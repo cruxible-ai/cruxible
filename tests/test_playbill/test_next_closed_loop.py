@@ -9,7 +9,7 @@ from typing import get_args
 
 import pytest
 
-from cruxible_client.contracts import ProviderLaneStatusV1
+from cruxible_client.contracts import PLAYBILL_HAND_EDIT_NEXT_REASONS, ProviderLaneStatusV1
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
@@ -39,6 +39,10 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
     parse_claim,
 )
+from cruxible_client.contracts.declared_blocks import (
+    PlaybillPresentationPolicyV2,
+    PlaybillProjectionCoverageObservationV1,
+)
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
@@ -50,6 +54,8 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
 )
+from cruxible_client.contracts.procedures.artifacts import render_procedure
+from cruxible_client.contracts.projection import AcceptedCoordinate as ClientAcceptedCoordinate
 from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.subjects import render_subject, subject_path
@@ -69,6 +75,7 @@ from cruxible_core.playbill.coverage.contracts import (
     occurrence_identity_digest,
 )
 from cruxible_core.playbill.coverage.indexes import WorkingOccurrenceV1
+from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.service.documents import (
@@ -82,6 +89,7 @@ from cruxible_core.service.playbill_claims import (
     service_list_playbill_claims,
 )
 from cruxible_core.service.playbill_next import (
+    HAND_EDIT_NEXT_REASONS,
     NextReason,
     PlaybillNextDriftObservationV1,
     PlaybillNextRequestV1,
@@ -123,6 +131,7 @@ from tests.test_playbill.test_dependency_impact import (
     _facts as _dependency_facts,
 )
 from tests.test_playbill.test_evidence_freshness import _activate as _activate_migration
+from tests.test_playbill.test_graph_v4_provider_closure import _accepted_procedure
 from tests.test_playbill.test_projection_next import (
     _claim_backing,
     _instance_with_query,
@@ -167,8 +176,8 @@ EXPECTED_OPERATIONS = {
     "retired_claim_source_stale": "playbill.document.propose",
     "unregistered_projection_block": "playbill.document.propose",
     "provider_lane_unavailable": "hand_edit",
+    "procedure_projection_missing": "hand_edit",
 }
-HAND_EDIT_REASONS = {"procedure_projection_missing"}
 
 
 def _expected_operation(key: ClosedLoopKey) -> str:
@@ -1207,6 +1216,43 @@ def _provider_lane_unavailable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> 
     assert all(item.reason != "provider_lane_unavailable" for item in repaired.items)
 
 
+def _procedure_projection_missing(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    instance, _owner = initialize_local(root)
+    coordinate = instance.accepted_coordinate()
+    procedure = _accepted_procedure()
+    real_tree_at = PlaybillInstance.tree_at
+
+    def with_procedure(self, oid):  # type: ignore[no-untyped-def]
+        tree = dict(real_tree_at(self, oid))
+        tree[procedure.path] = render_procedure(procedure.procedure)
+        return tree
+
+    monkeypatch.setattr(PlaybillInstance, "tree_at", with_procedure)
+    public = ClientAcceptedCoordinate.model_validate(
+        AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
+    )
+    result = service_playbill_next(
+        instance,
+        request=PlaybillNextRequestV1(
+            evaluation_time=EVALUATION_TIME,
+            access_profile=_access(),
+            workspace_observation=PlaybillNextWorkspaceObservationV1(
+                presentation_policy=PlaybillPresentationPolicyV2(),
+                projection_coverage=PlaybillProjectionCoverageObservationV1(
+                    coordinate=public,
+                    complete_kinds=("Procedure",),
+                    bindings=(),
+                ),
+            ),
+        ),
+    )
+    row = next(item for item in result.items if item.reason == "procedure_projection_missing")
+    assert row.repair.operation == "hand_edit"
+    assert row.repair.command is None
+    assert row.repair.target == ".playbill/sources.yaml"
+    assert row.repair.required_change == "add_procedure_projection_catalog_entries"
+
+
 CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("claim_conflicted", None): _claim_conflicted,
     ("claim_uncovered", None): _claim_uncovered,
@@ -1250,6 +1296,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("retired_claim_source_stale", None): _retired_claim_source_stale,
     ("unregistered_projection_block", None): _unregistered_projection_block,
     ("provider_lane_unavailable", None): _provider_lane_unavailable,
+    ("procedure_projection_missing", None): _procedure_projection_missing,
 }
 
 
@@ -1260,11 +1307,15 @@ def test_every_next_reason_has_an_effective_named_repair(
     key: ClosedLoopKey,
 ) -> None:
     reasons = set(get_args(NextReason))
-    assert {reason for reason, _discriminator in CLOSED_LOOP_CASES} == (reasons - HAND_EDIT_REASONS)
+    assert {reason for reason, _discriminator in CLOSED_LOOP_CASES} == reasons
     assert {
         discriminator for reason, discriminator in CLOSED_LOOP_CASES if reason == "citation_drifted"
     } == {"changed", "gone", "ambiguous"}
-    assert set(EXPECTED_OPERATIONS) == reasons - HAND_EDIT_REASONS
+    assert set(EXPECTED_OPERATIONS) == reasons
+    assert HAND_EDIT_NEXT_REASONS == PLAYBILL_HAND_EDIT_NEXT_REASONS
+    assert {
+        reason for reason, operation in EXPECTED_OPERATIONS.items() if operation == "hand_edit"
+    } == set(HAND_EDIT_NEXT_REASONS)
 
     case_root = tmp_path / "-".join(part for part in key if part is not None)
     case_root.mkdir()

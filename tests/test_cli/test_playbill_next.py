@@ -58,7 +58,7 @@ def test_cli_next_observes_locally_then_calls_one_queue_route(
                 coordinate=COORDINATE,
                 evaluation_time="2026-08-24T18:00:00.000000Z",
                 observed_domains=["accepted_state", "workspace_floor"],
-                unobserved_domains=["workspace_sources"],
+                unobserved_domains=["workspace_sources", "workspace_projections"],
                 items=[],
                 result_digest="sha256:" + "5" * 64,
             )
@@ -94,7 +94,7 @@ def test_cli_next_observes_locally_then_calls_one_queue_route(
 
     assert result.exit_code == 0, result.output
     assert "No repair work" in result.output
-    assert "Unobserved: workspace_sources" in result.output
+    assert "Unobserved: workspace_sources, workspace_projections" in result.output
     assert calls[0]["workspace_observation"] == observation
     assert calls[0]["evaluation_time"] == expected_time
     assert calls[0]["expiring_within"] == {"microseconds": expected_microseconds}
@@ -148,7 +148,12 @@ def test_cli_next_delta_labels_additions_and_removals(
                 tag="playbill-next-result-v2",
                 coordinate=COORDINATE,
                 evaluation_time="2026-08-24T18:00:00Z",
-                observed_domains=["accepted_state", "workspace_floor", "workspace_sources"],
+                observed_domains=[
+                    "accepted_state",
+                    "workspace_floor",
+                    "workspace_sources",
+                    "workspace_projections",
+                ],
                 unobserved_domains=[],
                 items=[removed, added],
                 result_digest="sha256:" + str(self.calls) * 64,
@@ -207,7 +212,12 @@ def test_cli_next_delta_memo_miss_renders_the_full_queue_without_change_labels(
             return contracts.PlaybillNextResult(
                 coordinate=COORDINATE,
                 evaluation_time="2026-08-24T18:00:00Z",
-                observed_domains=["accepted_state", "workspace_floor", "workspace_sources"],
+                observed_domains=[
+                    "accepted_state",
+                    "workspace_floor",
+                    "workspace_sources",
+                    "workspace_projections",
+                ],
                 unobserved_domains=[],
                 items=[item],
                 result_digest="sha256:" + "1" * 64,

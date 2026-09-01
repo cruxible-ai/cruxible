@@ -112,7 +112,12 @@ def _result(item_ids: tuple[str, ...], *, digest_hex: str = "9"):  # type: ignor
             compiler_digest="sha256:" + "4" * 64,
         ),
         evaluation_time=datetime(2026, 8, 20, tzinfo=UTC),
-        observed_domains=("accepted_state", "workspace_floor", "workspace_sources"),
+        observed_domains=(
+            "accepted_state",
+            "workspace_floor",
+            "workspace_sources",
+            "workspace_projections",
+        ),
         unobserved_domains=(),
         items=tuple(items),
         result_digest="sha256:" + digest_hex * 64,

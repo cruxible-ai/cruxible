@@ -92,7 +92,11 @@ def test_next_is_deterministic_and_excludes_the_removed_brief_reason(tmp_path: P
 
     assert retry == first
     assert first.observed_domains == ("accepted_state",)
-    assert first.unobserved_domains == ("workspace_floor", "workspace_sources")
+    assert first.unobserved_domains == (
+        "workspace_floor",
+        "workspace_sources",
+        "workspace_projections",
+    )
     assert "brief_unhealthy" not in get_args(NextReason)
     assert all(item.reason != "brief_unhealthy" for item in first.items)
     assert first.result_digest.startswith("sha256:")
@@ -171,7 +175,7 @@ def test_workspace_drift_is_verified_against_the_accepted_citation(
         "workspace_floor",
         "workspace_sources",
     )
-    assert result.unobserved_domains == ()
+    assert result.unobserved_domains == ("workspace_projections",)
     assert {item.reason for item in result.items}.issuperset({"citation_drifted", "floor_missing"})
     drift = next(item for item in result.items if item.reason == "citation_drifted")
     assert drift.related_identities == (citation.citation_id,)

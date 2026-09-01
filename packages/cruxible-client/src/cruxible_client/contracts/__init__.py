@@ -89,6 +89,10 @@ PlaybillNextReason: TypeAlias = Literal[
     "provider_lane_unavailable",
     "procedure_projection_missing",
 ]
+PlaybillHandEditNextReason: TypeAlias = Literal["procedure_projection_missing"]
+PLAYBILL_HAND_EDIT_NEXT_REASONS: frozenset[PlaybillHandEditNextReason] = frozenset(
+    {"procedure_projection_missing"}
+)
 
 ProviderLaneUnavailableCodeV1: TypeAlias = Literal[
     "provider_process_lease_invalid",
@@ -1075,8 +1079,22 @@ class PlaybillNextResult(BaseModel):
     tag: Literal["playbill-next-result-v1", "playbill-next-result-v2"] = "playbill-next-result-v1"
     coordinate: PlaybillAcceptedCoordinate
     evaluation_time: str
-    observed_domains: list[Literal["accepted_state", "workspace_floor", "workspace_sources"]]
-    unobserved_domains: list[Literal["accepted_state", "workspace_floor", "workspace_sources"]]
+    observed_domains: list[
+        Literal[
+            "accepted_state",
+            "workspace_floor",
+            "workspace_sources",
+            "workspace_projections",
+        ]
+    ]
+    unobserved_domains: list[
+        Literal[
+            "accepted_state",
+            "workspace_floor",
+            "workspace_sources",
+            "workspace_projections",
+        ]
+    ]
     items: list[dict[str, Any]]
     result_digest: str
     # Set only on a delta. Items are the changed rows while result_digest names

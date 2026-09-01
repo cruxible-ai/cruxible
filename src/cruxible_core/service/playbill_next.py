@@ -12,7 +12,11 @@ from typing import Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from cruxible_client.contracts import PlaybillNextReason, ProviderLaneStatusV1
+from cruxible_client.contracts import (
+    PLAYBILL_HAND_EDIT_NEXT_REASONS,
+    PlaybillNextReason,
+    ProviderLaneStatusV1,
+)
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
     Sha256Value,
@@ -126,13 +130,19 @@ NEXT_RESULT_V2_DIGEST_DOMAIN = "playbill-next-result-v2"
 DEFAULT_EXPIRING_WITHIN_MICROSECONDS = 604_800_000_000
 MAX_DEPENDENCY_LINEAGE_GENERATIONS = 256
 
-NextDomain = Literal["accepted_state", "workspace_floor", "workspace_sources"]
+NextDomain = Literal[
+    "accepted_state",
+    "workspace_floor",
+    "workspace_sources",
+    "workspace_projections",
+]
 NextSeverity = Literal["blocking", "repair", "warning"]
 CitationLineageNote = Literal[
     "predecessor_lineage_limit_exceeded",
     "predecessor_unresolved",
 ]
 NextReason: TypeAlias = PlaybillNextReason
+HAND_EDIT_NEXT_REASONS = PLAYBILL_HAND_EDIT_NEXT_REASONS
 NextRepairOperation = Literal[
     "playbill.authoring.create",
     "playbill.authoring.bind",
@@ -148,6 +158,7 @@ _ALL_DOMAINS: tuple[NextDomain, ...] = (
     "accepted_state",
     "workspace_floor",
     "workspace_sources",
+    "workspace_projections",
 )
 _PROJECTION_VISIBILITY_POLICY = QueryEvaluationPolicyV1(
     visible_verdicts=("contradicted", "stale", "supported", "uncovered", "unresolved"),
@@ -465,17 +476,25 @@ class PlaybillNextRepairV1(_StrictNextModel):
     target: str
     required_change: str
     arguments: object = Field(default_factory=dict)
-    # The operation is a dotted CLI path and the arguments are its options, so a
-    # caller could always have assembled this line -- and every caller had to.
-    # Composed from the digested fields beside it, so it is a pure function of
-    # them and stays deterministic inside the item_id and result_digest
-    # preimages it necessarily joins.
+    # Runnable operations are dotted CLI paths whose arguments are their options.
+    # Their command is composed from the digested fields beside it, so it stays
+    # deterministic inside the item_id and result_digest preimages. Hand edits
+    # instead carry a target and required change and never claim a command.
     command: str | None = None
 
     @field_validator("arguments", mode="before")
     @classmethod
     def _arguments(cls, value: object) -> CanonicalValue:
         return normalize_canonical(value)
+
+    @model_validator(mode="after")
+    def _hand_edit_shape(self) -> "PlaybillNextRepairV1":
+        if self.operation == "hand_edit":
+            if not self.target.strip() or not self.required_change.strip():
+                raise ValueError("hand-edit repairs require a target and required change")
+            if self.command is not None:
+                raise ValueError("hand-edit repairs cannot claim a runnable command")
+        return self
 
 
 class PlaybillNextItemV1(_StrictNextModel):
@@ -2694,9 +2713,9 @@ def _workspace_items(
         == AcceptedCoordinate.model_validate(coordinate.model_dump(mode="json")).model_dump(
             mode="json"
         )
-        and "workspace_sources" not in domains
+        and "workspace_projections" not in domains
     ):
-        domains.append("workspace_sources")
+        domains.append("workspace_projections")
     return tuple(domains), tuple(items)
 
 
@@ -2729,7 +2748,7 @@ def _procedure_projection_items(
     covered = {
         item.artifact.qualified for item in coverage.bindings if item.artifact.kind == "Procedure"
     }
-    items: list[PlaybillNextItemV1] = []
+    missing: list[tuple[str, dict[str, object]]] = []
     tree = instance.tree_at(coordinate.git_oid)
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
         if not path.startswith("procedures/") or not path.endswith(".json"):
@@ -2737,29 +2756,36 @@ def _procedure_projection_items(
         procedure = parse_procedure(tree[path], path=path)
         if procedure.lifecycle.state != "live" or procedure.identity.qualified in covered:
             continue
-        catalog_entry = {
+        catalog_entry: dict[str, object] = {
             "kind": "procedure",
             "procedure_identity": procedure.identity.model_dump(mode="json"),
             "locator": f"procedures/{procedure.identity.name}.md",
         }
-        items.append(
-            _item(
-                severity="warning",
-                reason="procedure_projection_missing",
-                subject_identity=procedure.identity.qualified,
-                detail={
-                    "catalog_entry": catalog_entry,
-                    "message": "accepted Procedure has no configured workspace projection",
-                },
-                repair=PlaybillNextRepairV1(
-                    operation="hand_edit",
-                    target=".playbill/sources.yaml",
-                    required_change="add_procedure_projection_catalog_entry",
-                    arguments={"catalog_entry": catalog_entry},
-                ),
-            )
-        )
-    return tuple(items)
+        missing.append((procedure.identity.qualified, catalog_entry))
+    if not missing:
+        return ()
+    missing.sort(key=lambda item: item[0].encode("utf-8"))
+    identities = tuple(item[0] for item in missing)
+    entries = [item[1] for item in missing]
+    return (
+        _item(
+            severity="warning",
+            reason="procedure_projection_missing",
+            subject_identity=".playbill/sources.yaml",
+            related_identities=identities,
+            detail={
+                "unprojected_procedure_ids": list(identities),
+                "catalog_entries": entries,
+                "message": "accepted Procedures have no configured workspace projection",
+            },
+            repair=PlaybillNextRepairV1(
+                operation="hand_edit",
+                target=".playbill/sources.yaml",
+                required_change="add_procedure_projection_catalog_entries",
+                arguments={"catalog_entries": entries},
+            ),
+        ),
+    )
 
 
 def _document_items(

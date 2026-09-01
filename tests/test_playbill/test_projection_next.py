@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import unittest.mock as mock
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -32,6 +33,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryParameterDeclarationV1,
     QueryParameterRefV1,
 )
+from cruxible_client.contracts.source_catalog import ProcedureProjectionCatalogEntry
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate
@@ -218,15 +220,20 @@ def test_unprojected_procedure_advisory_is_coordinate_bound_and_policy_controlle
     )
     assert row.severity == "warning"
     assert row.reason == "procedure_projection_missing"
-    assert row.subject_identity == procedure.procedure.identity.qualified
+    assert row.subject_identity == ".playbill/sources.yaml"
+    assert row.related_identities == (procedure.procedure.identity.qualified,)
     assert row.repair.operation == "hand_edit"
     assert row.repair.command is None
+    assert row.repair.target == ".playbill/sources.yaml"
+    assert row.repair.required_change == "add_procedure_projection_catalog_entries"
     assert row.repair.arguments == {
-        "catalog_entry": {
-            "kind": "procedure",
-            "procedure_identity": procedure.procedure.identity.model_dump(mode="json"),
-            "locator": f"procedures/{procedure.procedure.identity.name}.md",
-        }
+        "catalog_entries": [
+            {
+                "kind": "procedure",
+                "procedure_identity": procedure.procedure.identity.model_dump(mode="json"),
+                "locator": f"procedures/{procedure.procedure.identity.name}.md",
+            }
+        ]
     }
 
     projected = base_observation.model_copy(
@@ -287,6 +294,139 @@ def test_unprojected_procedure_advisory_is_coordinate_bound_and_policy_controlle
         )
         == ()
     )
+
+
+def test_service_next_coalesces_projection_advice_in_its_own_observed_domain(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    before = instance.accepted_coordinate()
+    before_tree = instance.tree_at(before.git_oid)
+    procedure = _accepted_procedure()
+    real_tree_at = PlaybillInstance.tree_at
+
+    def with_procedure(self, oid):  # type: ignore[no-untyped-def]
+        tree = dict(real_tree_at(self, oid))
+        tree[procedure.path] = render_procedure(procedure.procedure)
+        return tree
+
+    public = ClientAcceptedCoordinate.model_validate(
+        AcceptedCoordinate.from_internal(before).model_dump(mode="json")
+    )
+    request = PlaybillNextRequestV1(
+        evaluation_time=NOW,
+        access_profile=CoverageAccessProfileV1(
+            profile_id="procedure-service-test",
+            permitted_access_classes=("instance",),
+        ),
+        workspace_observation=PlaybillNextWorkspaceObservationV1(
+            presentation_policy=PlaybillPresentationPolicyV2(),
+            projection_coverage=PlaybillProjectionCoverageObservationV1(
+                coordinate=public,
+                complete_kinds=("Procedure",),
+                bindings=(),
+            ),
+        ),
+    )
+
+    observation = request.workspace_observation
+    assert observation is not None
+    coverage = observation.projection_coverage
+    assert coverage is not None
+    foreign = request.model_copy(
+        update={
+            "workspace_observation": observation.model_copy(
+                update={
+                    "projection_coverage": coverage.model_copy(
+                        update={"coordinate": public.model_copy(update={"git_oid": "f" * 40})}
+                    )
+                }
+            )
+        }
+    )
+    with mock.patch.object(PlaybillInstance, "tree_at", with_procedure):
+        result = service_playbill_next(instance, request=request)
+        unobserved = service_playbill_next(
+            instance,
+            request=PlaybillNextRequestV1(
+                evaluation_time=NOW,
+                access_profile=request.access_profile,
+            ),
+        )
+        foreign_result = service_playbill_next(instance, request=foreign)
+
+    assert "workspace_projections" in result.observed_domains
+    assert "workspace_sources" not in result.observed_domains
+    (row,) = tuple(item for item in result.items if item.reason == "procedure_projection_missing")
+    entries = row.repair.arguments["catalog_entries"]  # type: ignore[index]
+    assert len(entries) == 1
+    assert ProcedureProjectionCatalogEntry.model_validate(entries[0])
+    assert not [item for item in unobserved.items if item.reason == "procedure_projection_missing"]
+    assert "workspace_projections" in unobserved.unobserved_domains
+    assert not [
+        item for item in foreign_result.items if item.reason == "procedure_projection_missing"
+    ]
+    assert "workspace_projections" in foreign_result.unobserved_domains
+    assert instance.accepted_coordinate() == before
+    assert instance.tree_at(before.git_oid) == before_tree
+
+
+def test_many_unprojected_procedures_coalesce_without_a_cardinality_cap(
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.contracts.procedures.artifacts import ProcedureArtifactV1
+    from cruxible_client.contracts.procedures.graph import (
+        compute_procedure_definition_digest_v4,
+    )
+
+    instance, _owner = initialize_local(tmp_path)
+    coordinate = instance.accepted_coordinate()
+    public = ClientAcceptedCoordinate.model_validate(
+        AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
+    )
+    template = _accepted_procedure().procedure
+    real_tree_at = PlaybillInstance.tree_at
+
+    def with_many(self, oid):  # type: ignore[no-untyped-def]
+        tree = dict(real_tree_at(self, oid))
+        for index in range(25):
+            name = f"{template.definition.name}{index:02d}"
+            definition = template.definition.model_copy(update={"name": name})
+            artifact = ProcedureArtifactV1(
+                identity=template.identity.model_copy(update={"name": name}),
+                definition=definition,
+                definition_digest=compute_procedure_definition_digest_v4(definition).tagged,
+                pins=template.pins,
+                activation_policy=template.activation_policy,
+            )
+            tree[f"procedures/{name}.json"] = render_procedure(artifact)
+        return tree
+
+    request = PlaybillNextRequestV1(
+        evaluation_time=NOW,
+        access_profile=CoverageAccessProfileV1(
+            profile_id="many-procedures",
+            permitted_access_classes=("instance",),
+        ),
+        workspace_observation=PlaybillNextWorkspaceObservationV1(
+            presentation_policy=PlaybillPresentationPolicyV2(),
+            projection_coverage=PlaybillProjectionCoverageObservationV1(
+                coordinate=public,
+                complete_kinds=("Procedure",),
+                bindings=(),
+            ),
+        ),
+    )
+
+    with mock.patch.object(PlaybillInstance, "tree_at", with_many):
+        result = service_playbill_next(instance, request=request)
+
+    rows = tuple(item for item in result.items if item.reason == "procedure_projection_missing")
+    assert len(rows) == 1
+    row = rows[0]
+    assert len(row.related_identities) == 25
+    assert list(row.related_identities) == sorted(row.related_identities)
+    assert len(row.repair.arguments["catalog_entries"]) == 25  # type: ignore[index]
 
 
 def test_clean_claim_and_query_backings_do_not_stale_on_coordinate_or_time_alone(

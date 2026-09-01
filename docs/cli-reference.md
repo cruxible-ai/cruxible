@@ -386,12 +386,14 @@ observes readable source-file digests, including paths explicitly authorized by
 a local overlay. Unreadable or unresolved sources are omitted individually; the
 daemon compares observed sources with accepted whole-source snapshots and names
 drifted or unobserved cited sources. The daemon reads no clock or workspace.
-Without a valid source catalog, `workspace_sources` remains explicitly unobserved.
+Without actual source or drift observations, `workspace_sources` remains explicitly
+unobserved. Procedure-catalog coverage is accounted for separately as
+`workspace_projections` and cannot imply that workspace sources were scanned.
 An entry with `kind: procedure`, a `Procedure` identity, and a workspace-relative
 `locator` declares projection intent for that accepted Procedure. A complete,
-coordinate-bound catalog observation produces a nonblocking warning for each
-live Procedure without such an entry; the repair carries the exact hand-edit
-entry shape until a projection-authoring command exists.
+coordinate-bound catalog observation produces one nonblocking warning listing all
+live Procedures without such entries; the repair carries their exact hand-edit
+entry shapes until a projection-authoring command exists.
 Empty output means only that no work exists in the explicitly observed domains.
 Conflicting values in the same claim slot require revisions into distinct
 qualifiers; when a shared value field such as `topic` separates the contenders,
