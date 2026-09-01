@@ -517,12 +517,14 @@ def playbill_review_proposal(
     proposal_id: str,
     *,
     include_body: bool = False,
+    workspace_observation: Mapping[str, object] | None = None,
 ) -> contracts.PlaybillProposalReview:
     check_permission("cruxible_playbill_review", instance_id=instance_id)
     result = service_review_playbill_proposal(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
         access=_access(instance_id, include_body=include_body),
+        workspace_observation=workspace_observation,
     )
     return contracts.PlaybillProposalReview.model_validate(result.model_dump(mode="json"))
 

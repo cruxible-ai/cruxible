@@ -48,6 +48,30 @@ JSON codec and `.json` paths; those are separate domains. A mutable instance nee
 not use the executable's newest compiler coordinate, but its compiler must select
 that current artifact-codec lineage.
 
+The catalog may also carry ungoverned Procedure projection intent:
+
+~~~yaml
+- kind: procedure
+  procedure_identity:
+    kind: Procedure
+    name: release-guard
+  locator: runbooks/release-guard.md
+~~~
+
+`.playbill/presentation-policy.json` accepts V1 and upgrades it on read. V2 adds
+per-kind advisory switches; Procedures default on and Claims default off:
+
+~~~json
+{
+  "tag": "playbill-presentation-policy-v2",
+  "archival_source_ids": [],
+  "projection_advisories": {"claim": false, "procedure": true}
+}
+~~~
+
+These files express local presentation and projection choices only. They never
+enter the accepted tree or grant authority.
+
 ## Daemon state root
 
 The default state root is `~/.cruxible`. `cruxible server start --state-root

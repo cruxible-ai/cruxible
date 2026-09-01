@@ -168,6 +168,7 @@ EXPECTED_OPERATIONS = {
     "unregistered_projection_block": "playbill.document.propose",
     "provider_lane_unavailable": "hand_edit",
 }
+HAND_EDIT_REASONS = {"procedure_projection_missing"}
 
 
 def _expected_operation(key: ClosedLoopKey) -> str:
@@ -1259,11 +1260,11 @@ def test_every_next_reason_has_an_effective_named_repair(
     key: ClosedLoopKey,
 ) -> None:
     reasons = set(get_args(NextReason))
-    assert {reason for reason, _discriminator in CLOSED_LOOP_CASES} == reasons
+    assert {reason for reason, _discriminator in CLOSED_LOOP_CASES} == (reasons - HAND_EDIT_REASONS)
     assert {
         discriminator for reason, discriminator in CLOSED_LOOP_CASES if reason == "citation_drifted"
     } == {"changed", "gone", "ambiguous"}
-    assert set(EXPECTED_OPERATIONS) == reasons
+    assert set(EXPECTED_OPERATIONS) == reasons - HAND_EDIT_REASONS
 
     case_root = tmp_path / "-".join(part for part in key if part is not None)
     case_root.mkdir()

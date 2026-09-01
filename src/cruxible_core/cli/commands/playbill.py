@@ -41,7 +41,10 @@ from cruxible_client.authoring.sources import (
     load_source_catalog,
     root_aliases,
 )
-from cruxible_client.authoring.workspace import observe_playbill_next_workspace_with_coverage
+from cruxible_client.authoring.workspace import (
+    observe_playbill_next_workspace_with_coverage,
+    observe_playbill_projection_coverage,
+)
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_attestations import (
@@ -874,13 +877,49 @@ def inspect_refusal(proposal_id: str, output_json: bool) -> None:
 @proposal_group.command("review")
 @click.argument("proposal_id")
 @click.option("--include-body/--redacted", default=True)
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Workspace whose projection catalog and markers are observed locally.",
+)
 @json_option
 @handle_errors
-def review_proposal(proposal_id: str, include_body: bool, output_json: bool) -> None:
+def review_proposal(
+    proposal_id: str,
+    include_body: bool,
+    workspace_root: str,
+    output_json: bool,
+) -> None:
+    workspace = Path(workspace_root)
+
+    def _review_at_observed_coordinate(
+        client: CruxibleClient, instance_id: str
+    ) -> contracts.PlaybillProposalReview:
+        orientation = client.search_playbill(instance_id, mode="orient")
+        next_observation = observe_playbill_next_workspace(workspace)
+        observation: dict[str, object] = {
+            "tag": "playbill-review-workspace-observation-v1",
+            "presentation_policy": next_observation.get("presentation_policy"),
+            "presentation_policy_notes": next_observation.get("presentation_policy_notes", []),
+            "projection_coverage": None,
+        }
+        projection = observe_playbill_projection_coverage(
+            workspace,
+            coordinate=orientation.coordinate,
+        )
+        if projection is not None:
+            observation["projection_coverage"] = projection
+        return client.review_playbill_proposal(
+            instance_id,
+            proposal_id,
+            include_body=include_body,
+            workspace_observation=observation,
+        )
+
     result = _server_call(
-        lambda client, instance_id: client.review_playbill_proposal(
-            instance_id, proposal_id, include_body=include_body
-        ),
+        _review_at_observed_coordinate,
         command_name="playbill proposal review",
     )
     if output_json:

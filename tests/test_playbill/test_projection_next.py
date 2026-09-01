@@ -12,6 +12,10 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claim_types import claim_type_digest
 from cruxible_client.contracts.claims import claim_artifact_digest
 from cruxible_client.contracts.declared_blocks import (
+    PlaybillPresentationPolicyV2,
+    PlaybillProjectionAdvisoryPolicyV1,
+    PlaybillProjectionCoverageBindingV1,
+    PlaybillProjectionCoverageObservationV1,
     ProjectionBackingV1,
     ProjectionBlockStampV1,
     ProjectionClaimBackingV1,
@@ -21,6 +25,8 @@ from cruxible_client.contracts.declared_blocks import (
     projection_parameter_digest,
     projection_query_semantic_result_digest,
 )
+from cruxible_client.contracts.procedures.artifacts import render_procedure
+from cruxible_client.contracts.projection import AcceptedCoordinate as ClientAcceptedCoordinate
 from cruxible_client.contracts.query.grammar import (
     QueryEntryV1,
     QueryParameterDeclarationV1,
@@ -41,6 +47,7 @@ from cruxible_core.service.playbill_next import (
     PlaybillNextRequestV1,
     PlaybillNextSourceObservationV3,
     PlaybillNextWorkspaceObservationV1,
+    _procedure_projection_items,
     service_playbill_next,
 )
 from cruxible_core.service.playbill_query import build_accepted_query_facts
@@ -62,6 +69,7 @@ from tests.test_playbill._knowledge_loop_support import (
 )
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_claims import _claim_type
+from tests.test_playbill.test_graph_v4_provider_closure import _accepted_procedure
 from tests.test_playbill.test_query_execution_service import _instance_with_query
 from tests.test_playbill.test_reverse_drift_next import _published_world, _retire
 
@@ -172,6 +180,112 @@ def _projection_rows(instance: PlaybillInstance, request: PlaybillNextRequestV1)
         item
         for item in service_playbill_next(instance, request=request).items
         if item.reason.startswith("projection_")
+    )
+
+
+def test_unprojected_procedure_advisory_is_coordinate_bound_and_policy_controlled(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    coordinate = instance.accepted_coordinate()
+    procedure = _accepted_procedure()
+
+    class ProcedureTree:
+        def tree_at(self, _oid: str) -> dict[str, bytes]:
+            return {procedure.path: render_procedure(procedure.procedure)}
+
+    public = ClientAcceptedCoordinate.model_validate(
+        AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
+    )
+    base_observation = PlaybillNextWorkspaceObservationV1(
+        presentation_policy=PlaybillPresentationPolicyV2(),
+        projection_coverage=PlaybillProjectionCoverageObservationV1(
+            coordinate=public,
+            complete_kinds=("Procedure",),
+            bindings=(),
+        ),
+    )
+    profile = CoverageAccessProfileV1(
+        profile_id="procedure-projection-test",
+        permitted_access_classes=("instance",),
+    )
+
+    (row,) = _procedure_projection_items(
+        ProcedureTree(),  # type: ignore[arg-type]
+        coordinate=coordinate,
+        access_profile=profile,
+        observation=base_observation,
+    )
+    assert row.severity == "warning"
+    assert row.reason == "procedure_projection_missing"
+    assert row.subject_identity == procedure.procedure.identity.qualified
+    assert row.repair.operation == "hand_edit"
+    assert row.repair.command is None
+    assert row.repair.arguments == {
+        "catalog_entry": {
+            "kind": "procedure",
+            "procedure_identity": procedure.procedure.identity.model_dump(mode="json"),
+            "locator": f"procedures/{procedure.procedure.identity.name}.md",
+        }
+    }
+
+    projected = base_observation.model_copy(
+        update={
+            "projection_coverage": PlaybillProjectionCoverageObservationV1(
+                coordinate=public,
+                complete_kinds=("Procedure",),
+                bindings=(
+                    PlaybillProjectionCoverageBindingV1(
+                        artifact=procedure.procedure.identity,
+                        workspace_path="runbooks/procedure.md",
+                        evidence_kind="procedure_catalog",
+                    ),
+                ),
+            )
+        }
+    )
+    assert (
+        _procedure_projection_items(
+            ProcedureTree(),  # type: ignore[arg-type]
+            coordinate=coordinate,
+            access_profile=profile,
+            observation=projected,
+        )
+        == ()
+    )
+
+    disabled = base_observation.model_copy(
+        update={
+            "presentation_policy": PlaybillPresentationPolicyV2(
+                projection_advisories=PlaybillProjectionAdvisoryPolicyV1(procedure=False)
+            )
+        }
+    )
+    assert (
+        _procedure_projection_items(
+            ProcedureTree(),  # type: ignore[arg-type]
+            coordinate=coordinate,
+            access_profile=profile,
+            observation=disabled,
+        )
+        == ()
+    )
+
+    foreign = base_observation.model_copy(
+        update={
+            "projection_coverage": base_observation.projection_coverage.model_copy(
+                update={"coordinate": public.model_copy(update={"git_oid": "f" * 40})}
+            )
+        }
+    )
+    assert (
+        _procedure_projection_items(
+            ProcedureTree(),  # type: ignore[arg-type]
+            coordinate=coordinate,
+            access_profile=profile,
+            observation=foreign,
+        )
+        == ()
     )
 
 

@@ -114,6 +114,7 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "retired_claim_source_stale",
         "unregistered_projection_block",
         "provider_lane_unavailable",
+        "procedure_projection_missing",
     }
     assert set(get_args(NextRepairOperation)) == {
         "playbill.authoring.create",

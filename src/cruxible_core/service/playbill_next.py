@@ -56,15 +56,19 @@ from cruxible_client.contracts.declared_blocks import (
     MAX_PROJECTION_BLOCKS_PER_SOURCE,
     MAX_PROJECTION_CARDS_PER_SOURCE,
     MAX_PROJECTION_SOURCE_BYTES,
+    PlaybillPresentationPolicyAny,
     PlaybillPresentationPolicyNoteV1,
     PlaybillPresentationPolicyV1,
+    PlaybillProjectionCoverageObservationV1,
     ProjectionClaimBackingV1,
     ProjectionMarkerSummaryV1,
     ProjectionQueryBackingV1,
     projection_query_semantic_result_digest,
+    upgrade_playbill_presentation_policy,
 )
 from cruxible_client.contracts.documents import document_path, parse_document
 from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
+from cruxible_client.contracts.procedures.artifacts import parse_procedure
 from cruxible_client.contracts.query.definitions import QueryEvaluationPolicyV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
@@ -360,8 +364,9 @@ class PlaybillNextWorkspaceObservationV1(_StrictNextModel):
     installed_coordinate: AcceptedCoordinate | None = None
     drift_observations: tuple[PlaybillNextDriftObservationV1, ...] | None = None
     source_observations: tuple[PlaybillNextSourceObservationAny, ...] | None = None
-    presentation_policy: PlaybillPresentationPolicyV1 | None = None
+    presentation_policy: PlaybillPresentationPolicyAny | None = None
     presentation_policy_notes: tuple[PlaybillPresentationPolicyNoteV1, ...] = ()
+    projection_coverage: PlaybillProjectionCoverageObservationV1 | None = None
 
     @field_validator("drift_observations")
     @classmethod
@@ -1911,7 +1916,9 @@ def _self_published_source_items(
         return ()
     if observation.presentation_policy_notes:
         return ()
-    policy = observation.presentation_policy or PlaybillPresentationPolicyV1()
+    policy = upgrade_playbill_presentation_policy(
+        observation.presentation_policy or PlaybillPresentationPolicyV1()
+    )
     archival = set(policy.archival_source_ids)
     observed = {
         item.source_id: item
@@ -2679,7 +2686,80 @@ def _workspace_items(
             )
             if item is not None:
                 items.append(item)
+    projection = observation.projection_coverage
+    if (
+        projection is not None
+        and access_profile.permits("instance")
+        and projection.coordinate.model_dump(mode="json")
+        == AcceptedCoordinate.model_validate(coordinate.model_dump(mode="json")).model_dump(
+            mode="json"
+        )
+        and "workspace_sources" not in domains
+    ):
+        domains.append("workspace_sources")
     return tuple(domains), tuple(items)
+
+
+def _procedure_projection_items(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    access_profile: CoverageAccessProfileV1,
+    observation: PlaybillNextWorkspaceObservationV1 | None,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Advise on live Procedures absent from one complete local catalog observation."""
+
+    if (
+        observation is None
+        or observation.projection_coverage is None
+        or observation.presentation_policy_notes
+        or not access_profile.permits("instance")
+    ):
+        return ()
+    coverage = observation.projection_coverage
+    if coverage.coordinate.model_dump(mode="json") != PlaybillAcceptedCoordinate.from_internal(
+        coordinate
+    ).model_dump(mode="json"):
+        return ()
+    policy = upgrade_playbill_presentation_policy(
+        observation.presentation_policy or PlaybillPresentationPolicyV1()
+    )
+    if not policy.projection_advisories.procedure or "Procedure" not in coverage.complete_kinds:
+        return ()
+    covered = {
+        item.artifact.qualified for item in coverage.bindings if item.artifact.kind == "Procedure"
+    }
+    items: list[PlaybillNextItemV1] = []
+    tree = instance.tree_at(coordinate.git_oid)
+    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
+        if not path.startswith("procedures/") or not path.endswith(".json"):
+            continue
+        procedure = parse_procedure(tree[path], path=path)
+        if procedure.lifecycle.state != "live" or procedure.identity.qualified in covered:
+            continue
+        catalog_entry = {
+            "kind": "procedure",
+            "procedure_identity": procedure.identity.model_dump(mode="json"),
+            "locator": f"procedures/{procedure.identity.name}.md",
+        }
+        items.append(
+            _item(
+                severity="warning",
+                reason="procedure_projection_missing",
+                subject_identity=procedure.identity.qualified,
+                detail={
+                    "catalog_entry": catalog_entry,
+                    "message": "accepted Procedure has no configured workspace projection",
+                },
+                repair=PlaybillNextRepairV1(
+                    operation="hand_edit",
+                    target=".playbill/sources.yaml",
+                    required_change="add_procedure_projection_catalog_entry",
+                    arguments={"catalog_entry": catalog_entry},
+                ),
+            )
+        )
+    return tuple(items)
 
 
 def _document_items(
@@ -3109,6 +3189,12 @@ def service_playbill_next(
                     instance,
                     coordinate=coordinate,
                     evaluation_time=request.evaluation_time,
+                    access_profile=request.access_profile,
+                    observation=request.workspace_observation,
+                ),
+                *_procedure_projection_items(
+                    instance,
+                    coordinate=coordinate,
                     access_profile=request.access_profile,
                     observation=request.workspace_observation,
                 ),

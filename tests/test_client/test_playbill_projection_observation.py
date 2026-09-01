@@ -14,6 +14,7 @@ from cruxible_client import contracts as api
 from cruxible_client.authoring.workspace import (
     observe_playbill_next_workspace,
     observe_playbill_next_workspace_with_coverage,
+    observe_playbill_projection_coverage,
 )
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.declared_blocks import (
@@ -289,6 +290,66 @@ def test_missing_catalog_never_calls_coverage(tmp_path: Path) -> None:
     assert "source_observations" not in observation
     assert coordinate is None
     assert client.calls == []
+
+
+def test_projection_coverage_combines_claim_markers_and_procedure_catalog(
+    tmp_path: Path,
+) -> None:
+    _workspace(tmp_path)
+    _repin(_RepinClient(), tmp_path, claims=("CLM-first",))
+    catalog = tmp_path / ".playbill" / "sources.yaml"
+    catalog.write_text(
+        catalog.read_text(encoding="utf-8")
+        + """\
+  - kind: procedure
+    procedure_identity:
+      kind: Procedure
+      name: release-guard
+    locator: runbooks/release-guard.md
+""",
+        encoding="utf-8",
+    )
+
+    observed = observe_playbill_projection_coverage(tmp_path, coordinate=COORDINATE)
+
+    assert observed is not None
+    assert observed["coordinate"] == COORDINATE.model_dump(mode="json")
+    assert observed["complete_kinds"] == ["Claim", "Procedure"]
+    assert [item["artifact"] for item in observed["bindings"]] == [
+        {"kind": "Claim", "name": "CLM-first"},
+        {"kind": "Procedure", "name": "release-guard"},
+    ]
+
+
+def test_malformed_claim_markers_never_assert_claim_absence_but_leave_catalog_complete(
+    tmp_path: Path,
+) -> None:
+    source = _workspace(tmp_path)
+    source.write_bytes(source.read_bytes().replace(b"/playbill:block", b"/playbill:broken"))
+    catalog = tmp_path / ".playbill" / "sources.yaml"
+    catalog.write_text(
+        catalog.read_text(encoding="utf-8")
+        + """\
+  - kind: procedure
+    procedure_identity:
+      kind: Procedure
+      name: release-guard
+    locator: runbooks/release-guard.md
+""",
+        encoding="utf-8",
+    )
+
+    observed = observe_playbill_projection_coverage(tmp_path, coordinate=COORDINATE)
+
+    assert observed is not None
+    assert observed["complete_kinds"] == ["Procedure"]
+    assert observed["bindings"] == [
+        {
+            "artifact": {"kind": "Procedure", "name": "release-guard"},
+            "workspace_path": "runbooks/release-guard.md",
+            "evidence_kind": "procedure_catalog",
+        }
+    ]
 
 
 def test_oversized_source_remains_unobserved_without_calling_coverage(tmp_path: Path) -> None:

@@ -7,8 +7,17 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client.contracts.declared_blocks import (
+    PlaybillPresentationPolicyV2,
+    PlaybillProjectionCoverageBindingV1,
+    PlaybillProjectionCoverageObservationV1,
+    PlaybillReviewWorkspaceObservationV1,
+)
 from cruxible_client.contracts.errors import PlaybillKeyError
+from cruxible_client.contracts.procedures.artifacts import render_procedure
+from cruxible_client.contracts.projection import AcceptedCoordinate as ClientAcceptedCoordinate
 from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.service.documents import (
     service_propose_playbill_document,
     service_propose_playbill_principal_change,
@@ -16,12 +25,16 @@ from cruxible_core.playbill.service.documents import (
     service_submit_playbill_approval,
 )
 from cruxible_core.playbill.service.review import (
+    PlaybillProjectionAdvisory,
+    PlaybillReviewedMember,
+    _projection_advisory,
     render_playbill_proposal_review,
     service_prepare_playbill_approval,
     service_review_playbill_proposal,
 )
 from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
 from tests.test_playbill._support import generate_client
+from tests.test_playbill.test_graph_v4_provider_closure import _accepted_procedure
 from tests.test_service.test_playbill_documents import TIMESTAMP, _instance, _shell
 
 
@@ -56,6 +69,22 @@ def test_review_and_signing_keep_private_key_outside_wire_contract(tmp_path: Pat
     assert f"Proposal admission tier: {review.candidate.required_tier}" in rendered
     assert "Approve requires: graph_write" in rendered
     assert "Activate requires: graph_write" in rendered
+
+    advisory_rendered = render_playbill_proposal_review(
+        review.model_copy(
+            update={
+                "projection_advisory": PlaybillProjectionAdvisory(
+                    unprojected_count=1,
+                    artifact_identities=("Procedure:release-guard",),
+                    message=(
+                        "1 changed artifact has no projection coverage; "
+                        "reviewers will see raw JSON only"
+                    ),
+                )
+            }
+        )
+    )
+    assert "Projection advisory: 1 changed artifact" in advisory_rendered
 
     redacted = service_review_playbill_proposal(
         instance,
@@ -138,3 +167,84 @@ def test_lifecycle_review_names_the_proposing_actor(tmp_path: Path) -> None:
     rendered = render_playbill_proposal_review(review)
     assert f"{owner.principal.principal_id}'s own signature" in rendered
     assert "Required approvals: none" not in rendered
+
+
+def test_candidate_projection_advisory_counts_generated_successors_and_excludes_invalidations(
+    tmp_path: Path,
+) -> None:
+    instance, _owner, _reviewer = _instance(tmp_path)
+    procedure = _accepted_procedure()
+    settlement = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    public = ClientAcceptedCoordinate.model_validate(settlement.model_dump(mode="json"))
+    coverage = PlaybillProjectionCoverageObservationV1(
+        coordinate=public,
+        complete_kinds=("Procedure",),
+        bindings=(),
+    )
+
+    def member(role: str) -> PlaybillReviewedMember:
+        return PlaybillReviewedMember(
+            path=procedure.path,
+            artifact_kind="procedure",
+            disposition="added",
+            closure_role=role,  # type: ignore[arg-type]
+            predecessor_artifact_digest=None,
+            candidate_artifact_digest=procedure.artifact_digest,
+            base_semantic_artifact=None,
+            candidate_semantic_artifact={},
+            semantic_delta=(),
+            law_identifier="procedure-law",
+            law_digest="sha256:" + "1" * 64,
+            law_evidence={},
+            dependency_proof_refs=(),
+        )
+
+    observation = PlaybillReviewWorkspaceObservationV1(
+        presentation_policy=PlaybillPresentationPolicyV2(),
+        projection_coverage=coverage,
+    )
+    advisory = _projection_advisory(
+        members=(member("generated_successor"),),
+        candidate_tree={procedure.path: render_procedure(procedure.procedure)},
+        settlement_base=settlement,
+        workspace_observation=observation.model_dump(mode="json"),
+    )
+
+    assert advisory is not None
+    assert advisory.unprojected_count == 1
+    assert advisory.artifact_identities == (procedure.procedure.identity.qualified,)
+    assert "reviewers will see raw JSON only" in advisory.message
+    assert (
+        _projection_advisory(
+            members=(member("invalidation"),),
+            candidate_tree={procedure.path: render_procedure(procedure.procedure)},
+            settlement_base=settlement,
+            workspace_observation=observation,
+        )
+        is None
+    )
+
+    projected = observation.model_copy(
+        update={
+            "projection_coverage": coverage.model_copy(
+                update={
+                    "bindings": (
+                        PlaybillProjectionCoverageBindingV1(
+                            artifact=procedure.procedure.identity,
+                            workspace_path="runbooks/release.md",
+                            evidence_kind="procedure_catalog",
+                        ),
+                    )
+                }
+            )
+        }
+    )
+    assert (
+        _projection_advisory(
+            members=(member("authored"),),
+            candidate_tree={procedure.path: render_procedure(procedure.procedure)},
+            settlement_base=settlement,
+            workspace_observation=projected,
+        )
+        is None
+    )

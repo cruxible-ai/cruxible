@@ -7,11 +7,12 @@ import hashlib
 import os
 import stat
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import Literal, TypeAlias
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import (
     CasDigest,
     Sha256Value,
@@ -82,20 +83,64 @@ class SourceCatalogEntry(_StrictCatalogModel):
         return value
 
 
+class ProcedureProjectionCatalogEntry(_StrictCatalogModel):
+    """Local projection intent for one accepted Procedure identity."""
+
+    kind: Literal["procedure"] = "procedure"
+    procedure_identity: ArtifactIdentity
+    locator: str = Field(min_length=1, max_length=4096)
+    root_alias: str | None = None
+
+    @model_validator(mode="after")
+    def _shape(self) -> "ProcedureProjectionCatalogEntry":
+        if self.procedure_identity.kind != "Procedure":
+            raise ValueError("a Procedure projection entry must identify a Procedure")
+        path = Path(self.locator)
+        if self.root_alias is not None and path.is_absolute():
+            raise ValueError("root-aliased locators must be relative to their declared root")
+        parts = path.parts if path.is_absolute() else PurePosixPath(self.locator).parts
+        if any(part in {"", ".", ".."} for part in parts):
+            raise ValueError("catalog locator must be an explicit normalized file path")
+        return self
+
+
+SourceCatalogEntryAny: TypeAlias = SourceCatalogEntry | ProcedureProjectionCatalogEntry
+
+
+def _entry_key(entry: SourceCatalogEntryAny) -> tuple[str, str]:
+    if isinstance(entry, SourceCatalogEntry):
+        return ("document", entry.name)
+    return ("procedure", entry.procedure_identity.qualified)
+
+
+def _entry_sort_key(entry: SourceCatalogEntryAny) -> tuple[bytes, bytes]:
+    kind, identity = _entry_key(entry)
+    return kind.encode("utf-8"), identity.encode("utf-8")
+
+
 class SourceCatalog(_StrictCatalogModel):
     tag: Literal["playbill-source-catalog-v1"] = "playbill-source-catalog-v1"
     catalog_kind: SourceCatalogKind
-    entries: tuple[SourceCatalogEntry, ...]
+    entries: tuple[SourceCatalogEntryAny, ...]
 
     @field_validator("entries")
     @classmethod
-    def _entries(cls, value: tuple[SourceCatalogEntry, ...]) -> tuple[SourceCatalogEntry, ...]:
-        ordered = tuple(sorted(value, key=lambda item: item.name.encode("utf-8")))
-        if len({item.name for item in value}) != len(value):
+    def _entries(
+        cls, value: tuple[SourceCatalogEntryAny, ...]
+    ) -> tuple[SourceCatalogEntryAny, ...]:
+        ordered = tuple(sorted(value, key=_entry_sort_key))
+        documents = tuple(item for item in value if isinstance(item, SourceCatalogEntry))
+        procedures = tuple(
+            item for item in value if isinstance(item, ProcedureProjectionCatalogEntry)
+        )
+        if len({item.name for item in documents}) != len(documents):
             raise ValueError("source catalog entries must be unique by name")
-        targets = [item.document_id for item in value]
+        targets = [item.document_id for item in documents]
         if len(set(targets)) != len(targets):
             raise ValueError("source catalog contains duplicate Document targets")
+        procedure_targets = [item.procedure_identity.qualified for item in procedures]
+        if len(set(procedure_targets)) != len(procedure_targets):
+            raise ValueError("source catalog contains duplicate Procedure projection targets")
         if not value:
             raise ValueError("source catalog must declare at least one source")
         return ordered
@@ -223,19 +268,27 @@ def merge_source_catalogs(
         return portable
     if local.catalog_kind != "local":
         raise PlaybillFormatError("source-catalog overlay must be local")
-    merged = {entry.name: entry for entry in portable.entries}
+    merged = {_entry_key(entry): entry for entry in portable.entries}
     for entry in local.entries:
-        previous = merged.get(entry.name)
-        if previous is not None and (
-            previous.document_id != entry.document_id
-            or previous.compiler_profile != entry.compiler_profile
-        ):
-            raise PlaybillFormatError("local catalog ambiguously changes a source target/profile")
-        merged[entry.name] = entry
+        key = _entry_key(entry)
+        previous = merged.get(key)
+        if previous is not None:
+            if not isinstance(previous, type(entry)):
+                raise PlaybillFormatError("local catalog ambiguously changes an entry kind")
+            if isinstance(entry, SourceCatalogEntry):
+                assert isinstance(previous, SourceCatalogEntry)
+                if (
+                    previous.document_id != entry.document_id
+                    or previous.compiler_profile != entry.compiler_profile
+                ):
+                    raise PlaybillFormatError(
+                        "local catalog ambiguously changes a source target/profile"
+                    )
+        merged[key] = entry
     try:
         return SourceCatalog(
             catalog_kind="merged",
-            entries=tuple(sorted(merged.values(), key=lambda item: item.name.encode("utf-8"))),
+            entries=tuple(sorted(merged.values(), key=_entry_sort_key)),
         )
     except ValueError as exc:
         raise PlaybillFormatError("merged source catalogs are ambiguous") from exc
@@ -264,7 +317,12 @@ def compile_source_catalog(
     }
     inputs: list[ResolvedSourceInput] = []
     documents: list[CompiledSourceDocument] = []
-    for entry in catalog.entries:
+    document_entries = tuple(
+        entry for entry in catalog.entries if isinstance(entry, SourceCatalogEntry)
+    )
+    if not document_entries:
+        raise PlaybillFormatError("source compilation requires at least one Document source")
+    for entry in document_entries:
         locator = Path(entry.locator)
         if locator.is_absolute():
             candidates = tuple(
@@ -328,7 +386,13 @@ def compile_source_catalog(
         )
     input_tuple = tuple(inputs)
     document_tuple = tuple(documents)
-    catalog_value = source_catalog_digest(catalog)
+    # Procedure projection entries are ungoverned presentation intent. They
+    # must not perturb a Document compilation or its proposal provenance.
+    document_catalog = SourceCatalog(
+        catalog_kind=catalog.catalog_kind,
+        entries=document_entries,
+    )
+    catalog_value = source_catalog_digest(document_catalog)
     envelope_digests = tuple(item.envelope_digest for item in document_tuple)
     tree_digest = _proposed_tree_digest(document_tuple)
     digest_values: dict[str, object] = {
@@ -443,10 +507,12 @@ def _read_stable_file(path: Path) -> bytes:
 __all__ = [
     "CompiledSourceDocument",
     "ResolvedSourceInput",
+    "ProcedureProjectionCatalogEntry",
     "SourceAlignment",
     "SourceAlignmentState",
     "SourceCatalog",
     "SourceCatalogEntry",
+    "SourceCatalogEntryAny",
     "SourceCatalogKind",
     "SourceCompilationBundle",
     "SourceCompilationManifest",

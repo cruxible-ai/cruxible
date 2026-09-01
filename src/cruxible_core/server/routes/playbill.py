@@ -254,6 +254,11 @@ async def review_proposal(
         resolve_server_instance_id(instance_id),
         proposal_id,
         include_body=req.include_body,
+        workspace_observation=(
+            None
+            if req.workspace_observation is None
+            else req.workspace_observation.model_dump(mode="json")
+        ),
     )
 
 

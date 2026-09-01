@@ -369,10 +369,16 @@ class CruxibleClient:
         proposal_id: str,
         *,
         include_body: bool = False,
+        workspace_observation: Mapping[str, Any] | None = None,
     ) -> contracts.PlaybillProposalReview:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/review",
-            json={"include_body": include_body},
+            json={
+                "include_body": include_body,
+                "workspace_observation": (
+                    None if workspace_observation is None else dict(workspace_observation)
+                ),
+            },
         )
         return self._parse_model(response, contracts.PlaybillProposalReview)
 

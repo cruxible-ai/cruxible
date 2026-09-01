@@ -19,8 +19,10 @@ from cruxible_client.contracts.authoring.models import (
     WorkingSelectionObservationV1,
 )
 from cruxible_client.contracts.source_catalog import (
+    ProcedureProjectionCatalogEntry,
     SourceCatalog,
     SourceCatalogEntry,
+    SourceCatalogEntryAny,
     merge_source_catalogs,
 )
 
@@ -32,6 +34,8 @@ def _digest(content: bytes) -> str:
 def _validation_path(location: tuple[str | int, ...]) -> str:
     path = "$"
     for item in location:
+        if isinstance(item, str) and item.startswith("function-after["):
+            continue
         path += f"[{item}]" if isinstance(item, int) else f".{item}"
     return path
 
@@ -263,23 +267,42 @@ class WorkspaceSources:
         except (OSError, ValueError, yaml.YAMLError) as exc:
             raise SourceSelectionError(f"source catalog is invalid: {exc}") from exc
 
-    def _resolved_path(self, entry: SourceCatalogEntry) -> Path:
+    @property
+    def document_entries(self) -> tuple[SourceCatalogEntry, ...]:
+        return tuple(
+            entry for entry in self.catalog.entries if isinstance(entry, SourceCatalogEntry)
+        )
+
+    @property
+    def procedure_projection_entries(self) -> tuple[ProcedureProjectionCatalogEntry, ...]:
+        return tuple(
+            entry
+            for entry in self.catalog.entries
+            if isinstance(entry, ProcedureProjectionCatalogEntry)
+        )
+
+    def _resolved_path(self, entry: SourceCatalogEntryAny) -> Path:
+        label = (
+            entry.name
+            if isinstance(entry, SourceCatalogEntry)
+            else entry.procedure_identity.qualified
+        )
         if entry.root_alias is not None:
             raise SourceSelectionError(
-                f"source {entry.name!r} uses root_alias; S1 requires a merged absolute overlay"
+                f"catalog entry {label!r} uses root_alias; S1 requires a merged absolute overlay"
             )
         locator = Path(entry.locator)
         path = locator if locator.is_absolute() else self.workspace / locator
         resolved = path.expanduser().resolve()
         if not locator.is_absolute() and not resolved.is_relative_to(self.workspace):
-            raise SourceSelectionError(f"source {entry.name!r} escapes the workspace")
+            raise SourceSelectionError(f"catalog entry {label!r} escapes the workspace")
         return resolved
 
     def select(self, requested: str | Path) -> FileSelector:
         path = Path(requested)
         resolved = (path if path.is_absolute() else self.workspace / path).expanduser().resolve()
         matches = tuple(
-            entry for entry in self.catalog.entries if self._resolved_path(entry) == resolved
+            entry for entry in self.document_entries if self._resolved_path(entry) == resolved
         )
         if len(matches) != 1:
             raise SourceSelectionError(
@@ -292,10 +315,22 @@ class WorkspaceSources:
         return FileSelector(path=resolved, source_id=matches[0].name, content=content)
 
     def path_for_source(self, source_id: str) -> Path:
-        matches = tuple(entry for entry in self.catalog.entries if entry.name == source_id)
+        matches = tuple(entry for entry in self.document_entries if entry.name == source_id)
         if len(matches) != 1:
             raise SourceSelectionError(
                 f"logical source {source_id!r} maps to {len(matches)} local files"
+            )
+        return self._resolved_path(matches[0])
+
+    def path_for_procedure(self, procedure_identity: str) -> Path:
+        matches = tuple(
+            entry
+            for entry in self.procedure_projection_entries
+            if entry.procedure_identity.qualified == procedure_identity
+        )
+        if len(matches) != 1:
+            raise SourceSelectionError(
+                f"Procedure {procedure_identity!r} maps to {len(matches)} local projections"
             )
         return self._resolved_path(matches[0])
 

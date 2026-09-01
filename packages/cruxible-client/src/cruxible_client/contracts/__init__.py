@@ -87,6 +87,7 @@ PlaybillNextReason: TypeAlias = Literal[
     "unregistered_projection_block",
     "projection_marker_invalid",
     "provider_lane_unavailable",
+    "procedure_projection_missing",
 ]
 
 ProviderLaneUnavailableCodeV1: TypeAlias = Literal[
@@ -303,6 +304,28 @@ class PlaybillReviewedMember(BaseModel):
     dependency_proof_refs: list[dict[str, Any]]
 
 
+class PlaybillProjectionAdvisory(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-projection-advisory-v1"] = "playbill-projection-advisory-v1"
+    unprojected_count: int = Field(ge=1)
+    artifact_identities: list[str]
+    message: str
+
+    @field_validator("artifact_identities")
+    @classmethod
+    def _identities(cls, value: list[str]) -> list[str]:
+        if value != sorted(set(value), key=lambda item: item.encode("utf-8")):
+            raise ValueError("projection advisory identities must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _count(self) -> "PlaybillProjectionAdvisory":
+        if self.unprojected_count != len(self.artifact_identities):
+            raise ValueError("projection advisory count must match its identities")
+        return self
+
+
 class PlaybillProposalReview(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -321,6 +344,7 @@ class PlaybillProposalReview(BaseModel):
     attestation_coverage: dict[str, Any]
     documents: list[dict[str, Any]]
     redactions: list[str]
+    projection_advisory: PlaybillProjectionAdvisory | None = None
 
 
 class PlaybillApprovalChallenge(BaseModel):

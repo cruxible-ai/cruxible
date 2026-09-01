@@ -4,9 +4,17 @@ from __future__ import annotations
 
 import difflib
 import json
+from collections.abc import Mapping
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from cruxible_client.contracts import PlaybillSemanticFieldDelta
 from cruxible_client.contracts.attestations import ApprovalStatement, approval_digest
@@ -16,12 +24,18 @@ from cruxible_client.contracts.candidates import (
     CandidateRecord,
     CandidateRecordAnyVersion,
 )
+from cruxible_client.contracts.declared_blocks import (
+    PlaybillPresentationPolicyV1,
+    PlaybillReviewWorkspaceObservationV1,
+    upgrade_playbill_presentation_policy,
+)
 from cruxible_client.contracts.documents import parse_document
 from cruxible_client.contracts.errors import ApprovalIntegrityError, ProposalIntegrityError
 from cruxible_client.contracts.semantic import SourceMapping, whole_body_mapping
 from cruxible_client.contracts.semantic_delta import semantic_field_delta
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.closure import parse_dependency_artifact
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.service.documents import service_inspect_playbill_proposal
@@ -67,6 +81,26 @@ class PlaybillReviewedMember(_StrictReviewModel):
     dependency_proof_refs: tuple[dict[str, object], ...]
 
 
+class PlaybillProjectionAdvisory(_StrictReviewModel):
+    tag: Literal["playbill-projection-advisory-v1"] = "playbill-projection-advisory-v1"
+    unprojected_count: int = Field(ge=1)
+    artifact_identities: tuple[str, ...]
+    message: str
+
+    @field_validator("artifact_identities")
+    @classmethod
+    def _identities(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("projection advisory identities must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _count(self) -> "PlaybillProjectionAdvisory":
+        if self.unprojected_count != len(self.artifact_identities):
+            raise ValueError("projection advisory count must match its identities")
+        return self
+
+
 class PlaybillProposalReview(_StrictReviewModel):
     tag: Literal["playbill-proposal-review-v1"] = "playbill-proposal-review-v1"
     coordinate_kind: Literal["provisional"] = "provisional"
@@ -83,6 +117,7 @@ class PlaybillProposalReview(_StrictReviewModel):
     attestation_coverage: dict[str, object]
     documents: tuple[PlaybillReviewedDocument, ...]
     redactions: tuple[str, ...]
+    projection_advisory: PlaybillProjectionAdvisory | None = None
 
 
 class PlaybillApprovalChallenge(_StrictReviewModel):
@@ -265,11 +300,74 @@ def _review_members(
     return tuple(legacy_reviewed)
 
 
+def _projection_advisory(
+    *,
+    members: tuple[PlaybillReviewedMember, ...],
+    candidate_tree: dict[str, bytes],
+    settlement_base: AcceptedCoordinate,
+    workspace_observation: PlaybillReviewWorkspaceObservationV1 | Mapping[str, object] | None,
+) -> PlaybillProjectionAdvisory | None:
+    if workspace_observation is None:
+        return None
+    if not isinstance(workspace_observation, PlaybillReviewWorkspaceObservationV1):
+        try:
+            workspace_observation = PlaybillReviewWorkspaceObservationV1.model_validate(
+                workspace_observation
+            )
+        except ValidationError:
+            return None
+    if workspace_observation.presentation_policy_notes:
+        return None
+    coverage = workspace_observation.projection_coverage
+    if coverage is None or coverage.coordinate.model_dump(
+        mode="json"
+    ) != settlement_base.model_dump(mode="json"):
+        return None
+    policy = upgrade_playbill_presentation_policy(
+        workspace_observation.presentation_policy or PlaybillPresentationPolicyV1()
+    )
+    enabled = {
+        "Claim": policy.projection_advisories.claim,
+        "Procedure": policy.projection_advisories.procedure,
+    }
+    complete = set(coverage.complete_kinds)
+    covered = {item.artifact.qualified for item in coverage.bindings}
+    missing: list[str] = []
+    for member in members:
+        kind = {"claim": "Claim", "procedure": "Procedure"}.get(member.artifact_kind)
+        if (
+            kind is None
+            or member.closure_role == "invalidation"
+            or not enabled[kind]
+            or kind not in complete
+        ):
+            continue
+        content = candidate_tree.get(member.path)
+        parsed = None if content is None else parse_dependency_artifact(member.path, content)
+        if parsed is not None and parsed.identity.qualified not in covered:
+            missing.append(parsed.identity.qualified)
+    identities = tuple(sorted(set(missing), key=lambda item: item.encode("utf-8")))
+    if not identities:
+        return None
+    count = len(identities)
+    noun = "artifact" if count == 1 else "artifacts"
+    return PlaybillProjectionAdvisory(
+        unprojected_count=count,
+        artifact_identities=identities,
+        message=(
+            f"{count} changed {noun} have no projection coverage; reviewers will see raw JSON only"
+        ),
+    )
+
+
 def service_review_playbill_proposal(
     instance: PlaybillInstance,
     *,
     proposal_id: str,
     access: BodyAccessContext,
+    workspace_observation: PlaybillReviewWorkspaceObservationV1
+    | Mapping[str, object]
+    | None = None,
 ) -> PlaybillProposalReview:
     """Render one immutable candidate from its recorded base and proposal tree."""
 
@@ -306,6 +404,11 @@ def service_review_playbill_proposal(
         for item in approvals
     ]
     redactions = () if access.can_read_body else ("body", "readable_diff", "source_mapping")
+    reviewed_members = _review_members(
+        candidate,
+        base_tree=base_tree,
+        candidate_tree=candidate_tree,
+    )
     return PlaybillProposalReview(
         proposal_id=proposal_id,
         candidate=candidate,
@@ -314,11 +417,7 @@ def service_review_playbill_proposal(
         settlement_base=base_public,
         base_oid=base.git_oid,
         complete_members=candidate.members,
-        members=_review_members(
-            candidate,
-            base_tree=base_tree,
-            candidate_tree=candidate_tree,
-        ),
+        members=reviewed_members,
         governance={
             "activation_policy": candidate.activation_policy,
             "approval_requirements": [
@@ -341,6 +440,12 @@ def service_review_playbill_proposal(
         },
         documents=documents,
         redactions=redactions,
+        projection_advisory=_projection_advisory(
+            members=reviewed_members,
+            candidate_tree=candidate_tree,
+            settlement_base=base_public,
+            workspace_observation=workspace_observation,
+        ),
     )
 
 
@@ -416,6 +521,8 @@ def render_playbill_proposal_review(review: PlaybillProposalReview) -> str:
             )
         ),
     ]
+    if review.projection_advisory is not None:
+        lines.extend(("", f"Projection advisory: {review.projection_advisory.message}."))
     for document in review.documents:
         lines.extend(
             (
@@ -465,6 +572,7 @@ def render_playbill_proposal_review(review: PlaybillProposalReview) -> str:
 __all__ = [
     "PlaybillApprovalChallenge",
     "PlaybillProposalReview",
+    "PlaybillProjectionAdvisory",
     "PlaybillReviewedDocument",
     "PlaybillReviewedMember",
     "render_playbill_proposal_review",

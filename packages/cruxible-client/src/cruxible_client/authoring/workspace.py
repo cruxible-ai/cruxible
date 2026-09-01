@@ -24,12 +24,19 @@ from cruxible_client.authoring.selectors import WorkspaceSources
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.declared_blocks import (
     MAX_PROJECTION_CARDS_PER_SOURCE,
+    MAX_PROJECTION_COVERAGE_BINDINGS,
     MAX_PROJECTION_SCAN_BYTES,
     MAX_PROJECTION_SOURCE_BYTES,
+    PlaybillPresentationPolicyAny,
     PlaybillPresentationPolicyNoteV1,
     PlaybillPresentationPolicyV1,
+    PlaybillPresentationPolicyV2,
+    PlaybillProjectionCoverageBindingV1,
+    PlaybillProjectionCoverageObservationV1,
+    upgrade_playbill_presentation_policy,
 )
 from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.workspace_layout import PLAYBILL_FLOOR_PATH
 
 _CONFIG_PATH = PurePosixPath(".playbill/coverage.json")
@@ -44,11 +51,11 @@ def _presentation_policy(
     root: Path,
     *,
     known_source_ids: Sequence[str],
-) -> tuple[PlaybillPresentationPolicyV1 | None, tuple[PlaybillPresentationPolicyNoteV1, ...]]:
+) -> tuple[PlaybillPresentationPolicyV2 | None, tuple[PlaybillPresentationPolicyNoteV1, ...]]:
     path = root / ".playbill" / "presentation-policy.json"
     try:
         if not path.exists():
-            return PlaybillPresentationPolicyV1(), ()
+            return PlaybillPresentationPolicyV2(), ()
         resolved = path.resolve(strict=True)
     except OSError:
         return None, ("presentation_policy_unreadable",)
@@ -56,7 +63,11 @@ def _presentation_policy(
         return None, ("presentation_policy_path_escape",)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-        policy = PlaybillPresentationPolicyV1.model_validate(raw)
+        if isinstance(raw, Mapping) and raw.get("tag") == "playbill-presentation-policy-v2":
+            parsed: PlaybillPresentationPolicyAny = PlaybillPresentationPolicyV2.model_validate(raw)
+        else:
+            parsed = PlaybillPresentationPolicyV1.model_validate(raw)
+        policy = upgrade_playbill_presentation_policy(parsed)
     except OSError:
         return None, ("presentation_policy_unreadable",)
     except (ValueError, json.JSONDecodeError):
@@ -105,6 +116,14 @@ class _CoverageClient(Protocol):
         budget: Mapping[str, Any] | None = None,
         scan_budget: Mapping[str, Any] | None = None,
     ) -> contracts.PlaybillCoverageResult: ...
+
+    def search_playbill(
+        self,
+        instance_id: str,
+        *,
+        mode: Literal["search", "list", "orient"],
+        kinds: Sequence[str] = ("claim", "demand", "procedure"),
+    ) -> contracts.PlaybillSearchResult: ...
 
 
 def _canonical_json(value: object) -> bytes:
@@ -399,7 +418,7 @@ def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
             else floor.installed_coordinate.model_dump(mode="json")
         ),
         "drift_observations": None,
-        "presentation_policy": PlaybillPresentationPolicyV1().model_dump(mode="json"),
+        "presentation_policy": PlaybillPresentationPolicyV2().model_dump(mode="json"),
         "presentation_policy_notes": [],
     }
     try:
@@ -421,10 +440,10 @@ def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
     _observe_presentation_policy(
         observation,
         root,
-        known_source_ids=tuple(entry.name for entry in sources.catalog.entries),
+        known_source_ids=tuple(entry.name for entry in sources.document_entries),
     )
     source_observations: list[dict[str, str]] = []
-    for entry in sources.catalog.entries:
+    for entry in sources.document_entries:
         try:
             path = sources.path_for_source(entry.name)
             content = path.read_bytes()
@@ -481,6 +500,110 @@ def _projection_marker_observation(
         ],
         (),
     )
+
+
+def observe_playbill_projection_coverage(
+    workspace: str | Path,
+    *,
+    coordinate: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any],
+) -> dict[str, object] | None:
+    """Build bounded, coordinate-bound proof of configured local projections.
+
+    A valid catalog completely describes Procedure projection intent. Claim
+    coverage is complete only when every Document source can be read and its
+    complete marker set parses. Missing or malformed evidence removes that
+    kind from ``complete_kinds`` instead of manufacturing absence.
+    """
+
+    root = _workspace_root(workspace)
+    try:
+        sources = WorkspaceSources(root)
+    except (OSError, ValueError, PlaybillError):
+        return None
+
+    accepted = contracts.PlaybillAcceptedCoordinate.model_validate(coordinate)
+    procedure_bindings: list[PlaybillProjectionCoverageBindingV1] = []
+    procedures_complete = True
+    for procedure_entry in sources.procedure_projection_entries:
+        try:
+            sources.path_for_procedure(procedure_entry.procedure_identity.qualified)
+        except (OSError, ValueError, PlaybillError):
+            procedures_complete = False
+            procedure_bindings.clear()
+            break
+        procedure_bindings.append(
+            PlaybillProjectionCoverageBindingV1(
+                artifact=procedure_entry.procedure_identity,
+                workspace_path=procedure_entry.locator,
+                evidence_kind="procedure_catalog",
+            )
+        )
+
+    claim_bindings: list[PlaybillProjectionCoverageBindingV1] = []
+    claims_complete = True
+    scanned_bytes = 0
+    for document_entry in sources.document_entries:
+        try:
+            content = sources.path_for_source(document_entry.name).read_bytes()
+        except (OSError, ValueError, PlaybillError):
+            claims_complete = False
+            break
+        scanned_bytes += len(content)
+        if len(content) > MAX_PROJECTION_SOURCE_BYTES or scanned_bytes > MAX_PROJECTION_SCAN_BYTES:
+            claims_complete = False
+            break
+        try:
+            blocks = parse_projection_blocks(
+                content,
+                source_id=document_entry.name,
+                allow_bootstrap=True,
+            )
+        except (ProjectionMarkerError, ValueError):
+            claims_complete = False
+            break
+        if any(block.stamp is None for block in blocks):
+            claims_complete = False
+            break
+        for block in blocks:
+            assert block.stamp is not None
+            for backing in block.stamp.backing:
+                if backing.identity.kind == "Claim":
+                    claim_bindings.append(
+                        PlaybillProjectionCoverageBindingV1(
+                            artifact=backing.identity,
+                            workspace_path=document_entry.locator,
+                            evidence_kind="claim_marker",
+                        )
+                    )
+    if not claims_complete:
+        claim_bindings.clear()
+
+    complete_kinds: list[Literal["Claim", "Procedure"]] = []
+    bindings: list[PlaybillProjectionCoverageBindingV1] = []
+    if claims_complete and len(claim_bindings) <= MAX_PROJECTION_COVERAGE_BINDINGS:
+        complete_kinds.append("Claim")
+        bindings.extend(claim_bindings)
+    if procedures_complete and (
+        len(bindings) + len(procedure_bindings) <= MAX_PROJECTION_COVERAGE_BINDINGS
+    ):
+        complete_kinds.append("Procedure")
+        bindings.extend(procedure_bindings)
+    ordered_bindings = tuple(
+        sorted(
+            set(bindings),
+            key=lambda item: (
+                item.artifact.qualified.encode("utf-8"),
+                item.workspace_path.encode("utf-8"),
+                item.evidence_kind.encode("utf-8"),
+            ),
+        )
+    )
+    result = PlaybillProjectionCoverageObservationV1(
+        coordinate=AcceptedCoordinate.model_validate(accepted.model_dump(mode="json")),
+        complete_kinds=tuple(sorted(complete_kinds, key=lambda item: item.encode("utf-8"))),
+        bindings=ordered_bindings,
+    )
+    return result.model_dump(mode="json")
 
 
 def _coverage_v3_fields(
@@ -789,7 +912,29 @@ def observe_playbill_next_workspace_with_coverage(
     base = dict(observation or observe_playbill_next_workspace(workspace))
     entries = base.get("source_observations")
     if not isinstance(entries, list) or not entries:
-        return base, None
+        resolved_coordinate: contracts.PlaybillAcceptedCoordinate | None = None
+        try:
+            local_sources = WorkspaceSources(_workspace_root(workspace))
+        except (OSError, ValueError, PlaybillError):
+            local_sources = None
+        if local_sources is not None and local_sources.procedure_projection_entries:
+            if coordinate is not None:
+                resolved_coordinate = contracts.PlaybillAcceptedCoordinate.model_validate(
+                    coordinate
+                )
+            else:
+                resolved_coordinate = client.search_playbill(
+                    instance_id,
+                    mode="orient",
+                ).coordinate
+        if resolved_coordinate is not None:
+            projection = observe_playbill_projection_coverage(
+                workspace,
+                coordinate=resolved_coordinate,
+            )
+            if projection is not None:
+                base["projection_coverage"] = projection
+        return base, resolved_coordinate
 
     root = _workspace_root(workspace)
     try:
@@ -916,7 +1061,15 @@ def observe_playbill_next_workspace_with_coverage(
     base["source_observations"] = [
         enriched[source_id] for source_id in sorted(enriched, key=lambda item: item.encode("utf-8"))
     ]
-    return base, coverage.coordinate if coordinate_matches else None
+    resolved_coordinate = coverage.coordinate if coordinate_matches else None
+    if resolved_coordinate is not None:
+        projection = observe_playbill_projection_coverage(
+            workspace,
+            coordinate=resolved_coordinate,
+        )
+        if projection is not None:
+            base["projection_coverage"] = projection
+    return base, resolved_coordinate
 
 
 def activate_with_workspace_refresh(
@@ -959,6 +1112,8 @@ __all__ = [
     "configured_floor_path",
     "inspect_workspace_floor",
     "observe_playbill_next_workspace",
+    "observe_playbill_next_workspace_with_coverage",
+    "observe_playbill_projection_coverage",
     "materialize_playbill_floor",
     "verified_floor_files",
 ]

@@ -20,6 +20,7 @@ from cruxible_client.contracts.authoring.models import (
     InsertionPrepareRequestV2,
 )
 from cruxible_client.contracts.claim_types import ClaimType
+from cruxible_client.contracts.declared_blocks import PlaybillReviewWorkspaceObservationV1
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
@@ -91,6 +92,7 @@ class PlaybillApprovalRequest(_StrictPlaybillRequest):
 
 class PlaybillReviewRequest(_StrictPlaybillRequest):
     include_body: bool = False
+    workspace_observation: PlaybillReviewWorkspaceObservationV1 | None = None
 
 
 class PlaybillApprovalChallengeRequest(_StrictPlaybillRequest):

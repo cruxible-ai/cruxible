@@ -143,7 +143,7 @@ def test_next_workspace_observes_confined_whole_source_bytes(tmp_path: Path) -> 
     assert changed["source_observations"] != observation["source_observations"]
 
 
-def test_next_workspace_observes_sorted_archival_presentation_policy(tmp_path: Path) -> None:
+def test_next_workspace_upgrades_v1_archival_presentation_policy(tmp_path: Path) -> None:
     _catalog(tmp_path)
     policy_path = tmp_path / ".playbill" / "presentation-policy.json"
     policy_path.write_text(
@@ -154,8 +154,9 @@ def test_next_workspace_observes_sorted_archival_presentation_policy(tmp_path: P
     observation = observe_playbill_next_workspace(tmp_path)
 
     assert observation["presentation_policy"] == {
-        "tag": "playbill-presentation-policy-v1",
+        "tag": "playbill-presentation-policy-v2",
         "archival_source_ids": ["corpus.runbook"],
+        "projection_advisories": {"claim": False, "procedure": True},
     }
     assert observation["presentation_policy_notes"] == []
 

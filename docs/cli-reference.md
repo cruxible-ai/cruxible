@@ -382,6 +382,11 @@ a local overlay. Unreadable or unresolved sources are omitted individually; the
 daemon compares observed sources with accepted whole-source snapshots and names
 drifted or unobserved cited sources. The daemon reads no clock or workspace.
 Without a valid source catalog, `workspace_sources` remains explicitly unobserved.
+An entry with `kind: procedure`, a `Procedure` identity, and a workspace-relative
+`locator` declares projection intent for that accepted Procedure. A complete,
+coordinate-bound catalog observation produces a nonblocking warning for each
+live Procedure without such an entry; the repair carries the exact hand-edit
+entry shape until a projection-authoring command exists.
 Empty output means only that no work exists in the explicitly observed domains.
 Conflicting values in the same claim slot require revisions into distinct
 qualifiers; when a shared value field such as `topic` separates the contenders,
@@ -588,6 +593,7 @@ cruxible playbill proposal list [--status open|settled]
 cruxible playbill proposal readmit PROPOSAL_ID
 cruxible playbill proposal refusal PROPOSAL_ID
 cruxible playbill proposal review PROPOSAL_ID [--include-body|--redacted]
+  [--workspace-root DIR]
 cruxible playbill proposal approve PROPOSAL_ID
   --signer-id ID --key FILE [--yes]
 cruxible playbill proposal activate PROPOSAL_ID [--workspace-root DIR]

@@ -7,8 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.source_catalog import (
+    ProcedureProjectionCatalogEntry,
     SourceCatalog,
     SourceCatalogEntry,
     merge_source_catalogs,
@@ -224,3 +226,38 @@ def test_catalog_merge_and_path_guards_refuse_ambiguity_and_escape(tmp_path: Pat
                     "public_uri": local_uri,
                 }
             )
+
+
+def test_procedure_projection_entries_are_explicit_intent_not_document_inputs(
+    tmp_path: Path,
+) -> None:
+    entry = _entry()
+    projection = ProcedureProjectionCatalogEntry(
+        procedure_identity=ArtifactIdentity(kind="Procedure", name="release-guard"),
+        locator="runbooks/release-guard.md",
+    )
+    catalog = SourceCatalog(catalog_kind="portable", entries=(projection, entry))
+
+    assert catalog.entries == (entry, projection)
+    assert SourceCatalog.model_validate(catalog.model_dump(mode="json")) == catalog
+
+    repository = tmp_path / "authoring"
+    source = repository / "specs" / "design.md"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"# Design\n")
+    instance_root = tmp_path / "instance"
+    instance_root.mkdir()
+    instance = _instance(instance_root)[0]
+    bundle = service_compile_playbill_sources(
+        instance,
+        catalog=catalog,
+        repository_root=repository,
+    )
+    document_only = service_compile_playbill_sources(
+        instance,
+        catalog=SourceCatalog(catalog_kind="portable", entries=(entry,)),
+        repository_root=repository,
+    )
+
+    assert [item.source.name for item in bundle.documents] == ["playbill-design"]
+    assert bundle == document_only

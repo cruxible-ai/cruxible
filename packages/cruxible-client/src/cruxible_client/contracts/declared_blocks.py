@@ -37,6 +37,7 @@ MAX_PROJECTION_STAMP_BYTES = 16 * 1024
 MAX_PROJECTION_BACKINGS_PER_BLOCK = 64
 MAX_PROJECTION_SCAN_BYTES = 32 * 1024 * 1024
 MAX_PROJECTION_CARDS_PER_SOURCE = 256
+MAX_PROJECTION_COVERAGE_BINDINGS = 1024
 
 _BLOCK_ID = rb"[a-z][a-z0-9_.-]{0,63}"
 _STAMPED_OPEN = re.compile(rb"<!-- playbill:block:(" + _BLOCK_ID + rb"):([A-Za-z0-9_-]+) -->\n")
@@ -66,12 +67,124 @@ class PlaybillPresentationPolicyV1(_StrictDeclaredBlockModel):
         return value
 
 
+class PlaybillProjectionAdvisoryPolicyV1(_StrictDeclaredBlockModel):
+    """Per-artifact-kind switches for local projection advisories."""
+
+    claim: bool = False
+    procedure: bool = True
+
+
+class PlaybillPresentationPolicyV2(_StrictDeclaredBlockModel):
+    """Current local-only presentation policy; V1 remains readable."""
+
+    tag: Literal["playbill-presentation-policy-v2"] = "playbill-presentation-policy-v2"
+    archival_source_ids: tuple[str, ...] = ()
+    projection_advisories: PlaybillProjectionAdvisoryPolicyV1 = PlaybillProjectionAdvisoryPolicyV1()
+
+    @field_validator("archival_source_ids")
+    @classmethod
+    def _source_ids(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return PlaybillPresentationPolicyV1._source_ids(value)
+
+
+PlaybillPresentationPolicyAny: TypeAlias = (
+    PlaybillPresentationPolicyV1 | PlaybillPresentationPolicyV2
+)
+
+
+def upgrade_playbill_presentation_policy(
+    policy: PlaybillPresentationPolicyAny,
+) -> PlaybillPresentationPolicyV2:
+    if isinstance(policy, PlaybillPresentationPolicyV2):
+        return policy
+    return PlaybillPresentationPolicyV2(archival_source_ids=policy.archival_source_ids)
+
+
 PlaybillPresentationPolicyNoteV1: TypeAlias = Literal[
     "presentation_policy_malformed",
     "presentation_policy_path_escape",
     "presentation_policy_unknown_source_id",
     "presentation_policy_unreadable",
 ]
+
+
+class PlaybillProjectionCoverageBindingV1(_StrictDeclaredBlockModel):
+    """One client-observed mapping from governed identity to local projection path."""
+
+    artifact: ArtifactIdentity
+    workspace_path: str = Field(min_length=1, max_length=4096)
+    evidence_kind: Literal["claim_marker", "procedure_catalog"]
+
+    @model_validator(mode="after")
+    def _shape(self) -> "PlaybillProjectionCoverageBindingV1":
+        if self.artifact.kind not in {"Claim", "Procedure"}:
+            raise ValueError("projection coverage may identify only a Claim or Procedure")
+        expected = "claim_marker" if self.artifact.kind == "Claim" else "procedure_catalog"
+        if self.evidence_kind != expected:
+            raise ValueError("projection coverage evidence kind disagrees with artifact kind")
+        return self
+
+
+class PlaybillProjectionCoverageObservationV1(_StrictDeclaredBlockModel):
+    """Bounded local projection evidence at one exact accepted coordinate."""
+
+    tag: Literal["playbill-projection-coverage-observation-v1"] = (
+        "playbill-projection-coverage-observation-v1"
+    )
+    coordinate: AcceptedCoordinate
+    complete_kinds: tuple[Literal["Claim", "Procedure"], ...]
+    bindings: tuple[PlaybillProjectionCoverageBindingV1, ...] = Field(
+        max_length=MAX_PROJECTION_COVERAGE_BINDINGS
+    )
+
+    @field_validator("complete_kinds")
+    @classmethod
+    def _complete_kinds(
+        cls, value: tuple[Literal["Claim", "Procedure"], ...]
+    ) -> tuple[Literal["Claim", "Procedure"], ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("complete projection kinds must be sorted and unique")
+        return value
+
+    @field_validator("bindings")
+    @classmethod
+    def _bindings(
+        cls, value: tuple[PlaybillProjectionCoverageBindingV1, ...]
+    ) -> tuple[PlaybillProjectionCoverageBindingV1, ...]:
+        keys = tuple(
+            (item.artifact.qualified, item.workspace_path, item.evidence_kind) for item in value
+        )
+        if keys != tuple(
+            sorted(set(keys), key=lambda item: tuple(v.encode("utf-8") for v in item))
+        ):
+            raise ValueError("projection coverage bindings must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _binding_kinds(self) -> "PlaybillProjectionCoverageObservationV1":
+        if any(item.artifact.kind not in self.complete_kinds for item in self.bindings):
+            raise ValueError("projection bindings require complete observation of their kind")
+        return self
+
+
+class PlaybillReviewWorkspaceObservationV1(_StrictDeclaredBlockModel):
+    """Review-scoped subset of local projection facts; no daemon path access."""
+
+    tag: Literal["playbill-review-workspace-observation-v1"] = (
+        "playbill-review-workspace-observation-v1"
+    )
+    presentation_policy: PlaybillPresentationPolicyAny | None = None
+    presentation_policy_notes: tuple[PlaybillPresentationPolicyNoteV1, ...] = ()
+    projection_coverage: PlaybillProjectionCoverageObservationV1 | None = None
+
+    @field_validator("presentation_policy_notes")
+    @classmethod
+    def _notes(
+        cls, value: tuple[PlaybillPresentationPolicyNoteV1, ...]
+    ) -> tuple[PlaybillPresentationPolicyNoteV1, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("presentation-policy notes must be sorted and unique")
+        return value
 
 
 class ProjectionClaimBackingV1(_StrictDeclaredBlockModel):
@@ -471,13 +584,20 @@ __all__ = [
     "MAX_PROJECTION_BACKINGS_PER_BLOCK",
     "MAX_PROJECTION_BLOCKS_PER_SOURCE",
     "MAX_PROJECTION_CARDS_PER_SOURCE",
+    "MAX_PROJECTION_COVERAGE_BINDINGS",
     "MAX_PROJECTION_SCAN_BYTES",
     "MAX_PROJECTION_SOURCE_BYTES",
     "MAX_PROJECTION_STAMP_BYTES",
     "PROJECTION_MARKER_GRAMMAR",
     "PROJECTION_QUERY_PARAMETER_DOMAIN",
     "PROJECTION_QUERY_SEMANTIC_RESULT_DOMAIN",
+    "PlaybillPresentationPolicyAny",
     "PlaybillPresentationPolicyV1",
+    "PlaybillPresentationPolicyV2",
+    "PlaybillProjectionAdvisoryPolicyV1",
+    "PlaybillProjectionCoverageBindingV1",
+    "PlaybillProjectionCoverageObservationV1",
+    "PlaybillReviewWorkspaceObservationV1",
     "ParsedProjectionBlock",
     "ProjectionBackingV1",
     "ProjectionBlockStampV1",
@@ -494,4 +614,5 @@ __all__ = [
     "projection_query_semantic_result_digest",
     "render_projection_closing",
     "render_projection_opening",
+    "upgrade_playbill_presentation_policy",
 ]
