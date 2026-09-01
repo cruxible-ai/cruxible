@@ -1547,10 +1547,13 @@ def service_recover_provider_invocations(
                 for endpoint in occurrence.local_execution.declared_endpoints
                 if not endpoint.startswith("dynamic:")
             )
-            dynamic = tuple(
-                endpoint
-                for endpoint in occurrence.local_execution.declared_endpoints
-                if endpoint == "dynamic:target-from-run-input"
+            dynamic = cast(
+                tuple[Literal["dynamic:target-from-run-input"], ...],
+                tuple(
+                    endpoint
+                    for endpoint in occurrence.local_execution.declared_endpoints
+                    if endpoint == "dynamic:target-from-run-input"
+                ),
             )
             receipt = ProviderInvocationReceiptV1(
                 invocation_id=invocation_id,
@@ -1602,9 +1605,10 @@ def service_recover_provider_invocations(
                 receipt=receipt,
                 receipt_digest=provider_invocation_receipt_digest(receipt),
             )
-            common = dict(
+            writer.append(
                 stream=stream,
                 partition_id=partition_id,
+                event_kind="provider_invocation_completed",
                 accepted_coordinate=admission.accepted_coordinate,
                 procedure_artifact_digest=admission.procedure_artifact_digest,
                 definition_digest=admission.definition_digest,
@@ -1615,15 +1619,22 @@ def service_recover_provider_invocations(
                 admission_binding_digest=admission.admission_binding_digest,
                 actor_context=admission.actor_context,
                 recorded_at=recorded_at,
-            )
-            writer.append(
-                **common,
-                event_kind="provider_invocation_completed",
                 payload=completion.model_dump(mode="json"),
             )
             writer.append(
-                **common,
+                stream=stream,
+                partition_id=partition_id,
                 event_kind="attempt_finalized",
+                accepted_coordinate=admission.accepted_coordinate,
+                procedure_artifact_digest=admission.procedure_artifact_digest,
+                definition_digest=admission.definition_digest,
+                run_id=admission.run_id,
+                line_spec_digest=admission.line_spec_digest,
+                occurrence_id=admission.occurrence_id,
+                attempt=admission.attempt,
+                admission_binding_digest=admission.admission_binding_digest,
+                actor_context=admission.actor_context,
+                recorded_at=recorded_at,
                 payload={
                     "status": "failed",
                     "output": None,
