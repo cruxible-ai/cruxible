@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import signal
 import stat
 import subprocess
 from pathlib import Path
@@ -36,7 +37,10 @@ from cruxible_core.playbill.provider_local_runtime import (
     ProviderSecretResolverRegistry,
     translate_provider_budget,
 )
-from cruxible_core.playbill.provider_process_leases import ProviderProcessLeaseStore
+from cruxible_core.playbill.provider_process_leases import (
+    ProviderProcessLeaseStore,
+    ProviderProcessLeaseV1,
+)
 from cruxible_core.playbill.provider_runtime_contract import (
     ProviderRuntimeBudgetsV1,
     ProviderRuntimeRunContextV1,
@@ -407,3 +411,33 @@ def test_process_recovery_kills_only_an_echo_verified_invocation_group(tmp_path:
     assert leases.recover_all() == (invocation_id,)
     process.wait(timeout=1)
     assert tuple(leases.root.iterdir()) == ()
+
+
+def test_process_recovery_waits_through_a_transient_permission_probe(
+    tmp_path: Path, monkeypatch
+) -> None:
+    leases = ProviderProcessLeaseStore(tmp_path / "process-leases")
+    invocation_id = _digest("permission-probe")
+    record_path, control_path = leases.paths(invocation_id)
+    record_path.write_bytes(canonical_bytes({"invocation_id": invocation_id}))
+    lease = ProviderProcessLeaseV1(
+        invocation_id=invocation_id,
+        pid=101,
+        process_group_id=202,
+        control_path=control_path,
+        record_path=record_path,
+    )
+    monkeypatch.setattr(leases, "require", lambda value, timeout_seconds: lease)
+    monkeypatch.setattr("os.waitpid", lambda pid, flags: (0, 0))
+    probes = iter((PermissionError(), ProcessLookupError()))
+
+    def killpg(process_group_id: int, sent_signal: int) -> None:
+        assert process_group_id == lease.process_group_id
+        if sent_signal == 0:
+            raise next(probes)
+        assert sent_signal == signal.SIGKILL
+
+    monkeypatch.setattr("os.killpg", killpg)
+
+    assert leases.recover_all() == (invocation_id,)
+    assert not record_path.exists()

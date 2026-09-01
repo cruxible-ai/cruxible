@@ -114,6 +114,12 @@ class ProviderProcessLeaseStore:
                         os.killpg(lease.process_group_id, 0)
                     except ProcessLookupError:
                         break
+                    except PermissionError:
+                        # On macOS a killed direct child can transiently leave a
+                        # process-group probe returning EPERM before waitpid(2)
+                        # reports the reapable child. EPERM is not proof that the
+                        # group survived; keep waiting for one decisive signal.
+                        pass
                     time.sleep(0.01)
                 else:
                     raise PlaybillExecutionError("provider_process_group_survived_recovery")
