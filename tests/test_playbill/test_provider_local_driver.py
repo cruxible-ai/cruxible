@@ -181,8 +181,9 @@ if len(sys.argv) > 1 and sys.argv[1].endswith("provider_child_fence.py"):
         "pid": os.getpid(),
         "process_group_id": os.getpgrp(),
     }
-    with open(record_path, "wb") as handle:
-        handle.write(json.dumps(document, sort_keys=True, separators=(",", ":")).encode())
+    if not os.path.exists(record_path):
+        with open(record_path, "wb") as handle:
+            handle.write(json.dumps(document, sort_keys=True, separators=(",", ":")).encode())
 document = json.loads(sys.stdin.buffer.read())
 json.dump({
     "protocol_version": "1.0",

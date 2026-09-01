@@ -8,6 +8,7 @@ import json
 import os
 import signal
 import socket
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +47,46 @@ class ProviderProcessLeaseStore:
         ).hexdigest()[:32]
         return self.root / f"{stem}.json", self.control_root / f"{stem}.sock"
 
+    def publish(
+        self,
+        invocation_id: str,
+        *,
+        pid: int,
+        process_group_id: int,
+    ) -> Path:
+        """Atomically publish the exact spawned process identity for later echo proof."""
+
+        if pid <= 0 or process_group_id <= 0:
+            raise PlaybillExecutionError("provider_process_lease_invalid")
+        record_path, _control_path = self.paths(invocation_id)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=record_path.name + ".tmp-",
+            dir=self.root,
+        )
+        temporary = Path(temporary_name)
+        try:
+            os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(
+                    canonical_bytes(
+                        {
+                            "invocation_id": invocation_id,
+                            "pid": pid,
+                            "process_group_id": process_group_id,
+                        }
+                    )
+                )
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, record_path)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.close(descriptor)
+            with contextlib.suppress(FileNotFoundError):
+                temporary.unlink()
+            raise
+        return record_path
+
     def require(
         self,
         invocation_id: str,
@@ -56,6 +97,7 @@ class ProviderProcessLeaseStore:
 
         record_path, control_path = self.paths(invocation_id)
         deadline = time.monotonic() + timeout_seconds
+        last_echo_error: PlaybillExecutionError | None = None
         while time.monotonic() < deadline:
             try:
                 raw = record_path.read_bytes()
@@ -75,8 +117,15 @@ class ProviderProcessLeaseStore:
                 return lease
             except FileNotFoundError:
                 time.sleep(0.01)
+            except PlaybillExecutionError as exc:
+                if str(exc) != "provider_process_lease_echo_failed":
+                    raise
+                last_echo_error = exc
+                time.sleep(0.01)
             except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
                 raise PlaybillExecutionError("provider_process_lease_invalid") from exc
+        if last_echo_error is not None:
+            raise last_echo_error
         raise PlaybillExecutionError("provider_process_lease_missing")
 
     @staticmethod

@@ -656,11 +656,15 @@ def _run_child(
             close_fds=True,
         )
         try:
-            lease = (
-                process_leases.require(invocation_id)
-                if invocation_id is not None and process_leases is not None
-                else None
-            )
+            if invocation_id is not None and process_leases is not None:
+                process_leases.publish(
+                    invocation_id,
+                    pid=process.pid,
+                    process_group_id=process.pid,
+                )
+                lease = process_leases.require(invocation_id)
+            else:
+                lease = None
         except PlaybillExecutionError:
             # A child that cannot prove its own lease must not outlive the
             # failed invocation boundary.
@@ -724,7 +728,6 @@ def _run_child(
 
 
 _CHILD_FENCE_WRAPPER = """\
-import json
 import os
 import runpy
 import socket
@@ -748,19 +751,6 @@ def echo():
             connection.sendall(invocation_id.encode("utf-8") if data == invocation_id else b"")
 
 threading.Thread(target=echo, daemon=True).start()
-document = {
-    "invocation_id": invocation_id,
-    "pid": os.getpid(),
-    "process_group_id": os.getpgrp(),
-}
-temporary = record_path + ".tmp-" + str(os.getpid())
-descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-with os.fdopen(descriptor, "wb") as handle:
-    payload = json.dumps(document, sort_keys=True, separators=(",", ":"))
-    handle.write(payload.encode("utf-8"))
-    handle.flush()
-    os.fsync(handle.fileno())
-os.replace(temporary, record_path)
 sys.argv = ["cruxible_provider_runtime.child", "--entrypoint", entrypoint]
 runpy.run_module("cruxible_provider_runtime.child", run_name="__main__")
 """
