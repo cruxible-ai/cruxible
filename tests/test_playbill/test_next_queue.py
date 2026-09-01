@@ -182,7 +182,7 @@ def _accept_claim_successor(instance, owner, *, value: str, sequence: int):  # t
         for claim in (
             _claim_from_view(view) for view in service_list_playbill_claims(instance).claims
         )
-        if claim.statement.subject.artifact_path.endswith("/wi-42.yaml")
+        if claim.statement.subject.artifact_path.endswith("/wi-42.json")
     )
     proposed = service_propose_playbill_claim(
         instance,
@@ -505,7 +505,7 @@ def test_conflict_repair_names_qualifier_separation_not_dispositions(tmp_path: P
     current = next(
         claim
         for claim in (_claim_from_view(view) for view in listed.claims)
-        if claim.statement.subject.artifact_path.endswith("/wi-42.yaml")
+        if claim.statement.subject.artifact_path.endswith("/wi-42.json")
     )
     second = service_propose_playbill_claim(
         instance,

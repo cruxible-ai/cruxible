@@ -283,7 +283,7 @@ def _claim_conflicted(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         for claim in (
             _claim_from_view(view) for view in service_list_playbill_claims(instance).claims
         )
-        if claim.statement.subject.artifact_path.endswith("/wi-42.yaml")
+        if claim.statement.subject.artifact_path.endswith("/wi-42.json")
     )
     revised = next(
         claim for claim in contenders if claim.identity.qualified == conflicting.claim_identity
