@@ -255,7 +255,7 @@ def _validate_pattern_detail(pattern_kind: CurationPatternKind, detail: dict[str
             "Procedure",
         }:
             raise ValueError("dead-vocabulary pattern detail has the wrong artifact family")
-    else:
+    elif pattern_kind == "playbill.curation.literal_subject_reference.v1":
         expected = {"literal_value", "matching_subject_kinds", "message"}
         kinds = detail.get("matching_subject_kinds")
         if (
@@ -269,6 +269,8 @@ def _validate_pattern_detail(pattern_kind: CurationPatternKind, detail: dict[str
             != "literal looks like a subject reference; consider a subject-valued object"
         ):
             raise ValueError("literal-subject-reference pattern detail has the wrong shape")
+    else:
+        raise ValueError(f"unknown curation pattern kind: {pattern_kind}")
 
 
 def detector_law_digest(pattern_kind: CurationPatternKind) -> str:

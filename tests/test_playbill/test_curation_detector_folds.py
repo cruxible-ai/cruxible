@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import get_args
+from typing import cast, get_args
 
 import pytest
 
@@ -46,6 +46,7 @@ from cruxible_core.playbill.curation import (
     CurationDetectorCoverageV1,
     CurationEvidenceKind,
     CurationPatternKind,
+    _validate_pattern_detail,
 )
 from cruxible_core.playbill.curation_detectors import (
     _active_writing_principal_count,
@@ -89,6 +90,11 @@ def test_curation_detector_vocabularies_are_closed_and_enumerated() -> None:
         "consumption_epoch_uninitialized",
         "drift_series_unavailable",
     }
+
+
+def test_unknown_curation_pattern_kind_has_no_detail_fallthrough() -> None:
+    with pytest.raises(ValueError, match="unknown curation pattern kind"):
+        _validate_pattern_detail(cast(CurationPatternKind, "future-pattern"), {})
 
 
 def _with_qualifier(row, qualifier: str):  # type: ignore[no-untyped-def]
