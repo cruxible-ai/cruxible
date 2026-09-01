@@ -606,6 +606,13 @@ def _canonical_successor_bytes(
                 "predecessor_digest": current.artifact_digest,
             }
         if current.artifact_kind == "procedure":
+            raw_definition = payload.get("definition")
+            if isinstance(raw_definition, dict) and raw_definition.get("graph_format") == 4:
+                raise ClaimTypeMigrationDependentInvalid(
+                    f"{ClaimTypeMigrationDependentInvalid.code}: automatic migration of "
+                    f"graph-v4 Procedure dependent {current.identity.qualified} is not "
+                    "supported; supply an explicit successor"
+                )
             try:
                 definition = ProcedureDefinitionV3.model_validate(payload["definition"])
             except ValidationError as exc:

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import cruxible_core.runtime.playbill_api as runtime_api
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
@@ -140,6 +141,39 @@ def test_empty_interfaces_request_returns_an_honest_not_installed_inventory(
     assert isinstance(result, PlaybillInterfaceInventoryV1)
     assert result.provider_status == "not_installed"
     assert result.interfaces == ()
+
+
+def test_runtime_discovery_reports_the_shared_classifier_registry(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    installed = frozenset({"sha256:" + "a" * 64})
+    observed: dict[str, object] = {}
+
+    class _Manager:
+        def get(self, _instance_id: str):  # type: ignore[no-untyped-def]
+            return instance
+
+    class _Registry:
+        installed_classifier_digests = installed
+
+    def discover(_instance, **kwargs):  # type: ignore[no-untyped-def]
+        observed.update(kwargs)
+        return PlaybillInterfaceInventoryV1(
+            coordinate=PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            provider_status="not_installed",
+            interfaces=(),
+        )
+
+    monkeypatch.setattr(runtime_api, "check_permission", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runtime_api, "get_playbill_manager", lambda: _Manager())
+    monkeypatch.setattr(runtime_api, "PROVIDER_BUCKET_CLASSIFIER_REGISTRY", _Registry())
+    monkeypatch.setattr(runtime_api, "service_discover_playbill_semantic", discover)
+
+    runtime_api.playbill_discover(instance.descriptor.instance_id)
+
+    assert observed["installed_classifier_digests"] == installed
 
 
 def test_other_empty_discovery_profiles_remain_refused(tmp_path: Path) -> None:

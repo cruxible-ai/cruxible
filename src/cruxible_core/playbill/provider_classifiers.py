@@ -144,10 +144,16 @@ class ProviderBucketClassifierRegistry:
         return self._installations[classifier_digest]
 
 
+# The runtime and discovery surface share this daemon-local installation registry.
+# Accepted registrations remain governed; installed classifier code remains local.
+PROVIDER_BUCKET_CLASSIFIER_REGISTRY = ProviderBucketClassifierRegistry()
+
+
 __all__ = [
     "CORE_PROVIDER_BUCKET_CONFORMANCE_FIXTURES_V1",
     "ProviderBucketClassifierProtocol",
     "ProviderBucketClassifierRegistry",
+    "PROVIDER_BUCKET_CLASSIFIER_REGISTRY",
     "ProviderClassifierInstallationRefused",
     "core_provider_bucket_conformance_fixtures",
 ]

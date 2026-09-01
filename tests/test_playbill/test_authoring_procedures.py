@@ -980,6 +980,27 @@ def test_graph_law_failures_use_typed_definition_refusal(
     assert "errors.pydantic.dev" not in diagnostic.message
 
 
+def test_graph_v4_authoring_names_the_unsupported_lowering_path(tmp_path: Path) -> None:
+    coordinator, actor = _coordinator(tmp_path)
+    definition = _slot_definition().model_dump(mode="json", by_alias=True)
+    definition["graph_format"] = 4
+
+    result = coordinator.compile(
+        actor=actor,
+        payload=_payload(definition),
+        canonical_timestamp=TIMESTAMP,
+    )
+
+    assert result.verdict == "refused"
+    diagnostic = result.frontier.diagnostics[0]
+    assert diagnostic.code == "playbill.authoring.procedure_definition_invalid"
+    assert diagnostic.offending_element == "definition.graph_format"
+    assert diagnostic.message == (
+        "Graph-v4 Procedure authoring is not supported by the graph-v3 lowering path."
+    )
+    assert "future dedicated lowering path" in diagnostic.repairs[0].description
+
+
 def test_layout_only_procedure_successor_refuses_in_coordinator(tmp_path: Path) -> None:
     instance, owner = initialize_local(tmp_path)
     coordinator = AuthoringIntentCoordinator.for_instance(instance)

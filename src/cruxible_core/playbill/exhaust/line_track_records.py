@@ -1,8 +1,9 @@
 """Line-grained track records folded from one accepted ExhaustPromotion.
 
-A Line's v1 track record is keyed by the Line's identity, occurrence epoch, exact
-LineSpec digest, and accepted Procedure artifact. A Provider/interface rebind is
-an accepted Line-v2 successor, never an invisible deployment act. The v1
+A Line's v1 track-record fact is addressed by the Line subject plus the promotion
+identity, occurrence epoch, and three-axis dimension digest. The exact LineSpec
+digest remains committed in the fact value. A Provider/interface rebind is an
+accepted Line-v2 successor, never an invisible deployment act. The v1
 ``implementation_digest`` remains the Procedure artifact digest forever; it is
 not repurposed as Provider implementation identity. Provider invocation credit
 uses its separate interface × implementation × measured-bucket dimensions.
@@ -93,8 +94,10 @@ class LineTrackRecordDimensionsV1(_StrictTrackRecordModel):
     """Three independent axes.  Credit is never aggregated across any of them.
 
     ``implementation_digest`` is the exact accepted Procedure artifact a run
-    executed.  ``slot_interface_digest`` is the nominal interface surface the
-    LineSpec closed, which two different implementations may share.
+    executed. ``slot_interface_digest`` is an aggregate surface digest over every
+    slot's exact nominal interface content digest plus its address, role, and kind;
+    it is not another spelling of any one interface identity. Two different
+    implementations may share this closed surface.
     ``declared_input_bucket`` commits the declared input planes, so the same
     implementation reading a different declared plane earns separate credit.
     """
@@ -576,11 +579,11 @@ def line_track_record_facts(
 ) -> tuple[ProjectionFact, ...]:
     """Only an accepted promotion can create canonical Line track-record facts.
 
-    The subject is the Line the promotion exactly pins, so a rebind or a
-    deployment revision leaves the subject alone and the history continues.  The
-    fact key carries the dimension digest, so a different implementation, slot
-    interface, or declared input bucket lands on its own fact instead of being
-    summed into an existing one.
+    The subject is the Line the promotion exactly pins. The fact key is the
+    promotion identity plus occurrence epoch plus dimension digest; a different
+    implementation, slot-interface surface, or declared input bucket therefore
+    lands on its own fact instead of being summed into an existing one. The exact
+    LineSpec digest is retained in the value and checked against the promotion pin.
     """
 
     record = parse_line_track_record_output(output)
