@@ -112,6 +112,7 @@ def test_pc_hr_codec_succeeds_without_changing_the_p2_b0_verifier() -> None:
 
 def test_current_codec_lineage_is_closed_over_installed_compilers() -> None:
     assert PC_HR_ARTIFACT_CODEC_COMPILERS <= set(SUPPORTED_COMPILERS)
+    assert current_compiler_coordinate() in PC_HR_ARTIFACT_CODEC_COMPILERS
     assert P2_B0_COMPILER not in PC_HR_ARTIFACT_CODEC_COMPILERS
 
 
