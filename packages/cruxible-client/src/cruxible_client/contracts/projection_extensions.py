@@ -632,6 +632,22 @@ def playbill_provider_runtime_extension_registry() -> ProjectionExtensionRegistr
     )
 
 
+def playbill_p2c_extension_registry() -> ProjectionExtensionRegistry:
+    """Return the P2-C registry with governed Procedure mandates."""
+
+    prior = playbill_provider_runtime_extension_registry()
+    mandate = ProjectionFactDeclaration(
+        schema_id="playbill.procedure_mandate.authority",
+        schema_version=1,
+        classification="semantic",
+        constraints=("unique(subject_identity,fact_key)",),
+    )
+    return ProjectionExtensionRegistry(
+        (*prior.declarations("semantic"), mandate, *prior.declarations("presentation")),
+        artifact_kinds=("procedure-runtime-policy", "provider-interface", "procedure-mandate"),
+    )
+
+
 __all__ = [
     "ProjectionExtensionRegistry",
     "ProjectionFact",
@@ -643,6 +659,7 @@ __all__ = [
     "playbill_evidence_extension_registry",
     "playbill_procedure_extension_registry",
     "playbill_provider_runtime_extension_registry",
+    "playbill_p2c_extension_registry",
     "playbill_replay_extension_registry",
     "playbill_runtime_extension_registry",
     "playbill_claim_type_extension_registry",

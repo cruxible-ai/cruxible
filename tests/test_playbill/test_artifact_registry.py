@@ -63,6 +63,18 @@ def test_p2_b1_activates_provider_interface_only_at_the_successor_compiler() -> 
     )
 
 
+def test_p2_c_activates_procedure_mandates_only_at_the_successor_compiler() -> None:
+    assert registered_path_kind("procedure-mandates/demo.json") == "procedure-mandate"
+    with pytest.raises(ProjectionFormatError):
+        PLAYBILL_ARTIFACT_KINDS.resolve_path("procedure-mandates/demo.json")
+    assert (
+        artifact_kinds_for_compiler(current_compiler_coordinate()).resolve_path(
+            "procedure-mandates/demo.json"
+        )
+        == "procedure-mandate"
+    )
+
+
 def test_pc_hr_codec_succeeds_without_changing_the_p2_b0_verifier() -> None:
     legacy = artifact_kinds_for_compiler(P2_B0_COMPILER)
     current = artifact_kinds_for_compiler(current_compiler_coordinate())
@@ -195,7 +207,7 @@ def test_historical_claim_type_path_error_names_the_historical_spelling() -> Non
         )
 
 
-def test_p2_b1_reserves_every_provider_graph_successor_tag() -> None:
+def test_p2_c_reserves_every_current_artifact_tag() -> None:
     assert PLAYBILL_FORMAT_RESERVATIONS.implemented_tags() == (
         "playbill-accepted-state-run-input-v1",
         "playbill-approval-policy-v1",
@@ -211,6 +223,7 @@ def test_p2_b1_reserves_every_provider_graph_successor_tag() -> None:
         "playbill-line-v2",
         "playbill-prepared-procedure-run-v4",
         "playbill-procedure-admission-bound-payload-v4",
+        "playbill-procedure-mandate-v1",
         "playbill-procedure-pin-slot-ref-v1",
         "playbill-procedure-pin-slot-v1",
         "playbill-procedure-provider-binding-v2",

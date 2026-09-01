@@ -42,6 +42,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     ProcedureRuntimePolicyV1,
 )
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
+from cruxible_client.contracts.procedures.models import ProcedureHardCapsV3
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import AuthenticatedActor, ProposalReceiveLimits
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
@@ -800,6 +801,22 @@ class ProcedureRuntimePolicyAuthoringPayloadV1(_StrictAuthoringModel):
     procedure_runtime_policy: ProcedureRuntimePolicyV1
 
 
+class ProcedureMandateAuthoringPayloadV1(_StrictAuthoringModel):
+    """Decision-only grant input; lowering owns exact Procedure/predecessor digests."""
+
+    tag: Literal["playbill-procedure-mandate-authoring-payload-v1"] = (
+        "playbill-procedure-mandate-authoring-payload-v1"
+    )
+    name: str
+    procedure_name: str
+    rung: Literal[2, 3]
+    authority_ceiling: ProcedureHardCapsV3
+    namespace: tuple[str, ...]
+    valid_from: datetime
+    expires_at: datetime
+    retire: bool = False
+
+
 class ProcedureAuthoringPayloadV1(_StrictAuthoringModel):
     tag: Literal["playbill-procedure-authoring-payload-v1"] = (
         "playbill-procedure-authoring-payload-v1"
@@ -844,6 +861,7 @@ AuthoringChangeSetMemberV1: TypeAlias = Annotated[
     | QueryDefinitionAuthoringPayloadV1
     | ApprovalPolicyAuthoringPayloadV1
     | ProcedureRuntimePolicyAuthoringPayloadV1
+    | ProcedureMandateAuthoringPayloadV1
     | ProcedureAuthoringPayloadV1
     | ProcedureAuthoringPayloadV2,
     Field(discriminator="tag"),
@@ -859,6 +877,8 @@ def authoring_member_identity(payload: AuthoringChangeSetMemberV1) -> str:
         return APPROVAL_POLICY_IDENTITY
     if isinstance(payload, ProcedureRuntimePolicyAuthoringPayloadV1):
         return PROCEDURE_RUNTIME_POLICY_IDENTITY
+    if isinstance(payload, ProcedureMandateAuthoringPayloadV1):
+        return f"ProcedureMandate:{payload.name}"
     return f"Procedure:{payload.definition['name']}"
 
 
@@ -899,6 +919,7 @@ AuthoringPayloadV1 = Annotated[
     | QueryDefinitionAuthoringPayloadV1
     | ApprovalPolicyAuthoringPayloadV1
     | ProcedureRuntimePolicyAuthoringPayloadV1
+    | ProcedureMandateAuthoringPayloadV1
     | ChangeSetAuthoringPayloadV1,
     Field(discriminator="tag"),
 ]
@@ -1980,6 +2001,7 @@ __all__ = [
     "ProcedureAuthoringPayloadV2",
     "ApprovalPolicyAuthoringPayloadV1",
     "ProcedureRuntimePolicyAuthoringPayloadV1",
+    "ProcedureMandateAuthoringPayloadV1",
     "QueryDefinitionAuthoringPayloadV1",
     "SubjectAuthoringPayloadV1",
     "RepairAlternativeV1",

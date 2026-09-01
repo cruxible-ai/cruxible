@@ -177,6 +177,15 @@ P2_B1_ARTIFACT_KINDS = ArtifactKindRegistry(
         ),
     )
 )
+P2_C_ARTIFACT_KINDS = ArtifactKindRegistry(
+    (
+        *P2_B1_ARTIFACT_KINDS.entries(),
+        ArtifactPathKind(
+            "procedure-mandate",
+            re.compile(r"^procedure-mandates/[a-z][a-z0-9_.-]{0,255}\.json$"),
+        ),
+    )
+)
 
 PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
     tuple(
@@ -221,6 +230,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
                 "playbill-query-definition-v1",
                 "playbill-source-acquisition-policy-v1",
                 "playbill-standing-mandate-v1",
+                "playbill-procedure-mandate-v1",
             },
         )
         for tag in (
@@ -261,6 +271,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             "playbill-query-definition-v1",
             "playbill-source-acquisition-policy-v1",
             "playbill-standing-mandate-v1",
+            "playbill-procedure-mandate-v1",
         )
     )
 )
@@ -279,6 +290,7 @@ RegisteredPathKind = Literal[
     "presentation",
     "principal",
     "procedure",
+    "procedure-mandate",
     "provider",
     "provider-interface",
     "query-definition",
@@ -420,7 +432,7 @@ class ParsedProjectionTree:
 def registered_path_kind(
     path: str,
     *,
-    artifact_kinds: ArtifactKindRegistry = P2_B1_ARTIFACT_KINDS,
+    artifact_kinds: ArtifactKindRegistry = P2_C_ARTIFACT_KINDS,
 ) -> RegisteredPathKind:
     return cast(RegisteredPathKind, artifact_kinds.resolve_path(path))
 
@@ -582,7 +594,7 @@ def parse_projection_tree(
     blobs: dict[str, bytes],
     *,
     registry: ProjectionExtensionRegistry,
-    artifact_kinds: ArtifactKindRegistry = P2_B1_ARTIFACT_KINDS,
+    artifact_kinds: ArtifactKindRegistry = P2_C_ARTIFACT_KINDS,
     artifact_codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
     bodies: BodyProjectionProtocol | None = None,
     coordinate: ProjectionCoordinateContext | None = None,
@@ -1326,6 +1338,52 @@ def parse_projection_tree(
                 semantic_facts.append(
                     ProjectionFact(
                         schema_id="playbill.standing_mandate.authority",
+                        schema_version=1,
+                        subject_identity=identity,
+                        fact_key="finite_grant",
+                        value=mandate.model_dump(mode="json"),
+                    )
+                )
+                continue
+            if kind == "procedure-mandate":
+                from cruxible_client.contracts.procedure_mandates import (
+                    parse_procedure_mandate,
+                    procedure_mandate_digest,
+                )
+
+                mandate = parse_procedure_mandate(content, path=path, codec=artifact_codec)
+                identity = mandate.identity.qualified
+                if identity in identities:
+                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
+                identities[identity] = path
+                input_digest = file_digest(content).tagged
+                artifact_digest = procedure_mandate_digest(mandate).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity=identity,
+                        kind="procedure-mandate",
+                        format_tag=mandate.artifact_format,
+                        path=path,
+                        artifact_digest=artifact_digest,
+                        predecessor_digest=mandate.lifecycle.predecessor_digest,
+                        revision=projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=input_digest,
+                            artifact_digest=artifact_digest,
+                        ),
+                    )
+                )
+                pins.append(
+                    PinRow(
+                        source_identity=identity,
+                        target_identity=mandate.procedure.target.qualified,
+                        target_digest=mandate.procedure.artifact_digest,
+                    )
+                )
+                semantic_facts.append(
+                    ProjectionFact(
+                        schema_id="playbill.procedure_mandate.authority",
                         schema_version=1,
                         subject_identity=identity,
                         fact_key="finite_grant",
@@ -2230,6 +2288,7 @@ __all__ = [
     "ParsedProjectionTree",
     "PLAYBILL_ARTIFACT_KINDS",
     "P2_B1_ARTIFACT_KINDS",
+    "P2_C_ARTIFACT_KINDS",
     "P2_B0_ARTIFACT_KINDS",
     "PLAYBILL_FORMAT_RESERVATIONS",
     "PinRow",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Callable, Final, Literal
 
 from cruxible_client.authoring.inputs import (
@@ -12,6 +13,7 @@ from cruxible_client.authoring.inputs import (
     ExistingCaptureInput,
     LiteralObjectInput,
     ProcedureInput,
+    ProcedureMandateInputV1,
     ProcedureRuntimePolicyInput,
     QueryDefinitionInput,
     SelfSourceInput,
@@ -23,6 +25,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.documents import DocumentLifecycle, DocumentShell
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
+from cruxible_client.contracts.procedures.models import CanonicalDurationV1, ProcedureHardCapsV3
 from cruxible_client.contracts.query.definitions import (
     QueryDefinitionV1,
     QueryEvaluationPolicyV1,
@@ -49,6 +52,7 @@ AuthoringExampleName = Literal[
     "subject",
     "approval-policy",
     "procedure-runtime-policy",
+    "procedure-mandate",
 ]
 
 
@@ -74,6 +78,25 @@ def procedure_runtime_policy_example() -> ProcedureRuntimePolicyInput:
     return ProcedureRuntimePolicyInput(
         kind="procedure_runtime_policy",
         procedure_runtime_policy=ProcedureRuntimePolicyV1(provider_output_bytes_cap=2_097_152),
+    )
+
+
+def procedure_mandate_example() -> ProcedureMandateInputV1:
+    return ProcedureMandateInputV1(
+        kind="procedure_mandate",
+        name="replace-me",
+        procedure_name="replace-me",
+        rung=2,
+        authority_ceiling=ProcedureHardCapsV3(
+            max_wall_clock=CanonicalDurationV1(microseconds=60_000_000),
+            max_provider_calls=100,
+            max_capture_bytes=10_000_000,
+            max_items=1000,
+            max_repeat_attempts=5,
+        ),
+        namespace=("claims",),
+        valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        expires_at=datetime(2030, 1, 1, tzinfo=timezone.utc),
     )
 
 
@@ -400,6 +423,7 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
     "subject": subject_example,
     "approval-policy": approval_policy_example,
     "procedure-runtime-policy": procedure_runtime_policy_example,
+    "procedure-mandate": procedure_mandate_example,
 }
 
 _DOOR_EXAMPLES = {
@@ -419,6 +443,7 @@ AUTHORING_EXAMPLE_NAMES: Final[tuple[AuthoringExampleName, ...]] = (
     "subject",
     "approval-policy",
     "procedure-runtime-policy",
+    "procedure-mandate",
 )
 
 
@@ -479,6 +504,7 @@ __all__ = [
     "document_example",
     "approval_policy_example",
     "procedure_example",
+    "procedure_mandate_example",
     "query_claims_by_type_example",
     "subject_example",
 ]

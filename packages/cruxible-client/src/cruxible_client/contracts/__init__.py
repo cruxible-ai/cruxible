@@ -45,6 +45,7 @@ PlaybillAuthoringExampleName = Literal[
     "subject",
     "approval-policy",
     "procedure-runtime-policy",
+    "procedure-mandate",
 ]
 PlaybillPolicyKind: TypeAlias = Literal[
     "approval_policy",

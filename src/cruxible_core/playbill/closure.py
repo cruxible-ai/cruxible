@@ -71,6 +71,11 @@ from cruxible_client.contracts.merkle import (
     update_merkle_tree,
     verify_merkle_tree,
 )
+from cruxible_client.contracts.procedure_mandates import (
+    ProcedureMandateError,
+    parse_procedure_mandate,
+    procedure_mandate_digest,
+)
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureFormatError,
     parse_procedure,
@@ -131,6 +136,7 @@ class ArtifactDependencyStateV1(_StrictClosureModel):
         "standing-mandate",
         "claim",
         "procedure",
+        "procedure-mandate",
         "line",
         "query-definition",
         "exhaust-promotion",
@@ -290,6 +296,17 @@ def parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencySt
                 pins=procedure.pins,
                 lifecycle=procedure.lifecycle,
             )
+        if path.startswith("procedure-mandates/"):
+            mandate = parse_procedure_mandate(content, path=path)
+            return ArtifactDependencyStateV1(
+                path=path,
+                artifact_kind="procedure-mandate",
+                artifact_tag=mandate.artifact_format,
+                identity=mandate.identity,
+                artifact_digest=procedure_mandate_digest(mandate).tagged,
+                pins=mandate.pins,
+                lifecycle=mandate.lifecycle,
+            )
         if path.startswith("lines/"):
             line = parse_line_spec(content, path=path)
             return ArtifactDependencyStateV1(
@@ -334,6 +351,7 @@ def parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencySt
         SubjectFormatError,
         ClaimTypeFormatError,
         ProcedureFormatError,
+        ProcedureMandateError,
         LineSpecFormatError,
         QueryDefinitionFormatError,
         ExhaustPromotionError,

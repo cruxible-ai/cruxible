@@ -31,6 +31,7 @@ from cruxible_client.contracts.authoring.models import (
     ExistingCaptureCitationSourceV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
+    ProcedureMandateAuthoringPayloadV1,
     ProcedureRuntimePolicyAuthoringPayloadV1,
     QueryDefinitionAuthoringPayloadV1,
     RepairAlternativeV1,
@@ -86,6 +87,13 @@ from cruxible_client.contracts.claims import (
     render_claim,
 )
 from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.procedure_mandates import (
+    ProcedureMandateV1,
+    parse_procedure_mandate,
+    procedure_mandate_digest,
+    procedure_mandate_path,
+    render_procedure_mandate,
+)
 from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_PATH,
     procedure_runtime_policy_digest,
@@ -1347,6 +1355,48 @@ def _render_non_procedure_member(
     )
 
 
+def _render_procedure_mandate_member(
+    payload: ProcedureMandateAuthoringPayloadV1,
+    *,
+    tree: Mapping[str, bytes],
+) -> tuple[str, bytes, str]:
+    target_path = procedure_path(payload.procedure_name)
+    target_content = tree.get(target_path)
+    if target_content is None:
+        _refuse(
+            "playbill.authoring.procedure_mandate_procedure_missing",
+            "procedure_name",
+            "ProcedureMandate authoring requires the named accepted or same-ChangeSet Procedure.",
+            repair_kind="replace_procedure_name",
+            repair_description="Use a Procedure name present at the authoring coordinate.",
+        )
+    procedure = parse_procedure(target_content, path=target_path)
+    path = procedure_mandate_path(payload.name)
+    previous_content = tree.get(path)
+    predecessor_digest = None
+    if previous_content is not None:
+        previous = parse_procedure_mandate(previous_content, path=path)
+        predecessor_digest = procedure_mandate_digest(previous).tagged
+    mandate = ProcedureMandateV1(
+        identity=ArtifactIdentity(kind="ProcedureMandate", name=payload.name),
+        procedure=ArtifactPin(
+            role="procedure",
+            target=procedure.identity,
+            artifact_digest=procedure_artifact_digest(procedure).tagged,
+        ),
+        rung=payload.rung,
+        authority_ceiling=payload.authority_ceiling,
+        namespace=payload.namespace,
+        valid_from=payload.valid_from,
+        expires_at=payload.expires_at,
+        lifecycle=ArtifactLifecycle(
+            state="retired" if payload.retire else "live",
+            predecessor_digest=predecessor_digest,
+        ),
+    )
+    return path, render_procedure_mandate(mandate), procedure_mandate_digest(mandate).tagged
+
+
 def _lower_non_procedure(
     *,
     payload: SubjectAuthoringPayloadV1
@@ -1409,7 +1459,12 @@ def _lower_change_set(
         if not isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2)
     )
     for member in payload.members:
-        if isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
+        if isinstance(
+            member,
+            ProcedureAuthoringPayloadV1
+            | ProcedureAuthoringPayloadV2
+            | ProcedureMandateAuthoringPayloadV1,
+        ):
             continue
         path, content, digest = _render_non_procedure_member(member)
         member_paths.add(path)
@@ -1438,6 +1493,19 @@ def _lower_change_set(
         member_resolved["identity"] = authoring_member_identity(member)
         member_resolved["path"] = path
         resolved.append(member_resolved)
+    for member in payload.members:
+        if not isinstance(member, ProcedureMandateAuthoringPayloadV1):
+            continue
+        path, content, digest = _render_procedure_mandate_member(member, tree=staged_tree)
+        member_paths.add(path)
+        staged_tree[path] = content
+        resolved.append(
+            {
+                "artifact_digest": digest,
+                "identity": authoring_member_identity(member),
+                "path": path,
+            }
+        )
     changed = tuple(
         (path, staged_tree[path])
         for path in sorted(member_paths, key=lambda item: item.encode("utf-8"))
@@ -1491,6 +1559,23 @@ def lower_authoring(
         )
     if isinstance(intent.payload, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
         return _lower_procedure(intent=intent, base=base, base_tree=base_tree)
+    if isinstance(intent.payload, ProcedureMandateAuthoringPayloadV1):
+        path, content, digest = _render_procedure_mandate_member(
+            intent.payload,
+            tree=base_tree,
+        )
+        candidate_tree = dict(base_tree)
+        candidate_tree[path] = content
+        changed = () if base_tree.get(path) == content else ((path, content),)
+        return LoweredAuthoring(
+            proposed_tree=candidate_tree,
+            resolved_authoring={
+                "artifact_digest": digest,
+                "changed_members": _encoded_members(changed),
+                "identity": authoring_member_identity(intent.payload),
+            },
+            changed_members=changed,
+        )
     if isinstance(intent.payload, ChangeSetAuthoringPayloadV1):
         return _lower_change_set(intent=intent, base=base, base_tree=base_tree)
     return _lower_non_procedure(payload=intent.payload, base_tree=base_tree)
