@@ -20,6 +20,11 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.cli.main import cli
+from cruxible_core.playbill.claim_type_inputs import (
+    ClaimTypeInputV1,
+    claim_type_input_template,
+    lower_claim_type_input,
+)
 from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
@@ -159,6 +164,23 @@ def test_cli_claim_type_propose_delivers_nonblocking_source_lint(
     assert json.loads(result.stdout)["lint"]["warnings"] == [warning]
 
 
+def test_cli_claim_type_template_is_complete_model_generated_and_local(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client",
+        lambda: (_ for _ in ()).throw(AssertionError("template must not contact the daemon")),
+    )
+
+    result = CliRunner().invoke(cli, ["playbill", "claim-type", "propose", "--template"])
+
+    assert result.exit_code == 0, result.output
+    rendered = ClaimTypeInputV1.model_validate(json.loads(result.stdout))
+    assert rendered == claim_type_input_template()
+    lowered = lower_claim_type_input(rendered, tree={})
+    assert lowered.identity.qualified == "ClaimType:project.work_item.status"
+    assert lowered.evidence_admission_policy.rules[0].rule_id == "source-repo.replace-me"
+    assert rendered.anticipated_source_ids == ("repo.replace-me",)
+
+
 def test_cli_examples_are_supported_and_schema_discoverable() -> None:
     runner = CliRunner()
 
@@ -169,11 +191,12 @@ def test_cli_examples_are_supported_and_schema_discoverable() -> None:
     create_help = runner.invoke(cli, ["playbill", "authoring", "create", "--help"])
 
     assert claim_type_help.exit_code == 0, claim_type_help.output
+    assert "--template" in claim_type_help.output
     assert "--example" not in claim_type_help.output
     assert claim_type_example.exit_code == 2
     assert "No such option: --example" in claim_type_example.output
     assert claim_type_missing.exit_code == 2
-    assert "provide exactly one ClaimType input with --input" in claim_type_missing.output
+    assert "provide exactly one of --input or --template" in claim_type_missing.output
 
     assert retirement.exit_code == 0, retirement.output
     retirement_payload = json.loads(retirement.stdout)
@@ -888,6 +911,63 @@ def test_cli_bind_ambiguity_reports_candidate_offsets_without_calling_daemon(
     assert result.exit_code == 1
     assert "playbill.authoring.anchor_ambiguous" in result.output
     assert '"candidate_byte_offsets":[0,1]' in result.output
+    assert "--occurrence" in result.output
+
+
+def test_cli_bind_occurrence_selects_one_ambiguous_anchor(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # type: ignore[no-untyped-def]
+    source = tmp_path / "ambiguous.txt"
+    source.write_text("aaa")
+    stub = claim_self_source_example().model_dump(mode="json")
+    stub["source"] = {"kind": "working_selection", "source_id": "repo.work-items"}
+    stub["citation_role"] = "evidence"
+    payload_file = tmp_path / "stub.json"
+    payload_file.write_text(json.dumps(stub))
+    calls: list[dict[str, object]] = []
+
+    class StubClient:
+        def compile_playbill_authoring(
+            self,
+            instance_id: str,
+            *,
+            payload: dict[str, object],
+            intent_id: str | None,
+        ) -> contracts.PlaybillAuthoringPreflightResult:
+            calls.append(payload)
+            return contracts.PlaybillAuthoringPreflightResult(
+                verdict="passed",
+                certificate={"certificate_digest": "sha256:" + "6" * 64},
+                frontier={"diagnostics": []},
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://authoring.example.test",
+            "--instance-id",
+            "inst_authoring",
+            "playbill",
+            "authoring",
+            "bind",
+            "--file",
+            str(source),
+            "--anchor",
+            "aa",
+            "--occurrence",
+            "2",
+            "--payload-file",
+            str(payload_file),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls[0]["source"]["selector"]["start_byte"] == 1  # type: ignore[index]
+    assert calls[0]["source"]["selector"]["observed_occurrence_count"] == 2  # type: ignore[index]
+    assert calls[0]["source"]["selector"]["selected_occurrence"] == 2  # type: ignore[index]
 
 
 @pytest.mark.parametrize("citation_role", ["evidence", "copy"])

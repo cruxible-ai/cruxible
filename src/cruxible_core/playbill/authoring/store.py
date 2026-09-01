@@ -249,17 +249,21 @@ class AuthoringIntentStore:
         *,
         crash_hook: Callable[[str], None] | None = None,
         token_factory: Callable[[], str] | None = None,
+        read_only: bool = False,
     ) -> None:
         if exhaust_root.is_symlink() or not exhaust_root.is_dir():
             raise AuthoringIntentStoreError("AuthoringIntent exhaust root is not trustworthy")
         self.root = exhaust_root.resolve(strict=True) / "authoring-intents"
-        self.root.mkdir(mode=0o700, exist_ok=True)
+        if not read_only:
+            self.root.mkdir(mode=0o700, exist_ok=True)
         if self.root.is_symlink() or not self.root.is_dir():
             raise AuthoringIntentStoreError("AuthoringIntent root is not trustworthy")
-        os.chmod(self.root, 0o700)
+        if not read_only:
+            os.chmod(self.root, 0o700)
         self._lock_path = self.root / ".lock"
         self._crash_hook = crash_hook
         self._token_factory = token_factory or (lambda: secrets.token_hex(16))
+        self._read_only = read_only
 
     def _crash(self, boundary: str) -> None:
         if self._crash_hook is not None:
@@ -374,6 +378,12 @@ class AuthoringIntentStore:
         outside this validated store boundary.
         """
 
+        if self._read_only:
+            return tuple(
+                event
+                for directory in self._intent_directories()
+                for event in self._load_events(directory)
+            )
         with self._locked():
             self._recover_creating_directories()
             return tuple(
@@ -429,6 +439,7 @@ class AuthoringIntentStore:
         """Append one idempotent state transition under the store-wide CAS lock."""
 
         with self._locked():
+            self._recover_creating_directories()
             directory = self.root / intent_id
             events = self._load_events(directory)
             for event in events:

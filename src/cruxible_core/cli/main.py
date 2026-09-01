@@ -153,7 +153,10 @@ def handle_errors(f: Any) -> Any:
         try:
             ctx = click.get_current_context(silent=True)
             if ctx is not None:
-                target_mode = MUTATING_COMMAND_TARGETS.get(_command_path(ctx))
+                command_path = _command_path(ctx)
+                target_mode = MUTATING_COMMAND_TARGETS.get(command_path)
+                if command_path == ("playbill", "claim-type", "propose") and kwargs.get("template"):
+                    target_mode = None
                 if target_mode is not None and target_mode != "manual":
                     # Runtime import avoids the main <-> commands import cycle.
                     from cruxible_core.cli.commands._common import _echo_write_target

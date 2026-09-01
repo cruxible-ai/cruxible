@@ -115,6 +115,7 @@ A Subject is an identity-only referent. KIND and ID are the two halves of its
 ## playbill claim-type
 
 ~~~text
+cruxible playbill claim-type propose --template
 cruxible playbill claim-type propose --input FILE --name NAME
 cruxible playbill claim-type migrate REQUEST_FILE
 cruxible playbill claim-type list
@@ -123,9 +124,18 @@ cruxible playbill claim-type get PREDICATE
 
 A ClaimType is the governed interface a predicate must satisfy before any Claim
 may state it. `propose --input` accepts a complete `ClaimTypeInputV1`; ClaimType
-is not part of the authoring coordinator's example vocabulary. The command
-lowers the tagless form and returns nonblocking policy/source lint beside the
-proposal. The optional, sorted `anticipated_source_ids` input supplies
+is not part of the authoring coordinator's example vocabulary. `propose
+--template` prints a complete literal `project.work_item.status` input with a
+`repo.replace-me` foreign-source evidence rule and does not contact the daemon.
+Replace `anticipated_source_ids` with the logical source used by `authoring bind`;
+the source-intent lint then names the deterministic foreign-source
+CaptureContract digest to place in the rule. Flow-A binding carries that exact
+contract into the governed Claim candidate, so accepting the bound Claim accepts
+the contract and gives the rule a shipped evidence producer. The dormant
+direct-self-asserted constant has no production producer or acceptance surface
+and is not a template prerequisite. The input command lowers the tagless form
+and returns nonblocking policy/source lint beside the proposal. The optional,
+sorted `anticipated_source_ids` input supplies
 source-specific repair suggestions without entering the governed ClaimType.
 Expert proposals, migration preflight and submission, and SDK cold-dependency
 preflight deliver the same typed lint; advisories never enter candidate identity,
@@ -170,7 +180,8 @@ cruxible playbill authoring get INTENT_ID
 cruxible playbill authoring resume INTENT_ID
 cruxible playbill authoring list
 cruxible playbill authoring compile PAYLOAD [--intent-id INTENT_ID]
-cruxible playbill authoring bind --file PATH --anchor TEXT [--window-lines N]
+cruxible playbill authoring bind --file PATH --anchor TEXT [--occurrence N]
+  [--window-lines N]
   --payload-file CLAIM_STUB
 cruxible playbill authoring preflight INTENT_ID
 cruxible playbill authoring rebase INTENT_ID
@@ -186,11 +197,44 @@ references. `compile` creates or updates an intent and performs a binding prefli
 `rebase` advances an unsubmitted refused intent to the current accepted coordinate;
 `submit` is idempotent and never supplies approvals. `status` reports the remaining
 approval or activation conditions without impersonating the actors who own them.
+`bind --occurrence N` counts matching anchors in ascending byte-offset order and
+selects the 1-based `N`th match. The resulting selector records the total number
+observed while its start/end bytes name the selected occurrence; multiple matches
+are therefore truthful input metadata, not an unresolved selection.
 V2 publication preparation commits a deterministic Claim-backed block against fresh
-whole-source bytes before the client applies it. Insertion confirmation verifies the
-exact client observation; legacy v1 opens an ordinary backing-only successor candidate,
-while v2 binds the stamped block without a copy citation. Abandon closes only an
-unprepared publication expectation.
+whole-source bytes before the client applies it. A successful response includes
+`inserted_block_base64`: standard RFC 4648 base64 for the exact UTF-8 bytes to
+insert. (The canonical stamp token inside the opening marker uses URL-safe base64;
+these are deliberately different layers.) Decode with validation, then apply the
+preparation without inventing an offset: for `replace_window`, replace
+`rebased_selector.start_byte:end_byte`; otherwise splice the decoded block at
+`rebased_selector.insertion_offset`. In Python, the complete byte operation is:
+
+~~~python
+block = base64.b64decode(preparation["inserted_block_base64"], validate=True)
+selector = preparation["rebased_selector"]
+if preparation["operation"] == "replace_window":
+    postimage = preimage[: selector["start_byte"]] + block + preimage[selector["end_byte"] :]
+else:
+    offset = selector["insertion_offset"]
+    postimage = preimage[:offset] + block + preimage[offset:]
+~~~
+
+The decoded block is one LF-only opening marker line, the accepted body (ending
+in LF), and one LF-only closing marker line:
+
+~~~text
+<!-- playbill:block:BLOCK_ID:BASE64URL_CANONICAL_STAMP -->
+BODY
+<!-- /playbill:block:BLOCK_ID -->
+~~~
+
+The marker must start in column zero; blocks cannot overlap, nest, or repeat an ID,
+and marker-looking text inside a Markdown fence is not a declaration. Clients should
+insert the returned bytes verbatim rather than synthesize this grammar. Insertion
+confirmation verifies the exact client observation; legacy v1 opens an ordinary
+backing-only successor candidate, while v2 binds the stamped block without a copy
+citation. Abandon closes only an unprepared publication expectation.
 
 ## playbill policy
 
@@ -428,6 +472,19 @@ is the instruction channel rather than the data channel.
 The command always exits 0 and always emits one JSON object. A coverage failure
 degrades to the original output plus, where a channel exists, one
 `Playbill coverage: unavailable` line; it never breaks the agent's tool call.
+The parked hook writes one actionable code to stderr only when its own adapter
+input is malformed:
+
+- `playbill.coverage_hook.instance_id_missing`: add `instance_id` to
+  `.playbill/coverage.json`, or select one with the CLI context/environment.
+- `playbill.coverage_hook.rule_tag_invalid`: use the exact-path or path-prefix
+  rule tags shown in the integration README.
+- `playbill.coverage_hook.tool_response_invalid`: the Grep hook must receive its
+  structured response object; fix the harness envelope rather than parsing text.
+
+The workspace config's `instance_id` is the hook's selected instance. Transport
+selection (server URL or socket) still comes from the CLI flags, environment, or
+remembered CLI context.
 
 For a harness that owns its tool executor, the vendor-neutral middleware in
 `cruxible_core.playbill.coverage.middleware` is the full-fidelity path and

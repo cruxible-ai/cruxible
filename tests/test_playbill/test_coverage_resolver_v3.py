@@ -20,6 +20,7 @@ from cruxible_core.playbill.coverage.contracts import (
     CoverageSelectionV1,
     CoverageSpanRequestV1,
     CoverageSpanResultV3,
+    coverage_span_match_state,
 )
 from cruxible_core.playbill.coverage.resolver import resolve_coverage_v3
 from tests.test_playbill._coverage_support import (
@@ -177,6 +178,54 @@ def test_same_v3_inputs_resolve_byte_identically() -> None:
     assert canonical_bytes(first.model_dump(mode="json")) == canonical_bytes(
         second.model_dump(mode="json")
     )
+
+
+def test_span_rollup_never_masks_drift_behind_an_exact_card() -> None:
+    exact = _resolve().spans[0].cards[0]
+    drifted = exact.model_copy(
+        update={
+            "match_state": "drifted",
+            "occurrence_identity_digest": None,
+            "expected_commitment_digest": exact.observed_commitment_digest,
+            "observed_commitment_digest": "sha256:" + "f" * 64,
+            "reason_codes": ("commitment_superseded",),
+        }
+    )
+
+    assert coverage_span_match_state((exact.match_state, drifted.match_state)) == "drifted"
+    with pytest.raises(ValidationError, match="never hides drift"):
+        CoverageSpanResultV3(
+            request=CoverageSpanRequestV1(source=HANDBOOK),
+            match_state="exact",
+            health="complete",
+            absence_is_factual=False,
+            cards=tuple(sorted((exact, drifted), key=lambda card: card.sort_key)),
+            coverage=_resolve().spans[0].coverage,
+        )
+
+
+def test_resolver_summary_counts_a_mixed_exact_and_drifted_source_as_drifted() -> None:
+    second = b"The deployment window is Friday.\n"
+    citations = index_v2(
+        capture(HANDBOOK, CITED, name="still-exact"),
+        capture(HANDBOOK, second, name="now-drifted"),
+    )
+    snapshot = overlay(
+        working(HANDBOOK, PREAMBLE + CITED + b"The deployment window is Monday.\n"),
+        citations=citations,
+    )
+
+    result = resolve_coverage_v3(
+        request(HANDBOOK),
+        index=citations,
+        overlay=snapshot,
+        access=profile(),
+        manifest=manifest_v2(citations, snapshot),
+    )
+
+    assert {card.match_state for card in result.spans[0].cards} == {"exact", "drifted"}
+    assert result.spans[0].match_state == "drifted"
+    assert (result.summary.exact, result.summary.drifted) == (0, 1)
 
 
 def test_the_frozen_coverage_v3_grammar_matches_its_golden() -> None:

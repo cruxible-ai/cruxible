@@ -91,14 +91,14 @@ class SourceCatalog(_StrictCatalogModel):
     @classmethod
     def _entries(cls, value: tuple[SourceCatalogEntry, ...]) -> tuple[SourceCatalogEntry, ...]:
         ordered = tuple(sorted(value, key=lambda item: item.name.encode("utf-8")))
-        if value != ordered or len({item.name for item in value}) != len(value):
-            raise ValueError("source catalog entries must be sorted and unique by name")
+        if len({item.name for item in value}) != len(value):
+            raise ValueError("source catalog entries must be unique by name")
         targets = [item.document_id for item in value]
         if len(set(targets)) != len(targets):
             raise ValueError("source catalog contains duplicate Document targets")
         if not value:
             raise ValueError("source catalog must declare at least one source")
-        return value
+        return ordered
 
     @model_validator(mode="after")
     def _catalog_locator_scope(self) -> SourceCatalog:

@@ -759,6 +759,10 @@ class PlaybillInsertionPrepareResult(BaseModel):
     intent: dict[str, Any]
     expectation: dict[str, Any]
     preparation: dict[str, Any] | None = None
+    inserted_block_base64: str | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     warnings: list["PlaybillPublicationPrepareWarning"] = Field(default_factory=list)
 
 

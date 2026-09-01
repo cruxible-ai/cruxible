@@ -72,13 +72,14 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
+from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1, claim_type_input_template
 from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.playbill.coverage.adapter import (
     WorkingPathBindingsV1,
     WorkingSourceObservationV1,
 )
 from cruxible_core.playbill.coverage.claude_code import (
+    PostToolUseResponseError,
     annotated_tool_output,
     post_tool_use_response,
     read_post_tool_use_event,
@@ -86,6 +87,7 @@ from cruxible_core.playbill.coverage.claude_code import (
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1, CoverageResultV3
 from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
 from cruxible_core.playbill.coverage.middleware import (
+    CoverageRuleTagError,
     CoverageWorkspaceConfig,
     FloorGenerationPairV1,
     ResolveCoverage,
@@ -1228,19 +1230,28 @@ def claim_type_group() -> None:
 @claim_type_group.command("propose")
 @click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False))
 @click.option("--envelope", type=click.Path(exists=True, dir_okay=False), hidden=True)
+@click.option(
+    "--template",
+    is_flag=True,
+    help="Print one complete model-generated ClaimTypeInputV1 without contacting the daemon.",
+)
 @click.option("--name", "proposal_name")
 @json_option
 @handle_errors
 def propose_claim_type(
     input_path: str | None,
     envelope: str | None,
+    template: bool,
     proposal_name: str | None,
     output_json: bool,
 ) -> None:
     """Use the sanctioned typed-input ClaimType proposal path."""
 
-    if (input_path is None) == (envelope is None):
-        raise click.UsageError("provide exactly one ClaimType input with --input")
+    if sum((input_path is not None, envelope is not None, template)) != 1:
+        raise click.UsageError("provide exactly one of --input or --template")
+    if template:
+        _emit_json(claim_type_input_template().model_dump(mode="json"))
+        return
     if envelope is not None:
         envelope_payload = _read_mapping(envelope)
         resolved_name = proposal_name or envelope_payload.get("predicate")
@@ -1637,6 +1648,12 @@ def compile_authoring(payload: str, intent_id: str | None, output_json: bool) ->
 @click.option("--anchor", required=True)
 @click.option("--window-lines", type=click.IntRange(min=0), default=None)
 @click.option(
+    "--occurrence",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Select the 1-based anchor occurrence when the anchor is not unique.",
+)
+@click.option(
     "--payload-file",
     required=True,
     type=click.Path(exists=True, dir_okay=False),
@@ -1648,6 +1665,7 @@ def bind_authoring_selection(
     source_path: str,
     anchor: str,
     window_lines: int | None,
+    occurrence: int | None,
     payload_file: str,
     output_json: bool,
 ) -> None:
@@ -1666,6 +1684,7 @@ def bind_authoring_selection(
         content=content,
         anchor=anchor,
         window_lines=window_lines,
+        occurrence=occurrence,
     )
     result = _server_call(
         lambda client, instance_id: client.compile_playbill_authoring(
@@ -3118,15 +3137,30 @@ def _resolved_coverage(
     *,
     command_name: str,
     scan_budget: CoverageScanBudgetV1 | None = None,
+    instance_id: str | None = None,
 ) -> CoverageResultV3:
-    result = _server_call(
-        lambda client, instance_id: client.resolve_playbill_coverage(
-            instance_id,
+    def resolve(
+        client: CruxibleClient,
+        selected_instance_id: str,
+    ) -> contracts.PlaybillCoverageResult:
+        return client.resolve_playbill_coverage(
+            selected_instance_id,
             observations=[item.model_dump(mode="json") for item in observations],
             scan_budget=None if scan_budget is None else scan_budget.model_dump(mode="json"),
-        ),
-        command_name=command_name,
-    )
+        )
+
+    if instance_id is None:
+        result = _server_call(resolve, command_name=command_name)
+    else:
+        dispatched = _dispatch_cli(
+            lambda client: resolve(client, instance_id),
+            lambda: None,
+            allow_local=False,
+            command_name=command_name,
+        )
+        if dispatched is None:
+            raise click.ClickException("coverage resolver returned no result")
+        result = dispatched
     return CoverageResultV3.model_validate(result.result)
 
 
@@ -3176,12 +3210,15 @@ def resolve_coverage(
         _emit_json(result.model_dump(mode="json"))
         return
     if output_brief:
-        drifted = [span for span in result.spans if span.match_state == "drifted"]
         _emit_brief(
-            outcome=f"{result.health} ({result.summary.exact} exact, {len(drifted)} drifted)",
+            outcome=(
+                f"{result.health} ({result.summary.exact} exact, {result.summary.drifted} drifted)"
+            ),
             ids={"coordinate": result.at.git_oid, "epoch": str(result.epoch)},
             next_command=(
-                "cruxible playbill next --brief" if drifted or result.health != "complete" else None
+                "cruxible playbill next --brief"
+                if result.summary.drifted or result.health != "complete"
+                else None
             ),
         )
         return
@@ -3240,6 +3277,7 @@ def _hook_resolver(config: CoverageWorkspaceConfig) -> ResolveCoverage:
             tuple(observations),
             command_name="playbill hook post-tool-use",
             scan_budget=config.scan_budget,
+            instance_id=config.instance_id,
         )
 
     return resolve
@@ -3302,6 +3340,7 @@ def post_tool_use_hook(root: str) -> None:
 
     payload: Any = None
     text = ""
+    diagnostic: str | None = None
     try:
         payload = json.loads(sys.stdin.read() or "null")
         workspace = Path(root).expanduser()
@@ -3314,9 +3353,24 @@ def post_tool_use_hook(root: str) -> None:
                 resolve=_hook_resolver(config),
                 resolve_floor_generations=_hook_floor_generation_resolver(),
             )
-            text = middleware.after_tool(event).appended_coverage_text
+            delivery = middleware.after_tool(event)
+            text = delivery.appended_coverage_text
+            if delivery.failure_code == "coverage_operation_unavailable":
+                if config.instance_id is None:
+                    try:
+                        _require_instance_id()
+                    except click.UsageError:
+                        diagnostic = "playbill.coverage_hook.instance_id_missing"
+    except CoverageRuleTagError:
+        diagnostic = "playbill.coverage_hook.rule_tag_invalid"
+        text = ""
+    except PostToolUseResponseError:
+        diagnostic = "playbill.coverage_hook.tool_response_invalid"
+        text = ""
     except Exception:  # noqa: BLE001 - fail open; a broken hook is not the agent's problem
         text = ""
+    if diagnostic is not None:
+        click.echo(diagnostic, err=True)
     _emit_json(post_tool_use_response(annotated_tool_output(payload, text)))
 
 

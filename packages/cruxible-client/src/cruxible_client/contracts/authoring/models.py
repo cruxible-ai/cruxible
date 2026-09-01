@@ -71,7 +71,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:4c9b3111760ee2884509fe676cf47737100b84297d419022f1d2e218b1b2bd41"
+    "sha256:c16211d80654a657f1a85847101d20194b3f6230a77bf37fcad6a07663b1cccb"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -393,6 +393,7 @@ class WorkingAnchorWindowV1(_StrictAuthoringModel):
     start_byte: int = Field(ge=0)
     end_byte: int = Field(ge=1)
     observed_occurrence_count: int = Field(ge=0)
+    selected_occurrence: int | None = Field(default=None, ge=1)
 
     @field_validator("anchor")
     @classmethod
@@ -405,6 +406,11 @@ class WorkingAnchorWindowV1(_StrictAuthoringModel):
     def _window(self) -> "WorkingAnchorWindowV1":
         if self.end_byte <= self.start_byte:
             raise ValueError("working selection window must cover at least one byte")
+        if (
+            self.selected_occurrence is not None
+            and self.selected_occurrence > self.observed_occurrence_count
+        ):
+            raise ValueError("selected occurrence exceeds the observed occurrence count")
         return self
 
 
@@ -1815,12 +1821,32 @@ class InsertionPrepareResultV2(_StrictAuthoringModel):
     intent: AuthoringIntentV1
     expectation: InsertionExpectationV2
     preparation: PublicationPreparationV2 | None = None
+    inserted_block_base64: str | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     warnings: tuple[PublicationPrepareWarningV1, ...] = ()
 
     @model_validator(mode="after")
     def _preparation_shape(self) -> "InsertionPrepareResultV2":
         if self.outcome in {"prepared", "already_prepared", "bound"} and (self.preparation is None):
             raise ValueError("successful publication preparation requires exact preparation")
+        if self.preparation is None:
+            if self.inserted_block_base64 is not None:
+                raise ValueError("rendered publication bytes require an exact preparation")
+            return self
+        if self.inserted_block_base64 is None:
+            raise ValueError("an exact preparation requires its rendered publication bytes")
+        rendered = _canonical_base64(
+            self.inserted_block_base64,
+            label="rendered publication block",
+        )
+        if (
+            len(rendered) != self.preparation.inserted_block_byte_length
+            or "sha256:" + hashlib.sha256(rendered).hexdigest()
+            != self.preparation.inserted_block_digest
+        ):
+            raise ValueError("rendered publication bytes differ from their preparation")
         return self
 
     @field_validator("warnings")

@@ -39,8 +39,10 @@ question for this resolver, and skipping it costs no completeness.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Literal
 
+from cruxible_client.contracts.claims import ClaimCitationV1
 from cruxible_client.contracts.discovery import DiscoveryMatchBasis
 from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_client.contracts.source_references import CoverageDescriptorV1
@@ -51,6 +53,7 @@ from cruxible_core.playbill.coverage.contracts import (
     CoverageBatchSummaryV3,
     CoverageCardV2,
     CoverageHealthV1,
+    CoverageLineOverlayV1,
     CoverageMatchStateV1,
     CoverageRequestV1,
     CoverageResultV3,
@@ -58,7 +61,7 @@ from cruxible_core.playbill.coverage.contracts import (
     CoverageSpanResultV3,
     LogicalSourceIdentityV1,
     PlaybillCitationWindowObservationV1,
-    strongest_match_state,
+    coverage_span_match_state,
     weakest_health,
 )
 from cruxible_core.playbill.coverage.indexes import (
@@ -76,6 +79,83 @@ from cruxible_core.playbill.coverage.manifest import (
 from cruxible_core.playbill.projection import AcceptedCoordinate
 
 COVERAGE_FACET = "coverage"
+
+
+@dataclass(frozen=True)
+class BoundPublicationObservation:
+    """One parsed block backed by a durable confirmed publication."""
+
+    source: LogicalSourceIdentityV1
+    block_id: str
+    claim_path: str
+    claim_statement_digest: str
+    expected_body_digest: str
+    observed_body_digest: str
+    line_overlay: CoverageLineOverlayV1
+
+    @property
+    def sort_key(self) -> tuple[bytes, bytes, bytes]:
+        return (
+            self.source.sort_key,
+            self.block_id.encode("ascii"),
+            self.claim_path.encode("utf-8"),
+        )
+
+
+def _published_citation(
+    citation: EvidenceCitationV2,
+    observation: BoundPublicationObservation,
+) -> EvidenceCitationV2 | None:
+    """Project only the self-source association the confirmed block publishes."""
+
+    if citation.commitment_digest != observation.expected_body_digest:
+        return None
+    associations = tuple(
+        item
+        for item in citation.citation_associations
+        if item.claim_address.artifact_path == observation.claim_path
+        and isinstance(item.reference, ClaimCitationV1)
+        and item.reference.role == "copy"
+        and item.reference.origin == "self_source"
+    )
+    if not associations:
+        return None
+    captures = tuple(
+        sorted(
+            {item.capture_digest for item in associations},
+            key=lambda item: item.encode("ascii"),
+        )
+    )
+    claims = tuple(
+        sorted(
+            {item.claim_address for item in associations},
+            key=lambda item: (
+                item.artifact_path.encode("utf-8"),
+                item.selector.scheme.encode("ascii"),
+                item.selector.value.encode("utf-8"),
+            ),
+        )
+    )
+    return citation.model_copy(
+        update={
+            "accepted_source": observation.source,
+            "capture_digests": captures,
+            "claim_addresses": claims,
+            "citation_associations": associations,
+        }
+    )
+
+
+def _publication_selected(
+    observation: BoundPublicationObservation,
+    span: CoverageSpanRequestV1,
+) -> bool:
+    if span.selection is None:
+        return True
+    return (
+        observation.line_overlay.start_byte < span.selection.end_byte
+        and span.selection.start_byte < observation.line_overlay.end_byte
+    )
 
 
 def _source_floor(
@@ -161,6 +241,7 @@ def _resolve_span_v3(
     manifest: CoverageManifestBodyV2 | None,
     window_observations: tuple[PlaybillCitationWindowObservationV1, ...],
     additional_window_citation_ids: frozenset[str],
+    publication_observations: tuple[BoundPublicationObservation, ...],
 ) -> CoverageSpanResultV3:
     """Resolve one source from its own proof boundary, never a global scan bit."""
 
@@ -208,6 +289,12 @@ def _resolve_span_v3(
         else:
             withheld = True
 
+    source_publications = tuple(
+        item
+        for item in publication_observations
+        if item.source == span.source and _publication_selected(item, span)
+    )
+
     for occurrence in occurrences:
         if not _selected(occurrence, span):
             continue
@@ -219,6 +306,32 @@ def _resolve_span_v3(
                 continue
             if not access.permits(citation.access_class):
                 withheld = True
+                continue
+            published = next(
+                (
+                    projected
+                    for observation in source_publications
+                    if observation.observed_body_digest == occurrence.observed_commitment_digest
+                    and observation.line_overlay == occurrence.line_overlay
+                    and (projected := _published_citation(citation, observation)) is not None
+                ),
+                None,
+            )
+            if published is not None:
+                if not COVERAGE_HEALTH_PROVES_FRESHNESS[health]:
+                    cards.append(
+                        _card(
+                            "candidate",
+                            citation=published,
+                            occurrence=occurrence,
+                            at=request.at,
+                            reason_codes=("freshness_unprovable",),
+                        )
+                    )
+                else:
+                    cards.append(
+                        _card("exact", citation=published, occurrence=occurrence, at=request.at)
+                    )
                 continue
             byte_length = citation.byte_length or 0
             locally_scanned = overlay.scanned(span.source, citation.commitment_digest, byte_length)
@@ -292,6 +405,31 @@ def _resolve_span_v3(
                 )
             )
 
+        for observation in source_publications:
+            if observation.observed_body_digest == observation.expected_body_digest:
+                continue
+            for citation in index.by_commitment(observation.expected_body_digest):
+                if not isinstance(citation, EvidenceCitationV2):
+                    continue
+                if not access.permits(citation.access_class):
+                    withheld = True
+                    continue
+                published = _published_citation(citation, observation)
+                if published is None:
+                    continue
+                byte_length = published.byte_length or 0
+                if not overlay.scanned(span.source, published.commitment_digest, byte_length):
+                    health = weakest_health(health, "partial")
+                    reasons.add("unscanned_selection")
+                    continue
+                cards.append(
+                    _publication_drift_card(
+                        citation=published,
+                        observation=observation,
+                        at=request.at,
+                    )
+                )
+
     if withheld:
         if access.disclose_restricted_existence:
             health = weakest_health(health, "denied")
@@ -346,7 +484,7 @@ def _resolve_span_v3(
         for item in window_observations
         if item.source == span.source and item.citation_id in allowed_ids
     )
-    match_state: CoverageMatchStateV1 = strongest_match_state(card.match_state for card in kept)
+    match_state: CoverageMatchStateV1 = coverage_span_match_state(card.match_state for card in kept)
     return CoverageSpanResultV3(
         request=span,
         match_state=match_state,
@@ -426,6 +564,29 @@ def _drift_card(
     )
 
 
+def _publication_drift_card(
+    *,
+    citation: EvidenceCitationV2,
+    observation: BoundPublicationObservation,
+    at: AcceptedCoordinate,
+) -> CoverageCardV2:
+    return CoverageCardV2(
+        match_state="drifted",
+        at=at,
+        claim_addresses=citation.claim_addresses,
+        capture_digests=citation.capture_digests,
+        expected_commitment_digest=citation.commitment_digest,
+        observed_commitment_digest=observation.observed_body_digest,
+        accepted_source=observation.source,
+        observed_source=observation.source,
+        line_overlay=observation.line_overlay,
+        dereference_handle_digest=citation.dereference_handle_digest,
+        dependent_claim_count=citation.dependent_claim_count,
+        reason_codes=("commitment_superseded",),
+        citation_associations=citation.citation_associations,
+    )
+
+
 def _manifest_floor_v3(
     manifest: CoverageManifestBodyV2 | None,
     *,
@@ -456,6 +617,7 @@ def resolve_coverage_v3(
     manifest: CoverageManifestBodyV2 | None = None,
     window_observations: tuple[PlaybillCitationWindowObservationV1, ...] = (),
     additional_window_citation_ids: frozenset[str] = frozenset(),
+    publication_observations: tuple[BoundPublicationObservation, ...] = (),
 ) -> CoverageResultV3:
     """Resolve association-native coverage with source-local proof health."""
 
@@ -478,6 +640,7 @@ def resolve_coverage_v3(
             manifest=manifest,
             window_observations=window_observations,
             additional_window_citation_ids=additional_window_citation_ids,
+            publication_observations=publication_observations,
         )
         for span in request.spans
     )

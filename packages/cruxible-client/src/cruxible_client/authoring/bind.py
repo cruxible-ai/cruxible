@@ -36,6 +36,7 @@ class AuthoringBindAmbiguityError(AuthoringBindError):
                 {
                     "observed_occurrence_count": len(offsets),
                     "candidate_byte_offsets": list(offsets),
+                    "repair": "rerun with --occurrence N",
                 }
             ).decode("utf-8")
         )
@@ -89,6 +90,7 @@ def bind_working_selection_input(
     content: bytes,
     anchor: str,
     window_lines: int | None = None,
+    occurrence: int | None = None,
 ) -> ClaimAuthoringPayloadV1:
     """Observe local bytes for a decision-only working_selection Claim input."""
 
@@ -99,9 +101,14 @@ def bind_working_selection_input(
         raise AuthoringBindError("Flow-A bind input source must be working_selection")
     anchor_bytes = anchor.encode("utf-8")
     offsets = _anchor_offsets(content, anchor_bytes)
-    if len(offsets) != 1:
+    if occurrence is None and len(offsets) != 1:
         raise AuthoringBindAmbiguityError(offsets)
-    start = offsets[0]
+    if occurrence is not None and not 1 <= occurrence <= len(offsets):
+        raise AuthoringBindError(
+            "--occurrence must select a 1-based anchor occurrence; "
+            f"observed {len(offsets)}, requested {occurrence}"
+        )
+    start = offsets[0 if occurrence is None else occurrence - 1]
     end = start + len(anchor_bytes)
     if window_lines is not None:
         start, end = _line_window(
@@ -130,7 +137,8 @@ def bind_working_selection_input(
             anchor=anchor,
             start_byte=start,
             end_byte=end,
-            observed_occurrence_count=1,
+            observed_occurrence_count=len(offsets),
+            selected_occurrence=occurrence,
         ),
     )
     try:

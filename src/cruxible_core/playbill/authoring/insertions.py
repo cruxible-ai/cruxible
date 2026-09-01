@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 from datetime import datetime, timedelta
-from typing import NoReturn
+from typing import NoReturn, overload
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
@@ -165,6 +165,15 @@ def _overlapping_offsets(content: bytes, needle: bytes) -> tuple[int, ...]:
         start = found + 1
 
 
+@overload
+def build_publication_preparation(
+    expectation: PublicationPreparationV2,
+    *,
+    body: bytes,
+) -> bytes: ...
+
+
+@overload
 def build_publication_preparation(
     expectation: InsertionExpectationV2,
     *,
@@ -172,8 +181,32 @@ def build_publication_preparation(
     body: bytes,
     accepted_coordinate: AcceptedCoordinate,
     accepted_generation: int,
-) -> PublicationPreparationV2:
+) -> PublicationPreparationV2: ...
+
+
+def build_publication_preparation(
+    expectation: InsertionExpectationV2 | PublicationPreparationV2,
+    *,
+    body: bytes,
+    observation: PublicationSourceObservationV2 | None = None,
+    accepted_coordinate: AcceptedCoordinate | None = None,
+    accepted_generation: int | None = None,
+) -> PublicationPreparationV2 | bytes:
     """Build one deterministic full-file postimage from fresh observed bytes."""
+
+    if isinstance(expectation, PublicationPreparationV2):
+        framed = frame_projection_block(stamp=expectation.stamp, body=body)
+        if (
+            len(framed) != expectation.inserted_block_byte_length
+            or "sha256:" + hashlib.sha256(framed).hexdigest() != expectation.inserted_block_digest
+        ):
+            _raise(
+                InsertionProtocolError,
+                "rendered publication block differs from its preparation",
+            )
+        return framed
+    if observation is None or accepted_coordinate is None or accepted_generation is None:
+        raise TypeError("publication preparation requires an observation and accepted coordinate")
 
     if expectation.state not in {"pending", "prepared"}:
         if expectation.state == "awaiting_claim_acceptance":

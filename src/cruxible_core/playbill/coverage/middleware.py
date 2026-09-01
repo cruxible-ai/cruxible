@@ -67,7 +67,7 @@ from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_core.playbill.coverage.adapter import (
@@ -105,6 +105,10 @@ _SHA256_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 class _StrictMiddlewareModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class CoverageRuleTagError(CoverageError):
+    """A coverage rule used a tag outside the one frozen rule vocabulary."""
 
 
 # -- workspace configuration -----------------------------------------------
@@ -424,6 +428,13 @@ def load_coverage_config(root: Path) -> CoverageWorkspaceConfig:
         ):
             return CoverageWorkspaceConfigV1.model_validate(payload)
         return CoverageWorkspaceConfigV2.model_validate(payload)
+    except ValidationError as exc:
+        if any(
+            item.get("type") == "union_tag_invalid" and tuple(item.get("loc", ()))[:1] == ("rules",)
+            for item in exc.errors(include_url=False)
+        ):
+            raise CoverageRuleTagError("coverage configuration rule tag is not recognized") from exc
+        raise CoverageError(f"coverage configuration is not valid: {exc}") from exc
     except ValueError as exc:
         raise CoverageError(f"coverage configuration is not valid: {exc}") from exc
 
@@ -798,6 +809,7 @@ __all__ = [
     "CoverageMiddlewareV1",
     "CoveragePathPrefixRuleV1",
     "CoveragePathRuleV1",
+    "CoverageRuleTagError",
     "CoverageWorkspaceConfigV1",
     "CoverageWorkspaceConfigV2",
     "CoverageWorkspaceConfig",

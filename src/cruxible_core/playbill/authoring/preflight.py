@@ -542,26 +542,25 @@ def compute_preflight(
                 )
         if isinstance(payload.source, WorkingSelectionObservationV1):
             count = payload.source.selector.observed_occurrence_count
-            if count != 1:
+            if count > 1 and payload.source.selector.selected_occurrence is None:
                 diagnostics.append(
                     _diagnostic(
                         code="playbill.authoring.working_selection_ambiguous",
                         stage="source_binding",
-                        offending_element="source.selector.observed_occurrence_count",
+                        offending_element="source.selector.selected_occurrence",
                         message=(
-                            "The working-source anchor must occur exactly once; "
-                            f"the client observed {count}."
+                            "The working-source anchor occurred more than once and the "
+                            f"client did not select one of the {count} occurrences."
                         ),
                         repairs=(
                             _repair(
-                                "replace_anchor",
-                                "Choose an anchor/window that occurs exactly once.",
-                                {"required_occurrence_count": 1},
+                                "select_occurrence",
+                                "Select one 1-based occurrence of the working-source anchor.",
+                                {"minimum": 1, "maximum": count},
                             ),
                         ),
                     )
                 )
-
     current = instance.accepted_coordinate()
     current_public = AcceptedCoordinate.from_internal(current)
     current_tree = instance.tree_at(current.git_oid)

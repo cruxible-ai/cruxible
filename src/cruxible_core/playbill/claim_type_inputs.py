@@ -109,6 +109,46 @@ class ClaimTypeInputProposalResultV1(_StrictClaimTypeInputModel):
     lint: ClaimTypeProposalLintV1
 
 
+def claim_type_input_template() -> ClaimTypeInputV1:
+    """Return the complete literal ClaimType input shown by the CLI template surface."""
+
+    source_id = "repo.replace-me"
+    contract = foreign_source_capture_contract(source_id)
+    return ClaimTypeInputV1(
+        predicate="project.work_item.status",
+        allowed_subject_kinds=("project.work_item",),
+        object_kind="literal",
+        literal_schema={"type": "string"},
+        cardinality="one",
+        permitted_roles=("normative", "observation"),
+        evidence_admission_policy={
+            "rules": [
+                {
+                    "rule_id": f"source-{source_id}",
+                    "claim_roles": ["normative", "observation"],
+                    "capture_contract_digests": [capture_contract_digest(contract).tagged],
+                    "evidence_kinds": ["self_asserted"],
+                    "admission": "direct",
+                    "subject_binding": "exact_claim_subject",
+                }
+            ]
+        },
+        admission_policy={
+            "corroboration_requirements": [],
+            "freeze_requirements": [],
+        },
+        resolution_policy={
+            "cardinality": "one",
+            "eligible_verdicts": ["supported"],
+            "required_basis_kinds": [],
+            "require_current": True,
+            "selector": "only_contender",
+            "conflict_result": "unresolved",
+        },
+        anticipated_source_ids=(source_id,),
+    )
+
+
 def lower_claim_type_input(
     value: ClaimTypeInputV1,
     *,
@@ -147,11 +187,22 @@ def lint_claim_type_input(
 ) -> ClaimTypeProposalLintV1:
     tree = instance.tree_at(coordinate.git_oid)
     accepted_contracts: dict[str, str] = {}
+    source_ids = set(anticipated_source_ids)
+    if isinstance(value, ClaimTypeInputV1):
+        source_ids.update(value.anticipated_source_ids)
+    # Flow-A binding derives this exact deterministic contract and carries it in
+    # the governed Claim candidate. The dormant direct-self-asserted constant has
+    # no production producer or acceptor, so it is intentionally not resolvable.
+    resolvable_contracts: dict[str, str] = {}
+    for source_id in sorted(source_ids, key=lambda item: item.encode("utf-8")):
+        contract = foreign_source_capture_contract(source_id)
+        resolvable_contracts[capture_contract_digest(contract).tagged] = contract.identity.qualified
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
         if not path.startswith("capture-contracts/"):
             continue
         contract = parse_capture_contract(tree[path], path=path)
         accepted_contracts[capture_contract_digest(contract).tagged] = contract.identity.qualified
+    resolvable_contracts.update(accepted_contracts)
 
     policy = (
         value.evidence_admission_policy
@@ -168,7 +219,7 @@ def lint_claim_type_input(
         raw_digests = raw_rule.get("capture_contract_digests", [])
         digests = tuple(item for item in raw_digests if isinstance(item, str))
         admitted.update(digests)
-        if digests and not set(digests).intersection(accepted_contracts):
+        if digests and not set(digests).intersection(resolvable_contracts):
             for digest in digests:
                 warnings.append(
                     ClaimTypeLintWarningV1(
@@ -179,11 +230,11 @@ def lint_claim_type_input(
                         contract_identity="unresolved",
                         contract_digest=digest,
                         replacement_rule_fragment={
-                            "capture_contract_digests": sorted(accepted_contracts)
+                            "capture_contract_digests": sorted(resolvable_contracts)
                         },
                     )
                 )
-    if not admitted.intersection(accepted_contracts) and accepted_contracts and not warnings:
+    if not admitted.intersection(resolvable_contracts) and accepted_contracts and not warnings:
         contract_digest = sorted(accepted_contracts)[0]
         warnings.append(
             ClaimTypeLintWarningV1(
@@ -194,9 +245,6 @@ def lint_claim_type_input(
                 replacement_rule_fragment={"capture_contract_digests": [contract_digest]},
             )
         )
-    source_ids = set(anticipated_source_ids)
-    if isinstance(value, ClaimTypeInputV1):
-        source_ids.update(value.anticipated_source_ids)
     for source_id in sorted(source_ids, key=lambda item: item.encode("utf-8")):
         contract = foreign_source_capture_contract(source_id)
         contract_digest = capture_contract_digest(contract).tagged
@@ -222,6 +270,7 @@ __all__ = [
     "ClaimTypeInputV1",
     "ClaimTypeLintWarningV1",
     "ClaimTypeProposalLintV1",
+    "claim_type_input_template",
     "lint_claim_type_input",
     "lower_claim_type_input",
 ]

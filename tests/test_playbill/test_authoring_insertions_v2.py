@@ -33,6 +33,7 @@ from cruxible_client.contracts.claims import (
     LiteralClaimObject,
     claim_path,
     parse_claim,
+    render_claim,
 )
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBootstrapUnstampedError,
@@ -57,12 +58,17 @@ from cruxible_core.playbill.authoring.insertions import (
     publication_confirmation_matches,
 )
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
-from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.playbill.coverage.adapter import observe_working_source
+from cruxible_core.playbill.coverage.contracts import (
+    CoverageAccessProfileV1,
+    LogicalSourceIdentityV1,
+)
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
+from cruxible_core.service.playbill_coverage import service_resolve_playbill_coverage
 from cruxible_core.service.playbill_next import (
     PlaybillNextRequestV1,
     PlaybillNextSourceObservationV3,
@@ -578,6 +584,16 @@ def test_coordinator_reprepares_after_client_cas_refuses_a_concurrent_edit(
         actor=actor,
         observation=_observation(preimage),
     )
+    assert first.preparation is not None
+    assert first.inserted_block_base64 is not None
+    assert base64.b64decode(first.inserted_block_base64, validate=True) == frame_projection_block(
+        stamp=first.preparation.stamp,
+        body=b"status: ready\n",
+    )
+    malformed = first.model_dump(mode="json")
+    malformed["inserted_block_base64"] = base64.b64encode(b"wrong\n").decode("ascii")
+    with pytest.raises(ValidationError, match="differ from their preparation"):
+        type(first).model_validate(malformed)
     concurrent = b"concurrent heading\n" + preimage
     with pytest.raises(PlaybillInsertionApplyError, match="anchor is stale"):
         apply_playbill_publication(
@@ -874,6 +890,217 @@ def test_only_confirmed_publication_registration_suppresses_next_orphan_repair(
         for item in service_playbill_next(_instance, request=request).items
         if item.reason == "unregistered_projection_block"
     ]
+
+
+def test_confirmed_publication_resolves_exact_then_drifted_coverage(tmp_path: Path) -> None:
+    instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    assert prepared.preparation is not None
+    landed = apply_playbill_publication(
+        preimage,
+        intent_id=intent_id,
+        expectation=prepared.expectation.model_dump(mode="json"),
+        retained_body=b"status: ready\n",
+    )
+    source = LogicalSourceIdentityV1(plane="external", identity="repo.work-items")
+
+    before_confirmation = service_resolve_playbill_coverage(
+        instance,
+        instance_id=instance.descriptor.instance_id,
+        observations=(observe_working_source(source, landed.content),),
+    )
+    assert before_confirmation.summary.candidate == 1
+    assert before_confirmation.summary.exact == 0
+
+    confirmation = publication_confirmation_from_source(
+        intent_id=intent_id,
+        expectation=prepared.expectation,
+        observation=_observation(landed.content),
+    )
+    assert confirmation is not None
+    coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
+
+    exact = service_resolve_playbill_coverage(
+        instance,
+        instance_id=instance.descriptor.instance_id,
+        observations=(observe_working_source(source, landed.content),),
+    )
+    assert exact.summary.exact == 1
+    assert exact.summary.candidate == 0
+    (exact_card,) = exact.spans[0].cards
+    assert exact_card.accepted_source == source
+    assert exact_card.line_overlay is not None
+    assert exact_card.line_overlay.start_byte == prepared.preparation.body_start_byte
+    assert exact_card.line_overlay.end_byte == prepared.preparation.body_end_byte
+
+    changed = landed.content.replace(b"status: ready\n", b"status: stale\n", 1)
+    drifted = service_resolve_playbill_coverage(
+        instance,
+        instance_id=instance.descriptor.instance_id,
+        observations=(observe_working_source(source, changed),),
+    )
+    assert drifted.summary.drifted == 1
+    assert drifted.summary.candidate == 0
+    (drifted_card,) = drifted.spans[0].cards
+    assert drifted_card.expected_commitment_digest == _digest(b"status: ready\n")
+    assert drifted_card.observed_commitment_digest == _digest(b"status: stale\n")
+
+
+def test_confirmed_publication_coverage_fold_is_lock_free_and_nonrecovering(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    assert prepared.preparation is not None
+    landed = apply_playbill_publication(
+        preimage,
+        intent_id=intent_id,
+        expectation=prepared.expectation.model_dump(mode="json"),
+        retained_body=b"status: ready\n",
+    )
+    confirmation = publication_confirmation_from_source(
+        intent_id=intent_id,
+        expectation=prepared.expectation,
+        observation=_observation(landed.content),
+    )
+    assert confirmation is not None
+    coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
+
+    lock_path = coordinator.store.root / ".lock"
+    lock_path.unlink(missing_ok=True)
+
+    def fail_recovery(_store: AuthoringIntentStore) -> None:
+        raise AssertionError("coverage reads must not recover the authoring store")
+
+    monkeypatch.setattr(AuthoringIntentStore, "_recover_creating_directories", fail_recovery)
+    source = LogicalSourceIdentityV1(plane="external", identity="repo.work-items")
+    result = service_resolve_playbill_coverage(
+        instance,
+        instance_id=instance.descriptor.instance_id,
+        observations=(observe_working_source(source, landed.content),),
+    )
+
+    assert result.summary.exact == 1
+    assert not lock_path.exists()
+
+
+def test_confirmed_publication_only_promotes_its_exact_block_occurrence(tmp_path: Path) -> None:
+    instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    assert prepared.preparation is not None
+    landed = apply_playbill_publication(
+        preimage,
+        intent_id=intent_id,
+        expectation=prepared.expectation.model_dump(mode="json"),
+        retained_body=b"status: ready\n",
+    )
+    confirmation = publication_confirmation_from_source(
+        intent_id=intent_id,
+        expectation=prepared.expectation,
+        observation=_observation(landed.content),
+    )
+    assert confirmation is not None
+    coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
+
+    duplicate = b"status: ready\n" + landed.content
+    source = LogicalSourceIdentityV1(plane="external", identity="repo.work-items")
+    result = service_resolve_playbill_coverage(
+        instance,
+        instance_id=instance.descriptor.instance_id,
+        observations=(observe_working_source(source, duplicate),),
+    )
+
+    cards = result.spans[0].cards
+    assert sorted(card.match_state for card in cards) == ["candidate", "exact"]
+    exact_card = next(card for card in cards if card.match_state == "exact")
+    candidate_card = next(card for card in cards if card.match_state == "candidate")
+    assert exact_card.line_overlay != candidate_card.line_overlay
+
+
+@pytest.mark.parametrize("claim_mutation", ["retired", "restated"])
+def test_confirmed_publication_never_promotes_a_nonmatching_live_claim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    claim_mutation: str,
+) -> None:
+    instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    assert prepared.preparation is not None
+    landed = apply_playbill_publication(
+        preimage,
+        intent_id=intent_id,
+        expectation=prepared.expectation.model_dump(mode="json"),
+        retained_body=b"status: ready\n",
+    )
+    confirmation = publication_confirmation_from_source(
+        intent_id=intent_id,
+        expectation=prepared.expectation,
+        observation=_observation(landed.content),
+    )
+    assert confirmation is not None
+    bound = coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
+    assert bound.expectation.state == "bound"
+
+    claim_path_value = claim_path(bound.expectation.claim_identity)
+    coordinate = instance.accepted_coordinate()
+    accepted_tree = instance.tree_at(coordinate.git_oid)
+    accepted = parse_claim(accepted_tree[claim_path_value], path=claim_path_value)
+    if claim_mutation == "retired":
+        changed = accepted.model_copy(
+            update={"lifecycle": accepted.lifecycle.model_copy(update={"state": "retired"})}
+        )
+    else:
+        changed = accepted.model_copy(
+            update={
+                "statement": accepted.statement.model_copy(
+                    update={
+                        "object": accepted.statement.object.model_copy(
+                            update={"value": "a different accepted statement"}
+                        )
+                    }
+                )
+            }
+        )
+    changed_tree = {**accepted_tree, claim_path_value: render_claim(changed)}
+    original_tree_at = instance.tree_at
+    monkeypatch.setattr(
+        instance,
+        "tree_at",
+        lambda oid: changed_tree if oid == coordinate.git_oid else original_tree_at(oid),
+    )
+
+    source = LogicalSourceIdentityV1(plane="external", identity="repo.work-items")
+    result = service_resolve_playbill_coverage(
+        instance,
+        instance_id=instance.descriptor.instance_id,
+        observations=(observe_working_source(source, landed.content),),
+    )
+    assert result.summary.exact == 0
 
 
 def test_prepared_then_abandoned_expectation_retains_terminal_tombstone_shape(

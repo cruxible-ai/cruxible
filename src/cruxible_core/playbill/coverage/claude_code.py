@@ -85,6 +85,10 @@ TOOL_KINDS: dict[str, HarnessToolKindV1] = {
 ANNOTATABLE_TOOLS: frozenset[str] = frozenset({"Grep"})
 
 
+class PostToolUseResponseError(ValueError):
+    """A recognized PostToolUse event carried no structured tool response."""
+
+
 def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
@@ -170,6 +174,8 @@ def read_post_tool_use_event(
     tool_name = payload.get("tool_name")
     if not isinstance(tool_name, str) or tool_name not in TOOL_KINDS:
         return None
+    if tool_name in ANNOTATABLE_TOOLS and not isinstance(payload.get("tool_response"), dict):
+        raise PostToolUseResponseError("recognized PostToolUse tool_response must be an object")
 
     tool_input = _mapping(payload.get("tool_input"))
     response = _mapping(payload.get("tool_response"))

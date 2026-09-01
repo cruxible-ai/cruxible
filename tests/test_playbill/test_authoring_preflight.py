@@ -133,7 +133,11 @@ def _self_source_payload(*, insertion_target: object | None = None) -> ClaimAuth
     )
 
 
-def _working_payload(*, occurrence_count: int) -> ClaimAuthoringPayloadV1:
+def _working_payload(
+    *,
+    occurrence_count: int,
+    selected_occurrence: int | None = None,
+) -> ClaimAuthoringPayloadV1:
     selected = b"status: ready"
     digest = "sha256:" + hashlib.sha256(selected).hexdigest()
     return ClaimAuthoringPayloadV1(
@@ -152,6 +156,7 @@ def _working_payload(*, occurrence_count: int) -> ClaimAuthoringPayloadV1:
                 start_byte=0,
                 end_byte=len(selected),
                 observed_occurrence_count=occurrence_count,
+                selected_occurrence=selected_occurrence,
             ),
         ),
         citation_role="evidence",
@@ -223,6 +228,25 @@ def test_preflight_returns_independent_refusals_in_one_frontier(tmp_path: Path) 
         item.repairs or item.disposition in {"wait", "terminal"}
         for item in result.frontier.diagnostics
     )
+
+
+def test_preflight_accepts_a_client_selected_occurrence_from_multiple_matches(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    intent = coordinator.create(
+        actor=actor,
+        payload=_working_payload(occurrence_count=2, selected_occurrence=2),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    result = coordinator.preflight(intent.intent_id, actor=actor)
+
+    assert result.verdict == "passed"
+    assert result.frontier.diagnostics == ()
 
 
 def test_preflight_refuses_an_actor_absent_from_the_principal_registry(

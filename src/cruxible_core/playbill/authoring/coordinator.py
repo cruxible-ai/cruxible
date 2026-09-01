@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime
@@ -39,6 +40,7 @@ from cruxible_client.contracts.authoring.models import (
     PreflightResultV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
+    PublicationPreparationV2,
     PublicationPrepareWarningV1,
     PublicationSourceObservationV2,
     SelfSourceBodyV1,
@@ -150,6 +152,21 @@ def _rebase_operation_key(
             "next_base_coordinate": next_coordinate.model_dump(mode="json"),
         },
     ).tagged
+
+
+def _rendered_publication_block(
+    intent: AuthoringIntentV1,
+    preparation: PublicationPreparationV2 | None,
+) -> str | None:
+    if preparation is None:
+        return None
+    payload = intent.payload
+    if not isinstance(payload, ClaimAuthoringPayloadV1) or not isinstance(
+        payload.source, SelfSourceBodyV1
+    ):
+        raise InsertionProtocolError("publication intent lost its Flow-B self-source")
+    framed = build_publication_preparation(preparation, body=payload.source.content)
+    return base64.b64encode(framed).decode("ascii")
 
 
 @dataclass(frozen=True)
@@ -835,6 +852,10 @@ class AuthoringIntentCoordinator:
                 intent=current,
                 expectation=expectation,
                 preparation=expectation.preparation,
+                inserted_block_base64=_rendered_publication_block(
+                    current,
+                    expectation.preparation,
+                ),
             )
         if expectation.state in {"expired", "claim_currency_changed", "abandoned"}:
             replayed = self.store.operation_result(
@@ -874,6 +895,10 @@ class AuthoringIntentCoordinator:
                 intent=replayed,
                 expectation=replayed_expectation,
                 preparation=replayed_expectation.preparation,
+                inserted_block_base64=_rendered_publication_block(
+                    replayed,
+                    replayed_expectation.preparation,
+                ),
             )
         evaluation_time = self.clock()
         if exact is not None:
@@ -906,6 +931,10 @@ class AuthoringIntentCoordinator:
                 intent=bound,
                 expectation=bound_expectation,
                 preparation=bound_expectation.preparation,
+                inserted_block_base64=_rendered_publication_block(
+                    bound,
+                    bound_expectation.preparation,
+                ),
             )
 
         terminal_state = self._publication_guard_state(
@@ -929,6 +958,10 @@ class AuthoringIntentCoordinator:
                 intent=terminal,
                 expectation=terminal_expectation,
                 preparation=terminal_expectation.preparation,
+                inserted_block_base64=_rendered_publication_block(
+                    terminal,
+                    terminal_expectation.preparation,
+                ),
             )
         current_claim = self._current_claim(current)
         if current_claim is None:
@@ -978,6 +1011,10 @@ class AuthoringIntentCoordinator:
             intent=prepared,
             expectation=prepared_expectation,
             preparation=prepared_expectation.preparation,
+            inserted_block_base64=_rendered_publication_block(
+                prepared,
+                prepared_expectation.preparation,
+            ),
             warnings=warnings,
         )
 

@@ -47,7 +47,9 @@ def test_public_example_vocabulary_exactly_matches_authoring_input_examples() ->
 def test_claim_type_uses_typed_proposal_input_not_a_coordinator_example() -> None:
     assert "claim-type" not in get_args(contracts.PlaybillAuthoringExampleName)
     assert "ClaimType" not in tool_description("cruxible_playbill_authoring_example")
-    assert "ClaimTypeInputV1" in tool_description("cruxible_playbill_propose_claim_type")
+    description = tool_description("cruxible_playbill_propose_claim_type")
+    assert "ClaimTypeInputV1" in description
+    assert "cruxible playbill claim-type propose --template" in description
 
 
 def test_attestation_door_example_hints_have_mcp_client_parity() -> None:

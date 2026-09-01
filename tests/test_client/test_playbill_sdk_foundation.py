@@ -9,6 +9,7 @@ import pytest
 from cruxible_client.authoring.sdk_types import Duration, InsertionOperation
 from cruxible_client.authoring.selectors import WorkspaceSources
 from cruxible_client.authoring.workspace import observe_playbill_next_workspace
+from cruxible_client.contracts.source_catalog import SourceCatalog
 
 
 def _catalog(path: Path) -> None:
@@ -78,6 +79,48 @@ def test_selector_refuses_ambiguous_and_unmapped_paths(tmp_path: Path) -> None:
         workspace.select(source).anchor("same")
     with pytest.raises(ValueError, match="maps to 0 logical sources"):
         workspace.select("corpus/other.md")
+
+
+def test_source_catalog_accepts_unambiguous_entry_order_and_canonicalizes_it(
+    tmp_path: Path,
+) -> None:
+    _catalog(tmp_path)
+    catalog_path = tmp_path / ".playbill" / "sources.yaml"
+    first = catalog_path.read_text(encoding="utf-8").split("entries:\n", maxsplit=1)[1]
+    second = first.replace("corpus.runbook", "alpha.runbook").replace(
+        "document_id: runbook", "document_id: alpha-runbook"
+    )
+    catalog_path.write_text(
+        "tag: playbill-source-catalog-v1\ncatalog_kind: portable\nentries:\n" + first + second,
+        encoding="utf-8",
+    )
+
+    loaded = WorkspaceSources(tmp_path).catalog
+
+    assert [entry.name for entry in loaded.entries] == ["alpha.runbook", "corpus.runbook"]
+    assert SourceCatalog.model_validate(loaded.model_dump(mode="json")) == loaded
+
+
+def test_source_catalog_validation_refusal_has_stable_paths_without_raw_pydantic_dump(
+    tmp_path: Path,
+) -> None:
+    _catalog(tmp_path)
+    catalog_path = tmp_path / ".playbill" / "sources.yaml"
+    catalog_path.write_text(
+        catalog_path.read_text(encoding="utf-8").replace(
+            "required_tier: governed_write", "required_tier: impossible"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError) as caught:
+        WorkspaceSources(tmp_path)
+
+    refusal = str(caught.value)
+    assert "$.entries[0].required_tier" in refusal
+    assert "Input should be" in refusal
+    assert "input_value" not in refusal
+    assert "errors.pydantic.dev" not in refusal
 
 
 def test_next_workspace_observes_confined_whole_source_bytes(tmp_path: Path) -> None:

@@ -61,13 +61,17 @@ def test_refused_intent_rebases_without_changing_authoring_identity(tmp_path: Pa
     _seed_claim_surface(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
+    payload = _working_payload(occurrence_count=2)
     created = coordinator.create(
         actor=actor,
-        payload=_working_payload(occurrence_count=2),
+        payload=payload,
         canonical_timestamp=TIMESTAMP,
     ).intent
     refused = coordinator.preflight(created.intent_id, actor=actor)
     assert refused.verdict == "refused"
+    assert "playbill.authoring.working_selection_ambiguous" in {
+        diagnostic.code for diagnostic in refused.frontier.diagnostics
+    }
     before = coordinator.get(created.intent_id, actor=actor).intent
     assert before.candidate_status.state == "preflight_refused"
 
