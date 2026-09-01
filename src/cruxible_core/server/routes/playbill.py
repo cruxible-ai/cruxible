@@ -583,7 +583,7 @@ def retire_claim(
     "/{instance_id}/playbill/claim-attestations",
     response_model=ClaimAttestationAppendResultV1,
 )
-async def append_claim_attestation(
+def append_claim_attestation(
     instance_id: str,
     req: ClaimAttestationAppendRequestV1,
 ) -> ClaimAttestationAppendResultV1:
@@ -1004,7 +1004,7 @@ def bind_procedure(
     "/{instance_id}/playbill/procedures/{name}/runs",
     response_model=contracts.PlaybillProcedureRunState,
 )
-async def run_procedure(
+def run_procedure(
     instance_id: str,
     name: str,
     req: ProcedureRunRequestV2,

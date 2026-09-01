@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import subprocess
+from inspect import iscoroutinefunction
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,7 @@ from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry, reset_registry
+from cruxible_core.server.routes.playbill import append_claim_attestation, run_procedure
 
 
 @pytest.fixture
@@ -66,6 +68,11 @@ def test_host_allocation_is_idempotent_and_creates_no_semantic_state(
     assert repeated.status_code == 200, repeated.text
     assert repeated.json()["status"] == "already_exists"
     assert not Path(record.location).exists()
+
+
+def test_git_advertising_write_routes_run_outside_the_event_loop() -> None:
+    assert not iscoroutinefunction(append_claim_attestation)
+    assert not iscoroutinefunction(run_procedure)
 
 
 def test_remote_http_host_cannot_attach_a_daemon_local_workspace(
