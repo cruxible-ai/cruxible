@@ -24,7 +24,11 @@ from cruxible_client.contracts.documents import (
 from cruxible_client.contracts.errors import ProjectionCoordinateError, ProjectionFormatError
 from cruxible_core.playbill.assembler import ProjectionAssembler
 from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
-from cruxible_core.playbill.compiler import PB_B_COMPILER, PB_C_COMPILER
+from cruxible_core.playbill.compiler import (
+    PB_B_COMPILER,
+    PB_C_COMPILER,
+    artifact_codec_for_compiler,
+)
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import ProvisionalProjectionCoordinate
 from cruxible_core.playbill.projection_documents import (
@@ -76,7 +80,11 @@ def _shell(body_digest: str) -> DocumentShell:
 def _render(shell: DocumentShell) -> bytes:
     """Render bytes selected by the historical PB-C compiler coordinate."""
 
-    return artifact_bytes_for_path(render_document(shell), DOCUMENT_PATH)
+    return artifact_bytes_for_path(
+        render_document(shell),
+        DOCUMENT_PATH,
+        codec=artifact_codec_for_compiler(PB_C_COMPILER),
+    )
 
 
 def _candidate_coordinate(
