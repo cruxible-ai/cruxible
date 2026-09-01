@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -63,6 +63,9 @@ from cruxible_core.playbill.procedures.terminal_dependencies import (
     TAINT_UNPROMOTED_EXHAUST,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
+
+if TYPE_CHECKING:
+    from cruxible_core.playbill.procedures.execution import ProcedureRunAdmissionV1
 
 TerminalEgressKindV1 = Literal[
     "emit_capture",
@@ -579,8 +582,12 @@ def terminal_operation_key(request: TerminalEgressRequestV1) -> str:
         "playbill-terminal-operation-key-v1",
         {
             "admission_binding_digest": request.admission_binding_digest,
+            "kind": request.kind,
             "node_id": request.node_id,
             "item_manifest_digests": [item.manifest_digest for item in request.items],
+            "target_paths": list(getattr(request, "target_paths", ())),
+            "procedure_mandate_digest": getattr(request, "procedure_mandate_digest", None),
+            "procedure_artifact_digest": request.procedure_artifact_digest,
         },
     ).tagged
 
@@ -656,6 +663,8 @@ class TerminalEgressRequestV2(TerminalEgressRequestV1):
                 raise ValueError("Capture producer receipt does not reproduce its egress request")
         if (self.procedure_mandate_digest is not None) != effectful:
             raise ValueError("effectful terminal egress requires an exact Procedure mandate")
+        if self.mandate_pin is not None or self.mandate_basis_digests:
+            raise ValueError("v2 terminal egress refuses inherited StandingMandate authority")
         expected_key = terminal_operation_key(self) if effectful else None
         if self.operation_key != expected_key:
             raise ValueError("terminal operation key does not reproduce from the request")
@@ -666,34 +675,124 @@ class TerminalEgressRequestV2(TerminalEgressRequestV1):
         return self
 
 
+class TerminalAuthorityRefusal(TerminalEgressError):
+    """Repair-carrying refusal for the dark Procedure authority boundary."""
+
+    def __init__(
+        self,
+        codes: str | tuple[str, ...],
+        message: str,
+        *,
+        request: TerminalEgressRequestV1,
+        repair_kind: Literal["create_mandate", "author_successor", "rebind_admission"],
+        repair_command: str,
+    ) -> None:
+        normalized = (codes,) if isinstance(codes, str) else tuple(codes)
+        if not normalized:
+            raise ValueError("terminal authority refusal requires at least one code")
+        self.codes = normalized
+        self.code = normalized[0]
+        self.procedure_name = request.procedure_identity.name
+        self.required_rung = request.required_rung
+        self.target_namespace = tuple(getattr(request, "target_paths", ()))
+        self.repair_kind = repair_kind
+        self.repair_command = repair_command
+        super().__init__(
+            f"{', '.join(normalized)}: {message} "
+            f"Procedure={self.procedure_name!r}; required_rung={self.required_rung}; "
+            f"target_namespace={list(self.target_namespace)!r}. Repair: {repair_command}"
+        )
+
+
+PROCEDURE_MANDATE_REPAIR_COMMAND = "cruxible playbill authoring create --example procedure-mandate"
+PROCEDURE_ADMISSION_REPAIR = "Rebuild the terminal request from its exact admitted run."
+
+
+def _validated_run_admission(
+    request: TerminalEgressRequestV1,
+    admission: ProcedureRunAdmissionV1,
+) -> ProcedureRunAdmissionV1:
+    """Revalidate and bind the exact admission before using its authority fields."""
+
+    from cruxible_core.playbill.procedures.execution import (
+        ProcedureRunAdmissionV1,
+        procedure_admission_digest,
+    )
+
+    try:
+        if not isinstance(admission, ProcedureRunAdmissionV1):
+            raise TypeError("not a Procedure admission")
+        validated = type(admission).model_validate(admission.model_dump(mode="python"))
+    except (TypeError, ValueError) as exc:
+        raise TerminalAuthorityRefusal(
+            "procedure_authority_admission_invalid",
+            "The authority source is not a valid admitted Procedure run.",
+            request=request,
+            repair_kind="rebind_admission",
+            repair_command=PROCEDURE_ADMISSION_REPAIR,
+        ) from exc
+    common_matches = (
+        validated.admission_binding_digest == procedure_admission_digest(validated)
+        and request.admission_binding_digest == validated.admission_binding_digest
+        and request.run_id == validated.run_id
+        and request.accepted_coordinate == validated.accepted_coordinate
+        and request.procedure_identity == validated.procedure_identity
+        and request.procedure_artifact_digest == validated.procedure_artifact_digest
+        and request.actor_context == validated.actor_context
+        and request.prepared_at >= validated.admitted_at
+    )
+    v2_matches = not isinstance(request, TerminalEgressRequestV2) or (
+        request.requested_authority == validated.hard_caps
+        and request.evaluation_time == validated.admitted_at
+    )
+    if not common_matches or not v2_matches:
+        raise TerminalAuthorityRefusal(
+            "procedure_authority_admission_mismatch",
+            "The terminal request does not reproduce its admission-committed authority and time.",
+            request=request,
+            repair_kind="rebind_admission",
+            repair_command=PROCEDURE_ADMISSION_REPAIR,
+        )
+    return validated
+
+
 def build_terminal_egress_request_v2(
     request: TerminalEgressRequestV1,
     *,
+    admission: ProcedureRunAdmissionV1,
     procedure_mandate_digest: str | None,
     calibration_reading_digests: tuple[str, ...],
-    requested_authority: ProcedureHardCapsV3,
     target_paths: tuple[str, ...],
-    evaluation_time: datetime,
 ) -> TerminalEgressRequestV2:
-    """Successor a prepared v1 request without reinterpreting its fields."""
+    """Successor a prepared request from its exact admission, never caller authority."""
 
-    payload = request.model_dump(mode="python")
-    payload.pop("tag")
-    return TerminalEgressRequestV2(
+    validated_admission = _validated_run_admission(request, admission)
+    payload = {
+        field_name: getattr(request, field_name)
+        for field_name in TerminalEgressRequestV1.model_fields
+        if field_name != "tag"
+    }
+    payload["mandate_pin"] = None
+    payload["mandate_basis_digests"] = ()
+    provisional = TerminalEgressRequestV2.model_construct(
         **payload,
         procedure_mandate_digest=procedure_mandate_digest,
         calibration_reading_digests=calibration_reading_digests,
-        requested_authority=requested_authority,
+        requested_authority=validated_admission.hard_caps,
         target_paths=target_paths,
-        evaluation_time=evaluation_time,
-        operation_key=(
-            terminal_operation_key(request)
-            if request.kind in {"propose_change_set", "mandate_settlement"}
-            else None
-        ),
+        evaluation_time=validated_admission.admitted_at,
+        operation_key=None,
         producer_receipt=(
             producer_receipt_for_request(request) if request.kind == "emit_capture" else None
         ),
+    )
+    operation_key = (
+        terminal_operation_key(provisional)
+        if request.kind in {"propose_change_set", "mandate_settlement"}
+        else None
+    )
+    return TerminalEgressRequestV2.model_validate(
+        provisional.model_copy(update={"operation_key": operation_key}).model_dump(mode="python")
     )
 
 
@@ -727,27 +826,21 @@ class TerminalEgressReceiptV2(TerminalEgressReceiptV1):
         return self
 
 
-class TerminalAuthorityRefusal(TerminalEgressError):
-    def __init__(self, code: str, message: str, *, repair_command: str) -> None:
-        self.code = code
-        self.repair_command = repair_command
-        super().__init__(f"{code}: {message} Repair: {repair_command}")
-
-
-PROCEDURE_MANDATE_REPAIR_COMMAND = "cruxible playbill authoring create --example procedure-mandate"
-
-
 def require_procedure_mandate(
     request: TerminalEgressRequestV2,
     *,
+    admission: ProcedureRunAdmissionV1,
     accepted_mandates: Mapping[str, ProcedureMandateV1],
 ) -> ProcedureMandateV1:
     """Resolve and evaluate authority before any effectful adapter is invoked."""
 
+    _validated_run_admission(request, admission)
     if request.kind not in {"propose_change_set", "mandate_settlement"}:
         raise TerminalAuthorityRefusal(
             "procedure_mandate_not_applicable",
             "Only rung-2 and rung-3 terminals consume Procedure mandates.",
+            request=request,
+            repair_kind="rebind_admission",
             repair_command="Use the terminal's declared rung.",
         )
     digest = request.procedure_mandate_digest
@@ -756,6 +849,8 @@ def require_procedure_mandate(
         raise TerminalAuthorityRefusal(
             "procedure_mandate_required",
             "An exact accepted Procedure mandate is required before effect.",
+            request=request,
+            repair_kind="create_mandate",
             repair_command=PROCEDURE_MANDATE_REPAIR_COMMAND,
         )
     assert digest is not None
@@ -772,10 +867,11 @@ def require_procedure_mandate(
         ),
     )
     if evaluation.verdict == "refused":
-        code = evaluation.refusal_codes[0]
         raise TerminalAuthorityRefusal(
-            code,
+            evaluation.refusal_codes,
             "The accepted Procedure mandate does not cover this terminal request.",
+            request=request,
+            repair_kind="author_successor",
             repair_command=PROCEDURE_MANDATE_REPAIR_COMMAND,
         )
     return mandate
@@ -827,9 +923,9 @@ def verify_terminal_egress_receipt(
     for item, child in zip(request.items, receipt.children, strict=True):
         if child.item_key != item.item_key:
             raise TerminalEgressError("terminal egress receipt renames a child item")
-    if isinstance(request, TerminalEgressRequestV2):
-        if not isinstance(receipt, TerminalEgressReceiptV2):
-            raise TerminalEgressError("v2 terminal egress requires a v2 receipt")
+    if isinstance(receipt, TerminalEgressReceiptV2):
+        if not isinstance(request, TerminalEgressRequestV2):
+            raise TerminalEgressError("a v2 terminal receipt requires its exact v2 request")
         expected_producer = (
             None
             if request.producer_receipt is None
@@ -839,6 +935,8 @@ def verify_terminal_egress_receipt(
             raise TerminalEgressError("Capture egress did not bind its exact producer receipt")
         if receipt.operation_key != request.operation_key:
             raise TerminalEgressError("effectful egress did not reproduce its operation key")
+    elif isinstance(request, TerminalEgressRequestV2):
+        raise TerminalEgressError("v2 terminal egress requires a v2 receipt")
 
 
 class CaptureTerminalEgressSink:

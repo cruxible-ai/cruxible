@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Literal, Protocol
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -26,6 +27,9 @@ from cruxible_core.playbill.proposals import (
     ProposalAdmissionRequest,
     ProposalService,
 )
+
+if TYPE_CHECKING:
+    from cruxible_core.playbill.procedures.execution import ProcedureRunAdmissionV1
 
 
 class EffectfulTerminalError(PlaybillFormatError):
@@ -85,12 +89,28 @@ class SettlementDoorResultV1(_StrictTerminalServiceModel):
 class SettlementDoorProtocol(Protocol):
     """Adapter boundary whose implementation must call the sole activation service."""
 
+    def inspect_exact_candidate(
+        self,
+        *,
+        target: SettlementTargetV1,
+    ) -> SettlementCandidateInspection: ...
+
     def activate_exact_candidate(
         self,
         *,
         target: SettlementTargetV1,
         actor_id: str,
     ) -> SettlementDoorResultV1: ...
+
+
+@dataclass(frozen=True)
+class SettlementCandidateInspection:
+    """Read-only candidate facts derived by the sole settlement door."""
+
+    proposal_id: str
+    candidate_digest: str
+    base_semantic_root: str
+    target_paths: tuple[str, ...]
 
 
 def _changed_paths(base: Mapping[str, bytes], candidate: Mapping[str, bytes]) -> tuple[str, ...]:
@@ -120,6 +140,7 @@ class ProposalTerminalAdapter:
         self,
         *,
         request: TerminalEgressRequestV2,
+        admission: ProcedureRunAdmissionV1,
         candidate_tree: Mapping[str, bytes],
         accepted_mandates: Mapping[str, ProcedureMandateV1],
     ) -> TerminalEgressReceiptV2:
@@ -134,6 +155,7 @@ class ProposalTerminalAdapter:
         # create a ref, write admission evidence, or commit proposal bytes.
         require_procedure_mandate(
             request,
+            admission=admission,
             accepted_mandates=accepted_mandates,
         )
         actor_id = request.actor_context.actor_id
@@ -191,17 +213,34 @@ class SettlementTerminalAdapter:
         self,
         *,
         request: TerminalEgressRequestV2,
+        admission: ProcedureRunAdmissionV1,
         accepted_mandates: Mapping[str, ProcedureMandateV1],
     ) -> TerminalEgressReceiptV2:
         if request.kind != "mandate_settlement" or len(request.items) != 1:
             raise EffectfulTerminalError(
                 "settlement adapter serves one mandate_settlement target only"
             )
+        target = SettlementTargetV1.model_validate(request.items[0].value)
+        if target.base_semantic_root != request.accepted_coordinate.semantic_root:
+            raise EffectfulTerminalError(
+                "settlement_base_semantic_root_mismatch: target names another accepted base"
+            )
+        inspection = self.door.inspect_exact_candidate(target=target)
+        if (
+            inspection.proposal_id != target.proposal_id
+            or inspection.candidate_digest != target.candidate_digest
+            or inspection.base_semantic_root != target.base_semantic_root
+            or inspection.target_paths != request.target_paths
+        ):
+            raise EffectfulTerminalError(
+                "settlement_candidate_scope_mismatch: target paths are not the exact "
+                "candidate delta"
+            )
         require_procedure_mandate(
             request,
+            admission=admission,
             accepted_mandates=accepted_mandates,
         )
-        target = SettlementTargetV1.model_validate(request.items[0].value)
         result = self.door.activate_exact_candidate(
             target=target,
             actor_id=request.actor_context.actor_id,
@@ -235,6 +274,7 @@ class SettlementTerminalAdapter:
 __all__ = [
     "EffectfulTerminalError",
     "ProposalTerminalAdapter",
+    "SettlementCandidateInspection",
     "SettlementDoorProtocol",
     "SettlementDoorResultV1",
     "SettlementTargetV1",

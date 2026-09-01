@@ -173,10 +173,6 @@ class ProcedureBindingGraphV4LineClosureRequired(ProcedureSurfaceError):
     code = "playbill.procedure.binding.graph_v4_line_closure_required"
 
 
-class ProcedureEffectfulUnsupported(ProcedureSurfaceError):
-    code = "playbill.procedure.run.effectful_unsupported"
-
-
 class ProcedureRunNotCurrent(ProcedureSurfaceError):
     code = "playbill.procedure.run.not_current"
 
