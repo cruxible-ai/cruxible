@@ -95,11 +95,12 @@ class ServiceAttestationClient:
     def server_info(self) -> contracts.ServerInfoResult:
         return contracts.ServerInfoResult(
             server_required=False,
-            state_dir=str(self.state_dir),
+            state_root=str(self.state_dir),
             version="0.5.0",
             instance_count=1,
             auth_enabled=False,
             auth_required=False,
+            provider_lane=contracts.ProviderLaneStatusV1(state="available", code=None, detail=None),
         )
 
 

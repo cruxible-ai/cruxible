@@ -117,6 +117,9 @@ def test_status_reports_daemon_metadata(monkeypatch, runner: CliRunner) -> None:
                 instance_count=3,
                 auth_enabled=True,
                 auth_required=True,
+                provider_lane=contracts.ProviderLaneStatusV1(
+                    state="available", code=None, detail=None
+                ),
             )
 
     _patch_client(monkeypatch, StubClient())
@@ -129,6 +132,7 @@ def test_status_reports_daemon_metadata(monkeypatch, runner: CliRunner) -> None:
     assert "Instances: 3" in result.output
     assert "Auth enabled: yes" in result.output
     assert "Auth required: yes" in result.output
+    assert "Provider lane: available" in result.output
 
 
 def test_status_json_includes_transport(monkeypatch, runner: CliRunner) -> None:
@@ -141,6 +145,9 @@ def test_status_json_includes_transport(monkeypatch, runner: CliRunner) -> None:
                 instance_count=1,
                 auth_enabled=False,
                 auth_required=False,
+                provider_lane=contracts.ProviderLaneStatusV1(
+                    state="available", code=None, detail=None
+                ),
             )
 
     _patch_client(monkeypatch, StubClient())
@@ -151,6 +158,37 @@ def test_status_json_includes_transport(monkeypatch, runner: CliRunner) -> None:
     assert payload["version"] == "0.2.0"
     assert payload["instance_count"] == 1
     assert payload["transport"] == "http://server"
+    assert payload["provider_lane"] == {
+        "tag": "cruxible-provider-lane-status-v1",
+        "state": "available",
+        "code": None,
+        "detail": None,
+    }
+
+
+def test_status_reports_typed_provider_lane_degradation(monkeypatch, runner: CliRunner) -> None:
+    class StubClient:
+        def server_info(self) -> contracts.ServerInfoResult:
+            return contracts.ServerInfoResult(
+                server_required=False,
+                state_root="/srv/state",
+                version="0.2.0",
+                instance_count=1,
+                auth_enabled=False,
+                auth_required=False,
+                provider_lane=contracts.ProviderLaneStatusV1(
+                    state="unavailable",
+                    code="provider_runtime_recovery_failed",
+                    detail="journal recovery failed",
+                ),
+            )
+
+    _patch_client(monkeypatch, StubClient())
+    result = runner.invoke(cli, ["--server-url", "http://server", "server", "status"])
+
+    assert result.exit_code == 0, result.output
+    assert "Provider lane: unavailable" in result.output
+    assert "provider_runtime_recovery_failed: journal recovery failed" in result.output
 
 
 @pytest.fixture

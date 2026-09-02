@@ -9,6 +9,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from cruxible_client.contracts import ProviderLaneUnavailableCodeV1
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistrationV1,
     parse_provider_interface,
@@ -44,15 +45,6 @@ from cruxible_core.playbill.provider_process_leases import (
 )
 
 PROVIDER_RUNTIME_CONFIG_PATH = Path("daemon/provider-runtime.json")
-
-ProviderLaneUnavailableCodeV1 = Literal[
-    "provider_process_lease_invalid",
-    "provider_process_lease_missing",
-    "provider_process_lease_echo_failed",
-    "provider_process_lease_echo_mismatch",
-    "provider_process_group_survived_recovery",
-    "provider_runtime_recovery_failed",
-]
 
 
 class _StrictOperationalModel(BaseModel):
@@ -302,6 +294,7 @@ class ProviderRuntimeOperator:
 
     def _begin_invocation(self) -> None:
         with self._lock:
+            self._lazy_rearm_locked()
             if self.unavailable_reason is not None:
                 raise ProviderLocalRuntimeRefused(
                     "provider_unavailable",
@@ -356,9 +349,7 @@ class ProviderRuntimeOperator:
 
 
 class _OperatorBoundProviderRuntimeInvoker:
-    def __init__(
-        self, operator: ProviderRuntimeOperator, delegate: Any
-    ) -> None:
+    def __init__(self, operator: ProviderRuntimeOperator, delegate: Any) -> None:
         self.operator = operator
         self.delegate = delegate
 

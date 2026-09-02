@@ -9,6 +9,7 @@ from typing import get_args
 
 import pytest
 
+from cruxible_client.contracts import ProviderLaneStatusV1
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
@@ -165,6 +166,7 @@ EXPECTED_OPERATIONS = {
     "claim_cites_retired": "playbill.claim.retire",
     "retired_claim_source_stale": "playbill.document.propose",
     "unregistered_projection_block": "playbill.document.propose",
+    "provider_lane_unavailable": "hand_edit",
 }
 
 
@@ -1181,6 +1183,29 @@ def _unregistered_projection_block(root: Path, _monkeypatch: pytest.MonkeyPatch)
     publication_v2.test_prepared_publication_can_be_abandoned_without_observing_the_source(root)
 
 
+def _provider_lane_unavailable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    instance, _owner = initialize_local(root)
+    request = _request(instance)
+    degraded = service_playbill_next(
+        instance,
+        request=request,
+        provider_lane=ProviderLaneStatusV1(
+            state="unavailable",
+            code="provider_runtime_recovery_failed",
+            detail="operator recovery failed",
+        ),
+    )
+    row = next(item for item in degraded.items if item.reason == "provider_lane_unavailable")
+    assert row.repair.operation == "hand_edit"
+    assert row.repair.command is None
+    repaired = service_playbill_next(
+        instance,
+        request=request,
+        provider_lane=ProviderLaneStatusV1(state="available", code=None, detail=None),
+    )
+    assert all(item.reason != "provider_lane_unavailable" for item in repaired.items)
+
+
 CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("claim_conflicted", None): _claim_conflicted,
     ("claim_uncovered", None): _claim_uncovered,
@@ -1223,6 +1248,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("claim_cites_retired", None): _claim_cites_retired,
     ("retired_claim_source_stale", None): _retired_claim_source_stale,
     ("unregistered_projection_block", None): _unregistered_projection_block,
+    ("provider_lane_unavailable", None): _provider_lane_unavailable,
 }
 
 

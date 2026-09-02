@@ -14,6 +14,7 @@ from cruxible_core import __version__
 from cruxible_core.errors import ConfigError
 from cruxible_core.playbill.workspace_advertisement import workspace_git_object_format
 from cruxible_core.runtime.permissions import check_permission, require_unscoped_operator
+from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.config import (
     get_server_state_root,
     is_server_auth_enabled,
@@ -89,6 +90,9 @@ def server_info() -> contracts.ServerInfoResult:
     check_permission("cruxible_server_info")
     require_unscoped_operator("cruxible_server_info")
     store = get_runtime_credential_store()
+    lane_state, lane_code, lane_detail = (
+        get_playbill_manager().provider_runtime_operator().lane_status()
+    )
     return contracts.ServerInfoResult(
         server_required=is_server_required(),
         state_root=str(get_server_state_root()),
@@ -96,6 +100,11 @@ def server_info() -> contracts.ServerInfoResult:
         instance_count=get_registry().count_instances(),
         auth_enabled=is_server_auth_enabled(),
         auth_required=store.is_auth_required(),
+        provider_lane=contracts.ProviderLaneStatusV1(
+            state=lane_state,
+            code=lane_code,
+            detail=lane_detail,
+        ),
     )
 
 

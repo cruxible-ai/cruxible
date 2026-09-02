@@ -86,6 +86,16 @@ PlaybillNextReason: TypeAlias = Literal[
     "retired_claim_source_stale",
     "unregistered_projection_block",
     "projection_marker_invalid",
+    "provider_lane_unavailable",
+]
+
+ProviderLaneUnavailableCodeV1: TypeAlias = Literal[
+    "provider_process_lease_invalid",
+    "provider_process_lease_missing",
+    "provider_process_lease_echo_failed",
+    "provider_process_lease_echo_mismatch",
+    "provider_process_group_survived_recovery",
+    "provider_runtime_recovery_failed",
 ]
 
 
@@ -122,6 +132,23 @@ class RuntimeCredentialListResult(BaseModel):
     credentials: list[RuntimeCredentialMetadata] = Field(default_factory=list)
 
 
+class ProviderLaneStatusV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["cruxible-provider-lane-status-v1"] = "cruxible-provider-lane-status-v1"
+    state: Literal["available", "unavailable"]
+    code: ProviderLaneUnavailableCodeV1 | None
+    detail: str | None
+
+    @model_validator(mode="after")
+    def _state_matches_reason(self) -> ProviderLaneStatusV1:
+        if self.state == "available" and (self.code is not None or self.detail is not None):
+            raise ValueError("available Provider lane cannot carry a refusal reason")
+        if self.state == "unavailable" and (self.code is None or self.detail is None):
+            raise ValueError("unavailable Provider lane requires a typed code and detail")
+        return self
+
+
 class ServerInfoResult(BaseModel):
     server_required: bool
     state_root: str
@@ -129,6 +156,7 @@ class ServerInfoResult(BaseModel):
     instance_count: int
     auth_enabled: bool
     auth_required: bool
+    provider_lane: ProviderLaneStatusV1
 
 
 class ServerRestartResult(BaseModel):

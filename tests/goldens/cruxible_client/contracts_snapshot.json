@@ -51,7 +51,8 @@
         "claim_cites_retired",
         "retired_claim_source_stale",
         "unregistered_projection_block",
-        "projection_marker_invalid"
+        "projection_marker_invalid",
+        "provider_lane_unavailable"
       ]
     },
     "PlaybillPolicyKind": {
@@ -69,6 +70,16 @@
         "document_activation_policy",
         "procedure_activation_policy",
         "line_trigger_policy"
+      ]
+    },
+    "ProviderLaneUnavailableCodeV1": {
+      "values": [
+        "provider_process_lease_invalid",
+        "provider_process_lease_missing",
+        "provider_process_lease_echo_failed",
+        "provider_process_lease_echo_mismatch",
+        "provider_process_group_survived_recovery",
+        "provider_runtime_recovery_failed"
       ]
     },
     "RuntimeCredentialPermissionMode": {
@@ -25366,6 +25377,141 @@
         "path"
       ]
     },
+    "ProviderLaneStatusV1": {
+      "fields": {
+        "code": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "code",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "provider_process_lease_invalid",
+                  "provider_process_lease_missing",
+                  "provider_process_lease_echo_failed",
+                  "provider_process_lease_echo_mismatch",
+                  "provider_process_group_survived_recovery",
+                  "provider_runtime_recovery_failed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          }
+        },
+        "detail": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "detail",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "state": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "state",
+          "required": true,
+          "schema": {
+            "enum": [
+              "available",
+              "unavailable"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "cruxible-provider-lane-status-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-provider-lane-status-v1",
+            "default": "cruxible-provider-lane-status-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "enum": [
+                  "provider_process_lease_invalid",
+                  "provider_process_lease_missing",
+                  "provider_process_lease_echo_failed",
+                  "provider_process_lease_echo_mismatch",
+                  "provider_process_group_survived_recovery",
+                  "provider_runtime_recovery_failed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "state": {
+            "enum": [
+              "available",
+              "unavailable"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "tag": {
+            "const": "cruxible-provider-lane-status-v1",
+            "default": "cruxible-provider-lane-status-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "code",
+          "detail"
+        ],
+        "title": "ProviderLaneStatusV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "code",
+        "detail",
+        "state"
+      ]
+    },
     "RuntimeCredentialBootstrapResult": {
       "fields": {
         "credential_id": {
@@ -25869,6 +26015,15 @@
             "type": "integer"
           }
         },
+        "provider_lane": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "provider_lane",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ProviderLaneStatusV1"
+          }
+        },
         "server_required": {
           "has_default": false,
           "has_default_factory": false,
@@ -25901,6 +26056,64 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "ProviderLaneStatusV1": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "provider_process_lease_invalid",
+                      "provider_process_lease_missing",
+                      "provider_process_lease_echo_failed",
+                      "provider_process_lease_echo_mismatch",
+                      "provider_process_group_survived_recovery",
+                      "provider_runtime_recovery_failed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Code"
+              },
+              "detail": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Detail"
+              },
+              "state": {
+                "enum": [
+                  "available",
+                  "unavailable"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-provider-lane-status-v1",
+                "default": "cruxible-provider-lane-status-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "code",
+              "detail"
+            ],
+            "title": "ProviderLaneStatusV1",
+            "type": "object"
+          }
+        },
         "properties": {
           "auth_enabled": {
             "title": "Auth Enabled",
@@ -25913,6 +26126,9 @@
           "instance_count": {
             "title": "Instance Count",
             "type": "integer"
+          },
+          "provider_lane": {
+            "$ref": "#/$defs/ProviderLaneStatusV1"
           },
           "server_required": {
             "title": "Server Required",
@@ -25933,7 +26149,8 @@
           "version",
           "instance_count",
           "auth_enabled",
-          "auth_required"
+          "auth_required",
+          "provider_lane"
         ],
         "title": "ServerInfoResult",
         "type": "object"
@@ -25942,6 +26159,7 @@
         "auth_enabled",
         "auth_required",
         "instance_count",
+        "provider_lane",
         "server_required",
         "state_root",
         "version"

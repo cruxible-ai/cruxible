@@ -113,6 +113,7 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "claim_cites_retired",
         "retired_claim_source_stale",
         "unregistered_projection_block",
+        "provider_lane_unavailable",
     }
     assert set(get_args(NextRepairOperation)) == {
         "playbill.authoring.create",
@@ -121,4 +122,5 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "playbill.floor.export",
         "playbill.block.repin",
         "playbill.document.propose",
+        "hand_edit",
     }

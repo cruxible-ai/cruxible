@@ -3361,6 +3361,7 @@ class ProcedureExecutor:
                     cast(ProcedureNodeRefusalCodeV1, outcome.code),
                     outcome.message or "Provider binding refused.",
                     node_id=node_id,
+                    details=outcome.detail,
                 ) from exc
             if outcome.outcome_class == "operational":
                 raise _OperationalFailure(
@@ -3540,6 +3541,7 @@ class ProcedureExecutor:
                     cast(ProcedureNodeRefusalCodeV1, outcome.code),
                     outcome.message or "Provider invocation refused.",
                     node_id=node_id,
+                    details=outcome.detail,
                 )
             if outcome.outcome_class == "operational":
                 raise _OperationalFailure(

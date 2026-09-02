@@ -102,6 +102,34 @@ def test_next_reason_uses_the_exact_public_closed_vocabulary() -> None:
     assert set(get_args(NextReason)) == set(get_args(contracts.PlaybillNextReason))
 
 
+def test_provider_lane_degradation_is_a_typed_advisory_with_hand_edit_repair(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    result = service_playbill_next(
+        instance,
+        request=PlaybillNextRequestV1(
+            evaluation_time=EVALUATION_TIME,
+            access_profile=_access(),
+        ),
+        provider_lane=contracts.ProviderLaneStatusV1(
+            state="unavailable",
+            code="provider_process_lease_invalid",
+            detail="control socket path is too long",
+        ),
+    )
+
+    row = next(item for item in result.items if item.reason == "provider_lane_unavailable")
+    assert row.severity == "warning"
+    assert row.detail == {
+        "code": "provider_process_lease_invalid",
+        "detail": "control socket path is too long",
+    }
+    assert row.repair.operation == "hand_edit"
+    assert row.repair.target == "daemon/provider-runtime.json"
+    assert row.repair.command is None
+
+
 def test_workspace_drift_is_verified_against_the_accepted_citation(
     tmp_path: Path,
 ) -> None:

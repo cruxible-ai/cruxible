@@ -1373,9 +1373,17 @@ def playbill_next(
     request: PlaybillNextRequestV1 | Mapping[str, object],
 ) -> contracts.PlaybillNextResult:
     check_permission("cruxible_playbill_next", instance_id=instance_id)
+    lane_state, lane_code, lane_detail = (
+        get_playbill_manager().provider_runtime_operator().lane_status()
+    )
     result = service_playbill_next(
         get_playbill_manager().get(instance_id),
         request=validate_playbill_next_request(request),
+        provider_lane=contracts.ProviderLaneStatusV1(
+            state=lane_state,
+            code=lane_code,
+            detail=lane_detail,
+        ),
     )
     return contracts.PlaybillNextResult.model_validate(result.model_dump(mode="json"))
 

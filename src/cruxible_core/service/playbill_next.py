@@ -12,7 +12,7 @@ from typing import Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from cruxible_client.contracts import PlaybillNextReason
+from cruxible_client.contracts import PlaybillNextReason, ProviderLaneStatusV1
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
     Sha256Value,
@@ -136,6 +136,7 @@ NextRepairOperation = Literal[
     "playbill.floor.export",
     "playbill.block.repin",
     "playbill.document.propose",
+    "hand_edit",
 ]
 
 _SEVERITY_RANK: dict[NextSeverity, int] = {"blocking": 0, "repair": 1, "warning": 2}
@@ -640,6 +641,8 @@ def _repair_command(
 ) -> str | None:
     """Compose the runnable invocation for one repair operation."""
 
+    if operation == "hand_edit":
+        return None
     parts = ["cruxible", _REPAIR_COMMAND_PATHS[operation]]
     values = arguments if isinstance(arguments, Mapping) else {}
     if operation == "playbill.block.repin":
@@ -3050,6 +3053,7 @@ def service_playbill_next(
     instance: PlaybillInstance,
     *,
     request: PlaybillNextRequestAny,
+    provider_lane: ProviderLaneStatusV1 | None = None,
 ) -> PlaybillNextResultV1 | PlaybillNextResultV2:
     """Fold accepted state and explicit client observations into one repair queue."""
 
@@ -3128,6 +3132,29 @@ def service_playbill_next(
                     coordinate=coordinate,
                     access_profile=request.access_profile,
                     observation=request.workspace_observation,
+                ),
+                *(
+                    (
+                        _item(
+                            severity="warning",
+                            reason="provider_lane_unavailable",
+                            subject_identity="provider-runtime",
+                            detail={
+                                "code": provider_lane.code,
+                                "detail": provider_lane.detail,
+                            },
+                            repair=PlaybillNextRepairV1(
+                                operation="hand_edit",
+                                target="daemon/provider-runtime.json",
+                                required_change=(
+                                    "repair_provider_runtime_configuration_or_use_a_shorter_"
+                                    "state_root_then_retry"
+                                ),
+                            ),
+                        ),
+                    )
+                    if provider_lane is not None and provider_lane.state == "unavailable"
+                    else ()
                 ),
             ),
             key=_item_sort_key,
