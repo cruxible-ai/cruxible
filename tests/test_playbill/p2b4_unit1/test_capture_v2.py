@@ -197,6 +197,34 @@ def test_every_provider_evidence_edge_is_mutation_sensitive(
         )
 
 
+def test_capture_validation_refusal_exposes_only_the_law_clause(tmp_path: Path) -> None:
+    fixture = provider_capture_fixture(tmp_path)
+    built = build_provider_external_capture_v2(
+        store=fixture.store,
+        contract=fixture.contract,
+        result=fixture.result,
+        receipt=fixture.receipt,
+        occurrence=fixture.occurrence,
+        producer=fixture.producer,
+        bound_generation=fixture.bound_generation,
+    )
+    evidence = built.envelope.production_evidence
+    assert isinstance(evidence, ProviderInvocationCaptureEvidenceV1)
+    mutated = built.envelope.model_copy(
+        update={
+            "production_evidence": evidence.model_copy(
+                update={"provider_artifact_digest": digest("mutation", "provider")}
+            )
+        }
+    )
+
+    with pytest.raises(CaptureFormatError) as caught:
+        parse_capture_envelope(render_capture_envelope(mutated))
+
+    assert str(caught.value) == ("provider Capture provider_artifact_digest does not correspond")
+    assert "errors.pydantic.dev" not in str(caught.value)
+
+
 @pytest.mark.parametrize("resolver", [None, lambda _digest: None])
 def test_v2_verification_refuses_and_names_an_unresolved_producer_receipt(
     tmp_path: Path,

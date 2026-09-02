@@ -1193,10 +1193,18 @@ def render_capture_envelope(envelope: CaptureEnvelopeV1 | CaptureEnvelopeV2) -> 
 def parse_capture_envelope(content: bytes) -> CaptureEnvelopeV1 | CaptureEnvelopeV2:
     try:
         envelope = _CAPTURE_ENVELOPE_ADAPTER.validate_json(content)
-    except (ValueError, ValidationError) as exc:
-        raise CaptureFormatError(
-            f"Capture envelope failed strict versioned validation: {exc}"
-        ) from exc
+    except ValidationError as exc:
+        errors = exc.errors(include_url=False, include_input=False)
+        context = errors[0].get("ctx") if len(errors) == 1 else None
+        clause = context.get("error") if isinstance(context, dict) else None
+        detail = (
+            str(clause)
+            if isinstance(clause, ValueError)
+            else "Capture envelope failed strict versioned validation"
+        )
+        raise CaptureFormatError(detail) from exc
+    except ValueError as exc:
+        raise CaptureFormatError("Capture envelope failed strict versioned validation") from exc
     if render_capture_envelope(envelope) != content:
         raise CaptureFormatError("Capture envelope is not in canonical wire form")
     return envelope

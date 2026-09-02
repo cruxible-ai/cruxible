@@ -34,8 +34,7 @@ def _verify_capture_call_nodes(tree: ast.AST) -> tuple[ast.Call, ...]:
         qualified = (
             isinstance(node.func, ast.Attribute)
             and node.func.attr == "verify_capture"
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id in module_names
+            and ast.unparse(node.func.value) in module_names
         )
         if direct or qualified:
             found.append(node)
@@ -93,6 +92,12 @@ def test_capture_verifier_guard_resolves_aliases_and_rejects_literal_none() -> N
         keyword.value for keyword in calls[0].keywords if keyword.arg == "producer_receipt_resolver"
     )
     assert isinstance(resolver, ast.Constant) and resolver.value is None
+
+    dotted_tree = ast.parse(
+        "import cruxible_client.contracts.captures\n"
+        "cruxible_client.contracts.captures.verify_capture('sha256:' + '0' * 64)\n"
+    )
+    assert len(_verify_capture_call_nodes(dotted_tree)) == 1
 
 
 def test_client_claim_contract_does_not_import_daemon_receipt_machinery() -> None:

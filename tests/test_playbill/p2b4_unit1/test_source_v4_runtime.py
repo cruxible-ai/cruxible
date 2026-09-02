@@ -25,6 +25,7 @@ from cruxible_client.contracts.captures import (
     CaptureEnvelopeV2,
     CaptureFormatError,
     ProviderInvocationCaptureEvidenceV1,
+    ProviderProducerReceiptResolution,
     ProviderResultToExternalCaptureV1,
     capture_contract_digest,
     capture_digest,
@@ -65,6 +66,7 @@ from cruxible_client.contracts.provider_execution import (
     ProviderInvocationOutputDigestV1,
     ProviderInvocationStartedV1,
     ProviderSecretReferenceV1,
+    provider_invocation_receipt_digest,
 )
 from cruxible_client.contracts.providers import provider_digest
 from cruxible_core.playbill.cas import BodyAccessContext
@@ -1228,6 +1230,32 @@ def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
 
     completed_record = records[kinds.index("provider_invocation_completed")]
     completed_digest = str(produced["invocation_receipt_digest"])
+
+    transient_reads = 0
+
+    def fail_first_partition_read(stream, partition_id):  # type: ignore[no-untyped-def]
+        nonlocal transient_reads
+        transient_reads += 1
+        if transient_reads == 1:
+            raise OSError("transient journal read")
+        return original_all_records(stream, partition_id)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(fixture.journal, "all_records", fail_first_partition_read)
+        transient_resolver = journal_producer_receipt_resolver(
+            journal=fixture.journal,
+            instance_id=prepared.admission.instance_id,
+            bodies=fixture.bodies,
+        )
+        with pytest.raises(
+            CaptureFormatError,
+            match="producer receipt journal partition is unavailable",
+        ):
+            transient_resolver(completed_digest)
+        recovered = transient_resolver(completed_digest)
+    assert isinstance(recovered, ProviderProducerReceiptResolution)
+    assert provider_invocation_receipt_digest(recovered.receipt) == completed_digest
+    assert transient_reads > 1
 
     def read_with_target_damage(body_digest, *, access):  # type: ignore[no-untyped-def]
         if body_digest == completed_record.record.payload_digest:

@@ -182,7 +182,6 @@ class JournalProducerReceiptResolver:
     def _index(self) -> None:
         if self._indexed:
             return
-        self._indexed = True
         stream = procedure_line_journal_stream(self._instance_id)
         try:
             partition_ids = self._journal.partition_ids(stream)
@@ -338,6 +337,7 @@ class JournalProducerReceiptResolver:
                         )
                         continue
                     self._store(candidate_digest, procedure_receipt)
+        self._indexed = True
 
     def __call__(
         self,

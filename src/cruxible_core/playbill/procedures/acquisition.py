@@ -9,7 +9,6 @@ admitted-input tuple and never relabels its capture time.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from typing import Literal, Protocol, runtime_checkable
 
@@ -28,28 +27,14 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.captures import (
     CaptureContractV1,
     CaptureEnvelopeAny,
-    CaptureObjectStoreProtocol,
-    CaptureRunCoordinateV1,
-    CaptureSelectionBudgetV1,
-    capture_contract_digest,
     capture_contract_is_self_asserted,
     capture_digest,
-    parse_capture_envelope,
 )
 from cruxible_client.contracts.claim_verdicts import (
     EvidenceEpistemicGrade,
     EvidenceProvenanceGrade,
 )
-from cruxible_client.contracts.errors import PlaybillCasError
-from cruxible_client.contracts.providers import ProviderV1, provider_digest
-from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.source_readers import (
-    ExternalCaptureAcquisitionV1,
-    ExternalSourceError,
-    ExternalSourceReaderProtocol,
-    ExternalSourceReadRequestV1,
-    ProducerBindingV1,
-)
+from cruxible_core.playbill.source_readers import ExternalCaptureAcquisitionV1
 
 ProcedureAcquisitionOutcomeV1 = Literal[
     "acquired",
@@ -162,118 +147,6 @@ def capture_provenance_grade(contract: CaptureContractV1) -> EvidenceProvenanceG
     return "daemon-fetched"
 
 
-class ExternalSourceAcquirer:
-    """Bind one read-only external reader to the exact accepted contracts it serves."""
-
-    def __init__(
-        self,
-        *,
-        reader: ExternalSourceReaderProtocol,
-        store: CaptureObjectStoreProtocol,
-        contracts: dict[str, CaptureContractV1],
-        providers: dict[str, ProviderV1],
-        bindings: dict[str, ProducerBindingV1],
-        budgets: dict[str, CaptureSelectionBudgetV1] | None = None,
-        access: BodyAccessContext | None = None,
-    ) -> None:
-        self.reader = reader
-        self.store = store
-        self.contracts = contracts
-        self.providers = providers
-        self.bindings = bindings
-        self.budgets = budgets or {}
-        self.access = access or BodyAccessContext(
-            principal_id="procedure-source-acquirer",
-            can_read_body=True,
-        )
-
-    def acquire(
-        self,
-        *,
-        node_id: str,
-        input_name: str,
-        capture_contract: ArtifactPin,
-        provider: ArtifactPin,
-        request: CanonicalValue,
-        run_id: str,
-        bound_generation: str,
-        observed_at: datetime,
-    ) -> ProcedureSourceAcquisitionResultV1:
-        contract = self.contracts.get(capture_contract.artifact_digest)
-        accepted_provider = self.providers.get(provider.artifact_digest)
-        binding = self.bindings.get(provider.artifact_digest)
-        if contract is None or accepted_provider is None or binding is None:
-            return _refusal(node_id, input_name, "unavailable", "source binding is unresolved")
-        if not isinstance(request, dict):
-            return _refusal(node_id, input_name, "refused", "source request is not an object")
-        materialization = request.get("materialization", "cas")
-        budget = self.budgets.get(input_name) or contract.selection_budget
-        try:
-            run_coordinate = CaptureRunCoordinateV1(
-                run_kind="provider",
-                run_id=run_id,
-                bound_generation=bound_generation,
-                executable_identity=accepted_provider.identity,
-                executable_digest=provider_digest(accepted_provider).tagged,
-            )
-            read = ExternalSourceReadRequestV1(
-                contract=contract,
-                provider=accepted_provider,
-                binding=binding,
-                coordinate_type=str(request.get("coordinate_type")),
-                coordinate=request.get("coordinate"),
-                selector_type=str(request.get("selector_type")),
-                selector=request.get("selector"),
-                materialization=materialization,  # type: ignore[arg-type]
-                run_coordinate=run_coordinate,
-                observed_at=observed_at,
-                resource_budget=budget,
-            )
-        except ValueError as exc:
-            return _refusal(node_id, input_name, "refused", str(exc))
-        try:
-            acquisition = self.reader.acquire(read, store=self.store)
-        except ExternalSourceError as exc:
-            outcome: ProcedureAcquisitionOutcomeV1 = (
-                "oversized" if "budget" in str(exc) else "unavailable"
-            )
-            return _refusal(node_id, input_name, outcome, str(exc))
-        return ProcedureSourceAcquisitionResultV1(
-            node_id=node_id,
-            input_name=input_name,
-            outcome="acquired",
-            acquisition=acquisition,
-        )
-
-    def dereference(self, capture_digest_value: str) -> ProcedureCaptureMaterialV1:
-        try:
-            envelope_bytes = self.store.read(capture_digest_value, access=self.access)
-        except PlaybillCasError as exc:
-            raise ExternalSourceError("admitted Capture envelope is unavailable") from exc
-        envelope = parse_capture_envelope(envelope_bytes)
-        contract = self.contracts.get(envelope.capture_contract_digest)
-        if contract is None or capture_contract_digest(contract).tagged != (
-            envelope.capture_contract_digest
-        ):
-            raise ExternalSourceError("admitted Capture names an unresolved CaptureContract")
-        try:
-            material = self.store.read(envelope.commitment.digest, access=self.access)
-        except PlaybillCasError as exc:
-            raise ExternalSourceError("admitted Capture material is unavailable") from exc
-        try:
-            value = normalize_canonical(json.loads(material))
-        except (UnicodeDecodeError, ValueError) as exc:
-            raise ExternalSourceError("admitted Capture material is not canonical") from exc
-        return ProcedureCaptureMaterialV1(
-            capture_digest=capture_digest_value,
-            capture_contract_digest=envelope.capture_contract_digest,
-            envelope=envelope,
-            value=value,
-            epistemic_grade=contract.epistemic_grade,
-            provenance_grade=capture_provenance_grade(contract),
-        )
-
-
 def _refusal(
     node_id: str,
     input_name: str,
@@ -341,7 +214,6 @@ __all__ = [
     "ACQUISITION_REFUSED",
     "ACQUISITION_STALE",
     "ACQUISITION_UNAVAILABLE",
-    "ExternalSourceAcquirer",
     "ProcedureAcquisitionOutcomeV1",
     "ProcedureCaptureMaterialV1",
     "ProcedureSourceAcquirerProtocol",
