@@ -160,3 +160,26 @@ def test_uninitialized_instance_is_a_non_owning_skip(
 
     assert dispositions == {invocation_id: "handled"}
     assert not record.exists()
+
+
+def test_startup_recovery_holds_the_operator_lock_through_the_fold(
+    short_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    operator = ProviderRuntimeOperator(short_root)
+    invocation_id = "sha256:" + "c" * 64
+    _plant(operator, invocation_id)
+    fold = _Fold()
+    fold.owner[invocation_id] = "inst_one"
+    _wire(monkeypatch, operator, ("inst_one",), fold)
+    observed: list[bool] = []
+    bound = operator._recovery_fold
+    assert bound is not None
+
+    def assert_locked(result: object):  # type: ignore[no-untyped-def]
+        observed.append(operator._lock._is_owned())  # type: ignore[attr-defined]
+        return bound(result)  # type: ignore[arg-type]
+
+    operator.bind_recovery_fold(assert_locked)
+    operator.recover_all_with_bound_fold()
+
+    assert observed == [True]

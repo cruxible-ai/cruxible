@@ -255,7 +255,7 @@ class PlaybillInstanceManager:
 
         operator = self.provider_runtime_operator()
         try:
-            result = operator.recover_all()
+            result = operator.recover_all_with_bound_fold()
         except Exception as exc:
             operator.mark_unavailable(
                 "provider_runtime_recovery_failed",
@@ -267,7 +267,6 @@ class PlaybillInstanceManager:
                 removed=(),
                 could_not_clean=(),
             )
-        self._fold_provider_recovery(operator, result)
         return result
 
     def _fold_provider_recovery(

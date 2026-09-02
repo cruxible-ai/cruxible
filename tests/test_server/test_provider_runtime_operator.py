@@ -490,6 +490,10 @@ def test_unmatched_recovered_start_degrades_provider_and_continues_instances(
         SimpleNamespace(instance_id="inst_two", backend="governed_daemon"),
     )
     manager = PlaybillInstanceManager()
+    operator.recover_all_with_bound_fold = lambda: (  # type: ignore[attr-defined]
+        manager._fold_provider_recovery(operator, result),
+        result,
+    )[1]
     monkeypatch.setattr(manager, "provider_runtime_operator", lambda: operator)
     monkeypatch.setattr(manager, "get", lambda instance_id: instance_id)
     monkeypatch.setattr(
@@ -540,6 +544,10 @@ def test_could_not_clean_is_forwarded_as_recovery_required_without_completion(
         mark_unavailable=lambda *_args, **_kwargs: None,
     )
     manager = PlaybillInstanceManager()
+    operator.recover_all_with_bound_fold = lambda: (  # type: ignore[attr-defined]
+        manager._fold_provider_recovery(operator, result),
+        result,
+    )[1]
     monkeypatch.setattr(manager, "provider_runtime_operator", lambda: operator)
     monkeypatch.setattr(manager, "get", lambda instance_id: instance_id)
     monkeypatch.setattr(

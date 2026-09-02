@@ -394,6 +394,22 @@ class ProviderRuntimeOperator:
                 )
             return self._recover_locked()
 
+    def recover_all_with_bound_fold(self) -> ProviderProcessRecoveryResultV1:
+        """Run startup recovery and its manager-owned fold under one lock."""
+
+        with self._lock:
+            if self._in_flight:
+                raise ProviderLocalRuntimeRefused(
+                    "provider_process_lease_invalid",
+                    "Provider process recovery cannot run while an invocation is in flight",
+                )
+            result = self._recover_locked()
+            if self._fold_recovery_locked(result):
+                self._mark_available_locked()
+            elif self._rearm_required:
+                self._schedule_next_rearm_locked()
+            return result
+
     def _recover_locked(self) -> ProviderProcessRecoveryResultV1:
         if self.process_leases is None:
             failure = ProviderProcessRecoveryFailureV1(
@@ -419,25 +435,30 @@ class ProviderRuntimeOperator:
             return
         self._reinitialize_failed_construction_stages_locked()
         result = self._recover_locked()
-        if result.could_not_clean:
+        if not self._fold_recovery_locked(result):
             self._schedule_next_rearm_locked()
             return
-        if result.completion_invocation_ids:
+        self._mark_available_locked()
+        if self._rearm_required:
+            self._schedule_next_rearm_locked()
+
+    def _fold_recovery_locked(self, result: ProviderProcessRecoveryResultV1) -> bool:
+        needs_fold = bool(
+            result.completion_invocation_ids
+            or any(item.invocation_id is not None for item in result.could_not_clean)
+        )
+        if needs_fold:
             if self._recovery_fold is None:
                 self.mark_unavailable(
                     "provider_runtime_recovery_failed",
                     "Provider recovery result has no manager-owned journal fold",
                     retryable=True,
                 )
-                self._schedule_next_rearm_locked()
-                return
+                return False
             dispositions = self._recovery_fold(result)
             if "fold_failed" in dispositions.values():
-                self._schedule_next_rearm_locked()
-                return
-        self._mark_available_locked()
-        if self._rearm_required:
-            self._schedule_next_rearm_locked()
+                return False
+        return not result.could_not_clean
 
     def _mark_available_locked(self) -> None:
         self._recovery_failures.clear()
