@@ -112,6 +112,10 @@ def test_operator_public_entries_contain_every_instance_load_exception(
     assert result.completion_invocation_ids == ("sha256:" + "6" * 64,)
     assert record_path.exists()
     assert operator.lane_status()[1] == "provider_runtime_recovery_failed"
+    with pytest.raises(ProviderLocalRuntimeRefused) as acknowledgement_refusal:
+        operator.acknowledge_recovery({"sha256:" + "6" * 64: "fold_failed"})
+    assert acknowledgement_refusal.value.code == "provider_runtime_recovery_failed"
+    assert record_path.exists()
 
     manager, operator, record_path = _operator_with_failing_instance_load(
         short_root / "begin", monkeypatch, failure

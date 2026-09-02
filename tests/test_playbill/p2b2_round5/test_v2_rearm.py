@@ -173,7 +173,7 @@ def test_an_acknowledgement_for_an_id_the_fold_never_saw_is_a_no_op(short_root: 
     store = operator.process_leases
     assert store is not None
     kept = _plant_record(operator, "sha256:" + "e" * 64)
-    operator.acknowledge_recovery(("sha256:" + "f" * 64,))
+    operator.acknowledge_recovery({"sha256:" + "f" * 64: "handled"})
     assert kept.exists()
     assert store._pending_releases == {}
 

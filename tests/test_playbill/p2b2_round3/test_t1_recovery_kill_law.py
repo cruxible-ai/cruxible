@@ -330,7 +330,9 @@ def test_an_unkillable_group_degrades_the_lane_and_strands_the_durable_start(
     def fold_recovery(
         result: ProviderProcessRecoveryResultV1,
     ) -> dict[str, ProviderRecoveryFoldDisposition]:
-        operator.acknowledge_recovery(result.completion_invocation_ids)
+        operator.acknowledge_recovery(
+            {invocation_id: "handled" for invocation_id in result.completion_invocation_ids}
+        )
         folded.append(result)
         return {invocation_id: "handled" for invocation_id in result.completion_invocation_ids}
 

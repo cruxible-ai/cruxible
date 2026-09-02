@@ -248,4 +248,4 @@ def test_lazy_rearm_routes_the_recovery_result_through_the_manager_fold() -> Non
     assert "self._recovery_fold(result)" in source
     manager = (REPOSITORY_ROOT / "src/cruxible_core/runtime/playbill_manager.py").read_text()
     assert "def _fold_provider_recovery(" in manager
-    assert "operator.acknowledge_recovery((invocation_id,))" in manager
+    assert "operator.acknowledge_recovery({invocation_id: disposition})" in manager

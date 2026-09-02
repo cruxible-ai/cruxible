@@ -367,7 +367,7 @@ class PlaybillInstanceManager:
                     terminal=True,
                 )
             try:
-                operator.acknowledge_recovery((invocation_id,))
+                operator.acknowledge_recovery({invocation_id: disposition})
             except Exception as exc:
                 dispositions[invocation_id] = "fold_failed"
                 operator.mark_unavailable(

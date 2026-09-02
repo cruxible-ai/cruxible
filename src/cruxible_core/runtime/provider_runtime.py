@@ -532,12 +532,52 @@ class ProviderRuntimeOperator:
         with self._lock:
             self._recovery_fold = fold
 
-    def acknowledge_recovery(self, invocation_ids: tuple[str, ...]) -> None:
-        """Release completion-bearing fences after the manager fold commits."""
+    def acknowledge_recovery(
+        self,
+        dispositions: Mapping[str, ProviderRecoveryFoldDisposition],
+    ) -> None:
+        """Release only fences the manager fold classified terminally."""
 
         with self._lock:
+            refused = tuple(
+                sorted(
+                    (
+                        invocation_id
+                        for invocation_id, disposition in dispositions.items()
+                        if disposition == "fold_failed"
+                    ),
+                    key=str.encode,
+                )
+            )
+            invalid = tuple(
+                sorted(
+                    (
+                        invocation_id
+                        for invocation_id, disposition in dispositions.items()
+                        if disposition not in {"handled", "unclaimed", "fold_failed"}
+                    ),
+                    key=str.encode,
+                )
+            )
+            if refused or invalid:
+                invocation_ids = refused or invalid
+                raise ProviderLocalRuntimeRefused(
+                    "provider_runtime_recovery_failed",
+                    "Provider recovery acknowledgement requires a handled or unclaimed "
+                    f"fold disposition: {','.join(invocation_ids)}",
+                )
             if self.process_leases is not None:
-                self.process_leases.acknowledge_recovery(invocation_ids)
+                releasable = tuple(
+                    sorted(
+                        (
+                            invocation_id
+                            for invocation_id, disposition in dispositions.items()
+                            if disposition in {"handled", "unclaimed"}
+                        ),
+                        key=str.encode,
+                    )
+                )
+                self.process_leases.acknowledge_recovery(releasable)
 
     def lane_status(
         self,
