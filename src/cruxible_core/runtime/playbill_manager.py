@@ -315,6 +315,14 @@ class PlaybillInstanceManager:
                     reason=str(exc),
                 )
                 continue
+            except Exception as exc:
+                initialized_fold_failed = True
+                operator.mark_unavailable(
+                    "provider_runtime_recovery_failed",
+                    f"Provider instance load failed for {record.instance_id}: {exc}",
+                    retryable=True,
+                )
+                continue
             try:
                 handled_invocation_ids.update(
                     service_recover_provider_invocations(
