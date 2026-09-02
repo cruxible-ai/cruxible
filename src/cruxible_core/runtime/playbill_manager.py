@@ -315,10 +315,11 @@ class PlaybillInstanceManager:
         unhandled = set(invocation_ids) - handled_invocation_ids
         if unhandled and not fold_failed:
             fold_failed = True
+            first = min(unhandled, key=str.encode)
             operator.mark_unavailable(
                 "provider_runtime_recovery_failed",
-                "Provider recovery found no governed start for invocation(s): "
-                + ", ".join(sorted(unhandled, key=str.encode)),
+                f"Provider recovery found no governed start for {len(unhandled)} "
+                f"invocation(s); first={first}",
                 retryable=True,
             )
         if result.could_not_clean:

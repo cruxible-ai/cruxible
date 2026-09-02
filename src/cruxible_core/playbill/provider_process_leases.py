@@ -24,6 +24,7 @@ from cruxible_client.contracts.errors import PlaybillExecutionError
 
 DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS = 5.0
 DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS = 5.0
+DEFAULT_PROVIDER_RECOVERY_AGGREGATE_TIMEOUT_SECONDS = 30.0
 DEFAULT_PROVIDER_SECRET_WRITER_JOIN_TIMEOUT_SECONDS = 5.0
 DEFAULT_PROVIDER_STDIN_WRITER_JOIN_TIMEOUT_SECONDS = 5.0
 DEFAULT_PROVIDER_DESCENDANT_TRACKER_JOIN_TIMEOUT_SECONDS = 5.0
@@ -86,6 +87,7 @@ class ProviderProcessRecoveryFailureV1:
     invocation_id: str | None
     code: ProviderProcessFenceCodeV1
     message: str
+    attempt_status: Literal["attempted", "not_attempted"] = "attempted"
 
 
 @dataclass(frozen=True)
@@ -406,6 +408,9 @@ class ProviderProcessLeaseStore:
         control_root: Path | None = None,
         acquisition_timeout_seconds: float = DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS,
         recovery_timeout_seconds: float = DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS,
+        recovery_aggregate_timeout_seconds: float = (
+            DEFAULT_PROVIDER_RECOVERY_AGGREGATE_TIMEOUT_SECONDS
+        ),
         secret_writer_join_timeout_seconds: float = (
             DEFAULT_PROVIDER_SECRET_WRITER_JOIN_TIMEOUT_SECONDS
         ),
@@ -425,6 +430,7 @@ class ProviderProcessLeaseStore:
         self.root = root
         self.acquisition_timeout_seconds = acquisition_timeout_seconds
         self.recovery_timeout_seconds = recovery_timeout_seconds
+        self.recovery_aggregate_timeout_seconds = recovery_aggregate_timeout_seconds
         self.secret_writer_join_timeout_seconds = secret_writer_join_timeout_seconds
         self.stdin_writer_join_timeout_seconds = stdin_writer_join_timeout_seconds
         self.descendant_tracker_join_timeout_seconds = descendant_tracker_join_timeout_seconds
@@ -694,9 +700,24 @@ class ProviderProcessLeaseStore:
         except ProviderLocalRuntimeRefused as exc:
             current_boot_id = None
             boot_identity_failure = exc
+        aggregate_deadline = time.monotonic() + self.recovery_aggregate_timeout_seconds
         for record_path in sorted(self.root.glob("*.json"), key=lambda item: item.name.encode()):
             invocation_id: str | None = None
             control_path = self.control_root / f"{record_path.stem[:16]}.sock"
+            if time.monotonic() >= aggregate_deadline:
+                could_not_clean.append(
+                    ProviderProcessRecoveryFailureV1(
+                        record_name=record_path.name,
+                        invocation_id=None,
+                        code="provider_process_group_survived_recovery",
+                        message=(
+                            "provider_process_group_survived_recovery: aggregate recovery "
+                            "budget exhausted before this record was attempted"
+                        ),
+                        attempt_status="not_attempted",
+                    )
+                )
+                continue
             try:
                 raw = record_path.read_bytes()
                 document = json.loads(raw)
@@ -873,6 +894,7 @@ class ProviderProcessLeaseStore:
 __all__ = [
     "DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS",
     "DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS",
+    "DEFAULT_PROVIDER_RECOVERY_AGGREGATE_TIMEOUT_SECONDS",
     "DEFAULT_PROVIDER_SECRET_WRITER_JOIN_TIMEOUT_SECONDS",
     "DEFAULT_PROVIDER_STDIN_WRITER_JOIN_TIMEOUT_SECONDS",
     "DEFAULT_PROVIDER_DESCENDANT_TRACKER_JOIN_TIMEOUT_SECONDS",

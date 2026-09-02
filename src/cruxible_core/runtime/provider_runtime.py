@@ -36,6 +36,7 @@ from cruxible_core.playbill.provider_process_leases import (
     DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS,
     DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS,
     DEFAULT_PROVIDER_PROCESS_GROUP_TERMINATION_TIMEOUT_SECONDS,
+    DEFAULT_PROVIDER_RECOVERY_AGGREGATE_TIMEOUT_SECONDS,
     DEFAULT_PROVIDER_SECRET_WRITER_JOIN_TIMEOUT_SECONDS,
     DEFAULT_PROVIDER_STDIN_WRITER_JOIN_TIMEOUT_SECONDS,
     ProviderLocalRuntimeRefused,
@@ -91,6 +92,13 @@ class ProviderRuntimeOperationalConfigV1(_StrictOperationalModel):
     lease_recovery_timeout_seconds: float = Field(
         default=DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS,
         gt=0,
+    )
+    recovery_aggregate_timeout_seconds: float = Field(
+        default=DEFAULT_PROVIDER_RECOVERY_AGGREGATE_TIMEOUT_SECONDS,
+        gt=0,
+        description=(
+            "VALIDITY WINDOW: maximum elapsed duration of one process-fence recovery scan."
+        ),
     )
     secret_writer_join_timeout_seconds: float = Field(
         default=DEFAULT_PROVIDER_SECRET_WRITER_JOIN_TIMEOUT_SECONDS,
@@ -156,8 +164,15 @@ class ProviderRuntimeOperator:
         self._in_flight = 0
         self._rearm_required = False
         self._recovery_fold: Callable[[ProviderProcessRecoveryResultV1], bool] | None = None
+        self._unavailable_codes: set[ProviderLaneUnavailableCodeV1] = set()
+        self._unavailable_failure_count = 0
         self.unavailable_code: ProviderLaneUnavailableCodeV1 | None = None
         self.unavailable_reason: str | None = None
+        self._lane_status_snapshot: tuple[
+            Literal["available", "unavailable"],
+            ProviderLaneUnavailableCodeV1 | None,
+            str | None,
+        ] = ("available", None, None)
         self.config = ProviderRuntimeOperationalConfigV1()
         self.process_leases: ProviderProcessLeaseStore | None = None
         self.secret_store: FileProviderSecretStore | None = None
@@ -178,6 +193,7 @@ class ProviderRuntimeOperator:
                 control_root=self.state_root / "c",
                 acquisition_timeout_seconds=self.config.lease_acquisition_timeout_seconds,
                 recovery_timeout_seconds=self.config.lease_recovery_timeout_seconds,
+                recovery_aggregate_timeout_seconds=(self.config.recovery_aggregate_timeout_seconds),
                 secret_writer_join_timeout_seconds=(self.config.secret_writer_join_timeout_seconds),
                 stdin_writer_join_timeout_seconds=self.config.stdin_writer_join_timeout_seconds,
                 descendant_tracker_join_timeout_seconds=(
@@ -232,11 +248,18 @@ class ProviderRuntimeOperator:
 
         with self._lock:
             reason = f"{code}: {message}"
-            if self.unavailable_reason is None:
-                self.unavailable_code = code
-                self.unavailable_reason = reason
-            elif reason not in self.unavailable_reason:
-                self.unavailable_reason = f"{self.unavailable_reason}; {reason}"
+            self.unavailable_code = code
+            self._unavailable_codes.add(code)
+            self._unavailable_failure_count += 1
+            codes = ",".join(sorted(self._unavailable_codes, key=str.encode))
+            self.unavailable_reason = (
+                f"latest={reason}; codes=[{codes}]; count={self._unavailable_failure_count}"
+            )
+            self._lane_status_snapshot = (
+                "unavailable",
+                self.unavailable_code,
+                self.unavailable_reason,
+            )
             self._rearm_required = self._rearm_required or retryable
 
     def recover_all(self) -> ProviderProcessRecoveryResultV1:
@@ -284,9 +307,15 @@ class ProviderRuntimeOperator:
                 return
             if not self._recovery_fold(result):
                 return
+        self._mark_available_locked()
+
+    def _mark_available_locked(self) -> None:
         self._rearm_required = False
+        self._unavailable_codes.clear()
+        self._unavailable_failure_count = 0
         self.unavailable_code = None
         self.unavailable_reason = None
+        self._lane_status_snapshot = ("available", None, None)
 
     def bind_recovery_fold(
         self,
@@ -309,10 +338,7 @@ class ProviderRuntimeOperator:
     ) -> tuple[
         Literal["available", "unavailable"], ProviderLaneUnavailableCodeV1 | None, str | None
     ]:
-        with self._lock:
-            if self.unavailable_reason is None:
-                return "available", None, None
-            return "unavailable", self.unavailable_code, self.unavailable_reason
+        return self._lane_status_snapshot
 
     def invoker_for(
         self,

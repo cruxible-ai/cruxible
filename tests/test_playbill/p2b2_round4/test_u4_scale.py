@@ -83,7 +83,8 @@ def test_two_hundred_records_do_not_block_create_app_beyond_a_bounded_time(
     assert app is not None
     assert elapsed < 20.0, elapsed
     lane = get_playbill_manager().provider_runtime_operator().lane_status()
-    assert lane[0] == "available", lane
+    assert lane[0] == "unavailable", lane
+    assert lane[1] == "provider_runtime_recovery_failed"
 
 
 def test_one_stuck_record_is_bounded_by_its_configured_deadline(
@@ -119,12 +120,16 @@ def test_one_stuck_record_is_bounded_by_its_configured_deadline(
             live.wait(timeout=2)
 
 
-def test_the_recovery_loop_has_no_aggregate_budget(
+def test_the_recovery_loop_reports_records_beyond_its_aggregate_budget(
     short_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """N stuck records cost N x deadline, on the startup AND the re-arm path."""
+    """The config-carried aggregate deadline preserves unattempted records."""
 
-    store = ProviderProcessLeaseStore(short_root / "l3", recovery_timeout_seconds=0.4)
+    store = ProviderProcessLeaseStore(
+        short_root / "l3",
+        recovery_timeout_seconds=0.4,
+        recovery_aggregate_timeout_seconds=0.65,
+    )
     processes = [
         subprocess.Popen(
             [sys.executable, "-c", "import time\nwhile True: time.sleep(0.05)"],
@@ -149,7 +154,8 @@ def test_the_recovery_loop_has_no_aggregate_budget(
         result = store.recover_all()
         elapsed = time.monotonic() - started
         assert len(result.could_not_clean) == 4
-        assert elapsed >= 4 * 0.4, elapsed
+        assert [item.attempt_status for item in result.could_not_clean].count("not_attempted") >= 2
+        assert elapsed < 1.3, elapsed
     finally:
         for process in processes:
             with contextlib.suppress(OSError):

@@ -28,6 +28,7 @@ def test_k8_operational_config_reaches_the_daemon_lease_store(short_root: Path) 
                 "tag": "cruxible-provider-runtime-operational-config-v1",
                 "lease_acquisition_timeout_seconds": 1.5,
                 "lease_recovery_timeout_seconds": 2.25,
+                "recovery_aggregate_timeout_seconds": 2.75,
                 "secret_writer_join_timeout_seconds": 3.25,
                 "stdin_writer_join_timeout_seconds": 4.25,
                 "descendant_tracker_join_timeout_seconds": 5.25,
@@ -40,6 +41,7 @@ def test_k8_operational_config_reaches_the_daemon_lease_store(short_root: Path) 
     assert operator.process_leases is not None
     assert operator.process_leases.acquisition_timeout_seconds == 1.5
     assert operator.process_leases.recovery_timeout_seconds == 2.25
+    assert operator.process_leases.recovery_aggregate_timeout_seconds == 2.75
     assert operator.process_leases.secret_writer_join_timeout_seconds == 3.25
     assert operator.process_leases.stdin_writer_join_timeout_seconds == 4.25
     assert operator.process_leases.descendant_tracker_join_timeout_seconds == 5.25
@@ -64,6 +66,10 @@ def test_f5_no_bare_timeout_literal_remains_on_the_fence_path() -> None:
     assert (
         store_signature["recovery_timeout_seconds"].default
         is lease_module.DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS
+    )
+    assert (
+        store_signature["recovery_aggregate_timeout_seconds"].default
+        is lease_module.DEFAULT_PROVIDER_RECOVERY_AGGREGATE_TIMEOUT_SECONDS
     )
     assert (
         store_signature["secret_writer_join_timeout_seconds"].default

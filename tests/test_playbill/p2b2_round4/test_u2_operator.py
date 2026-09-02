@@ -94,7 +94,8 @@ def test_lane_status_uses_the_cached_snapshot_without_filesystem_access(
     assert operator.lane_status() == (
         "unavailable",
         "provider_process_lease_invalid",
-        "provider_process_lease_invalid: offline",
+        "latest=provider_process_lease_invalid: offline; "
+        "codes=[provider_process_lease_invalid]; count=1",
     )
 
 
@@ -272,8 +273,8 @@ def test_the_degraded_reason_reaches_a_node_refusal_projection() -> None:
     }
 
 
-def test_lane_status_blocks_while_a_rearm_recovery_runs(short_root: Path) -> None:
-    """Liveness: /server/info and next share the operator lock with recovery."""
+def test_lane_status_never_blocks_while_a_rearm_recovery_runs(short_root: Path) -> None:
+    """Status reads one atomic snapshot without taking the recovery lock."""
 
     operator = _degraded_operator(short_root)
     original = operator.process_leases.recover_all  # type: ignore[union-attr]
@@ -293,4 +294,18 @@ def test_lane_status_blocks_while_a_rearm_recovery_runs(short_root: Path) -> Non
     blocked = time.monotonic() - started
     thread.join()
     operator._end_invocation()
-    assert blocked > 0.3, blocked
+    assert blocked < 0.1, blocked
+
+
+def test_degraded_detail_is_latest_reason_codes_and_count(short_root: Path) -> None:
+    operator = ProviderRuntimeOperator(short_root)
+    operator.mark_unavailable("provider_process_lease_invalid", "first")
+    operator.mark_unavailable("provider_runtime_recovery_failed", "latest")
+    state, code, detail = operator.lane_status()
+    assert state == "unavailable"
+    assert code == "provider_runtime_recovery_failed"
+    assert detail == (
+        "latest=provider_runtime_recovery_failed: latest; "
+        "codes=[provider_process_lease_invalid,provider_runtime_recovery_failed]; count=2"
+    )
+    assert "first" not in detail
