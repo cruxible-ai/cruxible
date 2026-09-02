@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import subprocess
+from collections.abc import Iterator
 from inspect import iscoroutinefunction
 from pathlib import Path
 
@@ -46,6 +47,30 @@ def host_client(
     reset_runtime_credential_store()
     get_playbill_manager().clear()
     return TestClient(create_app())
+
+
+@pytest.fixture
+def authenticated_host_client(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[tuple[TestClient, str]]:
+    bootstrap_secret = "one-time-bootstrap-secret"
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "authenticated-server-state"))
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", bootstrap_secret)
+    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    reset_permissions()
+    reset_registry()
+    reset_runtime_credential_store()
+    get_playbill_manager().clear()
+    try:
+        with TestClient(create_app()) as client:
+            yield client, bootstrap_secret
+    finally:
+        get_playbill_manager().clear()
+        reset_runtime_credential_store()
+        reset_registry()
+        reset_permissions()
 
 
 def test_host_allocation_is_idempotent_and_creates_no_semantic_state(
@@ -737,19 +762,9 @@ def test_independent_approval_init_requires_and_accepts_a_second_ordinary_princi
 
 def test_authenticated_bootstrap_binds_owner_to_credential_identity(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    authenticated_host_client: tuple[TestClient, str],
 ) -> None:
-    state_dir = tmp_path / "authenticated-server-state"
-    bootstrap_secret = "one-time-bootstrap-secret"
-    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state_dir))
-    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
-    monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", bootstrap_secret)
-    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
-    reset_permissions()
-    reset_registry()
-    reset_runtime_credential_store()
-    get_playbill_manager().clear()
-    client = TestClient(create_app())
+    client, bootstrap_secret = authenticated_host_client
     bootstrap_headers = {"Authorization": f"Bearer {bootstrap_secret}"}
 
     allocated = client.post(

@@ -12,6 +12,7 @@ from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
+from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
 
 
@@ -26,6 +27,7 @@ def playbill_http(
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     reset_permissions()
     reset_registry()
+    reset_runtime_credential_store()
     get_playbill_manager().clear()
     registered = get_registry().create_governed_instance_with_id("inst_playbill_http")
     instance_id = registered.record.instance_id
@@ -55,5 +57,6 @@ def playbill_http(
         assert initialized.status_code == 200, initialized.text
         yield client, instance_id, reviewer.private_key_path
     get_playbill_manager().clear()
+    reset_runtime_credential_store()
     reset_registry()
     reset_permissions()
