@@ -136,6 +136,7 @@ def test_c4_no_secret_reaches_argv_or_the_child_environment(short_root: Path) ->
     assert "SUPERSECRET-C4" not in json.dumps(observed)
     assert "SUPERSECRET-C4" not in json.dumps(observed["argv"])
     assert spawns[0]["argv"][0] == str(interpreter)
+    assert Path(observed["env"]["HOME"]).is_relative_to(short_root.resolve())
 
 
 # ------------------------------------------------------------------ C-7

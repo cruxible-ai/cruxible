@@ -693,6 +693,12 @@ class _DescendantTracker:
         self.observe()
         return tuple(sorted(self._observed.values(), key=lambda item: item.pid))
 
+    def retained(self) -> tuple[ProviderDescendantProcessV1, ...]:
+        """Return identities retained before a later observation failure."""
+
+        with self._observation_lock:
+            return tuple(sorted(self._observed.values(), key=lambda item: item.pid))
+
     def close(self, *, timeout_seconds: float) -> None:
         self._stop.set()
         self._thread.join(timeout=timeout_seconds)
@@ -777,7 +783,9 @@ def _run_child(
         "PYTHONNOUSERSITE": "1",
         "PYTHONDONTWRITEBYTECODE": "1",
     }
-    with tempfile.TemporaryDirectory(prefix="cruxible-provider-") as scratch:
+    with tempfile.TemporaryDirectory(
+        prefix=".child-", dir=process_leases.root.parent
+    ) as scratch:
         os.chmod(scratch, 0o700)
         environment["HOME"] = scratch
         environment["TMPDIR"] = scratch
@@ -803,11 +811,27 @@ def _run_child(
             start_new_session=True,
             close_fds=True,
         )
-        descendants = _DescendantTracker(
-            process.pid,
-            invocation_id=invocation_id,
-            poll_interval_seconds=process_leases.descendant_tracker_poll_interval_seconds,
-        )
+        try:
+            descendants = _DescendantTracker(
+                process.pid,
+                invocation_id=invocation_id,
+                poll_interval_seconds=process_leases.descendant_tracker_poll_interval_seconds,
+            )
+        except BaseException as exc:
+            try:
+                _terminate_process_group(
+                    process,
+                    process_leases.process_group_termination_timeout_seconds,
+                    descendants=None,
+                )
+            except ProviderLocalRuntimeRefused as fence:
+                raise fence from exc
+            if isinstance(exc, ProviderLocalRuntimeRefused):
+                raise
+            raise ProviderLocalRuntimeRefused(
+                "provider_process_lease_invalid",
+                "provider descendant tracker could not start",
+            ) from exc
         try:
             # Establish the first observation while the root still owns any
             # already-spawned descendants.  Every later kill point forces
@@ -985,16 +1009,19 @@ def _terminate_process_group(
     process: subprocess.Popen[bytes],
     timeout_seconds: float,
     *,
-    descendants: _DescendantTracker,
+    descendants: _DescendantTracker | None,
 ) -> None:
     """Kill an unreaped group, reap its leader, then sweep exact descendants."""
 
     snapshot_failure: ProviderLocalRuntimeRefused | None = None
-    try:
-        observed_descendants = descendants.snapshot()
-    except ProviderLocalRuntimeRefused as exc:
+    if descendants is None:
         observed_descendants = ()
-        snapshot_failure = exc
+    else:
+        try:
+            observed_descendants = descendants.snapshot()
+        except ProviderLocalRuntimeRefused as exc:
+            observed_descendants = descendants.retained()
+            snapshot_failure = exc
     if process.returncode is None:
         with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
             os.killpg(process.pid, signal.SIGKILL)
@@ -1004,9 +1031,9 @@ def _terminate_process_group(
             process.wait(timeout=min(0.05, max(deadline - time.monotonic(), 0.001)))
         except subprocess.TimeoutExpired:
             continue
+        kill_descendants(observed_descendants)
         if snapshot_failure is not None:
             raise snapshot_failure
-        kill_descendants(observed_descendants)
         try:
             os.killpg(process.pid, 0)
             group_alive = True

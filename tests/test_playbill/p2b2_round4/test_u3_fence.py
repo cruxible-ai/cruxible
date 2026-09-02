@@ -21,6 +21,7 @@ from cruxible_core.playbill.provider_local_runtime import (
     _run_child,
 )
 from cruxible_core.playbill.provider_process_leases import (
+    ProviderDescendantProcessV1,
     ProviderLocalRuntimeRefused,
     ProviderProcessLeaseStore,
     _socket_peer_pid,
@@ -277,6 +278,85 @@ def test_a_publish_write_failure_is_typed_and_leaves_no_child_or_artifact(
     assert not descendant_alive
     assert tuple(lease_root.glob("*.json")) == ()
     assert tuple(store.control_root.glob("*.sock")) == ()
+
+
+def test_tracker_start_failure_kills_and_reaps_the_spawned_child(
+    short_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = ProviderProcessLeaseStore(short_root / "tracker")
+    marker = short_root / "tracker-marker"
+    interpreter = _write_fast_child(short_root / "tracker.py", marker=marker, mode="setsid")
+    spawned: list[subprocess.Popen[bytes]] = []
+    real_popen = subprocess.Popen
+
+    class Spy(subprocess.Popen[bytes]):
+        def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            super().__init__(*args, **kwargs)
+            spawned.append(self)
+
+    def fail_tracker(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("thread unavailable")
+
+    monkeypatch.setattr(runtime_module.subprocess, "Popen", Spy)
+    monkeypatch.setattr(runtime_module, "_DescendantTracker", fail_tracker)
+    try:
+        with pytest.raises(ProviderLocalRuntimeRefused) as caught:
+            _run_child(
+                interpreter,
+                entrypoint="demo:Provider",
+                context=CONTEXT,
+                budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=8, output_bytes=65_536),
+                secret_fd=None,
+                invocation_id="sha256:" + "4" * 64,
+                process_leases=store,
+            )
+        assert caught.value.code == "provider_process_lease_invalid"
+        assert len(spawned) == 1
+        assert spawned[0].poll() is not None
+    finally:
+        monkeypatch.setattr(runtime_module.subprocess, "Popen", real_popen)
+        _kill_tree(marker)
+
+
+def test_snapshot_failure_sweeps_retained_descendants_before_reraising(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity = ProviderDescendantProcessV1(pid=4321, process_start_time="start")
+    swept: list[ProviderDescendantProcessV1] = []
+
+    class Process:
+        pid = 1234
+        returncode = None
+
+        def wait(self, *, timeout: float) -> int:
+            assert timeout > 0
+            self.returncode = -signal.SIGKILL
+            return self.returncode
+
+    class Tracker:
+        @staticmethod
+        def snapshot() -> tuple[ProviderDescendantProcessV1, ...]:
+            raise ProviderLocalRuntimeRefused(
+                "provider_process_lease_invalid", "snapshot unavailable"
+            )
+
+        @staticmethod
+        def retained() -> tuple[ProviderDescendantProcessV1, ...]:
+            return (identity,)
+
+    monkeypatch.setattr(runtime_module.os, "killpg", lambda *_args: None)
+    monkeypatch.setattr(
+        runtime_module,
+        "kill_descendants",
+        lambda identities: swept.extend(identities),
+    )
+    with pytest.raises(ProviderLocalRuntimeRefused, match="snapshot unavailable"):
+        runtime_module._terminate_process_group(
+            Process(),  # type: ignore[arg-type]
+            1.0,
+            descendants=Tracker(),  # type: ignore[arg-type]
+        )
+    assert swept == [identity]
 
 
 # ------------------------------------------------------------------ T-8 peer pid
