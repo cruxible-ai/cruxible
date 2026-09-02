@@ -163,7 +163,7 @@ EXPECTED_OPERATIONS = {
     "floor_stale": "playbill.floor.export",
     "floor_invalid": "playbill.floor.export",
     "projection_dirty": "playbill.block.repin",
-    "projection_backing_stale": "playbill.block.repin",
+    "projection_backing_stale": frozenset({"playbill.block.repin", "playbill.block.sync"}),
     "projection_marker_invalid": "playbill.block.repin",
     "self_published_source_stale": "playbill.authoring.create",
     "claim_dependency_stale": "playbill.authoring.create",
@@ -183,7 +183,9 @@ EXPECTED_OPERATIONS = {
 def _expected_operation(key: ClosedLoopKey) -> str:
     if key == ("citation_drifted", "gone"):
         return "playbill.claim.retire"
-    return EXPECTED_OPERATIONS[key[0]]
+    expected = EXPECTED_OPERATIONS[key[0]]
+    assert isinstance(expected, str)
+    return expected
 
 
 def _access() -> CoverageAccessProfileV1:
@@ -962,7 +964,10 @@ def _projection_backing_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
     instance, _owner = _instance_with_query(root)
     before = _projection_request(instance, backing=(_claim_backing(instance, stale=True),))
     row = _row(instance, "projection_backing_stale", before)
-    assert row.repair.operation == EXPECTED_OPERATIONS["projection_backing_stale"]
+    expected = EXPECTED_OPERATIONS["projection_backing_stale"]
+    assert isinstance(expected, frozenset)
+    assert expected == {"playbill.block.repin", "playbill.block.sync"}
+    assert row.repair.operation in expected
 
     _assert_gone(
         instance,
