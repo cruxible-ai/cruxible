@@ -2048,6 +2048,7 @@ PlaybillBlockSyncOutcome: TypeAlias = Literal[
     "would_sync",
     "detached",
     "would_detach",
+    "skipped",
     "refused",
     "unsyncable",
 ]
@@ -2088,9 +2089,9 @@ class PlaybillBlockSyncItemV1(_StrictAuthoringModel):
 
     @model_validator(mode="after")
     def _item_shape(self) -> "PlaybillBlockSyncItemV1":
-        refused = self.outcome in {"refused", "unsyncable"}
-        if refused != (self.reason is not None):
-            raise ValueError("block sync refusal outcomes require exactly one typed reason")
+        reasoned = self.outcome in {"skipped", "refused", "unsyncable"}
+        if reasoned != (self.reason is not None):
+            raise ValueError("block sync skipped/refusal outcomes require exactly one typed reason")
         if self.repair_commands != tuple(
             sorted(set(self.repair_commands), key=lambda item: item.encode("utf-8"))
         ):

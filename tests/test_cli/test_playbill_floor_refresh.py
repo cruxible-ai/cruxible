@@ -178,7 +178,6 @@ def test_accepted_activation_exactly_replaces_the_declared_floor(
             "proposal-1",
             "--workspace-root",
             str(workspace),
-            "--no-sync",
             "--json",
         ],
     )
@@ -189,6 +188,52 @@ def test_accepted_activation_exactly_replaces_the_declared_floor(
     payload = json.loads(result.stdout)
     assert payload["status"] == "accepted"
     assert payload["floor_refresh"]["status"] == "refreshed"
+    assert payload["block_sync"]["has_refusals"] is False
+    assert payload["block_sync"]["items"][0]["outcome"] == "skipped"
+    assert payload["block_sync"]["items"][0]["reason"] == "workspace_not_attached"
+
+
+def test_attached_sync_refusal_reports_accepted_truth_and_runnable_repair(
+    monkeypatch,  # type: ignore[no-untyped-def]
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    save_cli_context(CliContextState(server_url="http://test", instance_id="inst_test"))
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: object())
+    activation = contracts.PlaybillWorkspaceActivationResult(
+        proposal_id="proposal-1",
+        activated_by="owner",
+        status="accepted",
+        accepted_coordinate=_coordinate(),
+        workspace_advertisement={"status": "updated", "workspace_path": str(tmp_path)},
+        floor_refresh=contracts.PlaybillFloorRefreshResult(status="not_configured"),
+        block_sync=contracts.PlaybillBlockSyncResultV1(
+            items=(
+                contracts.PlaybillBlockSyncItemV1(
+                    path="runbook.md",
+                    outcome="refused",
+                    reason="block_locally_modified",
+                    repair_commands=("cruxible playbill block sync --all",),
+                ),
+            ),
+            changed_file_count=0,
+            would_change=False,
+            has_refusals=True,
+        ),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.activate_with_workspace_refresh",
+        lambda *_args, **_kwargs: activation,
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["playbill", "proposal", "activate", "proposal-1", "--json"],
+    )
+
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["status"] == "accepted"
+    assert "repair: cruxible playbill block sync --all" in result.stderr
 
 
 def test_invalid_refresh_preserves_the_old_floor_and_reports_both_truths(

@@ -339,3 +339,35 @@ def test_accepted_activation_runs_workspace_sync_last(
     assert events == ["activate", "floor", "sync"]
     assert result.block_sync is not None
     assert result.block_sync.has_refusals is False
+
+
+def test_accepted_activation_skips_sync_for_an_unattached_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / "plain-checkout"
+    workspace.mkdir()
+
+    class StubClient:
+        def activate_playbill_proposal(
+            self, instance_id: str, proposal_id: str
+        ) -> contracts.PlaybillActivationReceipt:
+            return contracts.PlaybillActivationReceipt(
+                proposal_id=proposal_id,
+                activated_by="owner",
+                status="accepted",
+                accepted_coordinate=_coordinate(),
+                workspace_advertisement={"status": "not_attached", "workspace_path": None},
+            )
+
+    result = activate_with_workspace_refresh(
+        StubClient(),  # type: ignore[arg-type]
+        "inst_test",
+        "proposal-1",
+        workspace=workspace,
+    )
+
+    assert result.status == "accepted"
+    assert result.block_sync is not None
+    assert result.block_sync.has_refusals is False
+    (item,) = result.block_sync.items
+    assert item.outcome == "skipped"
+    assert item.reason == "workspace_not_attached"
+    assert item.repair_commands == ("cruxible playbill host create --workspace .",)

@@ -657,8 +657,10 @@ accepted activation followed by a failed local refresh reports both truths and
 exits nonzero; the daemon never receives the workspace path.
 
 After an accepted activation, the client runs block sync last unless
-`--no-sync` is explicit; a sync refusal is reported beside the already-accepted
-truth. `review open` refreshes the remote refs and creates a detached, gitignored
+`--no-sync` is explicit. An unattached workspace retains a typed `skipped`
+`workspace_not_attached` row and exits zero; a sync refusal in an attached
+workspace reports the already-accepted truth, names `cruxible playbill block sync
+--all`, and exits nonzero. `review open` refreshes the remote refs and creates a detached, gitignored
 worktree at `.playbill/review/<proposal-digest>/`; `review close` removes only a
 clean review worktree. This provides editor/diff access without creating a local
 branch. No review-ref mirror script is needed: standard Git tooling already

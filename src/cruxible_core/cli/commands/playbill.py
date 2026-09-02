@@ -1202,7 +1202,8 @@ def activate_proposal(
     if result.block_sync is not None and result.block_sync.has_refusals:
         _emit_json(payload)
         raise click.ClickException(
-            f"proposal activation status={result.status}; block sync reported refusals"
+            f"proposal activation status={result.status}; block sync reported refusals; "
+            "repair: cruxible playbill block sync --all"
         )
     if output_brief:
         _emit_brief(

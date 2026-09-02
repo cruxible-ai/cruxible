@@ -1348,6 +1348,21 @@ def activate_with_workspace_refresh(
                 workspace=workspace,
                 all_sources=True,
             )
+            if block_sync.items and all(
+                item.reason == "workspace_not_attached" for item in block_sync.items
+            ):
+                skipped = tuple(
+                    contracts.PlaybillBlockSyncItemV1.model_validate(
+                        {**item.model_dump(mode="json"), "outcome": "skipped"}
+                    )
+                    for item in block_sync.items
+                )
+                block_sync = contracts.PlaybillBlockSyncResultV1(
+                    items=skipped,
+                    changed_file_count=0,
+                    would_change=False,
+                    has_refusals=False,
+                )
         except Exception as exc:  # report activation and sync truth together
             block_sync = contracts.PlaybillBlockSyncResultV1(
                 items=(
