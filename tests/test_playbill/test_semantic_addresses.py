@@ -59,7 +59,7 @@ def test_unknown_line_number_and_malformed_selectors_refuse() -> None:
     with pytest.raises(ValidationError, match="must be empty"):
         SemanticSelector(scheme="claim-statement-v1", value="line:12")
     with pytest.raises(ValidationError, match="ledger path"):
-        SemanticAddress.whole_artifact("/Users/example/document.md")
+        SemanticAddress.whole_artifact("/workspace/document.md")
     with pytest.raises(ValidationError, match="extra_forbidden"):
         SemanticAddress.model_validate(
             {

@@ -9,19 +9,11 @@ import os
 import re
 import signal
 import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import get_args, get_type_hints
 
 import pytest
-from tests.test_playbill._p2b1_support import install_demo_classifier
-from tests.test_playbill.test_procedure_execution import _Authority, _Contracts
-from tests.test_playbill.test_provider_invocation_journal import (
-    _accepted_one_provider,
-    _Invoker,
-    _prepared_v5,
-)
 
 import cruxible_core.playbill.provider_local_runtime as runtime_module
 import cruxible_core.service.playbill_procedure_runs as procedure_run_service
@@ -51,11 +43,17 @@ from cruxible_core.playbill.provider_process_leases import (
     ProviderProcessRecoveryFailureV1,
 )
 from cruxible_core.playbill.provider_runtime_contract import ProviderRuntimeBudgetsV1
+from tests.test_playbill._p2b1_support import install_demo_classifier
+from tests.test_playbill.test_procedure_execution import _Authority, _Contracts
+from tests.test_playbill.test_provider_invocation_journal import (
+    _accepted_one_provider,
+    _Invoker,
+    _prepared_v5,
+)
 
-sys.path.insert(0, str(Path(__file__).parent))
-from _child import write_child  # noqa: E402
+from ._child import write_child
 
-WORKTREE = Path("/Users/robertmalone/Git/p2-worktrees/p2b2")
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 ESCAPE_SOURCE = r"""#!/usr/bin/env python3
 import json, os, socket, sys, threading, time
@@ -433,7 +431,7 @@ def test_no_tmp_path_remains_on_the_provider_fence_path() -> None:
         "src/cruxible_core/runtime/provider_runtime.py",
         "src/cruxible_core/runtime/playbill_manager.py",
     ):
-        text = (WORKTREE / name).read_text(encoding="utf-8")
+        text = (REPOSITORY_ROOT / name).read_text(encoding="utf-8")
         assert "/tmp" not in text, name
 
 

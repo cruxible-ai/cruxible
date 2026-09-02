@@ -1,4 +1,4 @@
-"""Round-3 probe support: short state roots (AF_UNIX 103-byte ceiling)."""
+"""Round-4 probe support: short state roots (AF_UNIX 103-byte ceiling)."""
 
 from __future__ import annotations
 
@@ -13,6 +13,6 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 @pytest.fixture()
 def short_root(request: pytest.FixtureRequest) -> Path:
-    root = Path(tempfile.mkdtemp(prefix=".b2-r3-", dir=REPOSITORY_ROOT))
+    root = Path(tempfile.mkdtemp(prefix=".b2-r4-", dir=REPOSITORY_ROOT))
     request.addfinalizer(lambda: shutil.rmtree(root, ignore_errors=True))
     return root

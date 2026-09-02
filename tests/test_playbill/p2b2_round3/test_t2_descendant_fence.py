@@ -29,8 +29,7 @@ from cruxible_core.playbill.provider_process_leases import (
 )
 from cruxible_core.playbill.provider_runtime_contract import ProviderRuntimeBudgetsV1
 
-sys.path.insert(0, str(Path(__file__).parent))
-from _child import write_child  # noqa: E402
+from ._child import write_child
 
 CONTEXT = b'{"run_id":"RUN-r3","input":{"value":"r3"}}'
 
@@ -262,7 +261,7 @@ def test_the_tracker_uses_one_snapshot_per_second_and_one_ps_per_snapshot(
     tracker = _DescendantTracker(
         os.getpid(), invocation_id="sha256:" + "e" * 64, poll_interval_seconds=1.0
     )
-    time.sleep(1.0)
+    time.sleep(1.1)
     tracker.close(timeout_seconds=1.0)
     ps_calls = [item for item in calls if item.startswith("ps ")]
     assert 1 <= len(ps_calls) <= 3, ps_calls

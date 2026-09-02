@@ -29,3 +29,4 @@ docs/llms-full.txt
 
 # Local operation-instance config (customized agent-operation + project-domain overlay); never shipped
 /ops/
+/.b2-*

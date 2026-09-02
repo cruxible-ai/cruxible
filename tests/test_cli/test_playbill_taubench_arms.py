@@ -24,6 +24,7 @@ nobody runs. What it exercises is not scale:
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 from dataclasses import fields
@@ -37,10 +38,13 @@ from tests.test_cli.test_playbill_knowledge_loop_smoke import (  # noqa: F401
 )
 
 BENCHMARK_DIR = Path(__file__).resolve().parents[2] / "benchmarks/playbill_taubench"
-if str(BENCHMARK_DIR) not in sys.path:
-    sys.path.insert(0, str(BENCHMARK_DIR))
-
-import recipe  # noqa: E402  -- the committed recipe, imported and driven, not copied
+_RECIPE_SPEC = importlib.util.spec_from_file_location(
+    "playbill_taubench_recipe", BENCHMARK_DIR / "recipe.py"
+)
+assert _RECIPE_SPEC is not None and _RECIPE_SPEC.loader is not None
+recipe = importlib.util.module_from_spec(_RECIPE_SPEC)
+sys.modules[_RECIPE_SPEC.name] = recipe
+_RECIPE_SPEC.loader.exec_module(recipe)
 
 pytestmark = pytest.mark.taubench
 

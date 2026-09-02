@@ -16,7 +16,7 @@ from cruxible_core.playbill.procedures.execution import (
 )
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
 
-WORKTREE = Path("/Users/robertmalone/Git/p2-worktrees/p2b2")
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_k8_operational_config_reaches_the_daemon_lease_store(short_root: Path) -> None:
@@ -89,7 +89,7 @@ def test_f5_no_bare_timeout_literal_remains_on_the_fence_path() -> None:
 
 
 def test_r6_regression_shape() -> None:
-    whole = (WORKTREE / "tests/test_server/test_provider_runtime_operator.py").read_text(
+    whole = (REPOSITORY_ROOT / "tests/test_server/test_provider_runtime_operator.py").read_text(
         encoding="utf-8"
     )
     start = whole.index("def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(")
