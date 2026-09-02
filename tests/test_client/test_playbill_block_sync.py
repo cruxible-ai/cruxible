@@ -348,6 +348,52 @@ def test_catalog_optional_explicit_path_cannot_escape_workspace(tmp_path: Path) 
     assert result.items[0].path == outside.name
 
 
+def test_nonportable_catalog_returns_a_typed_refusal(tmp_path: Path) -> None:
+    source = _workspace(tmp_path)
+    outside = tmp_path.parent / "outside-runbook.md"
+    outside.write_bytes(source.read_bytes())
+    catalog = tmp_path / ".playbill" / "sources.yaml"
+    catalog.write_text(
+        catalog.read_text(encoding="utf-8")
+        .replace("catalog_kind: portable", "catalog_kind: local")
+        .replace("locator: corpus/runbook.md", f"locator: {outside}"),
+        encoding="utf-8",
+    )
+
+    result = sync_projection_blocks(
+        _SyncClient(),  # type: ignore[arg-type]
+        INSTANCE_ID,
+        workspace=tmp_path,
+        all_sources=True,
+    )
+
+    assert result.items[0].outcome == "refused"
+    assert result.items[0].reason == "workspace_source_catalog_invalid"
+    assert outside.read_bytes() == source.read_bytes()
+
+
+def test_catalog_symlink_escape_is_typed_and_does_not_abort_other_sources(
+    tmp_path: Path,
+) -> None:
+    source = _workspace(tmp_path)
+    outside = tmp_path.parent / "outside-runbook.md"
+    outside.write_bytes(source.read_bytes())
+    source.unlink()
+    source.symlink_to(outside)
+
+    result = sync_projection_blocks(
+        _SyncClient(),  # type: ignore[arg-type]
+        INSTANCE_ID,
+        workspace=tmp_path,
+        all_sources=True,
+    )
+
+    assert result.items[0].outcome == "refused"
+    assert result.items[0].reason == "source_path_invalid"
+    assert "escapes the workspace" in str(result.items[0].detail["message"])
+    assert outside.read_bytes().count(OLD_BODY) == 1
+
+
 def test_whole_file_cas_preserves_a_concurrent_edit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

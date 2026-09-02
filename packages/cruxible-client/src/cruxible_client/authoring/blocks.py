@@ -494,7 +494,7 @@ def sync_projection_blocks(
     if catalog_paths:
         try:
             sources = WorkspaceSources(root)
-        except ValueError as exc:
+        except (ValueError, PlaybillError) as exc:
             return _result(
                 (
                     PlaybillBlockSyncItemV1(
@@ -511,7 +511,19 @@ def sync_projection_blocks(
     elif all_sources:
         assert sources is not None
         for entry in sources.document_entries:
-            selected[sources.path_for_source(entry.name)] = entry.name
+            try:
+                selected[sources.path_for_source(entry.name)] = entry.name
+            except (ValueError, PlaybillError) as exc:
+                items.append(
+                    PlaybillBlockSyncItemV1(
+                        path=entry.locator,
+                        source_id=entry.name,
+                        outcome="refused",
+                        reason="source_path_invalid",
+                        repair_commands=("cruxible playbill block sync --all",),
+                        detail={"message": str(exc)},
+                    )
+                )
     else:
         if not requested:
             raise ProjectionSyncError("block sync requires --all or at least one path")
