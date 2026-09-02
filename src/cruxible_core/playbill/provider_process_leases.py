@@ -399,6 +399,7 @@ class ProviderProcessLeaseStore:
         self.descendant_tracker_join_timeout_seconds = descendant_tracker_join_timeout_seconds
         self.descendant_tracker_poll_interval_seconds = descendant_tracker_poll_interval_seconds
         self.process_group_termination_timeout_seconds = process_group_termination_timeout_seconds
+        self._pending_releases: dict[str, ProviderProcessLeaseV1] = {}
         self._ensure_private_directory(root)
         # Control sockets are operational state and must share the daemon's
         # protected state-root boundary.  The short component also preserves
@@ -636,7 +637,21 @@ class ProviderProcessLeaseStore:
             with contextlib.suppress(FileNotFoundError):
                 path.unlink()
 
-    def recover_all(self) -> ProviderProcessRecoveryResultV1:
+    def acknowledge_recovery(self, invocation_ids: tuple[str, ...]) -> None:
+        """Release records only after their governed journal fold succeeds."""
+
+        for invocation_id in invocation_ids:
+            lease = self._pending_releases.get(invocation_id)
+            if lease is None:
+                continue
+            self.release(lease)
+            self._pending_releases.pop(invocation_id, None)
+
+    def recover_all(
+        self,
+        *,
+        defer_completion_release: bool = False,
+    ) -> ProviderProcessRecoveryResultV1:
         """Recover each fenced child independently under exact identity proof."""
 
         recovered: list[str] = []
@@ -703,7 +718,10 @@ class ProviderProcessLeaseStore:
                             reason="dead_orphan",
                         )
                     )
-                self.release(lease)
+                if defer_completion_release:
+                    self._pending_releases[invocation_id] = lease
+                else:
+                    self.release(lease)
             except ProviderLocalRuntimeRefused as exc:
                 could_not_clean.append(
                     ProviderProcessRecoveryFailureV1(

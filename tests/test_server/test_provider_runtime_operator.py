@@ -579,7 +579,7 @@ def test_lazy_rearm_is_serialized_and_never_runs_during_an_invocation(
     monkeypatch.setattr(
         operator.process_leases,
         "recover_all",
-        lambda: calls.append("recover") or clean,
+        lambda **_kwargs: calls.append("recover") or clean,
     )
     operator.mark_unavailable(
         "provider_process_group_survived_recovery",

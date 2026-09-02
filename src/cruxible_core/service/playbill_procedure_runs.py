@@ -1485,6 +1485,7 @@ def service_recover_provider_invocations(
     bodies = instance.body_store()
     access = BodyAccessContext(principal_id="provider-recovery", can_read_body=True)
     recovered: list[str] = []
+    handled: set[str] = set()
     for partition_id in journal.partition_ids(stream):
         records = journal.all_records(stream, partition_id)
         admission: ProcedureRunAdmissionV5 | None = None
@@ -1508,6 +1509,7 @@ def service_recover_provider_invocations(
                 completed[parsed_completion.invocation_id] = parsed_completion
         if admission is None or plan is None:
             continue
+        handled.update(wanted & set(completed))
         unresolved_ids = set(starts) - set(completed)
         failed_pending_ids = tuple(sorted(set(failures) & unresolved_ids, key=str.encode))
         for invocation_id in failed_pending_ids:
@@ -1644,6 +1646,7 @@ def service_recover_provider_invocations(
                 )
                 completed[invocation_id] = completion
                 recovered.append(invocation_id)
+                handled.add(invocation_id)
             ordered_completions = tuple(completed[item] for item in starts if item in completed)
             provider_calls = len(ordered_completions)
             invocation_receipt_digests = tuple(item.receipt_digest for item in ordered_completions)
@@ -1705,7 +1708,7 @@ def service_recover_provider_invocations(
             for run_id, invocation_id, code in sorted(observed_failures, key=lambda item: item[1])
         )
         raise ProcedureRunRecoveryRequired(f"{ProcedureRunRecoveryRequired.code}: {detail}")
-    return tuple(sorted(recovered, key=str.encode))
+    return tuple(sorted(handled, key=str.encode))
 
 
 def service_prepare_playbill_line_admission(

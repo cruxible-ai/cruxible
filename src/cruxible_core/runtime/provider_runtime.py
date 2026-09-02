@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -154,6 +155,7 @@ class ProviderRuntimeOperator:
         self._lock = threading.RLock()
         self._in_flight = 0
         self._rearm_required = False
+        self._recovery_fold: Callable[[ProviderProcessRecoveryResultV1], bool] | None = None
         self.unavailable_code: ProviderLaneUnavailableCodeV1 | None = None
         self.unavailable_reason: str | None = None
         self.config = ProviderRuntimeOperationalConfigV1()
@@ -261,7 +263,7 @@ class ProviderRuntimeOperator:
                 removed=(),
                 could_not_clean=(failure,),
             )
-        result = self.process_leases.recover_all()
+        result = self.process_leases.recover_all(defer_completion_release=True)
         for item in result.could_not_clean:
             self.mark_unavailable(item.code, item.message, retryable=True)
         return result
@@ -272,9 +274,35 @@ class ProviderRuntimeOperator:
         result = self._recover_locked()
         if result.could_not_clean:
             return
+        if result.completion_invocation_ids:
+            if self._recovery_fold is None:
+                self.mark_unavailable(
+                    "provider_runtime_recovery_failed",
+                    "Provider recovery result has no manager-owned journal fold",
+                    retryable=True,
+                )
+                return
+            if not self._recovery_fold(result):
+                return
         self._rearm_required = False
         self.unavailable_code = None
         self.unavailable_reason = None
+
+    def bind_recovery_fold(
+        self,
+        fold: Callable[[ProviderProcessRecoveryResultV1], bool],
+    ) -> None:
+        """Bind the manager-owned governed-journal fold used by lazy re-arm."""
+
+        with self._lock:
+            self._recovery_fold = fold
+
+    def acknowledge_recovery(self, invocation_ids: tuple[str, ...]) -> None:
+        """Release completion-bearing fences after the manager fold commits."""
+
+        with self._lock:
+            if self.process_leases is not None:
+                self.process_leases.acknowledge_recovery(invocation_ids)
 
     def lane_status(
         self,

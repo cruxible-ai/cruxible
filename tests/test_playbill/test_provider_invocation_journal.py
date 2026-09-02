@@ -707,6 +707,22 @@ def test_startup_recovery_closes_the_exact_start_and_terminalizes_the_attempt(
     )
     assert kinds.count("provider_invocation_completed") == 1
     assert kinds[-1] == "attempt_finalized"
+    before_refold = fixture.journal.all_records(
+        prepared.admission.journal_stream,
+        prepared.admission.journal_partition_id,
+    )
+    assert procedure_run_service.service_recover_provider_invocations(
+        _Instance(),  # type: ignore[arg-type]
+        invocation_ids=(invocation_id,),
+        recorded_at=datetime(2026, 9, 1, 0, 0, 1, tzinfo=timezone.utc),
+    ) == (invocation_id,)
+    assert (
+        fixture.journal.all_records(
+            prepared.admission.journal_stream,
+            prepared.admission.journal_partition_id,
+        )
+        == before_refold
+    )
     writer_state = fixture.journal.writer_state(
         prepared.admission.journal_stream,
         prepared.admission.journal_partition_id,

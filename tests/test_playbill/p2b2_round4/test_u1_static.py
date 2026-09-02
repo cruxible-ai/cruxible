@@ -222,14 +222,14 @@ def test_operator_construction_guards_every_filesystem_stage() -> None:
     assert secret_store_lines and set(secret_store_lines) <= guarded_lines
 
 
-def test_lazy_rearm_discards_the_recovery_fold() -> None:
-    """After a lazy re-arm the durable start is never completed."""
+def test_lazy_rearm_routes_the_recovery_result_through_the_manager_fold() -> None:
+    """A lazy re-arm cannot clear before the manager acknowledges its result."""
 
     from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
 
     source = inspect.getsource(ProviderRuntimeOperator._lazy_rearm_locked)
-    assert "completion_invocation_ids" not in source
-    assert "service_recover_provider_invocations" not in source
+    assert "completion_invocation_ids" in source
+    assert "self._recovery_fold(result)" in source
     manager = (REPOSITORY_ROOT / "src/cruxible_core/runtime/playbill_manager.py").read_text()
-    # the only journal fold lives in the startup path
-    assert manager.count("service_recover_provider_invocations") == 2
+    assert "def _fold_provider_recovery(" in manager
+    assert "operator.acknowledge_recovery(invocation_ids)" in manager

@@ -7,6 +7,7 @@ import os
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -107,10 +108,10 @@ def _degraded_operator(short_root: Path) -> ProviderRuntimeOperator:
     return operator
 
 
-def test_the_lazy_rearm_never_completes_the_durable_start_it_unblocks(
-    short_root: Path,
+def test_lazy_rearm_folds_before_releasing_the_durable_start(
+    short_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """T-5 residue: a re-armed lane deletes the record without folding the journal."""
+    """The manager fold observes the retained fence, then acknowledges its release."""
 
     operator = ProviderRuntimeOperator(short_root)
     store = operator.process_leases
@@ -134,27 +135,40 @@ def test_the_lazy_rearm_never_completes_the_durable_start_it_unblocks(
     )
     assert operator.unavailable_reason is not None
 
+    manager = get_playbill_manager().__class__()
+    registry_record = SimpleNamespace(backend="governed_daemon", instance_id="inst_rearm")
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_manager.get_registry",
+        lambda: SimpleNamespace(list_instances=lambda: (registry_record,)),
+    )
+    monkeypatch.setattr(manager, "get", lambda _instance_id: SimpleNamespace())
+    observed: list[str] = []
+
+    def fold(_instance: object, **kwargs: object) -> tuple[str, ...]:
+        assert record_path.exists(), "lease released before the governed fold"
+        value = kwargs["invocation_ids"]
+        assert isinstance(value, tuple)
+        ids = tuple(str(item) for item in value)
+        observed.extend(ids)
+        return ids
+
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_procedure_runs.service_recover_provider_invocations",
+        fold,
+    )
+    operator.bind_recovery_fold(lambda result: manager._fold_provider_recovery(operator, result))
+
     # A lazy re-arm on the invocation path.
     operator._begin_invocation()
     operator._end_invocation()
 
-    assert operator.unavailable_reason is None  # lane is back
-    assert not record_path.exists()  # the record is GONE
-    # ... and nothing ever folded `invocation` into the journal: the operator
-    # discards the ProviderProcessRecoveryResultV1 the re-arm produced.
-    import inspect
-
-    assert "completion_invocation_ids" not in inspect.getsource(
-        ProviderRuntimeOperator._lazy_rearm_locked
-    )
-    # ... and a later daemon restart can no longer find it either: the record the
-    # startup fold needs is gone, so the run stays `incomplete Provider invocation`
-    # with no path back to runnable.
+    assert observed == [invocation]
+    assert operator.unavailable_reason is None
+    assert not record_path.exists()
     restart = ProviderRuntimeOperator(short_root)
     assert restart.process_leases is not None
     later = restart.process_leases.recover_all()
     assert later.completion_invocation_ids == ()
-    assert invocation not in later.completion_invocation_ids
 
 
 def test_two_concurrent_first_invocations_rearm_exactly_once(short_root: Path) -> None:
@@ -162,10 +176,10 @@ def test_two_concurrent_first_invocations_rearm_exactly_once(short_root: Path) -
     calls: list[float] = []
     original = operator.process_leases.recover_all  # type: ignore[union-attr]
 
-    def counted():  # type: ignore[no-untyped-def]
+    def counted(**kwargs: object):  # type: ignore[no-untyped-def]
         calls.append(time.monotonic())
         time.sleep(0.05)
-        return original()
+        return original(**kwargs)  # type: ignore[arg-type]
 
     operator.process_leases.recover_all = counted  # type: ignore[union-attr,assignment]
     errors: list[BaseException] = []
@@ -265,10 +279,10 @@ def test_lane_status_blocks_while_a_rearm_recovery_runs(short_root: Path) -> Non
     original = operator.process_leases.recover_all  # type: ignore[union-attr]
     gate = threading.Event()
 
-    def slow():  # type: ignore[no-untyped-def]
+    def slow(**kwargs: object):  # type: ignore[no-untyped-def]
         gate.set()
         time.sleep(0.6)
-        return original()
+        return original(**kwargs)  # type: ignore[arg-type]
 
     operator.process_leases.recover_all = slow  # type: ignore[union-attr,assignment]
     thread = threading.Thread(target=operator._begin_invocation)
