@@ -442,6 +442,7 @@ def test_a_snapshot_failure_sweeps_and_reports_without_rethrowing(
                 pid=victim.pid, process_start_time=_process_start_time(victim.pid)
             )
         }
+        tracker._successful_observation_count = 1
         tracker._failure = ProviderLocalRuntimeRefused(
             "provider_process_lease_invalid", "planted snapshot failure"
         )

@@ -354,6 +354,10 @@ def test_snapshot_failure_sweeps_retained_descendants_and_reports_a_diagnostic(
         def retained() -> tuple[ProviderDescendantProcessV1, ...]:
             return (identity,)
 
+        @staticmethod
+        def has_successful_observation() -> bool:
+            return True
+
     def killpg(_pid: int, sig: int) -> None:
         if sig == 0:
             raise ProcessLookupError
