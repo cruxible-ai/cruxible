@@ -128,14 +128,21 @@ def test_returncode_is_none_and_the_group_is_alive_at_every_terminate_entry(
     observed: list[tuple[object, bool]] = []
     original = runtime_module._terminate_process_group
 
-    def spy(process, timeout_seconds, *, descendants):  # type: ignore[no-untyped-def]
+    def spy(  # type: ignore[no-untyped-def]
+        process, timeout_seconds, *, descendants, diagnostic_sink=None
+    ):
         alive = True
         try:
             os.killpg(process.pid, 0)
         except OSError:
             alive = False
         observed.append((process.returncode, alive))
-        return original(process, timeout_seconds, descendants=descendants)
+        return original(
+            process,
+            timeout_seconds,
+            descendants=descendants,
+            diagnostic_sink=diagnostic_sink,
+        )
 
     monkeypatch.setattr(runtime_module, "_terminate_process_group", spy)
     store = ProviderProcessLeaseStore(short_root / "l")
@@ -318,11 +325,12 @@ def test_tracker_start_failure_kills_and_reaps_the_spawned_child(
         _kill_tree(marker)
 
 
-def test_snapshot_failure_sweeps_retained_descendants_before_reraising(
+def test_snapshot_failure_sweeps_retained_descendants_and_reports_a_diagnostic(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     identity = ProviderDescendantProcessV1(pid=4321, process_start_time="start")
     swept: list[ProviderDescendantProcessV1] = []
+    diagnostics: list[ProviderLocalRuntimeRefused] = []
 
     class Process:
         pid = 1234
@@ -344,19 +352,25 @@ def test_snapshot_failure_sweeps_retained_descendants_before_reraising(
         def retained() -> tuple[ProviderDescendantProcessV1, ...]:
             return (identity,)
 
-    monkeypatch.setattr(runtime_module.os, "killpg", lambda *_args: None)
+    def killpg(_pid: int, sig: int) -> None:
+        if sig == 0:
+            raise ProcessLookupError
+
+    monkeypatch.setattr(runtime_module.os, "killpg", killpg)
     monkeypatch.setattr(
         runtime_module,
         "kill_descendants",
         lambda identities: swept.extend(identities),
     )
-    with pytest.raises(ProviderLocalRuntimeRefused, match="snapshot unavailable"):
-        runtime_module._terminate_process_group(
-            Process(),  # type: ignore[arg-type]
-            1.0,
-            descendants=Tracker(),  # type: ignore[arg-type]
-        )
+    runtime_module._terminate_process_group(
+        Process(),  # type: ignore[arg-type]
+        1.0,
+        descendants=Tracker(),  # type: ignore[arg-type]
+        diagnostic_sink=diagnostics.append,
+    )
     assert swept == [identity]
+    assert len(diagnostics) == 1
+    assert "snapshot unavailable" in str(diagnostics[0])
 
 
 # ------------------------------------------------------------------ T-8 peer pid

@@ -849,6 +849,7 @@ def _run_child(
                     process,
                     process_leases.process_group_termination_timeout_seconds,
                     descendants=descendants,
+                    diagnostic_sink=process_leases.record_diagnostic,
                 )
             except ProviderLocalRuntimeRefused as fence:
                 lease_refusal.details["process_fence_failure"] = {
@@ -885,6 +886,7 @@ def _run_child(
                     process,
                     process_leases.process_group_termination_timeout_seconds,
                     descendants=descendants,
+                    diagnostic_sink=process_leases.record_diagnostic,
                 )
             except ProviderLocalRuntimeRefused as fence:
                 if refusal is None:
@@ -910,6 +912,14 @@ def _collect_child_output(
     writer_join_timeout_seconds: float,
     observe_descendants: Callable[[], None] | None = None,
 ) -> _ProcessOutcome:
+    def observe_best_effort() -> None:
+        if observe_descendants is None:
+            return
+        try:
+            observe_descendants()
+        except ProviderLocalRuntimeRefused:
+            pass  # retained identities are swept and the lane records the diagnostic
+
     def write_stdin() -> None:
         try:
             assert process.stdin is not None
@@ -919,10 +929,7 @@ def _collect_child_output(
                 # The child cannot finish a whole-document input read until
                 # EOF. Snapshot after the bytes are delivered but before
                 # closing stdin so fast cross-session escapes are observable.
-                try:
-                    observe_descendants()
-                except ProviderLocalRuntimeRefused:
-                    pass  # the tracker re-raises its retained failure at the fence
+                observe_best_effort()
             process.stdin.close()
         except (BrokenPipeError, OSError, ValueError):
             pass
@@ -961,14 +968,14 @@ def _collect_child_output(
                     # work. Capture one event-driven snapshot while the root
                     # still owns cross-session descendants, independently of
                     # the configured background polling cadence.
-                    observe_descendants()
+                    observe_best_effort()
                     child_activity_observed = True
         if refusal is not None:
             raise ProviderLocalRuntimeRefused(*refusal)
         while True:
             if _process_exited_without_reaping(process.pid):
                 if observe_descendants is not None:
-                    observe_descendants()
+                    observe_best_effort()
                 break
             if time.monotonic() >= deadline:
                 raise ProviderLocalRuntimeRefused(
@@ -1008,6 +1015,7 @@ def _terminate_process_group(
     timeout_seconds: float,
     *,
     descendants: _DescendantTracker | None,
+    diagnostic_sink: Callable[[ProviderLocalRuntimeRefused], None] | None = None,
 ) -> None:
     """Kill an unreaped group, reap its leader, then sweep exact descendants."""
 
@@ -1032,7 +1040,9 @@ def _terminate_process_group(
             continue
         kill_descendants(observed_descendants)
         if snapshot_failure is not None:
-            raise snapshot_failure
+            if diagnostic_sink is not None:
+                diagnostic_sink(snapshot_failure)
+            snapshot_failure = None
         try:
             os.killpg(process.pid, 0)
             group_alive = True

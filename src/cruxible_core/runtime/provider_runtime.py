@@ -237,6 +237,9 @@ class ProviderRuntimeOperator:
                 process_leases = ProviderProcessLeaseStore(
                     self.state_root / "daemon" / "provider-process-leases",
                     control_root=self.state_root / "c",
+                    diagnostic_sink=lambda code, message: self.mark_unavailable(
+                        code, message, retryable=True
+                    ),
                     acquisition_timeout_seconds=self.config.lease_acquisition_timeout_seconds,
                     recovery_timeout_seconds=self.config.lease_recovery_timeout_seconds,
                     recovery_aggregate_timeout_seconds=(

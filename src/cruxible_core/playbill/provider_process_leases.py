@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 import time
 import weakref
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
@@ -407,6 +408,7 @@ class ProviderProcessLeaseStore:
         root: Path,
         *,
         control_root: Path | None = None,
+        diagnostic_sink: Callable[[ProviderProcessFenceCodeV1, str], None] | None = None,
         acquisition_timeout_seconds: float = DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS,
         recovery_timeout_seconds: float = DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS,
         recovery_aggregate_timeout_seconds: float = (
@@ -437,6 +439,8 @@ class ProviderProcessLeaseStore:
         self.descendant_tracker_join_timeout_seconds = descendant_tracker_join_timeout_seconds
         self.descendant_tracker_poll_interval_seconds = descendant_tracker_poll_interval_seconds
         self.process_group_termination_timeout_seconds = process_group_termination_timeout_seconds
+        self._diagnostic_sink = diagnostic_sink
+        self.diagnostics: tuple[tuple[ProviderProcessFenceCodeV1, str], ...] = ()
         self._pending_releases: dict[str, ProviderProcessLeaseV1] = {}
         self._ensure_private_directory(root)
         # Control sockets are operational state and must share the daemon's
@@ -459,6 +463,15 @@ class ProviderProcessLeaseStore:
         """Release this store's empty operational control namespace."""
 
         self._control_finalizer()
+
+    def record_diagnostic(self, failure: ProviderLocalRuntimeRefused) -> None:
+        """Retain one bounded observation failure without changing run outcome."""
+
+        code = cast(ProviderProcessFenceCodeV1, failure.code)
+        message = str(failure)
+        self.diagnostics = (*self.diagnostics[-15:], (code, message))
+        if self._diagnostic_sink is not None:
+            self._diagnostic_sink(code, message)
 
     @staticmethod
     def _ensure_private_directory(path: Path) -> None:
