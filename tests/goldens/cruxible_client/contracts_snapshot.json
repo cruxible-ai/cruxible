@@ -25426,6 +25426,7 @@
                   "would_sync",
                   "detached",
                   "would_detach",
+                  "skipped",
                   "refused",
                   "unsyncable"
                 ],
