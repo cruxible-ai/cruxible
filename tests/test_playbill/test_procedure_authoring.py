@@ -90,8 +90,9 @@ def test_accepted_claim_builder_expands_to_complete_expert_graph_golden() -> Non
     )
 
     assert first == second
+    # Retained pin at the P2-B2 compiler semantic revision 16.
     assert first.expanded_output_digest == (
-        "sha256:df28c8f7db44647698e28332ff48ceffb9f10813bf495ec789bbdfc4379f9deb"
+        "sha256:b97bb887f0351a1c64abc3704ef536c487b03b3546331444d73725e40c672dba"
     )
     assert [node.kind for node in first.definition.nodes] == ["state_tap", "guard", "project"]
     assert isinstance(first.definition.nodes[0], StateTapNodeV3)
