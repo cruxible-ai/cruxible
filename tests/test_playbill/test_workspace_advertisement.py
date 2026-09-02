@@ -472,3 +472,34 @@ def test_advertisement_refreshes_main_and_prunes_only_proposal_refs(tmp_path: Pa
     assert _git(workspace, "rev-parse", "refs/remotes/playbill/accepted") == _git(
         producer, "rev-parse", "HEAD"
     )
+
+
+def test_advertisement_prunes_pre_df3_remote_refs_without_touching_local_main(
+    tmp_path: Path,
+) -> None:
+    workspace, ledger = _repositories(tmp_path, "sha1")
+    local_main = _git(workspace, "rev-parse", "refs/heads/main")
+    _git(workspace, "update-ref", "refs/remotes/playbill/main", local_main)
+    _git(
+        workspace,
+        "update-ref",
+        "refs/remotes/playbill/proposals/owner/example",
+        local_main,
+    )
+
+    result = advertise_workspace_refs(
+        workspace_root=workspace,
+        ledger_path=ledger,
+        ledger_object_format="sha1",
+    )
+
+    assert result.status == "updated"
+    assert _git(workspace, "rev-parse", "refs/heads/main") == local_main
+    remaining = _git(
+        workspace,
+        "for-each-ref",
+        "--format=%(refname)",
+        "refs/remotes/playbill",
+    ).splitlines()
+    assert "refs/remotes/playbill/main" not in remaining
+    assert "refs/remotes/playbill/proposals/owner/example" not in remaining

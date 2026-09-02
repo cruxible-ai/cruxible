@@ -42,7 +42,12 @@ _GIT_OVERRIDES = (
 )
 
 
-def _git(workspace: Path, args: list[str]) -> subprocess.CompletedProcess[bytes]:
+def _git(
+    workspace: Path,
+    args: list[str],
+    *,
+    input_data: bytes | None = None,
+) -> subprocess.CompletedProcess[bytes]:
     command = ["git", *_GIT_OVERRIDES, "-C", str(workspace), *args]
     environment = {
         name: os.environ[name] for name in _PASSTHROUGH_ENVIRONMENT if name in os.environ
@@ -61,6 +66,7 @@ def _git(workspace: Path, args: list[str]) -> subprocess.CompletedProcess[bytes]
             check=False,
             capture_output=True,
             env=environment,
+            input=input_data,
             timeout=30,
         )
     except FileNotFoundError as exc:
@@ -254,15 +260,29 @@ def _advertise_workspace_refs(
         [
             "for-each-ref",
             "--format=%(refname)",
-            "refs/remotes/playbill/accepted",
-            "refs/remotes/playbill/proposals",
+            "refs/remotes/playbill",
         ],
     )
     if listed.returncode != 0:
         return failed("fetch_failed")
+    all_refs = tuple(line for line in _text(listed.stdout).splitlines() if line)
+    stale_refs = tuple(
+        ref
+        for ref in all_refs
+        if ref != "refs/remotes/playbill/accepted"
+        and not ref.startswith("refs/remotes/playbill/proposals/")
+    )
+    if stale_refs:
+        deleted = _git(
+            workspace,
+            ["update-ref", "--stdin"],
+            input_data="".join(f"delete {ref}\n" for ref in stale_refs).encode("utf-8"),
+        )
+        if deleted.returncode != 0:
+            return failed("fetch_failed")
     refs = tuple(
         sorted(
-            (line for line in _text(listed.stdout).splitlines() if line),
+            (ref for ref in all_refs if ref not in stale_refs),
             key=lambda item: item.encode("utf-8"),
         )
     )
