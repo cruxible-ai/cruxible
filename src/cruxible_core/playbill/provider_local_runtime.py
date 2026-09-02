@@ -782,7 +782,8 @@ def _observe_descendants_best_effort(
         observe_descendants()
     except ProviderLocalRuntimeRefused as failure:
         if diagnostic_sink is not None:
-            diagnostic_sink(failure)
+            with contextlib.suppress(Exception):
+                diagnostic_sink(failure)
 
 
 def _process_table_unavailable_refusal() -> ProviderLocalRuntimeRefused:
