@@ -136,7 +136,7 @@ def provider_capture_fixture(root: Path) -> ProviderCaptureFixture:
     receipt = ProviderInvocationReceiptV1(
         invocation_id=digest("invocation", "source"),
         occurrence_path=occurrence.occurrence_path,
-        run_id="RUN-b4-source",
+        run_id="run-b4-source",
         admission_binding_digest=digest("admission", "source"),
         provider_artifact_digest=provider_digest,
         implementation_digest=implementation_digest,
