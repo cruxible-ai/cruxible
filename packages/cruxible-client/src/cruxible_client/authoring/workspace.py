@@ -834,14 +834,16 @@ def _projection_marker_observation(
         blocks = parse_projection_blocks(content, source_id=source_id, allow_bootstrap=True)
     except (ProjectionMarkerError, ValueError):
         return [], ("projection_marker_invalid",)
-    if any(block.stamp is None for block in blocks):
-        return [], ("projection_block_unstamped",)
+    marker_notes = (
+        ("projection_block_unstamped",) if any(block.stamp is None for block in blocks) else ()
+    )
     return (
         [
             block.summary().model_dump(mode="json")
             for block in sorted(blocks, key=lambda item: item.block_id.encode("utf-8"))
+            if block.stamp is not None
         ],
-        (),
+        marker_notes,
     )
 
 

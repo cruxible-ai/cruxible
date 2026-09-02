@@ -181,6 +181,9 @@ def test_two_writer_successor_sync_converges_without_mutating_accepted_state(
         instance_id=instance.descriptor.instance_id,
         content=b"PREFIX\n" + landed.content + b"SUFFIX\n",
     )
+    stamped_content = source.read_bytes()
+    draft = b"<!-- playbill:block:draft-note -->\ndraft\n<!-- /playbill:block:draft-note -->\n"
+    source.write_bytes(stamped_content.removesuffix(b"SUFFIX\n") + draft + b"SUFFIX\n")
     original_stamp = prepared.preparation.stamp
     current = service_read_playbill_block_sync_backing(
         instance,
@@ -252,6 +255,7 @@ def test_two_writer_successor_sync_converges_without_mutating_accepted_state(
     (source_observation,) = workspace_observation["source_observations"]  # type: ignore[index]
     assert source_observation["tag"] == "playbill-next-source-observation-v4"
     assert source_observation["scan_notes"] == ["coverage_source_mismatch"]
+    assert source_observation["marker_notes"] == ["projection_block_unstamped"]
 
     next_result = service_playbill_next(
         instance,
@@ -267,9 +271,11 @@ def test_two_writer_successor_sync_converges_without_mutating_accepted_state(
     (stale_row,) = tuple(
         item for item in next_result.items if item.reason == "projection_backing_stale"
     )
+    assert any(item.reason == "projection_marker_invalid" for item in next_result.items)
     assert stale_row.repair.operation == "playbill.block.sync"
     assert stale_row.repair.command == "cruxible playbill block sync --all"
 
+    source.write_bytes(stamped_content)
     result = sync_projection_blocks(
         _ServiceClient(instance),  # type: ignore[arg-type]
         instance.descriptor.instance_id,

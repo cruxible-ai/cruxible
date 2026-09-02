@@ -2918,7 +2918,6 @@ def _projection_items(
                 PlaybillNextSourceObservationV4,
             ),
         )
-        and ("projection_marker_invalid" in source.marker_notes or not source.marker_notes)
     )
     if not observed_sources:
         return ()
@@ -2933,7 +2932,7 @@ def _projection_items(
             else set()
         )
         missing_block_ids = registered_block_ids - observed_block_ids
-        marker_invalid = "projection_marker_invalid" in source.marker_notes
+        marker_invalid = bool(source.marker_notes)
         if marker_invalid and not missing_block_ids:
             items.append(
                 _projection_marker_invalid_item(
@@ -2951,9 +2950,7 @@ def _projection_items(
                 )
             )
 
-    sources = tuple(
-        source for source in observed_sources if not source.marker_notes and source.marker_summaries
-    )
+    sources = tuple(source for source in observed_sources if source.marker_summaries)
     if not sources:
         return tuple(items)
 
