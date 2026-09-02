@@ -376,6 +376,25 @@ def test_catalog_symlink_escape_is_typed_and_does_not_abort_other_sources(
     tmp_path: Path,
 ) -> None:
     source = _workspace(tmp_path)
+    valid_source = tmp_path / "corpus" / "valid.md"
+    valid_stamp = _stamp().model_copy(update={"source_id": "corpus.valid", "block_id": "pub-valid"})
+    valid_source.write_bytes(frame_projection_block(stamp=valid_stamp, body=OLD_BODY))
+    catalog = tmp_path / ".playbill" / "sources.yaml"
+    catalog.write_text(
+        catalog.read_text(encoding="utf-8")
+        + """\
+  - name: corpus.valid
+    locator: corpus/valid.md
+    document_id: valid
+    document_kind: runbook
+    title: Valid
+    media_type: text/markdown
+    compiler_profile: document-v1
+    required_tier: governed_write
+    governance_scope: [Document:valid]
+""",
+        encoding="utf-8",
+    )
     outside = tmp_path.parent / "outside-runbook.md"
     outside.write_bytes(source.read_bytes())
     source.unlink()
@@ -388,9 +407,12 @@ def test_catalog_symlink_escape_is_typed_and_does_not_abort_other_sources(
         all_sources=True,
     )
 
-    assert result.items[0].outcome == "refused"
-    assert result.items[0].reason == "source_path_invalid"
-    assert "escapes the workspace" in str(result.items[0].detail["message"])
+    rows = {item.source_id: item for item in result.items}
+    assert rows["corpus.runbook"].outcome == "refused"
+    assert rows["corpus.runbook"].reason == "source_path_invalid"
+    assert "escapes the workspace" in str(rows["corpus.runbook"].detail["message"])
+    assert rows["corpus.valid"].outcome == "synced"
+    assert NEW_BODY in valid_source.read_bytes()
     assert outside.read_bytes().count(OLD_BODY) == 1
 
 

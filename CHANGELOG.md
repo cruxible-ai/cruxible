@@ -13,6 +13,8 @@
   differing file, and `context show` separates config attachment from daemon
   registration. The `next` vocabulary now covers workspace attachment,
   projection repair, curation, and stale publication-block synchronization.
+  The public `PlaybillBlockSyncOutcome` enum adds `skipped` for an unattached
+  activation-driven sync; an explicit unattached `block sync` remains refused.
 
 - **Provider local-runtime fences are bounded and observable (P2-B2).** Provider
   child groups are killed and reaped on every completion path, with deterministic
