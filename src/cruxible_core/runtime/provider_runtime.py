@@ -63,6 +63,16 @@ _FILESYSTEM_CONSTRUCTION_STAGES: tuple[_ConstructionStage, ...] = (
     "secret store",
     "deployment",
 )
+_CONSTRUCTION_STAGE_DEPENDENTS: Mapping[
+    _ConstructionStage,
+    tuple[_ConstructionStage, ...],
+] = {
+    "state root": _FILESYSTEM_CONSTRUCTION_STAGES,
+    "operational config": ("process lease store", "secret store", "deployment"),
+    "process lease store": (),
+    "secret store": (),
+    "deployment": (),
+}
 
 
 class _StrictOperationalModel(BaseModel):
@@ -298,6 +308,13 @@ class ProviderRuntimeOperator:
             if stage in {"state root", *_FILESYSTEM_CONSTRUCTION_STAGES}
         }
         stages.update(self._pending_construction_stages)
+        frontier = list(stages)
+        while frontier:
+            stage = frontier.pop()
+            for dependent in _CONSTRUCTION_STAGE_DEPENDENTS[stage]:
+                if dependent not in stages:
+                    stages.add(dependent)
+                    frontier.append(dependent)
         if "state root" in stages:
             if not self._initialize_state_root():
                 return
