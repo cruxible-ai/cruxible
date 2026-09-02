@@ -53,6 +53,7 @@ from cruxible_core.playbill.provider_classifiers import ProviderBucketClassifier
 from cruxible_core.playbill.provider_local_runtime import LocalProviderDeploymentV1
 from cruxible_core.playbill.provider_process_leases import (
     ProviderLocalRuntimeRefused,
+    ProviderProcessRecoveryFailureV1,
     ProviderProcessRecoveryResultV1,
 )
 from cruxible_core.playbill.provider_runtime_contract import (
@@ -453,7 +454,12 @@ def test_malformed_runtime_config_degrades_only_the_provider_lane(tmp_path: Path
     with pytest.raises(ProviderLocalRuntimeRefused) as caught:
         invoker.bind_provider(occurrence=object())  # type: ignore[arg-type]
     assert caught.value.code == "provider_unavailable"
-    assert caught.value.details == {"reason": operator.unavailable_reason}
+    assert caught.value.details == {
+        "reason": {
+            "code": operator.unavailable_code,
+            "detail": operator.unavailable_reason,
+        }
+    }
 
 
 def test_overlong_state_root_degrades_provider_at_operator_construction(
@@ -477,7 +483,7 @@ def test_unmatched_recovered_start_degrades_provider_and_continues_instances(
     unavailable: list[tuple[str, str]] = []
     operator = SimpleNamespace(
         recover_all=lambda: result,
-        mark_unavailable=lambda code, message: unavailable.append((code, message)),
+        mark_unavailable=lambda code, message, **_kwargs: unavailable.append((code, message)),
     )
     records = (
         SimpleNamespace(instance_id="inst_one", backend="governed_daemon"),
@@ -507,7 +513,92 @@ def test_unmatched_recovered_start_degrades_provider_and_continues_instances(
     assert visited == ["inst_one", "inst_two"]
     assert unavailable == [
         (
-            "playbill.procedure.run.recovery_required",
+            "provider_runtime_recovery_failed",
             "procedure_run_recovery_required: no exact admitted occurrence",
         )
     ]
+
+
+def test_could_not_clean_is_forwarded_as_recovery_required_without_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invocation_id = _digest("could-not-clean")
+    result = ProviderProcessRecoveryResultV1(
+        recovered=(),
+        removed=(),
+        could_not_clean=(
+            ProviderProcessRecoveryFailureV1(
+                record_name="fence.json",
+                invocation_id=invocation_id,
+                code="provider_process_group_survived_recovery",
+                message="group remains live",
+            ),
+        ),
+    )
+    operator = SimpleNamespace(
+        recover_all=lambda: result,
+        mark_unavailable=lambda *_args, **_kwargs: None,
+    )
+    manager = PlaybillInstanceManager()
+    monkeypatch.setattr(manager, "provider_runtime_operator", lambda: operator)
+    monkeypatch.setattr(manager, "get", lambda instance_id: instance_id)
+    monkeypatch.setattr(
+        playbill_manager_module,
+        "get_registry",
+        lambda: SimpleNamespace(
+            list_instances=lambda: (
+                SimpleNamespace(instance_id="inst_one", backend="governed_daemon"),
+            )
+        ),
+    )
+    observed: list[dict[str, object]] = []
+
+    def recover(_instance: str, **kwargs: object) -> tuple[str, ...]:
+        observed.append(kwargs)
+        return ()
+
+    monkeypatch.setattr(procedure_run_service, "service_recover_provider_invocations", recover)
+
+    assert manager.recover_provider_runtime() == result
+    assert observed[0]["invocation_ids"] == ()
+    assert observed[0]["recovery_failure_codes"] == {
+        invocation_id: "provider_process_group_survived_recovery"
+    }
+
+
+def test_lazy_rearm_is_serialized_and_never_runs_during_an_invocation(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    state_root = Path(tempfile.mkdtemp(dir="/tmp", prefix="p2b2-"))
+    request.addfinalizer(lambda: shutil.rmtree(state_root, ignore_errors=True))
+    operator = ProviderRuntimeOperator(state_root)
+    assert operator.process_leases is not None
+    calls: list[str] = []
+    clean = ProviderProcessRecoveryResultV1(recovered=(), removed=(), could_not_clean=())
+    monkeypatch.setattr(
+        operator.process_leases,
+        "recover_all",
+        lambda: calls.append("recover") or clean,
+    )
+    operator.mark_unavailable(
+        "provider_process_group_survived_recovery",
+        "repairable survivor",
+        retryable=True,
+    )
+    operator._in_flight = 1  # noqa: SLF001 - directly pins the K-9 exclusion
+    unavailable = operator.invoker_for(
+        SimpleNamespace(tree_at=lambda _oid: {}),  # type: ignore[arg-type]
+        accepted_oid="a" * 40,
+    )
+    assert calls == []
+    with pytest.raises(ProviderLocalRuntimeRefused):
+        unavailable.bind_provider(occurrence=object())
+
+    operator._in_flight = 0  # noqa: SLF001
+    operator.invoker_for(
+        SimpleNamespace(tree_at=lambda _oid: {}),  # type: ignore[arg-type]
+        accepted_oid="a" * 40,
+    )
+    assert calls == ["recover"]
+    assert operator.lane_status() == ("available", None, None)

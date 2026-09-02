@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -28,15 +29,30 @@ from cruxible_core.playbill.provider_local_runtime import (
     ProviderSecretResolverRegistry,
 )
 from cruxible_core.playbill.provider_process_leases import (
+    DEFAULT_PROVIDER_DESCENDANT_TRACKER_JOIN_TIMEOUT_SECONDS,
+    DEFAULT_PROVIDER_DESCENDANT_TRACKER_POLL_INTERVAL_SECONDS,
     DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS,
     DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS,
+    DEFAULT_PROVIDER_PROCESS_GROUP_TERMINATION_TIMEOUT_SECONDS,
+    DEFAULT_PROVIDER_SECRET_WRITER_JOIN_TIMEOUT_SECONDS,
+    DEFAULT_PROVIDER_STDIN_WRITER_JOIN_TIMEOUT_SECONDS,
     ProviderLocalRuntimeRefused,
+    ProviderProcessFenceCodeV1,
     ProviderProcessLeaseStore,
     ProviderProcessRecoveryFailureV1,
     ProviderProcessRecoveryResultV1,
 )
 
 PROVIDER_RUNTIME_CONFIG_PATH = Path("daemon/provider-runtime.json")
+
+ProviderLaneUnavailableCodeV1 = Literal[
+    "provider_process_lease_invalid",
+    "provider_process_lease_missing",
+    "provider_process_lease_echo_failed",
+    "provider_process_lease_echo_mismatch",
+    "provider_process_group_survived_recovery",
+    "provider_runtime_recovery_failed",
+]
 
 
 class _StrictOperationalModel(BaseModel):
@@ -83,6 +99,26 @@ class ProviderRuntimeOperationalConfigV1(_StrictOperationalModel):
         default=DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS,
         gt=0,
     )
+    secret_writer_join_timeout_seconds: float = Field(
+        default=DEFAULT_PROVIDER_SECRET_WRITER_JOIN_TIMEOUT_SECONDS,
+        gt=0,
+    )
+    stdin_writer_join_timeout_seconds: float = Field(
+        default=DEFAULT_PROVIDER_STDIN_WRITER_JOIN_TIMEOUT_SECONDS,
+        gt=0,
+    )
+    descendant_tracker_join_timeout_seconds: float = Field(
+        default=DEFAULT_PROVIDER_DESCENDANT_TRACKER_JOIN_TIMEOUT_SECONDS,
+        gt=0,
+    )
+    descendant_tracker_poll_interval_seconds: float = Field(
+        default=DEFAULT_PROVIDER_DESCENDANT_TRACKER_POLL_INTERVAL_SECONDS,
+        gt=0,
+    )
+    process_group_termination_timeout_seconds: float = Field(
+        default=DEFAULT_PROVIDER_PROCESS_GROUP_TERMINATION_TIMEOUT_SECONDS,
+        gt=0,
+    )
     deployments: tuple[ProviderDeploymentConfigV1, ...] = ()
 
     @field_validator("deployments")
@@ -103,50 +139,87 @@ class ProviderRuntimeOperator:
     def __init__(self, state_root: Path) -> None:
         self.state_root = state_root.resolve()
         self.state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._lock = threading.RLock()
+        self._in_flight = 0
+        self._rearm_required = False
+        self.unavailable_code: ProviderLaneUnavailableCodeV1 | None = None
         self.unavailable_reason: str | None = None
         try:
             self.config = self._load_config()
         except ProviderLocalRuntimeRefused as exc:
             self.config = ProviderRuntimeOperationalConfigV1()
-            self.mark_unavailable(exc.code, str(exc))
+            self.mark_unavailable(cast(ProviderProcessFenceCodeV1, exc.code), str(exc))
         try:
             process_leases = ProviderProcessLeaseStore(
                 self.state_root / "daemon" / "provider-process-leases",
                 control_root=self.state_root / "c",
                 acquisition_timeout_seconds=self.config.lease_acquisition_timeout_seconds,
                 recovery_timeout_seconds=self.config.lease_recovery_timeout_seconds,
+                secret_writer_join_timeout_seconds=(self.config.secret_writer_join_timeout_seconds),
+                stdin_writer_join_timeout_seconds=self.config.stdin_writer_join_timeout_seconds,
+                descendant_tracker_join_timeout_seconds=(
+                    self.config.descendant_tracker_join_timeout_seconds
+                ),
+                descendant_tracker_poll_interval_seconds=(
+                    self.config.descendant_tracker_poll_interval_seconds
+                ),
+                process_group_termination_timeout_seconds=(
+                    self.config.process_group_termination_timeout_seconds
+                ),
             )
             process_leases.paths("sha256:" + "0" * 64)
             self.process_leases: ProviderProcessLeaseStore | None = process_leases
         except ProviderLocalRuntimeRefused as exc:
             self.process_leases = None
-            self.mark_unavailable(exc.code, str(exc))
+            self.mark_unavailable(cast(ProviderProcessFenceCodeV1, exc.code), str(exc))
         self.secret_store = FileProviderSecretStore(self.state_root / "daemon" / "provider-secrets")
         self.secret_resolvers = ProviderSecretResolverRegistry(
             (EnvironmentProviderSecretResolver(), self.secret_store)
         )
         self.driver = LocalProviderExecutionDriver()
-        self.deployments = {
-            item.deployment_digest: self._deployment(item) for item in self.config.deployments
-        }
+        try:
+            self.deployments = {
+                item.deployment_digest: self._deployment(item) for item in self.config.deployments
+            }
+        except ProviderLocalRuntimeRefused as exc:
+            self.deployments = {}
+            self.mark_unavailable(cast(ProviderProcessFenceCodeV1, exc.code), str(exc))
 
-    def mark_unavailable(self, code: str, message: str) -> None:
+    def mark_unavailable(
+        self,
+        code: ProviderLaneUnavailableCodeV1 | ProviderProcessFenceCodeV1,
+        message: str,
+        *,
+        retryable: bool = False,
+    ) -> None:
         """Degrade only the Provider lane and preserve an operator-visible reason."""
 
-        reason = f"{code}: {message}"
-        if self.unavailable_reason is None:
-            self.unavailable_reason = reason
-        elif reason not in self.unavailable_reason:
-            self.unavailable_reason = f"{self.unavailable_reason}; {reason}"
+        with self._lock:
+            reason = f"{code}: {message}"
+            if self.unavailable_reason is None:
+                self.unavailable_code = code
+                self.unavailable_reason = reason
+            elif reason not in self.unavailable_reason:
+                self.unavailable_reason = f"{self.unavailable_reason}; {reason}"
+            self._rearm_required = self._rearm_required or retryable
 
     def recover_all(self) -> ProviderProcessRecoveryResultV1:
         """Recover every persisted process fence before serving requests."""
 
+        with self._lock:
+            if self._in_flight:
+                raise ProviderLocalRuntimeRefused(
+                    "provider_process_lease_invalid",
+                    "Provider process recovery cannot run while an invocation is in flight",
+                )
+            return self._recover_locked()
+
+    def _recover_locked(self) -> ProviderProcessRecoveryResultV1:
         if self.process_leases is None:
             failure = ProviderProcessRecoveryFailureV1(
                 record_name="provider-process-leases",
                 invocation_id=None,
-                code="provider_unavailable",
+                code="provider_process_lease_invalid",
                 message=self.unavailable_reason or "Provider process leases are unavailable",
             )
             return ProviderProcessRecoveryResultV1(
@@ -156,18 +229,43 @@ class ProviderRuntimeOperator:
             )
         result = self.process_leases.recover_all()
         for item in result.could_not_clean:
-            self.mark_unavailable(item.code, item.message)
+            self.mark_unavailable(item.code, item.message, retryable=True)
         return result
+
+    def _lazy_rearm_locked(self) -> None:
+        if not self._rearm_required or self._in_flight:
+            return
+        result = self._recover_locked()
+        if result.could_not_clean:
+            return
+        self._rearm_required = False
+        self.unavailable_code = None
+        self.unavailable_reason = None
+
+    def lane_status(
+        self,
+    ) -> tuple[
+        Literal["available", "unavailable"], ProviderLaneUnavailableCodeV1 | None, str | None
+    ]:
+        with self._lock:
+            if self.unavailable_reason is None:
+                return "available", None, None
+            return "unavailable", self.unavailable_code, self.unavailable_reason
 
     def invoker_for(
         self,
         instance: PlaybillInstance,
         *,
         accepted_oid: str,
-    ) -> ProviderLocalRuntimeInvoker | _UnavailableProviderRuntimeInvoker:
-        if self.unavailable_reason is not None:
-            return _UnavailableProviderRuntimeInvoker(self.unavailable_reason)
-        assert self.process_leases is not None
+    ) -> Any:
+        with self._lock:
+            self._lazy_rearm_locked()
+            if self.unavailable_reason is not None:
+                return _UnavailableProviderRuntimeInvoker(
+                    code=self.unavailable_code or "provider_runtime_recovery_failed",
+                    detail=self.unavailable_reason,
+                )
+            assert self.process_leases is not None
         tree = instance.tree_at(accepted_oid)
         providers: dict[str, AcceptedProviderV1] = {}
         interfaces: dict[str, AcceptedProviderInterfaceRegistrationV1] = {}
@@ -192,7 +290,7 @@ class ProviderRuntimeOperator:
                     registration=registration,
                     artifact_digest=digest,
                 )
-        return ProviderLocalRuntimeInvoker(
+        invoker = ProviderLocalRuntimeInvoker(
             deployments_by_digest=self.deployments,
             accepted_providers_by_digest=providers,
             accepted_interfaces_by_digest=interfaces,
@@ -200,6 +298,26 @@ class ProviderRuntimeOperator:
             process_leases=self.process_leases,
             driver=self.driver,
         )
+        return _OperatorBoundProviderRuntimeInvoker(self, invoker)
+
+    def _begin_invocation(self) -> None:
+        with self._lock:
+            if self.unavailable_reason is not None:
+                raise ProviderLocalRuntimeRefused(
+                    "provider_unavailable",
+                    "Provider runtime is unavailable until operator recovery",
+                    details={
+                        "reason": {
+                            "code": self.unavailable_code or "provider_runtime_recovery_failed",
+                            "detail": self.unavailable_reason,
+                        }
+                    },
+                )
+            self._in_flight += 1
+
+    def _end_invocation(self) -> None:
+        with self._lock:
+            self._in_flight -= 1
 
     def _load_config(self) -> ProviderRuntimeOperationalConfigV1:
         path = self.state_root / PROVIDER_RUNTIME_CONFIG_PATH
@@ -237,11 +355,34 @@ class ProviderRuntimeOperator:
         )
 
 
+class _OperatorBoundProviderRuntimeInvoker:
+    def __init__(
+        self, operator: ProviderRuntimeOperator, delegate: Any
+    ) -> None:
+        self.operator = operator
+        self.delegate = delegate
+
+    def bind_provider(self, *, occurrence: object) -> object:
+        return self.delegate.bind_provider(occurrence=occurrence)
+
+    def invoke_provider(self, **kwargs: object) -> object:
+        self.operator._begin_invocation()
+        try:
+            return self.delegate.invoke_provider(**kwargs)
+        finally:
+            self.operator._end_invocation()
+
+
 class _UnavailableProviderRuntimeInvoker:
     """Refusing invoker used when startup fences degrade the Provider lane."""
 
-    def __init__(self, reason: str) -> None:
-        self.reason = reason
+    def __init__(self, *, code: ProviderLaneUnavailableCodeV1, detail: str) -> None:
+        self.code = code
+        self.detail = detail
+
+    @property
+    def reason(self) -> dict[str, str]:
+        return {"code": self.code, "detail": self.detail}
 
     def bind_provider(self, *, occurrence: object) -> object:
         raise ProviderLocalRuntimeRefused(

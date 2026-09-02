@@ -213,26 +213,63 @@ class PlaybillInstanceManager:
         """Recover process fences before the daemon accepts requests."""
 
         operator = self.provider_runtime_operator()
-        result = operator.recover_all()
+        try:
+            result = operator.recover_all()
+        except Exception as exc:
+            operator.mark_unavailable(
+                "provider_runtime_recovery_failed",
+                f"Provider process recovery failed: {exc}",
+                retryable=True,
+            )
+            return ProviderProcessRecoveryResultV1(
+                recovered=(),
+                removed=(),
+                could_not_clean=(),
+            )
         invocation_ids = result.completion_invocation_ids
-        if not invocation_ids:
+        recovery_failures = {
+            item.invocation_id: item.code
+            for item in result.could_not_clean
+            if item.invocation_id is not None
+        }
+        if not invocation_ids and not recovery_failures:
             return result
         from cruxible_core.service.playbill_procedure_runs import (
             ProcedureRunRecoveryRequired,
             service_recover_provider_invocations,
         )
 
-        for record in get_registry().list_instances():
+        try:
+            records = get_registry().list_instances()
+        except Exception as exc:
+            operator.mark_unavailable(
+                "provider_runtime_recovery_failed",
+                f"Provider instance enumeration failed: {exc}",
+                retryable=True,
+            )
+            return result
+        for record in records:
             if record.backend != GOVERNED_DAEMON_BACKEND:
                 continue
             try:
                 service_recover_provider_invocations(
                     self.get(record.instance_id),
                     invocation_ids=invocation_ids,
+                    recovery_failure_codes=recovery_failures,
                     recorded_at=utc_now(),
                 )
             except ProcedureRunRecoveryRequired as exc:
-                operator.mark_unavailable(exc.code, str(exc))
+                operator.mark_unavailable(
+                    "provider_runtime_recovery_failed",
+                    str(exc),
+                    retryable=True,
+                )
+            except Exception as exc:
+                operator.mark_unavailable(
+                    "provider_runtime_recovery_failed",
+                    f"Provider journal recovery failed for {record.instance_id}: {exc}",
+                    retryable=True,
+                )
         return result
 
 

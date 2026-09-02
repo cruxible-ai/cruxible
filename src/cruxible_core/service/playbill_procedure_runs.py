@@ -1470,13 +1470,16 @@ def service_recover_provider_invocations(
     instance: PlaybillInstance,
     *,
     invocation_ids: tuple[str, ...],
+    recovery_failure_codes: Mapping[str, str] | None = None,
     recorded_at: datetime,
 ) -> tuple[str, ...]:
     """Close exact durable starts whose child groups were recovered at startup."""
 
-    if not invocation_ids:
+    failures = {} if recovery_failure_codes is None else dict(recovery_failure_codes)
+    if not invocation_ids and not failures:
         return ()
     wanted = set(invocation_ids)
+    observed_failures: list[tuple[str, str, str]] = []
     journal, _root = _journal_for_write(instance)
     stream = _stream(instance)
     bodies = instance.body_store()
@@ -1505,7 +1508,11 @@ def service_recover_provider_invocations(
                 completed[parsed_completion.invocation_id] = parsed_completion
         if admission is None or plan is None:
             continue
-        pending_ids = tuple(sorted(wanted & set(starts) - set(completed), key=str.encode))
+        unresolved_ids = set(starts) - set(completed)
+        failed_pending_ids = tuple(sorted(set(failures) & unresolved_ids, key=str.encode))
+        for invocation_id in failed_pending_ids:
+            observed_failures.append((admission.run_id, invocation_id, failures[invocation_id]))
+        pending_ids = tuple(sorted(wanted & unresolved_ids, key=str.encode))
         if not pending_ids:
             continue
         resolved_occurrences = []
@@ -1688,6 +1695,14 @@ def service_recover_provider_invocations(
                 partition_id,
                 expected_fencing_token=PROCEDURE_RUN_FENCING_TOKEN,
             )
+    if observed_failures:
+        detail = "; ".join(
+            f"run {run_id} invocation {invocation_id} requires recovery ({code})"
+            for run_id, invocation_id, code in sorted(observed_failures, key=lambda item: item[1])
+        )
+        raise ProcedureRunRecoveryRequired(
+            f"{ProcedureRunRecoveryRequired.code}: {detail}"
+        )
     return tuple(sorted(recovered, key=str.encode))
 
 

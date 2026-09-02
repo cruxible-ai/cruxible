@@ -73,7 +73,17 @@ def _format_request_validation_error(error: Mapping[str, Any]) -> str:
 def create_app() -> FastAPI:
     """Create and configure the Cruxible server app."""
     get_registry()
-    get_playbill_manager().recover_provider_runtime()
+    manager = get_playbill_manager()
+    try:
+        manager.recover_provider_runtime()
+    except Exception as exc:
+        # Last-resort isolation: Provider fence recovery must never prevent the
+        # non-Provider daemon surfaces from starting.
+        manager.provider_runtime_operator().mark_unavailable(
+            "provider_runtime_recovery_failed",
+            f"Provider runtime startup recovery failed: {exc}",
+            retryable=True,
+        )
     app = FastAPI(title="cruxible", responses=STANDARD_ERROR_RESPONSES)
     app.middleware("http")(token_auth_middleware)
 
