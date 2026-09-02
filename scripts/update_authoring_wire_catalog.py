@@ -73,13 +73,13 @@ def main() -> None:
         lines[start:end] = [rendered]
     CATALOG_MODULE.write_text("".join(lines), encoding="utf-8")
     cross_check = CROSS_CHECK_TEST.read_text(encoding="utf-8")
-    cross_check, replacements = re.subn(
+    cross_check, replacement_count = re.subn(
         r'(?<=AUTHORING_WIRE_CONTRACT_CATALOG_DIGEST == \(\n        ")sha256:[0-9a-f]{64}',
         digest,
         cross_check,
         count=1,
     )
-    if replacements != 1:
+    if replacement_count != 1:
         raise SystemExit(f"could not update authoring digest in {CROSS_CHECK_TEST}")
     CROSS_CHECK_TEST.write_text(cross_check, encoding="utf-8")
     print(f"Wrote {CATALOG_MODULE.relative_to(REPO_ROOT)}")
