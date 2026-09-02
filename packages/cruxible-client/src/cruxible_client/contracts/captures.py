@@ -70,6 +70,10 @@ from cruxible_client.contracts.source_references import (
     SourceReferenceV1,
     validate_source_commitment,
 )
+from cruxible_client.contracts.workspace_file import (
+    SourceReadReceiptV1,
+    source_read_receipt_digest,
+)
 
 if TYPE_CHECKING:
     from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -904,6 +908,9 @@ class ProviderInvocationCaptureEvidenceV1(_StrictCaptureModel):
     materialization_digest: str
     input_bucket: str
     invocation_receipt_digest: str
+    source_read_receipt_digest: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     secret_references: tuple[ProviderSecretReferenceV1, ...] = ()
     egress: ProviderEgressObservationV1
 
@@ -915,9 +922,12 @@ class ProviderInvocationCaptureEvidenceV1(_StrictCaptureModel):
         "implementation_digest",
         "materialization_digest",
         "invocation_receipt_digest",
+        "source_read_receipt_digest",
     )
     @classmethod
-    def _digests(cls, value: str) -> str:
+    def _digests(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         Sha256Value.from_tagged(value)
         return value
 
@@ -940,6 +950,14 @@ class ProviderInvocationCaptureEvidenceV1(_StrictCaptureModel):
         ) != len(value):
             raise ValueError("Capture secret references must be sorted and unique")
         return value
+
+    @model_validator(mode="after")
+    def _workspace_receipt(self) -> "ProviderInvocationCaptureEvidenceV1":
+        if (self.interface_id == "workspace.file") != (self.source_read_receipt_digest is not None):
+            raise ValueError(
+                "workspace.file evidence requires exactly one source-read receipt digest"
+            )
+        return self
 
 
 class ProcedureEgressCaptureEvidenceV1(_StrictCaptureModel):
@@ -1004,6 +1022,7 @@ class ProviderProducerReceiptResolution:
 
     receipt: ProviderInvocationReceiptV1
     occurrence: ProviderExternalOccurrencePlanV1
+    source_read_receipt: SourceReadReceiptV1 | None = None
 
 
 def _procedure_producer_receipt_digest(
@@ -2057,6 +2076,7 @@ def build_provider_external_capture_v2(
     occurrence: ProviderExternalOccurrencePlanV1,
     producer: ArtifactIdentity,
     bound_generation: str,
+    source_read_receipt: SourceReadReceiptV1 | None = None,
 ) -> CaptureBuildResult:
     """Validate one common-driver Source result and commit its v2 Capture."""
 
@@ -2080,10 +2100,6 @@ def build_provider_external_capture_v2(
         output_commitment = ProviderInvocationOutputDigestV1.model_validate(receipt.output)
     except ValidationError as exc:
         raise CaptureFormatError("Provider Source receipt lacks its output digest") from exc
-    if output_commitment.output_digest != provider_invocation_output_digest(
-        result.model_dump(mode="json")
-    ):
-        raise CaptureFormatError("Provider Capture result differs from its invocation receipt")
     if result.source_identity not in contract.logical_source_identities:
         raise CaptureFormatError("Provider Capture logical source is not admitted by its contract")
     if result.coordinate_type not in {
@@ -2092,7 +2108,40 @@ def build_provider_external_capture_v2(
         raise CaptureFormatError("Provider Capture source schemas are not admitted")
     if result.byte_length > contract.selection_budget.max_bytes:
         raise CaptureFormatError("Provider Capture result exceeds its contract byte budget")
+    workspace_source = occurrence.interface_id == "workspace.file"
+    if workspace_source != (source_read_receipt is not None):
+        raise CaptureFormatError("workspace.file Capture requires exactly one source-read receipt")
+    if source_read_receipt is not None and (
+        source_read_receipt.run_id != receipt.run_id
+        or source_read_receipt.admission_binding_digest != receipt.admission_binding_digest
+        or source_read_receipt.occurrence_path != receipt.occurrence_path
+        or source_read_receipt.logical_source != result.source_identity
+        or source_read_receipt.provider_input_digest != receipt.input_digest
+    ):
+        raise CaptureFormatError("workspace.file source-read receipt does not correspond")
     content = base64.b64decode(result.content_base64, validate=True)
+    try:
+        provider_output = (
+            normalize_canonical(json.loads(content))
+            if workspace_source
+            else result.model_dump(mode="json")
+        )
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise CaptureFormatError("workspace.file result is not canonical JSON") from exc
+    if (workspace_source and canonical_bytes(provider_output) != content) or (
+        output_commitment.output_digest != provider_invocation_output_digest(provider_output)
+    ):
+        raise CaptureFormatError("Provider Capture result differs from its invocation receipt")
+    if workspace_source:
+        assert source_read_receipt is not None
+        source_echo = provider_output.get("source") if isinstance(provider_output, dict) else None
+        if not isinstance(source_echo, dict) or source_echo != {
+            "logical_source": source_read_receipt.logical_source,
+            "commitment_digest": source_read_receipt.derived_request_digest,
+            "bytes_digest": source_read_receipt.bytes_digest,
+            "byte_length": source_read_receipt.byte_length,
+        }:
+            raise CaptureFormatError("workspace.file result mixes source attempts")
     stored = store.store(content)
     if stored.digest != result.bytes_digest:
         raise PlaybillCasError("Provider Capture material CAS digest did not reproduce")
@@ -2108,6 +2157,9 @@ def build_provider_external_capture_v2(
         materialization_digest=receipt.materialization_digest,
         input_bucket=receipt.input_bucket,
         invocation_receipt_digest=receipt_digest,
+        source_read_receipt_digest=(
+            None if source_read_receipt is None else source_read_receipt_digest(source_read_receipt)
+        ),
         secret_references=occurrence.secret_plan.references,
         egress=receipt.egress,
     )
@@ -2509,6 +2561,21 @@ def verify_capture(
                 receipt, occurrence
             ):
                 raise CaptureFormatError("provider Capture resolved receipt is not admissible")
+            source_read = resolved_receipt.source_read_receipt
+            if (evidence.interface_id == "workspace.file") != (source_read is not None):
+                raise CaptureFormatError("provider Capture source-read receipt is unavailable")
+            if source_read is not None and (
+                not isinstance(envelope.source, ExternalSourceReferenceV1)
+                or evidence.source_read_receipt_digest != source_read_receipt_digest(source_read)
+                or source_read.run_id != receipt.run_id
+                or source_read.admission_binding_digest != receipt.admission_binding_digest
+                or source_read.occurrence_path != receipt.occurrence_path
+                or source_read.logical_source != envelope.source.source_identity
+                or source_read.provider_input_digest != receipt.input_digest
+                or source_read.policy_coordinate.generation_root
+                != envelope.run_coordinate.bound_generation
+            ):
+                raise CaptureFormatError("provider Capture source-read receipt does not correspond")
         elif (
             not isinstance(resolved_receipt, ProcedureProducerReceiptProtocol)
             or resolved_receipt.tag != "playbill-procedure-producer-receipt-v1"
@@ -2571,6 +2638,51 @@ def verify_capture(
             )
             if len(material) > contract.selection_budget.max_bytes:
                 raise CaptureFormatError("external Capture material exceeds its contract")
+            material_evidence = (
+                envelope.production_evidence if isinstance(envelope, CaptureEnvelopeV2) else None
+            )
+            if (
+                isinstance(envelope, CaptureEnvelopeV2)
+                and isinstance(material_evidence, ProviderInvocationCaptureEvidenceV1)
+                and material_evidence.interface_id == "workspace.file"
+            ):
+                if not isinstance(resolved_receipt, ProviderProducerReceiptResolution) or (
+                    resolved_receipt.source_read_receipt is None
+                ):
+                    raise CaptureFormatError("workspace.file source-read receipt is unavailable")
+                try:
+                    workspace_body = json.loads(material)
+                except (UnicodeDecodeError, ValueError) as exc:
+                    raise CaptureFormatError(
+                        "workspace.file material is not canonical JSON"
+                    ) from exc
+                if canonical_bytes(workspace_body) != material or not isinstance(
+                    workspace_body, dict
+                ):
+                    raise CaptureFormatError("workspace.file material is not canonical JSON")
+                source_echo = workspace_body.get("source")
+                source_read = resolved_receipt.source_read_receipt
+                try:
+                    output_commitment = ProviderInvocationOutputDigestV1.model_validate(
+                        resolved_receipt.receipt.output
+                    )
+                except ValidationError as exc:
+                    raise CaptureFormatError(
+                        "workspace.file invocation output digest is unavailable"
+                    ) from exc
+                if output_commitment.output_digest != provider_invocation_output_digest(
+                    workspace_body
+                ):
+                    raise CaptureFormatError(
+                        "workspace.file material differs from its invocation receipt"
+                    )
+                if not isinstance(source_echo, dict) or source_echo != {
+                    "logical_source": source_read.logical_source,
+                    "commitment_digest": source_read.derived_request_digest,
+                    "bytes_digest": source_read.bytes_digest,
+                    "byte_length": source_read.byte_length,
+                }:
+                    raise CaptureFormatError("workspace.file material mixes source attempts")
     if isinstance(envelope.source, CasSourceReferenceV1):
         if envelope.source.content_digest != envelope.commitment.digest:
             raise CaptureFormatError("Capture CAS source differs from its commitment")

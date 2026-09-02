@@ -39,6 +39,7 @@ from cruxible_core.playbill.procedures.run_index import ProcedureRunIndex
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.query.engine import ClaimQueryResultV1
 from cruxible_core.playbill.service.query_definitions import accepted_query_definition
+from cruxible_core.playbill.workspace_file import WorkspaceFileReader
 from cruxible_core.service.playbill_query import service_run_playbill_query
 
 
@@ -192,6 +193,7 @@ def service_execute_direct_procedure(
     provider_executor: ProviderExecutorProtocol | None = None,
     provider_runtime_invoker: ProviderRuntimeInvokerProtocol | None = None,
     provider_runtime_invoker_factory: Callable[[], ProviderRuntimeInvokerProtocol] | None = None,
+    workspace_file_reader: WorkspaceFileReader | None = None,
     clock: ProcedureClockProtocol | None = None,
 ) -> ProcedureRunResultV1:
     """Execute through the shared runtime; no transport duplicates orchestration."""
@@ -209,6 +211,7 @@ def service_execute_direct_procedure(
             provider_executor=provider_executor,
             provider_runtime_invoker=provider_runtime_invoker,
             provider_runtime_invoker_factory=provider_runtime_invoker_factory,
+            workspace_file_reader=workspace_file_reader,
             clock=clock,
         ).execute(prepared, accepted)
     finally:

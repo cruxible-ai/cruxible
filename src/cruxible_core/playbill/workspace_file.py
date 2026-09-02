@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Literal
 
 from cruxible_client.contracts.canonical import (
+    ArtifactDigest,
     CanonicalValue,
     Sha256Value,
     normalize_canonical,
@@ -245,9 +246,9 @@ class WorkspaceFileReader:
             }
         )
         provider_input_digest = typed_digest(
-            Sha256Value,
-            "playbill-provider-invocation-input-v1",
-            {"input": provider_input},
+            ArtifactDigest,
+            "playbill-procedure-run-provider-input-v1",
+            {"value": provider_input},
         ).tagged
         receipt = SourceReadReceiptV1(
             run_id=run_id,

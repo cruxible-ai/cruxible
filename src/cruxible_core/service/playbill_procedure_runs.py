@@ -142,6 +142,7 @@ from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjec
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.provider_outcomes import map_provider_refusal
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
+from cruxible_core.playbill.workspace_file import WorkspaceFileReader
 from cruxible_core.service.playbill_procedures import (
     PlaybillProcedureStateTapReader,
     service_execute_direct_procedure,
@@ -1423,6 +1424,7 @@ def service_run_playbill_procedure(
     request: ProcedureRunRequestV2,
     actor_context: GovernedActorContext,
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None = None,
+    workspace_file_reader: WorkspaceFileReader | None = None,
 ) -> ProcedureRunStateV2:
     coordinate = _resolve_coordinate(instance, request.at)
     evaluation_time = request.evaluation_time or instance.accepted_evaluation_time(
@@ -1550,6 +1552,7 @@ def service_run_playbill_procedure(
                     accepted_oid=coordinate.git_oid,
                 )
             ),
+            workspace_file_reader=workspace_file_reader,
             clock=_DeterministicClock(evaluation_time),
         )
     except PlaybillExecutionError as exc:

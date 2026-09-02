@@ -1371,6 +1371,7 @@ def playbill_procedure_run(
         request=request,
         actor_context=actor,
         provider_runtime_operator=manager.provider_runtime_operator(),
+        workspace_file_reader=manager.workspace_file_reader(instance_id),
     )
     instance = manager.get(instance_id)
     record_consumption(

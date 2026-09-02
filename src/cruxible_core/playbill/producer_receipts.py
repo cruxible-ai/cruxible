@@ -19,6 +19,10 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.provider_execution import ProviderInvocationCompletedV1
+from cruxible_client.contracts.workspace_file import (
+    SourceReadReceiptV1,
+    source_read_receipt_digest,
+)
 from cruxible_core.playbill.cas import ContentAddressedBodyStore
 from cruxible_core.playbill.exhaust import LocalJournalBackend
 from cruxible_core.playbill.exhaust.records import parse_journal_payload
@@ -189,6 +193,7 @@ class JournalProducerReceiptResolver:
             raise CaptureFormatError("Capture producer receipt journal is unavailable") from exc
         for partition_id in partition_ids:
             admissions: dict[str, ProcedureAdmissionBoundPayloadV5] = {}
+            source_reads: dict[tuple[str, str], SourceReadReceiptV1 | None] = {}
             try:
                 records = self._journal.all_records(stream, partition_id)
             except (OSError, PlaybillError, ValueError) as exc:
@@ -236,6 +241,29 @@ class JournalProducerReceiptResolver:
                         continue
                     admissions[admission.admission_binding_digest] = bound_payload
                     continue
+                if record.event_kind == "source_read":
+                    try:
+                        if not isinstance(payload, dict):
+                            raise ValueError("Source-read payload is not an object")
+                        receipt = SourceReadReceiptV1.model_validate(payload.get("receipt"))
+                        digest = payload.get("receipt_digest")
+                        if digest != source_read_receipt_digest(receipt):
+                            raise ValueError("Source-read receipt digest does not reproduce")
+                        if (
+                            record.run_id != receipt.run_id
+                            or record.admission_binding_digest != receipt.admission_binding_digest
+                        ):
+                            raise ValueError("Source-read journal coordinates do not correspond")
+                        key = (receipt.admission_binding_digest, receipt.occurrence_path)
+                        source_reads[key] = None if key in source_reads else receipt
+                    except (KeyError, TypeError, ValidationError, ValueError) as exc:
+                        self._malformed(
+                            record_digest=stored.record_digest,
+                            event_kind=record.event_kind,
+                            candidate_digest=None,
+                            exc=exc,
+                        )
+                    continue
                 if record.event_kind == "provider_invocation_completed":
                     try:
                         if candidate_digest is None:
@@ -266,6 +294,23 @@ class JournalProducerReceiptResolver:
                             raise ValueError(
                                 "Provider completion differs from its exact admitted occurrence"
                             )
+                        source_read = source_reads.get(
+                            (binding_digest, provider_receipt.occurrence_path)
+                        )
+                        if (provider_receipt.interface_id == "workspace.file") != (
+                            source_read is not None
+                        ):
+                            raise ValueError(
+                                "Provider completion source-read receipt does not correspond"
+                            )
+                        if source_read is not None and (
+                            source_read.run_id != provider_receipt.run_id
+                            or source_read.provider_input_digest != provider_receipt.input_digest
+                            or source_read.policy_coordinate != admission.accepted_coordinate
+                        ):
+                            raise ValueError(
+                                "Provider completion source-read receipt differs from invocation"
+                            )
                     except (KeyError, TypeError, ValidationError, ValueError) as exc:
                         self._malformed(
                             record_digest=stored.record_digest,
@@ -279,6 +324,7 @@ class JournalProducerReceiptResolver:
                         ProviderProducerReceiptResolution(
                             receipt=provider_receipt,
                             occurrence=occurrences[0],
+                            source_read_receipt=source_read,
                         ),
                     )
                     continue

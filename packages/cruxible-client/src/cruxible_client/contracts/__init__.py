@@ -42,6 +42,12 @@ from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
     PlaybillWorkspaceAdvertisement,
 )
+from cruxible_client.contracts.workspace_file import (
+    SourceReadReceiptV1 as SourceReadReceiptV1,
+)
+from cruxible_client.contracts.workspace_file import (
+    WorkspaceFileSourceRequestV1 as WorkspaceFileSourceRequestV1,
+)
 
 RuntimeCredentialPermissionMode = Literal[
     "read_only",

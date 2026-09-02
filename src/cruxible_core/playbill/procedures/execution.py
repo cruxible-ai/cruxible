@@ -122,6 +122,11 @@ from cruxible_client.contracts.provider_execution import (
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
+from cruxible_client.contracts.workspace_file import (
+    SourceReadReceiptV1,
+    WorkspaceFileSourceRequestV1,
+    source_read_receipt_digest,
+)
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
 from cruxible_core.playbill.exhaust import (
@@ -215,6 +220,10 @@ from cruxible_core.playbill.provider_runtime_contract import (
 from cruxible_core.playbill.source_readers import (
     CaptureAcquisitionReceiptV1,
     ExternalCaptureAcquisitionV1,
+)
+from cruxible_core.playbill.workspace_file import (
+    WorkspaceFileReader,
+    WorkspaceFileReadRefused,
 )
 
 ProcedureRunStatusV1 = Literal[
@@ -2028,6 +2037,7 @@ class ProcedureExecutor:
         effective_rung: EffectiveRungV1 | None = None,
         egress_sink: TerminalEgressSinkProtocol | None = None,
         declared_effect_grants: tuple[str, ...] = (),
+        workspace_file_reader: WorkspaceFileReader | None = None,
         clock: ProcedureClockProtocol | None = None,
     ) -> None:
         self.journal = journal
@@ -2051,6 +2061,7 @@ class ProcedureExecutor:
         self.effective_rung = effective_rung
         self.egress_sink = egress_sink
         self.declared_effect_grants = declared_effect_grants
+        self.workspace_file_reader = workspace_file_reader
         self.clock = clock or SystemProcedureClock()
 
     def _pin(
@@ -3113,12 +3124,74 @@ class ProcedureExecutor:
             "source_request_derived",
             derived_request.model_dump(mode="json"),
         )
+        contract = self.capture_contracts.get(contract_pin.artifact_digest)
+        if contract is None or capture_contract_digest(contract).tagged != (
+            contract_pin.artifact_digest
+        ):
+            raise _InternalFailure(
+                "provider_protocol_violation",
+                details={"node_id": node.node_id, "reason": "CaptureContract is unavailable"},
+            )
+        source_read_receipt: SourceReadReceiptV1 | None = None
+        provider_payload = resolved_request
+        workspace_request: WorkspaceFileSourceRequestV1 | None = None
+        if occurrence.interface_id == "workspace.file":
+            if self.workspace_file_reader is None:
+                raise _RunRefusal(
+                    "workspace_file_read_refused",
+                    "No daemon-local workspace reader is available.",
+                    node_id=node.node_id,
+                    detail_code="binding",
+                    details={
+                        "path_class": "binding",
+                        "repair_commands": ["attach a workspace or configure an allowed root"],
+                    },
+                )
+            try:
+                workspace_request = WorkspaceFileSourceRequestV1.model_validate(resolved_request)
+                workspace_read = self.workspace_file_reader.read(
+                    workspace_request,
+                    run_id=admission.run_id,
+                    admission_binding_digest=admission.admission_binding_digest,
+                    occurrence_path=occurrence.occurrence_path,
+                    policy_coordinate=admission.accepted_coordinate,
+                    resolved_max_bytes=contract.selection_budget.max_bytes,
+                    derived_request_digest=derived_request.request_digest,
+                    read_at=self.clock.now(),
+                )
+            except (ValidationError, WorkspaceFileReadRefused) as exc:
+                path_class = (
+                    exc.path_class if isinstance(exc, WorkspaceFileReadRefused) else "path_grammar"
+                )
+                repairs = (
+                    exc.repair_commands
+                    if isinstance(exc, WorkspaceFileReadRefused)
+                    else ("use a normalized workspace-relative POSIX path",)
+                )
+                raise _RunRefusal(
+                    "workspace_file_read_refused",
+                    str(exc),
+                    node_id=node.node_id,
+                    detail_code=path_class,
+                    details={"path_class": path_class, "repair_commands": list(repairs)},
+                ) from exc
+            provider_payload = workspace_read.provider_input
+            source_read_receipt = workspace_read.receipt
+            self._append_event(
+                admission,
+                records,
+                "source_read",
+                {
+                    "receipt": source_read_receipt.model_dump(mode="json"),
+                    "receipt_digest": source_read_receipt_digest(source_read_receipt),
+                },
+            )
         try:
             output, invocation_receipt, invocation_receipt_digest = self._invoke_provider_v4(
                 node_id=node.node_id,
                 repeat_node_id=None,
                 effect_policy=None,
-                payload=resolved_request,
+                payload=provider_payload,
                 contract_out=None,
                 admission=admission,
                 state=state,
@@ -3176,20 +3249,27 @@ class ProcedureExecutor:
             )
             return
         try:
-            provider_result = ProviderResultToExternalCaptureV1.model_validate(output)
-        except ValidationError as exc:
+            if workspace_request is None or source_read_receipt is None:
+                provider_result = ProviderResultToExternalCaptureV1.model_validate(output)
+            else:
+                material_bytes = canonical_bytes(output)
+                provider_result = ProviderResultToExternalCaptureV1(
+                    source_identity=workspace_request.logical_source,
+                    coordinate_type=workspace_request.coordinate_type,
+                    coordinate=workspace_request.coordinate,
+                    selector_type=workspace_request.selector_type,
+                    selector=workspace_request.selector,
+                    replayability=workspace_request.replayability,
+                    content_base64=base64.b64encode(material_bytes).decode("ascii"),
+                    byte_length=len(material_bytes),
+                    bytes_digest=self.bodies.digest_bytes(material_bytes).tagged,
+                    observed_at=source_read_receipt.read_at,
+                )
+        except (ValidationError, ValueError) as exc:
             raise _InternalFailure(
                 "provider_protocol_violation",
                 details={"node_id": node.node_id, "reason": "Source result is not Capture wire"},
             ) from exc
-        contract = self.capture_contracts.get(contract_pin.artifact_digest)
-        if contract is None or capture_contract_digest(contract).tagged != (
-            contract_pin.artifact_digest
-        ):
-            raise _InternalFailure(
-                "provider_protocol_violation",
-                details={"node_id": node.node_id, "reason": "CaptureContract is unavailable"},
-            )
         reserved_store = _ReservedCaptureStore(
             bodies=self.bodies,
             reservations=self.material_reservations,
@@ -3204,6 +3284,7 @@ class ProcedureExecutor:
                 occurrence=occurrence,
                 producer=provider_pin.target,
                 bound_generation=admission.accepted_coordinate.generation_root,
+                source_read_receipt=source_read_receipt,
             )
             envelope = built.envelope
             source = envelope.source

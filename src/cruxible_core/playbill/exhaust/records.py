@@ -52,6 +52,7 @@ JournalEventKindV1 = Literal[
     "node_fired",
     "branch_evaluated",
     "source_request_derived",
+    "source_read",
     "source_acquisition",
     "produced_capture",
     "item_dependencies",
