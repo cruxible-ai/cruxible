@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -1004,10 +1005,14 @@ def open_review(
     advertisement = inspection.workspace_advertisement
     if advertisement.status != "updated":
         if advertisement.status == "not_attached":
+            workspace = _review_workspace_path(workspace_root).expanduser().resolve()
+            repair = ["cruxible"]
+            if server_socket := _root_ctx_obj().get("server_socket"):
+                repair.extend(("--server-socket", str(server_socket)))
+            repair.extend(("playbill", "host", "create", "--workspace", str(workspace)))
             raise click.ClickException(
                 "review_workspace_not_attached: this host has no registered review worktree; "
-                "repair: cruxible --server-socket SOCKET playbill host create "
-                "--workspace WORKSPACE"
+                f"repair: {shlex.join(repair)}"
             )
         reason = advertisement.failure_code or advertisement.status
         raise click.ClickException(f"proposal refs could not be refreshed: {reason}")

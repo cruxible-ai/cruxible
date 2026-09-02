@@ -93,6 +93,7 @@ def test_review_open_resolves_canonical_id_and_close_stays_local(
 
 def test_review_open_not_attached_names_a_runnable_local_socket_repair(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     class StubClient:
         def inspect_playbill_proposal(
@@ -108,24 +109,26 @@ def test_review_open_not_attached_names_a_runnable_local_socket_repair(
             )
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    server_socket = tmp_path / "daemon.sock"
 
     result = CliRunner().invoke(
         cli,
         [
-            "--server-url",
-            "https://review.example.test",
+            "--server-socket",
+            str(server_socket),
             "--instance-id",
             "inst_review",
             "playbill",
             "review",
             "open",
             "short-id",
+            "--workspace-root",
+            str(tmp_path),
         ],
     )
 
     assert result.exit_code == 1
     assert "review_workspace_not_attached" in result.output
-    assert (
-        "cruxible --server-socket SOCKET playbill host create --workspace WORKSPACE"
-        in result.output
-    )
+    assert f"cruxible --server-socket {server_socket}" in result.output
+    assert f"playbill host create --workspace {tmp_path}" in result.output
+    assert "SOCKET" not in result.output and "WORKSPACE" not in result.output
