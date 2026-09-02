@@ -8,6 +8,7 @@ the authoring catalog/snapshot re-pins required by that change.
 
 from __future__ import annotations
 
+import cruxible_client.contracts.captures as capture_contracts
 from cruxible_client.contracts.canonical import AcceptanceLawDigest, canonical_digest, typed_digest
 from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_ACCEPTANCE_LAW,
@@ -44,6 +45,7 @@ from cruxible_core.playbill.compiler import (
     P2_B0_COMPILER,
     P2_B1_COMPILER,
     P2_B2_COMPILER,
+    P2_B4_COMPILER,
     P2_C_COMPILER,
     PC_DF2_COMPILER,
     PC_E1_COMPILER,
@@ -363,3 +365,25 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
         "sha256:dbe2bd6c03327a15e49712acd40c5cc6528e9b135374793c513519c83c687648"
     )
     assert P2_B2_COMPILER.rule_digest == p2_b2_expected
+    p2_b4_expected = "sha256:" + canonical_digest(
+        "playbill-compiler-v1",
+        {
+            "implementation": "python-reference",
+            "projection_content": "claims-procedures-runtime-v1",
+            "schema_version": 1,
+            "semantic_revision": 17,
+        },
+    )
+    assert p2_b4_expected == (
+        "sha256:22e75aebcb286ed356cf34390230ef8b5adaaa326f4107b67d0b992009153331"
+    )
+    assert P2_B4_COMPILER.rule_digest == p2_b4_expected
+
+
+def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
+    assert capture_contracts._RUN_ID_RE.pattern == (  # noqa: SLF001
+        r"^[a-z0-9][a-z0-9_.:-]{0,255}$"
+    )
+    assert capture_contracts._RUN_ID_V2_RE.pattern == (  # noqa: SLF001
+        r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$"
+    )

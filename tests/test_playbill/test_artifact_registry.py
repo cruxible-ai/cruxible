@@ -22,6 +22,7 @@ from cruxible_client.contracts.subjects import SubjectShell, parse_subject, rend
 from cruxible_core.playbill.compiler import (
     P2_B0_COMPILER,
     P2_B2_COMPILER,
+    P2_B4_COMPILER,
     PC_DF2_COMPILER,
     PC_HR_ARTIFACT_CODEC_COMPILERS,
     SUPPORTED_COMPILERS,
@@ -115,7 +116,7 @@ def test_pc_hr_codec_succeeds_without_changing_the_p2_b0_verifier() -> None:
 def test_current_codec_lineage_is_closed_over_installed_compilers() -> None:
     assert PC_HR_ARTIFACT_CODEC_COMPILERS <= set(SUPPORTED_COMPILERS)
     assert current_compiler_coordinate() in PC_HR_ARTIFACT_CODEC_COMPILERS
-    assert {PC_DF2_COMPILER, P2_B2_COMPILER} <= PC_HR_ARTIFACT_CODEC_COMPILERS
+    assert {PC_DF2_COMPILER, P2_B2_COMPILER, P2_B4_COMPILER} <= (PC_HR_ARTIFACT_CODEC_COMPILERS)
     assert P2_B0_COMPILER not in PC_HR_ARTIFACT_CODEC_COMPILERS
 
 
@@ -225,6 +226,9 @@ def test_p2_b2_reserves_every_current_artifact_tag() -> None:
         "playbill-approval-policy-v1",
         "playbill-capture-contract-v1",
         "playbill-capture-envelope-v1",
+        "playbill-capture-envelope-v2",
+        "playbill-capture-procedure-egress-evidence-v1",
+        "playbill-capture-provider-invocation-evidence-v1",
         "playbill-claim-v2",
         "playbill-claim-v3",
         "playbill-exhaust-promotion-v1",
@@ -246,6 +250,7 @@ def test_p2_b2_reserves_every_current_artifact_tag() -> None:
         "playbill-procedure-calibration-reading-v1",
         "playbill-procedure-calibration-relation-cohort-witness-v1",
         "playbill-procedure-calibration-score-v1",
+        "playbill-procedure-derived-source-request-v1",
         "playbill-procedure-mandate-v1",
         "playbill-procedure-pin-slot-ref-v1",
         "playbill-procedure-pin-slot-v1",
@@ -274,9 +279,11 @@ def test_p2_b2_reserves_every_current_artifact_tag() -> None:
         "playbill-provider-interface-v1",
         "playbill-provider-invocation-completed-v1",
         "playbill-provider-invocation-outcome-v1",
+        "playbill-provider-invocation-output-digest-v1",
         "playbill-provider-invocation-receipt-v1",
         "playbill-provider-invocation-started-v1",
         "playbill-provider-local-materialization-reference-v1",
+        "playbill-provider-result-to-external-capture-v1",
         "playbill-provider-secret-binding-identity-v1",
         "playbill-provider-secret-receipt-reference-v1",
         "playbill-provider-secret-reference-v1",
