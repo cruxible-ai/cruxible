@@ -12,6 +12,7 @@ from cruxible_client.authoring.context import (
     PlaybillContextResolutionError,
     resolve_playbill_context,
 )
+from cruxible_client.authoring.sdk import SDK_CONTRACT_SNAPSHOT_DIGEST
 from cruxible_client.contracts.authoring.models import AUTHORING_SDK_VERSION
 from cruxible_core.cli.context import CliContextState, save_cli_context
 from cruxible_core.cli.main import cli
@@ -449,8 +450,8 @@ def test_sdk_connect_consumes_the_shared_workspace_resolution(
         def __init__(self, **values: object) -> None:
             connection.update(values)
 
-        def version(self) -> str:
-            return AUTHORING_SDK_VERSION
+        def _version_info(self) -> tuple[str, str]:
+            return AUTHORING_SDK_VERSION, SDK_CONTRACT_SNAPSHOT_DIGEST
 
         def close(self) -> None:
             pass
