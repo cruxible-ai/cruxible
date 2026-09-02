@@ -63,6 +63,48 @@ def test_status_down_daemon_errors_clearly(monkeypatch, runner: CliRunner) -> No
     assert result.exit_code == 1
     assert "could not reach Cruxible server" in result.output
     assert "Connection refused" in result.output
+    assert "Daemon reachable; credential missing" not in result.output
+
+
+def test_status_reachable_daemon_missing_credential_names_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    """A live auth-enabled daemon identifies the missing client credential."""
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", "bootstrap-secret")
+    reset_permissions()
+    reset_registry()
+    reset_runtime_credential_store()
+    reset_client_cache()
+    get_playbill_manager().clear()
+
+    try:
+        with TestClient(create_app()) as transport:
+            client = CruxibleClient(base_url="http://cruxible-daemon")
+            client._client = transport
+            _patch_client(monkeypatch, client)
+            result = runner.invoke(
+                cli,
+                ["--server-url", "http://cruxible-daemon", "server", "status"],
+            )
+    finally:
+        get_playbill_manager().clear()
+        reset_client_cache()
+        reset_runtime_credential_store()
+        reset_registry()
+        reset_permissions()
+
+    assert result.exit_code == 1
+    assert "Error: Daemon reachable; credential missing." in result.output
+    assert "AuthenticationError" not in result.output
+    assert "--server-bearer-token" in result.output
+    assert "CRUXIBLE_SERVER_BEARER_TOKEN" in result.output
+    assert "bootstrap-secret file" in result.output
+    assert "cruxible server start --bootstrap-secret-file PATH" in result.output
+    assert "could not reach Cruxible server" not in result.output
 
 
 def test_status_reports_daemon_metadata(monkeypatch, runner: CliRunner) -> None:

@@ -195,14 +195,25 @@ def handle_errors(f: Any) -> Any:
             # Error packages and HTTP transport support stay off the import path
             # until a command actually fails. Core errors share the client base,
             # so this remains one catch surface for local and remote execution.
+            from cruxible_client.errors import (
+                AuthenticationError,
+                ServerUnreachableError,
+            )
             from cruxible_client.errors import CoreError as ClientCoreError
-            from cruxible_client.errors import ServerUnreachableError
 
             if isinstance(exc, ServerUnreachableError):
                 # Transport failures already render as a friendly single line;
                 # the class-name prefix would only add noise.
                 click.secho(f"Error: {exc}", fg="red", err=True)
                 sys.exit(1)
+            if isinstance(exc, AuthenticationError):
+                # Keep server-auth refusals actionable without obscuring the
+                # daemon-reachable signal behind a redundant exception name.
+                from cruxible_core.server.auth import MISSING_BEARER_CREDENTIAL_MESSAGE
+
+                if str(exc) == MISSING_BEARER_CREDENTIAL_MESSAGE:
+                    click.secho(f"Error: {exc}", fg="red", err=True)
+                    sys.exit(1)
             if isinstance(exc, ClientCoreError):
                 click.secho(
                     f"Error: {exc.__class__.__name__}: {exc}",

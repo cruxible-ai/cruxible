@@ -65,6 +65,13 @@ _STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # carry exactly this type.
 _JSON_MEDIA_TYPE = "application/json"
 
+MISSING_BEARER_CREDENTIAL_MESSAGE = (
+    "Daemon reachable; credential missing. Supply a bearer token with "
+    "`--server-bearer-token` or `CRUXIBLE_SERVER_BEARER_TOKEN`. Operators may use "
+    "the bootstrap-secret file created by `cruxible server start "
+    "--bootstrap-secret-file PATH`."
+)
+
 
 def _request_media_type(request: Request) -> str:
     """Return the lower-cased Content-Type *media type*, stripped of parameters.
@@ -336,7 +343,7 @@ async def token_auth_middleware(
                 return _unauthorized_request_response(request)
 
     if bearer_token is None and auth_enabled:
-        return _unauthorized_request_response(request)
+        return _unauthorized_request_response(request, MISSING_BEARER_CREDENTIAL_MESSAGE)
     if request.headers.get(EFFECTIVE_PERMISSION_MODE_HEADER) is not None and (
         resolved_context is None or resolved_context.credential_type != "runtime_credential"
     ):
