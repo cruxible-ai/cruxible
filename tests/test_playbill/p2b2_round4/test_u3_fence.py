@@ -295,18 +295,18 @@ def test_the_peer_pid_is_kernel_supplied_not_a_message_field(short_root: Path) -
     import platform
 
     try:
-        if platform.system() == "Linux":
+        if platform.system() in {"Darwin", "Linux"}:
             assert _socket_peer_pid(connection) == os.getpid()
         else:
-            assert _socket_peer_pid(connection) is None  # see U: Darwin branch dead
+            assert _socket_peer_pid(connection) is None
     finally:
         client.close()
         connection.close()
         server.close()
 
 
-def test_the_darwin_peer_pid_branch_never_resolves(short_root: Path) -> None:
-    """T-8's Darwin half uses names CPython does not define, so it is dead code."""
+def test_the_darwin_numeric_peer_pid_authorizes_the_real_peer(short_root: Path) -> None:
+    """Darwin's kernel ABI works even though CPython omits the constants."""
 
     import platform
     import struct
@@ -323,9 +323,9 @@ def test_the_darwin_peer_pid_branch_never_resolves(short_root: Path) -> None:
     client.connect(str(path))
     connection, _ = server.accept()
     try:
-        assert _socket_peer_pid(connection) is None  # the shipped helper
+        assert _socket_peer_pid(connection) == os.getpid()
         raw = connection.getsockopt(0, 2, struct.calcsize("i"))
-        assert struct.unpack("i", raw)[0] == os.getpid()  # the numeric spelling works
+        assert struct.unpack("i", raw)[0] == os.getpid()
     finally:
         client.close()
         connection.close()

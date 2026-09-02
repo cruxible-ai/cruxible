@@ -279,10 +279,7 @@ def _descendant_processes_from_rows(
         parent = pending.pop()
         for row in children.get(parent, []):
             pending.append(row.pid)
-            if (
-                row.session_id == root_session_id
-                and row.process_group_id == root_process_group_id
-            ):
+            if row.session_id == root_session_id and row.process_group_id == root_process_group_id:
                 continue
             candidates.setdefault(row.pid, row)
     found: list[ProviderDescendantProcessV1] = []
@@ -388,11 +385,11 @@ def _socket_peer_pid(client: socket.socket) -> int | None:
             return int(struct.unpack("3i", raw)[0])
         except (OSError, struct.error):
             return None
-    local_peerpid = getattr(socket, "LOCAL_PEERPID", None)
-    sol_local = getattr(socket, "SOL_LOCAL", None)
-    if local_peerpid is not None and sol_local is not None:
+    if platform.system() == "Darwin":
         try:
-            raw = client.getsockopt(sol_local, local_peerpid, struct.calcsize("i"))
+            # Darwin exposes LOCAL_PEERPID/SOL_LOCAL to the kernel ABI but not
+            # as CPython constants. Their stable numeric spellings are 2/0.
+            raw = client.getsockopt(0, 2, struct.calcsize("i"))
             return int(struct.unpack("i", raw)[0])
         except (OSError, struct.error):
             return None
@@ -741,21 +738,25 @@ class ProviderProcessLeaseStore:
                         lease,
                         current_boot_id=current_boot_id,
                     )
+                recovered_invocation = False
+                removal: ProviderProcessLeaseRemovalV1 | None = None
                 if authorized_to_signal:
                     self._kill_and_verify(lease)
-                    recovered.append(invocation_id)
+                    recovered_invocation = True
                 else:
-                    removed.append(
-                        ProviderProcessLeaseRemovalV1(
-                            record_name=record_path.name,
-                            invocation_id=invocation_id,
-                            reason="dead_orphan",
-                        )
+                    removal = ProviderProcessLeaseRemovalV1(
+                        record_name=record_path.name,
+                        invocation_id=invocation_id,
+                        reason="dead_orphan",
                     )
                 if defer_completion_release:
                     self._pending_releases[invocation_id] = lease
                 else:
                     self.release(lease)
+                if recovered_invocation:
+                    recovered.append(invocation_id)
+                elif removal is not None:
+                    removed.append(removal)
             except ProviderLocalRuntimeRefused as exc:
                 could_not_clean.append(
                     ProviderProcessRecoveryFailureV1(
@@ -765,6 +766,9 @@ class ProviderProcessLeaseStore:
                         message=str(exc),
                     )
                 )
+            except FileNotFoundError:
+                # Another process completed the same rebuildable recovery.
+                continue
             except OSError as exc:
                 could_not_clean.append(
                     ProviderProcessRecoveryFailureV1(

@@ -190,8 +190,8 @@ def test_t13_a_prior_attempt_survivor_is_still_observed(short_root: Path) -> Non
             survivor.wait(timeout=2)
 
 
-def test_a_record_that_vanishes_mid_scan_latches_the_lane(short_root: Path) -> None:
-    """A FileNotFoundError between glob and read becomes `could_not_clean`."""
+def test_a_record_that_vanishes_mid_scan_is_already_handled(short_root: Path) -> None:
+    """A FileNotFoundError between glob and read is a harmless concurrent recovery."""
 
     store = ProviderProcessLeaseStore(short_root / "l4")
     path = _record(store, "sha256:" + "2" * 64)
@@ -208,9 +208,25 @@ def test_a_record_that_vanishes_mid_scan_latches_the_lane(short_root: Path) -> N
     finally:
         Path.read_bytes = original  # type: ignore[method-assign]
     assert result.removed == ()
+    assert result.could_not_clean == ()
+
+
+def test_release_failure_is_only_could_not_clean(
+    short_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = ProviderProcessLeaseStore(short_root / "release")
+    invocation_id = "sha256:" + "3" * 64
+    _record(store, invocation_id)
+
+    def refuse_release(_lease: object) -> None:
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr(store, "release", refuse_release)
+    result = store.recover_all()
+    assert result.recovered == ()
+    assert result.removed == ()
     assert len(result.could_not_clean) == 1
-    assert result.could_not_clean[0].invocation_id is None
-    assert result.could_not_clean[0].code == "provider_process_lease_invalid"
+    assert result.could_not_clean[0].invocation_id == invocation_id
 
 
 def test_two_hundred_identity_bearing_records_still_serve_within_a_bounded_time(
