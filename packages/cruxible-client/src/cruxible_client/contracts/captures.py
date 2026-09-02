@@ -8,6 +8,7 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Literal, Protocol, runtime_checkable
 
@@ -994,7 +995,15 @@ class ProducerReceiptResolverProtocol(Protocol):
     def __call__(
         self,
         digest: str,
-    ) -> ProviderInvocationReceiptV1 | ProcedureProducerReceiptProtocol | None: ...
+    ) -> ProviderProducerReceiptResolution | ProcedureProducerReceiptProtocol | None: ...
+
+
+@dataclass(frozen=True)
+class ProviderProducerReceiptResolution:
+    """Daemon-resolved Provider receipt and its exact admitted occurrence."""
+
+    receipt: ProviderInvocationReceiptV1
+    occurrence: ProviderExternalOccurrencePlanV1
 
 
 def _procedure_producer_receipt_digest(
@@ -1141,15 +1150,20 @@ class CaptureEnvelopeV2(_StrictCaptureModel):
             raise ValueError("derived Captures require reducer and input receipt-set together")
         evidence = self.production_evidence
         if isinstance(evidence, ProviderInvocationCaptureEvidenceV1):
-            if (
-                self.producer.kind != "Provider"
-                or self.run_coordinate.run_kind != "provider"
-                or self.run_coordinate.executable_identity != self.producer
-                or self.run_coordinate.executable_digest != evidence.provider_artifact_digest
-                or self.producer_binding_digest != evidence.external_occurrence_plan_digest
-                or self.producer_receipt_digest != evidence.invocation_receipt_digest
-            ):
+            if self.producer.kind != "Provider":
                 raise ValueError("provider Capture production evidence does not correspond")
+            if self.run_coordinate.run_kind != "provider":
+                raise ValueError("provider Capture run_kind does not correspond")
+            if self.run_coordinate.executable_identity != self.producer:
+                raise ValueError("provider Capture executable_identity does not correspond")
+            if self.run_coordinate.executable_digest != evidence.provider_artifact_digest:
+                raise ValueError("provider Capture provider_artifact_digest does not correspond")
+            if self.producer_binding_digest != evidence.external_occurrence_plan_digest:
+                raise ValueError(
+                    "provider Capture external_occurrence_plan_digest does not correspond"
+                )
+            if self.producer_receipt_digest != evidence.invocation_receipt_digest:
+                raise ValueError("provider Capture invocation_receipt_digest does not correspond")
         elif (
             self.producer.kind != "Procedure"
             or self.run_coordinate.run_kind != "procedure"
@@ -1180,7 +1194,9 @@ def parse_capture_envelope(content: bytes) -> CaptureEnvelopeV1 | CaptureEnvelop
     try:
         envelope = _CAPTURE_ENVELOPE_ADAPTER.validate_json(content)
     except (ValueError, ValidationError) as exc:
-        raise CaptureFormatError("Capture envelope failed strict versioned validation") from exc
+        raise CaptureFormatError(
+            f"Capture envelope failed strict versioned validation: {exc}"
+        ) from exc
     if render_capture_envelope(envelope) != content:
         raise CaptureFormatError("Capture envelope is not in canonical wire form")
     return envelope
@@ -2433,39 +2449,58 @@ def verify_capture(
             )
         evidence = envelope.production_evidence
         if isinstance(evidence, ProviderInvocationCaptureEvidenceV1):
-            if not isinstance(resolved_receipt, ProviderInvocationReceiptV1):
+            if not isinstance(resolved_receipt, ProviderProducerReceiptResolution):
                 raise CaptureFormatError("provider Capture resolved a non-Provider receipt")
-            receipt = resolved_receipt
-            expected_secret_receipts = tuple(
-                sorted(
-                    (
-                        ProviderSecretReceiptReferenceV1(
-                            binding_identity_digest=provider_secret_binding_identity_digest(
-                                ProviderSecretBindingIdentityV1(
-                                    realm=reference.realm,
-                                    name=reference.name,
-                                )
-                            ),
-                            purpose=reference.purpose,
-                        )
-                        for reference in evidence.secret_references
-                    ),
-                    key=lambda item: item.binding_identity_digest.encode("ascii"),
-                )
+            receipt = resolved_receipt.receipt
+            occurrence = resolved_receipt.occurrence
+            provider_evidence_bindings = (
+                (
+                    "external_occurrence_plan_digest",
+                    evidence.external_occurrence_plan_digest,
+                    provider_external_occurrence_plan_digest(occurrence),
+                ),
+                (
+                    "interface_artifact_digest",
+                    evidence.interface_artifact_digest,
+                    occurrence.interface_artifact_digest,
+                ),
+                (
+                    "secret_references",
+                    evidence.secret_references,
+                    occurrence.secret_plan.references,
+                ),
+                (
+                    "invocation_receipt_digest",
+                    evidence.invocation_receipt_digest,
+                    provider_invocation_receipt_digest(receipt),
+                ),
+                (
+                    "provider_artifact_digest",
+                    evidence.provider_artifact_digest,
+                    receipt.provider_artifact_digest,
+                ),
+                ("interface_id", evidence.interface_id, receipt.interface_id),
+                ("interface_digest", evidence.interface_digest, receipt.interface_digest),
+                (
+                    "implementation_digest",
+                    evidence.implementation_digest,
+                    receipt.implementation_digest,
+                ),
+                (
+                    "materialization_digest",
+                    evidence.materialization_digest,
+                    receipt.materialization_digest,
+                ),
+                ("input_bucket", evidence.input_bucket, receipt.input_bucket),
+                ("egress", evidence.egress, receipt.egress),
             )
-            if (
-                provider_invocation_receipt_digest(receipt) != evidence.invocation_receipt_digest
-                or receipt.outcome.status != "ok"
-                or receipt.provider_artifact_digest != evidence.provider_artifact_digest
-                or receipt.interface_id != evidence.interface_id
-                or receipt.interface_digest != evidence.interface_digest
-                or receipt.implementation_digest != evidence.implementation_digest
-                or receipt.materialization_digest != evidence.materialization_digest
-                or receipt.input_bucket != evidence.input_bucket
-                or receipt.egress != evidence.egress
-                or receipt.secret_references != expected_secret_receipts
+            for field_name, evidence_value, resolved_value in provider_evidence_bindings:
+                if evidence_value != resolved_value:
+                    raise CaptureFormatError(f"provider Capture {field_name} does not correspond")
+            if receipt.outcome.status != "ok" or not provider_capture_receipt_matches_occurrence(
+                receipt, occurrence
             ):
-                raise CaptureFormatError("provider Capture runtime evidence does not correspond")
+                raise CaptureFormatError("provider Capture resolved receipt is not admissible")
         elif (
             not isinstance(resolved_receipt, ProcedureProducerReceiptProtocol)
             or resolved_receipt.tag != "playbill-procedure-producer-receipt-v1"

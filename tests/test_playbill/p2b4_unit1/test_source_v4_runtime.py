@@ -23,9 +23,13 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
     CanonicalDurationV1,
     CaptureEnvelopeV2,
+    CaptureFormatError,
+    ProviderInvocationCaptureEvidenceV1,
     ProviderResultToExternalCaptureV1,
     capture_contract_digest,
+    capture_digest,
     parse_capture_envelope,
+    render_capture_envelope,
     verify_capture,
 )
 from cruxible_client.contracts.errors import (
@@ -40,13 +44,17 @@ from cruxible_client.contracts.procedures.artifacts import (
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
 from cruxible_client.contracts.procedures.models import (
     CaptureEgressNodeV3,
+    ProcedureDefinitionV3,
     ProviderNodeV4,
+    SourceNodeV3,
     SourceNodeV4,
 )
 from cruxible_client.contracts.procedures.results import (
     ProcedureAcquisitionPlanV2,
+    ProcedureAdmissionMaterialManifestV1,
     ProcedureRunReceiptV6,
     procedure_acquisition_plan_digest,
+    procedure_admission_material_digest,
     procedure_selection_decision_digest,
 )
 from cruxible_client.contracts.provider_execution import (
@@ -56,16 +64,20 @@ from cruxible_client.contracts.provider_execution import (
     ProviderInvocationCompletedV1,
     ProviderInvocationOutputDigestV1,
     ProviderInvocationStartedV1,
+    ProviderSecretReferenceV1,
 )
+from cruxible_client.contracts.providers import provider_digest
 from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.exhaust import parse_journal_payload
+from cruxible_core.playbill.exhaust import journal_payload_bytes, parse_journal_payload
 from cruxible_core.playbill.material_reservations import ProcedureMaterialReservationStore
+from cruxible_core.playbill.procedures.acquisition import ProcedureSourceAcquisitionResultV1
 from cruxible_core.playbill.procedures.egress import (
     CaptureTerminalEgressSink,
     TerminalEgressReceiptV2,
     compute_effective_rung,
 )
 from cruxible_core.playbill.procedures.execution import (
+    PreparedProcedureRunV3,
     PreparedProcedureRunV5,
     ProcedureExecutor,
     ProcedureRunAdmissionV5,
@@ -77,7 +89,10 @@ from cruxible_core.playbill.procedures.execution import (
     procedure_pin_set_digest,
     procedure_semantic_replay_key_digest,
 )
-from cruxible_core.playbill.producer_receipts import journal_producer_receipt_resolver
+from cruxible_core.playbill.producer_receipts import (
+    ProducerReceiptJournalNote,
+    journal_producer_receipt_resolver,
+)
 from cruxible_core.playbill.provider_classifiers import ProviderBucketClassifierRegistry
 from cruxible_core.playbill.provider_local_runtime import (
     BoundLocalProviderV1,
@@ -87,9 +102,31 @@ from cruxible_core.playbill.provider_runtime_contract import (
     ProviderRuntimeRefusalV1,
     ProviderRuntimeResultEnvelopeV1,
 )
+from cruxible_core.playbill.source_readers import (
+    ExternalSourceReadRequestV1,
+    FakeVersionedExternalSourceReader,
+    ProducerBindingV1,
+)
 from tests.test_playbill._p2b1_support import install_demo_classifier
-from tests.test_playbill._pc_c_support import capture_contract, digest
-from tests.test_playbill.test_procedure_execution import _Authority, _Contracts
+from tests.test_playbill._pc_c_support import (
+    NOW,
+    capture_contract,
+    digest,
+    provider,
+    provider_run,
+)
+from tests.test_playbill.test_procedure_execution import (
+    _accepted,
+    _Authority,
+    _budget,
+    _Contracts,
+    _fixture,
+    _hard_caps,
+    _line_admission,
+    _pin,
+    _prepare,
+    _StateReader,
+)
 from tests.test_playbill.test_provider_invocation_journal import (
     _accepted_one_provider,
     _prepared_v5,
@@ -385,6 +422,157 @@ def test_graph_v3_produced_capture_payload_keeps_its_frozen_field_set() -> None:
     assert _source_capture_association_fields(None, None) == {}
     assert _source_capture_association_fields("source/direct", None) == {}
     assert _source_capture_association_fields(None, digest("receipt", "unit1")) == {}
+    assert _source_capture_association_fields("source/direct", digest("receipt", "unit1")) == {
+        "occurrence_path": "source/direct",
+        "invocation_receipt_digest": digest("receipt", "unit1"),
+    }
+
+
+def test_live_graph_v3_source_keeps_the_frozen_produced_capture_payload(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    contract = capture_contract()
+    provider_artifact = provider(contract)
+    capture_pin = ArtifactPin(
+        role="capture-contract",
+        target=contract.identity,
+        artifact_digest=capture_contract_digest(contract).tagged,
+    )
+    provider_pin = ArtifactPin(
+        role="provider",
+        target=provider_artifact.identity,
+        artifact_digest=provider_digest(provider_artifact).tagged,
+    )
+    contract_in = _pin("contract-in", "Contract", "input")
+    contract_out = _pin("contract-out", "Contract", "output")
+    source = SourceNodeV3(
+        node_id="source",
+        capture_contract=capture_pin,
+        provider=provider_pin,
+        request={"relation": "orders"},
+        as_="result",
+    )
+    accepted = _accepted(
+        ProcedureDefinitionV3(
+            name="retained-v3-source",
+            contract_in=contract_in,
+            contract_out=contract_out,
+            nodes=(source,),
+            returns=source.as_,
+            budget=_budget().model_copy(update={"max_capture_bytes": 4096}),
+            hard_caps=_hard_caps().model_copy(update={"max_capture_bytes": 4096}),
+            terminal_capability=1,
+        ),
+        pins=(contract_in, contract_out, capture_pin, provider_pin),
+    )
+    admission = _line_admission(accepted, fixture)
+    direct = _prepare(accepted, fixture, _StateReader())
+    manifest = ProcedureAdmissionMaterialManifestV1(members=())
+    prepared = PreparedProcedureRunV3(
+        admission=admission,
+        accepted_state_materials=direct.accepted_state_materials,
+        admission_material_manifest=manifest,
+        admission_material_manifest_digest=procedure_admission_material_digest(manifest),
+    )
+    fixture.journal.activate_writer(
+        admission.journal_stream,
+        admission.journal_partition_id,
+        fencing_token="writer",
+        expected_head=fixture.journal.read_head(
+            admission.journal_stream,
+            admission.journal_partition_id,
+        ),
+    )
+    binding = ProducerBindingV1(
+        provider=provider_artifact.identity,
+        logical_source_identity="commerce.production.orders",
+        adapter_digest=digest("adapter", "retained-v3-source"),
+    )
+    reader = FakeVersionedExternalSourceReader()
+    reader.seed(
+        source_identity=binding.logical_source_identity,
+        coordinate_type="postgres-lsn-v1",
+        coordinate={"lsn": "0/16B6C50"},
+        selector_type="relation-primary-key-v1",
+        selector={"id": 7, "relation": "orders"},
+        value={"order_id": 7, "status": "settled"},
+    )
+    acquisition = reader.acquire(
+        ExternalSourceReadRequestV1(
+            contract=contract,
+            provider=provider_artifact,
+            binding=binding,
+            coordinate_type="postgres-lsn-v1",
+            coordinate={"lsn": "0/16B6C50"},
+            selector_type="relation-primary-key-v1",
+            selector={"id": 7, "relation": "orders"},
+            materialization="cas",
+            run_coordinate=provider_run(provider_artifact),
+            observed_at=NOW,
+            resource_budget=contract.selection_budget,
+        ),
+        store=fixture.bodies,
+    )
+
+    class _Acquirer:
+        def acquire(self, **kwargs):  # type: ignore[no-untyped-def]
+            return ProcedureSourceAcquisitionResultV1(
+                node_id=kwargs["node_id"],
+                input_name=kwargs["input_name"],
+                outcome="acquired",
+                acquisition=acquisition,
+            )
+
+        def dereference(self, _capture_digest):  # type: ignore[no-untyped-def]
+            raise AssertionError("the live acquisition path must not replay a landed Capture")
+
+    policy = SourceAcquisitionPolicyV1(
+        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="retained-v3-source"),
+        inputs=(
+            InputAcquisitionRuleV1(
+                input_name=source.as_,
+                requirement="required",
+                permitted_replayability=("attested_only", "exact"),
+                on_unavailable="refuse",
+                on_stale="refuse",
+                on_oversized="refuse",
+                on_conflict="preserve",
+            ),
+        ),
+        coherence=IndependentCoherenceV1(),
+    )
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        source_acquirer=_Acquirer(),
+        acquisition_policy=policy,
+    ).execute(prepared, accepted)
+
+    assert result.status == "succeeded"
+    _records, payloads = _payloads(prepared, fixture)
+    produced = next(
+        payload
+        for payload in payloads
+        if isinstance(payload, dict)
+        and payload.get("tag") == "playbill-procedure-produced-capture-v1"
+    )
+    assert set(produced) == {
+        "tag",
+        "node_id",
+        "input_name",
+        "capture_digest",
+        "capture_contract_digest",
+        "acquisition_receipt_digest",
+        "observed_at",
+        "epistemic_grade",
+        "provenance_grade",
+        "audit",
+    }
 
 
 def test_dynamic_source_request_is_a_pre_spawn_result_and_capture_is_post_completion(
@@ -831,6 +1019,7 @@ def test_two_run_ids_under_one_semantic_key_keep_independent_source_results(
 
 def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     accepted, prepared, fixture, policy, contract = _source_fixture(
         tmp_path,
@@ -889,6 +1078,20 @@ def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
     )
     assert isinstance(terminal_capture, CaptureEnvelopeV2)
     assert terminal_capture.producer_receipt_digest == receipt.producer_receipt_digest
+    scan_calls = {"partitions": 0, "records": 0}
+    original_partition_ids = fixture.journal.partition_ids
+    original_all_records = fixture.journal.all_records
+
+    def counted_partition_ids(stream):  # type: ignore[no-untyped-def]
+        scan_calls["partitions"] += 1
+        return original_partition_ids(stream)
+
+    def counted_all_records(stream, partition_id):  # type: ignore[no-untyped-def]
+        scan_calls["records"] += 1
+        return original_all_records(stream, partition_id)
+
+    monkeypatch.setattr(fixture.journal, "partition_ids", counted_partition_ids)
+    monkeypatch.setattr(fixture.journal, "all_records", counted_all_records)
     resolver = journal_producer_receipt_resolver(
         journal=fixture.journal,
         instance_id=prepared.admission.instance_id,
@@ -903,15 +1106,19 @@ def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
             access=BodyAccessContext(principal_id="unit-test", can_read_body=True),
         )
     )
+    assert isinstance(provider_capture, CaptureEnvelopeV2)
+    provider_evidence = provider_capture.production_evidence
+    assert isinstance(provider_evidence, ProviderInvocationCaptureEvidenceV1)
+    provider_artifacts = {
+        provider_capture.producer.qualified: prepared.acquisition_plan.external_occurrences[
+            0
+        ].provider_artifact_digest,
+    }
     assert verify_capture(
         provider_capture_digest,
         store=fixture.bodies,
         contract=contract,
-        producer_artifact_digests={
-            provider_capture.producer.qualified: prepared.acquisition_plan.external_occurrences[
-                0
-            ].provider_artifact_digest,
-        },
+        producer_artifact_digests=provider_artifacts,
         producer_receipt_resolver=resolver,
     ).producer_receipt_digest == str(produced["invocation_receipt_digest"])
     assert (
@@ -926,4 +1133,114 @@ def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
         )
         == terminal_capture
     )
+    forged_occurrence_digest = digest("forged-occurrence", "unit1-fix2")
+    forged_secret = ProviderSecretReferenceV1(
+        realm="orders",
+        name="reader",
+        epoch="forged-epoch",
+        purpose="read",
+        resolver_kind="environment",
+    )
+    forged_provider_captures = {
+        "interface_artifact_digest": provider_capture.model_copy(
+            update={
+                "production_evidence": provider_evidence.model_copy(
+                    update={
+                        "interface_artifact_digest": digest(
+                            "forged-interface-artifact", "unit1-fix2"
+                        )
+                    }
+                )
+            }
+        ),
+        "external_occurrence_plan_digest": provider_capture.model_copy(
+            update={
+                "source": provider_capture.source.model_copy(
+                    update={"producer_binding_digest": forged_occurrence_digest}
+                ),
+                "producer_binding_digest": forged_occurrence_digest,
+                "production_evidence": provider_evidence.model_copy(
+                    update={"external_occurrence_plan_digest": forged_occurrence_digest}
+                ),
+            }
+        ),
+        "secret_references": provider_capture.model_copy(
+            update={
+                "production_evidence": provider_evidence.model_copy(
+                    update={"secret_references": (forged_secret,)}
+                )
+            }
+        ),
+    }
+    for field, forged in forged_provider_captures.items():
+        forged_digest = capture_digest(forged).tagged
+        fixture.bodies.store(render_capture_envelope(forged))
+        with pytest.raises(CaptureFormatError, match=field):
+            verify_capture(
+                forged_digest,
+                store=fixture.bodies,
+                contract=contract,
+                producer_artifact_digests=provider_artifacts,
+                producer_receipt_resolver=resolver,
+            )
+    assert scan_calls == {
+        "partitions": 1,
+        "records": len(original_partition_ids(prepared.admission.journal_stream)),
+    }
+
+    unrelated = next(
+        stored
+        for stored in records
+        if stored.record.event_kind
+        not in {"admission_bound", "provider_invocation_completed", "terminal_egress"}
+    )
+    original_body_read = fixture.bodies.read
+
+    def read_with_unrelated_damage(body_digest, *, access):  # type: ignore[no-untyped-def]
+        if body_digest == unrelated.record.payload_digest:
+            return b"not a journal payload"
+        return original_body_read(body_digest, access=access)
+
+    notes: list[ProducerReceiptJournalNote] = []
+    with monkeypatch.context() as patch:
+        patch.setattr(fixture.bodies, "read", read_with_unrelated_damage)
+        damaged_resolver = journal_producer_receipt_resolver(
+            journal=fixture.journal,
+            instance_id=prepared.admission.instance_id,
+            bodies=fixture.bodies,
+            note_sink=notes.append,
+        )
+        assert (
+            verify_capture(
+                provider_capture_digest,
+                store=fixture.bodies,
+                contract=contract,
+                producer_artifact_digests=provider_artifacts,
+                producer_receipt_resolver=damaged_resolver,
+            )
+            == provider_capture
+        )
+    assert any(
+        note.code == "producer_receipt_unrelated_record_skipped"
+        and note.record_digest == unrelated.record_digest
+        for note in notes
+    )
+
+    completed_record = records[kinds.index("provider_invocation_completed")]
+    completed_digest = str(produced["invocation_receipt_digest"])
+
+    def read_with_target_damage(body_digest, *, access):  # type: ignore[no-untyped-def]
+        if body_digest == completed_record.record.payload_digest:
+            return journal_payload_bytes({"receipt_digest": completed_digest})
+        return original_body_read(body_digest, access=access)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(fixture.bodies, "read", read_with_target_damage)
+        damaged_resolver = journal_producer_receipt_resolver(
+            journal=fixture.journal,
+            instance_id=prepared.admission.instance_id,
+            bodies=fixture.bodies,
+        )
+        with pytest.raises(CaptureFormatError, match=completed_digest):
+            damaged_resolver(completed_digest)
     assert result.receipt.chain_head_digest == records[-1].record_digest

@@ -17,6 +17,7 @@ from cruxible_client.contracts.captures import (
     CaptureRunCoordinateV2,
     ProcedureEgressCaptureEvidenceV1,
     ProviderInvocationCaptureEvidenceV1,
+    ProviderProducerReceiptResolution,
     build_cas_capture,
     build_provider_external_capture_v2,
     capture_digest,
@@ -118,7 +119,12 @@ def test_provider_v2_round_trips_and_replays_complete_runtime_evidence(tmp_path:
                 fixture.producer.qualified: fixture.receipt.provider_artifact_digest
             },
             producer_receipt_resolver=lambda value: (
-                fixture.receipt if value == built.envelope.producer_receipt_digest else None
+                ProviderProducerReceiptResolution(
+                    receipt=fixture.receipt,
+                    occurrence=fixture.occurrence,
+                )
+                if value == built.envelope.producer_receipt_digest
+                else None
             ),
         )
         == built.envelope
@@ -170,7 +176,25 @@ def test_every_provider_evidence_edge_is_mutation_sensitive(
     mutated = built.envelope.model_copy(
         update={"production_evidence": evidence.model_copy(update={field: replacement})}
     )
-    assert capture_digest(mutated).tagged != built.capture_digest
+    mutated_digest = capture_digest(mutated).tagged
+    fixture.store.store(render_capture_envelope(mutated))
+    with pytest.raises(CaptureFormatError, match=field):
+        verify_capture(
+            mutated_digest,
+            store=fixture.store,
+            contract=fixture.contract,
+            producer_artifact_digests={
+                fixture.producer.qualified: fixture.receipt.provider_artifact_digest
+            },
+            producer_receipt_resolver=lambda value: (
+                ProviderProducerReceiptResolution(
+                    receipt=fixture.receipt,
+                    occurrence=fixture.occurrence,
+                )
+                if value == built.envelope.producer_receipt_digest
+                else None
+            ),
+        )
 
 
 @pytest.mark.parametrize("resolver", [None, lambda _digest: None])

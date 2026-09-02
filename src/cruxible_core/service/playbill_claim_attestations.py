@@ -241,10 +241,16 @@ def _new_capture_accounts(
         referent_tree,
         semantic_root=referent.semantic_root,
     )
+    bodies = instance.body_store()
+    producer_receipt_resolver = local_producer_receipt_resolver(
+        exhaust_root=instance.root / instance.descriptor.storage.exhaust,
+        instance_id=instance.descriptor.instance_id,
+        bodies=bodies,
+    )
     resolved: dict[tuple[str, str], ClaimAttestationResolvedArtifactV1] = {}
     for digest in statement.cited_capture_digests:
         try:
-            raw = instance.body_store().read(
+            raw = bodies.read(
                 digest,
                 access=BodyAccessContext(
                     principal_id="playbill-claim-attestation",
@@ -318,18 +324,14 @@ def _new_capture_accounts(
         try:
             verify_capture(
                 digest,
-                store=instance.body_store(),
+                store=bodies,
                 contract=contract,
                 ledger_resolver=_TreeLedgerResolver(
                     referent_tree,
                     statement.referent_coordinate,
                 ),
                 producer_artifact_digests=producers,
-                producer_receipt_resolver=local_producer_receipt_resolver(
-                    exhaust_root=instance.root / instance.descriptor.storage.exhaust,
-                    instance_id=instance.descriptor.instance_id,
-                    bodies=instance.body_store(),
-                ),
+                producer_receipt_resolver=producer_receipt_resolver,
             )
         except ClaimAttestationRefusal:
             raise
