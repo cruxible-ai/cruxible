@@ -577,12 +577,14 @@ def test_spawned_child_is_killed_when_its_owned_lease_cannot_be_verified(
             return -signal.SIGKILL
 
     monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: _Process())
+    monkeypatch.setattr("os.getsid", lambda _pid: 707)
+    monkeypatch.setattr("os.getpgid", lambda _pid: 707)
     monkeypatch.setattr(process_lease_module, "_current_boot_id", lambda: "boot")
     monkeypatch.setattr(process_lease_module, "_process_start_time", lambda _pid: "start")
     monkeypatch.setattr(
         local_runtime_module,
         "snapshot_provider_descendants",
-        lambda _pid, *, invocation_id: (),
+        lambda _pid, **_kwargs: (),
     )
     monkeypatch.setattr(
         leases,

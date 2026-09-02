@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -657,18 +657,35 @@ class _DescendantTracker:
         self.pid = pid
         self.invocation_id = invocation_id
         self.poll_interval_seconds = poll_interval_seconds
+        try:
+            self.root_session_id = os.getsid(pid)
+            self.root_process_group_id = os.getpgid(pid)
+        except OSError as exc:
+            raise ProviderLocalRuntimeRefused(
+                "provider_process_lease_invalid",
+                "provider root process identity is unavailable",
+            ) from exc
         self._observed: dict[tuple[int, str], ProviderDescendantProcessV1] = {}
         self._failure: ProviderLocalRuntimeRefused | None = None
+        self._observation_lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._track, daemon=True)
         self._thread.start()
 
     def observe(self) -> None:
-        for item in snapshot_provider_descendants(
-            self.pid,
-            invocation_id=self.invocation_id,
-        ):
-            self._observed[(item.pid, item.process_start_time)] = item
+        with self._observation_lock:
+            try:
+                observed = snapshot_provider_descendants(
+                    self.pid,
+                    invocation_id=self.invocation_id,
+                    root_session_id=self.root_session_id,
+                    root_process_group_id=self.root_process_group_id,
+                )
+            except ProviderLocalRuntimeRefused as exc:
+                self._failure = exc
+                raise
+            for item in observed:
+                self._observed[(item.pid, item.process_start_time)] = item
 
     def snapshot(self) -> tuple[ProviderDescendantProcessV1, ...]:
         if self._failure is not None:
@@ -834,6 +851,7 @@ def _run_child(
                 budgets=budgets,
                 started=started,
                 writer_join_timeout_seconds=process_leases.stdin_writer_join_timeout_seconds,
+                observe_descendants=descendants.observe,
             )
             return outcome
         except ProviderLocalRuntimeRefused as exc:
@@ -868,11 +886,21 @@ def _collect_child_output(
     budgets: ProviderRuntimeBudgetsV1,
     started: float,
     writer_join_timeout_seconds: float,
+    observe_descendants: Callable[[], None] | None = None,
 ) -> _ProcessOutcome:
     def write_stdin() -> None:
         try:
             assert process.stdin is not None
             process.stdin.write(context)
+            process.stdin.flush()
+            if observe_descendants is not None:
+                # The child cannot finish a whole-document input read until
+                # EOF. Snapshot after the bytes are delivered but before
+                # closing stdin so fast cross-session escapes are observable.
+                try:
+                    observe_descendants()
+                except ProviderLocalRuntimeRefused:
+                    pass  # the tracker re-raises its retained failure at the fence
             process.stdin.close()
         except (BrokenPipeError, OSError, ValueError):
             pass
@@ -889,6 +917,7 @@ def _collect_child_output(
         deadline = started + budgets.wall_clock_seconds
         open_streams = len(streams)
         refusal: tuple[str, str] | None = None
+        child_activity_observed = False
         while open_streams and refusal is None:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -905,9 +934,20 @@ def _collect_child_output(
                     refusal = ("budget_output_size", "provider exceeded aggregate output budget")
                     break
                 buffers[key.fd].extend(chunk)
+                if not child_activity_observed and observe_descendants is not None:
+                    # A successful provider must emit its envelope after its
+                    # work. Capture one event-driven snapshot while the root
+                    # still owns cross-session descendants, independently of
+                    # the configured background polling cadence.
+                    observe_descendants()
+                    child_activity_observed = True
         if refusal is not None:
             raise ProviderLocalRuntimeRefused(*refusal)
-        while not _process_exited_without_reaping(process.pid):
+        while True:
+            if _process_exited_without_reaping(process.pid):
+                if observe_descendants is not None:
+                    observe_descendants()
+                break
             if time.monotonic() >= deadline:
                 raise ProviderLocalRuntimeRefused(
                     "budget_wall_clock", "provider exceeded wall-clock budget"

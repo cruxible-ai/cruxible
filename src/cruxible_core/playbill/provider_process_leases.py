@@ -27,7 +27,7 @@ DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS = 5.0
 DEFAULT_PROVIDER_SECRET_WRITER_JOIN_TIMEOUT_SECONDS = 5.0
 DEFAULT_PROVIDER_STDIN_WRITER_JOIN_TIMEOUT_SECONDS = 5.0
 DEFAULT_PROVIDER_DESCENDANT_TRACKER_JOIN_TIMEOUT_SECONDS = 5.0
-DEFAULT_PROVIDER_DESCENDANT_TRACKER_POLL_INTERVAL_SECONDS = 1.0
+DEFAULT_PROVIDER_DESCENDANT_TRACKER_POLL_INTERVAL_SECONDS = 0.1
 DEFAULT_PROVIDER_PROCESS_GROUP_TERMINATION_TIMEOUT_SECONDS = 5.0
 _BOOT_ID_UNSET = object()
 
@@ -230,6 +230,14 @@ def _process_rows() -> tuple[_ProviderProcessRow, ...]:
             process_id, parent_id, group_id, session_id = (int(item) for item in fields[:4])
         except ValueError:
             continue
+        if platform.system() == "Darwin":
+            # Darwin's `ps` accepts `sess` but renders zero rather than the
+            # POSIX session id. Query the kernel so a session sweep can never
+            # collapse into a machine-wide candidate set.
+            try:
+                session_id = os.getsid(process_id)
+            except OSError:
+                continue
         rows.append(
             _ProviderProcessRow(
                 pid=process_id,
@@ -245,31 +253,50 @@ def _process_rows() -> tuple[_ProviderProcessRow, ...]:
 def _descendant_processes_from_rows(
     pid: int,
     rows: tuple[_ProviderProcessRow, ...],
+    *,
+    root_session_id: int | None = None,
+    root_process_group_id: int | None = None,
 ) -> tuple[ProviderDescendantProcessV1, ...]:
     root = next((row for row in rows if row.pid == pid), None)
-    if root is None:
+    if root_session_id is None and root is not None:
+        root_session_id = root.session_id
+    if root_process_group_id is None and root is not None:
+        root_process_group_id = root.process_group_id
+    if root_session_id is None or root_process_group_id is None:
         return ()
     children: dict[int, list[_ProviderProcessRow]] = {}
+    candidates = {
+        row.pid: row
+        for row in rows
+        if row.pid != pid
+        and row.session_id == root_session_id
+        and row.process_group_id != root_process_group_id
+    }
     for row in rows:
         children.setdefault(row.parent_pid, []).append(row)
     pending = [pid]
-    found: list[ProviderDescendantProcessV1] = []
     while pending:
         parent = pending.pop()
         for row in children.get(parent, []):
             pending.append(row.pid)
-            if row.session_id == root.session_id and row.process_group_id == root.process_group_id:
+            if (
+                row.session_id == root_session_id
+                and row.process_group_id == root_process_group_id
+            ):
                 continue
-            try:
-                start_time = _process_start_time(row.pid)
-            except ProviderLocalRuntimeRefused:
-                continue
-            found.append(
-                ProviderDescendantProcessV1(
-                    pid=row.pid,
-                    process_start_time=start_time,
-                )
+            candidates.setdefault(row.pid, row)
+    found: list[ProviderDescendantProcessV1] = []
+    for row in candidates.values():
+        try:
+            start_time = _process_start_time(row.pid)
+        except ProviderLocalRuntimeRefused:
+            continue
+        found.append(
+            ProviderDescendantProcessV1(
+                pid=row.pid,
+                process_start_time=start_time,
             )
+        )
     return tuple(sorted(found, key=lambda item: item.pid))
 
 
@@ -310,6 +337,8 @@ def snapshot_provider_descendants(
     pid: int,
     *,
     invocation_id: str,
+    root_session_id: int | None = None,
+    root_process_group_id: int | None = None,
 ) -> tuple[ProviderDescendantProcessV1, ...]:
     """Observe descendants and token-holders from one process-table snapshot."""
 
@@ -317,7 +346,12 @@ def snapshot_provider_descendants(
     found = {
         (item.pid, item.process_start_time): item
         for item in (
-            *_descendant_processes_from_rows(pid, rows),
+            *_descendant_processes_from_rows(
+                pid,
+                rows,
+                root_session_id=root_session_id,
+                root_process_group_id=root_process_group_id,
+            ),
             *_processes_naming_invocation_from_rows(invocation_id, rows),
         )
         if item.pid != pid

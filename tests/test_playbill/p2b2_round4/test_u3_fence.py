@@ -166,12 +166,10 @@ def test_returncode_is_none_and_the_group_is_alive_at_every_terminate_entry(
 
 
 @pytest.mark.parametrize("mode", ["setpgid", "setsid"])
-def test_a_fast_escaping_descendant_outlives_a_short_successful_invocation(
+def test_a_fast_escaping_descendant_is_swept_after_a_short_successful_invocation(
     short_root: Path, mode: str
 ) -> None:
-    """T-11's 1-second poll plus WNOWAIT reparenting: on the success path the
-    forced snapshot walks the ppid chain of a ZOMBIE, whose children were already
-    reparented to init, and the escapee's argv never carries the invocation id."""
+    """Session identity and the input-bound snapshot close the fast escape."""
 
     store = ProviderProcessLeaseStore(short_root / "l")
     marker = short_root / f"m-{mode}"
@@ -191,7 +189,7 @@ def test_a_fast_escaping_descendant_outlives_a_short_successful_invocation(
         survived = _grew(marker)
     finally:
         _kill_tree(marker)
-    assert survived, "the escapee was swept -- property holds"
+    assert not survived, "the escapee outlived the declared fence"
 
 
 def test_the_same_escape_is_caught_when_the_invocation_lasts_past_one_poll(

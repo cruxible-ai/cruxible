@@ -118,8 +118,8 @@ def test_the_sweep_skips_only_processes_in_the_original_session_and_group() -> N
     import inspect
 
     text = inspect.getsource(lease_module._descendant_processes_from_rows)
-    assert "row.session_id == root.session_id" in text
-    assert "row.process_group_id == root.process_group_id" in text
+    assert "row.session_id == root_session_id" in text
+    assert "row.process_group_id == root_process_group_id" in text
     assert "continue" in text
     terminate = inspect.getsource(runtime_module._terminate_process_group)
     assert "if process.returncode is None:" in terminate
