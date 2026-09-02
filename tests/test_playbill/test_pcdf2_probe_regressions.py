@@ -108,7 +108,7 @@ def test_rev15_and_rev12_remain_exact_codec_lineage_members() -> None:
 
 
 @pytest.mark.parametrize("retained", [PC_DF2_COMPILER, PC_HR_COMPILER])
-def test_retained_codec_instance_stays_writable_and_replays_under_rev16(
+def test_retained_codec_instance_stays_writable_and_replays_under_current_revision(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, retained
 ) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr(instance_module, "current_compiler_coordinate", lambda: retained)
