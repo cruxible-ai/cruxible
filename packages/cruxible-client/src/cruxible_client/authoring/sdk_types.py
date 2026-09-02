@@ -286,10 +286,15 @@ class IncompatibleDaemonVersion(PlaybillSdkError):
         self.daemon_version = daemon_version
         self.expected_snapshot_digest = expected_snapshot_digest
         self.actual_snapshot_digest = actual_snapshot_digest
+        self.client_snapshot_digest = expected_snapshot_digest
+        self.daemon_snapshot_digest = actual_snapshot_digest
         super().__init__(
-            f"client={client_version}, daemon={daemon_version}, "
-            f"expected_snapshot={expected_snapshot_digest}, "
-            f"actual_snapshot={actual_snapshot_digest}"
+            "Client and daemon authoring contracts are incompatible: "
+            f"client_version={client_version}, daemon_version={daemon_version}, "
+            f"client_snapshot_digest={expected_snapshot_digest}, "
+            f"daemon_snapshot_digest={actual_snapshot_digest}. "
+            "Repair: upgrade the client or daemon so both use the same authoring "
+            "contract snapshot."
         )
 
 

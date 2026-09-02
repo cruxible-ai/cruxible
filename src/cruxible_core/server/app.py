@@ -14,6 +14,9 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from cruxible_client.contracts.authoring.models import (
+    AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
+)
 from cruxible_client.contracts.errors import (
     ClaimAttestationRequestInvalid,
     PlaybillSinceRequestInvalid,
@@ -202,7 +205,10 @@ def create_app() -> FastAPI:
 
     @app.get("/version")
     async def version() -> dict[str, str]:
-        return {"version": __version__}
+        return {
+            "version": __version__,
+            "sdk_contract_snapshot_digest": AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
+        }
 
     app.include_router(instances_router)
     app.include_router(hosted_instances_router)

@@ -6,8 +6,11 @@ import hashlib
 from pathlib import Path
 from typing import Any, get_args
 
+import httpx
 import pytest
+from fastapi.testclient import TestClient
 
+from cruxible_client import __version__ as CLIENT_VERSION
 from cruxible_client import contracts
 from cruxible_client.authoring.sdk import SDK_CONTRACT_SNAPSHOT_DIGEST, SUPPORTED_DAEMON_CONTRACTS
 from cruxible_client.contracts.authoring.models import (
@@ -15,6 +18,9 @@ from cruxible_client.contracts.authoring.models import (
     AUTHORING_SDK_VERSION,
 )
 from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.transport.http import CruxibleClient
+from cruxible_core import __version__ as DAEMON_VERSION
+from cruxible_core.server.app import create_app
 from tests.support.client_contracts import (
     compare_contract_manifests,
     generate_contract_manifest,
@@ -50,6 +56,41 @@ def test_authoring_program_stamp_commits_the_exact_public_contract_snapshot() ->
     assert digest == AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST
     assert SDK_CONTRACT_SNAPSHOT_DIGEST == digest
     assert SUPPORTED_DAEMON_CONTRACTS[AUTHORING_SDK_VERSION] == digest
+
+
+def test_current_daemon_serves_the_snapshot_used_by_the_sdk_handshake() -> None:
+    assert CLIENT_VERSION == DAEMON_VERSION
+    with TestClient(create_app()) as server:
+        response = server.get("/version")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "version": DAEMON_VERSION,
+        "sdk_contract_snapshot_digest": SDK_CONTRACT_SNAPSHOT_DIGEST,
+    }
+
+
+def test_client_reads_package_version_and_served_snapshot_from_version_probe() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/version"
+        return httpx.Response(
+            200,
+            json={
+                "version": DAEMON_VERSION,
+                "sdk_contract_snapshot_digest": SDK_CONTRACT_SNAPSHOT_DIGEST,
+            },
+        )
+
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = httpx.Client(  # type: ignore[assignment]
+        base_url="http://cruxible",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        assert client._version_info() == (DAEMON_VERSION, SDK_CONTRACT_SNAPSHOT_DIGEST)
+        assert client.version() == DAEMON_VERSION
+    finally:
+        client.close()
 
 
 def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:

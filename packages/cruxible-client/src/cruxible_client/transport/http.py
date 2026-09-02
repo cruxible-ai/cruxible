@@ -149,12 +149,19 @@ class CruxibleClient:
         return payload
 
     def version(self) -> str:
+        version, _snapshot_digest = self._version_info()
+        return version
+
+    def _version_info(self) -> tuple[str, str | None]:
+        """Return package and served authoring-contract versions from the public probe."""
+
         response = self._client.get("/version")
         payload = self._parse_json(response)
         version = payload.get("version")
         if not isinstance(version, str):
             raise CoreError("Server /version response missing version string")
-        return version
+        snapshot_digest = payload.get("sdk_contract_snapshot_digest")
+        return version, snapshot_digest if isinstance(snapshot_digest, str) else None
 
     def server_info(self) -> contracts.ServerInfoResult:
         response = self._client.get("/api/v1/server/info")

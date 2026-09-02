@@ -18,11 +18,13 @@ from cruxible_client import (
     ReferentSensitivity,
     SubjectRef,
 )
+from cruxible_client import __version__ as CLIENT_VERSION
 from cruxible_client import contracts as api
 from cruxible_client.authoring.blocks import (
     ProjectionIndependentEvidenceForbidden,
     render_projection_opening,
 )
+from cruxible_client.authoring.sdk import SDK_CONTRACT_SNAPSHOT_DIGEST
 from cruxible_client.authoring.sdk_types import IncompatibleDaemonVersion
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -46,6 +48,7 @@ from cruxible_client.contracts.policies import (
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.errors import CoreError
+from cruxible_core import __version__ as DAEMON_VERSION
 
 _DIGEST = "sha256:" + "1" * 64
 _COORDINATE = api.PlaybillAcceptedCoordinate(
@@ -1127,7 +1130,43 @@ def test_capture_ref_from_a_copy_cannot_be_promoted_to_independent_evidence(
     assert capture.coordinate == pb.coordinate
 
 
-def test_connect_refuses_an_unknown_daemon_before_instance_io(
+def test_connect_accepts_current_daemon_package_with_current_served_snapshot(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # type: ignore[no-untyped-def]
+    _workspace(tmp_path)
+    calls: list[str] = []
+
+    class _CurrentClient(_Client):
+        def __init__(self, **_values: object) -> None:
+            super().__init__()
+            calls.append("connect")
+
+        def _version_info(self) -> tuple[str, str]:
+            calls.append("version_info")
+            return DAEMON_VERSION, SDK_CONTRACT_SNAPSHOT_DIGEST
+
+        def close(self) -> None:
+            calls.append("close")
+
+    monkeypatch.setattr("cruxible_client.authoring.sdk.CruxibleClient", _CurrentClient)
+
+    assert CLIENT_VERSION == DAEMON_VERSION
+    playbill = Playbill.connect(
+        target="http://explicit",
+        instance="inst_test",
+        workspace=tmp_path,
+    )
+    try:
+        assert playbill.coordinate.git_oid == _COORDINATE.git_oid
+        assert playbill.coordinate.generation_root == _COORDINATE.generation_root
+        assert calls == ["connect", "version_info"]
+    finally:
+        playbill.close()
+    assert calls == ["connect", "version_info", "close"]
+
+
+def test_connect_refuses_mismatched_served_snapshot_before_instance_io(
     monkeypatch,
     tmp_path: Path,
 ) -> None:  # type: ignore[no-untyped-def]
@@ -1141,27 +1180,43 @@ def test_connect_refuses_an_unknown_daemon_before_instance_io(
     calls: list[str] = []
     connection: dict[str, object] = {}
 
-    class _UnknownClient:
+    daemon_snapshot_digest = "sha256:" + "9" * 64
+
+    class _MismatchedClient:
         def __init__(self, **values: object) -> None:
             calls.append("connect")
             connection.update(values)
 
-        def version(self) -> str:
-            calls.append("version")
-            return "9.0.0"
+        def _version_info(self) -> tuple[str, str]:
+            calls.append("version_info")
+            return DAEMON_VERSION, daemon_snapshot_digest
 
         def close(self) -> None:
             calls.append("close")
 
-    monkeypatch.setattr("cruxible_client.authoring.sdk.CruxibleClient", _UnknownClient)
+    monkeypatch.setattr("cruxible_client.authoring.sdk.CruxibleClient", _MismatchedClient)
 
     try:
-        Playbill.connect(context=context, target="http://explicit", workspace=tmp_path)
+        Playbill.connect(
+            context=context,
+            target="http://explicit",
+            instance="inst_test",
+            workspace=tmp_path,
+        )
     except IncompatibleDaemonVersion as exc:
-        assert exc.daemon_version == "9.0.0"
+        assert exc.client_version == CLIENT_VERSION
+        assert exc.daemon_version == DAEMON_VERSION
+        assert exc.client_snapshot_digest == SDK_CONTRACT_SNAPSHOT_DIGEST
+        assert exc.daemon_snapshot_digest == daemon_snapshot_digest
+        message = str(exc)
+        assert f"client_version={CLIENT_VERSION}" in message
+        assert f"daemon_version={DAEMON_VERSION}" in message
+        assert f"client_snapshot_digest={SDK_CONTRACT_SNAPSHOT_DIGEST}" in message
+        assert f"daemon_snapshot_digest={daemon_snapshot_digest}" in message
+        assert "upgrade the client or daemon" in message
     else:  # pragma: no cover - the handshake must fail closed
-        raise AssertionError("unknown daemon version was accepted")
-    assert calls == ["connect", "version", "close"]
+        raise AssertionError("mismatched daemon snapshot was accepted")
+    assert calls == ["connect", "version_info", "close"]
     assert connection["base_url"] == "http://explicit"
     assert connection["socket_path"] is None
 
