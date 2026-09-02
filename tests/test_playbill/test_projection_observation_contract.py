@@ -122,6 +122,7 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "playbill.claim.retire",
         "playbill.floor.export",
         "playbill.block.repin",
+        "playbill.block.sync",
         "playbill.document.propose",
         "hand_edit",
     }

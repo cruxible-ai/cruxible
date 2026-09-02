@@ -43,6 +43,7 @@ playbill authoring status
 playbill authoring submit
 playbill audit
 playbill block repin
+playbill block sync
 playbill body store
 playbill claim explain
 playbill claim get
@@ -88,6 +89,8 @@ playbill proposal list
 playbill proposal readmit
 playbill proposal refusal
 playbill proposal review
+playbill review close
+playbill review open
 playbill procedure bind
 playbill procedure readiness
 playbill procedure run
@@ -193,6 +196,7 @@ GET  /api/v1/{instance_id}/playbill/procedures/{name}/readiness
 POST /api/v1/{instance_id}/playbill/procedures/{name}/bind
 POST /api/v1/{instance_id}/playbill/procedures/{name}/runs
 GET  /api/v1/{instance_id}/playbill/procedure-runs/{run_id}
+POST /api/v1/{instance_id}/playbill/projections/sync-backing
 POST /api/v1/{instance_id}/playbill/claim-attestations
 POST /api/v1/{instance_id}/playbill/claim-attestations/recover
 POST /api/v1/{instance_id}/playbill/discover
@@ -202,6 +206,7 @@ POST /api/v1/{instance_id}/playbill/floor/export
 POST /api/v1/{instance_id}/playbill/search
 POST /api/v1/{instance_id}/playbill/since
 GET  /api/v1/{instance_id}/playbill/whoami
+GET  /api/v1/{instance_id}/playbill/workspace-registration
 ```
 
 ## Surviving public MCP tool inventory

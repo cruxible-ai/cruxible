@@ -80,7 +80,7 @@ class _Cli:
     def accept(self, proposal_id: str) -> dict[str, Any]:
         """Activate the admitted candidate, exactly as an operator does."""
 
-        activated = self.json("playbill", "proposal", "activate", proposal_id)
+        activated = self.json("playbill", "proposal", "activate", proposal_id, "--no-sync")
         assert activated["status"] == "accepted", activated
         return activated
 

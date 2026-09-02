@@ -28,7 +28,10 @@ was selected, and entering one workspace never retargets another.
 ## context
 
 Manage remembered daemon and instance context. `context show` reports the
-resolved target, workspace, and the source selected for each target component:
+resolved target, workspace, and the source selected for each target component.
+It reports workspace-config attachment separately from daemon host registration;
+for local sockets, a mismatch is a typed attachment-disagreement row rather than
+silently treating those two notions as equivalent:
 
 ~~~text
 cruxible context connect
@@ -114,15 +117,21 @@ identity and is unsafe; prefer repairing the typed cause and allowing re-arm.
 ## playbill host
 
 ~~~text
-cruxible playbill host create [--instance-id ID]
+cruxible playbill host create [--instance-id ID] [--workspace DIR] [--replace]
 ~~~
 
 Allocates an empty daemon-owned host and remembers it. When the selected daemon
 is reached through `--server-socket` or `CRUXIBLE_SERVER_SOCKET`, the command
-also attaches the current Git worktree. A TCP client never sends a local path
-for the daemon to interpret. Host creation over TCP therefore refuses when the
-CLI is running inside a Git worktree; use the local socket for attachment, or
-run outside the worktree to create an intentionally unattached remote host.
+also registers the selected Git worktree with the daemon. Every selected
+workspace gets an atomic `.playbill/coverage.json` v2 write containing exactly
+one transport, the instance ID, and the fixed floor profile; bearer credentials
+and secrets are never inputs to that writer. A differing config is refused
+unless `--replace` is explicit.
+
+A TCP client never sends its local path to the daemon. Implicit attachment from
+inside a TCP worktree remains refused; explicit `--workspace DIR` instead writes
+a client-local `server_url` binding without claiming daemon registration. Use a
+local socket when the daemon must advertise ledger refs into that worktree.
 
 ## playbill init
 
@@ -134,6 +143,7 @@ cruxible playbill init --key-dir DIR
   [--recovery-key-dir DIR]
   [--recovery-principal-id ID]
   [--profile local|cloud]
+  [--workspace DIR] [--replace]
 ~~~
 
 Generates a client-held ordinary key outside the workspace and bootstraps the
@@ -153,16 +163,17 @@ existing keys without the matching marker are refused. Re-seed with fresh
 owner, reviewer, and recovery custody by default; see
 [Canonical repository and daemon layout](canonical-repository-layout.md).
 
-Successful initialization remembers the initialized instance before rendering
-either JSON or human output. For an attached local worktree, the daemon creates
-or validates the advisory `playbill` Git remote and fetches accepted `main` and
-proposal refs into `refs/remotes/playbill/*`. Those refs are review aids only;
-merging one never admits or activates governed state.
+Successful initialization remembers the initialized instance and atomically
+writes the selected workspace config before rendering either JSON or human
+output. For a daemon-registered local worktree, the advisory `playbill` remote
+fetches accepted state as `playbill/accepted` and open proposals as
+`playbill/proposals/<proposal-digest>`. These are remote-tracking refs only:
+compare them, never check them out or merge them to admit governed state.
 
-Initialization over TCP also refuses from inside a Git worktree because an
-attachment cannot be added afterward. An instance initialized without an
-attachment must be archived and rebuilt as an attached host; record attachment
-before init, then re-seed.
+Explicit `--workspace DIR` over TCP writes only the client-local URL binding.
+An instance initialized without daemon registration cannot acquire one later;
+archive and rebuild an attached host through the local socket when ledger-ref
+advertisement is required.
 
 ## playbill body
 
@@ -359,6 +370,8 @@ journal records and `status` reconstructs the one-read run state from those reco
 ~~~text
 cruxible playbill block repin SOURCE_ID BLOCK_ID [--claim ID]... [--query ID]...
   [--params CANONICAL_JSON]... [--workspace-root DIR] [--evaluation-time TS]
+cruxible playbill block sync [PATH]... [--all] [--check]
+  [--detach PATH]... [--discard-local PATH]... [--workspace-root DIR]
 ~~~
 
 Refreshes only the opening marker of an agent-authored declared Markdown block.
@@ -369,6 +382,22 @@ replaces the marker only when the complete local source still matches its
 observed bytes. It never renders prose, edits the body, or mutates governed
 state. Evidence anchors inside declared blocks are refused client-side; an
 explicit copy citation remains available.
+
+`block sync` converges only publication-origin blocks backed by one live Claim
+whose retained coordinator self-source carries the accepted body. It follows
+accepted Claim successors, updates the marker and body with one whole-file
+compare-and-swap, and proves the bytes outside every marker by digest before and
+after the atomic temp-file rename. `--check` writes nothing and exits nonzero
+when a change is needed. `--detach PATH` strips a retired block's markers while
+preserving its current body.
+
+A block body is overwritten only when it still matches the last-synced body
+digest in its stamp. A local edit is preserved and refused as
+`block_locally_modified`; revise it through governed authoring, or explicitly
+discard it with `--discard-local PATH`. Retired backings with no live successor
+refuse until `--detach PATH` is explicit; two live terminal successors refuse
+as ambiguous. The stale-block row from `playbill next` repairs with
+`cruxible playbill block sync`.
 
 ## playbill next
 
@@ -495,7 +524,9 @@ keyed by floor path and never writes a client path; export refuses a non-empty
 floor unless `--force` is given. The export carries its own coverage boundary
 in `coverage-manifest.json`, enumerated in the root manifest like every other
 floor file. `floor_output.path` is obsolete and refused; a v2 coverage config
-enables refresh with only the fixed profile:
+enables refresh with only the fixed profile. `floor export` records that profile
+when the config lacks it, so the following `next` observation no longer reports
+`floor_missing` after a successful export:
 
 ~~~json
 {
@@ -604,6 +635,9 @@ cruxible playbill proposal review PROPOSAL_ID [--include-body|--redacted]
 cruxible playbill proposal approve PROPOSAL_ID
   --signer-id ID --key FILE [--yes]
 cruxible playbill proposal activate PROPOSAL_ID [--workspace-root DIR]
+  [--no-sync]
+cruxible playbill review open PROPOSAL_ID [--workspace-root DIR]
+cruxible playbill review close PROPOSAL_ID [--workspace-root DIR]
 ~~~
 
 `cruxible playbill whoami` names the credential-derived actor, its effective
@@ -621,6 +655,14 @@ When `.playbill/coverage.json` at `--workspace-root` declares `floor_output`,
 activate refreshes floor-v2 as a verified exact directory replacement. An
 accepted activation followed by a failed local refresh reports both truths and
 exits nonzero; the daemon never receives the workspace path.
+
+After an accepted activation, the client runs block sync last unless
+`--no-sync` is explicit; a sync refusal is reported beside the already-accepted
+truth. `review open` refreshes the remote refs and creates a detached, gitignored
+worktree at `.playbill/review/<proposal-digest>/`; `review close` removes only a
+clean review worktree. This provides editor/diff access without creating a local
+branch. No review-ref mirror script is needed: standard Git tooling already
+lists the proposal namespace as remote branches.
 
 ## playbill principal
 
