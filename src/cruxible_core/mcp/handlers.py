@@ -98,7 +98,7 @@ _CLAIM_RETIRE = TypeAdapter(ClaimRetireRequestV1)
 
 
 class _LocalFloorClient:
-    """Give the shared client adapter the same two calls in library mode."""
+    """Give the shared client adapter the same calls in library mode."""
 
     def activate_playbill_proposal(
         self, instance_id: str, proposal_id: str
@@ -114,6 +114,14 @@ class _LocalFloorClient:
         if at is not None:  # pragma: no cover - shared refresh always asks for current
             raise DataValidationError("local floor adapter accepts only the current coordinate")
         return playbill_api.playbill_export_floor(instance_id)
+
+    def read_playbill_block_sync_backing(
+        self,
+        instance_id: str,
+        *,
+        request: contracts.PlaybillBlockSyncReadRequestV1,
+    ) -> contracts.PlaybillBlockSyncReadResultV1:
+        return playbill_api.playbill_read_block_sync_backing(instance_id, request=request)
 
 
 class _LocalSourceContextClient:

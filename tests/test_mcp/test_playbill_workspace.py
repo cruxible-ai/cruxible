@@ -11,7 +11,15 @@ from pathlib import Path
 import pytest
 
 from cruxible_client import contracts
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.declared_blocks import (
+    ProjectionBlockStampV1,
+    ProjectionClaimBackingV1,
+    frame_projection_block,
+    parse_projection_blocks,
+)
+from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.workspace import resolve_workspace_path
@@ -150,6 +158,92 @@ def test_activate_from_nested_cwd_refreshes_the_containing_git_worktree(
     assert result.floor_refresh.status == "refreshed"
     assert (workspace / ".playbill/floor/cards/fresh.json").is_file()
     assert not (nested / ".playbill/floor").exists()
+
+
+def test_library_mode_activate_syncs_an_attached_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    (workspace / ".playbill/coverage.json").write_text(
+        json.dumps(
+            {
+                "tag": "playbill-coverage-workspace-config-v2",
+                "instance_id": "inst_test",
+                "server_socket": str(tmp_path / "daemon.sock"),
+                "floor_output": {
+                    "tag": "playbill-floor-output-v1",
+                    "format": "playbill-floor-export-v2",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    old_body = b"status: old\n"
+    new_body = b"status: current\n"
+    stamp = ProjectionBlockStampV1(
+        source_id="corpus.runbook",
+        block_id="pub-mcp",
+        declared_generation=1,
+        declared_coordinate=AcceptedCoordinate.model_validate(_coordinate().model_dump()),
+        backing=(
+            ProjectionClaimBackingV1(
+                identity=ArtifactIdentity(kind="Claim", name="CLM-" + "a" * 32),
+                statement_digest="sha256:" + "7" * 64,
+            ),
+        ),
+        body_digest="sha256:" + hashlib.sha256(old_body).hexdigest(),
+    )
+    source = workspace / "runbook.md"
+    source.write_bytes(frame_projection_block(stamp=stamp, body=old_body))
+    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setattr(
+        handlers.playbill_api,
+        "playbill_activate",
+        lambda instance_id, proposal_id: contracts.PlaybillActivationReceipt(
+            proposal_id=proposal_id,
+            activated_by="owner",
+            status="accepted",
+            accepted_coordinate=_coordinate(),
+            workspace_advertisement={"status": "updated", "workspace_path": str(workspace)},
+        ),
+    )
+    monkeypatch.setattr(handlers.playbill_api, "playbill_export_floor", lambda _instance: _export())
+
+    def read_backing(
+        instance_id: str,
+        *,
+        request: contracts.PlaybillBlockSyncReadRequestV1,
+    ) -> contracts.PlaybillBlockSyncReadResultV1:
+        assert instance_id == "inst_test"
+        return contracts.PlaybillBlockSyncReadResultV1(
+            status="successor",
+            original_artifact_digest="sha256:" + "8" * 64,
+            artifact_digest="sha256:" + "9" * 64,
+            coordinate=AcceptedCoordinate.model_validate(_coordinate().model_dump()),
+            generation=2,
+            backing=ProjectionClaimBackingV1(
+                identity=request.stamp.backing[0].identity,
+                statement_digest="sha256:" + "a" * 64,
+            ),
+            body_content_base64=base64.b64encode(new_body).decode("ascii"),
+            body_digest="sha256:" + hashlib.sha256(new_body).hexdigest(),
+        )
+
+    monkeypatch.setattr(
+        handlers.playbill_api,
+        "playbill_read_block_sync_backing",
+        read_backing,
+    )
+
+    result = handlers.handle_playbill_activate("inst_test", "proposal-1")
+
+    assert result.status == "accepted"
+    assert result.block_sync is not None
+    assert result.block_sync.has_refusals is False
+    assert [item.outcome for item in result.block_sync.items] == ["synced"]
+    (block,) = parse_projection_blocks(source.read_bytes(), source_id="corpus.runbook")
+    assert source.read_bytes()[block.body_start : block.body_end] == new_body
 
 
 def test_workspace_status_compares_the_installed_floor(
