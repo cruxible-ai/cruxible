@@ -276,7 +276,9 @@ def _advertise_workspace_refs(
         deleted = _git(
             workspace,
             ["update-ref", "--stdin"],
-            input_data="".join(f"delete {ref}\n" for ref in stale_refs).encode("utf-8"),
+            input_data="".join(f"option no-deref\ndelete {ref}\n" for ref in stale_refs).encode(
+                "utf-8"
+            ),
         )
         if deleted.returncode != 0:
             return failed("fetch_failed")

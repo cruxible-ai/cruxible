@@ -573,6 +573,7 @@ def test_advertisement_prunes_pre_df3_remote_refs_without_touching_local_main(
     workspace, ledger = _repositories(tmp_path, "sha1")
     local_main = _git(workspace, "rev-parse", "refs/heads/main")
     _git(workspace, "update-ref", "refs/remotes/playbill/main", local_main)
+    _git(workspace, "symbolic-ref", "refs/remotes/playbill/HEAD", "refs/remotes/playbill/main")
     _git(
         workspace,
         "update-ref",
@@ -594,5 +595,6 @@ def test_advertisement_prunes_pre_df3_remote_refs_without_touching_local_main(
         "--format=%(refname)",
         "refs/remotes/playbill",
     ).splitlines()
+    assert "refs/remotes/playbill/HEAD" not in remaining
     assert "refs/remotes/playbill/main" not in remaining
     assert "refs/remotes/playbill/proposals/owner/example" not in remaining
