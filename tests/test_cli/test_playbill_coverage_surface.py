@@ -29,6 +29,7 @@ served called them.
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -88,6 +89,7 @@ COPY_SOURCE = f"external:{COPY_IDENTITY}"
 def _bootstrap(cruxible: _Cli, tmp_path: Path) -> None:
     cruxible.json("--server-url", "http://cruxible", "playbill", "host", "create")
     cruxible.bootstrap(tmp_path)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
 
 
 def _govern_the_bytes(cruxible: _Cli, tmp_path: Path) -> str:
