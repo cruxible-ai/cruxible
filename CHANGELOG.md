@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Provider local-runtime fences are bounded and observable (P2-B2).** Provider
+  child groups are killed and reaped on every completion path, with deterministic
+  same-session and best-effort cross-session descendant sweeps, typed process-lease
+  failures, manager-folded crash recovery, bounded lazy re-arm, and a non-blocking
+  Provider-lane status. Local operators can tune the documented
+  `daemon/provider-runtime.json`; non-Provider daemon surfaces remain available
+  while that lane is degraded.
+
 - **Human-readable governed state and a single state root (PC-HR).** Current
   compiler artifacts use pretty canonical JSON at `.json` paths while frozen
   historical compilers retain their compact `.yaml` verifier. The daemon state

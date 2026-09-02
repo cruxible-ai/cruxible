@@ -56,6 +56,35 @@ existing server. State defaults to `~/.cruxible`; `--state-root` overrides
 refused. See [Canonical repository and daemon layout](canonical-repository-layout.md)
 for the exact directory contract.
 
+`server status` and `server info` render `Provider lane:` and, when degraded,
+`Provider lane reason:`. Provider-lane degradation never prevents the daemon's
+non-Provider surfaces from starting, so these lines are the operator's recovery
+signal rather than a daemon-startup failure.
+
+### Provider runtime operational configuration
+
+The local operator may write `<state-root>/daemon/provider-runtime.json` while
+the daemon is stopped. This file is daemon-local operational configuration, not
+governed state; agents and Provider children never write it. Its closed v1 shape
+has tag `cruxible-provider-runtime-operational-config-v1` and these entries:
+
+| Entry | Default | Purpose |
+|---|---:|---|
+| `lease_acquisition_timeout_seconds` | `5.0` | Child lease/echo acquisition deadline. |
+| `lease_recovery_timeout_seconds` | `5.0` | Per-record process-fence recovery deadline. |
+| `recovery_aggregate_timeout_seconds` | `30.0` | Aggregate deadline for one recovery scan; later records remain for the next scan. |
+| `secret_writer_join_timeout_seconds` | `5.0` | Secret-pipe writer join deadline. |
+| `stdin_writer_join_timeout_seconds` | `5.0` | Provider-input writer join deadline. |
+| `descendant_tracker_join_timeout_seconds` | `5.0` | Descendant-observer join deadline. |
+| `descendant_tracker_poll_interval_seconds` | `0.1` | Cross-session descendant observation interval while a child is alive. |
+| `process_group_termination_timeout_seconds` | `5.0` | Child group termination and verification deadline. |
+| `deployments` | `[]` | Digest-keyed local Provider deployment records. |
+
+Unknown entries, non-positive timing values, malformed JSON, unsafe deployment
+paths, and an unreadable file degrade only the Provider lane with a typed cause.
+An exhausted aggregate recovery scan reports untouched records as
+`not_attempted`; a later lazy re-arm resumes from the retained records.
+
 ## playbill host
 
 ~~~text
