@@ -39,6 +39,7 @@ from cruxible_client.contracts.captures import (
     CaptureEnvelopeAny,
     CaptureObjectStoreProtocol,
     LedgerMaterialResolverProtocol,
+    ProducerReceiptResolverProtocol,
     capture_contract_is_self_asserted,
     capture_is_coordinator_self_source,
     capture_is_direct_selection_bound,
@@ -1333,6 +1334,8 @@ def evaluate_claim_law(
     accepted_coordinate: AcceptedCoordinate | None = None,
     accepted_referent_coordinates: frozenset[AcceptedCoordinate] | None = None,
     providers: Mapping[str, ProviderV1] | None = None,
+    producer_artifact_digests: Mapping[str, str] | None = None,
+    producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
     ledger_resolver: LedgerMaterialResolverProtocol | None = None,
     evaluation_time: datetime | None = None,
     allow_claim_type_retirement_shape_exemption: bool = False,
@@ -1731,7 +1734,9 @@ def evaluate_claim_law(
                     producer_artifact_digests={
                         identity: provider_digest(provider).tagged
                         for identity, provider in resolved_providers.items()
-                    },
+                    }
+                    | dict(producer_artifact_digests or {}),
+                    producer_receipt_resolver=producer_receipt_resolver,
                 )
             except (PlaybillFormatError, ValueError):
                 continue
@@ -1783,6 +1788,23 @@ def evaluate_claim_law(
                 return _diagnostic(
                     "playbill.claim.provider_pin_missing",
                     "A Provider-produced Capture requires every exact accepted Provider pin.",
+                    path=path,
+                )
+        for procedure_identity in {
+            identity
+            for identity in (envelope.producer, envelope.run_coordinate.executable_identity)
+            if identity.kind == "Procedure"
+        }:
+            procedure_digest = (producer_artifact_digests or {}).get(procedure_identity.qualified)
+            if procedure_digest is None or not _required_pin(
+                claim,
+                role="procedure",
+                identity=procedure_identity,
+                digest=procedure_digest,
+            ):
+                return _diagnostic(
+                    "playbill.claim.procedure_pin_missing",
+                    "A Procedure-produced Capture requires its exact accepted Procedure pin.",
                     path=path,
                 )
         if not _capture_is_explicitly_eligible(

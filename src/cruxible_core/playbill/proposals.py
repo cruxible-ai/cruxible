@@ -74,6 +74,7 @@ from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
     CaptureFormatError,
     CaptureObjectStoreProtocol,
+    ProducerReceiptResolverProtocol,
     capture_contract_digest,
     evaluate_capture_contract_law,
     parse_capture_contract,
@@ -1423,6 +1424,7 @@ class _MemberContext:
     principals: PrincipalRegistrySnapshot
     bodies: BodyVerifierProtocol
     promotion_verifier: ExhaustPromotionVerifierProtocol | None
+    producer_receipt_resolver: ProducerReceiptResolverProtocol | None
     accepted_referent_coordinates: frozenset[AcceptedCoordinate]
     candidate_tree: Mapping[str, bytes]
     candidate_states: Mapping[str, ArtifactDependencyStateV1]
@@ -2003,6 +2005,11 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         providers={
             identity: accepted.provider for identity, accepted in context.resolved.providers.items()
         },
+        producer_artifact_digests={
+            identity: accepted.artifact_digest
+            for identity, accepted in context.resolved.procedures.items()
+        },
+        producer_receipt_resolver=context.producer_receipt_resolver,
         law_digest=installed.coordinate.digest,
         instance_id=context.current.instance_id,
         accepted_coordinate=context.accepted_coordinate(),
@@ -2773,6 +2780,7 @@ def _evaluate_scoped_members(
     wire_version: CandidateWireVersion,
     claim_type_expansions: tuple[ClaimTypeExpansionEvidenceV1, ...],
     promotion_verifier: ExhaustPromotionVerifierProtocol | None,
+    producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
     query_facts_provider: ClaimQueryFactsProvider | None,
     replay_claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] | None,
     acceptance_laws: AcceptanceLawRegistry,
@@ -3001,6 +3009,7 @@ def _evaluate_scoped_members(
                 principals=principals,
                 bodies=bodies,
                 promotion_verifier=promotion_verifier,
+                producer_receipt_resolver=producer_receipt_resolver,
                 accepted_referent_coordinates=accepted_referent_coordinates_from_tree(
                     current_tree,
                     current=AcceptedCoordinate.from_internal(current),
@@ -3346,6 +3355,7 @@ def evaluate_proposal_tree(
     actor_id: str | None = None,
     claim_type_expansions: tuple[ClaimTypeExpansionEvidenceV1, ...] = (),
     promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
+    producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
     parent_state: EvaluatedTreeState | None = None,
     wire_version: CandidateWireVersion = PRODUCED_CANDIDATE_VERSION,
     query_facts_provider: ClaimQueryFactsProvider | None = None,
@@ -3445,6 +3455,7 @@ def evaluate_proposal_tree(
         wire_version=wire_version,
         claim_type_expansions=claim_type_expansions,
         promotion_verifier=promotion_verifier,
+        producer_receipt_resolver=producer_receipt_resolver,
         query_facts_provider=query_facts_provider,
         replay_claim_admission_accounts=replay_claim_admission_accounts,
         acceptance_laws=acceptance_laws,
@@ -3494,6 +3505,7 @@ class ProposalService:
         receive_limits: ProposalReceiveLimits = ProposalReceiveLimits(),
         current_coordinate: Callable[[], AcceptedProjectionCoordinate] | None = None,
         promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
+        producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
         query_facts_provider: ClaimQueryFactsProvider | None = None,
         workspace_advertiser: Callable[[], PlaybillWorkspaceAdvertisement] | None = None,
     ) -> None:
@@ -3504,6 +3516,7 @@ class ProposalService:
         self.receive_limits = receive_limits
         self._current_coordinate = current_coordinate or (lambda: accepted)
         self.promotion_verifier = promotion_verifier
+        self.producer_receipt_resolver = producer_receipt_resolver
         self.query_facts_provider = query_facts_provider
         self.workspace_advertiser = workspace_advertiser
 
@@ -3600,6 +3613,7 @@ class ProposalService:
             actor_id=actor.actor_id,
             claim_type_expansions=request.claim_type_expansions,
             promotion_verifier=self.promotion_verifier,
+            producer_receipt_resolver=self.producer_receipt_resolver,
             query_facts_provider=self.query_facts_provider,
         )
 

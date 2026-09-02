@@ -504,6 +504,28 @@ def provider_invocation_receipt_digest(receipt: ProviderInvocationReceiptV1) -> 
     return typed_digest(Sha256Value, PROVIDER_INVOCATION_RECEIPT_DOMAIN, payload).tagged
 
 
+class ProviderInvocationOutputDigestV1(_StrictProviderExecutionModel):
+    """Erasure-safe commitment replacing Source output bytes in exhaust."""
+
+    tag: Literal["playbill-provider-invocation-output-digest-v1"] = (
+        "playbill-provider-invocation-output-digest-v1"
+    )
+    output_digest: str
+
+    _output_digest = field_validator("output_digest")(_digest)
+
+
+PROVIDER_INVOCATION_OUTPUT_DOMAIN = "playbill-provider-invocation-output-v1"
+
+
+def provider_invocation_output_digest(output: object) -> str:
+    return typed_digest(
+        Sha256Value,
+        PROVIDER_INVOCATION_OUTPUT_DOMAIN,
+        {"output": normalize_canonical(output)},
+    ).tagged
+
+
 class ProcedureDerivedSourceRequestV1(_StrictProviderExecutionModel):
     """Post-admission Source request result committed before Provider spawn."""
 
@@ -623,6 +645,7 @@ __all__ = [
     "PROVIDER_EGRESS_OBSERVATION_DOMAIN",
     "PROVIDER_EXTERNAL_OCCURRENCE_PLAN_DOMAIN",
     "PROVIDER_INVOCATION_OUTCOME_DOMAIN",
+    "PROVIDER_INVOCATION_OUTPUT_DOMAIN",
     "PROVIDER_INVOCATION_RECEIPT_DOMAIN",
     "PROVIDER_SECRET_BINDING_IDENTITY_DOMAIN",
     "ProviderBudgetTranslationV1",
@@ -632,6 +655,7 @@ __all__ = [
     "ProviderInvocationCompletedV1",
     "ProviderInvocationOutcomeClassV1",
     "ProviderInvocationOutcomeV1",
+    "ProviderInvocationOutputDigestV1",
     "ProviderInvocationReceiptV1",
     "ProviderInvocationStartedV1",
     "ProviderSecretBindingIdentityV1",
@@ -646,6 +670,7 @@ __all__ = [
     "provider_external_occurrence_plan_digest",
     "provider_invocation_outcome_digest",
     "provider_invocation_receipt_digest",
+    "provider_invocation_output_digest",
     "procedure_derived_source_request_digest",
     "provider_secret_binding_identity_digest",
 ]

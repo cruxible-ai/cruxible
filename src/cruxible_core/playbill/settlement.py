@@ -46,6 +46,7 @@ from cruxible_client.contracts.canonical import (
     canonical_bytes,
     typed_digest,
 )
+from cruxible_client.contracts.captures import ProducerReceiptResolverProtocol
 from cruxible_client.contracts.documents import BodyVerifierProtocol
 from cruxible_client.contracts.errors import SettlementIntegrityError
 from cruxible_client.contracts.governance import (
@@ -701,6 +702,7 @@ def prepare_generation(
     crash_hook: SettlementCrashHook | None = None,
     promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
     query_facts_provider: ClaimQueryFactsProvider | None = None,
+    producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
 ) -> VerifiedGenerationBundle:
     """Build and verify a generation bundle without mutating main or serving state."""
 
@@ -725,6 +727,7 @@ def prepare_generation(
         claim_type_expansions=claim_type_expansions_from_candidate(candidate),
         promotion_verifier=promotion_verifier,
         query_facts_provider=query_facts_provider,
+        producer_receipt_resolver=producer_receipt_resolver,
         replay_claim_admission_accounts=claim_admission_accounts_from_candidate(candidate),
         wire_version=candidate.tag,
         acceptance_laws=laws,

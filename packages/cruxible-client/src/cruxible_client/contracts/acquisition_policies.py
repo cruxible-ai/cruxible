@@ -26,11 +26,16 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
-from cruxible_client.contracts.capture_journal import CaptureLandingEventAny
+from cruxible_client.contracts.capture_journal import (
+    CaptureLandingEventAny,
+    CaptureLandingEventV1,
+    CaptureLandingEventV2,
+)
 from cruxible_client.contracts.captures import (
     PLAYBILL_CAPTURE_COMPONENTS,
     CanonicalDurationV1,
     CaptureEnvelopeAny,
+    CaptureEnvelopeV1,
     CaptureSelectionBudgetV1,
     capture_digest,
 )
@@ -356,6 +361,15 @@ class AcquisitionCandidateV1(_StrictAcquisitionModel):
             raise ValueError("acquisition candidate Capture digest does not reproduce")
         if self.landing_event.capture_digest != self.capture_digest:
             raise ValueError("acquisition candidate differs from its landing event")
+        if isinstance(self.envelope, CaptureEnvelopeV1):
+            if not isinstance(self.landing_event, CaptureLandingEventV1):
+                raise ValueError("acquisition candidate crosses Capture landing versions")
+            if self.landing_event.run_receipt_digest != self.envelope.run_receipt_digest:
+                raise ValueError("acquisition landing receipt differs from its Capture")
+        elif not isinstance(self.landing_event, CaptureLandingEventV2):
+            raise ValueError("acquisition candidate crosses Capture landing versions")
+        elif self.landing_event.producer_receipt_digest != self.envelope.producer_receipt_digest:
+            raise ValueError("acquisition landing receipt differs from its Capture")
         return self
 
 

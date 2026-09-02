@@ -50,11 +50,13 @@ from cruxible_client.contracts.governance import PermissionTier, governance_iden
 from cruxible_client.contracts.provider_execution import (
     ProviderEgressObservationV1,
     ProviderExternalOccurrencePlanV1,
+    ProviderInvocationOutputDigestV1,
     ProviderInvocationReceiptV1,
     ProviderSecretBindingIdentityV1,
     ProviderSecretReceiptReferenceV1,
     ProviderSecretReferenceV1,
     provider_external_occurrence_plan_digest,
+    provider_invocation_output_digest,
     provider_invocation_receipt_digest,
     provider_secret_binding_identity_digest,
 )
@@ -72,7 +74,8 @@ if TYPE_CHECKING:
     from cruxible_client.contracts.projection import AcceptedCoordinate
 
 _CONTRACT_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
-_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")
+_RUN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,255}$")
+_RUN_ID_V2_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")
 
 DIRECT_SELF_ASSERTED_CONTRACT_ID = "playbill.direct-self-asserted-v1"
 DIRECT_SOURCE_IDENTITY = "playbill.direct-authoring"
@@ -794,6 +797,30 @@ class CaptureRunCoordinateV1(_StrictCaptureModel):
         return value
 
 
+class CaptureRunCoordinateV2(_StrictCaptureModel):
+    """Capture-v2 run coordinate with the Provider lane's widened run-id grammar."""
+
+    tag: Literal["playbill-capture-run-coordinate-v2"] = "playbill-capture-run-coordinate-v2"
+    run_kind: Literal["procedure", "watcher", "provider"]
+    run_id: str
+    bound_generation: str
+    executable_identity: ArtifactIdentity
+    executable_digest: str
+
+    @field_validator("run_id")
+    @classmethod
+    def _run_id(cls, value: str) -> str:
+        if not _RUN_ID_V2_RE.fullmatch(value):
+            raise ValueError("Capture v2 run_id is not canonical")
+        return value
+
+    @field_validator("bound_generation", "executable_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+
 class SourceEffectiveTimeV1(_StrictCaptureModel):
     tag: Literal["playbill-source-effective-time-v1"] = "playbill-source-effective-time-v1"
     effective_from: datetime
@@ -878,7 +905,6 @@ class ProviderInvocationCaptureEvidenceV1(_StrictCaptureModel):
     invocation_receipt_digest: str
     secret_references: tuple[ProviderSecretReferenceV1, ...] = ()
     egress: ProviderEgressObservationV1
-    source_read_receipt_digest: str | None = None
 
     @field_validator(
         "provider_artifact_digest",
@@ -888,12 +914,10 @@ class ProviderInvocationCaptureEvidenceV1(_StrictCaptureModel):
         "implementation_digest",
         "materialization_digest",
         "invocation_receipt_digest",
-        "source_read_receipt_digest",
     )
     @classmethod
-    def _digests(cls, value: str | None) -> str | None:
-        if value is not None:
-            Sha256Value.from_tagged(value)
+    def _digests(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
         return value
 
     @field_validator("secret_references")
@@ -932,6 +956,66 @@ class ProcedureEgressCaptureEvidenceV1(_StrictCaptureModel):
         return value
 
 
+@runtime_checkable
+class ProcedureProducerReceiptProtocol(Protocol):
+    """Client-side structural view of one daemon-owned Procedure producer receipt."""
+
+    @property
+    def tag(self) -> str: ...
+
+    @property
+    def admission_binding_digest(self) -> str: ...
+
+    @property
+    def run_id(self) -> str: ...
+
+    @property
+    def accepted_coordinate(self) -> AcceptedCoordinate: ...
+
+    @property
+    def procedure_identity(self) -> ArtifactIdentity: ...
+
+    @property
+    def procedure_artifact_digest(self) -> str: ...
+
+    @property
+    def terminal_node_id(self) -> str: ...
+
+    @property
+    def item_manifest_digests(self) -> tuple[str, ...]: ...
+
+    @property
+    def capture_contract_digest(self) -> str: ...
+
+
+class ProducerReceiptResolverProtocol(Protocol):
+    """Resolve only receipts validated against daemon journal authority."""
+
+    def __call__(
+        self,
+        digest: str,
+    ) -> ProviderInvocationReceiptV1 | ProcedureProducerReceiptProtocol | None: ...
+
+
+def _procedure_producer_receipt_digest(
+    receipt: ProcedureProducerReceiptProtocol,
+) -> str:
+    return typed_digest(
+        Sha256Value,
+        "playbill-procedure-producer-receipt-v1",
+        {
+            "admission_binding_digest": receipt.admission_binding_digest,
+            "run_id": receipt.run_id,
+            "accepted_coordinate": receipt.accepted_coordinate.model_dump(mode="json"),
+            "procedure_identity": receipt.procedure_identity.model_dump(mode="json"),
+            "procedure_artifact_digest": receipt.procedure_artifact_digest,
+            "terminal_node_id": receipt.terminal_node_id,
+            "item_manifest_digests": list(receipt.item_manifest_digests),
+            "capture_contract_digest": receipt.capture_contract_digest,
+        },
+    ).tagged
+
+
 class ProviderResultToExternalCaptureV1(_StrictCaptureModel):
     """Canonical Source Provider output from which core reconstructs a Capture."""
 
@@ -951,7 +1035,7 @@ class ProviderResultToExternalCaptureV1(_StrictCaptureModel):
     observed_at: datetime = Field(description="Reads EVALUATION INSTANT.")
     source_effective_time: SourceEffectiveTimeV1 | None = Field(
         default=None,
-        description="Nested effective interval reads ASSERTION TIME.",
+        description="Nested half-open interval reads VALIDITY WINDOW.",
     )
 
     _canonical_values = field_validator("coordinate", "selector", mode="before")(
@@ -1008,14 +1092,14 @@ class CaptureEnvelopeV2(_StrictCaptureModel):
     capture_contract_digest: str
     source: SourceReferenceV1
     commitment: EvidenceCommitmentV1
-    run_coordinate: CaptureRunCoordinateV1
+    run_coordinate: CaptureRunCoordinateV2
     producer_receipt_digest: str
     producer: ArtifactIdentity
     producer_binding_digest: str
     observed_at: datetime = Field(description="Reads EVALUATION INSTANT.")
     source_effective_time: SourceEffectiveTimeV1 | None = Field(
         default=None,
-        description="Nested effective interval reads ASSERTION TIME.",
+        description="Nested half-open interval reads VALIDITY WINDOW.",
     )
     reducer_digest: str | None = None
     input_receipt_set_manifest_digest: str | None = None
@@ -1904,7 +1988,7 @@ def _store_general_capture(
     )
 
 
-def _provider_capture_receipt_matches_occurrence(
+def provider_capture_receipt_matches_occurrence(
     receipt: ProviderInvocationReceiptV1,
     occurrence: ProviderExternalOccurrencePlanV1,
 ) -> bool:
@@ -1949,12 +2033,15 @@ def build_provider_external_capture_v2(
     occurrence: ProviderExternalOccurrencePlanV1,
     producer: ArtifactIdentity,
     bound_generation: str,
-    source_read_receipt_digest: str | None = None,
 ) -> CaptureBuildResult:
     """Validate one common-driver Source result and commit its v2 Capture."""
 
     if occurrence.occurrence_kind != "source":
         raise CaptureFormatError("Provider Capture conversion requires a Source occurrence")
+    if "external" not in contract.allowed_source_kinds:
+        raise CaptureFormatError("CaptureContract does not permit external observations")
+    if "cas" not in contract.allowed_materialization_modes:
+        raise CaptureFormatError("CaptureContract does not permit CAS materialization")
     contract_digest_value = capture_contract_digest(contract).tagged
     if (
         occurrence.capture_contract_digest != contract_digest_value
@@ -1962,14 +2049,16 @@ def build_provider_external_capture_v2(
         or receipt.outcome.status != "ok"
         or receipt.output is None
         or producer.kind != "Provider"
-        or not _provider_capture_receipt_matches_occurrence(receipt, occurrence)
+        or not provider_capture_receipt_matches_occurrence(receipt, occurrence)
     ):
         raise CaptureFormatError("Provider Capture conversion differs from its admitted contract")
     try:
-        receipt_result = ProviderResultToExternalCaptureV1.model_validate(receipt.output)
+        output_commitment = ProviderInvocationOutputDigestV1.model_validate(receipt.output)
     except ValidationError as exc:
-        raise CaptureFormatError("Provider Source output is not a Capture result") from exc
-    if receipt_result != result:
+        raise CaptureFormatError("Provider Source receipt lacks its output digest") from exc
+    if output_commitment.output_digest != provider_invocation_output_digest(
+        result.model_dump(mode="json")
+    ):
         raise CaptureFormatError("Provider Capture result differs from its invocation receipt")
     if result.source_identity not in contract.logical_source_identities:
         raise CaptureFormatError("Provider Capture logical source is not admitted by its contract")
@@ -1997,7 +2086,6 @@ def build_provider_external_capture_v2(
         invocation_receipt_digest=receipt_digest,
         secret_references=occurrence.secret_plan.references,
         egress=receipt.egress,
-        source_read_receipt_digest=source_read_receipt_digest,
     )
     envelope = CaptureEnvelopeV2(
         capture_contract_digest=contract_digest_value,
@@ -2016,7 +2104,7 @@ def build_provider_external_capture_v2(
             byte_length=result.byte_length,
             materialization="cas",
         ),
-        run_coordinate=CaptureRunCoordinateV1(
+        run_coordinate=CaptureRunCoordinateV2(
             run_kind="provider",
             run_id=receipt.run_id,
             bound_generation=bound_generation,
@@ -2043,7 +2131,7 @@ def build_procedure_capture_v2(
     store: CaptureObjectStoreProtocol,
     contract: CaptureContractV1,
     source_body: bytes,
-    run_coordinate: CaptureRunCoordinateV1,
+    run_coordinate: CaptureRunCoordinateV2,
     producer_receipt_digest: str,
     producer: ArtifactIdentity,
     producer_binding_digest: str,
@@ -2293,9 +2381,7 @@ def verify_capture(
     contract: CaptureContractV1,
     ledger_resolver: LedgerMaterialResolverProtocol | None = None,
     producer_artifact_digests: Mapping[str, str] | None = None,
-    provider_invocation_receipt: ProviderInvocationReceiptV1 | None = None,
-    provider_occurrence: ProviderExternalOccurrencePlanV1 | None = None,
-    procedure_producer_receipt_digest: str | None = None,
+    producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
 ) -> CaptureEnvelopeV1 | CaptureEnvelopeV2:
     """Replay one envelope and every proof available for its source kind."""
 
@@ -2335,15 +2421,40 @@ def verify_capture(
     ):
         raise CaptureFormatError("Capture v2 producer does not resolve at its exact digest")
     if isinstance(envelope, CaptureEnvelopeV2):
+        if producer_receipt_resolver is None:
+            raise CaptureFormatError(
+                "Capture producer receipt resolver is unavailable for "
+                f"{envelope.producer_receipt_digest}"
+            )
+        resolved_receipt = producer_receipt_resolver(envelope.producer_receipt_digest)
+        if resolved_receipt is None:
+            raise CaptureFormatError(
+                f"Capture producer receipt is unavailable: {envelope.producer_receipt_digest}"
+            )
         evidence = envelope.production_evidence
         if isinstance(evidence, ProviderInvocationCaptureEvidenceV1):
-            if provider_invocation_receipt is None or provider_occurrence is None:
-                raise CaptureFormatError("provider Capture verification requires runtime receipts")
-            receipt = provider_invocation_receipt
+            if not isinstance(resolved_receipt, ProviderInvocationReceiptV1):
+                raise CaptureFormatError("provider Capture resolved a non-Provider receipt")
+            receipt = resolved_receipt
+            expected_secret_receipts = tuple(
+                sorted(
+                    (
+                        ProviderSecretReceiptReferenceV1(
+                            binding_identity_digest=provider_secret_binding_identity_digest(
+                                ProviderSecretBindingIdentityV1(
+                                    realm=reference.realm,
+                                    name=reference.name,
+                                )
+                            ),
+                            purpose=reference.purpose,
+                        )
+                        for reference in evidence.secret_references
+                    ),
+                    key=lambda item: item.binding_identity_digest.encode("ascii"),
+                )
+            )
             if (
                 provider_invocation_receipt_digest(receipt) != evidence.invocation_receipt_digest
-                or provider_external_occurrence_plan_digest(provider_occurrence)
-                != evidence.external_occurrence_plan_digest
                 or receipt.outcome.status != "ok"
                 or receipt.provider_artifact_digest != evidence.provider_artifact_digest
                 or receipt.interface_id != evidence.interface_id
@@ -2352,13 +2463,21 @@ def verify_capture(
                 or receipt.materialization_digest != evidence.materialization_digest
                 or receipt.input_bucket != evidence.input_bucket
                 or receipt.egress != evidence.egress
-                or not _provider_capture_receipt_matches_occurrence(receipt, provider_occurrence)
-                or provider_occurrence.secret_plan.references != evidence.secret_references
-                or provider_occurrence.interface_artifact_digest
-                != evidence.interface_artifact_digest
+                or receipt.secret_references != expected_secret_receipts
             ):
                 raise CaptureFormatError("provider Capture runtime evidence does not correspond")
-        elif procedure_producer_receipt_digest != evidence.procedure_producer_receipt_digest:
+        elif (
+            not isinstance(resolved_receipt, ProcedureProducerReceiptProtocol)
+            or resolved_receipt.tag != "playbill-procedure-producer-receipt-v1"
+            or _procedure_producer_receipt_digest(resolved_receipt)
+            != evidence.procedure_producer_receipt_digest
+            or resolved_receipt.procedure_identity != envelope.producer
+            or resolved_receipt.procedure_artifact_digest != envelope.producer_binding_digest
+            or resolved_receipt.run_id != envelope.run_coordinate.run_id
+            or resolved_receipt.accepted_coordinate.generation_root
+            != envelope.run_coordinate.bound_generation
+            or resolved_receipt.capture_contract_digest != envelope.capture_contract_digest
+        ):
             raise CaptureFormatError("procedure Capture producer receipt does not correspond")
     if envelope.source.kind not in contract.allowed_source_kinds:
         raise CaptureFormatError("Capture source kind is not permitted by its contract")
@@ -2472,6 +2591,7 @@ __all__ = [
     "CaptureObjectStoreProtocol",
     "CaptureRetentionErasurePolicyV1",
     "CaptureRunCoordinateV1",
+    "CaptureRunCoordinateV2",
     "CaptureSelectionBudgetV1",
     "COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT",
     "COORDINATOR_SELF_SOURCE_CONTRACT_ID",
@@ -2497,6 +2617,9 @@ __all__ = [
     "DirectForeignSourceSelectionV1",
     "InputReceiptSetManifestV1",
     "ProcedureEgressCaptureEvidenceV1",
+    "ProcedureProducerReceiptProtocol",
+    "ProducerReceiptResolverProtocol",
+    "provider_capture_receipt_matches_occurrence",
     "ProviderResultToExternalCaptureV1",
     "ProviderInvocationCaptureEvidenceV1",
     "LedgerMaterialResolverProtocol",

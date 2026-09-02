@@ -6,7 +6,7 @@ import hashlib
 from datetime import datetime
 from typing import Literal, Protocol, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import (
@@ -178,7 +178,7 @@ class CaptureAcquisitionReceiptV1(_StrictSourceReaderModel):
     selector_type: str
     selector: object
     commitment: EvidenceCommitmentV1
-    observed_at: datetime
+    observed_at: datetime = Field(description="Reads EVALUATION INSTANT.")
     replayability: Literal["exact", "attested_only"]
     source_effective_time: SourceEffectiveTimeV1 | None = None
 

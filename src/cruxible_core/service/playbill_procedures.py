@@ -6,10 +6,8 @@ from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
 
-from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicyV1
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import CanonicalValue
-from cruxible_client.contracts.captures import CaptureContractV1
 from cruxible_client.contracts.errors import PlaybillExecutionError, PlaybillJournalError
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
 from cruxible_client.contracts.procedures.contracts import OwnedProcedureContractValidator
@@ -194,9 +192,6 @@ def service_execute_direct_procedure(
     provider_executor: ProviderExecutorProtocol | None = None,
     provider_runtime_invoker: ProviderRuntimeInvokerProtocol | None = None,
     provider_runtime_invoker_factory: Callable[[], ProviderRuntimeInvokerProtocol] | None = None,
-    capture_contracts: Mapping[str, CaptureContractV1] | None = None,
-    acquisition_policy: SourceAcquisitionPolicyV1 | None = None,
-    default_authorizations: tuple[str, ...] = (),
     clock: ProcedureClockProtocol | None = None,
 ) -> ProcedureRunResultV1:
     """Execute through the shared runtime; no transport duplicates orchestration."""
@@ -214,9 +209,6 @@ def service_execute_direct_procedure(
             provider_executor=provider_executor,
             provider_runtime_invoker=provider_runtime_invoker,
             provider_runtime_invoker_factory=provider_runtime_invoker_factory,
-            capture_contracts=capture_contracts,
-            acquisition_policy=acquisition_policy,
-            default_authorizations=default_authorizations,
             clock=clock,
         ).execute(prepared, accepted)
     finally:

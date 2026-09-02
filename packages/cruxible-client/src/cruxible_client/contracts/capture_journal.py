@@ -15,6 +15,7 @@ from cruxible_client.contracts.captures import (
     CaptureEnvelopeV1,
     CaptureEnvelopeV2,
     CaptureRunCoordinateV1,
+    CaptureRunCoordinateV2,
     capture_digest,
 )
 from cruxible_client.contracts.errors import PlaybillFormatError
@@ -95,7 +96,7 @@ class CaptureLandingEventV2(_StrictJournalModel):
     idempotency_key: str
     capture_digest: str
     capture_contract_digest: str
-    run_coordinate: CaptureRunCoordinateV1
+    run_coordinate: CaptureRunCoordinateV2
     producer_receipt_digest: str
     producer_binding_digest: str
     previous_event_digest: str | None
@@ -280,8 +281,6 @@ class InMemoryCaptureLandingJournal:
                 or existing.run_coordinate != envelope.run_coordinate
                 or _event_receipt_digest(existing) != _envelope_receipt_digest(envelope)
                 or existing.producer_binding_digest != envelope.producer_binding_digest
-                or isinstance(existing, CaptureLandingEventV1)
-                != isinstance(envelope, CaptureEnvelopeV1)
             ):
                 raise CaptureJournalError("landing retry reuses a key with a different payload")
             return existing

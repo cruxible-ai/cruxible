@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import timedelta
 from pathlib import Path
 
+import pytest
+
 from cruxible_client.contracts.acquisition_policies import AcquisitionCandidateV1, select_sources
 from cruxible_client.contracts.capture_journal import (
     CaptureLandingEventV1,
@@ -15,7 +17,9 @@ from cruxible_client.contracts.capture_journal import (
 from cruxible_client.contracts.captures import (
     CaptureEnvelopeV1,
     CaptureEnvelopeV2,
+    CaptureRunCoordinateV1,
     build_provider_external_capture_v2,
+    capture_digest,
 )
 from tests.test_playbill._pc_c_support import NOW
 from tests.test_playbill.p2b4_unit1._support import provider_capture_fixture
@@ -41,7 +45,13 @@ def test_mixed_v1_v2_replay_from_genesis_preserves_every_event_object(
         capture_contract_digest=envelope_v2.capture_contract_digest,
         source=envelope_v2.source,
         commitment=envelope_v2.commitment,
-        run_coordinate=envelope_v2.run_coordinate,
+        run_coordinate=CaptureRunCoordinateV1(
+            run_kind=envelope_v2.run_coordinate.run_kind,
+            run_id="run-b4-source",
+            bound_generation=envelope_v2.run_coordinate.bound_generation,
+            executable_identity=envelope_v2.run_coordinate.executable_identity,
+            executable_digest=envelope_v2.run_coordinate.executable_digest,
+        ),
         run_receipt_digest=envelope_v2.producer_receipt_digest,
         producer=envelope_v2.producer,
         producer_binding_digest=envelope_v2.producer_binding_digest,
@@ -71,9 +81,9 @@ def test_mixed_v1_v2_replay_from_genesis_preserves_every_event_object(
     assert isinstance(first, CaptureLandingEventV1)
     assert isinstance(second, CaptureLandingEventV2)
     assert first.idempotency_key == (
-        "80b88d651981f494f86b4822579f06bcf3d3057db6877d6f7636d401e6ce7705"
+        "e44868c72ea643c28b86ac66246be064baac3bf7c9d7be22c0525dd96a4ec9d7"
     )
-    assert first.event_id == "65f5f866cd86156e44c53ef79bf39384e139fd5091d765559e8608acf5926d08"
+    assert first.event_id == "eef54c8b396814fdb8125b31885e4e9ef54068e5ed02f0542cb2ac693b6f1252"
     assert first.partition_id == second.partition_id
     assert second.sequence == 1
     assert second.previous_event_digest == first.event_id
@@ -123,3 +133,22 @@ def test_mixed_v1_v2_replay_from_genesis_preserves_every_event_object(
         first.capture_digest,
         second.capture_digest,
     )
+
+    crossed = second.model_copy(
+        update={
+            "capture_digest": capture_digest(envelope_v1).tagged,
+            "run_coordinate": envelope_v1.run_coordinate,
+        }
+    )
+    with pytest.raises(ValueError, match="crosses Capture landing versions"):
+        AcquisitionCandidateV1(
+            input_name="orders",
+            envelope=envelope_v1,
+            capture_digest=capture_digest(envelope_v1).tagged,
+            landing_event=crossed,
+            current_replay_available=True,
+            selection_budget=fixture.contract.selection_budget,
+            selected_bytes=envelope_v1.commitment.byte_length or 0,
+            selected_rows=1,
+            selected_items=1,
+        )

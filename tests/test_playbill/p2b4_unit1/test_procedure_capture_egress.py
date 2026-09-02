@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cruxible_client.contracts.artifacts import ArtifactPin
+import pytest
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.captures import (
     CaptureEnvelopeV2,
     ProcedureEgressCaptureEvidenceV1,
@@ -16,6 +18,7 @@ from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodySt
 from cruxible_core.playbill.procedures.egress import (
     CaptureTerminalEgressSink,
     ProcedureProducerReceiptV1,
+    TerminalEgressError,
     TerminalEgressReceiptV2,
     build_terminal_egress_request_v2,
     procedure_producer_receipt_digest,
@@ -93,7 +96,42 @@ def test_procedure_capture_is_below_the_exact_pre_egress_producer_receipt(
             producer_artifact_digests={
                 admission.procedure_identity.qualified: admission.procedure_artifact_digest
             },
-            procedure_producer_receipt_digest=expected_producer_digest,
+            producer_receipt_resolver=lambda value: (
+                request.producer_receipt if value == expected_producer_digest else None
+            ),
         )
         == capture
     )
+
+
+def test_v2_capture_sink_refuses_a_configured_producer_mismatch(tmp_path: Path) -> None:
+    admission = _admission(tmp_path)
+    contract = capture_contract()
+    contract_digest = capture_contract_digest(contract).tagged
+    request = build_terminal_egress_request_v2(
+        _base_request(
+            "emit_capture",
+            admission=admission,
+            item=_item("result", value={"answer": 42}),
+            bound=ArtifactPin(
+                role="capture-contract",
+                target=contract.identity,
+                artifact_digest=contract_digest,
+            ),
+        ),
+        admission=admission,
+        procedure_mandate_digest=None,
+        calibration_reading_digests=(),
+        target_paths=(),
+    )
+    cas_root = tmp_path / "mismatched-egress-cas"
+    cas_root.mkdir()
+    sink = CaptureTerminalEgressSink(
+        store=ContentAddressedBodyStore(cas_root),
+        contracts={contract_digest: contract},
+        producer=ArtifactIdentity(kind="Procedure", name="substituted"),
+        producer_binding_digest=admission.procedure_artifact_digest,
+    )
+
+    with pytest.raises(TerminalEgressError, match="producer differs"):
+        sink.deliver_terminal_egress(request=request)

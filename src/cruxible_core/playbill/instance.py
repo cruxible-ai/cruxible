@@ -71,6 +71,7 @@ from cruxible_core.playbill.keys import (
     public_key_hex_from_private_file,
     raw_public_key_hex_from_openssh,
 )
+from cruxible_core.playbill.producer_receipts import local_producer_receipt_resolver
 from cruxible_core.playbill.projection import (
     AcceptedCoordinate,
     AcceptedProjectionCoordinate,
@@ -417,6 +418,7 @@ class PlaybillInstance:
         )
         if expected != descriptor.genesis:
             raise PlaybillBootstrapError("recorded genesis coordinates do not reproduce")
+        bodies = ContentAddressedBodyStore(paths["cas"])
         recovered = recover_instance(
             ledger,
             genesis=verified,
@@ -424,9 +426,14 @@ class PlaybillInstance:
             object_format=descriptor.git_object_format,
             compiler=descriptor.compiler,
             publication_directory=paths["projections"],
-            bodies=ContentAddressedBodyStore(paths["cas"]),
+            bodies=bodies,
             witness=witness,
             promotion_verifier=promotion_verifier,
+            producer_receipt_resolver=local_producer_receipt_resolver(
+                exhaust_root=paths["exhaust"],
+                instance_id=descriptor.instance_id,
+                bodies=bodies,
+            ),
             query_facts_builder=cls._accepted_query_facts,
             checkpoint_directory=cls._checkpoint_directory(managed_root),
         )
@@ -560,13 +567,19 @@ class PlaybillInstance:
         """Bind PB-C proposal evaluation to authenticated main and inert storage."""
 
         paths = self._validated_paths(self.root, self.descriptor.storage)
+        bodies = ContentAddressedBodyStore(paths["cas"])
         return ProposalService(
             self._ledger,
             accepted=self.accepted_coordinate(),
-            bodies=ContentAddressedBodyStore(paths["cas"]),
+            bodies=bodies,
             evidence=ProposalEvidenceStore(paths["exhaust"]),
             current_coordinate=self.accepted_coordinate,
             promotion_verifier=self._promotion_verifier,
+            producer_receipt_resolver=local_producer_receipt_resolver(
+                exhaust_root=paths["exhaust"],
+                instance_id=self.descriptor.instance_id,
+                bodies=bodies,
+            ),
             query_facts_provider=lambda coordinate: self._accepted_query_facts(self, coordinate),
             workspace_advertiser=self.advertise_workspace,
         )
@@ -782,6 +795,7 @@ class PlaybillInstance:
         """Replay accepted state after activation and repair its serving boundary."""
 
         paths = self._validated_paths(self.root, self.descriptor.storage)
+        bodies = ContentAddressedBodyStore(paths["cas"])
         self._recovered = recover_instance(
             self._ledger,
             genesis=self._verified_genesis,
@@ -789,9 +803,14 @@ class PlaybillInstance:
             object_format=self.descriptor.git_object_format,
             compiler=self.descriptor.compiler,
             publication_directory=paths["projections"],
-            bodies=ContentAddressedBodyStore(paths["cas"]),
+            bodies=bodies,
             witness=witness,
             promotion_verifier=self._promotion_verifier,
+            producer_receipt_resolver=local_producer_receipt_resolver(
+                exhaust_root=paths["exhaust"],
+                instance_id=self.descriptor.instance_id,
+                bodies=bodies,
+            ),
             query_facts_builder=self._accepted_query_facts,
             checkpoint_directory=self._checkpoint_directory(self.root),
         )
@@ -840,6 +859,11 @@ class PlaybillInstance:
             proposal_actor_id=proposal_actor_id,
             sequence=sequence,
             promotion_verifier=self._promotion_verifier,
+            producer_receipt_resolver=local_producer_receipt_resolver(
+                exhaust_root=self._validated_paths(self.root, self.descriptor.storage)["exhaust"],
+                instance_id=self.descriptor.instance_id,
+                bodies=self.body_store(),
+            ),
             query_facts_provider=lambda coordinate: self._accepted_query_facts(self, coordinate),
         )
 

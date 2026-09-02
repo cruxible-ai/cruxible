@@ -38,12 +38,18 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
 from cruxible_client.contracts.principals import principal_registry_from_tree
+from cruxible_client.contracts.procedures.artifacts import (
+    parse_procedure,
+    procedure_artifact_digest,
+    procedure_path,
+)
 from cruxible_client.contracts.providers import parse_provider, provider_digest, provider_path
 from cruxible_client.contracts.source_references import LedgerSourceReferenceV1
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.producer_receipts import local_producer_receipt_resolver
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.service.playbill_claims import _claim_law_evidence
 from cruxible_core.service.playbill_evidence import _capture_contracts
@@ -164,6 +170,16 @@ def _provider_digests(tree: dict[str, bytes]) -> dict[str, str]:
     return result
 
 
+def _procedure_digests(tree: dict[str, bytes]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for path, content in tree.items():
+        if not path.startswith("procedures/"):
+            continue
+        procedure = parse_procedure(content, path=path)
+        result[procedure.identity.qualified] = procedure_artifact_digest(procedure).tagged
+    return result
+
+
 def _live_at_append(
     identity: ArtifactIdentity,
     *,
@@ -180,6 +196,12 @@ def _live_at_append(
             accepted.contract.identity == identity and accepted.contract.lifecycle.state == "live"
             for accepted in _capture_contracts(append_tree).values()
         )
+    if identity.kind == "Procedure":
+        content = append_tree.get(procedure_path(identity.name))
+        if content is None:
+            return False
+        procedure = parse_procedure(content, path=procedure_path(identity.name))
+        return procedure.lifecycle.state == "live"
     return False
 
 
@@ -194,6 +216,8 @@ def _new_capture_accounts(
 ) -> tuple[tuple[str, ...], tuple[ClaimAttestationResolvedArtifactV1, ...]]:
     contracts = _capture_contracts(referent_tree)
     providers = _provider_digests(referent_tree)
+    procedures = _procedure_digests(referent_tree)
+    producers = providers | procedures
     admitted: list[str] = []
     claim_type_content = referent_tree.get(claim_type_path(claim.statement.predicate))
     if claim_type_content is None:
@@ -251,17 +275,17 @@ def _new_capture_accounts(
                     "capture_executable_unresolved",
                     "Capture executable does not resolve to its exact CaptureContract",
                 )
-        elif executable.kind == "Provider":
-            executable_digest = providers.get(executable.qualified)
+        elif executable.kind in {"Provider", "Procedure"}:
+            executable_digest = producers.get(executable.qualified)
             if executable_digest != envelope.run_coordinate.executable_digest:
                 _refuse(
                     "capture_executable_unresolved",
-                    "Capture executable Provider is not accepted at its exact digest",
+                    "Capture executable producer is not accepted at its exact digest",
                 )
         else:
             _refuse(
                 "capture_executable_unresolved",
-                "Capture executable is not an accepted CaptureContract or Provider",
+                "Capture executable is not an accepted CaptureContract or producer",
             )
 
         provenance_grade = (
@@ -283,10 +307,13 @@ def _new_capture_accounts(
                     "capture_provider_unresolved",
                     "daemon-fetched Capture provenance requires an accepted Provider",
                 )
+        elif envelope.producer.kind == "Procedure":
+            if envelope.producer.qualified not in procedures:
+                _refuse("capture_provider_unresolved", "Capture Procedure is not accepted")
         else:
             _refuse(
                 "capture_provider_unresolved",
-                "Capture producer is neither an accepted Provider nor active Principal",
+                "Capture producer is not an accepted Provider, Procedure, or active Principal",
             )
         try:
             verify_capture(
@@ -297,7 +324,12 @@ def _new_capture_accounts(
                     referent_tree,
                     statement.referent_coordinate,
                 ),
-                producer_artifact_digests=providers,
+                producer_artifact_digests=producers,
+                producer_receipt_resolver=local_producer_receipt_resolver(
+                    exhaust_root=instance.root / instance.descriptor.storage.exhaust,
+                    instance_id=instance.descriptor.instance_id,
+                    bodies=instance.body_store(),
+                ),
             )
         except ClaimAttestationRefusal:
             raise
@@ -334,9 +366,9 @@ def _new_capture_accounts(
         )
         resolved[(contract.identity.qualified, accepted.artifact_digest)] = contract_resolved
         for identity in {envelope.producer, envelope.run_coordinate.executable_identity}:
-            if identity.kind != "Provider":
+            if identity.kind not in {"Provider", "Procedure"}:
                 continue
-            artifact_digest = providers.get(identity.qualified)
+            artifact_digest = producers.get(identity.qualified)
             if artifact_digest is None:
                 _refuse("capture_provider_unresolved", "Capture Provider is not accepted")
             resolved[(identity.qualified, artifact_digest)] = ClaimAttestationResolvedArtifactV1(

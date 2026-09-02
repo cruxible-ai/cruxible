@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, cast, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -43,6 +43,7 @@ from cruxible_client.contracts.captures import (
     CaptureContractV1,
     CaptureObjectStoreProtocol,
     CaptureRunCoordinateV1,
+    CaptureRunCoordinateV2,
     build_cas_capture,
     build_procedure_capture_v2,
     capture_contract_digest,
@@ -601,7 +602,7 @@ class TerminalEgressRequestV2(TerminalEgressRequestV1):
     calibration_reading_digests: tuple[str, ...] = ()
     requested_authority: ProcedureHardCapsV3
     target_paths: tuple[str, ...] = ()
-    evaluation_time: datetime
+    evaluation_time: datetime = Field(description="Reads EVALUATION INSTANT.")
     operation_key: str | None = None
     producer_receipt: ProcedureProducerReceiptV1 | None = None
 
@@ -981,15 +982,32 @@ class CaptureTerminalEgressSink:
         contract = self.contracts.get(pin.artifact_digest)
         if contract is None or capture_contract_digest(contract).tagged != pin.artifact_digest:
             raise TerminalEgressError("no accepted CaptureContract reproduces this egress pin")
-        run_coordinate = CaptureRunCoordinateV1(
-            run_kind="procedure",
-            run_id=request.run_id,
-            bound_generation=request.accepted_coordinate.generation_root,
-            executable_identity=request.procedure_identity,
-            executable_digest=request.procedure_artifact_digest,
+        request_v2 = request if isinstance(request, TerminalEgressRequestV2) else None
+        if request_v2 is not None and (
+            self.producer != request.procedure_identity
+            or self.producer_binding_digest != request.procedure_artifact_digest
+        ):
+            raise TerminalEgressError(
+                "Capture egress sink producer differs from the Procedure request"
+            )
+        run_coordinate = (
+            CaptureRunCoordinateV2(
+                run_kind="procedure",
+                run_id=request.run_id,
+                bound_generation=request.accepted_coordinate.generation_root,
+                executable_identity=self.producer,
+                executable_digest=self.producer_binding_digest,
+            )
+            if request_v2 is not None
+            else CaptureRunCoordinateV1(
+                run_kind="procedure",
+                run_id=request.run_id,
+                bound_generation=request.accepted_coordinate.generation_root,
+                executable_identity=self.producer,
+                executable_digest=self.producer_binding_digest,
+            )
         )
         children: list[TerminalEgressChildReceiptV1] = []
-        request_v2 = request if isinstance(request, TerminalEgressRequestV2) else None
         producer_receipt_digest = (
             procedure_producer_receipt_digest(request_v2.producer_receipt)
             if request_v2 is not None and request_v2.producer_receipt is not None
@@ -1004,10 +1022,10 @@ class CaptureTerminalEgressSink:
                     store=self.store,
                     contract=contract,
                     source_body=canonical_bytes(item.value),
-                    run_coordinate=run_coordinate,
+                    run_coordinate=cast(CaptureRunCoordinateV2, run_coordinate),
                     producer_receipt_digest=producer_receipt_digest,
-                    producer=request.procedure_identity,
-                    producer_binding_digest=request.procedure_artifact_digest,
+                    producer=self.producer,
+                    producer_binding_digest=self.producer_binding_digest,
                     observed_at=capture_observed_at,
                 )
                 if producer_receipt_digest is not None
@@ -1015,7 +1033,7 @@ class CaptureTerminalEgressSink:
                     store=self.store,
                     contract=contract,
                     source_body=canonical_bytes(item.value),
-                    run_coordinate=run_coordinate,
+                    run_coordinate=cast(CaptureRunCoordinateV1, run_coordinate),
                     run_receipt_digest=request.admission_binding_digest,
                     producer=self.producer,
                     producer_binding_digest=self.producer_binding_digest,

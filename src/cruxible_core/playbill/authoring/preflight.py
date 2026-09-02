@@ -629,6 +629,7 @@ def compute_preflight(
                     rebased=base.git_oid != current.git_oid,
                     actor_id=actor.actor_id,
                     promotion_verifier=service.promotion_verifier,
+                    producer_receipt_resolver=service.producer_receipt_resolver,
                     query_facts_provider=service.query_facts_provider,
                 )
                 evaluated_tree = evaluation.tree

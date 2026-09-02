@@ -19,12 +19,14 @@ from cruxible_client.contracts.provider_execution import (
     ProviderEgressObservationV1,
     ProviderExternalOccurrencePlanV1,
     ProviderInvocationOutcomeV1,
+    ProviderInvocationOutputDigestV1,
     ProviderInvocationReceiptV1,
     ProviderSecretBindingIdentityV1,
     ProviderSecretReceiptReferenceV1,
     ProviderSecretReferenceV1,
     ProviderSecretResolutionPlanV1,
     VerifiedProviderBindingV1,
+    provider_invocation_output_digest,
     provider_secret_binding_identity_digest,
 )
 from cruxible_core.playbill.cas import ContentAddressedBodyStore
@@ -153,7 +155,9 @@ def provider_capture_fixture(root: Path) -> ProviderCaptureFixture:
             outcome_class="ok",
             attribution="none",
         ),
-        output=result.model_dump(mode="json"),
+        output=ProviderInvocationOutputDigestV1(
+            output_digest=provider_invocation_output_digest(result.model_dump(mode="json"))
+        ).model_dump(mode="json"),
         egress=egress,
         fence_scope="process_group+descendant_sweep",
         secret_references=(

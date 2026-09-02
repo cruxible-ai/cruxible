@@ -109,11 +109,13 @@ from cruxible_client.contracts.provider_execution import (
     ProviderExternalOccurrencePlanV1,
     ProviderInvocationCompletedV1,
     ProviderInvocationOutcomeV1,
+    ProviderInvocationOutputDigestV1,
     ProviderInvocationReceiptV1,
     ProviderInvocationStartedV1,
     ProviderSecretBindingIdentityV1,
     ProviderSecretReceiptReferenceV1,
     build_procedure_derived_source_request,
+    provider_invocation_output_digest,
     provider_invocation_receipt_digest,
     provider_secret_binding_identity_digest,
 )
@@ -1285,6 +1287,20 @@ def procedure_line_journal_stream(instance_id: str) -> JournalStreamIdentityV1:
     )
 
 
+def _source_capture_association_fields(
+    occurrence_path: str | None,
+    invocation_receipt_digest: str | None,
+) -> dict[str, str]:
+    """Keep the retained graph-v3 produced-Capture payload byte-identical."""
+
+    if occurrence_path is None or invocation_receipt_digest is None:
+        return {}
+    return {
+        "occurrence_path": occurrence_path,
+        "invocation_receipt_digest": invocation_receipt_digest,
+    }
+
+
 def verify_line_admission_spec(
     admission: ProcedureRunAdmissionV3,
     accepted_line: AcceptedLineSpecV1,
@@ -2081,9 +2097,9 @@ class ProcedureExecutor:
                 + effect_state
                 + provider_state
             )
+        self._require_current(admission)
         if isinstance(prepared, PreparedProcedureRunV5):
             self._preflight_source_runtime(prepared, accepted)
-        self._require_current(admission)
         if isinstance(prepared, PreparedProcedureRunV5):
             active_reservations = {
                 item.reservation_id for item in self.material_reservations.active()
@@ -3379,8 +3395,10 @@ class ProcedureExecutor:
                 "capture_digest": acquisition.capture_digest,
                 "capture_contract_digest": acquisition.envelope.capture_contract_digest,
                 "acquisition_receipt_digest": acquisition.receipt.digest,
-                "occurrence_path": occurrence_path,
-                "invocation_receipt_digest": invocation_receipt_digest,
+                **_source_capture_association_fields(
+                    occurrence_path,
+                    invocation_receipt_digest,
+                ),
                 "observed_at": format_datetime(acquisition.envelope.observed_at),
                 "epistemic_grade": acquisition.epistemic_grade,
                 "provenance_grade": acquisition.provenance_grade,
@@ -3702,9 +3720,14 @@ class ProcedureExecutor:
         except ProviderClassifierInstallationRefused as exc:
             raise _RunRefusal(exc.code, str(exc), node_id=node_id) from exc
         if not self._bucket_is_accepted(measured_bucket, occurrence.accepted_bucket_selectors):
-            raise _RunRefusal(
-                "unclaimed_bucket",
-                "The measured Provider input bucket is outside the admitted selectors.",
+            raise _ProviderNodeRefusal(
+                map_provider_refusal(
+                    "unclaimed_bucket",
+                    message=(
+                        "The measured Provider input bucket is outside the admitted selectors."
+                    ),
+                    detail={},
+                ),
                 node_id=node_id,
             )
         if not isinstance(payload, dict):
@@ -3844,13 +3867,9 @@ class ProcedureExecutor:
             implementation_digest=occurrence.implementation_digest,
             entrypoint=occurrence.local_execution.entrypoint,
             coordinates={
-                "instance_id": admission.instance_id,
-                "accepted_generation": admission.accepted_coordinate.git_oid,
-                "accepted_generation_digest": admission.accepted_coordinate.generation_root,
-                "procedure_artifact_digest": admission.procedure_artifact_digest,
-                "line_spec_digest": admission.line_spec_digest,
-                "occurrence_id": admission.occurrence_id,
-                "admission_binding_digest": admission.admission_binding_digest,
+                "accepted_coordinate": admission.accepted_coordinate.model_dump(mode="json"),
+                "occurrence_path": occurrence.occurrence_path,
+                "invocation_id": invocation_id,
             },
             input=payload,
             input_bucket=measured_bucket,
@@ -3916,6 +3935,13 @@ class ProcedureExecutor:
             if driver_result is not None
             else occurrence.local_execution
         )
+        journal_output = (
+            ProviderInvocationOutputDigestV1(
+                output_digest=provider_invocation_output_digest(output)
+            ).model_dump(mode="json")
+            if occurrence.occurrence_kind == "source" and output is not None
+            else output
+        )
         receipt = ProviderInvocationReceiptV1(
             invocation_id=invocation_id,
             occurrence_path=occurrence.occurrence_path,
@@ -3932,7 +3958,7 @@ class ProcedureExecutor:
             capture_contract_digest=occurrence.capture_contract_digest,
             input_digest=input_digest,
             outcome=outcome,
-            output=output,
+            output=journal_output,
             egress=egress,
             fence_scope="process_group+descendant_sweep",
             secret_references=tuple(

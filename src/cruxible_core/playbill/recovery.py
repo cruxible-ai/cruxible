@@ -23,6 +23,7 @@ from cruxible_client.contracts.canonical import (
     SemanticRoot,
     canonical_bytes,
 )
+from cruxible_client.contracts.captures import ProducerReceiptResolverProtocol
 from cruxible_client.contracts.errors import (
     PlaybillError,
     PlaybillGitError,
@@ -377,6 +378,7 @@ def _verify_successor(
     bodies: BodyProjectionProtocol,
     laws: AcceptanceLawRegistry,
     promotion_verifier: ExhaustPromotionVerifierProtocol | None,
+    producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
     query_facts_provider: ClaimQueryFactsProvider | None,
 ) -> _GenerationWindow:
     """Verify one successor against its parent window and return the next window."""
@@ -445,6 +447,7 @@ def _verify_successor(
         query_facts_provider=query_facts_provider,
         replay_claim_admission_accounts=claim_admission_accounts_from_candidate(candidate),
         promotion_verifier=promotion_verifier,
+        producer_receipt_resolver=producer_receipt_resolver,
         parent_state=window.state,
         wire_version=candidate.tag,
         acceptance_laws=laws,
@@ -634,6 +637,7 @@ def _clean_unaccepted_generations(
     bodies: BodyProjectionProtocol,
     laws: AcceptanceLawRegistry,
     promotion_verifier: ExhaustPromotionVerifierProtocol | None,
+    producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
     query_facts_builder: AcceptedQueryFactsBuilder | None,
 ) -> None:
     """Collect exact replay-valid generation commits that never settled on main."""
@@ -670,6 +674,7 @@ def _clean_unaccepted_generations(
                 bodies=bodies,
                 laws=laws,
                 promotion_verifier=promotion_verifier,
+                producer_receipt_resolver=producer_receipt_resolver,
                 query_facts_provider=(
                     None
                     if query_facts_builder is None
@@ -772,6 +777,7 @@ def recover_instance(
     witness: WitnessSink | None = None,
     laws: AcceptanceLawRegistry = PLAYBILL_ACCEPTANCE_LAWS,
     promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
+    producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
     query_facts_builder: AcceptedQueryFactsBuilder | None = None,
     checkpoint_directory: Path | None = None,
 ) -> RecoveredInstanceState:
@@ -863,6 +869,7 @@ def recover_instance(
             bodies=bodies,
             laws=laws,
             promotion_verifier=promotion_verifier,
+            producer_receipt_resolver=producer_receipt_resolver,
             query_facts_provider=(
                 None
                 if query_facts_builder is None
@@ -899,6 +906,7 @@ def recover_instance(
         bodies=bodies,
         laws=laws,
         promotion_verifier=promotion_verifier,
+        producer_receipt_resolver=producer_receipt_resolver,
         query_facts_builder=query_facts_builder,
     )
     _clean_unaccepted_publications(

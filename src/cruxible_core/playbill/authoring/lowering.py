@@ -139,6 +139,7 @@ from cruxible_core.playbill.compiler import (
     projection_registry_for_compiler,
 )
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.producer_receipts import local_producer_receipt_resolver
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.projection_artifacts import parse_projection_tree
 
@@ -230,7 +231,7 @@ def _capture_contract_at_base(
     return accepted
 
 
-def _provider_digests_for_capture(
+def _producer_digests_for_capture(
     tree: Mapping[str, bytes],
     *,
     producer: ArtifactIdentity,
@@ -238,14 +239,24 @@ def _provider_digests_for_capture(
 ) -> dict[str, str]:
     result: dict[str, str] = {}
     for identity in {producer, executable}:
-        if identity.kind != "Provider":
+        path = (
+            provider_path(identity.name)
+            if identity.kind == "Provider"
+            else procedure_path(identity.name)
+            if identity.kind == "Procedure"
+            else None
+        )
+        if path is None:
             continue
-        path = provider_path(identity.name)
         content = tree.get(path)
         if content is None:
             continue
-        provider = parse_provider(content, path=path)
-        result[identity.qualified] = provider_digest(provider).tagged
+        if identity.kind == "Provider":
+            provider = parse_provider(content, path=path)
+            result[identity.qualified] = provider_digest(provider).tagged
+        else:
+            procedure = parse_procedure(content, path=path)
+            result[identity.qualified] = procedure_artifact_digest(procedure).tagged
     return result
 
 
@@ -630,6 +641,7 @@ def _lower_claim(
     public_base = AcceptedCoordinate.from_internal(base)
     built_capture: CaptureBuildResult | DirectCaptureBuildResult | None = None
     accepted_contract: AcceptedCaptureContract | None = None
+    accepted_producer_digests: dict[str, str] = {}
     install_contract = True
     if isinstance(payload.source, SelfSourceBodyV1):
         built_capture = build_coordinator_self_source_capture(
@@ -679,6 +691,11 @@ def _lower_claim(
             contract_digest=envelope.capture_contract_digest,
         )
         try:
+            accepted_producer_digests = _producer_digests_for_capture(
+                candidate_base_tree,
+                producer=envelope.producer,
+                executable=envelope.run_coordinate.executable_identity,
+            )
             envelope = verify_capture(
                 payload.source.capture_digest,
                 store=store,
@@ -687,10 +704,11 @@ def _lower_claim(
                     candidate_base_tree,
                     AcceptedCoordinate.from_internal(base),
                 ),
-                producer_artifact_digests=_provider_digests_for_capture(
-                    candidate_base_tree,
-                    producer=envelope.producer,
-                    executable=envelope.run_coordinate.executable_identity,
+                producer_artifact_digests=accepted_producer_digests,
+                producer_receipt_resolver=local_producer_receipt_resolver(
+                    exhaust_root=instance.root / instance.descriptor.storage.exhaust,
+                    instance_id=instance.descriptor.instance_id,
+                    bodies=store,
                 ),
             )
         except (PlaybillError, ValueError):
@@ -817,6 +835,22 @@ def _lower_claim(
             artifact_digest=subject_digest_value,
         ),
     ]
+    for producer_identity in {
+        capture_envelope.producer,
+        capture_envelope.run_coordinate.executable_identity,
+    }:
+        producer_digest_value = accepted_producer_digests.get(producer_identity.qualified)
+        if producer_digest_value is not None and producer_identity.kind in {
+            "Provider",
+            "Procedure",
+        }:
+            pins.append(
+                ArtifactPin(
+                    role=producer_identity.kind.casefold(),
+                    target=producer_identity,
+                    artifact_digest=producer_digest_value,
+                )
+            )
     if object_referent is not None:
         pins.append(
             ArtifactPin(

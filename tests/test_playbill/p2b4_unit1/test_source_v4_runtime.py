@@ -26,6 +26,7 @@ from cruxible_client.contracts.captures import (
     ProviderResultToExternalCaptureV1,
     capture_contract_digest,
     parse_capture_envelope,
+    verify_capture,
 )
 from cruxible_client.contracts.errors import (
     PlaybillCasError,
@@ -53,6 +54,7 @@ from cruxible_client.contracts.provider_execution import (
     ProviderEgressObservationV1,
     ProviderExternalOccurrencePlanV1,
     ProviderInvocationCompletedV1,
+    ProviderInvocationOutputDigestV1,
     ProviderInvocationStartedV1,
 )
 from cruxible_core.playbill.cas import BodyAccessContext
@@ -68,12 +70,14 @@ from cruxible_core.playbill.procedures.execution import (
     ProcedureExecutor,
     ProcedureRunAdmissionV5,
     _ReservedCaptureStore,
+    _source_capture_association_fields,
     procedure_admission_digest,
     procedure_line_run_id,
     procedure_node_pin_sets,
     procedure_pin_set_digest,
     procedure_semantic_replay_key_digest,
 )
+from cruxible_core.playbill.producer_receipts import journal_producer_receipt_resolver
 from cruxible_core.playbill.provider_classifiers import ProviderBucketClassifierRegistry
 from cruxible_core.playbill.provider_local_runtime import (
     BoundLocalProviderV1,
@@ -148,6 +152,7 @@ def _source_fixture(
     *,
     rule: InputAcquisitionRuleV1 | None = None,
     include_terminal: bool = False,
+    accepted_bucket_selectors: tuple[str, ...] | None = None,
 ) -> tuple[
     AcceptedProcedureV1,
     PreparedProcedureRunV5,
@@ -240,6 +245,11 @@ def _source_fixture(
             "occurrence_kind": "source",
             "input_name": source_node.as_,
             "capture_contract_digest": contract_pin.artifact_digest,
+            "accepted_bucket_selectors": (
+                old_occurrence.accepted_bucket_selectors
+                if accepted_bucket_selectors is None
+                else accepted_bucket_selectors
+            ),
             "contract_input_digest": None,
             "contract_output_digest": None,
             "source_runtime_plan_digest": digest("source-runtime-plan", "unit1"),
@@ -371,6 +381,12 @@ def _next_attempt(prepared: PreparedProcedureRunV5) -> PreparedProcedureRunV5:
     )
 
 
+def test_graph_v3_produced_capture_payload_keeps_its_frozen_field_set() -> None:
+    assert _source_capture_association_fields(None, None) == {}
+    assert _source_capture_association_fields("source/direct", None) == {}
+    assert _source_capture_association_fields(None, digest("receipt", "unit1")) == {}
+
+
 def test_dynamic_source_request_is_a_pre_spawn_result_and_capture_is_post_completion(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -410,13 +426,9 @@ def test_dynamic_source_request_is_a_pre_spawn_result_and_capture_is_post_comple
     assert result.output == {"size": 3}
     assert (invoker.bind_calls, invoker.spawn_calls) == (1, 1)
     assert invoker.coordinates == {
-        "instance_id": prepared.admission.instance_id,
-        "accepted_generation": prepared.admission.accepted_coordinate.git_oid,
-        "accepted_generation_digest": prepared.admission.accepted_coordinate.generation_root,
-        "procedure_artifact_digest": prepared.admission.procedure_artifact_digest,
-        "line_spec_digest": prepared.admission.line_spec_digest,
-        "occurrence_id": prepared.admission.occurrence_id,
-        "admission_binding_digest": prepared.admission.admission_binding_digest,
+        "accepted_coordinate": prepared.admission.accepted_coordinate.model_dump(mode="json"),
+        "occurrence_path": "source/direct",
+        "invocation_id": invoker.coordinates["invocation_id"],
     }
     records, payloads = _payloads(prepared, fixture)
     kinds = [item.record.event_kind for item in records]
@@ -444,6 +456,11 @@ def test_dynamic_source_request_is_a_pre_spawn_result_and_capture_is_post_comple
     completed = ProviderInvocationCompletedV1.model_validate(
         payloads[kinds.index("provider_invocation_completed")]
     )
+    assert isinstance(
+        ProviderInvocationOutputDigestV1.model_validate(completed.receipt.output),
+        ProviderInvocationOutputDigestV1,
+    )
+    assert b"content_base64" not in canonical_bytes(payloads)
     assert started.invocation_id == completed.invocation_id
     produced = payloads[kinds.index("produced_capture")]
     assert isinstance(produced, dict)
@@ -692,6 +709,71 @@ def test_incomplete_source_closure_refuses_before_attempt_or_invoker_constructio
     )
 
 
+def test_currency_refusal_precedes_source_closure_preflight(tmp_path: Path) -> None:
+    accepted, prepared, fixture, policy, _contract = _source_fixture(tmp_path)
+    authority = _Authority(digest("procedure", "superseded"))
+
+    with pytest.raises(PlaybillExecutionError, match="current"):
+        ProcedureExecutor(
+            journal=fixture.journal,
+            bodies=fixture.bodies,
+            run_index=fixture.run_index,
+            fencing_token="writer",
+            activation_authority=authority,
+            contract_validator=_Contracts(),
+            acquisition_policy=policy,
+            capture_contracts={},
+        ).execute(prepared, accepted)
+
+    assert authority.calls == 1
+    assert not fixture.journal.all_records(
+        prepared.admission.journal_stream,
+        prepared.admission.journal_partition_id,
+    )
+
+
+def test_local_unclaimed_bucket_uses_the_same_declared_source_default(
+    tmp_path: Path,
+) -> None:
+    default_rule = InputAcquisitionRuleV1(
+        input_name="source_result",
+        requirement="conservative_default",
+        permitted_replayability=("attested_only", "exact"),
+        max_age=CanonicalDurationV1(microseconds=60_000_000),
+        on_unavailable="declared_conservative_default",
+        on_stale="refuse",
+        on_oversized="refuse",
+        on_conflict="preserve",
+        conservative_default=False,
+    )
+    accepted, prepared, fixture, policy, contract = _source_fixture(
+        tmp_path,
+        rule=default_rule,
+        accepted_bucket_selectors=("size=large",),
+    )
+    registry = ProviderBucketClassifierRegistry()
+    install_demo_classifier(registry)
+    invoker = _SourceInvoker(observed_at=prepared.admission.occurrence_evaluation_time)
+
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=invoker,
+        provider_classifier_registry=registry,
+        capture_contracts={capture_contract_digest(contract).tagged: contract},
+        acquisition_policy=policy,
+        default_authorizations=("source_result",),
+    ).execute(prepared, accepted)
+
+    assert result.status == "succeeded"
+    assert result.output is False
+    assert invoker.spawn_calls == 0
+
+
 def test_two_run_ids_under_one_semantic_key_keep_independent_source_results(
     tmp_path: Path,
 ) -> None:
@@ -807,4 +889,41 @@ def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
     )
     assert isinstance(terminal_capture, CaptureEnvelopeV2)
     assert terminal_capture.producer_receipt_digest == receipt.producer_receipt_digest
+    resolver = journal_producer_receipt_resolver(
+        journal=fixture.journal,
+        instance_id=prepared.admission.instance_id,
+        bodies=fixture.bodies,
+    )
+    produced = payloads[kinds.index("produced_capture")]
+    assert isinstance(produced, dict)
+    provider_capture_digest = str(produced["capture_digest"])
+    provider_capture = parse_capture_envelope(
+        fixture.bodies.read(
+            provider_capture_digest,
+            access=BodyAccessContext(principal_id="unit-test", can_read_body=True),
+        )
+    )
+    assert verify_capture(
+        provider_capture_digest,
+        store=fixture.bodies,
+        contract=contract,
+        producer_artifact_digests={
+            provider_capture.producer.qualified: prepared.acquisition_plan.external_occurrences[
+                0
+            ].provider_artifact_digest,
+        },
+        producer_receipt_resolver=resolver,
+    ).producer_receipt_digest == str(produced["invocation_receipt_digest"])
+    assert (
+        verify_capture(
+            receipt.children[0].egress_digest,
+            store=fixture.bodies,
+            contract=contract,
+            producer_artifact_digests={
+                accepted.procedure.identity.qualified: accepted.artifact_digest,
+            },
+            producer_receipt_resolver=resolver,
+        )
+        == terminal_capture
+    )
     assert result.receipt.chain_head_digest == records[-1].record_digest
