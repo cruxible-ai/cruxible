@@ -407,7 +407,7 @@ class ProviderProcessLeaseStore:
         self,
         root: Path,
         *,
-        control_root: Path | None = None,
+        control_root: Path,
         diagnostic_sink: Callable[[ProviderProcessFenceCodeV1, str], None] | None = None,
         acquisition_timeout_seconds: float = DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS,
         recovery_timeout_seconds: float = DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS,
@@ -446,7 +446,7 @@ class ProviderProcessLeaseStore:
         # Control sockets are operational state and must share the daemon's
         # protected state-root boundary.  The short component also preserves
         # headroom under the platform AF_UNIX path limit.
-        self.control_root = root / "c" if control_root is None else control_root
+        self.control_root = control_root
         self._ensure_private_directory(self.control_root)
         self._control_finalizer = weakref.finalize(
             self,

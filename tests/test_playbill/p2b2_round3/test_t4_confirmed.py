@@ -132,7 +132,7 @@ def _reap(marker: Path) -> None:
 
 
 def test_k1_the_escape_child_is_typed_killed_and_leaves_no_lease(short_root: Path) -> None:
-    store = ProviderProcessLeaseStore(short_root / "l")
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     marker = short_root / "escape"
     interpreter = _write(short_root / "escape.py", ESCAPE_SOURCE, MARKER=str(marker))
     try:
@@ -160,7 +160,7 @@ def test_k1_the_escape_child_is_typed_killed_and_leaves_no_lease(short_root: Pat
 
 
 def test_c15_the_aggregate_output_cap_is_real(short_root: Path) -> None:
-    store = ProviderProcessLeaseStore(short_root / "l")
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     interpreter = _write(short_root / "flood.py", FLOOD_SOURCE)
     started = time.monotonic()
     with pytest.raises(ProviderLocalRuntimeRefused) as caught:
@@ -182,7 +182,7 @@ def test_c15_the_aggregate_output_cap_is_real(short_root: Path) -> None:
 
 
 def test_c7_lease_record_integrity(short_root: Path) -> None:
-    store = ProviderProcessLeaseStore(short_root / "l")
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     record = store.publish("sha256:" + "c" * 64, pid=os.getpid(), process_group_id=os.getpgid(0))
     assert oct(record.stat().st_mode)[-3:] == "600"
     assert oct((short_root / "l").stat().st_mode)[-3:] == "700"
@@ -440,7 +440,7 @@ def test_the_path_length_refusal_names_the_repair(short_root: Path) -> None:
     deep.mkdir(parents=True)
     store_root = deep / "l"
     with pytest.raises(ProviderLocalRuntimeRefused) as caught:
-        ProviderProcessLeaseStore(store_root).paths("sha256:" + "f" * 64)
+        ProviderProcessLeaseStore(store_root, control_root=deep / "c").paths("sha256:" + "f" * 64)
     assert caught.value.code == "provider_process_lease_invalid"
     assert "shorter CRUXIBLE_STATE_ROOT" in str(caught.value)
 
@@ -492,7 +492,7 @@ def test_k9_recovery_still_races_a_live_invocation_on_the_same_store(
     """CONFIRM (deployment constraint, unchanged): a second process running
     `recover_all` on the same state root kills an in-flight child."""
 
-    store = ProviderProcessLeaseStore(short_root / "l")
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     marker = short_root / "raced"
     interpreter = write_child(short_root / "child.py", mode="escape", marker=marker)
     import threading

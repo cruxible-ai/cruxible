@@ -145,7 +145,7 @@ def test_returncode_is_none_and_the_group_is_alive_at_every_terminate_entry(
         )
 
     monkeypatch.setattr(runtime_module, "_terminate_process_group", spy)
-    store = ProviderProcessLeaseStore(short_root / "l")
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     marker = short_root / "m"
     interpreter = _write_fast_child(short_root / "c.py", marker=marker, mode="setsid")
     try:
@@ -179,7 +179,7 @@ def test_a_fast_escaping_descendant_is_swept_after_a_short_successful_invocation
 ) -> None:
     """Session identity and the input-bound snapshot close the fast escape."""
 
-    store = ProviderProcessLeaseStore(short_root / "l")
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     marker = short_root / f"m-{mode}"
     interpreter = _write_fast_child(short_root / f"c-{mode}.py", marker=marker, mode=mode)
     try:
@@ -206,7 +206,9 @@ def test_the_same_escape_is_caught_when_the_invocation_lasts_past_one_poll(
     """Contrast: with a sub-second poll interval the same escapee is swept."""
 
     store = ProviderProcessLeaseStore(
-        short_root / "l2", descendant_tracker_poll_interval_seconds=0.05
+        short_root / "l2",
+        control_root=short_root / "c",
+        descendant_tracker_poll_interval_seconds=0.05,
     )
     marker = short_root / "m2"
     interpreter = _write_fast_child(short_root / "c2.py", marker=marker, mode="setpgid", linger=0.4)
@@ -236,7 +238,7 @@ def test_a_publish_write_failure_is_typed_and_leaves_no_child_or_artifact(
     """T-2 ruled a publish failure kills the child and unlinks record+socket."""
 
     lease_root = short_root / "l3"
-    store = ProviderProcessLeaseStore(lease_root)
+    store = ProviderProcessLeaseStore(lease_root, control_root=short_root / "c")
     marker = short_root / "m3"
     interpreter = _write_fast_child(short_root / "c3.py", marker=marker, mode="setsid")
     os.chmod(lease_root, 0o500)  # mkstemp(dir=root) now fails with EACCES
@@ -290,7 +292,7 @@ def test_a_publish_write_failure_is_typed_and_leaves_no_child_or_artifact(
 def test_tracker_start_failure_kills_and_reaps_the_spawned_child(
     short_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    store = ProviderProcessLeaseStore(short_root / "tracker")
+    store = ProviderProcessLeaseStore(short_root / "tracker", control_root=short_root / "c")
     marker = short_root / "tracker-marker"
     interpreter = _write_fast_child(short_root / "tracker.py", marker=marker, mode="setsid")
     spawned: list[subprocess.Popen[bytes]] = []
@@ -429,7 +431,7 @@ def test_the_darwin_numeric_peer_pid_authorizes_the_real_peer(short_root: Path) 
 def test_an_independent_echo_server_cannot_authorise_a_kill(short_root: Path) -> None:
     """CONFIRM T-8 end to end: an echo from a non-lease pid never signals."""
 
-    store = ProviderProcessLeaseStore(short_root / "l4")
+    store = ProviderProcessLeaseStore(short_root / "l4", control_root=short_root / "c")
     invocation_id = "sha256:" + "f" * 64
     record_path, control_path = store.paths(invocation_id)
     victim = subprocess.Popen(
@@ -601,7 +603,7 @@ def test_a_fork_only_escapee_is_still_swept_because_its_argv_names_the_invocatio
 ) -> None:
     """CONFIRM: the fd-holding (fork-only) case is covered even on a fast success."""
 
-    store = ProviderProcessLeaseStore(short_root / "lf")
+    store = ProviderProcessLeaseStore(short_root / "lf", control_root=short_root / "c")
     marker = short_root / "mf"
     interpreter = short_root / "cf.py"
     interpreter.write_text(FORK_CHILD.replace("@MARKER@", str(marker)), encoding="utf-8")

@@ -65,7 +65,7 @@ def test_the_success_path_kills_the_group_so_a_plain_child_cannot_survive(
     same-session descendant that exec'd away survives every successful invocation
     and the lease is released, hiding it from `recover_all` forever."""
 
-    store = ProviderProcessLeaseStore(short_root / "l")
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     marker = short_root / "survivor"
     interpreter = write_child(short_root / "child.py", mode="ok", marker=marker)
     try:
@@ -92,7 +92,7 @@ def test_a_same_session_setpgid_descendant_is_swept_on_the_refusal_path(
     grandchild that only calls `setpgid(0,0)` is outside the recorded process group
     AND outside the sweep."""
 
-    store = ProviderProcessLeaseStore(short_root / "l")
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     marker = short_root / "setpgid-survivor"
     interpreter = write_child(short_root / "child.py", mode="setpgid", marker=marker)
     try:
@@ -135,7 +135,7 @@ def test_a_descendant_cannot_read_the_secret_bundle_after_the_parent_close(
     """The secret pipe is inherited by grandchildren; the daemon closes only its own
     end, and the success path leaves the descendant alive to read the bundle."""
 
-    store = ProviderProcessLeaseStore(short_root / "l")
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     leak = short_root / "leaked"
     interpreter = write_child(short_root / "child.py", mode="leak", marker=leak)
     secret = "SUPERSECRET-CUSTODY-MATERIAL"
@@ -275,7 +275,7 @@ def test_the_success_path_still_has_a_safe_window_to_kill_the_group(
     the child is still an unreaped zombie - its pid is NOT released and its group
     still exists, so a `killpg` there would be safe."""
 
-    store = ProviderProcessLeaseStore(short_root / "l")
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     marker = short_root / "window"
     interpreter = write_child(short_root / "child.py", mode="ok", marker=marker)
     observed: list[tuple[object, bool]] = []

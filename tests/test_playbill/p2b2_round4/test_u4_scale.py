@@ -37,7 +37,7 @@ def _record(store: ProviderProcessLeaseStore, invocation_id: str, **fields: obje
 def test_t12_two_hundred_records_read_the_boot_id_once(
     short_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    store = ProviderProcessLeaseStore(short_root / "l")
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     for index in range(200):
         _record(store, "sha256:" + f"{index:064x}")
     boot_calls: list[int] = []
@@ -83,14 +83,17 @@ def test_two_hundred_records_do_not_block_create_app_beyond_a_bounded_time(
     assert app is not None
     assert elapsed < 20.0, elapsed
     lane = get_playbill_manager().provider_runtime_operator().lane_status()
-    assert lane[0] == "unavailable", lane
-    assert lane[1] == "provider_runtime_recovery_failed"
+    assert lane == ("available", None, None)
 
 
 def test_one_stuck_record_is_bounded_by_its_configured_deadline(
     short_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    store = ProviderProcessLeaseStore(short_root / "l2", recovery_timeout_seconds=0.5)
+    store = ProviderProcessLeaseStore(
+        short_root / "l2",
+        control_root=short_root / "c",
+        recovery_timeout_seconds=0.5,
+    )
     live = subprocess.Popen(
         [sys.executable, "-c", "import time\nwhile True: time.sleep(0.05)"],
         start_new_session=True,
@@ -127,6 +130,7 @@ def test_the_recovery_loop_reports_records_beyond_its_aggregate_budget(
 
     store = ProviderProcessLeaseStore(
         short_root / "l3",
+        control_root=short_root / "c",
         recovery_timeout_seconds=0.4,
         recovery_aggregate_timeout_seconds=0.65,
     )
@@ -199,7 +203,7 @@ def test_t13_a_prior_attempt_survivor_is_still_observed(short_root: Path) -> Non
 def test_a_record_that_vanishes_mid_scan_is_already_handled(short_root: Path) -> None:
     """A FileNotFoundError between glob and read is a harmless concurrent recovery."""
 
-    store = ProviderProcessLeaseStore(short_root / "l4")
+    store = ProviderProcessLeaseStore(short_root / "l4", control_root=short_root / "c")
     path = _record(store, "sha256:" + "2" * 64)
     original = Path.read_bytes
 
@@ -220,7 +224,7 @@ def test_a_record_that_vanishes_mid_scan_is_already_handled(short_root: Path) ->
 def test_release_failure_is_only_could_not_clean(
     short_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    store = ProviderProcessLeaseStore(short_root / "release")
+    store = ProviderProcessLeaseStore(short_root / "release", control_root=short_root / "c")
     invocation_id = "sha256:" + "3" * 64
     _record(store, invocation_id)
 
@@ -240,7 +244,7 @@ def test_two_hundred_identity_bearing_records_still_serve_within_a_bounded_time(
 ) -> None:
     """The honest profile: every record forces one `ps` start-token lookup."""
 
-    store = ProviderProcessLeaseStore(short_root / "l5")
+    store = ProviderProcessLeaseStore(short_root / "l5", control_root=short_root / "c")
     boot = lease_module._current_boot_id()
     for index in range(200):
         _record(

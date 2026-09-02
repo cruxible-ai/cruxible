@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import pytest
 import cruxible_core.runtime.provider_runtime as provider_runtime_module
 from cruxible_core.playbill.provider_process_leases import (
     ProviderLocalRuntimeRefused,
+    ProviderProcessLeaseStore,
     ProviderProcessRecoveryFailureV1,
     ProviderProcessRecoveryResultV1,
 )
@@ -117,3 +119,9 @@ def test_lazy_rearm_refuses_immediately_inside_the_configured_backoff(
     with pytest.raises(ProviderLocalRuntimeRefused):
         operator._begin_invocation()
     assert calls == [100.0, 105.0]
+
+
+def test_process_lease_control_root_is_a_required_keyword() -> None:
+    parameter = inspect.signature(ProviderProcessLeaseStore).parameters["control_root"]
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameter.default is inspect.Parameter.empty

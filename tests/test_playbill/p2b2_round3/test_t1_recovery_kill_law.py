@@ -109,7 +109,7 @@ def test_a_reused_pid_whose_recorded_identity_matches_is_sigkilled(short_root: P
     """No proof of daemon parentage: any live pid+pgid whose published identity
     reproduces is SIGKILLed with its whole group and descendant tree."""
 
-    store = ProviderProcessLeaseStore(short_root / "l")
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     victim, marker = _spawn_marker(short_root, "victim")
     try:
         _write_record(
@@ -135,7 +135,7 @@ def test_a_reused_pid_whose_recorded_identity_matches_is_sigkilled(short_root: P
 def test_a_prefix_record_with_a_live_pid_is_never_signalled(short_root: Path) -> None:
     """CONFIRM: boot_id/process_start_time = None (pre-fix record) sends no signal."""
 
-    store = ProviderProcessLeaseStore(short_root / "l")
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     bystander, marker = _spawn_marker(short_root, "bystander")
     try:
         _write_record(
@@ -159,7 +159,7 @@ def test_a_prefix_record_with_a_live_pid_is_never_signalled(short_root: Path) ->
 def test_a_stale_record_naming_a_reused_pid_sends_no_signal(short_root: Path) -> None:
     """CONFIRM: same boot, live pid, but a start token from the dead predecessor."""
 
-    store = ProviderProcessLeaseStore(short_root / "l")
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     bystander, marker = _spawn_marker(short_root, "reused")
     try:
         _write_record(
@@ -188,7 +188,7 @@ def test_ps_absence_is_a_typed_publish_refusal(
     the OS identity is unavailable, but an absent `ps`/`sysctl` raises
     FileNotFoundError straight out of `publish()`."""
 
-    store = ProviderProcessLeaseStore(short_root / "l")
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
 
     def missing(*_args: object, **_kwargs: object) -> object:
         raise FileNotFoundError(2, "No such file or directory: 'ps'")
@@ -203,7 +203,7 @@ def test_ps_absence_is_a_typed_publish_refusal(
 def test_ps_garbage_is_typed(short_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """CONFIRM: a `ps` that answers with garbage is converted to a typed refusal."""
 
-    store = ProviderProcessLeaseStore(short_root / "l")
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
 
     class _Garbage:
         returncode = 0
@@ -222,7 +222,7 @@ def test_an_oserror_inside_recovery_retains_the_invocation_id_and_record(
     """A record that parses but fails later is removed with invocation_id=None, so
     its durable `provider_invocation_started` is never completed."""
 
-    store = ProviderProcessLeaseStore(short_root / "l")
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     invocation_id = "sha256:" + "f" * 64
     record_path = _write_record(
         store,
@@ -258,7 +258,7 @@ def test_the_echo_alone_never_authorizes_a_killpg(
     """Clause (a) of the kill law attests only that SOMETHING at the socket knows
     the invocation id - never that `lease.pid` is that process."""
 
-    store = ProviderProcessLeaseStore(short_root / "l")
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     invocation_id = "sha256:" + "1" * 64
     _record, control_path = store.paths(invocation_id)
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -319,15 +319,20 @@ def test_an_unkillable_group_degrades_the_lane_and_strands_the_durable_start(
     """could_not_clean keeps the record, never authors a completion, and (through
     the operator) latches the Provider lane unavailable for the process lifetime."""
 
-    from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
+    from cruxible_core.runtime.provider_runtime import (
+        ProviderRecoveryFoldDisposition,
+        ProviderRuntimeOperator,
+    )
 
     operator = ProviderRuntimeOperator(short_root)
     folded: list[ProviderProcessRecoveryResultV1] = []
 
-    def fold_recovery(result: ProviderProcessRecoveryResultV1) -> bool:
+    def fold_recovery(
+        result: ProviderProcessRecoveryResultV1,
+    ) -> dict[str, ProviderRecoveryFoldDisposition]:
         operator.acknowledge_recovery(result.completion_invocation_ids)
         folded.append(result)
-        return True
+        return {invocation_id: "handled" for invocation_id in result.completion_invocation_ids}
 
     operator.bind_recovery_fold(fold_recovery)
     assert operator.process_leases is not None
@@ -381,7 +386,7 @@ def test_an_unkillable_group_degrades_the_lane_and_strands_the_durable_start(
 def test_two_records_naming_the_same_pid_do_not_double_signal(short_root: Path) -> None:
     """CONFIRM: ordering is safe - the second record sees a dead pid and is removed."""
 
-    store = ProviderProcessLeaseStore(short_root / "l")
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     victim, marker = _spawn_marker(short_root, "twice")
     try:
         for suffix in ("3", "4"):

@@ -97,7 +97,7 @@ def test_c4_no_secret_reaches_argv_or_the_child_environment(short_root: Path) ->
 
     dump = short_root / "dump.json"
     interpreter = _child(short_root / "c.py", dump=dump)
-    store = ProviderProcessLeaseStore(short_root / "l")
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     handed: list[dict[str, object]] = []
     real_popen = subprocess.Popen
 
@@ -143,7 +143,7 @@ def test_c4_no_secret_reaches_argv_or_the_child_environment(short_root: Path) ->
 
 
 def test_c7_lease_record_integrity_with_the_new_identity_keys(short_root: Path) -> None:
-    store = ProviderProcessLeaseStore(short_root / "l7")
+    store = ProviderProcessLeaseStore(short_root / "l7", control_root=short_root / "c")
     record = store.publish("sha256:" + "c" * 64, pid=os.getpid(), process_group_id=os.getpgid(0))
     assert oct(record.stat().st_mode)[-3:] == "600"
     assert oct((short_root / "l7").stat().st_mode)[-3:] == "700"
@@ -169,7 +169,7 @@ def test_c7_lease_record_integrity_with_the_new_identity_keys(short_root: Path) 
 def test_c15_the_aggregate_output_cap_is_real(short_root: Path) -> None:
     dump = short_root / "d15.json"
     interpreter = _child(short_root / "c15.py", dump=dump, mode="flood")
-    store = ProviderProcessLeaseStore(short_root / "l15")
+    store = ProviderProcessLeaseStore(short_root / "l15", control_root=short_root / "c")
     started = time.monotonic()
     with pytest.raises(ProviderLocalRuntimeRefused) as caught:
         _run_child(
@@ -189,7 +189,7 @@ def test_c15_the_aggregate_output_cap_is_real(short_root: Path) -> None:
 def test_k1_the_r1_escape_shape_is_still_dead(short_root: Path) -> None:
     dump = short_root / "d1.json"
     interpreter = _child(short_root / "c1.py", dump=dump, mode="escape")
-    store = ProviderProcessLeaseStore(short_root / "l1")
+    store = ProviderProcessLeaseStore(short_root / "l1", control_root=short_root / "c")
     try:
         with pytest.raises(ProviderLocalRuntimeRefused) as caught:
             _run_child(
@@ -217,7 +217,7 @@ def test_k1_the_r1_escape_shape_is_still_dead(short_root: Path) -> None:
 
 
 def test_l1_a_dead_orphan_is_never_signalled(short_root: Path) -> None:
-    store = ProviderProcessLeaseStore(short_root / "lo")
+    store = ProviderProcessLeaseStore(short_root / "lo", control_root=short_root / "c")
     victim = subprocess.Popen(
         [sys.executable, "-c", "import time\nwhile True: time.sleep(0.05)"],
         start_new_session=True,
@@ -251,7 +251,7 @@ def test_l1_a_dead_orphan_is_never_signalled(short_root: Path) -> None:
 
 
 def test_l2_recover_all_is_per_record_fault_isolated(short_root: Path) -> None:
-    store = ProviderProcessLeaseStore(short_root / "li")
+    store = ProviderProcessLeaseStore(short_root / "li", control_root=short_root / "c")
     bad, _c = store.paths("sha256:" + "d" * 64)
     bad.write_bytes(b"{not canonical")
     good_id = "sha256:" + "e" * 64

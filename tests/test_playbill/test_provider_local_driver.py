@@ -929,7 +929,10 @@ def test_control_namespaces_are_state_local_and_finalize_without_orphans(
     tmp_path: Path,
 ) -> None:
     roots = tuple(tmp_path / f"leases-{index}" for index in range(5))
-    stores = [ProviderProcessLeaseStore(root) for root in roots]
+    stores = [
+        ProviderProcessLeaseStore(root, control_root=tmp_path / f"c-{index}")
+        for index, root in enumerate(roots)
+    ]
     controls = tuple(store.control_root for store in stores)
     assert all(path.is_relative_to(tmp_path) for path in controls)
     assert all(path.is_dir() for path in controls)
@@ -940,7 +943,7 @@ def test_control_namespaces_are_state_local_and_finalize_without_orphans(
 
 def test_overlong_control_socket_path_refuses_with_the_operator_repair(tmp_path: Path) -> None:
     root = tmp_path / ("long-state-root-" + "x" * 110)
-    leases = ProviderProcessLeaseStore(root)
+    leases = ProviderProcessLeaseStore(root, control_root=root / "c")
     with pytest.raises(ProviderLocalRuntimeRefused) as caught:
         leases.paths(_digest("long-control-path"))
     assert caught.value.code == "provider_process_lease_invalid"
@@ -959,7 +962,7 @@ def test_process_lease_root_refuses_non_directory_or_symlink(
         target.mkdir()
         root.symlink_to(target, target_is_directory=True)
     with pytest.raises(ProviderLocalRuntimeRefused) as caught:
-        ProviderProcessLeaseStore(root)
+        ProviderProcessLeaseStore(root, control_root=tmp_path / "c")
     assert caught.value.code == "provider_process_lease_invalid"
 
 

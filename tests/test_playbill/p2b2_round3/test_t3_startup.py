@@ -262,7 +262,7 @@ def test_startup_recovery_reads_the_boot_id_once_per_fold(
 
     import cruxible_core.playbill.provider_process_leases as lease_module
 
-    store = ProviderProcessLeaseStore(short_root / "l")
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     boot = _current_boot_id()
     for index in range(200):
         _write_record(
