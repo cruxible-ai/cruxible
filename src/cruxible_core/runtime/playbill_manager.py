@@ -6,6 +6,7 @@ import os
 import threading
 from pathlib import Path
 
+import structlog
 from pydantic import ValidationError
 
 from cruxible_client.contracts.canonical import canonical_bytes
@@ -23,9 +24,14 @@ from cruxible_core.playbill.workspace_advertisement import (
     advertise_workspace_refs,
     workspace_git_object_format,
 )
-from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
+from cruxible_core.runtime.provider_runtime import (
+    ProviderRecoveryFoldDisposition,
+    ProviderRuntimeOperator,
+)
 from cruxible_core.server.config import get_server_state_root
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
+
+_log = structlog.get_logger("cruxible.provider_runtime")
 
 
 def _fsync_directory(path: Path) -> None:
@@ -237,7 +243,9 @@ class PlaybillInstanceManager:
     ) -> None:
         """Give one operator the manager-owned governed-journal fold."""
 
-        def fold(result: ProviderProcessRecoveryResultV1) -> bool:
+        def fold(
+            result: ProviderProcessRecoveryResultV1,
+        ) -> dict[str, ProviderRecoveryFoldDisposition]:
             return self._fold_provider_recovery(operator, result)
 
         operator.bind_recovery_fold(fold)
@@ -266,8 +274,8 @@ class PlaybillInstanceManager:
         self,
         operator: ProviderRuntimeOperator,
         result: ProviderProcessRecoveryResultV1,
-    ) -> bool:
-        """Fold one recovery result, then acknowledge its deferred fence releases."""
+    ) -> dict[str, ProviderRecoveryFoldDisposition]:
+        """Fold and acknowledge each recovered invocation independently."""
 
         invocation_ids = result.completion_invocation_ids
         recovery_failures = {
@@ -276,7 +284,7 @@ class PlaybillInstanceManager:
             if item.invocation_id is not None
         }
         if not invocation_ids and not recovery_failures:
-            return not result.could_not_clean
+            return {}
         from cruxible_core.service.playbill_procedure_runs import (
             ProcedureRunRecoveryRequired,
             service_recover_provider_invocations,
@@ -290,59 +298,77 @@ class PlaybillInstanceManager:
                 f"Provider instance enumeration failed: {exc}",
                 retryable=True,
             )
-            return False
+            return {
+                invocation_id: "fold_failed"
+                for invocation_id in sorted({*invocation_ids, *recovery_failures}, key=str.encode)
+            }
         handled_invocation_ids: set[str] = set()
-        fold_failed = False
+        initialized_fold_failed = False
         for record in records:
             if record.backend != GOVERNED_DAEMON_BACKEND:
                 continue
             try:
+                instance = self.get(record.instance_id)
+            except (PlaybillBootstrapError, PlaybillReseedRequired, InstanceNotFoundError) as exc:
+                _log.warning(
+                    "provider_recovery_instance_skipped",
+                    instance_id=record.instance_id,
+                    reason=str(exc),
+                )
+                continue
+            try:
                 handled_invocation_ids.update(
                     service_recover_provider_invocations(
-                        self.get(record.instance_id),
+                        instance,
                         invocation_ids=invocation_ids,
                         recovery_failure_codes=recovery_failures,
                         recorded_at=utc_now(),
                     )
                 )
             except ProcedureRunRecoveryRequired as exc:
-                fold_failed = True
+                initialized_fold_failed = True
                 operator.mark_unavailable(
                     "provider_runtime_recovery_failed",
                     str(exc),
                     retryable=True,
                 )
             except Exception as exc:
-                fold_failed = True
+                initialized_fold_failed = True
                 operator.mark_unavailable(
                     "provider_runtime_recovery_failed",
                     f"Provider journal recovery failed for {record.instance_id}: {exc}",
                     retryable=True,
                 )
-        unhandled = set(invocation_ids) - handled_invocation_ids
-        if unhandled and not fold_failed:
-            fold_failed = True
-            first = min(unhandled, key=str.encode)
-            operator.mark_unavailable(
-                "provider_runtime_recovery_failed",
-                f"Provider recovery found no governed start for {len(unhandled)} "
-                f"invocation(s); first={first}",
-                retryable=True,
-            )
-        if result.could_not_clean:
-            fold_failed = True
-        if fold_failed:
-            return False
-        try:
-            operator.acknowledge_recovery(invocation_ids)
-        except Exception as exc:
-            operator.mark_unavailable(
-                "provider_runtime_recovery_failed",
-                f"Provider recovery acknowledgement failed: {exc}",
-                retryable=True,
-            )
-            return False
-        return True
+        dispositions: dict[str, ProviderRecoveryFoldDisposition] = {}
+        for invocation_id in sorted({*invocation_ids, *recovery_failures}, key=str.encode):
+            if invocation_id in recovery_failures:
+                dispositions[invocation_id] = "fold_failed"
+            elif invocation_id in handled_invocation_ids:
+                dispositions[invocation_id] = "handled"
+            elif initialized_fold_failed:
+                dispositions[invocation_id] = "fold_failed"
+            else:
+                dispositions[invocation_id] = "unclaimed"
+
+        for invocation_id, disposition in tuple(dispositions.items()):
+            if disposition == "fold_failed":
+                continue
+            if disposition == "unclaimed":
+                _log.warning(
+                    "provider_recovery_unclaimed",
+                    invocation_id=invocation_id,
+                    terminal=True,
+                )
+            try:
+                operator.acknowledge_recovery((invocation_id,))
+            except Exception as exc:
+                dispositions[invocation_id] = "fold_failed"
+                operator.mark_unavailable(
+                    "provider_runtime_recovery_failed",
+                    f"Provider recovery acknowledgement failed for {invocation_id}: {exc}",
+                    retryable=True,
+                )
+        return dispositions
 
 
 _manager = PlaybillInstanceManager()

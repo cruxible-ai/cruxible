@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -47,6 +47,7 @@ from cruxible_core.playbill.provider_process_leases import (
 )
 
 PROVIDER_RUNTIME_CONFIG_PATH = Path("daemon/provider-runtime.json")
+ProviderRecoveryFoldDisposition = Literal["handled", "unclaimed", "fold_failed"]
 
 
 class _StrictOperationalModel(BaseModel):
@@ -163,7 +164,13 @@ class ProviderRuntimeOperator:
         self._lock = threading.RLock()
         self._in_flight = 0
         self._rearm_required = False
-        self._recovery_fold: Callable[[ProviderProcessRecoveryResultV1], bool] | None = None
+        self._recovery_fold: (
+            Callable[
+                [ProviderProcessRecoveryResultV1],
+                Mapping[str, ProviderRecoveryFoldDisposition],
+            ]
+            | None
+        ) = None
         self._unavailable_codes: set[ProviderLaneUnavailableCodeV1] = set()
         self._unavailable_failure_count = 0
         self.unavailable_code: ProviderLaneUnavailableCodeV1 | None = None
@@ -305,7 +312,8 @@ class ProviderRuntimeOperator:
                     retryable=True,
                 )
                 return
-            if not self._recovery_fold(result):
+            dispositions = self._recovery_fold(result)
+            if "fold_failed" in dispositions.values():
                 return
         self._mark_available_locked()
 
@@ -319,7 +327,10 @@ class ProviderRuntimeOperator:
 
     def bind_recovery_fold(
         self,
-        fold: Callable[[ProviderProcessRecoveryResultV1], bool],
+        fold: Callable[
+            [ProviderProcessRecoveryResultV1],
+            Mapping[str, ProviderRecoveryFoldDisposition],
+        ],
     ) -> None:
         """Bind the manager-owned governed-journal fold used by lazy re-arm."""
 
@@ -491,4 +502,5 @@ __all__ = [
     "ProviderDeploymentConfigV1",
     "ProviderRuntimeOperationalConfigV1",
     "ProviderRuntimeOperator",
+    "ProviderRecoveryFoldDisposition",
 ]
