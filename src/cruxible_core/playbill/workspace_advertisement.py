@@ -363,6 +363,30 @@ def _ensure_review_worktrees_ignored(workspace_root: Path) -> None:
         raise ValueError("review workspace ignore rule could not be written") from exc
 
 
+def _review_worktree_target(
+    workspace_root: Path,
+    *,
+    key: str,
+    create_parent: bool,
+) -> Path:
+    playbill_root = workspace_root / ".playbill"
+    review_root = playbill_root / "review"
+    if playbill_root.is_symlink():
+        raise ValueError(f"review workspace path escapes the Git worktree: {playbill_root}")
+    try:
+        if create_parent:
+            review_root.mkdir(parents=True, exist_ok=True)
+        resolved_review_root = review_root.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ValueError(f"review workspace path is absent or unsafe: {review_root}") from exc
+    if review_root.is_symlink() or resolved_review_root.parent.parent != workspace_root:
+        raise ValueError(f"review workspace path escapes the Git worktree: {review_root}")
+    target = review_root / key
+    if target.is_symlink():
+        raise ValueError(f"review workspace path escapes the Git worktree: {target}")
+    return target
+
+
 def open_proposal_review_worktree(*, workspace_path: Path, proposal_id: str) -> Path:
     """Materialize one advertised proposal tree as a detached, ignored worktree."""
 
@@ -370,14 +394,13 @@ def open_proposal_review_worktree(*, workspace_path: Path, proposal_id: str) -> 
     if workspace_root is None:
         raise ValueError("review workspace must be inside one Git worktree")
     key = _review_proposal_key(proposal_id)
-    review_root = workspace_root / ".playbill" / "review"
-    target = review_root / key
-    if review_root.is_symlink() or target.is_symlink() or target.exists():
-        raise ValueError("review workspace already exists or has an unsafe path")
     reference = f"refs/remotes/playbill/proposals/{key}"
     resolved = _git(workspace_root, ["rev-parse", "--verify", f"{reference}^{{commit}}"])
     if resolved.returncode != 0:
         raise ValueError("proposal is not an advertised open proposal")
+    target = _review_worktree_target(workspace_root, key=key, create_parent=True)
+    if target.exists():
+        raise ValueError(f"review workspace already exists or has an unsafe path: {target}")
     _ensure_review_worktrees_ignored(workspace_root)
     created = _git(
         workspace_root,
@@ -398,9 +421,16 @@ def close_proposal_review_worktree(*, workspace_path: Path, proposal_id: str) ->
     if workspace_root is None:
         raise ValueError("review workspace must be inside one Git worktree")
     key = _review_proposal_key(proposal_id)
-    target = workspace_root / ".playbill" / "review" / key
-    if target.is_symlink() or not target.is_dir():
-        raise ValueError("review workspace is absent or has an unsafe path")
+    target = _review_worktree_target(workspace_root, key=key, create_parent=False)
+    if not target.exists():
+        pruned = _git(workspace_root, ["worktree", "prune"])
+        if pruned.returncode != 0:
+            raise ValueError(
+                f"review workspace registration could not be pruned: {_text(pruned.stderr)}"
+            )
+        return target
+    if not target.is_dir():
+        raise ValueError(f"review workspace is absent or has an unsafe path: {target}")
     removed = _git(workspace_root, ["worktree", "remove", str(target)])
     if removed.returncode != 0:
         raise ValueError(

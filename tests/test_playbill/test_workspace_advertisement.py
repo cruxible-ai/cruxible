@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -144,6 +145,98 @@ def test_review_worktree_is_detached_ignored_and_never_creates_a_branch(
     assert closed == opened
     assert not opened.exists()
     assert _git(workspace, "for-each-ref", "--format=%(refname)", "refs/heads") == (branches_before)
+
+
+def test_review_open_refuses_a_symlinked_playbill_directory(tmp_path: Path) -> None:
+    workspace, ledger = _repositories(tmp_path, "sha1")
+    assert (
+        advertise_workspace_refs(
+            workspace_root=workspace,
+            ledger_path=ledger,
+            ledger_object_format="sha1",
+        ).status
+        == "updated"
+    )
+    outside = tmp_path / "outside"
+    (outside / "review").mkdir(parents=True)
+    (workspace / ".playbill").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="escapes the Git worktree") as caught:
+        open_proposal_review_worktree(
+            workspace_path=workspace,
+            proposal_id=PROPOSAL_KEY,
+        )
+
+    assert str(workspace / ".playbill") in str(caught.value)
+    assert not (outside / "review" / PROPOSAL_KEY).exists()
+
+
+def test_review_close_refuses_to_delete_through_a_symlinked_playbill_directory(
+    tmp_path: Path,
+) -> None:
+    workspace, ledger = _repositories(tmp_path, "sha1")
+    assert (
+        advertise_workspace_refs(
+            workspace_root=workspace,
+            ledger_path=ledger,
+            ledger_object_format="sha1",
+        ).status
+        == "updated"
+    )
+    outside = tmp_path / "outside"
+    review_root = outside / "review"
+    review_root.mkdir(parents=True)
+    target = review_root / PROPOSAL_KEY
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(workspace),
+            "worktree",
+            "add",
+            "--detach",
+            str(target),
+            f"refs/remotes/playbill/proposals/{PROPOSAL_KEY}",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    (workspace / ".playbill").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="escapes the Git worktree") as caught:
+        close_proposal_review_worktree(
+            workspace_path=workspace,
+            proposal_id=PROPOSAL_KEY,
+        )
+
+    assert str(workspace / ".playbill") in str(caught.value)
+    assert target.is_dir()
+
+
+def test_review_close_prunes_a_missing_registered_worktree(tmp_path: Path) -> None:
+    workspace, ledger = _repositories(tmp_path, "sha1")
+    assert (
+        advertise_workspace_refs(
+            workspace_root=workspace,
+            ledger_path=ledger,
+            ledger_object_format="sha1",
+        ).status
+        == "updated"
+    )
+    opened = open_proposal_review_worktree(
+        workspace_path=workspace,
+        proposal_id=PROPOSAL_KEY,
+    )
+    shutil.rmtree(opened)
+
+    closed = close_proposal_review_worktree(
+        workspace_path=workspace,
+        proposal_id=PROPOSAL_KEY,
+    )
+
+    assert closed == opened
+    worktrees = _git(workspace, "worktree", "list", "--porcelain")
+    assert str(opened) not in worktrees
 
 
 def test_advertisement_does_not_fetch_ledger_tags(tmp_path: Path) -> None:
