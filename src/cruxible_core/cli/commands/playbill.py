@@ -1003,6 +1003,12 @@ def open_review(
     )
     advertisement = inspection.workspace_advertisement
     if advertisement.status != "updated":
+        if advertisement.status == "not_attached":
+            raise click.ClickException(
+                "review_workspace_not_attached: this host has no registered review worktree; "
+                "repair: cruxible --server-socket SOCKET playbill host create "
+                "--workspace WORKSPACE"
+            )
         reason = advertisement.failure_code or advertisement.status
         raise click.ClickException(f"proposal refs could not be refreshed: {reason}")
     admission = inspection.proposal.get("admission")

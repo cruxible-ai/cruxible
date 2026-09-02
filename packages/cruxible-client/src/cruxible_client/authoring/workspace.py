@@ -13,12 +13,14 @@ import json
 import os
 import secrets
 import shutil
+import subprocess
 import tempfile
 import unicodedata
 from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from tempfile import NamedTemporaryFile
 from typing import Any, Literal, Protocol, cast
+from urllib.parse import urlsplit
 
 from cruxible_client import contracts
 from cruxible_client.authoring.blocks import (
@@ -46,6 +48,7 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.workspace_layout import PLAYBILL_FLOOR_PATH
 
 _CONFIG_PATH = PurePosixPath(".playbill/coverage.json")
+_CONFIG_EXCLUDE_RULE = b"/.playbill/coverage.json\n"
 _FLOOR_DOMAIN = "playbill-floor-export-v2"
 _WORKSPACE_CONFIG_TAG = "playbill-coverage-workspace-config-v2"
 _FLOOR_OUTPUT = {
@@ -82,7 +85,102 @@ def _contains_secret_field(value: object) -> bool:
                 return True
     elif isinstance(value, list | tuple):
         return any(_contains_secret_field(child) for child in value)
+    elif isinstance(value, str):
+        try:
+            parsed = urlsplit(value)
+        except ValueError:
+            return False
+        return parsed.username is not None or parsed.password is not None
     return False
+
+
+def _workspace_git_common_dir(workspace: Path) -> Path | None:
+    environment = {
+        key: os.environ[key]
+        for key in ("PATH", "TMPDIR", "TMP", "TEMP", "SYSTEMROOT")
+        if key in os.environ
+    }
+    environment.update(
+        {
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_TERMINAL_PROMPT": "0",
+            "LC_ALL": "C",
+        }
+    )
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(workspace),
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-common-dir",
+            ],
+            check=False,
+            capture_output=True,
+            env=environment,
+            text=True,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    try:
+        return Path(result.stdout.strip()).resolve(strict=True)
+    except OSError as exc:
+        raise PlaybillWorkspaceError(f"Git common directory cannot be resolved: {exc}") from exc
+
+
+def _ensure_workspace_config_ignored(workspace: Path) -> None:
+    common_dir = _workspace_git_common_dir(workspace)
+    if common_dir is None:
+        return
+    info_dir = common_dir / "info"
+    exclude_path = info_dir / "exclude"
+    if info_dir.is_symlink() or exclude_path.is_symlink():
+        raise PlaybillWorkspaceError("Git info/exclude path must not be a symbolic link")
+    try:
+        info_dir.mkdir(parents=True, exist_ok=True)
+        existing = exclude_path.read_bytes() if exclude_path.exists() else b""
+    except OSError as exc:
+        raise PlaybillWorkspaceError(f"Git info/exclude cannot be read: {exc}") from exc
+    if _CONFIG_EXCLUDE_RULE.rstrip(b"\n") in existing.splitlines():
+        return
+    content = existing
+    if content and not content.endswith(b"\n"):
+        content += b"\n"
+    content += _CONFIG_EXCLUDE_RULE
+    temporary: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            mode="wb",
+            prefix=".exclude.",
+            dir=info_dir,
+            delete=False,
+        ) as output:
+            temporary = Path(output.name)
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+        assert temporary is not None
+        mode = exclude_path.stat().st_mode & 0o777 if exclude_path.exists() else 0o644
+        os.chmod(temporary, mode)
+        os.replace(temporary, exclude_path)
+        temporary = None
+        descriptor = os.open(info_dir, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        raise PlaybillWorkspaceError(
+            f"Git info/exclude could not be written atomically: {exc}"
+        ) from exc
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def _read_workspace_config(path: Path) -> dict[str, Any] | None:
@@ -159,6 +257,11 @@ def _planned_workspace_config(
     transports = [value for value in (server_url, server_socket) if value is not None]
     if len(transports) != 1 or not transports[0].strip():
         raise PlaybillWorkspaceError("workspace config requires exactly one nonempty transport")
+    if _contains_secret_field({"transport": transports[0]}):
+        raise PlaybillWorkspaceError(
+            "workspace config refuses URL user information; pass credentials with "
+            "CRUXIBLE_SERVER_BEARER_TOKEN"
+        )
     path = root / _CONFIG_PATH
     try:
         existing = _read_workspace_config(path)
@@ -236,6 +339,7 @@ def write_playbill_workspace_config(
         replace=replace,
     )
     assert desired is not None
+    _ensure_workspace_config_ignored(path.parent.parent)
     if current:
         return path
     _atomic_write_workspace_config(path, desired)

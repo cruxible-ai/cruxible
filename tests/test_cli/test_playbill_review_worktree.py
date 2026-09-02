@@ -89,3 +89,43 @@ def test_review_open_resolves_canonical_id_and_close_stays_local(
     ]
     assert '"detached": true' in opened_result.output
     assert '"closed": true' in closed_result.output
+
+
+def test_review_open_not_attached_names_a_runnable_local_socket_repair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubClient:
+        def inspect_playbill_proposal(
+            self, instance_id: str, proposal_id: str
+        ) -> contracts.PlaybillProposalInspection:
+            return _inspection().model_copy(
+                update={
+                    "workspace_advertisement": contracts.PlaybillWorkspaceAdvertisement(
+                        status="not_attached",
+                        workspace_path=None,
+                    )
+                }
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://review.example.test",
+            "--instance-id",
+            "inst_review",
+            "playbill",
+            "review",
+            "open",
+            "short-id",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "review_workspace_not_attached" in result.output
+    assert (
+        "cruxible --server-socket SOCKET playbill host create --workspace WORKSPACE"
+        in result.output
+    )

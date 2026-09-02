@@ -1,8 +1,8 @@
 # Canonical repository and daemon layout
 
-Cruxible keeps shareable workspace configuration, derived local views, and
-daemon authority in separate locations. No daemon key, bearer credential,
-accepted ledger, or trust root belongs in the source repository.
+Cruxible keeps shareable source declarations, machine-local attachment config,
+tracked local views, and daemon authority in separate locations. No daemon key,
+bearer credential, accepted ledger, or trust root belongs in the source repository.
 
 ## Workspace
 
@@ -16,17 +16,20 @@ accepted ledger, or trust root belongs in the source repository.
     floor/
 ~~~
 
-`sources.yaml`, `coverage.json`, and `presentation-policy.json` are shareable,
-workspace-local, ungoverned configuration: they never enter the accepted tree
-or grant authority. The optional `server_socket` field is a local attachment
+`sources.yaml` and `presentation-policy.json` are shareable workspace-local,
+ungoverned configuration: they never enter the accepted tree or grant authority.
+`coverage.json` is per-machine attachment and coverage configuration. The attach
+writer adds it to the repository's `.git/info/exclude`; it never asks the user to
+commit a socket path. The optional `server_socket` field is a local attachment
 transport in both retained coverage-config spellings; adding it does not create
 a governed artifact revision. `sources.local.yaml` is an optional machine-local
-overlay and must be ignored. `.playbill/floor/` is a derived, exactly replaceable
-cache and must also be ignored. A typical ignore fragment is:
+overlay and must be ignored. The floor is tracked while the config is per-machine:
+`.playbill/floor/` is a derived, exactly replaceable view whose accepted-coordinate
+changes remain visible in ordinary repository review. A typical shared ignore
+fragment is therefore only:
 
 ~~~gitignore
 .playbill/sources.local.yaml
-.playbill/floor/
 ~~~
 
 The floor location is fixed. A v2 `floor_output` declaration enables it but
@@ -42,8 +45,9 @@ does not carry a path:
 }
 ~~~
 
-The floor is excluded from evidence observation, so reading generated cards
-cannot recursively manufacture coverage. Delete and re-export it at any time.
+The tracked floor is excluded from evidence observation, so reading generated
+cards cannot recursively manufacture coverage. Re-export it to replace the view
+at the current accepted coordinate.
 
 The `.yaml` source-catalog names are intentional workspace formats. Governed
 ledger artifacts in the installed PC-HR compiler lineage use the pretty canonical

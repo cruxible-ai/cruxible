@@ -120,16 +120,28 @@ def _walk_roots(start: Path, *, home: Path) -> tuple[Path, ...]:
     )
     if device is None:
         raise PlaybillContextResolutionError(f"workspace discovery cannot inspect {start}")
-    ceiling = home if start.is_relative_to(home) else None
+    if start.is_relative_to(home):
+        ceiling = home
+    else:
+        ceiling = start.parent if start.parent.parent != start.parent else start
+        for candidate in (start, *start.parents):
+            if candidate.parent == candidate:
+                break
+            try:
+                if (candidate / ".git").exists():
+                    ceiling = candidate
+                    break
+            except OSError:
+                break
     roots: list[Path] = []
     for root in (start, *start.parents):
         try:
             if root.stat().st_dev != device:
                 break
         except OSError:
-            continue
+            break
         roots.append(root)
-        if ceiling is not None and root == ceiling:
+        if root == ceiling:
             break
     return tuple(roots)
 

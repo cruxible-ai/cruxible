@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -132,6 +133,39 @@ def test_workspace_config_writer_refuses_differences_and_never_carries_secrets(
         "tag": "playbill-coverage-workspace-config-v2",
     }
     assert "must-not-survive" not in written.read_text(encoding="utf-8")
+
+
+def test_workspace_config_writer_refuses_credentials_embedded_in_url(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    with pytest.raises(PlaybillWorkspaceError, match="CRUXIBLE_SERVER_BEARER_TOKEN"):
+        write_playbill_workspace_config(
+            workspace,
+            instance_id="inst_secret",
+            server_url="https://agent:secret@example.test",
+        )
+
+    assert not (workspace / ".playbill" / "coverage.json").exists()
+
+
+def test_workspace_config_writer_adds_machine_local_git_exclusion(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+
+    write_playbill_workspace_config(
+        workspace,
+        instance_id="inst_local",
+        server_url="https://playbill.example.test",
+    )
+
+    excluded = subprocess.run(
+        ["git", "-C", str(workspace), "check-ignore", "--quiet", ".playbill/coverage.json"],
+        check=False,
+    )
+    assert excluded.returncode == 0
+    assert b"/.playbill/coverage.json\n" in (workspace / ".git/info/exclude").read_bytes()
 
 
 def test_floor_output_writer_upgrades_and_preserves_safe_coverage_rules(tmp_path: Path) -> None:

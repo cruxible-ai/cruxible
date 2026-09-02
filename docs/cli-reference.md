@@ -8,6 +8,7 @@ The public CLI has four top-level command groups.
 --server-url TEXT
 --server-socket TEXT
 --instance-id TEXT
+--no-workspace
 --json-compact
 --version
 ~~~
@@ -126,7 +127,9 @@ also registers the selected Git worktree with the daemon. Every selected
 workspace gets an atomic `.playbill/coverage.json` v2 write containing exactly
 one transport, the instance ID, and the fixed floor profile; bearer credentials
 and secrets are never inputs to that writer. A differing config is refused
-unless `--replace` is explicit.
+unless `--replace` is explicit. Because the binding may carry a local socket,
+the writer adds `.playbill/coverage.json` to this repository's machine-local
+`.git/info/exclude` rather than changing a shared ignore file.
 
 A TCP client never sends its local path to the daemon. Implicit attachment from
 inside a TCP worktree remains refused; explicit `--workspace DIR` instead writes
@@ -369,7 +372,8 @@ journal records and `status` reconstructs the one-read run state from those reco
 
 ~~~text
 cruxible playbill block repin SOURCE_ID BLOCK_ID [--claim ID]... [--query ID]...
-  [--params CANONICAL_JSON]... [--workspace-root DIR] [--evaluation-time TS]
+  [--backing SHA256] [--params CANONICAL_JSON]... [--workspace-root DIR]
+  [--evaluation-time TS]
 cruxible playbill block sync [PATH]... [--all] [--check]
   [--detach PATH]... [--discard-local PATH]... [--workspace-root DIR]
 ~~~
@@ -660,11 +664,13 @@ After an accepted activation, the client runs block sync last unless
 `--no-sync` is explicit. An unattached workspace retains a typed `skipped`
 `workspace_not_attached` row and exits zero; a sync refusal in an attached
 workspace reports the already-accepted truth, names `cruxible playbill block sync
---all`, and exits nonzero. `review open` refreshes the remote refs and creates a detached, gitignored
-worktree at `.playbill/review/<proposal-digest>/`; `review close` removes only a
-clean review worktree. This provides editor/diff access without creating a local
-branch. No review-ref mirror script is needed: standard Git tooling already
-lists the proposal namespace as remote branches.
+--all`, and exits nonzero. `review open` refreshes the remote refs and creates a
+detached, gitignored worktree at `.playbill/review/<proposal-digest>/`; `review
+close` removes only a clean review worktree. A `review_workspace_not_attached`
+refusal names the local-socket `playbill host create --workspace` command needed
+when creating a host that supports review worktrees. This provides editor/diff
+access without creating a local branch. No review-ref mirror script is needed:
+standard Git tooling already lists the proposal namespace as remote branches.
 
 ## playbill principal
 

@@ -10,6 +10,7 @@ from click.testing import CliRunner
 from cruxible_client import Playbill, contracts
 from cruxible_client.authoring.context import (
     PlaybillContextResolutionError,
+    _walk_roots,
     resolve_playbill_context,
 )
 from cruxible_client.authoring.sdk import SDK_CONTRACT_SNAPSHOT_DIGEST
@@ -76,6 +77,8 @@ def test_two_cwds_resolve_their_own_workspace_before_one_global_slot(tmp_path: P
     second = tmp_path / "second"
     _attach(first, instance_id="inst_first", server_url="https://first.example.test")
     _attach(second, instance_id="inst_second", server_url="https://second.example.test")
+    nested = first / "nested"
+    nested.mkdir()
     remembered = {
         "server_url": "https://global.example.test",
         "instance_id": "inst_global",
@@ -84,7 +87,7 @@ def test_two_cwds_resolve_their_own_workspace_before_one_global_slot(tmp_path: P
     first_result = resolve_playbill_context(
         remembered=remembered,
         environ={},
-        cwd=first / "nested",
+        cwd=nested,
     )
     second_result = resolve_playbill_context(
         remembered=remembered,
@@ -221,6 +224,20 @@ def test_workspace_walk_stops_at_home(tmp_path: Path) -> None:
     assert resolved.server_url == "https://mine.example.test"
     assert resolved.instance_id == "inst_mine"
     assert resolved.workspace_source == "local"
+
+
+def test_workspace_walk_outside_home_stops_at_the_containing_repository(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    repository = tmp_path / "external" / "repository"
+    nested = repository / "packages" / "one"
+    home.mkdir()
+    nested.mkdir(parents=True)
+    (repository / ".git").mkdir()
+
+    roots = _walk_roots(nested.resolve(), home=home.resolve())
+
+    assert roots == (nested.resolve(), nested.parent.resolve(), repository.resolve())
+    assert Path(nested.anchor) not in roots
 
 
 def test_invalid_ancestor_binding_is_skipped_with_a_warning(tmp_path: Path) -> None:
