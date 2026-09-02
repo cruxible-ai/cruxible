@@ -57,7 +57,10 @@ from cruxible_client.contracts.procedures.contracts import (
     ValidatedProcedureContract,
 )
 from cruxible_client.contracts.procedures.graph import analyze_procedure_v3, analyze_procedure_v4
-from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpecV1
+from cruxible_client.contracts.procedures.line_specs import (
+    AcceptedLineSpecV1,
+    line_identity_digest,
+)
 from cruxible_client.contracts.procedures.models import (
     TERMINAL_REQUIRED_RUNGS,
     CaptureEgressNodeV3,
@@ -246,7 +249,6 @@ PROCEDURE_SEMANTIC_REPLAY_KEY_V4_DOMAIN = "playbill-procedure-semantic-replay-ke
 PROCEDURE_SEMANTIC_REPLAY_KEY_V5_DOMAIN = "playbill-procedure-semantic-replay-key-v5"
 PROCEDURE_INPUT_PROVENANCE_DOMAIN = "playbill-procedure-replay-input-provenance-v1"
 PROCEDURE_LINE_RUN_ID_DOMAIN = "playbill-procedure-line-run-id-v1"
-PROCEDURE_LINE_PARTITION_DOMAIN = "playbill-line-journal-partition-v1"
 PROCEDURE_RUN_ID_V2_DOMAIN = "playbill-procedure-run-id-v2"
 PROCEDURE_RUN_RECEIPT_V2_DOMAIN = "playbill-procedure-run-receipt-v2"
 PROCEDURE_RUN_RECEIPT_V3_DOMAIN = "playbill-procedure-run-receipt-v3"
@@ -1332,11 +1334,7 @@ def verify_line_admission_spec(
 def procedure_line_partition(line_identity: ArtifactIdentity) -> str:
     if line_identity.kind != "Line":
         raise ValueError("Procedure Line partition requires a Line identity")
-    digest = typed_digest(
-        Sha256Value,
-        PROCEDURE_LINE_PARTITION_DOMAIN,
-        {"line_identity": line_identity.model_dump(mode="json")},
-    ).tagged
+    digest = line_identity_digest(line_identity)
     return "line:" + digest.removeprefix("sha256:")
 
 

@@ -639,6 +639,16 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 module="playbill",
                 attr="procedure_group",
             ),
+            "line": _group(
+                "Trigger accepted Lines.",
+                {
+                    "run": _command(
+                        "playbill", "run_line", "Trigger one due accepted Line occurrence."
+                    ),
+                },
+                module="playbill",
+                attr="line_group",
+            ),
             "next": _command("playbill", "next_work", "Read the deterministic repair queue."),
             "audit": _command("playbill", "audit", "Read ranked Claim verification work."),
             "curation": _group(

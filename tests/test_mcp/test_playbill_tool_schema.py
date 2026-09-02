@@ -43,6 +43,22 @@ def test_init_and_explain_publish_their_protocol_enums() -> None:
     assert explain["properties"]["detail"]["enum"] == ["summary", "evidence", "proof"]
 
 
+def test_line_run_schema_exposes_only_daemon_occurrence_assertions() -> None:
+    schema = _schemas()["cruxible_playbill_line_run"].inputSchema
+
+    assert set(schema["properties"]) == {
+        "instance_id",
+        "line_identity_digest",
+        "evaluation_time",
+        "occurrence_id",
+    }
+    assert set(schema["required"]) == {
+        "instance_id",
+        "line_identity_digest",
+        "evaluation_time",
+    }
+
+
 def test_agent_schema_never_accepts_private_keys_or_local_paths() -> None:
     forbidden = {"private_key", "private_key_path", "local_path", "workspace_root"}
     violations: list[str] = []

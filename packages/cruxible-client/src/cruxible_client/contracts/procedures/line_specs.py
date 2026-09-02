@@ -333,6 +333,21 @@ def line_spec_digest(line: LineSpecAny) -> ArtifactDigest:
     )
 
 
+LINE_IDENTITY_DIGEST_DOMAIN = "playbill-line-journal-partition-v1"
+
+
+def line_identity_digest(identity: ArtifactIdentity) -> str:
+    """Return the stable identity carried by served Line-run requests."""
+
+    if identity.kind != "Line":
+        raise ValueError("Line identity digest requires kind Line")
+    return typed_digest(
+        ArtifactDigest,
+        LINE_IDENTITY_DIGEST_DOMAIN,
+        {"line_identity": identity.model_dump(mode="json")},
+    ).tagged
+
+
 class AcceptedLineSpecV1(_StrictLineModel):
     path: str
     line: LineSpecAny
@@ -671,10 +686,12 @@ __all__ = [
     "LineSpecAny",
     "LineSpecV1",
     "LineSpecV2",
+    "LINE_IDENTITY_DIGEST_DOMAIN",
     "ManualTriggerPolicyV1",
     "TriggerPolicyV1",
     "WindowCloseTriggerPolicyV1",
     "evaluate_line_spec_law",
+    "line_identity_digest",
     "line_spec_digest",
     "line_spec_path",
     "parse_line_spec",

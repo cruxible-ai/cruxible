@@ -1680,6 +1680,22 @@ class Playbill:
             self._assert_coordinate(procedure.coordinate)
         return Procedure(self, name, self.coordinate)
 
+    def run_line(
+        self,
+        line_identity_digest: str,
+        *,
+        occurrence_id: str | None = None,
+    ) -> ProcedureRun:
+        """Trigger one daemon-derived occurrence of an accepted Line."""
+
+        result = self._client.run_playbill_line(
+            self._instance_id,
+            line_identity_digest,
+            occurrence_id=occurrence_id,
+            evaluation_time=self._evaluation_time(),
+        )
+        return ProcedureRun(self, result)
+
     def get(self, ref: str | TypedRef) -> KnowledgeCard:
         if isinstance(ref, SubjectRef):
             kind, identifier = _subject_parts(ref.address)

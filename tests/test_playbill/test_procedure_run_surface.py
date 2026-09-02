@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -21,6 +22,14 @@ from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.graph import (
     compute_procedure_definition_digest_v3,
     compute_procedure_definition_digest_v4,
+)
+from cruxible_client.contracts.procedures.line_specs import (
+    AcceptedLineSpecV1,
+    CadenceTriggerPolicyV1,
+    CaptureLandingTriggerPolicyV1,
+    line_identity_digest,
+    line_spec_digest,
+    line_spec_path,
 )
 from cruxible_client.contracts.procedures.models import (
     GuardNodeV3,
@@ -58,6 +67,8 @@ from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.service.playbill_procedure_runs import (
     DirectProcedureReceiptReducer,
+    LineRunIdentityMismatch,
+    LineRunRequestV1,
     ProcedureBindingGraphV4LineClosureRequired,
     ProcedureBindingTargetV1,
     ProcedureBindRequestV1,
@@ -84,6 +95,8 @@ from tests.test_playbill._support import FIXED_TIMESTAMP, initialize_local
 from tests.test_playbill.test_graph_v4_provider_closure import (
     _accepted_procedure as _accepted_provider_v4_procedure,
 )
+from tests.test_playbill.test_line_specs import _digest as _line_digest
+from tests.test_playbill.test_line_specs import _line
 from tests.test_playbill.test_procedure_owned_contracts import (
     _accepted_query_procedure,
     _activate_procedure,
@@ -91,6 +104,161 @@ from tests.test_playbill.test_procedure_owned_contracts import (
 )
 
 READ_TIME = datetime(2026, 8, 24, 16, 0, tzinfo=UTC)
+
+
+def _accepted_line(line) -> AcceptedLineSpecV1:  # type: ignore[no-untyped-def]
+    return AcceptedLineSpecV1(
+        path=line_spec_path(line.identity.name),
+        line=line,
+        artifact_digest=line_spec_digest(line).tagged,
+    )
+
+
+def test_line_run_request_requires_one_route_and_body_identity() -> None:
+    digest = _line_digest("line")
+    with pytest.raises(LineRunIdentityMismatch, match="route and request"):
+        procedure_run_service.service_run_playbill_line(
+            SimpleNamespace(),  # type: ignore[arg-type]
+            path_identity_digest=digest,
+            request=LineRunRequestV1(
+                line_identity_digest=_line_digest("other"),
+                evaluation_time=READ_TIME,
+            ),
+            actor_context=SimpleNamespace(),  # type: ignore[arg-type]
+            caller_rung=0,
+        )
+
+
+def test_line_without_current_exact_mandate_refuses_typed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    line, accepted, _interfaces = _line()
+    accepted_line = _accepted_line(line)
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_line_by_identity_digest",
+        lambda *_args, **_kwargs: accepted_line,
+    )
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_procedure",
+        lambda *_args, **_kwargs: accepted,
+    )
+    monkeypatch.setattr(procedure_run_service, "_assert_line_closure_complete", lambda *_a: None)
+    monkeypatch.setattr(procedure_run_service, "_line_catalogs", lambda *_a: ({}, {}))
+    monkeypatch.setattr(
+        procedure_run_service,
+        "evaluate_line_spec_law",
+        lambda *_args, **_kwargs: SimpleNamespace(verdict="accepted"),
+    )
+    monkeypatch.setattr(procedure_run_service, "_accepted_line_mandates", lambda *_a, **_k: ())
+
+    result = procedure_run_service.service_run_playbill_line(
+        instance,
+        path_identity_digest=line_identity_digest(line.identity),
+        request=LineRunRequestV1(
+            line_identity_digest=line_identity_digest(line.identity),
+            evaluation_time=READ_TIME,
+        ),
+        actor_context=_actor(instance),
+        caller_rung=3,
+    )
+
+    assert result.status == "admission_refused"
+    assert isinstance(result.terminal, ProcedureAdmissionRefusalV1)
+    assert result.terminal.code == "line_mandate_required"
+    assert "accept a ProcedureMandate" in str(result.terminal.details)
+
+
+def test_line_closure_loss_refuses_before_mandate_or_occurrence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    line, accepted, _interfaces = _line()
+    accepted_line = _accepted_line(line)
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_line_by_identity_digest",
+        lambda *_args, **_kwargs: accepted_line,
+    )
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_procedure",
+        lambda *_args, **_kwargs: accepted,
+    )
+
+    result = procedure_run_service.service_run_playbill_line(
+        instance,
+        path_identity_digest=line_identity_digest(line.identity),
+        request=LineRunRequestV1(
+            line_identity_digest=line_identity_digest(line.identity),
+            evaluation_time=READ_TIME,
+        ),
+        actor_context=_actor(instance),
+        caller_rung=3,
+    )
+
+    assert result.status == "admission_refused"
+    assert isinstance(result.terminal, ProcedureAdmissionRefusalV1)
+    assert result.terminal.code == "line_closure_incomplete"
+    assert "Restore or succeed" in str(result.terminal.details)
+
+
+def test_daemon_derives_manual_cadence_and_capture_occurrences() -> None:
+    manual, _accepted, _interfaces = _line()
+    manual_line = _accepted_line(manual)
+    coordinate = SimpleNamespace(git_oid="a" * 40)
+    first, next_due, awaited = procedure_run_service._line_occurrence(  # noqa: SLF001
+        {},
+        manual_line,
+        coordinate=coordinate,
+        evaluation_time=READ_TIME,
+        prior=(),
+    )
+    assert first.startswith("sha256:")
+    assert next_due is None and awaited is None
+
+    cadence, _accepted, _interfaces = _line(
+        trigger=CadenceTriggerPolicyV1(cadence_policy_digest=_line_digest("hourly"))
+    )
+    cadence_line = _accepted_line(cadence)
+    prior = SimpleNamespace(
+        occurrence_evaluation_time=READ_TIME,
+        bound_coordinate=SimpleNamespace(git_oid="9" * 40),
+    )
+    _occurrence, next_due, awaited = procedure_run_service._line_occurrence(  # noqa: SLF001
+        {"policies/hourly.json": b'{"interval_seconds":3600}'},
+        cadence_line,
+        coordinate=coordinate,
+        evaluation_time=READ_TIME + timedelta(minutes=30),
+        prior=(prior,),  # type: ignore[arg-type]
+    )
+    assert next_due == READ_TIME + timedelta(hours=1)
+    assert awaited is None
+
+    capture, _accepted, _interfaces = _line(
+        trigger=CaptureLandingTriggerPolicyV1(
+            anchor_capture_contract_digest=_line_digest("anchor-capture"),
+            landing_filter_digest=_line_digest("landing-filter"),
+        )
+    )
+    _occurrence, next_due, awaited = procedure_run_service._line_occurrence(  # noqa: SLF001
+        {},
+        _accepted_line(capture),
+        coordinate=coordinate,
+        evaluation_time=READ_TIME + timedelta(hours=1),
+        prior=(
+            SimpleNamespace(
+                occurrence_evaluation_time=READ_TIME,
+                bound_coordinate=coordinate,
+            ),
+        ),  # type: ignore[arg-type]
+    )
+    assert next_due is None
+    assert awaited == capture.trigger_policy.anchor_capture_contract_digest
 
 
 def test_genesis_evaluation_time_comes_from_the_signed_commit(tmp_path: Path) -> None:

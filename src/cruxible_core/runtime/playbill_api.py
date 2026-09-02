@@ -184,12 +184,14 @@ from cruxible_core.service.playbill_next import (
 )
 from cruxible_core.service.playbill_policies import list_playbill_policies_in_force
 from cruxible_core.service.playbill_procedure_runs import (
+    LineRunRequestV1,
     ProcedureBindRequestV1,
     ProcedureReadinessRequestV1,
     ProcedureRunRequestV2,
     service_bind_playbill_procedure,
     service_get_playbill_procedure_run,
     service_playbill_procedure_readiness,
+    service_run_playbill_line,
     service_run_playbill_procedure,
 )
 from cruxible_core.service.playbill_projection_sync import (
@@ -1488,6 +1490,28 @@ def playbill_procedure_run_status(
     result = service_get_playbill_procedure_run(
         get_playbill_manager().get(instance_id),
         run_id=run_id,
+    )
+    return contracts.PlaybillProcedureRunState.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_line_run(
+    instance_id: str,
+    line_identity_digest: str,
+    *,
+    request: LineRunRequestV1,
+) -> contracts.PlaybillProcedureRunState:
+    check_permission("cruxible_playbill_line_run", instance_id=instance_id)
+    actor = _actor_context()
+    if actor is None:
+        raise AuthenticationError("Line run requires an authenticated actor identity")
+    manager = get_playbill_manager()
+    result = service_run_playbill_line(
+        manager.get(instance_id),
+        path_identity_digest=line_identity_digest,
+        request=request,
+        actor_context=actor,
+        caller_rung=get_current_mode().value - 1,
+        provider_runtime_operator=manager.provider_runtime_operator(),
     )
     return contracts.PlaybillProcedureRunState.model_validate(result.model_dump(mode="json"))
 

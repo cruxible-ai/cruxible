@@ -509,6 +509,52 @@ def test_sdk_procedure_run_sends_at_only_for_an_explicit_replay(tmp_path: Path) 
     assert client.runs[1]["at"] == _COORDINATE
 
 
+def test_sdk_line_run_carries_the_asserted_identity_and_occurrence(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+
+    class LineClient(_Client):
+        def __init__(self) -> None:
+            super().__init__()
+            self.line_request: dict[str, object] = {}
+
+        def run_playbill_line(
+            self,
+            _instance_id: str,
+            line_identity_digest: str,
+            **values: object,
+        ) -> api.PlaybillProcedureRunState:
+            self.line_request = {"line_identity_digest": line_identity_digest, **values}
+            return api.PlaybillProcedureRunState(
+                run_id="RUN-" + "b" * 64,
+                procedure_identity={"kind": "Procedure", "name": "daily-summary"},
+                procedure_artifact_digest=_DIGEST,
+                bound_coordinate=_COORDINATE,
+                head_at_admission=_COORDINATE,
+                lane="current",
+                evaluation_time=str(values["evaluation_time"]),
+                status="succeeded",
+                pending_inputs=[],
+                outcomes=[],
+                next_operation={"kind": "done"},
+                result={"ok": True},
+            )
+
+    client = LineClient()
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_test",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
+    )
+
+    assert pb.run_line(_DIGEST, occurrence_id="sha256:" + "c" * 64).status == "succeeded"
+    assert client.line_request == {
+        "line_identity_digest": _DIGEST,
+        "occurrence_id": "sha256:" + "c" * 64,
+        "evaluation_time": "2026-08-24T12:00:00+00:00",
+    }
+
+
 def test_sdk_plain_retirement_replay_uses_accepted_operation_coordinate(
     tmp_path: Path,
 ) -> None:

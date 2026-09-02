@@ -142,7 +142,10 @@ from cruxible_core.playbill.workspace_advertisement import (
     containing_git_workspace_root,
     open_proposal_review_worktree,
 )
-from cruxible_core.service.playbill_procedure_runs import ProcedureBindRequestV1
+from cruxible_core.service.playbill_procedure_runs import (
+    LineRunRequestV1,
+    ProcedureBindRequestV1,
+)
 
 ResultT = TypeVar("ResultT")
 _ISO8601_DURATION = re.compile(
@@ -3206,6 +3209,46 @@ def procedure_run_status(run_id: str, output_json: bool) -> None:
         command_name="playbill procedure status",
     )
     _emit_json(result.model_dump(mode="json"))
+
+
+@playbill_group.group("line")
+def line_group() -> None:
+    """Trigger accepted Lines."""
+
+
+@line_group.command("run")
+@click.argument("line_identity_digest")
+@click.option("--occurrence-id", default=None, help="Assert the daemon-derived occurrence id.")
+@click.option("--evaluation-time", required=True, help="Explicit ISO-8601 evaluation time.")
+@json_option
+@handle_errors
+def run_line(
+    line_identity_digest: str,
+    occurrence_id: str | None,
+    evaluation_time: str,
+    output_json: bool,
+) -> None:
+    request = LineRunRequestV1.model_validate(
+        {
+            "line_identity_digest": line_identity_digest,
+            "occurrence_id": occurrence_id,
+            "evaluation_time": evaluation_time,
+        }
+    )
+    result = _server_call(
+        lambda client, instance_id: client.run_playbill_line(
+            instance_id,
+            line_identity_digest,
+            occurrence_id=request.occurrence_id,
+            evaluation_time=request.evaluation_time.isoformat(),
+        ),
+        command_name="playbill line run",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(f"{result.run_id or line_identity_digest}: {result.status}")
+    click.echo(f"Next: {result.next_operation['kind']}")
 
 
 @playbill_group.command("next")

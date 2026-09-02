@@ -281,15 +281,21 @@ def _mandate_term(
     *,
     mandate_grants: Mapping[str, MandateGrantV1],
     mandate_coordinate_digest: str,
+    procedure_mandate_rung: int | None,
 ) -> EffectiveRungTermReadingV1:
     # StandingMandate is a Provider/CaptureContract/ClaimType grant and cannot
     # be reinterpreted as Procedure authority. P2-C binds the exact
     # ProcedureMandate in the dark v2 request; the executable fold follows B2.
     del mandate_grants
+    rung = MANDATE_FREE_RUNG_CEILING if procedure_mandate_rung is None else procedure_mandate_rung
     return EffectiveRungTermReadingV1(
         term="mandate_grant",
-        rung=MANDATE_FREE_RUNG_CEILING,
-        reason="No exact Procedure mandate is bound; rung 2 and rung 3 are unavailable.",
+        rung=rung,
+        reason=(
+            "No exact Procedure mandate is bound; rung 2 and rung 3 are unavailable."
+            if procedure_mandate_rung is None
+            else f"The exact accepted Procedure mandate grants rung {procedure_mandate_rung}."
+        ),
         basis_digest=mandate_coordinate_digest,
     )
 
@@ -346,6 +352,7 @@ def compute_effective_rung(
     sensitivity_policy_digest: str,
     mandate_coordinate_digest: str,
     calibration_coordinate_digest: str,
+    procedure_mandate_rung: int | None = None,
 ) -> EffectiveRungV1:
     """Fold the five §8.5.1 terms; each may narrow the result and none may widen it.
 
@@ -379,6 +386,7 @@ def compute_effective_rung(
         _mandate_term(
             mandate_grants=mandate_grants,
             mandate_coordinate_digest=mandate_coordinate_digest,
+            procedure_mandate_rung=procedure_mandate_rung,
         ),
         _calibration_term(
             calibration_caps=calibration_caps,

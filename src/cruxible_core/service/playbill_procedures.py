@@ -23,6 +23,7 @@ from cruxible_core.playbill.exhaust import (
     evaluate_exhaust_promotion_law,
 )
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.procedures.egress import EffectiveRungV1
 from cruxible_core.playbill.procedures.execution import (
     ContractValidatorProtocol,
     PreparedProcedureRunV1,
@@ -194,6 +195,8 @@ def service_execute_direct_procedure(
     provider_runtime_invoker: ProviderRuntimeInvokerProtocol | None = None,
     provider_runtime_invoker_factory: Callable[[], ProviderRuntimeInvokerProtocol] | None = None,
     workspace_file_reader: WorkspaceFileReader | None = None,
+    slot_pins: Mapping[str, ArtifactPin] | None = None,
+    effective_rung: EffectiveRungV1 | None = None,
     clock: ProcedureClockProtocol | None = None,
 ) -> ProcedureRunResultV1:
     """Execute through the shared runtime; no transport duplicates orchestration."""
@@ -212,6 +215,8 @@ def service_execute_direct_procedure(
             provider_runtime_invoker=provider_runtime_invoker,
             provider_runtime_invoker_factory=provider_runtime_invoker_factory,
             workspace_file_reader=workspace_file_reader,
+            slot_pins=slot_pins,
+            effective_rung=effective_rung,
             clock=clock,
         ).execute(prepared, accepted)
     finally:

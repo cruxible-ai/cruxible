@@ -1164,6 +1164,25 @@ class CruxibleClient:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/procedure-runs/{run_id}")
         return self._parse_model(response, contracts.PlaybillProcedureRunState)
 
+    def run_playbill_line(
+        self,
+        instance_id: str,
+        line_identity_digest: str,
+        *,
+        occurrence_id: str | None,
+        evaluation_time: str,
+    ) -> contracts.PlaybillProcedureRunState:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/lines/{line_identity_digest}/runs",
+            json={
+                "tag": "playbill-line-run-request-v1",
+                "line_identity_digest": line_identity_digest,
+                "occurrence_id": occurrence_id,
+                "evaluation_time": evaluation_time,
+            },
+        )
+        return self._parse_model(response, contracts.PlaybillProcedureRunState)
+
     def next_playbill(
         self,
         instance_id: str,

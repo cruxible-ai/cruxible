@@ -30,6 +30,13 @@ ProcedureAdmissionRefusalCodeV1: TypeAlias = Literal[
     "provider_explicit_implementation_required",
     "provider_replay_receipt_required",
     "exhaust_binding_carrier_required",
+    "line_identity_mismatch",
+    "line_not_accepted",
+    "line_closure_incomplete",
+    "line_mandate_required",
+    "occurrence_id_mismatch",
+    "occurrence_not_due",
+    "occurrence_already_admitted",
 ]
 ProcedureNodeRefusalCodeV1: TypeAlias = Literal[
     "guard_refused",

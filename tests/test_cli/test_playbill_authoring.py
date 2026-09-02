@@ -42,6 +42,67 @@ COORDINATE = contracts.PlaybillAcceptedCoordinate(
 INTENT_ID = "AIT-" + "5" * 32
 
 
+def test_cli_line_run_forwards_only_the_occurrence_assertion(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    calls: list[tuple[str, str, str | None, str]] = []
+
+    class StubClient:
+        def run_playbill_line(
+            self,
+            instance_id: str,
+            line_identity_digest: str,
+            *,
+            occurrence_id: str | None,
+            evaluation_time: str,
+        ) -> contracts.PlaybillProcedureRunState:
+            calls.append((instance_id, line_identity_digest, occurrence_id, evaluation_time))
+            return contracts.PlaybillProcedureRunState(
+                run_id=None,
+                procedure_identity={"kind": "Procedure", "name": "triage"},
+                procedure_artifact_digest="sha256:" + "9" * 64,
+                bound_coordinate=COORDINATE,
+                head_at_admission=COORDINATE,
+                lane="current",
+                evaluation_time=evaluation_time,
+                status="admission_refused",
+                pending_inputs=[],
+                outcomes=[],
+                next_operation={"kind": "terminal"},
+                terminal={
+                    "tag": "playbill-procedure-admission-refusal-v1",
+                    "classification": "admission_refusal",
+                    "code": "occurrence_not_due",
+                    "message": "not due",
+                    "details": {},
+                    "retryable": False,
+                },
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    digest = "sha256:" + "a" * 64
+    occurrence = "sha256:" + "b" * 64
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://line.example.test",
+            "--instance-id",
+            "inst_line",
+            "playbill",
+            "line",
+            "run",
+            digest,
+            "--occurrence-id",
+            occurrence,
+            "--evaluation-time",
+            "2026-09-02T12:00:00Z",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [("inst_line", digest, occurrence, "2026-09-02T12:00:00+00:00")]
+
+
 def test_cli_compile_reads_payload_and_submit_uses_only_opaque_intent(
     monkeypatch,
     tmp_path: Path,

@@ -67,6 +67,7 @@ from cruxible_core.server.playbill_request_models import (
 )
 from cruxible_core.server.routes import resolve_server_instance_id
 from cruxible_core.service.playbill_procedure_runs import (
+    LineRunRequestV1,
     ProcedureBindRequestV1,
     ProcedureReadinessRequestV1,
     ProcedureRunRequestV2,
@@ -1063,6 +1064,22 @@ def run_procedure(
     return playbill_api.playbill_procedure_run(
         resolve_server_instance_id(instance_id),
         name,
+        request=req,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/lines/{line_identity_digest}/runs",
+    response_model=contracts.PlaybillProcedureRunState,
+)
+def run_line(
+    instance_id: str,
+    line_identity_digest: str,
+    req: LineRunRequestV1,
+) -> contracts.PlaybillProcedureRunState:
+    return playbill_api.playbill_line_run(
+        resolve_server_instance_id(instance_id),
+        line_identity_digest,
         request=req,
     )
 

@@ -212,6 +212,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_procedure_run_status": (
         "Use when you need one Procedure run's typed outcomes and exact next operation."
     ),
+    "cruxible_playbill_line_run": (
+        "Trigger one due accepted Line occurrence. Reuse a returned occurrence id only as an "
+        "idempotency assertion; the daemon derives occurrence identity."
+    ),
     "cruxible_playbill_discover": (
         "Use when you do not yet know which interface or Subject names the state you want."
     ),

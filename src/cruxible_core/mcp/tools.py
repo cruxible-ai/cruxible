@@ -640,6 +640,21 @@ def register_tools(
         return handlers.handle_playbill_procedure_run_status(instance_id, run_id)
 
     @_tool
+    def cruxible_playbill_line_run(
+        instance_id: str,
+        line_identity_digest: str,
+        evaluation_time: str,
+        occurrence_id: str | None = None,
+    ) -> contracts.PlaybillProcedureRunState:
+        """Trigger one due occurrence of an accepted Line."""
+        return handlers.handle_playbill_line_run(
+            instance_id,
+            line_identity_digest,
+            occurrence_id=occurrence_id,
+            evaluation_time=evaluation_time,
+        )
+
+    @_tool
     def cruxible_playbill_discover(
         instance_id: str,
         query: str | None = None,

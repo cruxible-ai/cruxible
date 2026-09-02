@@ -25,6 +25,7 @@ from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpecV1,
     LineSpecV2,
     evaluate_line_spec_law,
+    line_identity_digest,
     line_spec_digest,
     line_spec_path,
 )
@@ -67,6 +68,7 @@ from cruxible_core.playbill.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_INTERFACE_ID,
     workspace_file_interface_registration,
 )
+from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.playbill_manager import PlaybillInstanceManager
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
 from cruxible_core.service.playbill_procedure_runs import ProcedureRunRecoveryRequired
@@ -237,6 +239,7 @@ def _rebind_prepared_line(
 def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
     request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
+    playbill_http,
 ) -> None:
     state_root = Path(tempfile.mkdtemp(prefix=".provider-state-", dir=Path.cwd()))
     request.addfinalizer(lambda: shutil.rmtree(state_root, ignore_errors=True))
@@ -350,35 +353,6 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
         implementation.implementation_digest,
         deployment,
     ).binding
-    occurrence = SimpleNamespace(
-        local_execution=admitted_binding,
-        provider_artifact_digest=accepted_provider.artifact_digest,
-        interface_artifact_digest=interface.artifact_digest,
-        implementation_digest=implementation.implementation_digest,
-        secret_plan=ProviderSecretResolutionPlanV1(),
-    )
-    context = ProviderRuntimeRunContextV1(
-        protocol_version="1.0",
-        run_id="RUN-daemon-operator",
-        interface_id=interface.registration.interface_id,
-        interface_digest=interface.registration.interface_digest,
-        implementation_digest=implementation.implementation_digest,
-        entrypoint=admitted_binding.entrypoint,
-        input={"value": "served"},
-        input_bucket="size=small",
-        budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=65_536),
-    )
-
-    outcome = invoker.invoke_provider(
-        occurrence=occurrence,  # type: ignore[arg-type]
-        context=context,
-        invocation_id=_digest("daemon-invocation"),
-        bound=invoker.bind_provider(occurrence=occurrence),  # type: ignore[arg-type]
-    )
-    assert outcome.envelope.output == {"echo": "served"}
-    assert outcome.verified_binding == admitted_binding
-    assert tuple(operator.process_leases.root.glob("*.json")) == ()
-
     accepted_procedure = _procedure_bound_to_provider(accepted_provider)
     (state_root / "line-service").mkdir()
     prepared, line_fixture = _prepared_v5(
@@ -416,17 +390,47 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
         "PROVIDER_BUCKET_CLASSIFIER_REGISTRY",
         classifier_registry,
     )
-    result = service_execute_direct_procedure(
-        prepared,
-        accepted_procedure,
-        journal=line_fixture.journal,
-        bodies=line_fixture.bodies,
-        run_index_path=state_root / "line-run-index.sqlite",
-        fencing_token="writer",
-        activation_authority=_Authority(accepted_procedure.artifact_digest),
-        contract_validator=_Contracts(),
-        provider_runtime_invoker=invoker,
+
+    def execute_through_line_route(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        result = service_execute_direct_procedure(
+            prepared,
+            accepted_procedure,
+            journal=line_fixture.journal,
+            bodies=line_fixture.bodies,
+            run_index_path=state_root / "line-run-index.sqlite",
+            fencing_token="writer",
+            activation_authority=_Authority(accepted_procedure.artifact_digest),
+            contract_validator=_Contracts(),
+            provider_runtime_invoker=invoker,
+        )
+        monkeypatch.setattr(
+            procedure_run_service,
+            "_records_for_run",
+            lambda _instance, _run_id: line_fixture.journal.all_records(
+                prepared.admission.journal_stream,
+                prepared.admission.journal_partition_id,
+            ),
+        )
+        return procedure_run_service._state_from_records(  # noqa: SLF001
+            SimpleNamespace(body_store=lambda: line_fixture.bodies),  # type: ignore[arg-type]
+            run_id=prepared.admission.run_id,
+            receipt=result.receipt,
+        )
+
+    monkeypatch.setattr(playbill_api, "service_run_playbill_line", execute_through_line_route)
+    client, instance_id, _reviewer_key = playbill_http
+    identity_digest = line_identity_digest(accepted_line.line.identity)
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/lines/{identity_digest}/runs",
+        json={
+            "tag": "playbill-line-run-request-v1",
+            "line_identity_digest": identity_digest,
+            "occurrence_id": None,
+            "evaluation_time": "2026-08-21T12:00:00Z",
+        },
     )
+    assert response.status_code == 200, response.text
+    result = response.json()
     records = line_fixture.journal.all_records(
         prepared.admission.journal_stream,
         prepared.admission.journal_partition_id,
@@ -440,9 +444,9 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
         )
         for item in records
     ]
-    assert result.status == "succeeded", json.dumps(payloads[-1], indent=2)
-    assert result.receipt is not None
-    assert result.output == {"echo": "line-served"}
+    assert result["status"] == "succeeded", json.dumps(payloads[-1], indent=2)
+    assert result["receipt"] is not None
+    assert result["result"] == {"echo": "line-served"}
     assert [item.record.event_kind for item in records].count("provider_invocation_completed") == 1
     assert tuple(operator.process_leases.root.glob("*.json")) == ()
 

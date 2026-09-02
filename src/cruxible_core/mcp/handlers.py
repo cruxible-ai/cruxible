@@ -80,6 +80,7 @@ from cruxible_core.playbill.search import (
 from cruxible_core.runtime import host_api, playbill_api
 from cruxible_core.server.config import get_runtime_bearer_token, resolve_server_settings
 from cruxible_core.service.playbill_procedure_runs import (
+    LineRunRequestV1,
     ProcedureBindRequestV1,
     ProcedureReadinessRequestV1,
     ProcedureRunRequestV2,
@@ -1202,6 +1203,36 @@ def handle_playbill_procedure_run_status(
         lambda client: client.get_playbill_procedure_run(instance_id, run_id),
         lambda: playbill_api.playbill_procedure_run_status(instance_id, run_id),
         operation_name="cruxible_playbill_procedure_run_status",
+    )
+
+
+def handle_playbill_line_run(
+    instance_id: str,
+    line_identity_digest: str,
+    *,
+    occurrence_id: str | None,
+    evaluation_time: str,
+) -> contracts.PlaybillProcedureRunState:
+    request = LineRunRequestV1.model_validate(
+        {
+            "line_identity_digest": line_identity_digest,
+            "occurrence_id": occurrence_id,
+            "evaluation_time": parse_datetime(evaluation_time),
+        }
+    )
+    return _dispatch_remote_or_local(
+        lambda client: client.run_playbill_line(
+            instance_id,
+            line_identity_digest,
+            occurrence_id=request.occurrence_id,
+            evaluation_time=request.evaluation_time.isoformat(),
+        ),
+        lambda: playbill_api.playbill_line_run(
+            instance_id,
+            line_identity_digest,
+            request=request,
+        ),
+        operation_name="cruxible_playbill_line_run",
     )
 
 

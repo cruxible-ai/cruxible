@@ -13,6 +13,7 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from cruxible_client.contracts import ProviderLaneUnavailableCodeV1
+from cruxible_client.contracts.provider_execution import VerifiedProviderBindingV1
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistrationV1,
     parse_provider_interface,
@@ -709,6 +710,52 @@ class ProviderRuntimeOperator:
             driver=self.driver,
         )
         return _OperatorBoundProviderRuntimeInvoker(self, invoker)
+
+    def admit_line_provider(
+        self,
+        accepted_provider: AcceptedProviderV1,
+        accepted_interface: AcceptedProviderInterfaceRegistrationV1,
+        implementation_digest: str,
+        *,
+        eligible_environment_pin_keys: tuple[str, ...],
+    ) -> VerifiedProviderBindingV1:
+        """Resolve one accepted Line closure against operator-owned deployments."""
+
+        with self._lock:
+            self._lazy_rearm_locked()
+            if self.unavailable_reason is not None:
+                raise ProviderLocalRuntimeRefused(
+                    "provider_unavailable",
+                    "Provider runtime is unavailable until operator recovery",
+                    details={
+                        "reason": {
+                            "code": self.unavailable_code or "provider_runtime_recovery_failed",
+                            "detail": self.unavailable_reason,
+                        }
+                    },
+                )
+            candidates = tuple(
+                deployment
+                for _digest, deployment in sorted(self.deployments.items())
+                if deployment.environment_pin_key in eligible_environment_pin_keys
+            )
+        last_refusal: ProviderLocalRuntimeRefused | None = None
+        for deployment in candidates:
+            try:
+                return self.driver.bind(
+                    accepted_provider,
+                    accepted_interface,
+                    implementation_digest,
+                    deployment,
+                ).binding
+            except ProviderLocalRuntimeRefused as exc:
+                last_refusal = exc
+        if last_refusal is not None:
+            raise last_refusal
+        raise ProviderLocalRuntimeRefused(
+            "no_compatible_artifact",
+            "No operator deployment matches the accepted Line environment closure.",
+        )
 
     def _begin_invocation(self) -> None:
         with self._lock:
