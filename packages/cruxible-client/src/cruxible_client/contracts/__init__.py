@@ -142,8 +142,8 @@ class ProviderLaneStatusV1(BaseModel):
 
     @model_validator(mode="after")
     def _state_matches_reason(self) -> ProviderLaneStatusV1:
-        if self.state == "available" and (self.code is not None or self.detail is not None):
-            raise ValueError("available Provider lane cannot carry a refusal reason")
+        if self.state == "available" and self.code is not None:
+            raise ValueError("available Provider lane cannot carry a refusal code")
         if self.state == "unavailable" and (self.code is None or self.detail is None):
             raise ValueError("unavailable Provider lane requires a typed code and detail")
         return self

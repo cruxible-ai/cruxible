@@ -59,7 +59,9 @@ def test_pre_publish_process_table_failure_is_diagnostic_only(
     assert not control_path.exists()
     assert store.diagnostics
     assert "pre-publish process-table failure" in store.diagnostics[0][1]
-    assert operator.lane_status() == ("available", None, None)
+    state, code, detail = operator.lane_status()
+    assert (state, code) == ("available", None)
+    assert detail is not None and "pre-publish process-table failure" in detail
 
 
 def test_all_forced_observations_share_the_diagnostic_only_helper() -> None:

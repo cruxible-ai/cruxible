@@ -60,4 +60,6 @@ def test_transient_process_table_failure_is_diagnostic_only(
     assert operator._observation_diagnostic_count >= 1
     assert operator._last_observation_diagnostic is not None
     assert "transient process-table failure" in operator._last_observation_diagnostic[1]
-    assert operator.lane_status() == ("available", None, None)
+    state, code, detail = operator.lane_status()
+    assert (state, code) == ("available", None)
+    assert detail is not None and "transient process-table failure" in detail

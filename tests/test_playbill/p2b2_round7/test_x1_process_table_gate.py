@@ -117,7 +117,9 @@ def test_one_successful_process_table_read_keeps_a_transient_failure_diagnostic_
     record_path, control_path = store.paths(invocation_id)
     assert not record_path.exists()
     assert not control_path.exists()
-    assert operator.lane_status() == ("available", None, None)
+    state, code, detail = operator.lane_status()
+    assert (state, code) == ("available", None)
+    assert detail is not None and "operating-system process table" in detail
 
 
 def test_a_retained_pre_execution_refusal_folds_on_the_next_manager_recovery(

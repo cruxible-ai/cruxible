@@ -311,6 +311,15 @@ class ProviderRuntimeOperator:
         with self._lock:
             self._observation_diagnostic_count += 1
             self._last_observation_diagnostic = (code, message)
+            self._refresh_lane_status_locked()
+
+    def _observation_diagnostic_detail_locked(self) -> str | None:
+        if self._last_observation_diagnostic is None:
+            return None
+        _code, message = self._last_observation_diagnostic
+        return (
+            f"observation_diagnostics: count={self._observation_diagnostic_count}; last={message}"
+        )
 
     def _reinitialize_failed_construction_stages_locked(self) -> None:
         stages = {
@@ -389,7 +398,11 @@ class ProviderRuntimeOperator:
                 return
             self.unavailable_code = None
             self.unavailable_reason = None
-            self._lane_status_snapshot = ("available", None, None)
+            self._lane_status_snapshot = (
+                "available",
+                None,
+                self._observation_diagnostic_detail_locked(),
+            )
             return
         latest: tuple[ProviderLaneUnavailableCodeV1, str] | None = None
         if self._latest_failure is not None:
@@ -409,7 +422,11 @@ class ProviderRuntimeOperator:
         self.unavailable_reason = (
             f"latest={code}: {message}; codes=[{codes}]; count={self._unavailable_failure_count}"
         )
-        self._lane_status_snapshot = ("unavailable", code, self.unavailable_reason)
+        observation_detail = self._observation_diagnostic_detail_locked()
+        status_detail = self.unavailable_reason
+        if observation_detail is not None:
+            status_detail = f"{status_detail}; {observation_detail}"
+        self._lane_status_snapshot = ("unavailable", code, status_detail)
 
     def recover_all(self) -> ProviderProcessRecoveryResultV1:
         """Recover every persisted process fence before serving requests."""

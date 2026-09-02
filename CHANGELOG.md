@@ -8,7 +8,9 @@
   failures, manager-folded crash recovery, bounded lazy re-arm, and a non-blocking
   Provider-lane status. Local operators can tune the documented
   `daemon/provider-runtime.json`; non-Provider daemon surfaces remain available
-  while that lane is degraded.
+  while that lane is degraded. Transient process-table failures remain
+  diagnostic-only and surface their bounded count and last typed message in the
+  existing Provider-lane detail.
 
 - **Human-readable governed state and a single state root (PC-HR).** Current
   compiler artifacts use pretty canonical JSON at `.json` paths while frozen

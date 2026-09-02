@@ -28,11 +28,14 @@ def test_transient_observation_diagnostics_never_degrade_or_serialize_the_lane(
         "provider_process_lease_invalid",
         "provider_process_lease_invalid: transient process-table hiccup",
     )
-    assert operator.lane_status() == ("available", None, None)
+    state, code, detail = operator.lane_status()
+    assert (state, code) == ("available", None)
+    assert detail is not None and "count=1" in detail
+    assert "transient process-table hiccup" in detail
 
     operator._begin_invocation()
     operator._begin_invocation()
     assert operator._in_flight == 2
     operator._end_invocation()
     operator._end_invocation()
-    assert operator.lane_status() == ("available", None, None)
+    assert operator.lane_status() == (state, code, detail)

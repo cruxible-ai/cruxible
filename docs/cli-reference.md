@@ -59,7 +59,10 @@ for the exact directory contract.
 `server status` and `server info` render `Provider lane:` and, when degraded,
 `Provider lane reason:`. Provider-lane degradation never prevents the daemon's
 non-Provider surfaces from starting, so these lines are the operator's recovery
-signal rather than a daemon-startup failure.
+signal rather than a daemon-startup failure. When transient process-table reads
+fail without degrading the lane, `Provider lane detail:` reports the bounded
+observation-diagnostic count and last typed message; JSON clients read the same
+text in `provider_lane.detail`.
 
 ### Provider runtime operational configuration
 
@@ -77,7 +80,7 @@ has tag `cruxible-provider-runtime-operational-config-v1` and these entries:
 | `secret_writer_join_timeout_seconds` | `5.0` | Secret-pipe writer join deadline. |
 | `stdin_writer_join_timeout_seconds` | `5.0` | Provider-input writer join deadline. |
 | `descendant_tracker_join_timeout_seconds` | `5.0` | Descendant-observer join deadline. |
-| `descendant_tracker_poll_interval_seconds` | `0.1` | Cross-session descendant observation interval while a child is alive; each poll reads the host process table, so shorter intervals trade CPU and process-spawn cost for a smaller best-effort observation window. |
+| `descendant_tracker_poll_interval_seconds` | `0.1` | Cross-session descendant observation interval while a child is alive; each poll reads the host process table, so shorter intervals trade CPU and process-spawn cost for a smaller best-effort observation window. Transient failures appear as bounded observation diagnostics in Provider-lane detail. |
 | `process_group_termination_timeout_seconds` | `5.0` | Child group termination and verification deadline. |
 | `deployments` | `[]` | Digest-keyed local Provider deployment records. |
 

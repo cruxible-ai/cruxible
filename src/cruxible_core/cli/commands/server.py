@@ -236,6 +236,8 @@ def server_status_cmd(output_json: bool) -> None:
         click.echo(
             f"Provider lane reason: {result.provider_lane.code}: {result.provider_lane.detail}"
         )
+    elif result.provider_lane.detail is not None:
+        click.echo(f"Provider lane detail: {result.provider_lane.detail}")
 
 
 @server_group.command("info")
@@ -261,6 +263,8 @@ def server_info_cmd(output_json: bool) -> None:
         click.echo(
             f"Provider lane reason: {result.provider_lane.code}: {result.provider_lane.detail}"
         )
+    elif result.provider_lane.detail is not None:
+        click.echo(f"Provider lane detail: {result.provider_lane.detail}")
 
 
 @server_group.command("restart")
