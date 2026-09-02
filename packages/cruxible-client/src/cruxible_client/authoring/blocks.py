@@ -563,7 +563,7 @@ def sync_projection_blocks(
         content = b""
         try:
             content = path.read_bytes()
-            blocks = parse_projection_blocks(content, source_id=source_id)
+            blocks = parse_projection_blocks(content, source_id=source_id, allow_bootstrap=True)
         except (OSError, ProjectionMarkerError) as exc:
             items.append(_marker_error_item(root=root, path=path, content=content, error=exc))
             continue
@@ -572,7 +572,22 @@ def sync_projection_blocks(
         original_spans: list[tuple[int, int]] = []
         for block in blocks:
             stamp = block.stamp
-            assert stamp is not None
+            if stamp is None:
+                items.append(
+                    PlaybillBlockSyncItemV1(
+                        path=relative,
+                        source_id=source_id,
+                        block_id=block.block_id,
+                        outcome="skipped",
+                        reason="block_unstamped",
+                        repair_commands=(
+                            "cruxible playbill block repin "
+                            f"{shlex.quote(source_id)} {shlex.quote(block.block_id)}",
+                        ),
+                        detail={"message": "unstamped draft blocks are not synchronized"},
+                    )
+                )
+                continue
             if len(stamp.backing) != 1:
                 items.append(
                     PlaybillBlockSyncItemV1(
@@ -744,7 +759,9 @@ def sync_projection_blocks(
             after_outside = _digest(_outside_bytes(replacement, final_spans))
             if before_outside != after_outside:
                 raise ProjectionSyncError("bytes outside synchronized markers changed")
-            final_blocks = parse_projection_blocks(replacement, source_id=source_id)
+            final_blocks = parse_projection_blocks(
+                replacement, source_id=source_id, allow_bootstrap=True
+            )
             final_by_id = {block.block_id: block for block in final_blocks}
             if detach:
                 if set(replacements) & set(final_by_id):
@@ -754,7 +771,7 @@ def sync_projection_blocks(
                     final = final_by_id[block_id]
                     assert final.stamp is not None
                     assert_projection_block_frame(
-                        replacement,
+                        replacement[final.opening_start : final.closing_end],
                         source_id=source_id,
                         block_id=block_id,
                         stamp=final.stamp,

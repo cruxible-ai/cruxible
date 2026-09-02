@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from cruxible_client.contracts import (
     PLAYBILL_HAND_EDIT_NEXT_REASONS,
+    PlaybillBlockSyncReadRequestV1,
     PlaybillNextReason,
     ProviderLaneStatusV1,
 )
@@ -119,6 +120,9 @@ from cruxible_core.service.playbill_claims import (
 from cruxible_core.service.playbill_evidence import (
     current_verified_claim_attestations,
     service_evaluate_playbill_claim_verdict,
+)
+from cruxible_core.service.playbill_projection_sync import (
+    service_read_playbill_block_sync_backing,
 )
 from cruxible_core.service.playbill_publications import bound_publication_registrations
 from cruxible_core.service.playbill_query import build_accepted_query_facts
@@ -2997,6 +3001,7 @@ def _projection_items(
                 )
             visible = True
             stale: list[str] = []
+            body_digest_detail: dict[str, str] = {}
             retired: list[str] = []
             overturned: list[str] = []
             for backing in marker.stamp.backing:
@@ -3061,6 +3066,28 @@ def _projection_items(
             if not visible:
                 continue
             target = f"{source.source_id}#{marker.stamp.block_id}"
+            syncable = (
+                (registration in registrations if registrations is not None else False)
+                and len(marker.stamp.backing) == 1
+                and isinstance(marker.stamp.backing[0], ProjectionClaimBackingV1)
+            )
+            if syncable:
+                sync_read = service_read_playbill_block_sync_backing(
+                    instance,
+                    request=PlaybillBlockSyncReadRequestV1(stamp=marker.stamp),
+                )
+                if (
+                    sync_read.status in {"current", "successor"}
+                    and sync_read.body_digest != marker.stamp.body_digest
+                ):
+                    identity = marker.stamp.backing[0].identity.qualified
+                    if identity not in stale:
+                        stale.append(identity)
+                    assert sync_read.body_digest is not None
+                    body_digest_detail = {
+                        "stamped_body_digest": marker.stamp.body_digest,
+                        "terminal_body_digest": sync_read.body_digest,
+                    }
             identities = tuple(
                 sorted(
                     (backing.identity.qualified for backing in marker.stamp.backing),
@@ -3133,11 +3160,6 @@ def _projection_items(
                 )
             if stale:
                 related = tuple(sorted(stale, key=lambda value: value.encode("utf-8")))
-                syncable = (
-                    (registration in registrations if registrations is not None else False)
-                    and len(marker.stamp.backing) == 1
-                    and isinstance(marker.stamp.backing[0], ProjectionClaimBackingV1)
-                )
                 items.append(
                     _item(
                         severity="repair",
@@ -3148,6 +3170,7 @@ def _projection_items(
                             "source_id": source.source_id,
                             "block_id": marker.stamp.block_id,
                             "stale_backings": list(related),
+                            **body_digest_detail,
                         },
                         repair=PlaybillNextRepairV1(
                             operation=(

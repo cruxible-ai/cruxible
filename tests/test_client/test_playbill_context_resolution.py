@@ -72,6 +72,12 @@ entries:
     )
 
 
+def test_missing_workspace_start_stops_walk_without_probing_parents(tmp_path: Path) -> None:
+    missing = tmp_path / "missing" / "cwd"
+
+    assert _walk_roots(missing, home=tmp_path / "home") == ()
+
+
 def test_two_cwds_resolve_their_own_workspace_before_one_global_slot(tmp_path: Path) -> None:
     first = tmp_path / "first"
     second = tmp_path / "second"

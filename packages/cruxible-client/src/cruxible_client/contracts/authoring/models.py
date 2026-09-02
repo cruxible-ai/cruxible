@@ -2060,6 +2060,7 @@ PlaybillBlockSyncReason: TypeAlias = Literal[
     "workspace_source_catalog_invalid",
     "source_path_invalid",
     "block_marker_malformed",
+    "block_unstamped",
     "block_multi_backing",
     "block_query_backing",
     "block_locally_modified",

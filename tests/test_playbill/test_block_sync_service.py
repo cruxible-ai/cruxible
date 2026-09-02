@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -128,6 +129,125 @@ entries:
     source = root / "work-items.md"
     source.write_bytes(content)
     return source
+
+
+def test_body_only_amend_emits_sync_repair_and_converges_green(tmp_path: Path) -> None:
+    daemon_root = tmp_path / "daemon"
+    workspace_root = tmp_path / "writer"
+    daemon_root.mkdir()
+    workspace_root.mkdir()
+    instance, owner, coordinator, actor, intent_id, preimage, _clock = (
+        _submitted_publication(daemon_root)
+    )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    assert prepared.preparation is not None
+    from cruxible_client.authoring.insertions import apply_playbill_publication
+    from cruxible_core.playbill.authoring.insertions import publication_confirmation_from_source
+
+    landed = apply_playbill_publication(
+        preimage,
+        intent_id=intent_id,
+        expectation=prepared.expectation.model_dump(mode="json"),
+        retained_body=b"status: ready\n",
+    )
+    confirmation = publication_confirmation_from_source(
+        intent_id=intent_id,
+        expectation=prepared.expectation,
+        observation=_observation(landed.content),
+    )
+    assert confirmation is not None
+    assert coordinator.confirm_insertion(
+        intent_id,
+        actor=actor,
+        observation=confirmation,
+    ).outcome == "bound"
+    source = _workspace(
+        workspace_root,
+        instance_id=instance.descriptor.instance_id,
+        content=landed.content,
+    )
+
+    original = coordinator.store.get(intent_id, actor_id=actor.actor_id)
+    revised_body = b"status: body-only revision\n"
+    body_only_payload = _successor_payload(
+        original.semantic_identity,
+        value="ready",
+    ).model_copy(
+        update={
+            "source": SelfSourceBodyV1(
+                content_base64=base64.b64encode(revised_body).decode("ascii")
+            )
+        }
+    )
+    successor = AuthoringIntentCoordinator.for_instance(instance).create(
+        actor=actor,
+        payload=body_only_payload,
+        canonical_timestamp="2026-08-21T12:00:02.000000Z",
+    ).intent
+    submitted = AuthoringIntentCoordinator.for_instance(instance).submit(
+        successor.intent_id,
+        actor=actor,
+    )
+    assert submitted.status.proposal_id is not None
+    assert submitted.status.candidate_digest is not None
+    _activate(
+        instance,
+        owner,
+        proposal_id=submitted.status.proposal_id,
+        candidate_digest=submitted.status.candidate_digest,
+    )
+
+    access_profile = CoverageAccessProfileV1(
+        profile_id="body-only-block-sync-test",
+        permitted_access_classes=("instance", "public"),
+    )
+
+    def observed_next():  # type: ignore[no-untyped-def]
+        observation = observe_playbill_next_workspace(workspace_root)
+        observation, coordinate = observe_playbill_next_workspace_with_coverage(
+            _ServiceClient(instance),  # type: ignore[arg-type]
+            instance.descriptor.instance_id,
+            workspace_root,
+            observation=observation,
+            access_profile=access_profile.model_dump(mode="json"),
+        )
+        assert coordinate is not None
+        return service_playbill_next(
+            instance,
+            request=PlaybillNextRequestV1(
+                at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+                evaluation_time=datetime(2026, 8, 21, 13, tzinfo=UTC),
+                access_profile=access_profile,
+                workspace_observation=PlaybillNextWorkspaceObservationV1.model_validate(
+                    observation
+                ),
+            ),
+        )
+
+    stale = next(
+        item for item in observed_next().items if item.reason == "projection_backing_stale"
+    )
+    assert stale.repair.operation == "playbill.block.sync"
+    assert stale.detail["stamped_body_digest"] == prepared.preparation.body_digest
+    assert stale.detail["terminal_body_digest"] == "sha256:" + hashlib.sha256(
+        revised_body
+    ).hexdigest()
+
+    synced = sync_projection_blocks(
+        _ServiceClient(instance),  # type: ignore[arg-type]
+        instance.descriptor.instance_id,
+        workspace=workspace_root,
+        paths=(source,),
+    )
+    assert [item.outcome for item in synced.items] == ["synced"]
+    assert revised_body in source.read_bytes()
+    assert not [
+        item for item in observed_next().items if item.reason == "projection_backing_stale"
+    ]
 
 
 def test_two_writer_successor_sync_converges_without_mutating_accepted_state(
@@ -275,21 +395,24 @@ def test_two_writer_successor_sync_converges_without_mutating_accepted_state(
     assert stale_row.repair.operation == "playbill.block.sync"
     assert stale_row.repair.command == "cruxible playbill block sync --all"
 
-    source.write_bytes(stamped_content)
     result = sync_projection_blocks(
         _ServiceClient(instance),  # type: ignore[arg-type]
         instance.descriptor.instance_id,
         workspace=workspace_root,
-        paths=(source,),
+        all_sources=True,
     )
 
-    assert [item.outcome for item in result.items] == ["synced"]
+    assert [item.outcome for item in result.items] == ["skipped", "synced"]
+    assert result.items[0].reason == "block_unstamped"
+    assert result.has_refusals is False
     content = source.read_bytes()
     assert content.startswith(b"PREFIX\n") and content.endswith(b"SUFFIX\n")
-    (block,) = parse_projection_blocks(
+    blocks = parse_projection_blocks(
         content[len(b"PREFIX\n") : -len(b"SUFFIX\n")],
         source_id="repo.work-items",
+        allow_bootstrap=True,
     )
+    block = next(item for item in blocks if item.stamp is not None)
     assert block.stamp is not None
     assert block.stamp.backing[0].statement_digest != original_stamp.backing[0].statement_digest
     assert content[len(b"PREFIX\n") + block.body_start : len(b"PREFIX\n") + block.body_end] == (

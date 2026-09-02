@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 
 import pytest
@@ -132,3 +133,51 @@ def test_review_open_not_attached_names_a_runnable_local_socket_repair(
     assert f"cruxible --server-socket {server_socket}" in result.output
     assert f"playbill host create --workspace {tmp_path}" in result.output
     assert "SOCKET" not in result.output and "WORKSPACE" not in result.output
+
+
+def test_review_open_not_attached_url_branch_keeps_a_valid_local_repair(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class StubClient:
+        def inspect_playbill_proposal(
+            self, instance_id: str, proposal_id: str
+        ) -> contracts.PlaybillProposalInspection:
+            return _inspection().model_copy(
+                update={
+                    "workspace_advertisement": contracts.PlaybillWorkspaceAdvertisement(
+                        status="not_attached",
+                        workspace_path=None,
+                    )
+                }
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    workspace = tmp_path / "review workspace"
+    workspace.mkdir()
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://review.example.test",
+            "--instance-id",
+            "inst_review",
+            "playbill",
+            "review",
+            "open",
+            "short-id",
+            "--workspace-root",
+            str(workspace),
+        ],
+    )
+
+    assert result.exit_code == 1
+    repair = result.output.split("repair: ", maxsplit=1)[1].strip()
+    assert shlex.split(repair) == [
+        "cruxible",
+        "playbill",
+        "host",
+        "create",
+        "--workspace",
+        str(workspace.resolve()),
+    ]
