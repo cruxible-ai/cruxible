@@ -23,6 +23,12 @@
   The public `PlaybillBlockSyncOutcome` enum adds `skipped` for an unattached
   activation-driven sync; an explicit unattached `block sync` remains refused.
 
+- **Source execution now lands versioned Capture evidence (P2-B4).** Source
+  occurrences share the governed Provider driver and journal an erasure-safe
+  output commitment before producing Capture v2 envelopes. Provider and
+  Procedure Captures bind exact daemon-resolved producer receipts, while mixed
+  Capture v1/v2 landing and replay preserve every retained v1 wire and digest.
+
 - **Provider local-runtime fences are bounded and observable (P2-B2).** Provider
   child groups are killed and reaped on every completion path, with deterministic
   same-session and best-effort cross-session descendant sweeps, typed process-lease
