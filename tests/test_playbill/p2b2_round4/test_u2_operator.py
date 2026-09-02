@@ -226,19 +226,20 @@ def test_in_flight_is_decremented_on_every_delegate_exception(short_root: Path) 
     assert operator._in_flight == 0
 
 
-def test_a_non_retryable_degradation_never_rearms(short_root: Path) -> None:
-    """Config/containment failures need a restart; confirm that is deliberate."""
+def test_a_construction_degradation_rearms_only_its_failed_stage(short_root: Path) -> None:
+    """A repaired construction stage is retried without rebuilding the operator."""
 
     config = short_root / "daemon" / "provider-runtime.json"
     config.parent.mkdir(parents=True)
     config.write_text("{not json", encoding="utf-8")
     operator = ProviderRuntimeOperator(short_root)
     assert operator.unavailable_reason is not None
-    assert operator._rearm_required is False
+    assert operator._rearm_required is True
     config.write_text(json.dumps({"tag": "cruxible-provider-runtime-operational-config-v1"}))
-    with pytest.raises(ProviderLocalRuntimeRefused):
-        operator._begin_invocation()
-    assert operator.unavailable_reason is not None
+    operator._begin_invocation()
+    operator._end_invocation()
+    assert operator.unavailable_reason is None
+    assert operator.config == operator.config.model_validate_json(config.read_bytes())
 
 
 # ------------------------------------------------------------------ U-5 reason

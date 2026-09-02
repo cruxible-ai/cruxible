@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -36,6 +37,7 @@ from cruxible_core.playbill.provider_process_leases import (
     DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS,
     DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS,
     DEFAULT_PROVIDER_PROCESS_GROUP_TERMINATION_TIMEOUT_SECONDS,
+    DEFAULT_PROVIDER_REARM_BACKOFF_SECONDS,
     DEFAULT_PROVIDER_RECOVERY_AGGREGATE_TIMEOUT_SECONDS,
     DEFAULT_PROVIDER_SECRET_WRITER_JOIN_TIMEOUT_SECONDS,
     DEFAULT_PROVIDER_STDIN_WRITER_JOIN_TIMEOUT_SECONDS,
@@ -48,6 +50,19 @@ from cruxible_core.playbill.provider_process_leases import (
 
 PROVIDER_RUNTIME_CONFIG_PATH = Path("daemon/provider-runtime.json")
 ProviderRecoveryFoldDisposition = Literal["handled", "unclaimed", "fold_failed"]
+_ConstructionStage = Literal[
+    "state root",
+    "operational config",
+    "process lease store",
+    "secret store",
+    "deployment",
+]
+_FILESYSTEM_CONSTRUCTION_STAGES: tuple[_ConstructionStage, ...] = (
+    "operational config",
+    "process lease store",
+    "secret store",
+    "deployment",
+)
 
 
 class _StrictOperationalModel(BaseModel):
@@ -101,6 +116,11 @@ class ProviderRuntimeOperationalConfigV1(_StrictOperationalModel):
             "VALIDITY WINDOW: maximum elapsed duration of one process-fence recovery scan."
         ),
     )
+    rearm_backoff_seconds: float = Field(
+        default=DEFAULT_PROVIDER_REARM_BACKOFF_SECONDS,
+        gt=0,
+        description="VALIDITY WINDOW: minimum interval between lazy recovery attempts.",
+    )
     secret_writer_join_timeout_seconds: float = Field(
         default=DEFAULT_PROVIDER_SECRET_WRITER_JOIN_TIMEOUT_SECONDS,
         gt=0,
@@ -140,11 +160,8 @@ class ProviderRuntimeOperator:
 
     def __init__(self, state_root: Path) -> None:
         self._initialize_degraded(state_root)
-        try:
-            self.state_root = state_root.resolve()
-            self.state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        except (OSError, ProviderLocalRuntimeRefused) as exc:
-            self._mark_construction_failure("state root", exc)
+        if not self._initialize_state_root():
+            self._pending_construction_stages.update(_FILESYSTEM_CONSTRUCTION_STAGES)
             return
         self._initialize_filesystem_components()
 
@@ -164,6 +181,7 @@ class ProviderRuntimeOperator:
         self._lock = threading.RLock()
         self._in_flight = 0
         self._rearm_required = False
+        self._next_rearm_after = 0.0
         self._recovery_fold: (
             Callable[
                 [ProviderProcessRecoveryResultV1],
@@ -171,7 +189,10 @@ class ProviderRuntimeOperator:
             ]
             | None
         ) = None
-        self._unavailable_codes: set[ProviderLaneUnavailableCodeV1] = set()
+        self._construction_failures: dict[str, tuple[ProviderLaneUnavailableCodeV1, str]] = {}
+        self._recovery_failures: dict[ProviderLaneUnavailableCodeV1, str] = {}
+        self._pending_construction_stages: set[_ConstructionStage] = set()
+        self._latest_failure: tuple[Literal["construction", "recovery"], str] | None = None
         self._unavailable_failure_count = 0
         self.unavailable_code: ProviderLaneUnavailableCodeV1 | None = None
         self.unavailable_reason: str | None = None
@@ -189,48 +210,98 @@ class ProviderRuntimeOperator:
         self.driver = LocalProviderExecutionDriver()
         self.deployments: dict[str, LocalProviderDeploymentV1] = {}
 
-    def _initialize_filesystem_components(self) -> None:
+    def _initialize_state_root(self) -> bool:
         try:
-            self.config = self._load_config()
+            self.state_root = self.state_root.resolve()
+            self.state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
         except (OSError, ProviderLocalRuntimeRefused) as exc:
-            self._mark_construction_failure("operational config", exc)
-        try:
-            process_leases = ProviderProcessLeaseStore(
-                self.state_root / "daemon" / "provider-process-leases",
-                control_root=self.state_root / "c",
-                acquisition_timeout_seconds=self.config.lease_acquisition_timeout_seconds,
-                recovery_timeout_seconds=self.config.lease_recovery_timeout_seconds,
-                recovery_aggregate_timeout_seconds=(self.config.recovery_aggregate_timeout_seconds),
-                secret_writer_join_timeout_seconds=(self.config.secret_writer_join_timeout_seconds),
-                stdin_writer_join_timeout_seconds=self.config.stdin_writer_join_timeout_seconds,
-                descendant_tracker_join_timeout_seconds=(
-                    self.config.descendant_tracker_join_timeout_seconds
-                ),
-                descendant_tracker_poll_interval_seconds=(
-                    self.config.descendant_tracker_poll_interval_seconds
-                ),
-                process_group_termination_timeout_seconds=(
-                    self.config.process_group_termination_timeout_seconds
-                ),
-            )
-            process_leases.paths("sha256:" + "0" * 64)
-            self.process_leases = process_leases
-        except (OSError, ProviderLocalRuntimeRefused) as exc:
-            self._mark_construction_failure("process lease store", exc)
-        try:
-            secret_store = FileProviderSecretStore(self.state_root / "daemon" / "provider-secrets")
-            self.secret_store = secret_store
-            self.secret_resolvers = ProviderSecretResolverRegistry(
-                (EnvironmentProviderSecretResolver(), secret_store)
-            )
-        except (OSError, ProviderLocalRuntimeRefused) as exc:
-            self._mark_construction_failure("secret store", exc)
-        try:
-            self.deployments = {
-                item.deployment_digest: self._deployment(item) for item in self.config.deployments
-            }
-        except (OSError, ProviderLocalRuntimeRefused) as exc:
-            self._mark_construction_failure("deployment", exc)
+            self._mark_construction_failure("state root", exc)
+            return False
+        self._clear_construction_failure("state root")
+        return True
+
+    def _initialize_filesystem_components(
+        self,
+        stages: set[_ConstructionStage] | None = None,
+    ) -> None:
+        selected = set(_FILESYSTEM_CONSTRUCTION_STAGES) if stages is None else set(stages)
+        if "operational config" in selected:
+            try:
+                self.config = self._load_config()
+            except (OSError, ProviderLocalRuntimeRefused) as exc:
+                self._mark_construction_failure("operational config", exc)
+            else:
+                self._clear_construction_failure("operational config")
+        if "process lease store" in selected:
+            try:
+                process_leases = ProviderProcessLeaseStore(
+                    self.state_root / "daemon" / "provider-process-leases",
+                    control_root=self.state_root / "c",
+                    acquisition_timeout_seconds=self.config.lease_acquisition_timeout_seconds,
+                    recovery_timeout_seconds=self.config.lease_recovery_timeout_seconds,
+                    recovery_aggregate_timeout_seconds=(
+                        self.config.recovery_aggregate_timeout_seconds
+                    ),
+                    secret_writer_join_timeout_seconds=(
+                        self.config.secret_writer_join_timeout_seconds
+                    ),
+                    stdin_writer_join_timeout_seconds=(
+                        self.config.stdin_writer_join_timeout_seconds
+                    ),
+                    descendant_tracker_join_timeout_seconds=(
+                        self.config.descendant_tracker_join_timeout_seconds
+                    ),
+                    descendant_tracker_poll_interval_seconds=(
+                        self.config.descendant_tracker_poll_interval_seconds
+                    ),
+                    process_group_termination_timeout_seconds=(
+                        self.config.process_group_termination_timeout_seconds
+                    ),
+                )
+                process_leases.paths("sha256:" + "0" * 64)
+                self.process_leases = process_leases
+            except (OSError, ProviderLocalRuntimeRefused) as exc:
+                self._mark_construction_failure("process lease store", exc)
+            else:
+                self._clear_construction_failure("process lease store")
+        if "secret store" in selected:
+            try:
+                secret_store = FileProviderSecretStore(
+                    self.state_root / "daemon" / "provider-secrets"
+                )
+                self.secret_store = secret_store
+                self.secret_resolvers = ProviderSecretResolverRegistry(
+                    (EnvironmentProviderSecretResolver(), secret_store)
+                )
+            except (OSError, ProviderLocalRuntimeRefused) as exc:
+                self._mark_construction_failure("secret store", exc)
+            else:
+                self._clear_construction_failure("secret store")
+        if "deployment" in selected:
+            try:
+                self.deployments = {
+                    item.deployment_digest: self._deployment(item)
+                    for item in self.config.deployments
+                }
+            except (OSError, ProviderLocalRuntimeRefused) as exc:
+                self._mark_construction_failure("deployment", exc)
+            else:
+                self._clear_construction_failure("deployment")
+
+    def _reinitialize_failed_construction_stages_locked(self) -> None:
+        stages = {
+            cast(_ConstructionStage, stage)
+            for stage in self._construction_failures
+            if stage in {"state root", *_FILESYSTEM_CONSTRUCTION_STAGES}
+        }
+        stages.update(self._pending_construction_stages)
+        if "state root" in stages:
+            if not self._initialize_state_root():
+                return
+            stages.remove("state root")
+        filesystem_stages = stages & set(_FILESYSTEM_CONSTRUCTION_STAGES)
+        if filesystem_stages:
+            self._initialize_filesystem_components(filesystem_stages)
 
     def _mark_construction_failure(
         self,
@@ -242,7 +313,20 @@ class ProviderRuntimeOperator:
             if isinstance(exc, ProviderLocalRuntimeRefused)
             else "provider_process_lease_invalid"
         )
-        self.mark_unavailable(code, f"Provider {component} is unavailable: {exc}")
+        message = f"Provider {component} is unavailable: {exc}"
+        with self._lock:
+            self._construction_failures[component] = (code, message)
+            self._pending_construction_stages.discard(cast(_ConstructionStage, component))
+            self._latest_failure = ("construction", component)
+            self._unavailable_failure_count += 1
+            self._rearm_required = True
+            self._refresh_lane_status_locked()
+
+    def _clear_construction_failure(self, component: _ConstructionStage) -> None:
+        with self._lock:
+            self._construction_failures.pop(component, None)
+            self._pending_construction_stages.discard(component)
+            self._refresh_lane_status_locked()
 
     def mark_unavailable(
         self,
@@ -254,20 +338,47 @@ class ProviderRuntimeOperator:
         """Degrade only the Provider lane and preserve an operator-visible reason."""
 
         with self._lock:
-            reason = f"{code}: {message}"
-            self.unavailable_code = code
-            self._unavailable_codes.add(code)
+            typed_code = code
+            if retryable:
+                self._recovery_failures[typed_code] = message
+                self._latest_failure = ("recovery", typed_code)
+            else:
+                key = f"manual:{typed_code}"
+                self._construction_failures[key] = (typed_code, message)
+                self._latest_failure = ("construction", key)
             self._unavailable_failure_count += 1
-            codes = ",".join(sorted(self._unavailable_codes, key=str.encode))
-            self.unavailable_reason = (
-                f"latest={reason}; codes=[{codes}]; count={self._unavailable_failure_count}"
-            )
-            self._lane_status_snapshot = (
-                "unavailable",
-                self.unavailable_code,
-                self.unavailable_reason,
-            )
             self._rearm_required = self._rearm_required or retryable
+            self._refresh_lane_status_locked()
+
+    def _refresh_lane_status_locked(self) -> None:
+        failures = [*self._construction_failures.values()]
+        failures.extend((code, message) for code, message in self._recovery_failures.items())
+        if not failures:
+            if self._rearm_required and self.unavailable_reason is not None:
+                return
+            self.unavailable_code = None
+            self.unavailable_reason = None
+            self._lane_status_snapshot = ("available", None, None)
+            return
+        latest: tuple[ProviderLaneUnavailableCodeV1, str] | None = None
+        if self._latest_failure is not None:
+            category, key = self._latest_failure
+            if category == "construction":
+                latest = self._construction_failures.get(key)
+            else:
+                typed_key = cast(ProviderLaneUnavailableCodeV1, key)
+                message = self._recovery_failures.get(typed_key)
+                if message is not None:
+                    latest = (typed_key, message)
+        if latest is None:
+            latest = failures[-1]
+        code, message = latest
+        codes = ",".join(sorted({item[0] for item in failures}, key=str.encode))
+        self.unavailable_code = code
+        self.unavailable_reason = (
+            f"latest={code}: {message}; codes=[{codes}]; count={self._unavailable_failure_count}"
+        )
+        self._lane_status_snapshot = ("unavailable", code, self.unavailable_reason)
 
     def recover_all(self) -> ProviderProcessRecoveryResultV1:
         """Recover every persisted process fence before serving requests."""
@@ -301,8 +412,12 @@ class ProviderRuntimeOperator:
     def _lazy_rearm_locked(self) -> None:
         if not self._rearm_required or self._in_flight:
             return
+        if time.monotonic() < self._next_rearm_after:
+            return
+        self._reinitialize_failed_construction_stages_locked()
         result = self._recover_locked()
         if result.could_not_clean:
+            self._schedule_next_rearm_locked()
             return
         if result.completion_invocation_ids:
             if self._recovery_fold is None:
@@ -311,19 +426,30 @@ class ProviderRuntimeOperator:
                     "Provider recovery result has no manager-owned journal fold",
                     retryable=True,
                 )
+                self._schedule_next_rearm_locked()
                 return
             dispositions = self._recovery_fold(result)
             if "fold_failed" in dispositions.values():
+                self._schedule_next_rearm_locked()
                 return
         self._mark_available_locked()
+        if self._rearm_required:
+            self._schedule_next_rearm_locked()
 
     def _mark_available_locked(self) -> None:
-        self._rearm_required = False
-        self._unavailable_codes.clear()
-        self._unavailable_failure_count = 0
-        self.unavailable_code = None
-        self.unavailable_reason = None
-        self._lane_status_snapshot = ("available", None, None)
+        self._recovery_failures.clear()
+        self._rearm_required = bool(
+            self._construction_failures or self._pending_construction_stages
+        )
+        self._next_rearm_after = 0.0
+        if not self._rearm_required:
+            self._unavailable_failure_count = 0
+            self._latest_failure = None
+        self._refresh_lane_status_locked()
+
+    def _schedule_next_rearm_locked(self) -> None:
+        self._rearm_required = True
+        self._next_rearm_after = time.monotonic() + self.config.rearm_backoff_seconds
 
     def bind_recovery_fold(
         self,

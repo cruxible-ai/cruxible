@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import cruxible_core.playbill.provider_process_leases as lease_module
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import PlaybillBootstrapError
 from cruxible_core.playbill.provider_process_leases import ProviderLocalRuntimeRefused
@@ -63,6 +64,7 @@ def _wire(
     instances: tuple[str, ...],
     fold: _Fold,
 ) -> PlaybillInstanceManager:
+    monkeypatch.setattr(lease_module, "_current_boot_id", lambda: "test-boot")
     manager = PlaybillInstanceManager()
     records = tuple(
         SimpleNamespace(backend="governed_daemon", instance_id=instance_id)
@@ -101,6 +103,7 @@ def test_owner_failure_retains_only_its_id_then_succeeds(
     assert not records[ids[2]].exists()
     assert sorted(fold.appends) == [ids[0], ids[2]]
 
+    operator._next_rearm_after = 0.0
     operator._begin_invocation()
     operator._end_invocation()
     assert not records[ids[1]].exists()
@@ -139,6 +142,7 @@ def test_uninitialized_instance_is_a_non_owning_skip(
         "cruxible_core.runtime.playbill_manager.get_registry",
         lambda: SimpleNamespace(list_instances=lambda: records),
     )
+    monkeypatch.setattr(lease_module, "_current_boot_id", lambda: "test-boot")
 
     def get(instance_id: str) -> str:
         if instance_id == "inst_bare":
