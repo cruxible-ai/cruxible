@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 from pathlib import Path
 
+from cruxible_client.contracts.acquisition_policies import AcquisitionCandidateV1, select_sources
 from cruxible_client.contracts.capture_journal import (
     CaptureLandingEventV1,
     CaptureLandingEventV2,
@@ -18,6 +19,7 @@ from cruxible_client.contracts.captures import (
 )
 from tests.test_playbill._pc_c_support import NOW
 from tests.test_playbill.p2b4_unit1._support import provider_capture_fixture
+from tests.test_playbill.test_acquisition_policies import _policy, _rule
 
 
 def test_mixed_v1_v2_replay_from_genesis_preserves_every_event_object(
@@ -87,3 +89,37 @@ def test_mixed_v1_v2_replay_from_genesis_preserves_every_event_object(
     assert replayed.events_after() == original
     assert replayed.events_after()[0].model_dump(mode="json") == first.model_dump(mode="json")
     replayed.verify()
+
+    selected = select_sources(
+        _policy(_rule("orders")),
+        (
+            AcquisitionCandidateV1(
+                input_name="orders",
+                envelope=envelope_v1,
+                capture_digest=first.capture_digest,
+                landing_event=first,
+                current_replay_available=True,
+                selection_budget=fixture.contract.selection_budget,
+                selected_bytes=envelope_v1.commitment.byte_length or 0,
+                selected_rows=1,
+                selected_items=1,
+            ),
+            AcquisitionCandidateV1(
+                input_name="orders",
+                envelope=envelope_v2,
+                capture_digest=second.capture_digest,
+                landing_event=second,
+                current_replay_available=True,
+                selection_budget=fixture.contract.selection_budget,
+                selected_bytes=envelope_v2.commitment.byte_length or 0,
+                selected_rows=1,
+                selected_items=1,
+            ),
+        ),
+        anchor=second,
+        evaluation_time=NOW + timedelta(seconds=2),
+    )
+    assert selected.decisions[0].selected_capture_digests == (
+        first.capture_digest,
+        second.capture_digest,
+    )

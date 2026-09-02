@@ -75,9 +75,11 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunReceiptV5,
     ProcedureRunReceiptV6,
     ProcedureSelectionDecisionV1,
+    ProcedureSourceCaptureAssociationV1,
     ProcedureTerminalV1,
 )
 from cruxible_client.contracts.provider_execution import (
+    ProcedureDerivedSourceRequestV1,
     ProviderEgressObservationV1,
     ProviderInvocationCompletedV1,
     ProviderInvocationOutcomeV1,
@@ -133,6 +135,7 @@ from cruxible_core.playbill.procedures.execution import (
     prepare_direct_procedure_run,
     procedure_replay_input_vector,
     resolve_procedure_runtime_policy,
+    run_value_digest,
     verify_line_admission_spec,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -839,7 +842,10 @@ def _state_from_records(
     final = None
     outcomes: list[ProcedureRunOutcomeV1] = []
     invocation_receipt_digests: list[str] = []
+    source_capture_associations: tuple[ProcedureSourceCaptureAssociationV1, ...] = ()
     provider_invocations: dict[str, Literal["started", "completed"]] = {}
+    derived_source_requests: dict[str, ProcedureDerivedSourceRequestV1] = {}
+    produced_source_associations: list[ProcedureSourceCaptureAssociationV1] = []
     for stored in records:
         payload = parse_journal_payload(bodies.read(stored.record.payload_digest, access=access))
         if stored.record.event_kind == "admission_bound":
@@ -883,6 +889,23 @@ def _state_from_records(
             )
         if stored.record.event_kind == "attempt_finalized":
             final = payload
+        if stored.record.event_kind == "source_request_derived":
+            try:
+                derived = ProcedureDerivedSourceRequestV1.model_validate(payload)
+            except (ValidationError, TypeError, ValueError) as exc:
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: derived Source request is invalid"
+                ) from exc
+            if (
+                derived.run_id != run_id
+                or derived.admission_binding_digest != stored.record.admission_binding_digest
+                or derived.occurrence_path in derived_source_requests
+            ):
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: derived Source request does not bind "
+                    "this run exactly"
+                )
+            derived_source_requests[derived.occurrence_path] = derived
         if stored.record.event_kind == "provider_invocation_started":
             try:
                 started = ProviderInvocationStartedV1.model_validate(payload)
@@ -894,6 +917,28 @@ def _state_from_records(
                 raise ProcedureRunRecoveryRequired(
                     f"{ProcedureRunRecoveryRequired.code}: Provider invocation start is duplicated"
                 )
+            planned = (
+                ()
+                if acquisition_plan is None
+                else tuple(
+                    item
+                    for item in acquisition_plan.external_occurrences
+                    if item.occurrence_path == started.occurrence_path
+                )
+            )
+            if len(planned) != 1:
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: Provider start is not admitted exactly"
+                )
+            if planned[0].occurrence_kind == "source":
+                derived_for_start = derived_source_requests.get(started.occurrence_path)
+                if derived_for_start is None or started.input_digest != run_value_digest(
+                    "provider-input", derived_for_start.request
+                ):
+                    raise ProcedureRunRecoveryRequired(
+                        f"{ProcedureRunRecoveryRequired.code}: Source spawn lacks its exact "
+                        "pre-spawn derived request result"
+                    )
             provider_invocations[started.invocation_id] = "started"
         if stored.record.event_kind == "provider_invocation_completed":
             try:
@@ -917,6 +962,30 @@ def _state_from_records(
                 )
             provider_invocations[completed.invocation_id] = "completed"
             invocation_receipt_digests.append(completed.receipt_digest)
+        if stored.record.event_kind == "produced_capture" and isinstance(payload, dict):
+            occurrence_path = payload.get("occurrence_path")
+            invocation_receipt_digest = payload.get("invocation_receipt_digest")
+            if occurrence_path is not None or invocation_receipt_digest is not None:
+                try:
+                    if not isinstance(occurrence_path, str) or not isinstance(
+                        invocation_receipt_digest, str
+                    ):
+                        raise TypeError("Source Capture association is partial")
+                    association = ProcedureSourceCaptureAssociationV1(
+                        occurrence_path=occurrence_path,
+                        invocation_receipt_digest=invocation_receipt_digest,
+                        capture_digest=str(payload.get("capture_digest")),
+                    )
+                except (TypeError, ValueError, ValidationError) as exc:
+                    raise ProcedureRunRecoveryRequired(
+                        f"{ProcedureRunRecoveryRequired.code}: produced Source Capture is invalid"
+                    ) from exc
+                if association.invocation_receipt_digest not in invocation_receipt_digests:
+                    raise ProcedureRunRecoveryRequired(
+                        f"{ProcedureRunRecoveryRequired.code}: produced Source Capture precedes "
+                        "its Provider completion"
+                    )
+                produced_source_associations.append(association)
     if admission is None:
         raise ProcedureRunRecoveryRequired(
             f"{ProcedureRunRecoveryRequired.code}: run lacks a supported admission_bound"
@@ -955,6 +1024,42 @@ def _state_from_records(
     terminal: ProcedureTerminalV1 | None = None
     semantic_result_digest = None
     if isinstance(final, dict):
+        try:
+            raw_associations = final.get("source_capture_associations", [])
+            if not isinstance(raw_associations, list):
+                raise TypeError("Source Capture associations are not a list")
+            source_capture_associations = tuple(
+                ProcedureSourceCaptureAssociationV1.model_validate(item)
+                for item in raw_associations
+            )
+        except (TypeError, ValueError, ValidationError) as exc:
+            raise ProcedureRunRecoveryRequired(
+                f"{ProcedureRunRecoveryRequired.code}: Source Capture associations are invalid"
+            ) from exc
+        if tuple(item.occurrence_path for item in source_capture_associations) != tuple(
+            sorted(
+                {item.occurrence_path for item in source_capture_associations},
+                key=str.encode,
+            )
+        ) or any(
+            item.invocation_receipt_digest not in invocation_receipt_digests
+            for item in source_capture_associations
+        ):
+            raise ProcedureRunRecoveryRequired(
+                f"{ProcedureRunRecoveryRequired.code}: Source Capture associations do not "
+                "match durable Provider receipts"
+            )
+        expected_source_associations = tuple(
+            sorted(
+                produced_source_associations,
+                key=lambda item: item.occurrence_path.encode("utf-8"),
+            )
+        )
+        if source_capture_associations != expected_source_associations:
+            raise ProcedureRunRecoveryRequired(
+                f"{ProcedureRunRecoveryRequired.code}: final Source Capture associations do not "
+                "reproduce produced-Capture events"
+            )
         raw_status = final.get("status")
         if raw_status not in {
             "succeeded",
@@ -1232,7 +1337,7 @@ def _state_from_records(
                     acquisition_plan_digest=acquisition_plan_digest,
                     exhaust_access_binding_digest=(admission.exhaust_access_binding_digest),
                     invocation_receipt_digests=tuple(invocation_receipt_digests),
-                    source_capture_associations=(),
+                    source_capture_associations=source_capture_associations,
                 )
             elif isinstance(admission, ProcedureRunAdmissionV4):
                 public_receipt = ProcedureRunReceiptV5(
@@ -1437,10 +1542,10 @@ def service_run_playbill_procedure(
             fencing_token=PROCEDURE_RUN_FENCING_TOKEN,
             activation_authority=_CurrentProcedureAuthority(instance),
             provider_executor=None,
-            provider_runtime_invoker=(
+            provider_runtime_invoker_factory=(
                 None
                 if provider_runtime_operator is None
-                else provider_runtime_operator.invoker_for(
+                else lambda: provider_runtime_operator.invoker_for(
                     instance,
                     accepted_oid=coordinate.git_oid,
                 )

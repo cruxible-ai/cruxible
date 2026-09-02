@@ -26,11 +26,11 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
-from cruxible_client.contracts.capture_journal import CaptureLandingEventV1
+from cruxible_client.contracts.capture_journal import CaptureLandingEventAny
 from cruxible_client.contracts.captures import (
     PLAYBILL_CAPTURE_COMPONENTS,
     CanonicalDurationV1,
-    CaptureEnvelopeV1,
+    CaptureEnvelopeAny,
     CaptureSelectionBudgetV1,
     capture_digest,
 )
@@ -331,9 +331,9 @@ def evaluate_acquisition_policy_law(
 class AcquisitionCandidateV1(_StrictAcquisitionModel):
     tag: Literal["playbill-acquisition-candidate-v1"] = "playbill-acquisition-candidate-v1"
     input_name: str
-    envelope: CaptureEnvelopeV1
+    envelope: CaptureEnvelopeAny
     capture_digest: str
-    landing_event: CaptureLandingEventV1
+    landing_event: CaptureLandingEventAny
     current_replay_available: bool
     selection_budget: CaptureSelectionBudgetV1
     selected_bytes: int = Field(ge=0)
@@ -444,7 +444,7 @@ def select_sources(
     policy: SourceAcquisitionPolicyV1,
     candidates: tuple[AcquisitionCandidateV1, ...],
     *,
-    anchor: CaptureLandingEventV1,
+    anchor: CaptureLandingEventAny,
     evaluation_time: datetime,
     default_authorizations: tuple[str, ...] = (),
 ) -> SourceSelectionReceiptV1:

@@ -86,7 +86,11 @@ class CaptureLandingEventV2(_StrictJournalModel):
     tag: Literal["playbill-capture-landing-v2"] = "playbill-capture-landing-v2"
     instance_id: str
     partition_id: str
-    sequence: int = Field(ge=0, le=(2**64) - 1)
+    sequence: int = Field(
+        ge=0,
+        le=(2**64) - 1,
+        description="Reads SETTLEMENT ORDER.",
+    )
     event_id: str
     idempotency_key: str
     capture_digest: str
@@ -95,7 +99,7 @@ class CaptureLandingEventV2(_StrictJournalModel):
     producer_receipt_digest: str
     producer_binding_digest: str
     previous_event_digest: str | None
-    landed_at: datetime
+    landed_at: datetime = Field(description="Reads EVALUATION INSTANT.")
 
     @field_validator("partition_id", "event_id", "idempotency_key", "previous_event_digest")
     @classmethod

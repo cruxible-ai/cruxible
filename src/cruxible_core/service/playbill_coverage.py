@@ -29,7 +29,7 @@ from collections.abc import Mapping, Sequence
 
 from cruxible_client.contracts.captures import (
     CaptureContractV1,
-    CaptureEnvelopeV1,
+    CaptureEnvelopeAny,
     capture_contract_digest,
     capture_contract_is_self_asserted,
     parse_capture_contract,
@@ -276,7 +276,7 @@ def _materialized_wanted_selections(
     instance: PlaybillInstance,
     *,
     index: EvidenceCitationIndexV2,
-    envelopes: Mapping[str, CaptureEnvelopeV1] | None = None,
+    envelopes: Mapping[str, CaptureEnvelopeAny] | None = None,
 ) -> tuple[tuple[str, int, bytes | None], ...]:
     """Resolve retained exact bytes before entering the pure occurrence scanner.
 
@@ -348,7 +348,7 @@ def _citation_window_observations(
     *,
     index: EvidenceCitationIndexV2,
     observations: Sequence[WorkingSourceObservationV1],
-    envelopes: Mapping[str, CaptureEnvelopeV1],
+    envelopes: Mapping[str, CaptureEnvelopeAny],
     retired_associations: Sequence[tuple[LogicalSourceIdentityV1, str, str]] = (),
 ) -> tuple[PlaybillCitationWindowObservationV1, ...]:
     """Observe each accepted citation's original window in its named working source."""
@@ -475,7 +475,7 @@ def _capture_envelopes(
     instance: PlaybillInstance,
     *,
     index: EvidenceCitationIndexV2,
-) -> dict[str, CaptureEnvelopeV1]:
+) -> dict[str, CaptureEnvelopeAny]:
     """Read each retained capture envelope once for both coverage consumers."""
 
     access = BodyAccessContext(principal_id=COVERAGE_PRINCIPAL, can_read_body=True)

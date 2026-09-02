@@ -504,6 +504,80 @@ def provider_invocation_receipt_digest(receipt: ProviderInvocationReceiptV1) -> 
     return typed_digest(Sha256Value, PROVIDER_INVOCATION_RECEIPT_DOMAIN, payload).tagged
 
 
+class ProcedureDerivedSourceRequestV1(_StrictProviderExecutionModel):
+    """Post-admission Source request result committed before Provider spawn."""
+
+    tag: Literal["playbill-procedure-derived-source-request-v1"] = (
+        "playbill-procedure-derived-source-request-v1"
+    )
+    run_id: str
+    admission_binding_digest: str
+    occurrence_path: str
+    node_id: str
+    input_name: str
+    request: object
+    request_digest: str
+
+    _admission_digest = field_validator("admission_binding_digest")(_digest)
+
+    @field_validator("request", mode="before")
+    @classmethod
+    def _request(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+    @field_validator("request_digest")
+    @classmethod
+    def _request_digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _correspondence(self) -> ProcedureDerivedSourceRequestV1:
+        if self.request_digest != procedure_derived_source_request_digest(self):
+            raise ValueError("derived Source request digest does not reproduce")
+        return self
+
+
+PROCEDURE_DERIVED_SOURCE_REQUEST_DOMAIN = "playbill-procedure-derived-source-request-v1"
+
+
+def procedure_derived_source_request_digest(request: ProcedureDerivedSourceRequestV1) -> str:
+    payload = request.model_dump(mode="json")
+    payload.pop("tag")
+    payload.pop("request_digest")
+    return typed_digest(
+        Sha256Value,
+        PROCEDURE_DERIVED_SOURCE_REQUEST_DOMAIN,
+        payload,
+    ).tagged
+
+
+def build_procedure_derived_source_request(
+    *,
+    run_id: str,
+    admission_binding_digest: str,
+    occurrence_path: str,
+    node_id: str,
+    input_name: str,
+    request: object,
+) -> ProcedureDerivedSourceRequestV1:
+    provisional = ProcedureDerivedSourceRequestV1.model_construct(
+        run_id=run_id,
+        admission_binding_digest=admission_binding_digest,
+        occurrence_path=occurrence_path,
+        node_id=node_id,
+        input_name=input_name,
+        request=normalize_canonical(request),
+        request_digest="sha256:" + "0" * 64,
+    )
+    return ProcedureDerivedSourceRequestV1.model_validate(
+        {
+            **provisional.model_dump(mode="python"),
+            "request_digest": procedure_derived_source_request_digest(provisional),
+        }
+    )
+
+
 class ProviderInvocationStartedV1(_StrictProviderExecutionModel):
     """Provider-start payload whose journal ``recorded_at`` reads EVALUATION INSTANT."""
 
@@ -544,6 +618,7 @@ class ProviderInvocationCompletedV1(_StrictProviderExecutionModel):
 
 
 __all__ = [
+    "PROCEDURE_DERIVED_SOURCE_REQUEST_DOMAIN",
     "PROVIDER_BUDGET_TRANSLATION_DOMAIN",
     "PROVIDER_EGRESS_OBSERVATION_DOMAIN",
     "PROVIDER_EXTERNAL_OCCURRENCE_PLAN_DOMAIN",
@@ -563,11 +638,14 @@ __all__ = [
     "ProviderSecretReceiptReferenceV1",
     "ProviderSecretReferenceV1",
     "ProviderSecretResolutionPlanV1",
+    "ProcedureDerivedSourceRequestV1",
     "VerifiedProviderBindingV1",
     "provider_budget_translation_digest",
+    "build_procedure_derived_source_request",
     "provider_egress_observation_digest",
     "provider_external_occurrence_plan_digest",
     "provider_invocation_outcome_digest",
     "provider_invocation_receipt_digest",
+    "procedure_derived_source_request_digest",
     "provider_secret_binding_identity_digest",
 ]

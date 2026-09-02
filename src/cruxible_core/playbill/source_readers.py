@@ -17,7 +17,9 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.captures import (
     CaptureContractV1,
+    CaptureEnvelopeAny,
     CaptureEnvelopeV1,
+    CaptureEnvelopeV2,
     CaptureObjectStoreProtocol,
     CaptureRunCoordinateV1,
     CaptureSelectionBudgetV1,
@@ -202,7 +204,7 @@ class ExternalCaptureAcquisitionV1(_StrictSourceReaderModel):
         "playbill-external-capture-acquisition-v1"
     )
     receipt: CaptureAcquisitionReceiptV1
-    envelope: CaptureEnvelopeV1
+    envelope: CaptureEnvelopeAny
     capture_digest: str
     epistemic_grade: Literal["observed", "derived", "predicted"]
     provenance_grade: Literal["self-asserted", "daemon-fetched", "provider-signed", "witnessed"]
@@ -221,8 +223,28 @@ class ExternalCaptureAcquisitionV1(_StrictSourceReaderModel):
 
     @model_validator(mode="after")
     def _correspondence(self) -> "ExternalCaptureAcquisitionV1":
-        if self.envelope.run_receipt_digest != self.receipt.digest:
-            raise ValueError("Capture envelope differs from its acquisition receipt")
+        envelope = self.envelope
+        if isinstance(envelope, CaptureEnvelopeV1):
+            if envelope.run_receipt_digest != self.receipt.digest:
+                raise ValueError("Capture envelope differs from its acquisition receipt")
+        else:
+            assert isinstance(envelope, CaptureEnvelopeV2)
+            source = envelope.source
+            if not isinstance(source, ExternalSourceReferenceV1) or (
+                self.receipt.capture_contract_digest != envelope.capture_contract_digest
+                or self.receipt.producer != envelope.producer
+                or self.receipt.producer_binding_digest != envelope.producer_binding_digest
+                or self.receipt.source_identity != source.source_identity
+                or self.receipt.coordinate_type != source.coordinate_type
+                or self.receipt.coordinate != source.coordinate
+                or self.receipt.selector_type != source.selector_type
+                or self.receipt.selector != source.selector
+                or self.receipt.commitment != envelope.commitment
+                or self.receipt.observed_at != envelope.observed_at
+                or self.receipt.replayability != source.replayability
+                or self.receipt.source_effective_time != envelope.source_effective_time
+            ):
+                raise ValueError("Capture v2 differs from its acquisition receipt")
         if capture_digest(self.envelope).tagged != self.capture_digest:
             raise ValueError("external Capture digest does not reproduce")
         return self

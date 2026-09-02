@@ -36,7 +36,7 @@ from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     AcceptedCaptureContract,
     CaptureContractV1,
-    CaptureEnvelopeV1,
+    CaptureEnvelopeAny,
     CaptureObjectStoreProtocol,
     LedgerMaterialResolverProtocol,
     capture_contract_is_self_asserted,
@@ -1052,7 +1052,7 @@ def evaluate_capture_evidence_admissions(
     claim_type: ClaimType,
     capture_digest: str,
     capture_contract: AcceptedCaptureContract,
-    envelope: CaptureEnvelopeV1,
+    envelope: CaptureEnvelopeAny,
     verified_attestations: tuple[VerifiedClaimAttestationV1, ...],
 ) -> tuple[CaptureEvidenceKindAdmission, ...]:
     """Run the shared evidence-admission evaluator for every declared evidence kind."""
@@ -1126,7 +1126,7 @@ def _citation_origin_refusal(
     claim: ClaimArtifactAny,
     *,
     capture_digest: str,
-    envelope: CaptureEnvelopeV1,
+    envelope: CaptureEnvelopeAny,
     contract: CaptureContractV1,
     store: CaptureObjectStoreProtocol,
 ) -> tuple[str, str] | None:

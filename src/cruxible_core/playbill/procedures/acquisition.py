@@ -27,7 +27,7 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.captures import (
     CaptureContractV1,
-    CaptureEnvelopeV1,
+    CaptureEnvelopeAny,
     CaptureObjectStoreProtocol,
     CaptureRunCoordinateV1,
     CaptureSelectionBudgetV1,
@@ -109,7 +109,7 @@ class ProcedureCaptureMaterialV1(_StrictAcquisitionModel):
     )
     capture_digest: str
     capture_contract_digest: str
-    envelope: CaptureEnvelopeV1
+    envelope: CaptureEnvelopeAny
     value: object
     epistemic_grade: EvidenceEpistemicGrade
     provenance_grade: EvidenceProvenanceGrade

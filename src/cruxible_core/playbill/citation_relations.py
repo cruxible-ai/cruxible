@@ -16,7 +16,7 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
     FOREIGN_SOURCE_COORDINATE_TYPE,
     FOREIGN_SOURCE_SELECTOR_TYPE,
-    CaptureEnvelopeV1,
+    CaptureEnvelopeAny,
     CaptureFormatError,
     capture_contract_digest,
     parse_capture_contract,
@@ -190,7 +190,7 @@ def build_citation_relation_facts(
                 replaced_uses.append(dict(fact.value))
             else:
                 uses.append(dict(fact.value))
-    envelopes_by_digest: dict[str, CaptureEnvelopeV1] = {}
+    envelopes_by_digest: dict[str, CaptureEnvelopeAny] = {}
     for path in sorted(tree, key=lambda value: value.encode("utf-8")):
         if not path.startswith("claims/"):
             continue

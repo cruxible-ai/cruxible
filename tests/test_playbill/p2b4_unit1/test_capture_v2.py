@@ -161,6 +161,35 @@ def test_provider_result_cannot_diverge_from_the_durable_invocation_receipt(
         )
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("occurrence_path", "source/other"),
+        ("deployment_digest", digest("deployment", "other")),
+        ("materialization_digest", digest("materialization", "other")),
+        ("capture_contract_digest", digest("contract", "other")),
+    ],
+)
+def test_invocation_receipt_cannot_be_crossed_with_another_admitted_occurrence(
+    tmp_path: Path,
+    field: str,
+    value: str,
+) -> None:
+    fixture = provider_capture_fixture(tmp_path)
+    receipt = fixture.receipt.model_copy(update={field: value})
+
+    with pytest.raises(CaptureFormatError, match="admitted contract"):
+        build_provider_external_capture_v2(
+            store=fixture.store,
+            contract=fixture.contract,
+            result=fixture.result,
+            receipt=receipt,
+            occurrence=fixture.occurrence,
+            producer=fixture.producer,
+            bound_generation=fixture.bound_generation,
+        )
+
+
 def test_procedure_evidence_arm_prohibits_provider_only_fields() -> None:
     receipt_digest = digest("producer-receipt", "procedure")
     procedure_digest = digest("procedure", "one")

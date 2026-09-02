@@ -44,7 +44,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_client.contracts.captures import CaptureEnvelopeV1
+from cruxible_client.contracts.captures import CaptureEnvelopeAny
 from cruxible_client.contracts.claim_verdicts import ObservationTrustGrade
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
@@ -122,7 +122,7 @@ class CaptureCitationInputV1(_StrictCoverageIndexModel):
         "playbill-coverage-capture-citation-input-v1"
     )
     capture_digest: str
-    envelope: CaptureEnvelopeV1
+    envelope: CaptureEnvelopeAny
     access_class: SourceAccessClass = "instance"
     source_handle: SourceHandleV1 | None = None
 

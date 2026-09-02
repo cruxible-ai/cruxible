@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 from collections.abc import Mapping
@@ -10,12 +11,13 @@ from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
 from typing import Callable, Literal, Protocol, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cruxible_client.contracts.acquisition_policies import (
     AcquisitionInputDecisionV1,
     InputAcquisitionRuleV1,
     SourceAcquisitionPolicyV1,
+    acquisition_policy_digest,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import (
@@ -26,8 +28,21 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_client.contracts.captures import CaptureRetentionErasurePolicyV1
-from cruxible_client.contracts.errors import PlaybillExecutionError, PlaybillJournalError
+from cruxible_client.contracts.captures import (
+    CaptureContractV1,
+    CaptureEnvelopeV1,
+    CaptureFormatError,
+    CaptureRetentionErasurePolicyV1,
+    ProviderResultToExternalCaptureV1,
+    build_provider_external_capture_v2,
+    capture_contract_digest,
+)
+from cruxible_client.contracts.cas_contracts import CasObjectMetadata
+from cruxible_client.contracts.errors import (
+    PlaybillCasError,
+    PlaybillExecutionError,
+    PlaybillJournalError,
+)
 from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_PATH,
     ProcedureRuntimePolicyV1,
@@ -84,6 +99,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunBudgetObservedV1,
     ProcedureRunBudgetV1,
     ProcedureSelectionDecisionV1,
+    ProcedureSourceCaptureAssociationV1,
     procedure_acquisition_plan_digest,
     procedure_admission_material_digest,
     procedure_selection_decision_digest,
@@ -92,14 +108,17 @@ from cruxible_client.contracts.provider_execution import (
     ProviderEgressObservationV1,
     ProviderExternalOccurrencePlanV1,
     ProviderInvocationCompletedV1,
+    ProviderInvocationOutcomeV1,
     ProviderInvocationReceiptV1,
     ProviderInvocationStartedV1,
     ProviderSecretBindingIdentityV1,
     ProviderSecretReceiptReferenceV1,
+    build_procedure_derived_source_request,
     provider_invocation_receipt_digest,
     provider_secret_binding_identity_digest,
 )
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
@@ -115,6 +134,7 @@ from cruxible_core.playbill.exhaust import (
 from cruxible_core.playbill.material_reservations import (
     PendingAdmissionMaterialReservationV1,
     ProcedureMaterialReservationStore,
+    RunMaterialReservationV1,
     make_run_reservation,
     run_material_invocation_id,
 )
@@ -130,6 +150,7 @@ from cruxible_core.playbill.procedures.egress import (
     TerminalEgressItemV1,
     TerminalEgressRequestV1,
     TerminalEgressSinkProtocol,
+    build_terminal_egress_request_v2,
     effect_dispatch_refusal,
     effective_rung_digest,
     verify_terminal_egress_receipt,
@@ -182,11 +203,16 @@ from cruxible_core.playbill.provider_outcomes import (
     map_provider_envelope,
     map_provider_refusal,
     provider_canonical_value,
+    provider_refusal_is_absorbable,
 )
 from cruxible_core.playbill.provider_runtime_contract import (
     ProviderRuntimeBudgetsV1,
     ProviderRuntimeRunContextV1,
     ProviderRuntimeWireError,
+)
+from cruxible_core.playbill.source_readers import (
+    CaptureAcquisitionReceiptV1,
+    ExternalCaptureAcquisitionV1,
 )
 
 ProcedureRunStatusV1 = Literal[
@@ -1776,6 +1802,17 @@ class _RunRefusal(Exception):
         )
 
 
+class _ProviderNodeRefusal(_RunRefusal):
+    def __init__(self, outcome: ProviderInvocationOutcomeV1, *, node_id: str) -> None:
+        super().__init__(
+            outcome.code or "provider_declined",
+            outcome.message or "Provider invocation refused.",
+            node_id=node_id,
+            details=outcome.detail,
+        )
+        self.outcome = outcome
+
+
 class _BudgetExceeded(Exception):
     def __init__(
         self,
@@ -1844,6 +1881,9 @@ class _RunState:
     wall_clock_microseconds: int = 0
     acquisition_plan: ProcedureAcquisitionPlanV2 | None = None
     invocation_receipt_digests: list[str] = dataclass_field(default_factory=list)
+    source_capture_associations: list[ProcedureSourceCaptureAssociationV1] = dataclass_field(
+        default_factory=list
+    )
     provider_invocations_started: int = 0
     provider_invocations_completed: int = 0
     run_started_monotonic_ns: int = 0
@@ -1882,6 +1922,53 @@ class _RunState:
         return frozenset() if found is None else found.item(index)
 
 
+class _ReservedCaptureStore:
+    """Keep produced Capture objects GC-reachable until their event is durable."""
+
+    def __init__(
+        self,
+        *,
+        bodies: ContentAddressedBodyStore,
+        reservations: ProcedureMaterialReservationStore,
+        admission: ProcedureRunAdmissionV1,
+    ) -> None:
+        self._bodies = bodies
+        self._reservations = reservations
+        self._admission = admission
+        self.pending: list[RunMaterialReservationV1] = []
+
+    def store(self, content: bytes) -> CasObjectMetadata:
+        body_digest = self._bodies.digest_bytes(content).tagged
+        reservation = make_run_reservation(
+            instance_id=self._admission.instance_id,
+            partition_id=self._admission.journal_partition_id,
+            event_kind="produced_capture",
+            run_id=self._admission.run_id,
+            admission_binding_digest=self._admission.admission_binding_digest,
+            body_digest=body_digest,
+        )
+        with self._reservations.locked():
+            self._reservations.reserve_locked(reservation)
+            metadata = self._bodies.store(content)
+        if metadata.digest != reservation.body_digest:
+            raise PlaybillExecutionError("reserved Capture material digest did not reproduce")
+        if all(item.reservation_id != reservation.reservation_id for item in self.pending):
+            self.pending.append(reservation)
+        return metadata
+
+    def verify(self, digest: str) -> bool:
+        return self._bodies.verify(digest)
+
+    def read(self, digest: str, *, access: BodyAccessContext) -> bytes:
+        return self._bodies.read(digest, access=access)
+
+    def release(self) -> None:
+        with self._reservations.locked():
+            for reservation in self.pending:
+                self._reservations.release_locked(reservation.reservation_id)
+        self.pending.clear()
+
+
 def _effective_max_items(admission: ProcedureRunAdmissionV1) -> int:
     return (
         admission.hard_caps.max_items
@@ -1914,7 +2001,10 @@ class ProcedureExecutor:
         contract_validator: ContractValidatorProtocol,
         provider_executor: ProviderExecutorProtocol | None = None,
         provider_runtime_invoker: ProviderRuntimeInvokerProtocol | None = None,
+        provider_runtime_invoker_factory: Callable[[], ProviderRuntimeInvokerProtocol]
+        | None = None,
         provider_classifier_registry: ProviderBucketClassifierRegistry | None = None,
+        capture_contracts: Mapping[str, CaptureContractV1] | None = None,
         source_acquirer: ProcedureSourceAcquirerProtocol | None = None,
         acquisition_policy: SourceAcquisitionPolicyV1 | None = None,
         default_authorizations: tuple[str, ...] = (),
@@ -1933,9 +2023,11 @@ class ProcedureExecutor:
         self.contract_validator = contract_validator
         self.provider_executor = provider_executor
         self.provider_runtime_invoker = provider_runtime_invoker
+        self.provider_runtime_invoker_factory = provider_runtime_invoker_factory
         self.provider_classifier_registry = (
             provider_classifier_registry or PROVIDER_BUCKET_CLASSIFIER_REGISTRY
         )
+        self.capture_contracts = dict(capture_contracts or {})
         self.source_acquirer = source_acquirer
         self.acquisition_policy = acquisition_policy
         self.default_authorizations = default_authorizations
@@ -1989,6 +2081,8 @@ class ProcedureExecutor:
                 + effect_state
                 + provider_state
             )
+        if isinstance(prepared, PreparedProcedureRunV5):
+            self._preflight_source_runtime(prepared, accepted)
         self._require_current(admission)
         if isinstance(prepared, PreparedProcedureRunV5):
             active_reservations = {
@@ -2173,6 +2267,13 @@ class ProcedureExecutor:
             "provider_calls": state.provider_calls,
             "capture_bytes": state.capture_bytes,
             "invocation_receipt_digests": state.invocation_receipt_digests,
+            "source_capture_associations": [
+                item.model_dump(mode="json")
+                for item in sorted(
+                    state.source_capture_associations,
+                    key=lambda item: item.occurrence_path.encode("utf-8"),
+                )
+            ],
             "budget": ProcedureRunBudgetV1(
                 declared=ProcedureRunBudgetDeclaredV1(
                     budget=admission.budget,
@@ -2209,6 +2310,64 @@ class ProcedureExecutor:
             refusal=refusal,
             receipt=receipt,
         )
+
+    def _preflight_source_runtime(
+        self,
+        prepared: PreparedProcedureRunV5,
+        accepted: AcceptedProcedureV1,
+    ) -> None:
+        """Refuse an incomplete Source closure before the first attempt record."""
+
+        sources = tuple(
+            node for node in accepted.procedure.definition.nodes if isinstance(node, SourceNodeV4)
+        )
+        if not sources:
+            return
+        admission = prepared.admission
+        if (
+            self.acquisition_policy is None
+            or acquisition_policy_digest(self.acquisition_policy).tagged
+            != admission.acquisition_policy_digest
+        ):
+            raise PlaybillExecutionError(
+                "source_acquisition_plan_mismatch: accepted Source policy is unavailable"
+            )
+        for node in sources:
+            matches = tuple(
+                occurrence
+                for occurrence in prepared.acquisition_plan.external_occurrences
+                if occurrence.occurrence_kind == "source"
+                and occurrence.node_id == node.node_id
+                and occurrence.repeat_node_id is None
+            )
+            if len(matches) != 1:
+                raise PlaybillExecutionError(
+                    "source_acquisition_plan_mismatch: Source occurrence is not exact"
+                )
+            occurrence = matches[0]
+            contract_pin = self._pin(
+                node.capture_contract,
+                label=f"source {node.node_id!r}",
+            )
+            provider_pin = self._pin(
+                node.provider,
+                label=f"source {node.node_id!r} provider",
+            )
+            contract = self.capture_contracts.get(contract_pin.artifact_digest)
+            if (
+                occurrence.input_name != node.as_
+                or occurrence.capture_contract_digest != contract_pin.artifact_digest
+                or occurrence.provider_artifact_digest != provider_pin.artifact_digest
+                or occurrence.interface_artifact_digest != node.interface.artifact_digest
+                or occurrence.interface_digest != node.interface_digest
+                or occurrence.implementation_digest != node.implementation_digest
+                or occurrence.effect_class == "external_mutation"
+                or contract is None
+                or capture_contract_digest(contract).tagged != contract_pin.artifact_digest
+            ):
+                raise PlaybillExecutionError(
+                    "source_acquisition_plan_mismatch: Source closure does not reproduce"
+                )
 
     def _seed_state(self, prepared: PreparedProcedureRunV1) -> _RunState:
         """Bind every admitted plane's material and its provenance before node one."""
@@ -2276,7 +2435,14 @@ class ProcedureExecutor:
                 tokens.add(policy_token(admission.acquisition_policy_digest))
             if admission.selection_receipt_digest is not None:
                 tokens.add(receipt_token(admission.selection_receipt_digest))
-            tokens.add(receipt_token(landed.material.envelope.run_receipt_digest))
+            envelope = landed.material.envelope
+            tokens.add(
+                receipt_token(
+                    envelope.run_receipt_digest
+                    if isinstance(envelope, CaptureEnvelopeV1)
+                    else envelope.producer_receipt_digest
+                )
+            )
             state.provenance[name] = AliasProvenanceV1(whole=frozenset(tokens))
             state.facts[landed.input.capture_digest] = DependencyEvidenceFactsV1(
                 epistemic_grade=landed.material.epistemic_grade,
@@ -2625,6 +2791,9 @@ class ProcedureExecutor:
                 raise PlaybillExecutionError("admitted state_tap material is absent")
             self._extend_alias(state, node.as_, _node_policy_tokens(node) | state.control)
             return None
+        if isinstance(node, SourceNodeV4):
+            self._run_source_v4(node, admission=admission, state=state, records=records)
+            return None
         if isinstance(node, SourceNodeV3):
             self._run_source(node, admission=admission, state=state, records=records)
             return None
@@ -2859,6 +3028,248 @@ class ProcedureExecutor:
             decision=decision,
         )
 
+    def _run_source_v4(
+        self,
+        node: SourceNodeV4,
+        *,
+        admission: ProcedureRunAdmissionV1,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+    ) -> None:
+        """Run Source through B2's admitted common Provider occurrence."""
+
+        if node.as_ in state.outputs:
+            self._extend_alias(state, node.as_, _node_policy_tokens(node) | state.control)
+            return
+        if not isinstance(admission, ProcedureRunAdmissionV5):
+            raise _RunRefusal(
+                "provider_acquisition_plan_required",
+                "Graph-v4 Source execution requires the landed B2 acquisition carrier.",
+                node_id=node.node_id,
+            )
+        rule = self._acquisition_rule(node.as_)
+        if rule is None:
+            raise _RunRefusal(
+                "source_acquisition_unavailable",
+                "No declared acquisition rule serves this Source node.",
+                node_id=node.node_id,
+            )
+        occurrence = self._planned_external_occurrence(
+            state=state,
+            node_id=node.node_id,
+            repeat_node_id=None,
+            occurrence_kind="source",
+        )
+        contract_pin = self._pin(node.capture_contract, label=f"source {node.node_id!r}")
+        provider_pin = self._pin(node.provider, label=f"source {node.node_id!r} provider")
+        if (
+            occurrence.input_name != node.as_
+            or occurrence.capture_contract_digest != contract_pin.artifact_digest
+            or occurrence.provider_artifact_digest != provider_pin.artifact_digest
+            or occurrence.interface_artifact_digest != node.interface.artifact_digest
+            or occurrence.interface_digest != node.interface_digest
+            or occurrence.implementation_digest != node.implementation_digest
+            or occurrence.effect_class == "external_mutation"
+        ):
+            raise _RunRefusal(
+                "provider_acquisition_plan_mismatch",
+                "The admitted Source occurrence differs from the graph binding.",
+                node_id=node.node_id,
+            )
+        resolved_request = normalize_canonical(
+            _resolve_template(
+                node.request,
+                input_payload=state.input_payload,
+                outputs=state.outputs,
+            )
+        )
+        derived_request = build_procedure_derived_source_request(
+            run_id=admission.run_id,
+            admission_binding_digest=admission.admission_binding_digest,
+            occurrence_path=occurrence.occurrence_path,
+            node_id=node.node_id,
+            input_name=node.as_,
+            request=resolved_request,
+        )
+        self._append_event(
+            admission,
+            records,
+            "source_request_derived",
+            derived_request.model_dump(mode="json"),
+        )
+        try:
+            output, invocation_receipt, invocation_receipt_digest = self._invoke_provider_v4(
+                node_id=node.node_id,
+                repeat_node_id=None,
+                effect_policy=None,
+                payload=resolved_request,
+                contract_out=None,
+                admission=admission,
+                state=state,
+                records=records,
+                occurrence=occurrence,
+            )
+        except _ProviderNodeRefusal as exc:
+            absorbable = provider_refusal_is_absorbable(exc.outcome) and (
+                (rule.requirement == "optional" and rule.on_unavailable == "omit_optional")
+                or (
+                    rule.requirement == "conservative_default"
+                    and rule.on_unavailable == "declared_conservative_default"
+                    and rule.input_name in self.default_authorizations
+                )
+            )
+            if not absorbable:
+                raise
+            unavailable = ProcedureSourceAcquisitionResultV1(
+                node_id=node.node_id,
+                input_name=node.as_,
+                outcome="unavailable",
+                reason_code="playbill.acquisition.unavailable",
+                detail=exc.refusal.message,
+            )
+            decision = apply_acquisition_result(
+                rule,
+                unavailable,
+                default_authorized=rule.input_name in self.default_authorizations,
+            )
+            self._append_event(
+                admission,
+                records,
+                "source_acquisition",
+                {
+                    "tag": "playbill-procedure-source-acquisition-v1",
+                    "node_id": node.node_id,
+                    "input_name": node.as_,
+                    "result": unavailable.model_dump(mode="json"),
+                    "decision": decision.model_dump(mode="json"),
+                    "provider_refusal": exc.outcome.model_dump(mode="json"),
+                    "audit": {
+                        "deployment_digest": admission.deployment_snapshot_digest,
+                        "recorded_at": format_datetime(self.clock.now()),
+                    },
+                },
+            )
+            self._bind_acquisition(
+                node,
+                admission=admission,
+                state=state,
+                records=records,
+                rule=rule,
+                result=unavailable,
+                decision=decision,
+            )
+            return
+        try:
+            provider_result = ProviderResultToExternalCaptureV1.model_validate(output)
+        except ValidationError as exc:
+            raise _InternalFailure(
+                "provider_protocol_violation",
+                details={"node_id": node.node_id, "reason": "Source result is not Capture wire"},
+            ) from exc
+        contract = self.capture_contracts.get(contract_pin.artifact_digest)
+        if contract is None or capture_contract_digest(contract).tagged != (
+            contract_pin.artifact_digest
+        ):
+            raise _InternalFailure(
+                "provider_protocol_violation",
+                details={"node_id": node.node_id, "reason": "CaptureContract is unavailable"},
+            )
+        reserved_store = _ReservedCaptureStore(
+            bodies=self.bodies,
+            reservations=self.material_reservations,
+            admission=admission,
+        )
+        try:
+            built = build_provider_external_capture_v2(
+                store=reserved_store,
+                contract=contract,
+                result=provider_result,
+                receipt=invocation_receipt,
+                occurrence=occurrence,
+                producer=provider_pin.target,
+                bound_generation=admission.accepted_coordinate.generation_root,
+            )
+            envelope = built.envelope
+            source = envelope.source
+            assert isinstance(source, ExternalSourceReferenceV1)
+            material_bytes = base64.b64decode(provider_result.content_base64, validate=True)
+            material = normalize_canonical(json.loads(material_bytes))
+            if canonical_bytes(material) != material_bytes:
+                raise ValueError("Source material is not canonical JSON")
+            acquisition_receipt = CaptureAcquisitionReceiptV1(
+                capture_contract_digest=envelope.capture_contract_digest,
+                producer=envelope.producer,
+                producer_binding_digest=envelope.producer_binding_digest,
+                source_identity=source.source_identity,
+                coordinate_type=source.coordinate_type,
+                coordinate=source.coordinate,
+                selector_type=source.selector_type,
+                selector=source.selector,
+                commitment=envelope.commitment,
+                observed_at=envelope.observed_at,
+                replayability=source.replayability,
+                source_effective_time=envelope.source_effective_time,
+            )
+            acquisition = ExternalCaptureAcquisitionV1(
+                receipt=acquisition_receipt,
+                envelope=envelope,
+                capture_digest=built.capture_digest,
+                epistemic_grade=contract.epistemic_grade,
+                provenance_grade="daemon-fetched",
+                canonical_material=material,
+            )
+        except (CaptureFormatError, PlaybillCasError, ValidationError, ValueError) as exc:
+            raise _InternalFailure(
+                "provider_protocol_violation",
+                details={"node_id": node.node_id, "reason": "Capture conversion failed"},
+            ) from exc
+        result = ProcedureSourceAcquisitionResultV1(
+            node_id=node.node_id,
+            input_name=node.as_,
+            outcome="acquired",
+            acquisition=acquisition,
+        )
+        decision = apply_acquisition_result(
+            rule,
+            result,
+            default_authorized=rule.input_name in self.default_authorizations,
+        )
+        self._append_event(
+            admission,
+            records,
+            "source_acquisition",
+            {
+                "tag": "playbill-procedure-source-acquisition-v1",
+                "node_id": node.node_id,
+                "input_name": node.as_,
+                "result": result.model_dump(mode="json", exclude={"acquisition"}),
+                "decision": decision.model_dump(mode="json"),
+                "audit": {
+                    "deployment_digest": admission.deployment_snapshot_digest,
+                    "recorded_at": format_datetime(self.clock.now()),
+                },
+            },
+        )
+        self._bind_acquisition(
+            node,
+            admission=admission,
+            state=state,
+            records=records,
+            rule=rule,
+            result=result,
+            decision=decision,
+            occurrence_path=occurrence.occurrence_path,
+            invocation_receipt_digest=invocation_receipt_digest,
+        )
+        state.source_capture_associations.append(
+            ProcedureSourceCaptureAssociationV1(
+                occurrence_path=occurrence.occurrence_path,
+                invocation_receipt_digest=invocation_receipt_digest,
+                capture_digest=built.capture_digest,
+            )
+        )
+        reserved_store.release()
+
     def _acquisition_rule(self, input_name: str) -> InputAcquisitionRuleV1 | None:
         if self.acquisition_policy is None:
             return None
@@ -2869,7 +3280,7 @@ class ProcedureExecutor:
 
     def _bind_acquisition(
         self,
-        node: SourceNodeV3,
+        node: SourceNodeV3 | SourceNodeV4,
         *,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
@@ -2877,6 +3288,8 @@ class ProcedureExecutor:
         rule: InputAcquisitionRuleV1,
         result: ProcedureSourceAcquisitionResultV1,
         decision: AcquisitionInputDecisionV1,
+        occurrence_path: str | None = None,
+        invocation_receipt_digest: str | None = None,
     ) -> None:
         base = _node_policy_tokens(node) | state.control
         if admission.acquisition_policy_digest is not None:
@@ -2966,6 +3379,8 @@ class ProcedureExecutor:
                 "capture_digest": acquisition.capture_digest,
                 "capture_contract_digest": acquisition.envelope.capture_contract_digest,
                 "acquisition_receipt_digest": acquisition.receipt.digest,
+                "occurrence_path": occurrence_path,
+                "invocation_receipt_digest": invocation_receipt_digest,
                 "observed_at": format_datetime(acquisition.envelope.observed_at),
                 "epistemic_grade": acquisition.epistemic_grade,
                 "provenance_grade": acquisition.provenance_grade,
@@ -3102,7 +3517,7 @@ class ProcedureExecutor:
                 label=f"mandate_settlement {node.node_id!r} mandate",
             )
             mandate_basis = rung.mandate_basis_digests
-        return TerminalEgressRequestV1(
+        request = TerminalEgressRequestV1(
             kind=node.kind,
             run_id=admission.run_id,
             node_id=node.node_id,
@@ -3129,6 +3544,15 @@ class ProcedureExecutor:
             ),
             prepared_at=self.clock.now(),
         )
+        if isinstance(admission, ProcedureRunAdmissionV5) and isinstance(node, CaptureEgressNodeV3):
+            return build_terminal_egress_request_v2(
+                request,
+                admission=admission,
+                procedure_mandate_digest=None,
+                calibration_reading_digests=(),
+                target_paths=(),
+            )
+        return request
 
     def _record_terminal_items(
         self,
@@ -3212,31 +3636,32 @@ class ProcedureExecutor:
                 return True
         return False
 
-    def _planned_provider_occurrence(
+    def _planned_external_occurrence(
         self,
         *,
         state: _RunState,
         node_id: str,
         repeat_node_id: str | None,
+        occurrence_kind: Literal["provider", "source"],
     ) -> ProviderExternalOccurrencePlanV1:
         plan = state.acquisition_plan
         if plan is None:
             raise _RunRefusal(
                 "provider_acquisition_plan_required",
-                "Graph-v4 Provider execution requires a complete admitted acquisition plan.",
+                "Graph-v4 external execution requires a complete admitted acquisition plan.",
                 node_id=node_id,
             )
         matches = tuple(
             item
             for item in plan.external_occurrences
-            if item.occurrence_kind == "provider"
+            if item.occurrence_kind == occurrence_kind
             and item.node_id == node_id
             and item.repeat_node_id == repeat_node_id
         )
         if len(matches) != 1:
             raise _RunRefusal(
                 "provider_acquisition_plan_mismatch",
-                "The admitted acquisition plan does not name this Provider occurrence exactly.",
+                "The admitted acquisition plan does not name this external occurrence exactly.",
                 node_id=node_id,
             )
         return matches[0]
@@ -3248,16 +3673,23 @@ class ProcedureExecutor:
         repeat_node_id: str | None,
         effect_policy: ArtifactPin | ProcedurePinSlotRefV1 | None,
         payload: CanonicalValue,
-        contract_out: ArtifactPin,
+        contract_out: ArtifactPin | None,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
-    ) -> CanonicalValue:
-        occurrence = self._planned_provider_occurrence(
+        occurrence: ProviderExternalOccurrencePlanV1 | None = None,
+    ) -> tuple[CanonicalValue, ProviderInvocationReceiptV1, str]:
+        occurrence = occurrence or self._planned_external_occurrence(
             state=state,
             node_id=node_id,
             repeat_node_id=repeat_node_id,
+            occurrence_kind="provider",
         )
+        if (
+            self.provider_runtime_invoker is None
+            and self.provider_runtime_invoker_factory is not None
+        ):
+            self.provider_runtime_invoker = self.provider_runtime_invoker_factory()
         if self.provider_runtime_invoker is None:
             raise _RunRefusal(
                 "provider_unavailable",
@@ -3412,9 +3844,13 @@ class ProcedureExecutor:
             implementation_digest=occurrence.implementation_digest,
             entrypoint=occurrence.local_execution.entrypoint,
             coordinates={
-                "accepted_coordinate": admission.accepted_coordinate.model_dump(mode="json"),
-                "occurrence_path": occurrence.occurrence_path,
-                "invocation_id": invocation_id,
+                "instance_id": admission.instance_id,
+                "accepted_generation": admission.accepted_coordinate.git_oid,
+                "accepted_generation_digest": admission.accepted_coordinate.generation_root,
+                "procedure_artifact_digest": admission.procedure_artifact_digest,
+                "line_spec_digest": admission.line_spec_digest,
+                "occurrence_id": admission.occurrence_id,
+                "admission_binding_digest": admission.admission_binding_digest,
             },
             input=payload,
             input_bucket=measured_bucket,
@@ -3537,12 +3973,7 @@ class ProcedureExecutor:
         state.invocation_receipt_digests.append(receipt_digest)
         if outcome.status != "ok":
             if outcome.outcome_class == "node_refusal":
-                raise _RunRefusal(
-                    cast(ProcedureNodeRefusalCodeV1, outcome.code),
-                    outcome.message or "Provider invocation refused.",
-                    node_id=node_id,
-                    details=outcome.detail,
-                )
+                raise _ProviderNodeRefusal(outcome, node_id=node_id)
             if outcome.outcome_class == "operational":
                 raise _OperationalFailure(
                     outcome.code or "provider_execution_error", details=outcome.detail
@@ -3551,14 +3982,18 @@ class ProcedureExecutor:
                 outcome.code or "provider_protocol_violation", details=outcome.detail
             )
         assert output is not None
-        validated = _validate_node_contract(
-            self.contract_validator,
-            contract=contract_out,
-            payload=output,
-            direction="output",
-            node_id=node_id,
-            max_items=_effective_max_items(admission),
-            observe_items=state.observe_items,
+        validated = (
+            _validate_node_contract(
+                self.contract_validator,
+                contract=contract_out,
+                payload=output,
+                direction="output",
+                node_id=node_id,
+                max_items=_effective_max_items(admission),
+                observe_items=state.observe_items,
+            )
+            if contract_out is not None
+            else normalize_canonical(output)
         )
         if effectful:
             self._append_event(
@@ -3572,7 +4007,7 @@ class ProcedureExecutor:
                     "invocation_receipt_digest": receipt_digest,
                 },
             )
-        return validated
+        return validated, receipt, receipt_digest
 
     def _run_provider_v4(
         self,
@@ -3600,7 +4035,7 @@ class ProcedureExecutor:
             max_items=_effective_max_items(admission),
             observe_items=state.observe_items,
         )
-        output = self._invoke_provider_v4(
+        output, _receipt, _receipt_digest = self._invoke_provider_v4(
             node_id=node.node_id,
             repeat_node_id=None,
             effect_policy=node.effect_policy,
@@ -3897,7 +4332,7 @@ class ProcedureExecutor:
                 max_items=_effective_max_items(admission),
                 observe_items=state.observe_items,
             )
-            local_outputs[body.as_] = self._invoke_provider_v4(
+            local_outputs[body.as_], _receipt, _receipt_digest = self._invoke_provider_v4(
                 node_id=body.node_id,
                 repeat_node_id=repeat_node_id,
                 effect_policy=body.effect_policy,

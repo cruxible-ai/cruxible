@@ -1298,7 +1298,7 @@ class DirectCaptureBuildResult(_StrictCaptureModel):
 
 
 def capture_is_direct_self_source(
-    envelope: CaptureEnvelopeV1,
+    envelope: CaptureEnvelopeAny,
     *,
     contract: CaptureContractV1,
     store: CaptureObjectStoreProtocol,
@@ -1334,7 +1334,7 @@ def capture_is_direct_self_source(
 
 
 def capture_is_coordinator_self_source(
-    envelope: CaptureEnvelopeV1,
+    envelope: CaptureEnvelopeAny,
     *,
     contract: CaptureContractV1,
     claim_id: str,
@@ -1352,7 +1352,7 @@ def capture_is_coordinator_self_source(
 
 
 def capture_is_direct_selection_bound(
-    envelope: CaptureEnvelopeV1,
+    envelope: CaptureEnvelopeAny,
     *,
     contract: CaptureContractV1,
     claim_id: str,
@@ -1387,7 +1387,7 @@ CaptureReuseClassification = Literal[
 
 
 def classify_capture_reuse(
-    envelope: CaptureEnvelopeV1,
+    envelope: CaptureEnvelopeAny,
     *,
     contract: CaptureContractV1,
     store: CaptureObjectStoreProtocol,
@@ -1904,6 +1904,42 @@ def _store_general_capture(
     )
 
 
+def _provider_capture_receipt_matches_occurrence(
+    receipt: ProviderInvocationReceiptV1,
+    occurrence: ProviderExternalOccurrencePlanV1,
+) -> bool:
+    expected_secret_receipts = tuple(
+        sorted(
+            (
+                ProviderSecretReceiptReferenceV1(
+                    binding_identity_digest=provider_secret_binding_identity_digest(
+                        ProviderSecretBindingIdentityV1(
+                            realm=reference.realm,
+                            name=reference.name,
+                        )
+                    ),
+                    purpose=reference.purpose,
+                )
+                for reference in occurrence.secret_plan.references
+            ),
+            key=lambda item: item.binding_identity_digest.encode("ascii"),
+        )
+    )
+    local = occurrence.local_execution
+    return (
+        receipt.occurrence_path == occurrence.occurrence_path
+        and receipt.provider_artifact_digest == occurrence.provider_artifact_digest
+        and receipt.interface_id == occurrence.interface_id
+        and receipt.interface_digest == occurrence.interface_digest
+        and receipt.implementation_digest == occurrence.implementation_digest
+        and receipt.materialization_digest == local.materialization_digest
+        and receipt.deployment_digest == local.deployment_digest
+        and receipt.capture_contract_digest == occurrence.capture_contract_digest
+        and receipt.budget_translation == occurrence.budget_translation
+        and receipt.secret_references == expected_secret_receipts
+    )
+
+
 def build_provider_external_capture_v2(
     *,
     store: CaptureObjectStoreProtocol,
@@ -1925,6 +1961,8 @@ def build_provider_external_capture_v2(
         or receipt.capture_contract_digest != contract_digest_value
         or receipt.outcome.status != "ok"
         or receipt.output is None
+        or producer.kind != "Provider"
+        or not _provider_capture_receipt_matches_occurrence(receipt, occurrence)
     ):
         raise CaptureFormatError("Provider Capture conversion differs from its admitted contract")
     try:
@@ -2302,23 +2340,6 @@ def verify_capture(
             if provider_invocation_receipt is None or provider_occurrence is None:
                 raise CaptureFormatError("provider Capture verification requires runtime receipts")
             receipt = provider_invocation_receipt
-            expected_secret_receipts = tuple(
-                sorted(
-                    (
-                        ProviderSecretReceiptReferenceV1(
-                            binding_identity_digest=provider_secret_binding_identity_digest(
-                                ProviderSecretBindingIdentityV1(
-                                    realm=reference.realm,
-                                    name=reference.name,
-                                )
-                            ),
-                            purpose=reference.purpose,
-                        )
-                        for reference in evidence.secret_references
-                    ),
-                    key=lambda item: item.binding_identity_digest.encode("ascii"),
-                )
-            )
             if (
                 provider_invocation_receipt_digest(receipt) != evidence.invocation_receipt_digest
                 or provider_external_occurrence_plan_digest(provider_occurrence)
@@ -2331,7 +2352,7 @@ def verify_capture(
                 or receipt.materialization_digest != evidence.materialization_digest
                 or receipt.input_bucket != evidence.input_bucket
                 or receipt.egress != evidence.egress
-                or receipt.secret_references != expected_secret_receipts
+                or not _provider_capture_receipt_matches_occurrence(receipt, provider_occurrence)
                 or provider_occurrence.secret_plan.references != evidence.secret_references
                 or provider_occurrence.interface_artifact_digest
                 != evidence.interface_artifact_digest
