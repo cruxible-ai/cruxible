@@ -176,6 +176,13 @@ def test_run_child_catches_the_typed_publish_refusal() -> None:
     caught: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Try):
+            calls_publish = any(
+                isinstance(inner, ast.Attribute) and inner.attr == "publish"
+                for statement in node.body
+                for inner in ast.walk(statement)
+            )
+            if not calls_publish:
+                continue
             for handler in node.handlers:
                 if isinstance(handler.type, ast.Name):
                     caught.append(handler.type.id)
