@@ -446,7 +446,12 @@ class ProviderInvocationReceiptV1(_StrictProviderExecutionModel):
     outcome: ProviderInvocationOutcomeV1
     output: object | None = None
     egress: ProviderEgressObservationV1
-    fence_scope: Literal["process_group+descendant_sweep"]
+    fence_scope: Literal["process_group+descendant_sweep"] = Field(
+        description=(
+            "Process-group kill plus deterministic same-session sweep and best-effort "
+            "cross-session sweep within the configured poll interval."
+        )
+    )
     secret_references: tuple[ProviderSecretReceiptReferenceV1, ...] = ()
     budget_translation: ProviderBudgetTranslationV1
     duration_microseconds: int = Field(ge=0)

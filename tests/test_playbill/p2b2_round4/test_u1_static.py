@@ -104,6 +104,10 @@ def test_l8_fence_scope_is_required_and_fixed() -> None:
     field = ProviderInvocationReceiptV1.model_fields["fence_scope"]
     assert field.is_required()
     assert typing.get_args(field.annotation) == ("process_group+descendant_sweep",)
+    assert field.description == (
+        "Process-group kill plus deterministic same-session sweep and best-effort "
+        "cross-session sweep within the configured poll interval."
+    )
 
 
 def test_c10_caps_carry_no_numeric_literal() -> None:
