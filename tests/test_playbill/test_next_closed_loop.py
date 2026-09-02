@@ -967,7 +967,24 @@ def _projection_backing_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
     expected = EXPECTED_OPERATIONS["projection_backing_stale"]
     assert isinstance(expected, frozenset)
     assert expected == {"playbill.block.repin", "playbill.block.sync"}
-    assert row.repair.operation in expected
+    assert row.repair.operation == "playbill.block.repin"
+
+    _assert_gone(
+        instance,
+        "projection_backing_stale",
+        _projection_request(instance, backing=(_claim_backing(instance),)),
+    )
+
+
+def _projection_backing_stale_sync(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    instance, _owner = _instance_with_query(root)
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_next._registered_publication_blocks",
+        lambda _instance: {("corpus.runbook", "status")},
+    )
+    before = _projection_request(instance, backing=(_claim_backing(instance, stale=True),))
+    row = _row(instance, "projection_backing_stale", before)
+    assert row.repair.operation == "playbill.block.sync"
 
     _assert_gone(
         instance,
@@ -1272,6 +1289,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("floor_invalid", None): _floor_invalid,
     ("projection_dirty", None): _projection_dirty,
     ("projection_backing_stale", None): _projection_backing_stale,
+    ("projection_backing_stale", "sync"): _projection_backing_stale_sync,
     ("projection_marker_invalid", None): _projection_marker_invalid,
     ("self_published_source_stale", None): _self_published_source_stale,
     ("claim_dependency_stale", None): _claim_dependency_stale,
