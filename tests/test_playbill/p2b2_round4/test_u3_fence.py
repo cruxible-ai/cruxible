@@ -224,7 +224,7 @@ def test_the_same_escape_is_caught_when_the_invocation_lasts_past_one_poll(
 # ------------------------------------------------------------------ T-2 residue
 
 
-def test_a_publish_write_failure_escapes_untyped_and_leaves_the_child_running(
+def test_a_publish_write_failure_is_typed_and_leaves_no_child_or_artifact(
     short_root: Path,
 ) -> None:
     """T-2 ruled a publish failure kills the child and unlinks record+socket."""
@@ -273,10 +273,12 @@ def test_a_publish_write_failure_escapes_untyped_and_leaves_the_child_running(
                 os.killpg(pid, signal.SIGKILL)
         _kill_tree(marker)
         _kill_tree(str(marker) + ".spawned")
-    assert isinstance(escaped, OSError)
-    assert not isinstance(escaped, ProviderLocalRuntimeRefused)
-    assert child_alive or descendant_alive, "nothing survived"
-    assert not (lease_root / "..").exists() or True
+    assert isinstance(escaped, ProviderLocalRuntimeRefused)
+    assert escaped.code == "provider_process_lease_invalid"
+    assert not child_alive
+    assert not descendant_alive
+    assert tuple(lease_root.glob("*.json")) == ()
+    assert tuple(store.control_root.glob("*.sock")) == ()
 
 
 # ------------------------------------------------------------------ T-8 peer pid

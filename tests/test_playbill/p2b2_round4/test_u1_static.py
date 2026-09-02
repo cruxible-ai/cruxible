@@ -152,7 +152,7 @@ def test_adopted_regressions_write_into_the_repository_working_tree() -> None:
     assert "/.b2-*" in ignore
 
 
-def test_publish_has_untyped_oserror_sites() -> None:
+def test_publish_translates_every_write_oserror() -> None:
     """T-2 ruled a publish failure must never unwind untyped."""
 
     from cruxible_core.playbill.provider_process_leases import ProviderProcessLeaseStore
@@ -160,14 +160,15 @@ def test_publish_has_untyped_oserror_sites() -> None:
     source = inspect.getsource(ProviderProcessLeaseStore.publish)
     assert "tempfile.mkstemp(" in source
     head, _sep, tail = source.partition("record_path, _control_path = self.paths")
-    # everything from mkstemp onward: the only handler is a bare re-raise
+    # Everything from mkstemp onward has a typed OSError translation; the
+    # BaseException branch remains only to clean up non-OS failures unchanged.
     assert "except BaseException:" in tail
-    assert "ProviderLocalRuntimeRefused" not in tail, tail
-    # mkstemp itself is outside every try
-    assert tail.index("tempfile.mkstemp") < tail.index("try:")
+    assert "except OSError as exc:" in tail
+    assert "ProviderLocalRuntimeRefused" in tail, tail
+    assert tail.index("try:") < tail.index("tempfile.mkstemp")
 
 
-def test_run_child_only_catches_typed_refusals_around_publish() -> None:
+def test_run_child_catches_the_typed_publish_refusal() -> None:
     from cruxible_core.playbill import provider_local_runtime
 
     source = inspect.getsource(provider_local_runtime._run_child)

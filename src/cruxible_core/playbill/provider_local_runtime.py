@@ -822,7 +822,7 @@ def _run_child(
                 )
             record_path, control_path = process_leases.paths(invocation_id)
             for path in (record_path, control_path):
-                with contextlib.suppress(FileNotFoundError):
+                with contextlib.suppress(FileNotFoundError, OSError):
                     path.unlink()
             raise
 

@@ -511,12 +511,14 @@ class ProviderProcessLeaseStore:
                 "the operating-system process session is unavailable",
             ) from exc
         record_path, _control_path = self.paths(invocation_id)
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix=record_path.name + ".tmp-",
-            dir=self.root,
-        )
-        temporary = Path(temporary_name)
+        descriptor: int | None = None
+        temporary: Path | None = None
         try:
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=record_path.name + ".tmp-",
+                dir=self.root,
+            )
+            temporary = Path(temporary_name)
             os.fchmod(descriptor, 0o600)
             with os.fdopen(descriptor, "wb") as handle:
                 handle.write(
@@ -534,11 +536,24 @@ class ProviderProcessLeaseStore:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temporary, record_path)
+        except OSError as exc:
+            if descriptor is not None:
+                with contextlib.suppress(OSError):
+                    os.close(descriptor)
+            if temporary is not None:
+                with contextlib.suppress(FileNotFoundError, OSError):
+                    temporary.unlink()
+            raise ProviderLocalRuntimeRefused(
+                "provider_process_lease_invalid",
+                "process-lease record could not be published",
+            ) from exc
         except BaseException:
-            with contextlib.suppress(OSError):
-                os.close(descriptor)
-            with contextlib.suppress(FileNotFoundError):
-                temporary.unlink()
+            if descriptor is not None:
+                with contextlib.suppress(OSError):
+                    os.close(descriptor)
+            if temporary is not None:
+                with contextlib.suppress(FileNotFoundError, OSError):
+                    temporary.unlink()
             raise
         return record_path
 
