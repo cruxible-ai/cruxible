@@ -20,11 +20,13 @@ STAGES = ("state_root", "config", "lease_dirs", "secret_store", "deployments")
 
 def _server_state(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
     from cruxible_core.runtime.permissions import reset_permissions
+    from cruxible_core.server.credentials import reset_runtime_credential_store
     from cruxible_core.server.registry import get_registry, reset_registry
 
     monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(root))
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     reset_permissions()
+    reset_runtime_credential_store()
     reset_registry()
     get_playbill_manager().clear()
     get_registry()
