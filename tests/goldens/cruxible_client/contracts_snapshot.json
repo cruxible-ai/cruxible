@@ -22,10 +22,22 @@
         "procedure-mandate"
       ]
     },
+    "PlaybillHandEditNextReason": {
+      "values": [
+        "procedure_projection_missing",
+        "provider_lane_unavailable"
+      ]
+    },
     "PlaybillHostStatus": {
       "values": [
         "created",
         "already_exists"
+      ]
+    },
+    "PlaybillHostWorkspaceRegistrationStatus": {
+      "values": [
+        "registered",
+        "not_registered"
       ]
     },
     "PlaybillNextReason": {
@@ -52,7 +64,8 @@
         "retired_claim_source_stale",
         "unregistered_projection_block",
         "projection_marker_invalid",
-        "provider_lane_unavailable"
+        "provider_lane_unavailable",
+        "procedure_projection_missing"
       ]
     },
     "PlaybillPolicyKind": {
@@ -556,6 +569,95 @@
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
           },
+          "PlaybillProjectionAdvisory": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_identities": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Artifact Identities",
+                "type": "array"
+              },
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-projection-advisory-v1",
+                "default": "playbill-projection-advisory-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "unprojected_count": {
+                "minimum": 1,
+                "title": "Unprojected Count",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "unprojected_count",
+              "artifact_identities",
+              "message"
+            ],
+            "title": "PlaybillProjectionAdvisory",
+            "type": "object"
+          },
+          "PlaybillProjectionEvidence": {
+            "additionalProperties": false,
+            "description": "Whether one bounded workspace projection observation informed review.",
+            "properties": {
+              "coordinate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "observation_invalid",
+                      "presentation_policy_invalid",
+                      "coverage_missing",
+                      "coordinate_not_accepted",
+                      "coordinate_before_settlement_base"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "status": {
+                "enum": [
+                  "used",
+                  "rejected"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-projection-evidence-v1",
+                "default": "playbill-projection-evidence-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "title": "PlaybillProjectionEvidence",
+            "type": "object"
+          },
           "PlaybillProposalReview": {
             "additionalProperties": false,
             "properties": {
@@ -614,6 +716,28 @@
               "parent_semantic_root": {
                 "title": "Parent Semantic Root",
                 "type": "string"
+              },
+              "projection_advisory": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillProjectionAdvisory"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "projection_evidence": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillProjectionEvidence"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "proposal_id": {
                 "title": "Proposal Id",
@@ -13879,6 +14003,114 @@
         "status"
       ]
     },
+    "PlaybillHostWorkspaceRegistrationV1": {
+      "fields": {
+        "instance_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance_id",
+          "required": true,
+          "schema": {
+            "title": "Instance Id",
+            "type": "string"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "registered",
+              "not_registered"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-host-workspace-registration-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-host-workspace-registration-v1",
+            "default": "playbill-host-workspace-registration-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "workspace_path": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "workspace_path",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Workspace Path"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "Whether one daemon host has a daemon-local workspace registration.",
+        "properties": {
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "registered",
+              "not_registered"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-host-workspace-registration-v1",
+            "default": "playbill-host-workspace-registration-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "workspace_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Workspace Path"
+          }
+        },
+        "required": [
+          "instance_id",
+          "status"
+        ],
+        "title": "PlaybillHostWorkspaceRegistrationV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "instance_id",
+        "status"
+      ]
+    },
     "PlaybillInitResult": {
       "fields": {
         "approval_policy_mode": {
@@ -14790,7 +15022,8 @@
               "enum": [
                 "accepted_state",
                 "workspace_floor",
-                "workspace_sources"
+                "workspace_sources",
+                "workspace_projections"
               ],
               "type": "string"
             },
@@ -14848,7 +15081,8 @@
               "enum": [
                 "accepted_state",
                 "workspace_floor",
-                "workspace_sources"
+                "workspace_sources",
+                "workspace_projections"
               ],
               "type": "string"
             },
@@ -14945,7 +15179,8 @@
               "enum": [
                 "accepted_state",
                 "workspace_floor",
-                "workspace_sources"
+                "workspace_sources",
+                "workspace_projections"
               ],
               "type": "string"
             },
@@ -14977,7 +15212,8 @@
               "enum": [
                 "accepted_state",
                 "workspace_floor",
-                "workspace_sources"
+                "workspace_sources",
+                "workspace_projections"
               ],
               "type": "string"
             },
@@ -19535,6 +19771,274 @@
         "status"
       ]
     },
+    "PlaybillProjectionAdvisory": {
+      "fields": {
+        "artifact_identities": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "artifact_identities",
+          "required": true,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Artifact Identities",
+            "type": "array"
+          }
+        },
+        "message": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "message",
+          "required": true,
+          "schema": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-projection-advisory-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-projection-advisory-v1",
+            "default": "playbill-projection-advisory-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "unprojected_count": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "unprojected_count",
+          "required": true,
+          "schema": {
+            "minimum": 1,
+            "title": "Unprojected Count",
+            "type": "integer"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_identities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Artifact Identities",
+            "type": "array"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-projection-advisory-v1",
+            "default": "playbill-projection-advisory-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "unprojected_count": {
+            "minimum": 1,
+            "title": "Unprojected Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "unprojected_count",
+          "artifact_identities",
+          "message"
+        ],
+        "title": "PlaybillProjectionAdvisory",
+        "type": "object"
+      },
+      "required_fields": [
+        "artifact_identities",
+        "message",
+        "unprojected_count"
+      ]
+    },
+    "PlaybillProjectionEvidence": {
+      "fields": {
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "reason": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "observation_invalid",
+                  "presentation_policy_invalid",
+                  "coverage_missing",
+                  "coordinate_not_accepted",
+                  "coordinate_before_settlement_base"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "used",
+              "rejected"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-projection-evidence-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-projection-evidence-v1",
+            "default": "playbill-projection-evidence-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Whether one bounded workspace projection observation informed review.",
+        "properties": {
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "observation_invalid",
+                  "presentation_policy_invalid",
+                  "coverage_missing",
+                  "coordinate_not_accepted",
+                  "coordinate_before_settlement_base"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "status": {
+            "enum": [
+              "used",
+              "rejected"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-projection-evidence-v1",
+            "default": "playbill-projection-evidence-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "PlaybillProjectionEvidence",
+        "type": "object"
+      },
+      "required_fields": [
+        "status"
+      ]
+    },
     "PlaybillProposalInspection": {
       "fields": {
         "accepted_coordinate": {
@@ -20638,6 +21142,44 @@
             "type": "string"
           }
         },
+        "projection_advisory": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "projection_advisory",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillProjectionAdvisory"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "projection_evidence": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "projection_evidence",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillProjectionEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "proposal_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -20735,6 +21277,95 @@
               "compiler_digest"
             ],
             "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillProjectionAdvisory": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_identities": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Artifact Identities",
+                "type": "array"
+              },
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-projection-advisory-v1",
+                "default": "playbill-projection-advisory-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "unprojected_count": {
+                "minimum": 1,
+                "title": "Unprojected Count",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "unprojected_count",
+              "artifact_identities",
+              "message"
+            ],
+            "title": "PlaybillProjectionAdvisory",
+            "type": "object"
+          },
+          "PlaybillProjectionEvidence": {
+            "additionalProperties": false,
+            "description": "Whether one bounded workspace projection observation informed review.",
+            "properties": {
+              "coordinate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "observation_invalid",
+                      "presentation_policy_invalid",
+                      "coverage_missing",
+                      "coordinate_not_accepted",
+                      "coordinate_before_settlement_base"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "status": {
+                "enum": [
+                  "used",
+                  "rejected"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-projection-evidence-v1",
+                "default": "playbill-projection-evidence-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "title": "PlaybillProjectionEvidence",
             "type": "object"
           },
           "PlaybillReviewedMember": {
@@ -20962,6 +21593,28 @@
           "parent_semantic_root": {
             "title": "Parent Semantic Root",
             "type": "string"
+          },
+          "projection_advisory": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillProjectionAdvisory"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "projection_evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillProjectionEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "proposal_id": {
             "title": "Proposal Id",
@@ -24629,6 +25282,25 @@
             "type": "string"
           }
         },
+        "block_sync": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "block_sync",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillBlockSyncResultV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "floor_refresh": {
           "has_default": false,
           "has_default_factory": false,
@@ -24725,6 +25397,151 @@
               "compiler_digest"
             ],
             "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillBlockSyncItemV1": {
+            "additionalProperties": false,
+            "properties": {
+              "block_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Block Id"
+              },
+              "detail": {
+                "additionalProperties": true,
+                "title": "Detail",
+                "type": "object"
+              },
+              "outcome": {
+                "enum": [
+                  "unchanged",
+                  "synced",
+                  "would_sync",
+                  "detached",
+                  "would_detach",
+                  "refused",
+                  "unsyncable"
+                ],
+                "title": "Outcome",
+                "type": "string"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "workspace_not_attached",
+                      "workspace_binding_invalid",
+                      "workspace_instance_mismatch",
+                      "workspace_source_catalog_missing",
+                      "workspace_source_catalog_invalid",
+                      "source_path_invalid",
+                      "block_marker_malformed",
+                      "block_multi_backing",
+                      "block_query_backing",
+                      "block_locally_modified",
+                      "block_backing_missing",
+                      "block_backing_changed",
+                      "block_not_publication_origin",
+                      "block_publication_registry_unavailable",
+                      "block_backing_retired",
+                      "block_successor_ambiguous",
+                      "block_successor_body_missing",
+                      "block_successor_body_ambiguous",
+                      "block_concurrent_edit",
+                      "block_frame_invalid",
+                      "block_sync_failed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "repair_commands": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Repair Commands",
+                "type": "array"
+              },
+              "source_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Id"
+              },
+              "tag": {
+                "const": "playbill-block-sync-item-v1",
+                "default": "playbill-block-sync-item-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "outcome"
+            ],
+            "title": "PlaybillBlockSyncItemV1",
+            "type": "object"
+          },
+          "PlaybillBlockSyncResultV1": {
+            "additionalProperties": false,
+            "properties": {
+              "changed_file_count": {
+                "minimum": 0,
+                "title": "Changed File Count",
+                "type": "integer"
+              },
+              "has_refusals": {
+                "title": "Has Refusals",
+                "type": "boolean"
+              },
+              "items": {
+                "items": {
+                  "$ref": "#/$defs/PlaybillBlockSyncItemV1"
+                },
+                "title": "Items",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-block-sync-result-v1",
+                "default": "playbill-block-sync-result-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "would_change": {
+                "title": "Would Change",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "items",
+              "changed_file_count",
+              "would_change",
+              "has_refusals"
+            ],
+            "title": "PlaybillBlockSyncResultV1",
             "type": "object"
           },
           "PlaybillFloorRefreshResult": {
@@ -24891,6 +25708,17 @@
           "activated_by": {
             "title": "Activated By",
             "type": "string"
+          },
+          "block_sync": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillBlockSyncResultV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "floor_refresh": {
             "$ref": "#/$defs/PlaybillFloorRefreshResult"

@@ -21,7 +21,7 @@ from cruxible_client.contracts.primitives import canonical_json
 
 AUTHORING_WIRE_CATALOG_VERSION = 1
 AUTHORING_WIRE_CONTRACT_CATALOG_DIGEST = (
-    "sha256:7ccc323d90e4e2e7e1fa4413c24902bf3bee6c0bb23d217c17dd3139349a5843"
+    "sha256:a3af1fbadfd41266c3baffdf6d0db9fb3d624af4379408707c01fbb4363f6031"
 )
 
 AUTHORING_WIRE_MODEL_NAMES = (
@@ -71,6 +71,11 @@ AUTHORING_WIRE_MODEL_NAMES = (
     "InsertionPrepareResultV2",
     "InsertionTargetV2",
     "InsertionTerminalTombstoneV2",
+    "PlaybillBlockSyncItemV1",
+    "PlaybillBlockSyncReadRequestV1",
+    "PlaybillBlockSyncReadResultV1",
+    "PlaybillBlockSyncResultV1",
+    "PlaybillBlockSyncSuccessorCandidateV1",
     "PreflightCertificateV1",
     "PreflightResultV1",
     "ProcedureAuthoringPayloadV1",

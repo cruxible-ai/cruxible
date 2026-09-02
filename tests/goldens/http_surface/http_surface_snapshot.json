@@ -150,6 +150,9 @@
   "/api/v1/{instance_id}/playbill/procedures/{name}/runs": {
     "POST": "PlaybillProcedureRunState"
   },
+  "/api/v1/{instance_id}/playbill/projections/sync-backing": {
+    "POST": "PlaybillBlockSyncReadResultV1"
+  },
   "/api/v1/{instance_id}/playbill/proposals": {
     "GET": "PlaybillProposalList"
   },
@@ -215,6 +218,9 @@
   },
   "/api/v1/{instance_id}/playbill/whoami": {
     "GET": "PlaybillWhoAmI"
+  },
+  "/api/v1/{instance_id}/playbill/workspace-registration": {
+    "GET": "PlaybillHostWorkspaceRegistrationV1"
   },
   "/api/v1/{instance_id}/runtime/bootstrap/claim": {
     "POST": "RuntimeCredentialBootstrapResult"
