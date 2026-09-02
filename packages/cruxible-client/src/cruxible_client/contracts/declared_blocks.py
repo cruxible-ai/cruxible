@@ -364,12 +364,7 @@ def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _decode_projection_stamp(
-    encoded: bytes,
-    *,
-    source_id: str,
-    block_id: str,
-) -> ProjectionBlockStampV1:
+def _parse_projection_stamp(encoded: bytes) -> ProjectionBlockStampV1:
     if len(encoded) > (MAX_PROJECTION_STAMP_BYTES * 4 + 2) // 3:
         raise ProjectionMarkerError("projection stamp exceeds its decoded byte ceiling")
     try:
@@ -388,8 +383,6 @@ def _decode_projection_stamp(
         stamp = ProjectionBlockStampV1.model_validate(value)
     except (UnicodeError, ValueError, ValidationError, PlaybillError) as exc:
         raise ProjectionMarkerError(f"projection stamp is malformed: {exc}") from exc
-    if stamp.source_id != source_id or stamp.block_id != block_id:
-        raise ProjectionMarkerError("projection stamp source or block differs from its marker")
     return stamp
 
 
@@ -407,10 +400,10 @@ def render_projection_closing(block_id: str) -> bytes:
     return b"<!-- /playbill:block:" + block_id.encode("ascii") + b" -->\n"
 
 
-def parse_projection_blocks(
+def _parse_projection_blocks(
     content: bytes,
     *,
-    source_id: str,
+    source_id: str | None,
     allow_bootstrap: bool = False,
 ) -> tuple[ParsedProjectionBlock, ...]:
     """Parse one complete source, refusing every ambiguous declaration boundary."""
@@ -469,6 +462,7 @@ def parse_projection_blocks(
             block_id = closing.group(1).decode("ascii")
             if active is None or active[0] != block_id:
                 raise ProjectionMarkerError("projection marker closes an absent or different block")
+            assert source_id is not None
             active_id, stamp, opening_start, body_start = active
             body = content[body_start:line_start]
             blocks.append(
@@ -497,10 +491,18 @@ def parse_projection_blocks(
             raise ProjectionMarkerError("projection source exceeds its 128-block ceiling")
         seen.add(block_id)
         if stamped is not None:
-            stamp = _decode_projection_stamp(
-                stamped.group(2), source_id=source_id, block_id=block_id
-            )
+            stamp = _parse_projection_stamp(stamped.group(2))
+            if stamp.block_id != block_id:
+                raise ProjectionMarkerError("projection stamp block differs from its marker")
+            if source_id is None:
+                source_id = stamp.source_id
+            elif stamp.source_id != source_id:
+                raise ProjectionMarkerError("projection stamp source differs from its marker")
         elif allow_bootstrap:
+            if source_id is None:
+                raise ProjectionMarkerError(
+                    "an unstamped bootstrap block cannot identify its logical source"
+                )
             stamp = None
         else:
             raise ProjectionBootstrapUnstampedError(
@@ -510,6 +512,30 @@ def parse_projection_blocks(
     if active is not None:
         raise ProjectionMarkerError("projection block opening has no matching closing marker")
     return tuple(blocks)
+
+
+def parse_projection_blocks(
+    content: bytes,
+    *,
+    source_id: str,
+    allow_bootstrap: bool = False,
+) -> tuple[ParsedProjectionBlock, ...]:
+    """Parse one complete source using its known logical source identity."""
+
+    return _parse_projection_blocks(
+        content,
+        source_id=source_id,
+        allow_bootstrap=allow_bootstrap,
+    )
+
+
+def discover_projection_blocks(content: bytes) -> tuple[ParsedProjectionBlock, ...]:
+    """Parse stamped blocks while discovering their one logical source identity."""
+
+    blocks = _parse_projection_blocks(content, source_id=None)
+    if not blocks:
+        raise ProjectionMarkerError("source contains no stamped projection blocks")
+    return blocks
 
 
 def frame_projection_block(*, stamp: ProjectionBlockStampV1, body: bytes) -> bytes:

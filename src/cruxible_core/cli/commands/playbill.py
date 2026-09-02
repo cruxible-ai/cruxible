@@ -27,7 +27,7 @@ from cruxible_client.authoring.attestations import (
     local_attestation_signer_from_environment,
 )
 from cruxible_client.authoring.bind import bind_working_selection_input
-from cruxible_client.authoring.blocks import repin_projection_block
+from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
 from cruxible_client.authoring.examples import (
     AUTHORING_EXAMPLE_FACTORIES,
     AUTHORING_EXAMPLE_NAMES,
@@ -988,11 +988,16 @@ def approve_proposal(
     type=click.Path(file_okay=False),
     help="Workspace holding .playbill/coverage.json and its optional floor output.",
 )
+@click.option("--no-sync", is_flag=True, help="Skip the activating workspace's block sync.")
 @brief_option
 @json_option
 @handle_errors
 def activate_proposal(
-    proposal_id: str, workspace_root: str, output_brief: bool, output_json: bool
+    proposal_id: str,
+    workspace_root: str,
+    no_sync: bool,
+    output_brief: bool,
+    output_json: bool,
 ) -> None:
     result = _server_call(
         lambda client, instance_id: activate_with_workspace_refresh(
@@ -1000,6 +1005,7 @@ def activate_proposal(
             instance_id,
             proposal_id,
             workspace=Path(workspace_root),
+            sync=not no_sync,
         ),
         command_name="playbill proposal activate",
     )
@@ -1009,6 +1015,11 @@ def activate_proposal(
         _emit_json(payload)
         raise click.ClickException(
             f"proposal activation status={result.status}; floor refresh failed: {message}"
+        )
+    if result.block_sync is not None and result.block_sync.has_refusals:
+        _emit_json(payload)
+        raise click.ClickException(
+            f"proposal activation status={result.status}; block sync reported refusals"
         )
     if output_brief:
         _emit_brief(
@@ -2342,6 +2353,12 @@ def block_group() -> None:
 @click.option("--claim", "claims", multiple=True, help="Accepted Claim backing identity.")
 @click.option("--query", "queries", multiple=True, help="Accepted QueryDefinition identity.")
 @click.option(
+    "--backing",
+    "backing_digest",
+    default=None,
+    help="Exact successor artifact digest selected from an ambiguity refusal.",
+)
+@click.option(
     "--params",
     "parameters",
     multiple=True,
@@ -2356,6 +2373,7 @@ def repin_projection(
     block_id: str,
     claims: tuple[str, ...],
     queries: tuple[str, ...],
+    backing_digest: str | None,
     parameters: tuple[str, ...],
     workspace_root: str,
     evaluation_time: str | None,
@@ -2363,6 +2381,10 @@ def repin_projection(
 ) -> None:
     """Refresh one declaration marker without writing its body or closing line."""
 
+    if backing_digest is not None and (claims or queries or parameters):
+        raise click.ClickException(
+            "--backing cannot be combined with --claim, --query, or --params"
+        )
     if parameters and len(parameters) != len(queries):
         raise click.ClickException("--params must appear once for each --query or not at all")
     resolved: list[tuple[str, Mapping[str, object]]] = []
@@ -2401,6 +2423,7 @@ def repin_projection(
             block_id=block_id,
             claims=claims,
             queries=resolved,
+            backing_digest=backing_digest,
             evaluation_time=instant,
         ),
         command_name="playbill block repin",
@@ -2409,6 +2432,66 @@ def repin_projection(
         _emit_json(stamp.model_dump(mode="json"))
         return
     click.echo(f"Repinned {source_id}#{block_id} at generation {stamp.declared_generation}.")
+
+
+@block_group.command("sync")
+@click.argument("paths", nargs=-1, type=click.Path(dir_okay=False))
+@click.option("--all", "all_sources", is_flag=True, help="Synchronize every catalog source.")
+@click.option("--check", is_flag=True, help="Report safe changes without writing them.")
+@click.option(
+    "--detach",
+    "detach_paths",
+    multiple=True,
+    type=click.Path(dir_okay=False),
+    help="Strip markers from retired blocks while preserving their current body.",
+)
+@click.option(
+    "--discard-local",
+    "discard_local_paths",
+    multiple=True,
+    type=click.Path(dir_okay=False),
+    help="Allow accepted bytes to replace a locally edited block in this path.",
+)
+@click.option("--workspace-root", default=".", show_default=True, type=click.Path(file_okay=False))
+@json_option
+@handle_errors
+def sync_projection(
+    paths: tuple[str, ...],
+    all_sources: bool,
+    check: bool,
+    detach_paths: tuple[str, ...],
+    discard_local_paths: tuple[str, ...],
+    workspace_root: str,
+    output_json: bool,
+) -> None:
+    """Converge safe publication blocks to their current accepted Claim bodies."""
+
+    result = _server_call(
+        lambda client, instance_id: sync_projection_blocks(
+            client,
+            instance_id,
+            workspace=workspace_root,
+            paths=paths,
+            all_sources=all_sources,
+            check=check,
+            detach_paths=detach_paths,
+            discard_local_paths=discard_local_paths,
+        ),
+        command_name="playbill block sync",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        for item in result.items:
+            target = item.path
+            if item.block_id is not None:
+                target += f"#{item.block_id}"
+            suffix = "" if item.reason is None else f":{item.reason}"
+            click.echo(f"{target}: {item.outcome}{suffix}")
+            for repair in item.repair_commands:
+                click.echo(f"  repair: {repair}")
+    if (check and result.would_change) or result.has_refusals:
+        raise click.exceptions.Exit(1)
 
 
 @playbill_group.group("policy")

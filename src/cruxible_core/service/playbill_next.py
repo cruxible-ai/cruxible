@@ -149,6 +149,7 @@ NextRepairOperation = Literal[
     "playbill.claim.retire",
     "playbill.floor.export",
     "playbill.block.repin",
+    "playbill.block.sync",
     "playbill.document.propose",
     "hand_edit",
 ]
@@ -611,6 +612,7 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "playbill.claim.retire": "playbill claim retire",
     "playbill.floor.export": "playbill floor export",
     "playbill.block.repin": "playbill block repin",
+    "playbill.block.sync": "playbill block sync",
     "playbill.document.propose": "playbill document propose",
 }
 
@@ -674,6 +676,11 @@ def _repair_command(
         block_id = values.get("block_id")
         if isinstance(source_id, str) and isinstance(block_id, str):
             parts.extend([shlex.quote(source_id), shlex.quote(block_id)])
+        else:
+            return None
+    elif operation == "playbill.block.sync":
+        if values.get("all") is True:
+            parts.append("--all")
         else:
             return None
     elif operation == "playbill.claim.retire":
@@ -3133,6 +3140,11 @@ def _projection_items(
                 )
             if stale:
                 related = tuple(sorted(stale, key=lambda value: value.encode("utf-8")))
+                syncable = (
+                    (registration in registrations if registrations is not None else False)
+                    and len(marker.stamp.backing) == 1
+                    and isinstance(marker.stamp.backing[0], ProjectionClaimBackingV1)
+                )
                 items.append(
                     _item(
                         severity="repair",
@@ -3145,10 +3157,16 @@ def _projection_items(
                             "stale_backings": list(related),
                         },
                         repair=PlaybillNextRepairV1(
-                            operation="playbill.block.repin",
+                            operation=(
+                                "playbill.block.sync" if syncable else "playbill.block.repin"
+                            ),
                             target=target,
-                            required_change="review_block_supersede_prose_then_repin",
-                            arguments=arguments,
+                            required_change=(
+                                "sync_unique_publication_successor"
+                                if syncable
+                                else "review_block_supersede_prose_then_repin"
+                            ),
+                            arguments={"all": True} if syncable else arguments,
                         ),
                     )
                 )

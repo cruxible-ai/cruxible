@@ -19,7 +19,11 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, cast
 
 from cruxible_client import contracts
-from cruxible_client.authoring.blocks import ProjectionMarkerError, parse_projection_blocks
+from cruxible_client.authoring.blocks import (
+    ProjectionMarkerError,
+    parse_projection_blocks,
+    sync_projection_blocks,
+)
 from cruxible_client.authoring.selectors import WorkspaceSources
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.declared_blocks import (
@@ -104,6 +108,13 @@ class _FloorClient(Protocol):
         *,
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
     ) -> contracts.PlaybillFloorExport: ...
+
+    def read_playbill_block_sync_backing(
+        self,
+        instance_id: str,
+        *,
+        request: contracts.PlaybillBlockSyncReadRequestV1,
+    ) -> contracts.PlaybillBlockSyncReadResultV1: ...
 
 
 class _CoverageClient(Protocol):
@@ -1078,8 +1089,9 @@ def activate_with_workspace_refresh(
     proposal_id: str,
     *,
     workspace: str | Path,
+    sync: bool = True,
 ) -> contracts.PlaybillWorkspaceActivationResult:
-    """Activate once, then independently refresh the current configured floor."""
+    """Activate once, refresh the floor, then independently sync local blocks."""
 
     activation = client.activate_playbill_proposal(instance_id, proposal_id)
     try:
@@ -1100,9 +1112,34 @@ def activate_with_workspace_refresh(
             )
     except Exception as exc:  # report activation and refresh truth together
         refresh = contracts.PlaybillFloorRefreshResult(status="failed", message=str(exc))
+    block_sync = None
+    if sync and activation.status == "accepted":
+        try:
+            block_sync = sync_projection_blocks(
+                cast(Any, client),
+                instance_id,
+                workspace=workspace,
+                all_sources=True,
+            )
+        except Exception as exc:  # report activation and sync truth together
+            block_sync = contracts.PlaybillBlockSyncResultV1(
+                items=(
+                    contracts.PlaybillBlockSyncItemV1(
+                        path=".",
+                        outcome="refused",
+                        reason="block_sync_failed",
+                        repair_commands=("cruxible playbill block sync --all",),
+                        detail={"message": str(exc)},
+                    ),
+                ),
+                changed_file_count=0,
+                would_change=False,
+                has_refusals=True,
+            )
     return contracts.PlaybillWorkspaceActivationResult(
         **activation.model_dump(mode="json"),
         floor_refresh=refresh,
+        block_sync=block_sync,
     )
 
 

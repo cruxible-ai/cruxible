@@ -163,6 +163,18 @@ class CruxibleClient:
         snapshot_digest = payload.get("sdk_contract_snapshot_digest")
         return version, snapshot_digest if isinstance(snapshot_digest, str) else None
 
+    def read_playbill_block_sync_backing(
+        self,
+        instance_id: str,
+        *,
+        request: contracts.PlaybillBlockSyncReadRequestV1,
+    ) -> contracts.PlaybillBlockSyncReadResultV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/projections/sync-backing",
+            json=request.model_dump(mode="json"),
+        )
+        return self._parse_model(response, contracts.PlaybillBlockSyncReadResultV1)
+
     def server_info(self) -> contracts.ServerInfoResult:
         response = self._client.get("/api/v1/server/info")
         return self._parse_model(response, contracts.ServerInfoResult)

@@ -186,6 +186,9 @@ from cruxible_core.service.playbill_procedure_runs import (
     service_playbill_procedure_readiness,
     service_run_playbill_procedure,
 )
+from cruxible_core.service.playbill_projection_sync import (
+    service_read_playbill_block_sync_backing,
+)
 from cruxible_core.service.playbill_proposals import (
     ProposalInventoryStatus,
     service_list_playbill_proposals,
@@ -1164,6 +1167,18 @@ def playbill_get_claim(
             paths=(path,),
         )
     return contracts.PlaybillClaimViewV2.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_read_block_sync_backing(
+    instance_id: str,
+    *,
+    request: contracts.PlaybillBlockSyncReadRequestV1,
+) -> contracts.PlaybillBlockSyncReadResultV1:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    return service_read_playbill_block_sync_backing(
+        get_playbill_manager().get(instance_id),
+        request=request,
+    )
 
 
 def playbill_claim_history(

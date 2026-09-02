@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.authoring.blocks import repin_projection_block
+from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
 from cruxible_client.authoring.insertions import apply_playbill_publication
 from cruxible_core.playbill.authoring.insertions import build_publication_preparation
 
@@ -28,6 +28,9 @@ SANCTIONED_CALLERS = {
     "projection_repin": {
         "packages/cruxible-client/src/cruxible_client/authoring/blocks.py::repin_projection_block",
     },
+    "projection_sync": {
+        "packages/cruxible-client/src/cruxible_client/authoring/blocks.py::sync_projection_blocks",
+    },
     "publication_v2": {
         "packages/cruxible-client/src/cruxible_client/authoring/insertions.py::"
         "apply_playbill_publication",
@@ -39,6 +42,11 @@ SANCTIONED_WRITERS: dict[str, tuple[Callable[..., object], str, tuple[str, ...]]
         repin_projection_block,
         "assert_projection_block_frame",
         ("replace one declared block's opening marker",),
+    ),
+    "packages/cruxible-client/src/cruxible_client/authoring/blocks.py::sync_projection_blocks": (
+        sync_projection_blocks,
+        "frame_projection_block",
+        ("atomically synchronize accepted publication block bytes",),
     ),
     "packages/cruxible-client/src/cruxible_client/authoring/insertions.py::"
     "apply_playbill_publication": (
@@ -135,7 +143,11 @@ def test_sanctioned_writer_inventory_matches_primitive_callers() -> None:
 
 
 def test_projection_primitive_callers_equal_the_two_writer_inventory() -> None:
-    assert set(SANCTIONED_CALLERS) == {"projection_repin", "publication_v2"}
+    assert set(SANCTIONED_CALLERS) == {
+        "projection_repin",
+        "projection_sync",
+        "publication_v2",
+    }
     _assert_only_sanctioned_callers(_projection_primitive_callers())
 
 

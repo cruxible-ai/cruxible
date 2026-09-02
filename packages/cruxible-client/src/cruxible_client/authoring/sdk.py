@@ -27,6 +27,7 @@ from cruxible_client.authoring.attestations import (
 from cruxible_client.authoring.blocks import (
     assert_independent_projection_evidence,
     repin_projection_block,
+    sync_projection_blocks,
 )
 from cruxible_client.authoring.context import (
     PlaybillContextResolutionError,
@@ -1025,7 +1026,12 @@ class Playbill:
             ),
         )
 
-    def activate(self, proposal_id: str) -> api.PlaybillWorkspaceActivationResult:
+    def activate(
+        self,
+        proposal_id: str,
+        *,
+        no_sync: bool = False,
+    ) -> api.PlaybillWorkspaceActivationResult:
         """Activate one proposal and refresh this workspace's configured floor.
 
         Activation was the one step of the authoring loop `Playbill` did not
@@ -1039,6 +1045,7 @@ class Playbill:
             self._instance_id,
             proposal_id,
             workspace=self._workspace,
+            sync=not no_sync,
         )
 
     def refresh(self) -> SearchPage:
@@ -2022,6 +2029,7 @@ class ProjectionBlocks:
         queries: Sequence[
             str | QueryRef | tuple[str | QueryRef, Mapping[str, CanonicalValue]]
         ] = (),
+        backing_digest: str | None = None,
         evaluation_time: datetime,
     ) -> ProjectionBlockStampV1:
         source_id = _address(source, RefKind.SOURCE)
@@ -2049,8 +2057,28 @@ class ProjectionBlocks:
             block_id=block_id,
             claims=claim_refs,
             queries=query_refs,
+            backing_digest=backing_digest,
             evaluation_time=evaluation_time,
             coordinate=self._playbill.coordinate,
+        )
+
+    def sync(
+        self,
+        *paths: str | Path,
+        all: bool = False,
+        check: bool = False,
+        detach: Sequence[str | Path] = (),
+        discard_local: Sequence[str | Path] = (),
+    ) -> api.PlaybillBlockSyncResultV1:
+        return sync_projection_blocks(
+            self._playbill._client,
+            self._playbill._instance_id,
+            workspace=self._playbill._workspace,
+            paths=paths,
+            all_sources=all,
+            check=check,
+            detach_paths=detach,
+            discard_local_paths=discard_local,
         )
 
 

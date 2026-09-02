@@ -10,6 +10,21 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from cruxible_client.contracts.approval_policy import ApprovalPolicyMode
 from cruxible_client.contracts.authoring.inputs import AuthoringInputV1
+from cruxible_client.contracts.authoring.models import (
+    PlaybillBlockSyncItemV1 as PlaybillBlockSyncItemV1,
+)
+from cruxible_client.contracts.authoring.models import (
+    PlaybillBlockSyncReadRequestV1 as PlaybillBlockSyncReadRequestV1,
+)
+from cruxible_client.contracts.authoring.models import (
+    PlaybillBlockSyncReadResultV1 as PlaybillBlockSyncReadResultV1,
+)
+from cruxible_client.contracts.authoring.models import (
+    PlaybillBlockSyncResultV1 as PlaybillBlockSyncResultV1,
+)
+from cruxible_client.contracts.authoring.models import (
+    PlaybillBlockSyncSuccessorCandidateV1 as PlaybillBlockSyncSuccessorCandidateV1,
+)
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedures.results import (
@@ -89,9 +104,12 @@ PlaybillNextReason: TypeAlias = Literal[
     "provider_lane_unavailable",
     "procedure_projection_missing",
 ]
-PlaybillHandEditNextReason: TypeAlias = Literal["procedure_projection_missing"]
+PlaybillHandEditNextReason: TypeAlias = Literal[
+    "procedure_projection_missing",
+    "provider_lane_unavailable",
+]
 PLAYBILL_HAND_EDIT_NEXT_REASONS: frozenset[PlaybillHandEditNextReason] = frozenset(
-    {"procedure_projection_missing"}
+    {"procedure_projection_missing", "provider_lane_unavailable"}
 )
 
 ProviderLaneUnavailableCodeV1: TypeAlias = Literal[
@@ -432,6 +450,7 @@ class PlaybillWorkspaceActivationResult(PlaybillActivationReceipt):
     """Activation receipt plus the independent client-workspace refresh outcome."""
 
     floor_refresh: PlaybillFloorRefreshResult
+    block_sync: PlaybillBlockSyncResultV1 | None = None
 
 
 class PlaybillDocumentView(BaseModel):

@@ -204,3 +204,55 @@ def test_activate_reports_accepted_and_refresh_failure(tmp_path: Path) -> None:
     assert result.status == "accepted"
     assert result.floor_refresh.status == "failed"
     assert "differs" in (result.floor_refresh.message or "")
+
+
+def test_accepted_activation_runs_workspace_sync_last(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path)
+    events: list[str] = []
+
+    class StubClient:
+        def activate_playbill_proposal(
+            self, instance_id: str, proposal_id: str
+        ) -> contracts.PlaybillActivationReceipt:
+            events.append("activate")
+            return contracts.PlaybillActivationReceipt(
+                proposal_id=proposal_id,
+                activated_by="owner",
+                status="accepted",
+                accepted_coordinate=_coordinate(),
+                workspace_advertisement={"status": "not_attached", "workspace_path": None},
+            )
+
+        def export_playbill_floor(
+            self,
+            instance_id: str,
+            *,
+            at=None,  # type: ignore[no-untyped-def]
+        ) -> contracts.PlaybillFloorExport:
+            events.append("floor")
+            return _export()
+
+    def sync(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        events.append("sync")
+        return contracts.PlaybillBlockSyncResultV1(
+            items=(), changed_file_count=0, would_change=False, has_refusals=False
+        )
+
+    monkeypatch.setattr(
+        "cruxible_client.authoring.workspace.sync_projection_blocks",
+        sync,
+    )
+
+    result = activate_with_workspace_refresh(
+        StubClient(),
+        "inst_test",
+        "proposal-1",
+        workspace=workspace,
+    )
+
+    assert events == ["activate", "floor", "sync"]
+    assert result.block_sync is not None
+    assert result.block_sync.has_refusals is False

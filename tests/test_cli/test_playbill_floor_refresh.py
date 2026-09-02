@@ -135,6 +135,7 @@ def test_accepted_activation_exactly_replaces_the_declared_floor(
             "proposal-1",
             "--workspace-root",
             str(workspace),
+            "--no-sync",
             "--json",
         ],
     )
@@ -166,6 +167,7 @@ def test_invalid_refresh_preserves_the_old_floor_and_reports_both_truths(
             "proposal-1",
             "--workspace-root",
             str(workspace),
+            "--no-sync",
             "--json",
         ],
     )
@@ -195,6 +197,7 @@ def test_lost_cas_retry_safely_refreshes_the_current_floor(
             "proposal-1",
             "--workspace-root",
             str(workspace),
+            "--no-sync",
             "--json",
         ],
     )

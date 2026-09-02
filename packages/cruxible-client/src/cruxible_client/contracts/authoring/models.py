@@ -35,6 +35,7 @@ from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import LiteralClaimObject, SubjectClaimObject, claim_path
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
+    ProjectionClaimBackingV1,
     ProjectionMarkerSummaryV1,
 )
 from cruxible_client.contracts.procedure_runtime_policy import (
@@ -1916,6 +1917,209 @@ class InsertionAbandonResultV1(_StrictAuthoringModel):
     expectation: InsertionExpectationV2
 
 
+PlaybillBlockSyncReadStatus: TypeAlias = Literal[
+    "current",
+    "successor",
+    "refused",
+    "unsyncable",
+]
+PlaybillBlockSyncReadReason: TypeAlias = Literal[
+    "block_workspace_instance_mismatch",
+    "block_backing_missing",
+    "block_backing_changed",
+    "block_not_publication_origin",
+    "block_publication_registry_unavailable",
+    "block_backing_retired",
+    "block_successor_ambiguous",
+    "block_successor_body_missing",
+    "block_successor_body_ambiguous",
+]
+
+
+class PlaybillBlockSyncSuccessorCandidateV1(_StrictAuthoringModel):
+    tag: Literal["playbill-block-sync-successor-candidate-v1"] = (
+        "playbill-block-sync-successor-candidate-v1"
+    )
+    identity: ArtifactIdentity
+    artifact_digest: str
+    coordinate: AcceptedCoordinate
+    generation: int = Field(ge=0)
+
+    _artifact_digest = field_validator("artifact_digest")(
+        lambda value: _sha256(value, label="block sync successor artifact digest")
+    )
+
+
+class PlaybillBlockSyncReadRequestV1(_StrictAuthoringModel):
+    tag: Literal["playbill-block-sync-read-request-v1"] = "playbill-block-sync-read-request-v1"
+    stamp: ProjectionBlockStampV1
+    preferred_successor_digest: str | None = None
+
+    @field_validator("preferred_successor_digest")
+    @classmethod
+    def _preferred_digest(cls, value: str | None) -> str | None:
+        if value is not None:
+            _sha256(value, label="preferred block sync successor digest")
+        return value
+
+
+class PlaybillBlockSyncReadResultV1(_StrictAuthoringModel):
+    tag: Literal["playbill-block-sync-read-result-v1"] = "playbill-block-sync-read-result-v1"
+    status: PlaybillBlockSyncReadStatus
+    original_artifact_digest: str | None = None
+    artifact_digest: str | None = None
+    coordinate: AcceptedCoordinate | None = None
+    generation: int | None = Field(default=None, ge=0)
+    backing: ProjectionClaimBackingV1 | None = None
+    body_content_base64: str | None = None
+    body_digest: str | None = None
+    successor_candidates: tuple[PlaybillBlockSyncSuccessorCandidateV1, ...] = ()
+    reason: PlaybillBlockSyncReadReason | None = None
+    detail: str | None = None
+
+    @field_validator("original_artifact_digest", "artifact_digest", "body_digest")
+    @classmethod
+    def _optional_digests(cls, value: str | None) -> str | None:
+        if value is not None:
+            _sha256(value, label="block sync digest")
+        return value
+
+    @field_validator("body_content_base64")
+    @classmethod
+    def _body_base64(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            decoded = base64.b64decode(value, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise ValueError("block sync body is not canonical base64") from exc
+        if base64.b64encode(decoded).decode("ascii") != value:
+            raise ValueError("block sync body base64 spelling is not canonical")
+        return value
+
+    @model_validator(mode="after")
+    def _result_shape(self) -> "PlaybillBlockSyncReadResultV1":
+        success = self.status in {"current", "successor"}
+        success_values = (
+            self.original_artifact_digest,
+            self.artifact_digest,
+            self.coordinate,
+            self.generation,
+            self.backing,
+            self.body_content_base64,
+            self.body_digest,
+        )
+        if success != all(value is not None for value in success_values):
+            raise ValueError("successful block sync reads require the complete retained body")
+        if success and (self.reason is not None or self.successor_candidates):
+            raise ValueError("successful block sync reads cannot carry a refusal")
+        if not success and self.reason is None:
+            raise ValueError("refused block sync reads require a typed reason")
+        if self.reason == "block_successor_ambiguous":
+            if len(self.successor_candidates) < 2:
+                raise ValueError("ambiguous block sync reads require successor candidates")
+        elif self.successor_candidates:
+            raise ValueError("only ambiguous block sync reads carry successor candidates")
+        if self.successor_candidates != tuple(
+            sorted(
+                self.successor_candidates,
+                key=lambda item: item.artifact_digest.encode("ascii"),
+            )
+        ):
+            raise ValueError("block sync successor candidates must be digest-sorted")
+        if success:
+            assert self.body_content_base64 is not None
+            assert self.body_digest is not None
+            body = base64.b64decode(self.body_content_base64, validate=True)
+            if "sha256:" + hashlib.sha256(body).hexdigest() != self.body_digest:
+                raise ValueError("block sync retained body does not reproduce its digest")
+        return self
+
+    @property
+    def body(self) -> bytes | None:
+        if self.body_content_base64 is None:
+            return None
+        return base64.b64decode(self.body_content_base64, validate=True)
+
+
+PlaybillBlockSyncOutcome: TypeAlias = Literal[
+    "unchanged",
+    "synced",
+    "would_sync",
+    "detached",
+    "would_detach",
+    "refused",
+    "unsyncable",
+]
+PlaybillBlockSyncReason: TypeAlias = Literal[
+    "workspace_not_attached",
+    "workspace_binding_invalid",
+    "workspace_instance_mismatch",
+    "workspace_source_catalog_missing",
+    "workspace_source_catalog_invalid",
+    "source_path_invalid",
+    "block_marker_malformed",
+    "block_multi_backing",
+    "block_query_backing",
+    "block_locally_modified",
+    "block_backing_missing",
+    "block_backing_changed",
+    "block_not_publication_origin",
+    "block_publication_registry_unavailable",
+    "block_backing_retired",
+    "block_successor_ambiguous",
+    "block_successor_body_missing",
+    "block_successor_body_ambiguous",
+    "block_concurrent_edit",
+    "block_frame_invalid",
+    "block_sync_failed",
+]
+
+
+class PlaybillBlockSyncItemV1(_StrictAuthoringModel):
+    tag: Literal["playbill-block-sync-item-v1"] = "playbill-block-sync-item-v1"
+    path: str
+    source_id: str | None = None
+    block_id: str | None = None
+    outcome: PlaybillBlockSyncOutcome
+    reason: PlaybillBlockSyncReason | None = None
+    repair_commands: tuple[str, ...] = ()
+    detail: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _item_shape(self) -> "PlaybillBlockSyncItemV1":
+        refused = self.outcome in {"refused", "unsyncable"}
+        if refused != (self.reason is not None):
+            raise ValueError("block sync refusal outcomes require exactly one typed reason")
+        if self.repair_commands != tuple(
+            sorted(set(self.repair_commands), key=lambda item: item.encode("utf-8"))
+        ):
+            raise ValueError("block sync repair commands must be byte-sorted and unique")
+        return self
+
+
+class PlaybillBlockSyncResultV1(_StrictAuthoringModel):
+    tag: Literal["playbill-block-sync-result-v1"] = "playbill-block-sync-result-v1"
+    items: tuple[PlaybillBlockSyncItemV1, ...]
+    changed_file_count: int = Field(ge=0)
+    would_change: bool
+    has_refusals: bool
+
+    @model_validator(mode="after")
+    def _summary_shape(self) -> "PlaybillBlockSyncResultV1":
+        changed = {item.path for item in self.items if item.outcome in {"synced", "detached"}}
+        prospective = any(
+            item.outcome in {"synced", "would_sync", "detached", "would_detach"}
+            for item in self.items
+        )
+        refused = any(item.outcome in {"refused", "unsyncable"} for item in self.items)
+        if self.changed_file_count != len(changed):
+            raise ValueError("block sync changed-file count does not reproduce")
+        if self.would_change != prospective or self.has_refusals != refused:
+            raise ValueError("block sync summary flags do not reproduce")
+        return self
+
+
 __all__ = [
     "AUTHORING_CANDIDATE_TREE_DIGEST_DOMAIN",
     "AUTHORING_CREATE_FINGERPRINT_DOMAIN",
@@ -1995,6 +2199,15 @@ __all__ = [
     "PublicationPreparationV2",
     "PublicationPrepareWarningV1",
     "PublicationSourceObservationV2",
+    "PlaybillBlockSyncItemV1",
+    "PlaybillBlockSyncOutcome",
+    "PlaybillBlockSyncReadReason",
+    "PlaybillBlockSyncReadRequestV1",
+    "PlaybillBlockSyncReadResultV1",
+    "PlaybillBlockSyncReadStatus",
+    "PlaybillBlockSyncReason",
+    "PlaybillBlockSyncResultV1",
+    "PlaybillBlockSyncSuccessorCandidateV1",
     "PreflightCertificateV1",
     "PreflightResultV1",
     "ProcedureAuthoringPayloadV1",

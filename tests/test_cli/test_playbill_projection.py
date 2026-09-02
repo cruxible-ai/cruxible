@@ -10,6 +10,10 @@ import pytest
 from click.testing import CliRunner
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.authoring.models import (
+    PlaybillBlockSyncItemV1,
+    PlaybillBlockSyncResultV1,
+)
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
     ProjectionClaimBackingV1,
@@ -123,3 +127,101 @@ def test_cli_repin_rejects_query_parameter_count_mismatch() -> None:
 
     assert result.exit_code == 1
     assert "once for each --query" in result.output
+
+
+def test_cli_sync_passes_local_edit_and_path_controls(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def sync(client: object, instance_id: str, **values: Any) -> PlaybillBlockSyncResultV1:
+        assert instance_id == "inst_projection"
+        calls.append(values)
+        return PlaybillBlockSyncResultV1(
+            items=(
+                PlaybillBlockSyncItemV1(
+                    path="corpus/runbook.md",
+                    source_id="corpus.runbook",
+                    block_id="summary",
+                    outcome="unchanged",
+                ),
+            ),
+            changed_file_count=0,
+            would_change=False,
+            has_refusals=False,
+        )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: object())
+    monkeypatch.setattr("cruxible_core.cli.commands.playbill.sync_projection_blocks", sync)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://projection.example.test",
+            "--instance-id",
+            "inst_projection",
+            "playbill",
+            "block",
+            "sync",
+            "corpus/runbook.md",
+            "--discard-local",
+            "corpus/runbook.md",
+            "--workspace-root",
+            str(tmp_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [
+        {
+            "workspace": str(tmp_path),
+            "paths": ("corpus/runbook.md",),
+            "all_sources": False,
+            "check": False,
+            "detach_paths": (),
+            "discard_local_paths": ("corpus/runbook.md",),
+        }
+    ]
+
+
+def test_cli_sync_check_exits_nonzero_when_safe_bytes_would_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = PlaybillBlockSyncResultV1(
+        items=(
+            PlaybillBlockSyncItemV1(
+                path="corpus/runbook.md",
+                source_id="corpus.runbook",
+                block_id="summary",
+                outcome="would_sync",
+            ),
+        ),
+        changed_file_count=0,
+        would_change=True,
+        has_refusals=False,
+    )
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: object())
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.sync_projection_blocks",
+        lambda *_args, **_kwargs: result,
+    )
+
+    invoked = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://projection.example.test",
+            "--instance-id",
+            "inst_projection",
+            "playbill",
+            "block",
+            "sync",
+            "--all",
+            "--check",
+        ],
+    )
+
+    assert invoked.exit_code == 1
+    assert "would_sync" in invoked.output
