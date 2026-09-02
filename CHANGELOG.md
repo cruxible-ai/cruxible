@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Client custody follows one Git-worktree boundary.** Initialization,
+  approval, principal changes, and Claim attestations now anchor custody checks
+  to the worktree containing the process CWD; outside a worktree, no workspace
+  root is inferred. Inherited `GIT_DIR` and `GIT_WORK_TREE` selectors are ignored
+  for that decision, with a typed advisory written to stderr when they select a
+  different worktree.
+
 - **Playbill workspace context and deterministic repair move together (PC-DF3).**
   Publication blocks can sync through the read-only sync-backing route while
   preserving local edits with `block_locally_modified`, `--discard-local`,

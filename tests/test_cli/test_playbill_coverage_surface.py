@@ -89,6 +89,7 @@ COPY_SOURCE = f"external:{COPY_IDENTITY}"
 def _bootstrap(cruxible: _Cli, tmp_path: Path) -> None:
     cruxible.json("--server-url", "http://cruxible", "playbill", "host", "create")
     cruxible.bootstrap(tmp_path)
+    # Git init follows bootstrap so TCP host attachment and in-tree custody stay refused.
     subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
 
 

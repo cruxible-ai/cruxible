@@ -152,7 +152,6 @@ def test_and_activate_brief_prints_the_accepted_coordinate_and_receipt(
         accepted_coordinate=COORDINATE,
         workspace_advertisement={"status": "not_attached", "workspace_path": None},
         floor_refresh=contracts.PlaybillFloorRefreshResult(status="not_configured"),
-        workspace_advertisement=contracts.NOT_ATTACHED_ADVERTISEMENT,
     )
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
     monkeypatch.setattr(

@@ -138,6 +138,7 @@ from cruxible_core.playbill.service.review import (
 from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
 from cruxible_core.playbill.workspace_advertisement import (
     close_proposal_review_worktree,
+    containing_git_workspace_root,
     open_proposal_review_worktree,
 )
 from cruxible_core.service.playbill_procedure_runs import ProcedureBindRequestV1
@@ -351,8 +352,8 @@ class _LocalGitWorkspaceResult:
     note: _GitWorkspaceEnvironmentNote | None
 
 
-def _git_workspace_root(environment: Mapping[str, str]) -> Path | None:
-    """Resolve the worktree containing the CWD under one explicit environment."""
+def _inherited_git_workspace_root() -> Path | None:
+    """Resolve only the advisory root selected by ambient Git variables."""
 
     try:
         completed = subprocess.run(
@@ -360,7 +361,6 @@ def _git_workspace_root(environment: Mapping[str, str]) -> Path | None:
             check=False,
             capture_output=True,
             cwd=Path.cwd(),
-            env=dict(environment),
             text=True,
             timeout=5,
         )
@@ -379,19 +379,10 @@ def _explicit_git_workspace_root(value: str) -> Path:
         selected = Path(value).expanduser().resolve(strict=True)
     except OSError as exc:
         raise click.UsageError(f"--workspace is not an accessible directory: {value}") from exc
-    completed = subprocess.run(
-        ["git", "-C", str(selected), "rev-parse", "--show-toplevel"],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=5,
-    )
-    if completed.returncode != 0:
+    workspace_root = containing_git_workspace_root(selected)
+    if workspace_root is None:
         raise click.UsageError("--workspace must select a path inside one Git worktree")
-    try:
-        return Path(completed.stdout.strip()).resolve(strict=True)
-    except (OSError, RuntimeError) as exc:
-        raise click.UsageError("--workspace Git root cannot be resolved") from exc
+    return workspace_root
 
 
 def _workspace_config_transport() -> dict[str, str]:
@@ -406,16 +397,10 @@ def _workspace_config_transport() -> dict[str, str]:
 def _local_git_workspace_root() -> _LocalGitWorkspaceResult:
     """Resolve the CWD worktree without trusting an inherited repository selector."""
 
-    inherited_environment = dict(os.environ)
-    clean_environment = dict(inherited_environment)
     repository_selectors = ("GIT_DIR", "GIT_WORK_TREE")
-    inherited_selector = any(name in clean_environment for name in repository_selectors)
-    for name in repository_selectors:
-        clean_environment.pop(name, None)
-    workspace_root = _git_workspace_root(clean_environment)
-    inherited_root = (
-        _git_workspace_root(inherited_environment) if inherited_selector else workspace_root
-    )
+    inherited_selector = any(name in os.environ for name in repository_selectors)
+    workspace_root = containing_git_workspace_root(Path.cwd())
+    inherited_root = _inherited_git_workspace_root() if inherited_selector else workspace_root
     note = None
     if (
         workspace_root is not None
@@ -449,9 +434,12 @@ def _custody_workspace_root() -> Path | None:
     return resolution.workspace_root
 
 
-def _custody_forbidden_roots() -> tuple[Path, ...]:
-    workspace_root = _custody_workspace_root()
+def _forbidden_roots_for(workspace_root: Path | None) -> tuple[Path, ...]:
     return () if workspace_root is None else (workspace_root,)
+
+
+def _custody_forbidden_roots() -> tuple[Path, ...]:
+    return _forbidden_roots_for(_custody_workspace_root())
 
 
 def _refuse_tcp_workspace_operation(git_workspace: Path | None) -> None:
@@ -523,7 +511,7 @@ def _adopt_init_retry_key(
         target.directory,
         principal_id=target.principal.principal_id,
         kind=target.principal.kind,
-        forbidden_roots=() if workspace is None else (workspace,),
+        forbidden_roots=_forbidden_roots_for(workspace),
     )
     expected = _init_resume_payload(
         target,
@@ -550,7 +538,7 @@ def _prepare_init_custody(
             directory,
             principal_id=principal_id,
             kind=kind,
-            forbidden_roots=() if workspace is None else (workspace,),
+            forbidden_roots=_forbidden_roots_for(workspace),
         )
         for directory, principal_id, kind in specifications
     )
@@ -598,7 +586,7 @@ def _prepare_init_custody(
                 target.directory,
                 principal_id=target.principal.principal_id,
                 kind=target.principal.kind,
-                forbidden_roots=() if workspace is None else (workspace,),
+                forbidden_roots=_forbidden_roots_for(workspace),
             )
             _write_init_resume_marker(
                 marker,
@@ -682,6 +670,7 @@ def create_host(
 ) -> None:
     """Allocate an empty host and remember it as the active instance."""
 
+    git_workspace: Path | None
     if workspace_path is not None:
         git_workspace = _explicit_git_workspace_root(workspace_path)
     else:

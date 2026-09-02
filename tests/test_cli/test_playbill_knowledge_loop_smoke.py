@@ -481,6 +481,7 @@ def test_cli_custody_refusal_names_the_custody_and_workspace_roots(
 
 
 def test_local_git_workspace_ignores_inherited_repository_selection(
+    served_cli: _Cli,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -493,6 +494,7 @@ def test_local_git_workspace_ignores_inherited_repository_selection(
     monkeypatch.chdir(nested)
     monkeypatch.setenv("GIT_DIR", str(inherited_workspace / ".git"))
     monkeypatch.setenv("GIT_WORK_TREE", str(inherited_workspace))
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(cwd_workspace))
 
     resolution = _local_git_workspace_root()
 
@@ -501,6 +503,17 @@ def test_local_git_workspace_ignores_inherited_repository_selection(
     assert resolution.note.code == "inherited_git_workspace_ignored"
     assert resolution.note.cwd_workspace_root == cwd_workspace.resolve()
     assert resolution.note.inherited_workspace_root == inherited_workspace.resolve()
+
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill._refuse_tcp_workspace_operation",
+        lambda _workspace: None,
+    )
+    rendered = served_cli.run(
+        "--server-url", "http://cruxible", "playbill", "host", "create", "--json"
+    )
+    json.loads(rendered.stdout)
+    assert "inherited_git_workspace_ignored" in rendered.stderr
+    assert "inherited_git_workspace_ignored" not in rendered.stdout
 
 
 def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
