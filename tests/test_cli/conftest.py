@@ -24,7 +24,6 @@ def reset_server_mode_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.delenv("CRUXIBLE_SERVER_BEARER_TOKEN", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
-    monkeypatch.delenv("CRUXIBLE_STATE_ROOT", raising=False)
     reset_client_cache()
     reset_registry()
     yield

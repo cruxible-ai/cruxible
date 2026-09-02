@@ -77,6 +77,7 @@ testpaths = ["tests"]
 pythonpath = ["src", "packages/cruxible-client/src"]
 markers = [
     "docker: requires a working Docker daemon and may build or run container images",
+    "state_root_fallback: tests default state resolution against an isolated temporary HOME",
     "wheel: builds and installs the distribution wheel into a throwaway venv; requires build tooling",
     "taubench: drives the committed benchmarks/playbill_taubench recipe end to end; runs by default",
 ]

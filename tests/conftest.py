@@ -1,6 +1,7 @@
 """Shared test fixtures for cruxible-core."""
 
 import os
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,24 @@ import pytest
 _DOCKER_TEST_ENV = "CRUXIBLE_RUN_DOCKER_TESTS"
 _WHEEL_TEST_ENV = "CRUXIBLE_RUN_WHEEL_TESTS"
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
+
+
+@pytest.fixture(scope="session", autouse=True)
+def isolate_server_state_root(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[None]:
+    """Keep every test away from user-scoped current and legacy daemon state."""
+
+    state_root = tmp_path_factory.mktemp("server-state")
+    previous = os.environ.get("CRUXIBLE_STATE_ROOT")
+    os.environ["CRUXIBLE_STATE_ROOT"] = str(state_root)
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("CRUXIBLE_STATE_ROOT", None)
+        else:
+            os.environ["CRUXIBLE_STATE_ROOT"] = previous
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -53,6 +72,7 @@ def _opt_in_enabled(config: pytest.Config, *, marker: str, env_var: str) -> bool
 def isolate_cli_context(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path_factory: pytest.TempPathFactory,
+    request: pytest.FixtureRequest,
 ) -> None:
     """Keep tests isolated from any user-scoped remembered CLI/server context."""
 
@@ -62,6 +82,10 @@ def isolate_cli_context(
     monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET", raising=False)
     monkeypatch.delenv("CRUXIBLE_INSTANCE_ID", raising=False)
     monkeypatch.delenv("CRUXIBLE_PLAYBILL_WORKSPACE", raising=False)
+    if request.node.get_closest_marker("state_root_fallback") is not None:
+        isolated_home = tmp_path_factory.mktemp("state-root-fallback-home")
+        monkeypatch.setenv("HOME", str(isolated_home))
+        monkeypatch.delenv("CRUXIBLE_STATE_ROOT", raising=False)
 
 
 @pytest.fixture
