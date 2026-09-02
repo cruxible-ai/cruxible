@@ -75,6 +75,32 @@ class PlaybillWorkspaceError(PlaybillError, ValueError):
     """A client workspace or exported floor failed deterministic validation."""
 
 
+class PlaybillWorkspaceAttachmentError(PlaybillWorkspaceError):
+    """Daemon registration and the requested client workspace disagree."""
+
+    error_code = "playbill.workspace.registration_disagrees"
+
+    def __init__(
+        self,
+        *,
+        instance_id: str,
+        requested_workspace: str,
+        registered_workspace: str | None,
+    ) -> None:
+        self.instance_id = instance_id
+        self.requested_workspace = requested_workspace
+        self.registered_workspace = registered_workspace
+        self.repair_commands = (
+            f"cruxible playbill host create --instance-id {instance_id} "
+            f"--workspace {requested_workspace}",
+        )
+        super().__init__(
+            f"{self.error_code}: host {instance_id!r} is not registered to workspace "
+            f"{requested_workspace!r} (registered={registered_workspace!r}); repair: "
+            f"{self.repair_commands[0]}"
+        )
+
+
 def _contains_secret_field(value: object) -> bool:
     if isinstance(value, Mapping):
         for key, child in value.items():
@@ -1493,6 +1519,7 @@ def activate_with_workspace_refresh(
 
 
 __all__ = [
+    "PlaybillWorkspaceAttachmentError",
     "PlaybillWorkspaceError",
     "activate_with_workspace_refresh",
     "configured_floor_path",

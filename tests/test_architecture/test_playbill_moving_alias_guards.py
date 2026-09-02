@@ -54,3 +54,19 @@ def test_gate_selectors_never_compare_against_moving_current_aliases() -> None:
         "compare an exact retained coordinate or use installed-lineage membership: "
         f"{violations!r}"
     )
+
+
+def test_cli_and_sdk_consume_the_one_daemon_compatibility_function() -> None:
+    consumers = (
+        ROOT / "src" / "cruxible_core" / "cli" / "commands" / "_common.py",
+        ROOT / "packages" / "cruxible-client" / "src" / "cruxible_client" / "authoring" / "sdk.py",
+    )
+    for path in consumers:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        calls = {
+            node.func.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        assert "check_daemon_compatibility" in calls, path.relative_to(ROOT)
+        assert "SUPPORTED_DAEMON_CONTRACTS" not in path.read_text(encoding="utf-8")

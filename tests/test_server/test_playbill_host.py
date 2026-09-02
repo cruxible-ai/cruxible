@@ -101,6 +101,64 @@ def test_host_allocation_is_idempotent_and_creates_no_semantic_state(
     assert not Path(record.location).exists()
 
 
+def test_host_show_and_server_status_inspect_uninitialized_hosts_without_writing(
+    host_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    get_registry().get_or_create_local_instance(tmp_path / "unrelated-local")
+    created = host_client.post(
+        "/api/v1/runtime/instances",
+        json={"instance_id": "inst_show_empty"},
+    )
+    assert created.status_code == 200
+    record = get_registry().get("inst_show_empty")
+    assert record is not None
+
+    shown = host_client.get("/api/v1/inst_show_empty/playbill/host")
+    assert shown.status_code == 200, shown.text
+    assert shown.json() == {
+        "tag": "playbill-host-inspection-v1",
+        "instance_id": "inst_show_empty",
+        "managed_root": str(Path(record.location).resolve()),
+        "workspace_root": None,
+        "compiler_coordinate": None,
+        "compiler_revision": None,
+        "compatibility": "uninitialized",
+        "writable": False,
+        "reason": None,
+    }
+    status = host_client.get("/api/v1/server/info")
+    assert status.status_code == 200, status.text
+    assert status.json()["instance_count"] == 1
+    assert [row["instance_id"] for row in status.json()["hosts"]] == ["inst_show_empty"]
+    assert status.json()["compiler_revision"] == "p2-b4"
+    assert not Path(record.location).exists()
+
+
+def test_status_keeps_malformed_host_as_typed_reseed_row(
+    host_client: TestClient,
+) -> None:
+    created = host_client.post(
+        "/api/v1/runtime/instances",
+        json={"instance_id": "inst_malformed_show"},
+    )
+    assert created.status_code == 200
+    record = get_registry().get("inst_malformed_show")
+    assert record is not None
+    managed = Path(record.location)
+    managed.mkdir(parents=True)
+    trust = get_registry().state_root / "trust" / "inst_malformed_show.json"
+    trust.parent.mkdir(parents=True)
+    trust.write_text("not canonical trust data", encoding="utf-8")
+
+    status = host_client.get("/api/v1/server/info")
+    assert status.status_code == 200, status.text
+    row = status.json()["hosts"][0]
+    assert row["compatibility"] == "reseed_required"
+    assert row["reason"]["code"] == "host_state_malformed"
+    assert row["reason"]["repair_commands"] == ["cruxible playbill host create"]
+
+
 def test_git_advertising_write_routes_run_outside_the_event_loop() -> None:
     assert not iscoroutinefunction(append_claim_attestation)
     assert not iscoroutinefunction(run_procedure)

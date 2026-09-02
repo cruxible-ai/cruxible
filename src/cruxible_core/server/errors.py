@@ -17,6 +17,8 @@ from cruxible_client.contracts.errors import (
     ProposalAdmissionError,
     ProposalEvaluationIntegrityError,
     ProposalIntegrityError,
+    ProposalNotFoundError,
+    ProposalSelectorAmbiguousError,
     SettlementIntegrityError,
 )
 from cruxible_client.errors import ErrorResponse, response_to_error
@@ -179,6 +181,7 @@ def _status_for_error(exc: CoreError) -> int:
             InstallNotFoundError,
             BindingNotFoundError,
             DocumentNotFoundError,
+            ProposalNotFoundError,
         ),
     ):
         return 404
@@ -203,6 +206,7 @@ def _status_for_error(exc: CoreError) -> int:
             SettlementIntegrityError,
             ProposalIntegrityError,
             ReviewOperationalConcurrentChangeError,
+            ProposalSelectorAmbiguousError,
         ),
     ):
         # 409: a pending-edge refusal is a STATE conflict, not a policy or tier
@@ -331,6 +335,14 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["field_path"] = exc.field_path
     if isinstance(exc, RuntimeCredentialNotFoundError):
         context["credential_id"] = exc.credential_id
+    if isinstance(exc, ProposalNotFoundError):
+        context["selector"] = exc.selector
+        context["accepted_forms"] = list(exc.accepted_forms)
+        context["repair_commands"] = list(exc.repair_commands)
+    if isinstance(exc, ProposalSelectorAmbiguousError):
+        context["selector"] = exc.selector
+        context["candidates"] = list(exc.candidates)
+        context["repair_commands"] = list(exc.repair_commands)
     if isinstance(exc, InvalidContinuationError):
         context["reason"] = exc.reason
     if isinstance(exc, ConcurrentStateDriftError):

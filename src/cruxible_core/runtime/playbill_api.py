@@ -194,6 +194,7 @@ from cruxible_core.service.playbill_proposals import (
     service_list_playbill_proposals,
     service_playbill_whoami,
     service_readmit_playbill_proposal,
+    service_resolve_playbill_proposal_selector,
 )
 from cruxible_core.service.playbill_query import service_run_playbill_query
 from cruxible_core.service.playbill_search import service_search_playbill
@@ -469,6 +470,18 @@ def playbill_list_proposals(
         status=status,
     )
     return contracts.PlaybillProposalList.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_resolve_proposal_selector(
+    instance_id: str,
+    selector: str,
+) -> contracts.PlaybillProposalSelectorResultV1:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_resolve_playbill_proposal_selector(
+        get_playbill_manager().get(instance_id),
+        selector=selector,
+    )
+    return contracts.PlaybillProposalSelectorResultV1.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_readmit_proposal(

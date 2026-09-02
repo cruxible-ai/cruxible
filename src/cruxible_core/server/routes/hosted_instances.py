@@ -8,15 +8,23 @@ from cruxible_client import contracts
 from cruxible_core.runtime import host_api
 from cruxible_core.server.config import resolve_server_settings
 from cruxible_core.server.request_models import PlaybillHostCreateRequest
-from cruxible_core.server.route_paths import PLAYBILL_HOST_CREATE_PATH
+from cruxible_core.server.route_paths import PLAYBILL_HOST_CREATE_PATH, PLAYBILL_HOST_SHOW_PATH
 from cruxible_core.server.routes import resolve_server_instance_id
 
 router = APIRouter(prefix="/api/v1", tags=["playbill-hosts"])
 
 
+@router.get(PLAYBILL_HOST_SHOW_PATH, response_model=contracts.PlaybillHostInspectionV1)
+def show_playbill_host(instance_id: str) -> contracts.PlaybillHostInspectionV1:
+    """Inspect one daemon host without acquiring semantic authority."""
+
+    return host_api.show_playbill_host(resolve_server_instance_id(instance_id))
+
+
 @router.post(
     PLAYBILL_HOST_CREATE_PATH,
     response_model=contracts.PlaybillHostResult,
+    response_model_exclude={"git_workspace_note"},
 )
 def create_playbill_host(
     req: PlaybillHostCreateRequest,

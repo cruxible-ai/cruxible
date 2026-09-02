@@ -12,11 +12,8 @@ from fastapi.testclient import TestClient
 
 from cruxible_client import __version__ as CLIENT_VERSION
 from cruxible_client import contracts
-from cruxible_client.authoring.sdk import SDK_CONTRACT_SNAPSHOT_DIGEST, SUPPORTED_DAEMON_CONTRACTS
-from cruxible_client.contracts.authoring.models import (
-    AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
-    AUTHORING_SDK_VERSION,
-)
+from cruxible_client.authoring.sdk import SDK_CONTRACT_SNAPSHOT_DIGEST
+from cruxible_client.contracts.authoring.models import AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core import __version__ as DAEMON_VERSION
@@ -55,7 +52,6 @@ def test_authoring_program_stamp_commits_the_exact_public_contract_snapshot() ->
 
     assert digest == AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST
     assert SDK_CONTRACT_SNAPSHOT_DIGEST == digest
-    assert SUPPORTED_DAEMON_CONTRACTS[AUTHORING_SDK_VERSION] == digest
 
 
 def test_current_daemon_serves_the_snapshot_used_by_the_sdk_handshake() -> None:
@@ -97,6 +93,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
     current = generate_contract_manifest()
     assert set(current["models"]) == {
         "PlaybillAcceptedCoordinate",
+        "GitWorkspaceNoteV1",
         "PlaybillActivationReceipt",
         "PlaybillAuditCoverage",
         "PlaybillAuditCoveredClaim",
@@ -116,6 +113,8 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillExplainResult",
         "PlaybillExplainUnsupportedDetail",
         "PlaybillHostResult",
+        "PlaybillHostCompatibilityReasonV1",
+        "PlaybillHostInspectionV1",
         "PlaybillHostWorkspaceRegistrationV1",
         "PlaybillInitResult",
         "PlaybillPrincipalList",
@@ -182,6 +181,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillProposalList",
         "PlaybillProposalListEntry",
         "PlaybillProposalReadmitResult",
+        "PlaybillProposalSelectorResultV1",
         "PlaybillProviderInterfaceEntry",
         "PlaybillSearchResult",
         "PlaybillSinceCursor",
@@ -190,6 +190,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillSinceRow",
         "PlaybillWhoAmI",
         "PlaybillWorkspaceActivationResult",
+        "PlaybillWorkspaceAttachResultV1",
         "PlaybillWorkspaceFloorStatus",
         "PlaybillWorkspaceFloorWriteResult",
         "RuntimeCredentialBootstrapResult",

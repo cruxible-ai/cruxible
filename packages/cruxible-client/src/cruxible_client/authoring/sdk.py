@@ -18,7 +18,6 @@ from typing import Any, Literal, TypeVar, cast
 
 from pydantic import SecretStr, TypeAdapter
 
-from cruxible_client import __version__
 from cruxible_client import contracts as api
 from cruxible_client.authoring.attestations import (
     ClaimAttestationV2Signer,
@@ -51,7 +50,6 @@ from cruxible_client.authoring.sdk_types import (
     Disposition,
     Duration,
     EffectivePeriod,
-    IncompatibleDaemonVersion,
     ProcedureRef,
     QueryRef,
     ReferenceKindError,
@@ -151,13 +149,6 @@ from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
 
 SDK_CONTRACT_SNAPSHOT_DIGEST = AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST
-# This frozen wire-version catalog remains part of the prerelease re-pin law;
-# daemon compatibility is determined from the digest the daemon serves, never
-# by looking up its independently moving package version here.
-SUPPORTED_DAEMON_CONTRACTS: Mapping[str, str] = {
-    "0.4.0": "sha256:f008e9dfde54a8b7ad801b0c19cb419614512a02166784414dc58345c0abd0f2",
-    AUTHORING_SDK_VERSION: SDK_CONTRACT_SNAPSHOT_DIGEST,
-}
 
 _SUBJECT_RE = re.compile(
     r"^(?P<kind>[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*)/"
@@ -890,16 +881,9 @@ class Playbill:
             token=raw_token,
         )
         try:
-            daemon_version, daemon_snapshot_digest = client._version_info()
-            if daemon_snapshot_digest != SDK_CONTRACT_SNAPSHOT_DIGEST:
-                raise IncompatibleDaemonVersion(
-                    client_version=__version__,
-                    daemon_version=daemon_version,
-                    expected_snapshot_digest=SDK_CONTRACT_SNAPSHOT_DIGEST,
-                    actual_snapshot_digest=(
-                        daemon_snapshot_digest if daemon_snapshot_digest is not None else "missing"
-                    ),
-                )
+            from cruxible_client.compatibility import check_daemon_compatibility
+
+            check_daemon_compatibility(client)
             result = cls(
                 client=client,
                 instance_id=resolved.instance_id,
@@ -2238,7 +2222,6 @@ __all__ = [
     "Proposal",
     "Publication",
     "SDK_CONTRACT_SNAPSHOT_DIGEST",
-    "SUPPORTED_DAEMON_CONTRACTS",
     "SearchPage",
     "SubjectDraft",
 ]

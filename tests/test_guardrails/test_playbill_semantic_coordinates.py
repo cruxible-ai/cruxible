@@ -387,3 +387,32 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
     assert capture_contracts._RUN_ID_V2_RE.pattern == (  # noqa: SLF001
         r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$"
     )
+
+
+def test_installed_compiler_revision_labels_are_exact_and_complete() -> None:
+    from cruxible_core.playbill.compiler import (
+        COMPILER_REVISION_LABELS,
+        SUPPORTED_COMPILERS,
+        current_compiler_coordinate,
+    )
+
+    assert tuple(COMPILER_REVISION_LABELS) == SUPPORTED_COMPILERS
+    assert tuple(COMPILER_REVISION_LABELS.values()) == (
+        "pb-b",
+        "pb-c",
+        "pb-d",
+        "pc-a1",
+        "pc-a2",
+        "pc-b",
+        "pc-c",
+        "pc-d",
+        "pc-e1",
+        "p2-b0",
+        "pc-hr",
+        "p2-b1",
+        "p2-c",
+        "pc-df2",
+        "p2-b2",
+        "p2-b4",
+    )
+    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "p2-b4"

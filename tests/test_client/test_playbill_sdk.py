@@ -1107,6 +1107,17 @@ def test_claim_view_mints_capture_refs_from_typed_admission_accounts(tmp_path: P
                     },
                 ],
                 admission_evaluation_time="2026-08-28T12:00:00Z",
+                statement=api.ClaimStatementCardV1(
+                    subject={
+                        "artifact_path": "subjects/secops.policy/a.json",
+                        "selector": {"scheme": "artifact-v1", "value": ""},
+                    },
+                    predicate="secops.policy.patch_sla",
+                    object={"kind": "literal", "value": 48},
+                    role="normative",
+                    qualifier=None,
+                    lifecycle="live",
+                ),
                 admission_accounts=[
                     api.PlaybillCaptureAdmissionAccount(
                         tag="playbill-capture-admission-account-v1",

@@ -61,6 +61,7 @@ Playbill signing principals.
 
 ~~~text
 cruxible server start [--state-root DIR] [--socket PATH | --host HOST --port PORT]
+cruxible server install-service [SERVER-START FLAGS] [--print] [--replace]
 cruxible server status
 cruxible server info
 cruxible server restart
@@ -72,7 +73,20 @@ existing server. State defaults to `~/.cruxible`; `--state-root` overrides
 refused. See [Canonical repository and daemon layout](canonical-repository-layout.md)
 for the exact directory contract.
 
-`server status` and `server info` render `Provider lane:` and, when degraded,
+`server install-service` renders a per-user launchd agent on macOS or systemd
+user unit on Linux. It records the resolved `cruxible` executable and explicit
+state-root, transport, capability-ceiling, and auth settings under the daemon
+state root; a later `--print` with that state root revalidates and renders the
+record without writing. Installation refuses an existing unit unless
+`--replace`, loads/enables the unit, and does not start it. Start it with the
+service manager or run `cruxible server start`. Service files contain no bearer
+or bootstrap secret; auth-on installation requires an active durable runtime
+credential first.
+
+`server status` lists the daemon's exact current compiler coordinate and each
+governed host as `uninitialized`, `writable`, or `reseed_required`, retaining a
+typed reason for malformed or retired state. `server status` and `server info`
+also render `Provider lane:` and, when degraded,
 `Provider lane reason:`. Provider-lane degradation never prevents the daemon's
 non-Provider surfaces from starting, so these lines are the operator's recovery
 signal rather than a daemon-startup failure. When transient process-table reads
@@ -119,6 +133,8 @@ identity and is unsafe; prefer repairing the typed cause and allowing re-arm.
 
 ~~~text
 cruxible playbill host create [--instance-id ID] [--workspace DIR] [--replace]
+cruxible playbill host show INSTANCE [--json]
+cruxible playbill workspace attach [--instance-id ID] [--replace]
 ~~~
 
 Allocates an empty daemon-owned host and remembers it. When the selected daemon
@@ -135,6 +151,13 @@ A TCP client never sends its local path to the daemon. Implicit attachment from
 inside a TCP worktree remains refused; explicit `--workspace DIR` instead writes
 a client-local `server_url` binding without claiming daemon registration. Use a
 local socket when the daemon must advertise ledger refs into that worktree.
+
+`host show` is a zero-authority inspection of workspace registration, managed
+root, exact compiler coordinate/revision, and write compatibility; the CLI adds
+the selected transport. `workspace attach` is client-local and requires a Unix
+socket: it writes `.playbill/coverage.json` for an existing host only after the
+daemon proves that it registered the exact current Git worktree. A missing or
+different registration is a typed refusal and no config is written.
 
 ## playbill init
 
@@ -245,7 +268,7 @@ retirement decisions from diagnostics.
 cruxible playbill claim retire IDENTITY REQUEST_FILE
 cruxible playbill claim attest IDENTITY --support|--contradict|--unsure [--note TEXT]
 cruxible playbill claim list [--subject PATH] [--predicate P] [--include-retired]
-cruxible playbill claim get IDENTITY
+cruxible playbill claim get IDENTITY [--brief]
 cruxible playbill claim history IDENTITY
 cruxible playbill claim explain IDENTITY [--evaluation-time TS]
 ~~~
@@ -256,6 +279,9 @@ attributed retirement over the complete dependent Claim closure; the request
 must name every dependent reason and never receives a daemon-synthesized end
 time. explain returns the verdict together with the law evidence and source
 handles it was computed from.
+`claim get --brief` renders the typed subject, predicate, object, role,
+qualifier, flat lifecycle state, and predecessor digest. JSON returns the same
+shape in the top-level `statement` field alongside the canonical envelope.
 
 ## playbill claim-attestation
 
@@ -649,8 +675,12 @@ cruxible playbill review close PROPOSAL_ID [--workspace-root DIR]
 
 `cruxible playbill whoami` names the credential-derived actor, its effective
 permission mode, accepted principal-registration status, and current coordinate.
-`proposal list` deterministically separates current open candidates from accepted,
-refused, and stale terminal evidence so retries do not depend on remembered IDs.
+`proposal list` prints a labeled `COORDINATE_TIME` column and deterministically
+separates current open candidates from accepted, refused, and stale terminal
+evidence so retries do not depend on remembered IDs. Proposal actions accept a
+full digest, a unique digest prefix, or a target ref whose current Git target
+names exactly one admission; unknown and historical ambiguous selectors are
+typed refusals that point back to `proposal list`.
 `proposal readmit` replays a stale proposal's authored content through the current
 governed rebase and returns a fresh, idempotent proposal without changing the old
 proposal evidence. A stale generated ClaimType dependency-closure migration is not

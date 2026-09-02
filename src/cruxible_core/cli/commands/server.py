@@ -19,6 +19,7 @@ import os
 import secrets
 import time
 from pathlib import Path
+from typing import Literal, cast
 
 import click
 
@@ -33,7 +34,18 @@ from cruxible_core.cli.main import handle_errors, long_running_command
 from cruxible_core.runtime.permissions import PERMISSION_MODE_NAMES
 from cruxible_core.server.config import (
     get_runtime_bootstrap_secret,
+    get_server_state_root,
     is_server_auth_enabled,
+)
+from cruxible_core.server.service_install import (
+    ServiceInstallConfigV1,
+    current_service_platform,
+    durable_credentials_available,
+    install_service,
+    load_service_config,
+    render_service,
+    resolved_cruxible_executable,
+    service_config_path,
 )
 
 # Poll cadence while waiting for the re-exec'd daemon to start answering again.
@@ -205,6 +217,93 @@ def server_start_cmd(
     )
 
 
+@server_group.command("install-service")
+@click.option("--state-root", default=None, help="Durable daemon state root.")
+@click.option("--socket", "socket_path", default=None, help="Unix socket for server start.")
+@click.option("--host", default=None, help="TCP bind host when no socket is selected.")
+@click.option("--port", type=int, default=None, help="TCP bind port when no socket is selected.")
+@click.option(
+    "--capability-ceiling",
+    type=click.Choice(PERMISSION_MODE_NAMES, case_sensitive=False),
+    default=None,
+    help="Recorded server capability ceiling (default: admin).",
+)
+@click.option("--auth/--no-auth", default=None, help="Enable or disable daemon authentication.")
+@click.option("--replace", is_flag=True, help="Replace an existing service unit.")
+@click.option("--print", "print_only", is_flag=True, help="Print without writing or enabling.")
+@handle_errors
+def server_install_service_cmd(
+    state_root: str | None,
+    socket_path: str | None,
+    host: str | None,
+    port: int | None,
+    capability_ceiling: str | None,
+    auth: bool | None,
+    replace: bool,
+    print_only: bool,
+) -> None:
+    """Render or install a user service that runs `cruxible server start`."""
+
+    if socket_path is not None and (host is not None or port is not None):
+        raise click.UsageError("choose --socket or --host/--port, not both")
+    root = (
+        Path(state_root).expanduser().resolve()
+        if state_root is not None
+        else get_server_state_root()
+    )
+    explicit_settings = any(
+        value is not None for value in (socket_path, host, port, capability_ceiling, auth)
+    )
+    recorded_path = service_config_path(root)
+    if print_only and recorded_path.is_file() and not explicit_settings:
+        config = load_service_config(root)
+        if config.platform != current_service_platform():
+            raise click.UsageError(
+                "recorded service platform differs from this host; rerun --print with explicit "
+                "server settings"
+            )
+        if config.auth_enabled and not durable_credentials_available(root):
+            raise click.UsageError(
+                "recorded auth-on service no longer has an active durable runtime credential; "
+                "repair: run `cruxible server start --bootstrap-secret-file PATH`, claim the "
+                "bootstrap credential, then rerun install-service"
+            )
+        click.echo(render_service(config).decode("utf-8"), nl=False)
+        return
+
+    auth_enabled = bool(auth)
+    if auth_enabled and not durable_credentials_available(root):
+        raise click.UsageError(
+            "auth-on unattended startup requires an active durable runtime credential; "
+            "repair: run `cruxible server start --bootstrap-secret-file PATH`, claim the "
+            "bootstrap credential, then rerun install-service"
+        )
+    config = ServiceInstallConfigV1(
+        platform=current_service_platform(),
+        executable=str(resolved_cruxible_executable()),
+        state_root=str(root),
+        socket_path=(
+            str(Path(socket_path).expanduser().resolve()) if socket_path is not None else None
+        ),
+        host=None if socket_path is not None else (host or "127.0.0.1"),
+        port=None if socket_path is not None else (port or 8100),
+        capability_ceiling=cast(
+            Literal["read_only", "governed_write", "graph_write", "admin"],
+            (capability_ceiling or "admin").lower(),
+        ),
+        auth_enabled=auth_enabled,
+    )
+    if print_only:
+        click.echo(render_service(config).decode("utf-8"), nl=False)
+        return
+    destination = install_service(config, replace=replace)
+    click.echo(f"Installed service unit: {destination}")
+    click.echo(f"Recorded settings: {root / 'daemon' / 'service-install-v1.json'}")
+    click.echo(
+        "Enabled but not started. Start it with the service manager or `cruxible server start`."
+    )
+
+
 @server_group.command("status")
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
 @handle_errors
@@ -229,6 +328,15 @@ def server_status_cmd(output_json: bool) -> None:
     click.echo(f"Version: {result.version}")
     click.echo(f"State root: {result.state_root}")
     click.echo(f"Instances: {result.instance_count}")
+    click.echo(f"Compiler coordinate: {result.compiler_coordinate or '-'}")
+    click.echo(f"Compiler revision: {result.compiler_revision or '-'}")
+    for host in result.hosts:
+        click.echo(
+            f"Host {host.instance_id}: {host.compatibility} "
+            f"({host.compiler_revision or '-'}, {host.compiler_coordinate or '-'})"
+        )
+        if host.reason is not None:
+            click.echo(f"  Reason: {host.reason.code}: {host.reason.detail}")
     click.echo(f"Auth enabled: {'yes' if result.auth_enabled else 'no'}")
     click.echo(f"Auth required: {'yes' if result.auth_required else 'no'}")
     click.echo(f"Provider lane: {result.provider_lane.state}")

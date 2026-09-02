@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Operator and agent workflows now close their setup and selection loops.**
+  Server status reports exact compiler compatibility per governed host, and
+  `playbill host show` exposes one host without acquiring authority. Proposal
+  commands resolve full digests, unique prefixes, and current target refs
+  through one typed read; Claim reads add a shared statement-first projection.
+  A single client/daemon digest handshake now gates both CLI and SDK entry, while
+  `server install-service` and `playbill workspace attach` provide credential-free,
+  atomic local setup. Inherited-Git advisories are retained in affected JSON
+  receipts, subject-valued Claim authoring preserves typed Subject objects, and
+  projection repair detects body-only accepted revisions.
+
 - **Client custody follows one Git-worktree boundary.** Initialization,
   approval, principal changes, and Claim attestations now anchor custody checks
   to the worktree containing the process CWD; outside a worktree, no workspace

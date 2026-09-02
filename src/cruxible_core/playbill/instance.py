@@ -646,6 +646,11 @@ class PlaybillInstance:
         paths = self._validated_paths(self.root, self.descriptor.storage)
         return ProposalEvidenceStore(paths["exhaust"])
 
+    def proposal_ref_target(self, target_ref: str) -> str | None:
+        """Read one proposal transport ref without exposing ledger mutation."""
+
+        return self._ledger.read_proposal_ref(target_ref)
+
     def review_operational_store(self) -> ReviewOperationalStore:
         """Return the local append-only review observation store.
 

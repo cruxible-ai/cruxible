@@ -52,6 +52,12 @@ def test_client_sends_the_frozen_tag_only_request() -> None:
 
 def test_cli_reports_the_new_proposal_without_hiding_its_source(monkeypatch) -> None:
     class StubClient:
+        def resolve_playbill_proposal_selector(self, instance_id, selector):
+            assert (instance_id, selector) == ("inst_test", SOURCE_ID)
+            return contracts.PlaybillProposalSelectorResultV1(
+                selector=selector, proposal_id=SOURCE_ID
+            )
+
         def readmit_playbill_proposal(self, instance_id, proposal_id):
             assert (instance_id, proposal_id) == ("inst_test", SOURCE_ID)
             return _result()

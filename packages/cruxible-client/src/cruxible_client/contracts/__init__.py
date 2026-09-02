@@ -26,6 +26,7 @@ from cruxible_client.contracts.authoring.models import (
     PlaybillBlockSyncSuccessorCandidateV1 as PlaybillBlockSyncSuccessorCandidateV1,
 )
 from cruxible_client.contracts.canonical import Sha256Value
+from cruxible_client.contracts.claims import ClaimStatementCardV1 as ClaimStatementCardV1
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedures.results import (
     ProcedurePendingSuccessorV1,
@@ -123,11 +124,22 @@ ProviderLaneUnavailableCodeV1: TypeAlias = Literal[
 ]
 
 
+class GitWorkspaceNoteV1(BaseModel):
+    """Client-side advisory when CWD wins over inherited Git selectors."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    code: Literal["inherited_git_workspace_ignored"]
+    cwd_workspace_root: str
+    inherited_workspace_root: str
+
+
 class PlaybillHostResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     instance_id: str
     status: PlaybillHostStatus
+    git_workspace_note: GitWorkspaceNoteV1 | None = None
 
 
 class PlaybillHostWorkspaceRegistrationV1(BaseModel):
@@ -141,6 +153,53 @@ class PlaybillHostWorkspaceRegistrationV1(BaseModel):
     instance_id: str
     status: PlaybillHostWorkspaceRegistrationStatus
     workspace_path: str | None = None
+
+
+PlaybillHostCompatibilityV1: TypeAlias = Literal["uninitialized", "writable", "reseed_required"]
+PlaybillHostCompatibilityReasonCodeV1: TypeAlias = Literal[
+    "legacy_layout_requires_reseed",
+    "host_state_incomplete",
+    "host_state_malformed",
+    "compiler_lineage_not_writable",
+]
+
+
+class PlaybillHostCompatibilityReasonV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    code: PlaybillHostCompatibilityReasonCodeV1
+    detail: str
+    repair_commands: tuple[str, ...]
+
+
+class PlaybillHostInspectionV1(BaseModel):
+    """Credential-safe compatibility view of one governed daemon host."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-host-inspection-v1"] = "playbill-host-inspection-v1"
+    instance_id: str
+    managed_root: str
+    workspace_root: str | None
+    compiler_coordinate: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
+    compiler_revision: str | None = None
+    compatibility: PlaybillHostCompatibilityV1
+    writable: bool
+    reason: PlaybillHostCompatibilityReasonV1 | None = None
+
+    @model_validator(mode="after")
+    def _compatibility_fields_agree(self) -> PlaybillHostInspectionV1:
+        if self.writable != (self.compatibility == "writable"):
+            raise ValueError("writable must agree with compatibility")
+        if self.compatibility == "uninitialized" and (
+            self.compiler_coordinate is not None
+            or self.compiler_revision is not None
+            or self.reason is not None
+        ):
+            raise ValueError("uninitialized host cannot carry compiler or reason")
+        if self.compatibility == "reseed_required" and self.reason is None:
+            raise ValueError("reseed_required host must carry a typed reason")
+        return self
 
 
 class RuntimeCredentialBootstrapResult(BaseModel):
@@ -194,6 +253,9 @@ class ServerInfoResult(BaseModel):
     auth_enabled: bool
     auth_required: bool
     provider_lane: ProviderLaneStatusV1
+    compiler_coordinate: str | None = None
+    compiler_revision: str | None = None
+    hosts: tuple[PlaybillHostInspectionV1, ...] = ()
 
 
 class ServerRestartResult(BaseModel):
@@ -222,6 +284,7 @@ class PlaybillInitResult(BaseModel):
     recovery_posture: str
     approval_policy_mode: ApprovalPolicyMode
     workspace_advertisement: PlaybillWorkspaceAdvertisement
+    git_workspace_note: GitWorkspaceNoteV1 | None = None
 
 
 class PlaybillCasObjectResult(BaseModel):
@@ -267,6 +330,14 @@ class PlaybillProposalList(BaseModel):
     coordinate: PlaybillAcceptedCoordinate
     status_filter: Literal["open", "settled"] | None = None
     entries: list[PlaybillProposalListEntry]
+
+
+class PlaybillProposalSelectorResultV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-proposal-selector-result-v1"] = "playbill-proposal-selector-result-v1"
+    selector: str
+    proposal_id: str
 
 
 class PlaybillProposalReadmitResult(BaseModel):
@@ -434,6 +505,7 @@ class PlaybillApprovalReceipt(BaseModel):
     signing_semantic_root: str
     attestation_digest: str
     key_history_ref: str
+    git_workspace_note: GitWorkspaceNoteV1 | None = None
 
 
 class PlaybillActivationReceipt(BaseModel):
@@ -745,6 +817,7 @@ class PlaybillClaimViewV2(BaseModel):
     facts: list[dict[str, Any]]
     admission_evaluation_time: str
     admission_accounts: list[PlaybillCaptureAdmissionAccount]
+    statement: ClaimStatementCardV1
 
 
 class PlaybillClaimList(BaseModel):
@@ -1563,6 +1636,20 @@ class PlaybillWorkspaceFloorWriteResult(BaseModel):
     floor_digest: str
     coordinate: PlaybillAcceptedCoordinate
     file_count: int = Field(ge=1)
+    git_workspace_note: GitWorkspaceNoteV1 | None = None
+
+
+class PlaybillWorkspaceAttachResultV1(BaseModel):
+    """Client-owned result of binding local config to an existing daemon host."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-workspace-attach-result-v1"] = "playbill-workspace-attach-result-v1"
+    instance_id: str
+    workspace_root: str
+    config_path: str
+    transport: str
+    git_workspace_note: GitWorkspaceNoteV1 | None = None
 
 
 class PlaybillWorkspaceFloorStatus(BaseModel):

@@ -609,6 +609,10 @@ def test_http_whoami_and_proposal_inventory_are_typed_reads(
         status_filter="open",
         entries=[],
     )
+    selector = contracts.PlaybillProposalSelectorResultV1(
+        selector="refs/proposals/operator/example",
+        proposal_id="sha256:" + "5" * 64,
+    )
 
     monkeypatch.setattr(
         "cruxible_core.runtime.playbill_api.playbill_whoami",
@@ -618,14 +622,27 @@ def test_http_whoami_and_proposal_inventory_are_typed_reads(
         "cruxible_core.runtime.playbill_api.playbill_list_proposals",
         lambda selected, *, status=None: (seen.append((selected, status)), proposals)[1],
     )
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_api.playbill_resolve_proposal_selector",
+        lambda selected, value: (seen.append((selected, value)), selector)[1],
+    )
 
     identity = client.get(f"/api/v1/{instance_id}/playbill/whoami")
     listing = client.get(f"/api/v1/{instance_id}/playbill/proposals?status=open")
+    resolved = client.get(
+        f"/api/v1/{instance_id}/playbill/proposal-selector",
+        params={"selector": selector.selector},
+    )
 
-    assert identity.status_code == listing.status_code == 200
+    assert identity.status_code == listing.status_code == resolved.status_code == 200
     assert identity.json()["tag"] == "playbill-whoami-v1"
     assert listing.json()["tag"] == "playbill-proposal-list-v1"
-    assert seen == [(instance_id, None), (instance_id, "open")]
+    assert resolved.json() == selector.model_dump(mode="json")
+    assert seen == [
+        (instance_id, None),
+        (instance_id, "open"),
+        (instance_id, selector.selector),
+    ]
 
 
 def test_http_insertion_confirm_and_abandon_are_typed(

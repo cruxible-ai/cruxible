@@ -110,6 +110,27 @@ SUPPORTED_COMPILERS = (
     P2_B2_COMPILER,
     P2_B4_COMPILER,
 )
+# Immutable human-facing revision labels.  The digest remains the authority;
+# these labels are display metadata and must never be inferred from the moving
+# current compiler alias or from tuple position.
+COMPILER_REVISION_LABELS = {
+    PB_B_COMPILER: "pb-b",
+    PB_C_COMPILER: "pb-c",
+    PB_D_COMPILER: "pb-d",
+    PC_A1_COMPILER: "pc-a1",
+    PC_A2_COMPILER: "pc-a2",
+    PC_B_COMPILER: "pc-b",
+    PC_C_COMPILER: "pc-c",
+    PC_D_COMPILER: "pc-d",
+    PC_E1_COMPILER: "pc-e1",
+    P2_B0_COMPILER: "p2-b0",
+    PC_HR_COMPILER: "pc-hr",
+    P2_B1_COMPILER: "p2-b1",
+    P2_C_COMPILER: "p2-c",
+    PC_DF2_COMPILER: "pc-df2",
+    P2_B2_COMPILER: "p2-b2",
+    P2_B4_COMPILER: "p2-b4",
+}
 PC_HR_ARTIFACT_CODEC_COMPILERS = frozenset(
     {
         PC_HR_COMPILER,
@@ -200,6 +221,7 @@ __all__ = [
     "PC_DF2_COMPILER",
     "PC_HR_COMPILER",
     "PC_HR_ARTIFACT_CODEC_COMPILERS",
+    "COMPILER_REVISION_LABELS",
     "SUPPORTED_COMPILERS",
     "current_compiler_coordinate",
     "artifact_codec_for_compiler",

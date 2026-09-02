@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 #   emits the notice itself immediately before the write.
 MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "host", "create"): "create",
+    ("playbill", "workspace", "attach"): "manual",
     ("playbill", "init"): "active",
     ("playbill", "body", "store"): "active",
     ("playbill", "document", "propose"): "active",
@@ -181,7 +182,8 @@ def handle_errors(f: Any) -> Any:
                 click.secho(
                     "Error: could not reach Cruxible server at "
                     f"{_active_transport_label(exc)}: {exc} "
-                    f"(target source: {_active_target_source()})",
+                    f"(target source: {_active_target_source()}). "
+                    "Repair: run `cruxible server start`",
                     fg="red",
                     err=True,
                 )
@@ -329,10 +331,25 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 {
                     "create": _command(
                         "playbill", "create_host", "Allocate an empty host for Playbill."
-                    )
+                    ),
+                    "show": _command(
+                        "playbill", "show_host", "Inspect one registered Playbill host."
+                    ),
                 },
                 module="playbill",
                 attr="host_group",
+            ),
+            "workspace": _group(
+                "Bind local configuration to a registered Playbill host.",
+                {
+                    "attach": _command(
+                        "playbill",
+                        "attach_workspace",
+                        "Attach this Git worktree to an existing host.",
+                    )
+                },
+                module="playbill",
+                attr="workspace_group",
             ),
             "init": _command("playbill", "init_playbill", "Bootstrap Playbill state."),
             "whoami": _command(
@@ -754,6 +771,9 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         "Launch and inspect the Cruxible daemon.",
         {
             "start": _command("server", "server_start_cmd", "Launch the daemon in the foreground."),
+            "install-service": _command(
+                "server", "server_install_service_cmd", "Install a user daemon service."
+            ),
             "status": _command("server", "server_status_cmd", "Report daemon status."),
             "info": _command("server", "server_info_cmd", "Show daemon metadata."),
             "restart": _command("server", "server_restart_cmd", "Re-exec the daemon in place."),

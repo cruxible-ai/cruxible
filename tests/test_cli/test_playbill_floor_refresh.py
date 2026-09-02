@@ -93,6 +93,15 @@ def _install_client(
     save_cli_context(CliContextState(server_url="http://test", instance_id="inst_test"))
 
     class StubClient:
+        def resolve_playbill_proposal_selector(
+            self, instance_id: str, selector: str
+        ) -> contracts.PlaybillProposalSelectorResultV1:
+            assert instance_id == "inst_test"
+            return contracts.PlaybillProposalSelectorResultV1(
+                selector=selector,
+                proposal_id=selector,
+            )
+
         def activate_playbill_proposal(
             self, instance_id: str, proposal_id: str
         ) -> contracts.PlaybillActivationReceipt:
@@ -199,7 +208,17 @@ def test_attached_sync_refusal_reports_accepted_truth_and_runnable_repair(
 ) -> None:
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
     save_cli_context(CliContextState(server_url="http://test", instance_id="inst_test"))
-    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: object())
+
+    class StubClient:
+        def resolve_playbill_proposal_selector(
+            self, instance_id: str, selector: str
+        ) -> contracts.PlaybillProposalSelectorResultV1:
+            return contracts.PlaybillProposalSelectorResultV1(
+                selector=selector,
+                proposal_id=selector,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     activation = contracts.PlaybillWorkspaceActivationResult(
         proposal_id="proposal-1",
         activated_by="owner",
@@ -305,6 +324,14 @@ def test_activation_renders_malformed_proposal_id_as_typed_refusal(
     save_cli_context(CliContextState(server_url="http://test", instance_id="inst_test"))
 
     class StubClient:
+        def resolve_playbill_proposal_selector(
+            self, instance_id: str, selector: str
+        ) -> contracts.PlaybillProposalSelectorResultV1:
+            return contracts.PlaybillProposalSelectorResultV1(
+                selector=selector,
+                proposal_id=selector,
+            )
+
         def activate_playbill_proposal(
             self, _instance_id: str, _proposal_id: str
         ) -> contracts.PlaybillActivationReceipt:

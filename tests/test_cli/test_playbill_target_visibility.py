@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import click
@@ -28,6 +29,7 @@ def _isolate_target_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 
 EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("playbill", "host", "create"): "create",
+    ("playbill", "workspace", "attach"): "manual",
     ("playbill", "init"): "active",
     ("playbill", "body", "store"): "active",
     ("playbill", "document", "propose"): "active",
@@ -130,6 +132,15 @@ def test_remembered_playbill_write_marks_remembered_target(
     )
 
     class StubClient:
+        def resolve_playbill_proposal_selector(
+            self, instance_id: str, selector: str
+        ) -> contracts.PlaybillProposalSelectorResultV1:
+            assert instance_id == "inst_remembered"
+            return contracts.PlaybillProposalSelectorResultV1(
+                selector=selector,
+                proposal_id=selector,
+            )
+
         def activate_playbill_proposal(
             self, instance_id: str, proposal_id: str
         ) -> contracts.PlaybillActivationReceipt:
@@ -431,6 +442,44 @@ def test_coverage_commands_are_reads_and_stay_out_of_the_mutating_inventory(
     assert result.stdout.startswith("Playbill coverage: 0 exact, 0 drifted, 0 candidates, 0 none")
 
 
+def test_host_show_is_a_silent_read_and_cli_adds_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    assert ("playbill", "host", "show") not in MUTATING_COMMAND_TARGETS
+
+    class StubClient:
+        def show_playbill_host(self, instance_id: str) -> contracts.PlaybillHostInspectionV1:
+            return contracts.PlaybillHostInspectionV1(
+                instance_id=instance_id,
+                managed_root=str(tmp_path / "state"),
+                workspace_root=None,
+                compatibility="uninitialized",
+                writable=False,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    socket = tmp_path / "daemon.sock"
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-socket",
+            str(socket),
+            "playbill",
+            "host",
+            "show",
+            "inst_show",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    payload = json.loads(result.stdout)
+    assert payload["instance_id"] == "inst_show"
+    assert payload["transport"] == f"unix socket {socket}"
+
+
 def test_claim_type_template_does_not_announce_a_write_target(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -455,3 +504,93 @@ def test_claim_type_template_does_not_announce_a_write_target(
 
     assert result.exit_code == 0, result.output
     assert result.stderr == ""
+
+
+def test_workspace_attach_writes_config_only_after_exact_daemon_registration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(workspace)], check=True)
+    socket = tmp_path / "daemon.sock"
+    monkeypatch.chdir(workspace)
+
+    class StubClient:
+        def playbill_host_workspace_registration(
+            self, instance_id: str
+        ) -> contracts.PlaybillHostWorkspaceRegistrationV1:
+            assert instance_id == "inst_attached"
+            return contracts.PlaybillHostWorkspaceRegistrationV1(
+                instance_id=instance_id,
+                status="registered",
+                workspace_path=str(workspace.resolve()),
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-socket",
+            str(socket),
+            "playbill",
+            "workspace",
+            "attach",
+            "--instance-id",
+            "inst_attached",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["instance_id"] == "inst_attached"
+    assert payload["workspace_root"] == str(workspace.resolve())
+    assert payload["transport"] == str(socket.resolve())
+    assert result.stderr == f"target: inst_attached @ {socket.resolve()} (explicit)\n"
+    config = json.loads((workspace / ".playbill" / "coverage.json").read_text())
+    assert config["instance_id"] == "inst_attached"
+    assert config["server_socket"] == str(socket.resolve())
+    assert not any(
+        fragment in json.dumps(config).lower()
+        for fragment in ("bearer", "password", "secret", "token")
+    )
+
+
+def test_workspace_attach_refuses_a_different_registration_without_writing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    other = tmp_path / "other-workspace"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(workspace)], check=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(other)], check=True)
+    monkeypatch.chdir(workspace)
+
+    class StubClient:
+        def playbill_host_workspace_registration(
+            self, instance_id: str
+        ) -> contracts.PlaybillHostWorkspaceRegistrationV1:
+            return contracts.PlaybillHostWorkspaceRegistrationV1(
+                instance_id=instance_id,
+                status="registered",
+                workspace_path=str(other.resolve()),
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-socket",
+            str(tmp_path / "daemon.sock"),
+            "playbill",
+            "workspace",
+            "attach",
+            "--instance-id",
+            "inst_other",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "playbill.workspace.registration_disagrees" in result.output
+    assert "cruxible playbill host create --instance-id inst_other" in result.output
+    assert not (workspace / ".playbill" / "coverage.json").exists()

@@ -31,12 +31,14 @@ from cruxible_client.contracts.claims import (
     ClaimCitationV1,
     ClaimLawEvidenceAny,
     ClaimLawEvidenceV1,
+    ClaimStatementCardV1,
     ClaimUnsupportedFormatError,
     SubjectClaimObject,
     claim_artifact_digest,
     claim_citation_references,
     claim_path,
     claim_statement_address,
+    claim_statement_card,
     claim_statement_digest,
     evaluate_capture_evidence_admissions,
     parse_claim,
@@ -136,6 +138,7 @@ class PlaybillClaimViewV2(_StrictClaimServiceModel):
     facts: tuple[dict[str, object], ...]
     admission_evaluation_time: datetime
     admission_accounts: tuple[CaptureAdmissionAccountV1, ...]
+    statement: ClaimStatementCardV1
 
     @field_validator("admission_evaluation_time")
     @classmethod
@@ -446,6 +449,7 @@ def service_get_playbill_claim(
             tree=instance.tree_at(coordinate.git_oid),
             law=_claim_law_evidence(instance, path=path, at=coordinate),
         ),
+        statement=claim_statement_card(parsed),
     )
 
 

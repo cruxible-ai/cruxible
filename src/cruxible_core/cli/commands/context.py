@@ -36,9 +36,11 @@ def context_show(output_json: bool) -> None:
         "workspace_path": None,
         "reason": "no_instance",
     }
-    client = _get_client()
-    if client is not None and obj.get("instance_id"):
+    if obj.get("instance_id"):
         try:
+            client = _get_client()
+            if client is None:
+                raise RuntimeError("server transport is not configured")
             observed = client.playbill_host_workspace_registration(str(obj["instance_id"]))
             registration = {
                 "tag": "playbill-daemon-host-registration-status-v1",
@@ -79,6 +81,9 @@ def context_show(output_json: bool) -> None:
                     "tag": "playbill-workspace-attachment-disagreement-v1",
                     "code": "workspace_config_missing",
                     "detail": "daemon host is registered here but the workspace config is absent",
+                    "repair": (
+                        f"cruxible playbill workspace attach --instance-id {obj.get('instance_id')}"
+                    ),
                 }
     payload = {
         "server_url": obj.get("server_url"),
@@ -112,6 +117,8 @@ def context_show(output_json: bool) -> None:
     click.echo(f"Daemon host registration: {registration['status']}")
     if disagreement is not None:
         click.echo(f"Attachment disagreement: {disagreement['code']}")
+        if disagreement.get("repair"):
+            click.echo(f"Repair: {disagreement['repair']}")
 
 
 @connect_group.command("connect")

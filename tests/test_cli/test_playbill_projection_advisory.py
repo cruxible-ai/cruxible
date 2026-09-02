@@ -29,6 +29,15 @@ def test_cli_review_sends_bounded_coordinate_bound_projection_observation(
     }
 
     class StubClient:
+        def resolve_playbill_proposal_selector(
+            self, instance_id: str, selector: str
+        ) -> contracts.PlaybillProposalSelectorResultV1:
+            assert instance_id == "inst_review"
+            return contracts.PlaybillProposalSelectorResultV1(
+                selector=selector,
+                proposal_id=selector,
+            )
+
         def search_playbill(self, instance_id: str, *, mode: str) -> SimpleNamespace:
             assert instance_id == "inst_review"
             assert mode == "orient"

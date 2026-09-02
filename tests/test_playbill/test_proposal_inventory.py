@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
     DocumentShell,
+)
+from cruxible_client.contracts.errors import (
+    ProposalNotFoundError,
+    ProposalSelectorAmbiguousError,
 )
 from cruxible_core.playbill.service.documents import service_propose_playbill_document
 from cruxible_core.runtime import playbill_api
@@ -16,6 +22,7 @@ from cruxible_core.server.auth import ResolvedAuthContext
 from cruxible_core.service.playbill_proposals import (
     service_list_playbill_proposals,
     service_playbill_whoami,
+    service_resolve_playbill_proposal_selector,
 )
 from tests.test_playbill._candidate_support import submit_query_definition_candidate
 from tests.test_playbill._claim_authoring_support import service_propose_playbill_claim
@@ -115,6 +122,57 @@ def test_whoami_binds_transport_identity_to_current_principal_registry(tmp_path:
         sorted(active.active_principal_ids, key=lambda item: item.encode("utf-8"))
     )
     assert absent.principal_registration_status == "absent"
+
+
+def test_proposal_selector_resolves_full_prefix_and_current_target_ref(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    proposed = submit_query_definition_candidate(
+        instance,
+        query=work_item_query("selector-query"),
+        actor_id="owner",
+        proposal_name="selector-query",
+        timestamp=TIMESTAMP,
+    )
+    admission = proposed.proposal.admission
+
+    assert (
+        service_resolve_playbill_proposal_selector(
+            instance, selector=admission.proposal_id
+        ).proposal_id
+        == admission.proposal_id
+    )
+    assert (
+        service_resolve_playbill_proposal_selector(
+            instance, selector=admission.proposal_id[:20]
+        ).proposal_id
+        == admission.proposal_id
+    )
+    assert (
+        service_resolve_playbill_proposal_selector(
+            instance, selector=admission.target_ref
+        ).proposal_id
+        == admission.proposal_id
+    )
+    with pytest.raises(ProposalNotFoundError) as refused:
+        service_resolve_playbill_proposal_selector(
+            instance, selector="refs/proposals/owner/missing"
+        )
+    assert refused.value.error_code == "playbill.proposal_not_found"
+    assert refused.value.repair_commands == ("cruxible playbill proposal list",)
+
+    original_target = instance.proposal_ref_target
+    instance.proposal_ref_target = lambda _selector: None  # type: ignore[method-assign]
+    try:
+        with pytest.raises(ProposalSelectorAmbiguousError) as historical:
+            service_resolve_playbill_proposal_selector(
+                instance,
+                selector=admission.target_ref,
+            )
+    finally:
+        instance.proposal_ref_target = original_target  # type: ignore[method-assign]
+    assert historical.value.candidates == (admission.proposal_id,)
 
 
 def test_runtime_whoami_uses_the_runtime_credential_label_as_actor_id(

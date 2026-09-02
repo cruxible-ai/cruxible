@@ -183,6 +183,40 @@ class ClaimStatement(_StrictClaimModel):
         return self
 
 
+class ClaimStatementCardV1(_StrictClaimModel):
+    """Flat, typed statement-first projection shared by read and floor surfaces."""
+
+    tag: Literal["playbill-claim-statement-card-v1"] = "playbill-claim-statement-card-v1"
+    subject: SemanticAddress
+    predicate: str
+    object: ClaimObject
+    role: ClaimRole
+    qualifier: str | None = None
+    lifecycle: Literal["live", "retired"]
+    predecessor_digest: str | None = None
+
+    @field_validator("predecessor_digest")
+    @classmethod
+    def _predecessor_digest(cls, value: str | None) -> str | None:
+        if value is not None:
+            ArtifactDigest.from_tagged(value)
+        return value
+
+
+def claim_statement_card(claim: ClaimArtifactAny) -> ClaimStatementCardV1:
+    """Project one already-validated Claim without flattening semantic objects."""
+
+    return ClaimStatementCardV1(
+        subject=claim.statement.subject,
+        predicate=claim.statement.predicate,
+        object=claim.statement.object,
+        role=claim.statement.role,
+        qualifier=claim.statement.qualifier,
+        lifecycle=claim.lifecycle.state,
+        predecessor_digest=claim.lifecycle.predecessor_digest,
+    )
+
+
 class ClaimReferentContext(_StrictClaimModel):
     tag: Literal["playbill-claim-referent-context-v1"] = "playbill-claim-referent-context-v1"
     subject_content_digest: str
@@ -2022,6 +2056,7 @@ __all__ = [
     "ClaimRetireRequestV1",
     "ClaimRetirementReason",
     "ClaimStatement",
+    "ClaimStatementCardV1",
     "ClaimUnsupportedFormatError",
     "ExactContentClaimObject",
     "LiteralClaimObject",
@@ -2036,6 +2071,7 @@ __all__ = [
     "claim_referent_context_digest",
     "claim_statement_address",
     "claim_statement_digest",
+    "claim_statement_card",
     "evaluate_claim_law",
     "new_claim_id",
     "merge_claim_citations",

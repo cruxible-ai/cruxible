@@ -12,6 +12,7 @@ from typing import Any, TypeVar, cast
 import click
 
 from cruxible_client import CruxibleClient
+from cruxible_client.compatibility import check_daemon_compatibility
 from cruxible_core.cli.context import (
     CliContextState,
     clear_cli_context,
@@ -173,6 +174,7 @@ def _get_client() -> CruxibleClient | None:
         socket_path=server_socket,
         token=get_runtime_bearer_token(),
     )
+    check_daemon_compatibility(client)
     obj["_client"] = client
     return client
 

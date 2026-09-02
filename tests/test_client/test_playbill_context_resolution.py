@@ -453,6 +453,46 @@ def test_context_show_reports_typed_daemon_config_disagreement(
     }
 
 
+def test_context_show_names_workspace_attach_for_missing_local_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _clear_target_env(monkeypatch)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    socket = tmp_path / "daemon.sock"
+    monkeypatch.chdir(workspace)
+    monkeypatch.setenv("CRUXIBLE_SERVER_SOCKET", str(socket))
+    monkeypatch.setenv("CRUXIBLE_INSTANCE_ID", "inst_workspace")
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+
+    class StubClient:
+        def playbill_host_workspace_registration(
+            self, instance_id: str
+        ) -> contracts.PlaybillHostWorkspaceRegistrationV1:
+            return contracts.PlaybillHostWorkspaceRegistrationV1(
+                instance_id=instance_id,
+                status="registered",
+                workspace_path=str(workspace.resolve()),
+            )
+
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.context._get_client",
+        lambda: StubClient(),
+    )
+
+    result = CliRunner().invoke(cli, ["context", "show", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["attachment_disagreement"] == {
+        "tag": "playbill-workspace-attachment-disagreement-v1",
+        "code": "workspace_config_missing",
+        "detail": "daemon host is registered here but the workspace config is absent",
+        "repair": "cruxible playbill workspace attach --instance-id inst_workspace",
+    }
+
+
 def test_sdk_connect_consumes_the_shared_workspace_resolution(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

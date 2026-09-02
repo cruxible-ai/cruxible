@@ -29,6 +29,7 @@ from cruxible_core.server.request_logging import log_runtime_request
 from cruxible_core.server.route_paths import (
     HEALTH_PATH,
     PLAYBILL_HOST_CREATE_PATH,
+    PLAYBILL_HOST_SHOW_PATH,
     RUNTIME_BOOTSTRAP_CLAIM_PATH,
     SERVER_INFO_PATH,
     SERVER_RESTART_PATH,
@@ -187,11 +188,13 @@ def _forbidden_origin_response(request: Request) -> JSONResponse:
 
 _RUNTIME_BOOTSTRAP_CLAIM_ROUTE = api_v1_path(RUNTIME_BOOTSTRAP_CLAIM_PATH)
 _PLAYBILL_HOST_CREATE_ROUTE = api_v1_path(PLAYBILL_HOST_CREATE_PATH)
+_PLAYBILL_HOST_SHOW_ROUTE = api_v1_path(PLAYBILL_HOST_SHOW_PATH)
 # (method, route) pairs for the daemon-wide server-operation endpoints that the
 # unscoped runtime bootstrap operator may drive directly with the bootstrap secret.
 _SERVER_OPERATION_ROUTES: tuple[tuple[str, str], ...] = (
     ("GET", api_v1_path(SERVER_INFO_PATH)),
     ("POST", api_v1_path(SERVER_RESTART_PATH)),
+    ("GET", _PLAYBILL_HOST_SHOW_ROUTE),
 )
 
 

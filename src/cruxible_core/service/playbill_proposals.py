@@ -10,8 +10,11 @@ from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.errors import (
     ProposalAdmissionError,
     ProposalIntegrityError,
+    ProposalNotFoundError,
     ProposalReadmitRequiresResubmission,
+    ProposalSelectorAmbiguousError,
 )
+from cruxible_core.playbill.id_prefixes import resolve_id_prefix
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
@@ -67,6 +70,12 @@ class PlaybillProposalReadmitResultV1(_StrictOperationalReadModel):
     source_proposal_id: str
     operation_digest: str
     proposal: PlaybillProposalInspection
+
+
+class PlaybillProposalSelectorResultV1(_StrictOperationalReadModel):
+    tag: Literal["playbill-proposal-selector-result-v1"] = "playbill-proposal-selector-result-v1"
+    selector: str
+    proposal_id: str
 
 
 class PlaybillWhoAmIV1(_StrictOperationalReadModel):
@@ -140,6 +149,52 @@ def service_list_playbill_proposals(
         status_filter=status,
         entries=tuple(entries),
     )
+
+
+def service_resolve_playbill_proposal_selector(
+    instance: PlaybillInstance,
+    *,
+    selector: str,
+) -> PlaybillProposalSelectorResultV1:
+    """Resolve a user selector once to immutable proposal admission evidence."""
+
+    admissions = tuple(instance.proposal_evidence().list_admissions())
+    proposal_ids = tuple(item.proposal_id for item in admissions)
+    resolved = resolve_id_prefix(
+        selector,
+        proposal_ids,
+        marker="sha256:",
+        label="proposal",
+    )
+    if resolved in proposal_ids:
+        return PlaybillProposalSelectorResultV1(selector=selector, proposal_id=resolved)
+
+    matching_ref_admissions = tuple(item for item in admissions if item.target_ref == selector)
+    if matching_ref_admissions:
+        target_oid = instance.proposal_ref_target(selector)
+        current_candidates = tuple(
+            sorted(
+                {
+                    item.proposal_id
+                    for item in matching_ref_admissions
+                    if item.candidate_commit_oid == target_oid
+                },
+                key=lambda item: item.encode("utf-8"),
+            )
+        )
+        if len(current_candidates) == 1:
+            return PlaybillProposalSelectorResultV1(
+                selector=selector,
+                proposal_id=current_candidates[0],
+            )
+        historical_candidates = tuple(
+            sorted(
+                {item.proposal_id for item in matching_ref_admissions},
+                key=lambda item: item.encode("utf-8"),
+            )
+        )
+        raise ProposalSelectorAmbiguousError(selector, historical_candidates)
+    raise ProposalNotFoundError(selector)
 
 
 def _proposal_result(instance: PlaybillInstance, proposal_id: str) -> ProposalResult:

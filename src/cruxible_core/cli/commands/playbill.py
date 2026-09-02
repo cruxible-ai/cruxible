@@ -45,6 +45,7 @@ from cruxible_client.authoring.sources import (
     root_aliases,
 )
 from cruxible_client.authoring.workspace import (
+    PlaybillWorkspaceAttachmentError,
     observe_playbill_next_workspace_with_coverage,
     observe_playbill_projection_coverage,
     record_playbill_floor_output,
@@ -78,7 +79,6 @@ from cruxible_core.cli.commands._common import (
     _echo_write_target,
     _emit_brief,
     _emit_json,
-    _get_client,
     _require_instance_id,
     _root_ctx_obj,
     _transport_target,
@@ -196,8 +196,9 @@ def _server_call(
     *,
     command_name: str,
 ) -> ResultT:
+    instance_id = _require_instance_id()
     result = _dispatch_cli(
-        lambda client: operation(client, _require_instance_id()),
+        lambda client: operation(client, instance_id),
         lambda: None,
         allow_local=False,
         command_name=command_name,
@@ -416,6 +417,15 @@ def _local_git_workspace_root() -> _LocalGitWorkspaceResult:
 
 
 def _emit_git_workspace_note(resolution: _LocalGitWorkspaceResult) -> None:
+    _root_ctx_obj()["git_workspace_note"] = (
+        None
+        if resolution.note is None
+        else contracts.GitWorkspaceNoteV1(
+            code=resolution.note.code,
+            cwd_workspace_root=str(resolution.note.cwd_workspace_root),
+            inherited_workspace_root=str(resolution.note.inherited_workspace_root),
+        )
+    )
     if resolution.note is None:
         return
     note = resolution.note
@@ -432,6 +442,13 @@ def _custody_workspace_root() -> Path | None:
     resolution = _local_git_workspace_root()
     _emit_git_workspace_note(resolution)
     return resolution.workspace_root
+
+
+def _with_git_workspace_note(result: Any) -> Any:
+    note = _root_ctx_obj().get("git_workspace_note")
+    if note is None:
+        return result
+    return result.model_copy(update={"git_workspace_note": note})
 
 
 def _forbidden_roots_for(workspace_root: Path | None) -> tuple[Path, ...]:
@@ -650,6 +667,117 @@ def host_group() -> None:
     """Allocate daemon-owned hosts without adopting config or semantic state."""
 
 
+@playbill_group.group("workspace")
+def workspace_group() -> None:
+    """Bind local client configuration to an existing registered host."""
+
+
+@workspace_group.command("attach")
+@click.option("--instance-id", default=None, help="Existing registered daemon host ID.")
+@click.option("--replace", is_flag=True, help="Replace a differing workspace config.")
+@json_option
+@handle_errors
+def attach_workspace(
+    instance_id: str | None,
+    replace: bool,
+    output_json: bool,
+) -> None:
+    """Attach this Git worktree to an existing matching daemon registration."""
+
+    resolution = _local_git_workspace_root()
+    _emit_git_workspace_note(resolution)
+    workspace = resolution.workspace_root
+    if workspace is None:
+        raise click.UsageError("playbill workspace attach must run inside one Git worktree")
+    if not _root_ctx_obj().get("server_socket"):
+        raise click.UsageError(
+            "playbill workspace attach requires a local --server-socket so the daemon can "
+            "prove its registered workspace path"
+        )
+    selected = instance_id or _require_instance_id()
+    registration = _dispatch_cli(
+        lambda client: client.playbill_host_workspace_registration(selected),
+        lambda: None,
+        allow_local=False,
+        command_name="playbill workspace attach",
+    )
+    assert isinstance(registration, contracts.PlaybillHostWorkspaceRegistrationV1)
+    registered = registration.workspace_path
+    if (
+        registration.status != "registered"
+        or registered is None
+        or Path(registered).resolve(strict=False) != workspace
+    ):
+        raise PlaybillWorkspaceAttachmentError(
+            instance_id=selected,
+            requested_workspace=str(workspace),
+            registered_workspace=registered,
+        )
+    transport_values = _workspace_config_transport()
+    transport = str(next(iter(transport_values.values())))
+    click.echo(f"target: {selected} @ {transport} (explicit)", err=True)
+    config_path = write_playbill_workspace_config(
+        workspace,
+        instance_id=selected,
+        replace=replace,
+        **transport_values,
+    )
+    result = contracts.PlaybillWorkspaceAttachResultV1(
+        instance_id=selected,
+        workspace_root=str(workspace),
+        config_path=str(config_path),
+        transport=transport,
+    )
+    result = _with_git_workspace_note(result)
+    if output_json:
+        _emit_json(result.model_dump(mode="json", exclude_none=True))
+        return
+    click.echo(f"Attached workspace {workspace} to Playbill host {selected}")
+    click.echo(f"Config: {config_path}")
+
+
+def _active_server_transport() -> str:
+    obj = _root_ctx_obj()
+    if obj.get("server_url"):
+        return str(obj["server_url"])
+    if obj.get("server_socket"):
+        return f"unix socket {obj['server_socket']}"
+    return "configured Cruxible server"
+
+
+@host_group.command("show")
+@click.argument("instance_id")
+@json_option
+@handle_errors
+def show_host(instance_id: str, output_json: bool) -> None:
+    """Show one existing daemon host and its write compatibility."""
+
+    result = _dispatch_cli(
+        lambda client: client.show_playbill_host(instance_id),
+        lambda: None,
+        allow_local=False,
+        command_name="playbill host show",
+    )
+    assert isinstance(result, contracts.PlaybillHostInspectionV1)
+    transport = _active_server_transport()
+    if output_json:
+        payload = result.model_dump(mode="json")
+        payload["transport"] = transport
+        _emit_json(payload)
+        return
+    click.echo(f"Playbill host: {result.instance_id}")
+    click.echo(f"Transport: {transport}")
+    click.echo(f"Managed root: {result.managed_root}")
+    click.echo(f"Workspace root: {result.workspace_root or '-'}")
+    click.echo(f"Compiler coordinate: {result.compiler_coordinate or '-'}")
+    click.echo(f"Compiler revision: {result.compiler_revision or '-'}")
+    click.echo(f"Compatibility: {result.compatibility}")
+    if result.reason is not None:
+        click.echo(f"Reason: {result.reason.code}: {result.reason.detail}")
+        for repair in result.reason.repair_commands:
+            click.echo(f"Repair: {repair}")
+
+
 @host_group.command("create")
 @click.option("--instance-id", default=None, help="Optional caller-selected opaque ID.")
 @click.option(
@@ -701,6 +829,7 @@ def create_host(
         command_name="playbill host create",
     )
     assert isinstance(result, contracts.PlaybillHostResult)
+    result = _with_git_workspace_note(result)
     if git_workspace is not None:
         write_playbill_workspace_config(
             git_workspace,
@@ -710,7 +839,7 @@ def create_host(
         )
     _activate_server_instance(result.instance_id)
     if output_json:
-        _emit_json(result.model_dump(mode="json"))
+        _emit_json(result.model_dump(mode="json", exclude_none=True))
         return
     click.echo(f"Playbill host: {result.instance_id} ({result.status})")
 
@@ -764,7 +893,7 @@ def init_playbill(
         raise click.UsageError("--require-independent-approval requires --reviewer-key-dir")
     if workspace_path is None:
         _refuse_tcp_workspace_operation(git_workspace)
-    if _get_client() is None:
+    if not (_root_ctx_obj().get("server_url") or _root_ctx_obj().get("server_socket")):
         raise click.UsageError("Local execution disabled for playbill init; use server mode.")
     selected = _require_instance_id()
     transport = _transport_target(_root_ctx_obj())
@@ -810,6 +939,7 @@ def init_playbill(
         ),
         command_name="playbill init",
     )
+    result = _with_git_workspace_note(result)
     if git_workspace is not None:
         write_playbill_workspace_config(
             git_workspace,
@@ -821,7 +951,7 @@ def init_playbill(
         marker.unlink()
     _activate_server_instance(result.instance_id)
     if output_json:
-        _emit_json(result.model_dump(mode="json"))
+        _emit_json(result.model_dump(mode="json", exclude_none=True))
         return
     click.echo(f"Playbill initialized at {result.coordinate.git_oid}")
     click.echo(f"Approval policy: {result.approval_policy_mode}")
@@ -981,6 +1111,7 @@ def list_proposals(status: str | None, output_json: bool) -> None:
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
+    click.echo("STATUS  PROPOSAL_ID  TARGET_REF  COORDINATE_TIME")
     for entry in result.entries:
         terminal = "" if entry.terminal_reason is None else f" {entry.terminal_reason}"
         click.echo(
@@ -996,7 +1127,10 @@ def list_proposals(status: str | None, output_json: bool) -> None:
 @handle_errors
 def readmit_proposal(proposal_id: str, output_json: bool) -> None:
     result = _server_call(
-        lambda client, instance_id: client.readmit_playbill_proposal(instance_id, proposal_id),
+        lambda client, instance_id: client.readmit_playbill_proposal(
+            instance_id,
+            client.resolve_playbill_proposal_selector(instance_id, proposal_id).proposal_id,
+        ),
         command_name="playbill proposal readmit",
     )
     if output_json:
@@ -1017,7 +1151,10 @@ def readmit_proposal(proposal_id: str, output_json: bool) -> None:
 @handle_errors
 def inspect_proposal(proposal_id: str, output_json: bool) -> None:
     result = _server_call(
-        lambda client, instance_id: client.inspect_playbill_proposal(instance_id, proposal_id),
+        lambda client, instance_id: client.inspect_playbill_proposal(
+            instance_id,
+            client.resolve_playbill_proposal_selector(instance_id, proposal_id).proposal_id,
+        ),
         command_name="playbill proposal inspect",
     )
     _emit_json(result.model_dump(mode="json"))
@@ -1029,7 +1166,10 @@ def inspect_proposal(proposal_id: str, output_json: bool) -> None:
 @handle_errors
 def inspect_refusal(proposal_id: str, output_json: bool) -> None:
     result = _server_call(
-        lambda client, instance_id: client.inspect_playbill_refusal(instance_id, proposal_id),
+        lambda client, instance_id: client.inspect_playbill_refusal(
+            instance_id,
+            client.resolve_playbill_proposal_selector(instance_id, proposal_id).proposal_id,
+        ),
         command_name="playbill proposal refusal",
     )
     _emit_json(result.model_dump(mode="json"))
@@ -1166,9 +1306,12 @@ def review_proposal(
         )
         if projection is not None:
             observation["projection_coverage"] = projection
+        resolved_id = client.resolve_playbill_proposal_selector(
+            instance_id, proposal_id
+        ).proposal_id
         return client.review_playbill_proposal(
             instance_id,
-            proposal_id,
+            resolved_id,
             include_body=include_body,
             workspace_observation=observation,
         )
@@ -1198,13 +1341,18 @@ def approve_proposal(
     yes: bool,
     output_json: bool,
 ) -> None:
-    challenge = _server_call(
-        lambda client, instance_id: client.prepare_playbill_approval(
-            instance_id,
-            proposal_id,
-            signer_id=signer_id,
-            include_body=True,
-        ),
+    def _resolve_and_prepare(
+        client: CruxibleClient, instance_id: str
+    ) -> tuple[str, contracts.PlaybillApprovalChallenge]:
+        resolved_id = client.resolve_playbill_proposal_selector(
+            instance_id, proposal_id
+        ).proposal_id
+        return resolved_id, client.prepare_playbill_approval(
+            instance_id, resolved_id, signer_id=signer_id, include_body=True
+        )
+
+    resolved_id, challenge = _server_call(
+        _resolve_and_prepare,
         command_name="playbill proposal approve",
     )
     review = PlaybillProposalReview.model_validate(challenge.review.model_dump(mode="json"))
@@ -1223,13 +1371,14 @@ def approve_proposal(
     result = _server_call(
         lambda client, instance_id: client.submit_playbill_approval(
             instance_id,
-            proposal_id,
+            resolved_id,
             attestation=attestation.model_dump(mode="json"),
         ),
         command_name="playbill proposal approve",
     )
+    result = _with_git_workspace_note(result)
     if output_json:
-        _emit_json(result.model_dump(mode="json"))
+        _emit_json(result.model_dump(mode="json", exclude_none=True))
     else:
         click.echo(f"Approved {result.candidate_digest} as {result.signer_id}")
 
@@ -1258,7 +1407,7 @@ def activate_proposal(
         lambda client, instance_id: activate_with_workspace_refresh(
             client,
             instance_id,
-            proposal_id,
+            client.resolve_playbill_proposal_selector(instance_id, proposal_id).proposal_id,
             workspace=Path(workspace_root),
             sync=not no_sync,
         ),
@@ -1826,7 +1975,10 @@ def migrate_claim_type(request_file: str, output_json: bool) -> None:
         click.echo("ClaimType migration proposal")
         click.echo(f"Operation: {result.operation_digest}")
         click.echo(f"Dependents: {len(result.dependents)}")
-        click.echo(f"Proposal: {result.proposal.proposal.get('proposal_id', '<submitted>')}")
+        admission = result.proposal.proposal.get("admission", {})
+        proposal_id = admission.get("proposal_id", "<submitted>")
+        click.echo(f"Proposal: {proposal_id}")
+        click.echo(f"Next: cruxible playbill proposal approve {proposal_id}")
     click.echo("Semantic delta:")
     if not result.semantic_delta:
         click.echo("  (no semantic field changes)")
@@ -2518,9 +2670,15 @@ def list_claims(
 @claim_group.command("get")
 @click.argument("identity")
 @click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
+@brief_option
 @json_option
 @handle_errors
-def get_claim(identity: str, evaluation_time: str | None, output_json: bool) -> None:
+def get_claim(
+    identity: str,
+    evaluation_time: str | None,
+    output_brief: bool,
+    output_json: bool,
+) -> None:
     result = _server_call(
         lambda client, instance_id: client.get_playbill_claim(
             instance_id,
@@ -2531,6 +2689,16 @@ def get_claim(identity: str, evaluation_time: str | None, output_json: bool) -> 
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
+        return
+    if output_brief:
+        statement = result.statement
+        click.echo(f"Subject: {canonical_json(statement.subject.model_dump(mode='json'))}")
+        click.echo(f"Predicate: {statement.predicate}")
+        click.echo(f"Object: {canonical_json(statement.object.model_dump(mode='json'))}")
+        click.echo(f"Role: {statement.role}")
+        click.echo(f"Qualifier: {statement.qualifier or '-'}")
+        click.echo(f"Lifecycle: {statement.lifecycle}")
+        click.echo(f"Predecessor: {statement.predecessor_digest or '-'}")
         return
     click.echo(f"{result.envelope['identity']}  {result.envelope['path']}")
     _emit_admission_accounts(result.admission_accounts)
@@ -3656,13 +3824,14 @@ def export_floor(
     if workspace_root is None:
         raise click.UsageError("playbill floor export must run inside one Git worktree")
     written = materialize_playbill_floor(workspace_root, export=result, force=force)
+    written = _with_git_workspace_note(written)
     record_playbill_floor_output(
         workspace_root,
         instance_id=_require_instance_id(),
         **_workspace_config_transport(),
     )
     if output_json:
-        _emit_json(result.manifest)
+        _emit_json(written.model_dump(mode="json", exclude_none=True))
         return
     click.echo(f"Wrote {len(result.files)} floor file(s) to {written.destination}")
     click.echo(f"Floor digest: {result.manifest['floor_digest']}")

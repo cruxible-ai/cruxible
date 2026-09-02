@@ -204,6 +204,10 @@ class CruxibleClient:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/workspace-registration")
         return self._parse_model(response, contracts.PlaybillHostWorkspaceRegistrationV1)
 
+    def show_playbill_host(self, instance_id: str) -> contracts.PlaybillHostInspectionV1:
+        response = self._client.get(f"/api/v1/{instance_id}/playbill/host")
+        return self._parse_model(response, contracts.PlaybillHostInspectionV1)
+
     def claim_runtime_bootstrap(
         self, instance_id: str, bootstrap_secret: str
     ) -> contracts.RuntimeCredentialBootstrapResult:
@@ -355,6 +359,17 @@ class CruxibleClient:
             params=params,
         )
         return self._parse_model(response, contracts.PlaybillProposalList)
+
+    def resolve_playbill_proposal_selector(
+        self,
+        instance_id: str,
+        selector: str,
+    ) -> contracts.PlaybillProposalSelectorResultV1:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/playbill/proposal-selector",
+            params={"selector": selector},
+        )
+        return self._parse_model(response, contracts.PlaybillProposalSelectorResultV1)
 
     def readmit_playbill_proposal(
         self,

@@ -55,6 +55,17 @@ def test_claim_get_and_explain_render_one_actionable_line_per_capture(monkeypatc
                 facts=[],
                 admission_evaluation_time="2026-08-22T12:00:00Z",
                 admission_accounts=[_account()],
+                statement=contracts.ClaimStatementCardV1(
+                    subject={
+                        "artifact_path": "subjects/secops.policy/a.json",
+                        "selector": {"scheme": "artifact-v1", "value": ""},
+                    },
+                    predicate="secops.policy.patch_sla",
+                    object={"kind": "literal", "value": 48},
+                    role="normative",
+                    qualifier=None,
+                    lifecycle="live",
+                ),
             )
 
         def explain_playbill_claim(self, instance_id, identity, *, evaluation_time=None):

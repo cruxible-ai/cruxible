@@ -250,7 +250,6 @@ def test_cli_init_requires_an_active_instance_before_provisioning(
         "cruxible_core.cli.commands.playbill.generate_client_principal_key",
         lambda *_args, **_kwargs: reached.append("key"),
     )
-    monkeypatch.setattr("cruxible_core.cli.commands.playbill._get_client", lambda: object())
 
     result = CliRunner().invoke(
         cli,
@@ -310,7 +309,6 @@ def test_cli_init_adopts_only_its_transport_bound_response_loss_orphan(
             )
 
     stub = StubClient()
-    monkeypatch.setattr("cruxible_core.cli.commands.playbill._get_client", lambda: stub)
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: stub)
     args = [
         "--server-url",
@@ -359,10 +357,6 @@ def test_tcp_in_git_worktree_refuses_before_remote_or_key_mutation(
     )
     monkeypatch.chdir(workspace)
     reached: list[str] = []
-    monkeypatch.setattr(
-        "cruxible_core.cli.commands.playbill._get_client",
-        lambda: reached.append("client"),
-    )
     monkeypatch.setattr(
         "cruxible_core.cli.commands._common._get_client",
         lambda: reached.append("client"),
@@ -511,9 +505,13 @@ def test_local_git_workspace_ignores_inherited_repository_selection(
     rendered = served_cli.run(
         "--server-url", "http://cruxible", "playbill", "host", "create", "--json"
     )
-    json.loads(rendered.stdout)
+    payload = json.loads(rendered.stdout)
     assert "inherited_git_workspace_ignored" in rendered.stderr
-    assert "inherited_git_workspace_ignored" not in rendered.stdout
+    assert payload["git_workspace_note"] == {
+        "code": "inherited_git_workspace_ignored",
+        "cwd_workspace_root": str(cwd_workspace.resolve()),
+        "inherited_workspace_root": str(inherited_workspace.resolve()),
+    }
 
 
 def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
@@ -726,7 +724,10 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     floor = tmp_path / ".playbill/floor"
     exported = cruxible.json("playbill", "floor", "export")
     manifest = json.loads((floor / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest == exported
+    assert exported["tag"] == "playbill-workspace-floor-write-result-v1"
+    assert exported["floor_digest"] == manifest["floor_digest"]
+    assert exported["coordinate"] == manifest["coordinate"]
+    assert exported["file_count"] == len(manifest["files"]) + 1
     assert manifest["coordinate"] == coordinate
     assert manifest["floor_digest"].startswith("sha256:")
 

@@ -105,7 +105,11 @@ def _coordinate(
     )
 
 
-@router.post("/{instance_id}/playbill/init", response_model=contracts.PlaybillInitResult)
+@router.post(
+    "/{instance_id}/playbill/init",
+    response_model=contracts.PlaybillInitResult,
+    response_model_exclude={"git_workspace_note"},
+)
 def playbill_init(
     instance_id: str,
     req: PlaybillInitRequest,
@@ -201,6 +205,20 @@ async def list_proposals(
 
 
 @router.get(
+    "/{instance_id}/playbill/proposal-selector",
+    response_model=contracts.PlaybillProposalSelectorResultV1,
+)
+async def resolve_proposal_selector(
+    instance_id: str,
+    selector: str,
+) -> contracts.PlaybillProposalSelectorResultV1:
+    return playbill_api.playbill_resolve_proposal_selector(
+        resolve_server_instance_id(instance_id),
+        selector,
+    )
+
+
+@router.get(
     "/{instance_id}/playbill/proposals/{proposal_id}",
     response_model=contracts.PlaybillProposalInspection,
 )
@@ -282,6 +300,7 @@ async def prepare_approval(
 @router.post(
     "/{instance_id}/playbill/proposals/{proposal_id}/approvals",
     response_model=contracts.PlaybillApprovalReceipt,
+    response_model_exclude={"git_workspace_note"},
 )
 async def submit_approval(
     instance_id: str,

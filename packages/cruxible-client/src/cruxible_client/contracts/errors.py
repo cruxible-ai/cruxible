@@ -184,6 +184,45 @@ class ProposalAdmissionError(PlaybillError):
     """An unauthenticated, mis-scoped, oversized, or malformed proposal was refused."""
 
 
+class ProposalNotFoundError(PlaybillError):
+    """A proposal selector did not resolve to immutable admission evidence."""
+
+    error_code = "playbill.proposal_not_found"
+
+    def __init__(self, selector: str, *, message: str | None = None) -> None:
+        self.selector = selector
+        self.accepted_forms = ("full proposal digest", "unique digest prefix", "target ref")
+        self.repair_commands = ("cruxible playbill proposal list",)
+        super().__init__(
+            message
+            or f"{self.error_code}: proposal selector {selector!r} was not found; accepted "
+            "forms are a full proposal digest, unique digest prefix, or target ref; run "
+            "`cruxible playbill proposal list`"
+        )
+
+
+class ProposalSelectorAmbiguousError(PlaybillError):
+    """A mutable proposal selector does not name one current admission."""
+
+    error_code = "playbill.proposal_selector_ambiguous"
+
+    def __init__(
+        self,
+        selector: str,
+        candidates: tuple[str, ...],
+        *,
+        message: str | None = None,
+    ) -> None:
+        self.selector = selector
+        self.candidates = candidates
+        self.repair_commands = ("cruxible playbill proposal list",)
+        super().__init__(
+            message
+            or f"{self.error_code}: proposal selector {selector!r} names multiple current "
+            f"admissions: {', '.join(candidates)}; use one full proposal digest"
+        )
+
+
 class ProposalReadmitRequiresResubmission(ProposalAdmissionError):
     """A generated closure must be rebuilt rather than byte-rebased."""
 
@@ -269,6 +308,8 @@ __all__ = [
     "ProposalActivationRequestInvalid",
     "ProposalAdmissionError",
     "ProposalReadmitRequiresResubmission",
+    "ProposalNotFoundError",
+    "ProposalSelectorAmbiguousError",
     "ProposalIntegrityError",
     "ProjectionCoordinateError",
     "ProjectionError",

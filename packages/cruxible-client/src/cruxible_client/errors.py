@@ -21,6 +21,8 @@ from cruxible_client._error_base import (
 from cruxible_client.contracts.errors import (
     PlaybillSinceRequestInvalid,
     ProposalActivationRequestInvalid,
+    ProposalNotFoundError,
+    ProposalSelectorAmbiguousError,
 )
 
 _MAX_DISPLAY_ERRORS = 10
@@ -261,7 +263,10 @@ class ServerUnreachableError(CoreError):
     def __init__(self, target: str, reason: str) -> None:
         self.target = target
         self.reason = reason
-        super().__init__(f"could not reach Cruxible server at {target}: {reason}")
+        super().__init__(
+            f"could not reach Cruxible server at {target}: {reason}. "
+            "Repair: run `cruxible server start`"
+        )
 
 
 class AuthenticationError(CoreError):
@@ -422,6 +427,17 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
         )
     elif body.error_type == "ProposalActivationRequestInvalid":
         exc = ProposalActivationRequestInvalid(body.message)
+    elif body.error_type == "ProposalNotFoundError":
+        exc = ProposalNotFoundError(
+            str(context.get("selector", "unknown")),
+            message=body.message,
+        )
+    elif body.error_type == "ProposalSelectorAmbiguousError":
+        exc = ProposalSelectorAmbiguousError(
+            str(context.get("selector", "unknown")),
+            tuple(str(item) for item in context.get("candidates", [])),
+            message=body.message,
+        )
     elif body.error_type == "ConstraintViolationError":
         exc = ConstraintViolationError(body.message, violations=context.get("violations", []))
     elif body.error_type == "OwnershipError":
