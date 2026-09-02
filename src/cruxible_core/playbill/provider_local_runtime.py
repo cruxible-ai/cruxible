@@ -927,7 +927,10 @@ def _run_child(
         try:
             _require_initial_descendant_observation(
                 descendants,
-                timeout_seconds=process_leases.acquisition_timeout_seconds,
+                timeout_seconds=min(
+                    process_leases.acquisition_timeout_seconds,
+                    max(started + budgets.wall_clock_seconds - time.monotonic(), 0.0),
+                ),
                 diagnostic_sink=process_leases.record_diagnostic,
             )
             outcome = _collect_child_output(
