@@ -57,7 +57,7 @@ def test_transient_process_table_failure_is_diagnostic_only(
     assert tuple(store.root.glob("*.json")) == ()
     assert store.diagnostics[-1][0] == "provider_process_lease_invalid"
     assert "transient process-table failure" in store.diagnostics[-1][1]
-    state, code, detail = operator.lane_status()
-    assert state == "unavailable"
-    assert code == "provider_process_lease_invalid"
-    assert detail is not None and "transient process-table failure" in detail
+    assert operator._observation_diagnostic_count >= 1
+    assert operator._last_observation_diagnostic is not None
+    assert "transient process-table failure" in operator._last_observation_diagnostic[1]
+    assert operator.lane_status() == ("available", None, None)

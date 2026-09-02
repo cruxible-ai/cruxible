@@ -204,6 +204,8 @@ class ProviderRuntimeOperator:
         self._pending_construction_stages: set[_ConstructionStage] = set()
         self._latest_failure: tuple[Literal["construction", "recovery"], str] | None = None
         self._unavailable_failure_count = 0
+        self._observation_diagnostic_count = 0
+        self._last_observation_diagnostic: tuple[ProviderProcessFenceCodeV1, str] | None = None
         self.unavailable_code: ProviderLaneUnavailableCodeV1 | None = None
         self.unavailable_reason: str | None = None
         self._lane_status_snapshot: tuple[
@@ -247,9 +249,7 @@ class ProviderRuntimeOperator:
                 process_leases = ProviderProcessLeaseStore(
                     self.state_root / "daemon" / "provider-process-leases",
                     control_root=self.state_root / "c",
-                    diagnostic_sink=lambda code, message: self.mark_unavailable(
-                        code, message, retryable=True
-                    ),
+                    diagnostic_sink=self._record_observation_diagnostic,
                     acquisition_timeout_seconds=self.config.lease_acquisition_timeout_seconds,
                     recovery_timeout_seconds=self.config.lease_recovery_timeout_seconds,
                     recovery_aggregate_timeout_seconds=(
@@ -300,6 +300,17 @@ class ProviderRuntimeOperator:
                 self._mark_construction_failure("deployment", exc)
             else:
                 self._clear_construction_failure("deployment")
+
+    def _record_observation_diagnostic(
+        self,
+        code: ProviderProcessFenceCodeV1,
+        message: str,
+    ) -> None:
+        """Retain bounded observation telemetry without changing lane availability."""
+
+        with self._lock:
+            self._observation_diagnostic_count += 1
+            self._last_observation_diagnostic = (code, message)
 
     def _reinitialize_failed_construction_stages_locked(self) -> None:
         stages = {
