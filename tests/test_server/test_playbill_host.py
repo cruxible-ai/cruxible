@@ -18,6 +18,10 @@ from cruxible_client.contracts.documents import (
 from cruxible_client.contracts.errors import PlaybillBootstrapError, PlaybillReseedRequired
 from cruxible_core.errors import ConfigError
 from cruxible_core.playbill.keys import generate_client_principal_key
+from cruxible_core.playbill.service.documents import (
+    service_activate_playbill_proposal,
+    service_submit_playbill_approval,
+)
 from cruxible_core.runtime import host_api, playbill_api
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
@@ -25,6 +29,7 @@ from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry, reset_registry
 from cruxible_core.server.routes.playbill import append_claim_attestation, run_procedure
+from tests.test_playbill.test_activation import _sign
 
 
 @pytest.fixture
@@ -385,7 +390,87 @@ def test_attached_bootstrap_inherits_sha1_and_advertises_genesis(
 
     assert get_playbill_manager().get("inst_attached").descriptor.git_object_format == "sha1"
     assert initialized.workspace_advertisement.status == "updated"
-    assert initialized.workspace_advertisement.advertised_refs == ("refs/remotes/playbill/main",)
+    assert initialized.workspace_advertisement.advertised_refs == (
+        "refs/remotes/playbill/accepted",
+    )
+    local_branches = subprocess.run(
+        ["git", "-C", str(workspace), "for-each-ref", "--format=%(refname)", "refs/heads"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    stored = playbill_api.playbill_store_body(
+        "inst_attached",
+        content_base64=base64.b64encode(b"review candidate\n").decode("ascii"),
+    )
+    proposed = playbill_api.playbill_propose_document(
+        "inst_attached",
+        shell=DocumentShell(
+            identity="document:review-candidate",
+            document_kind="design",
+            title="Review candidate",
+            media_type="text/plain",
+            body_digest=stored.digest,
+            authority=DocumentAuthority(required_tier="graph_write"),
+            governance_scope=("project:playbill",),
+            lifecycle=DocumentLifecycle(revision=1),
+        ),
+        proposal_name="review-candidate",
+    )
+    proposal_id = proposed.proposal["admission"]["proposal_id"]
+    proposal_key = proposal_id.removeprefix("sha256:")
+    assert proposed.workspace_advertisement.advertised_refs == (
+        "refs/remotes/playbill/accepted",
+        f"refs/remotes/playbill/proposals/{proposal_key}",
+    )
+    remote_branches = subprocess.run(
+        ["git", "-C", str(workspace), "branch", "--remotes", "--format=%(refname)"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert remote_branches == [
+        "refs/remotes/playbill/accepted",
+        f"refs/remotes/playbill/proposals/{proposal_key}",
+    ]
+    assert (
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(workspace),
+                "for-each-ref",
+                "--format=%(refname)",
+                "refs/heads",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        == local_branches
+    )
+    instance = get_playbill_manager().get("inst_attached")
+    candidate_digest = proposed.proposal["evaluation"]["candidate_digest"]
+    signed = _sign(owner, candidate_digest, instance.accepted_coordinate().semantic_root)
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=proposal_id,
+        attestation=signed.attestation,
+        authenticated_submitter="operator",
+    )
+    activated = service_activate_playbill_proposal(
+        instance,
+        proposal_id=proposal_id,
+        activated_by="operator",
+    )
+    assert activated.status == "accepted"
+    assert activated.workspace_advertisement.advertised_refs == ("refs/remotes/playbill/accepted",)
+    assert subprocess.run(
+        ["git", "-C", str(workspace), "branch", "--remotes", "--format=%(refname)"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines() == ["refs/remotes/playbill/accepted"]
     remote_url = subprocess.run(
         ["git", "-C", str(workspace), "remote", "get-url", "playbill"],
         check=True,

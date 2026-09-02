@@ -11,8 +11,12 @@ import pytest
 from cruxible_core.playbill import workspace_advertisement as advertisement_module
 from cruxible_core.playbill.workspace_advertisement import (
     advertise_workspace_refs,
+    close_proposal_review_worktree,
+    open_proposal_review_worktree,
     workspace_git_object_format,
 )
+
+PROPOSAL_KEY = "a" * 64
 
 
 def _git(path: Path, *args: str) -> str:
@@ -45,7 +49,7 @@ def _repositories(tmp_path: Path, object_format: str) -> tuple[Path, Path]:
     _git(workspace, "commit", "-m", "workspace")
     _git(workspace, "push", str(ledger), "HEAD:refs/heads/main")
     head = _git(workspace, "rev-parse", "HEAD")
-    _git(ledger, "update-ref", "refs/proposals/owner/example", head)
+    _git(ledger, "update-ref", f"refs/heads/proposals/{PROPOSAL_KEY}", head)
     return workspace, ledger
 
 
@@ -74,7 +78,7 @@ def _repositories_with_alternate(tmp_path: Path) -> tuple[Path, Path]:
         capture_output=True,
     )
     head = _git(workspace, "rev-parse", "HEAD")
-    _git(ledger, "update-ref", "refs/proposals/owner/example", head)
+    _git(ledger, "update-ref", f"refs/heads/proposals/{PROPOSAL_KEY}", head)
     return workspace, ledger
 
 
@@ -95,17 +99,51 @@ def test_advertisement_fetches_only_remote_tracking_refs(
     assert workspace_git_object_format(workspace) == object_format
     assert result.status == "updated"
     assert result.advertised_refs == (
-        "refs/remotes/playbill/main",
-        "refs/remotes/playbill/proposals/owner/example",
+        "refs/remotes/playbill/accepted",
+        f"refs/remotes/playbill/proposals/{PROPOSAL_KEY}",
     )
     assert _git(workspace, "status", "--porcelain=v1") == before_status
     assert _git(workspace, "symbolic-ref", "--short", "HEAD") == "main"
     assert _git(workspace, "config", "--get-all", "remote.playbill.fetch").splitlines() == [
-        "+refs/heads/main:refs/remotes/playbill/main",
-        "+refs/proposals/*:refs/remotes/playbill/proposals/*",
+        "+refs/heads/main:refs/remotes/playbill/accepted",
+        "+refs/heads/proposals/*:refs/remotes/playbill/proposals/*",
     ]
     assert _git(workspace, "config", "--get", "remote.playbill.tagOpt") == "--no-tags"
     assert _git(workspace, "config", "--get", "remote.playbill.skipFetchAll") == "true"
+
+
+def test_review_worktree_is_detached_ignored_and_never_creates_a_branch(
+    tmp_path: Path,
+) -> None:
+    workspace, ledger = _repositories(tmp_path, "sha1")
+    advertised = advertise_workspace_refs(
+        workspace_root=workspace,
+        ledger_path=ledger,
+        ledger_object_format="sha1",
+    )
+    assert advertised.status == "updated"
+    branches_before = _git(workspace, "for-each-ref", "--format=%(refname)", "refs/heads")
+
+    opened = open_proposal_review_worktree(
+        workspace_path=workspace,
+        proposal_id=f"sha256:{PROPOSAL_KEY}",
+    )
+
+    assert opened == workspace / ".playbill" / "review" / PROPOSAL_KEY
+    assert _git(opened, "rev-parse", "--abbrev-ref", "HEAD") == "HEAD"
+    assert _git(workspace, "for-each-ref", "--format=%(refname)", "refs/heads") == (branches_before)
+    assert _git(workspace, "status", "--porcelain=v1") == ""
+    exclude = Path(_git(workspace, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    assert b"/.playbill/review/\n" in (exclude / "info" / "exclude").read_bytes()
+
+    closed = close_proposal_review_worktree(
+        workspace_path=workspace,
+        proposal_id=PROPOSAL_KEY,
+    )
+
+    assert closed == opened
+    assert not opened.exists()
+    assert _git(workspace, "for-each-ref", "--format=%(refname)", "refs/heads") == (branches_before)
 
 
 def test_advertisement_does_not_fetch_ledger_tags(tmp_path: Path) -> None:
@@ -420,7 +458,7 @@ def test_advertisement_refreshes_main_and_prunes_only_proposal_refs(tmp_path: Pa
     _git(producer, "add", "accepted.txt")
     _git(producer, "commit", "-m", "accepted")
     _git(producer, "push", "origin", "main")
-    _git(ledger, "update-ref", "-d", "refs/proposals/owner/example")
+    _git(ledger, "update-ref", "-d", f"refs/heads/proposals/{PROPOSAL_KEY}")
 
     refreshed = advertise_workspace_refs(
         workspace_root=workspace,
@@ -429,8 +467,8 @@ def test_advertisement_refreshes_main_and_prunes_only_proposal_refs(tmp_path: Pa
     )
 
     assert refreshed.status == "updated"
-    assert refreshed.advertised_refs == ("refs/remotes/playbill/main",)
+    assert refreshed.advertised_refs == ("refs/remotes/playbill/accepted",)
     assert _git(workspace, "rev-parse", "refs/heads/main") == local_main
-    assert _git(workspace, "rev-parse", "refs/remotes/playbill/main") == _git(
+    assert _git(workspace, "rev-parse", "refs/remotes/playbill/accepted") == _git(
         producer, "rev-parse", "HEAD"
     )

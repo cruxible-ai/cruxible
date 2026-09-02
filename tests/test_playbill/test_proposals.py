@@ -315,6 +315,8 @@ def test_submit_advertises_only_after_all_proposal_evidence_is_durable(tmp_path:
         timestamp=TIMESTAMP,
     )
 
+    instance._reconcile_proposal_review_refs()
+
     assert calls == ["advertised", "advertised"]
     assert result.workspace_advertisement.status == "failed"
     assert result.candidate is not None

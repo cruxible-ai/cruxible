@@ -448,10 +448,14 @@ def playbill_inspect_proposal(
     proposal_id: str,
 ) -> contracts.PlaybillProposalInspection:
     check_permission("cruxible_playbill_inspect", instance_id=instance_id)
-    result = service_inspect_playbill_proposal(
-        get_playbill_manager().get(instance_id), proposal_id=proposal_id
+    instance = get_playbill_manager().get(instance_id)
+    result = service_inspect_playbill_proposal(instance, proposal_id=proposal_id)
+    return contracts.PlaybillProposalInspection.model_validate(
+        {
+            **result.model_dump(mode="json"),
+            "workspace_advertisement": instance.advertise_workspace().model_dump(mode="json"),
+        }
     )
-    return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_list_proposals(

@@ -25,6 +25,7 @@ from cruxible_core.playbill.keys import raw_public_key_hex_from_openssh
 
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _PROPOSAL_REF_RE = re.compile(r"^refs/proposals/[a-z][a-z0-9_.-]{0,127}/[a-z][a-z0-9_.-]{0,127}$")
+_PROPOSAL_REVIEW_REF_RE = re.compile(r"^refs/heads/proposals/[0-9a-f]{64}$")
 _PASSTHROUGH_ENVIRONMENT = ("PATH", "TMPDIR", "TMP", "TEMP", "SYSTEMROOT")
 _COMMAND_ENVIRONMENT = frozenset(
     {
@@ -377,6 +378,73 @@ class GitLedger:
             return None
         oid = result.stdout.decode().strip()
         self._validate_oid(oid)
+        return oid
+
+    def replace_proposal_review_refs(self, refs: Mapping[str, str]) -> None:
+        """Atomically replace the standard-Git projection of open proposal refs."""
+
+        normalized: dict[str, str] = {}
+        for proposal_id, oid in refs.items():
+            ref = f"refs/heads/proposals/{proposal_id}"
+            if not _PROPOSAL_REVIEW_REF_RE.fullmatch(ref):
+                raise PlaybillGitError("proposal review ref name is malformed")
+            self._validate_oid(oid)
+            normalized[ref] = oid
+        current = {
+            line
+            for line in self._git(["for-each-ref", "--format=%(refname)", "refs/heads/proposals"])
+            .decode("utf-8")
+            .splitlines()
+            if line
+        }
+        commands = ["start"]
+        commands.extend(
+            f"update {ref} {normalized[ref]}" for ref in sorted(normalized, key=str.encode)
+        )
+        commands.extend(
+            f"delete {ref}" for ref in sorted(current - set(normalized), key=str.encode)
+        )
+        commands.extend(("prepare", "commit"))
+        self._git(["update-ref", "--stdin"], input_bytes=("\n".join(commands) + "\n").encode())
+
+    def proposal_review_commit(
+        self,
+        *,
+        tree_oid: str,
+        base_oid: str,
+        actor_id: str,
+        timestamp: str,
+    ) -> str:
+        """Reproduce the evaluated proposal commit used only by advisory review refs."""
+
+        self._validate_oid(tree_oid)
+        self._validate_oid(base_oid)
+        environment = {
+            "GIT_AUTHOR_NAME": actor_id,
+            "GIT_AUTHOR_EMAIL": f"{actor_id}@proposal.playbill.invalid",
+            "GIT_COMMITTER_NAME": "playbill-daemon",
+            "GIT_COMMITTER_EMAIL": "daemon@playbill.invalid",
+            "GIT_AUTHOR_DATE": timestamp,
+            "GIT_COMMITTER_DATE": timestamp,
+        }
+        oid = (
+            self._git(
+                [
+                    "commit-tree",
+                    tree_oid,
+                    "-p",
+                    base_oid,
+                    "-m",
+                    "Record Playbill proposal",
+                ],
+                environment=environment,
+            )
+            .decode()
+            .strip()
+        )
+        self._validate_oid(oid)
+        if self.tree_oid(oid) != tree_oid or self.parent_of(oid) != base_oid:
+            raise PlaybillGitError("proposal review commit does not reproduce its evidence")
         return oid
 
     def tree_oid(self, commit_oid: str) -> str:

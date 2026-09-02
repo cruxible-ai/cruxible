@@ -355,7 +355,12 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                         "playbill",
                         "repin_projection",
                         "Refresh one declaration marker without editing its prose.",
-                    )
+                    ),
+                    "sync": _command(
+                        "playbill",
+                        "sync_projection",
+                        "Converge safe publication blocks to accepted Claim bodies.",
+                    ),
                 },
                 module="playbill",
                 attr="block_group",
@@ -407,6 +412,23 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 },
                 module="playbill",
                 attr="proposal_group",
+            ),
+            "review": _group(
+                "Materialize detached local worktrees for proposal comparison.",
+                {
+                    "open": _command(
+                        "playbill",
+                        "open_review",
+                        "Open an advertised proposal as a detached worktree.",
+                    ),
+                    "close": _command(
+                        "playbill",
+                        "close_review",
+                        "Close one clean detached proposal review worktree.",
+                    ),
+                },
+                module="playbill",
+                attr="review_group",
             ),
             "subject": _group(
                 "Propose and read identity-only governed Subjects.",

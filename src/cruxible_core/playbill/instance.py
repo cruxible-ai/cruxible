@@ -585,6 +585,7 @@ class PlaybillInstance:
         if self._workspace_advertiser is None:
             return NOT_ATTACHED_ADVERTISEMENT
         try:
+            self._reconcile_proposal_review_refs()
             return self._workspace_advertiser()
         except BaseException:
             return PlaybillWorkspaceAdvertisement(
@@ -592,6 +593,39 @@ class PlaybillInstance:
                 workspace_path=None,
                 failure_code="unexpected_failure",
             )
+
+    def _reconcile_proposal_review_refs(self) -> None:
+        """Project exactly the open proposal trees into standard ledger branch refs."""
+
+        coordinate = self.accepted_coordinate()
+        accepted_candidates = {
+            generation.record.candidate_digest
+            for generation in self.accepted_history()
+            if generation.record is not None
+        }
+        evidence = self.proposal_evidence()
+        refs: dict[str, str] = {}
+        for admission in evidence.list_admissions():
+            evaluation = evidence.read_evaluation(admission.proposal_id)
+            candidate_digest = evaluation.candidate_digest
+            if (
+                candidate_digest is None
+                or candidate_digest in accepted_candidates
+                or evaluation.evaluated_tree_oid is None
+            ):
+                continue
+            candidate = evidence.read_candidate(candidate_digest)
+            if candidate.candidate.parent_semantic_root != coordinate.semantic_root:
+                continue
+            refs[admission.proposal_id.removeprefix("sha256:")] = (
+                self._ledger.proposal_review_commit(
+                    tree_oid=evaluation.evaluated_tree_oid,
+                    base_oid=evaluation.evaluated_base_oid,
+                    actor_id=admission.actor_id,
+                    timestamp=admission.admitted_at,
+                )
+            )
+        self._ledger.replace_proposal_review_refs(refs)
 
     def proposal_evidence(self) -> ProposalEvidenceStore:
         """Return the immutable non-authoritative proposal/approval evidence store."""

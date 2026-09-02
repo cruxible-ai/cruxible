@@ -130,6 +130,10 @@ from cruxible_core.playbill.service.review import (
     render_playbill_proposal_review,
 )
 from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
+from cruxible_core.playbill.workspace_advertisement import (
+    close_proposal_review_worktree,
+    open_proposal_review_worktree,
+)
 from cruxible_core.service.playbill_procedure_runs import ProcedureBindRequestV1
 
 ResultT = TypeVar("ResultT")
@@ -872,6 +876,90 @@ def inspect_refusal(proposal_id: str, output_json: bool) -> None:
         command_name="playbill proposal refusal",
     )
     _emit_json(result.model_dump(mode="json"))
+
+
+@playbill_group.group("review")
+def review_group() -> None:
+    """Materialize detached local worktrees for proposal comparison."""
+
+
+def _review_workspace_path(workspace_root: str | None) -> Path:
+    if workspace_root is not None:
+        return Path(workspace_root)
+    configured = _root_ctx_obj().get("playbill_workspace")
+    return Path(str(configured)) if configured is not None else Path.cwd()
+
+
+@review_group.command("open")
+@click.argument("proposal_id")
+@click.option("--workspace-root", default=None, type=click.Path(file_okay=False))
+@json_option
+@handle_errors
+def open_review(
+    proposal_id: str,
+    workspace_root: str | None,
+    output_json: bool,
+) -> None:
+    """Open an advertised proposal tree for comparison, never checkout."""
+
+    inspection = _server_call(
+        lambda client, instance_id: client.inspect_playbill_proposal(instance_id, proposal_id),
+        command_name="playbill review open",
+    )
+    advertisement = inspection.workspace_advertisement
+    if advertisement.status != "updated":
+        reason = advertisement.failure_code or advertisement.status
+        raise click.ClickException(f"proposal refs could not be refreshed: {reason}")
+    admission = inspection.proposal.get("admission")
+    canonical_id = admission.get("proposal_id") if isinstance(admission, Mapping) else None
+    if not isinstance(canonical_id, str):
+        raise click.ClickException("proposal inspection omitted its canonical proposal ID")
+    try:
+        path = open_proposal_review_worktree(
+            workspace_path=_review_workspace_path(workspace_root),
+            proposal_id=canonical_id,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    payload = {
+        "proposal_id": canonical_id,
+        "path": str(path),
+        "detached": True,
+    }
+    if output_json:
+        _emit_json(payload)
+    else:
+        click.echo(f"Opened detached review worktree: {path}")
+
+
+@review_group.command("close")
+@click.argument("proposal_id")
+@click.option("--workspace-root", default=None, type=click.Path(file_okay=False))
+@json_option
+@handle_errors
+def close_review(
+    proposal_id: str,
+    workspace_root: str | None,
+    output_json: bool,
+) -> None:
+    """Close one clean detached proposal review worktree."""
+
+    try:
+        path = close_proposal_review_worktree(
+            workspace_path=_review_workspace_path(workspace_root),
+            proposal_id=proposal_id,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    payload = {
+        "proposal_id": proposal_id,
+        "path": str(path),
+        "closed": True,
+    }
+    if output_json:
+        _emit_json(payload)
+    else:
+        click.echo(f"Closed review worktree: {path}")
 
 
 @proposal_group.command("review")

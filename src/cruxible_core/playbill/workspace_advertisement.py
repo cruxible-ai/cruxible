@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import cast
 
 from cruxible_client.contracts.types import GitObjectFormat
@@ -14,8 +16,10 @@ from cruxible_client.contracts.workspace_advertisement import (
 )
 
 _REMOTE_NAME = "playbill"
-_MAIN_REFSPEC = "+refs/heads/main:refs/remotes/playbill/main"
-_PROPOSAL_REFSPEC = "+refs/proposals/*:refs/remotes/playbill/proposals/*"
+_ACCEPTED_REFSPEC = "+refs/heads/main:refs/remotes/playbill/accepted"
+_PROPOSAL_REFSPEC = "+refs/heads/proposals/*:refs/remotes/playbill/proposals/*"
+_PROPOSAL_ID_RE = re.compile(r"^[0-9a-f]{64}$")
+_REVIEW_EXCLUDE = b"/.playbill/review/\n"
 _PASSTHROUGH_ENVIRONMENT = ("PATH", "TMPDIR", "TMP", "TEMP", "SYSTEMROOT")
 # Fetch can consult fsmonitor, hooks, alternate-reference enumeration, transport
 # commands/helpers, and upload-pack. Pin each process-bearing seam at command-line
@@ -214,7 +218,7 @@ def _advertise_workspace_refs(
             "--local",
             "--replace-all",
             f"remote.{_REMOTE_NAME}.fetch",
-            _MAIN_REFSPEC,
+            _ACCEPTED_REFSPEC,
         ],
     )
     if configured.returncode != 0:
@@ -239,7 +243,7 @@ def _advertise_workspace_refs(
             "--upload-pack=git-upload-pack",
             "--prune",
             _REMOTE_NAME,
-            _MAIN_REFSPEC,
+            _ACCEPTED_REFSPEC,
             _PROPOSAL_REFSPEC,
         ],
     )
@@ -250,7 +254,7 @@ def _advertise_workspace_refs(
         [
             "for-each-ref",
             "--format=%(refname)",
-            "refs/remotes/playbill/main",
+            "refs/remotes/playbill/accepted",
             "refs/remotes/playbill/proposals",
         ],
     )
@@ -291,8 +295,105 @@ def advertise_workspace_refs(
         )
 
 
+def _review_proposal_key(proposal_id: str) -> str:
+    key = proposal_id.removeprefix("sha256:")
+    if _PROPOSAL_ID_RE.fullmatch(key) is None:
+        raise ValueError("review workspace requires one full sha256 proposal ID")
+    return key
+
+
+def _ensure_review_worktrees_ignored(workspace_root: Path) -> None:
+    common = _git(
+        workspace_root,
+        ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )
+    if common.returncode != 0:
+        raise ValueError("review workspace cannot resolve Git metadata")
+    try:
+        common_path = Path(_text(common.stdout)).resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ValueError("review workspace Git metadata is invalid") from exc
+    exclude = common_path / "info" / "exclude"
+    if exclude.is_symlink():
+        raise ValueError("review workspace exclude file must not be a symbolic link")
+    try:
+        current = exclude.read_bytes() if exclude.exists() else b""
+        if _REVIEW_EXCLUDE in current.splitlines(keepends=True):
+            return
+        replacement = current
+        if replacement and not replacement.endswith(b"\n"):
+            replacement += b"\n"
+        replacement += _REVIEW_EXCLUDE
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        temporary: Path | None = None
+        try:
+            with NamedTemporaryFile(mode="wb", dir=exclude.parent, delete=False) as output:
+                temporary = Path(output.name)
+                output.write(replacement)
+                output.flush()
+                os.fsync(output.fileno())
+            if exclude.exists():
+                temporary.chmod(exclude.stat().st_mode)
+            os.replace(temporary, exclude)
+            temporary = None
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+    except OSError as exc:
+        raise ValueError("review workspace ignore rule could not be written") from exc
+
+
+def open_proposal_review_worktree(*, workspace_path: Path, proposal_id: str) -> Path:
+    """Materialize one advertised proposal tree as a detached, ignored worktree."""
+
+    workspace_root = containing_git_workspace_root(workspace_path)
+    if workspace_root is None:
+        raise ValueError("review workspace must be inside one Git worktree")
+    key = _review_proposal_key(proposal_id)
+    review_root = workspace_root / ".playbill" / "review"
+    target = review_root / key
+    if review_root.is_symlink() or target.is_symlink() or target.exists():
+        raise ValueError("review workspace already exists or has an unsafe path")
+    reference = f"refs/remotes/playbill/proposals/{key}"
+    resolved = _git(workspace_root, ["rev-parse", "--verify", f"{reference}^{{commit}}"])
+    if resolved.returncode != 0:
+        raise ValueError("proposal is not an advertised open proposal")
+    _ensure_review_worktrees_ignored(workspace_root)
+    created = _git(
+        workspace_root,
+        ["worktree", "add", "--detach", str(target), reference],
+    )
+    if created.returncode != 0:
+        raise ValueError(f"review workspace could not be opened: {_text(created.stderr)}")
+    detached = _git(target, ["symbolic-ref", "-q", "HEAD"])
+    if detached.returncode == 0:
+        raise ValueError("review workspace unexpectedly created a local branch")
+    return target
+
+
+def close_proposal_review_worktree(*, workspace_path: Path, proposal_id: str) -> Path:
+    """Remove one clean detached review worktree without deleting a branch."""
+
+    workspace_root = containing_git_workspace_root(workspace_path)
+    if workspace_root is None:
+        raise ValueError("review workspace must be inside one Git worktree")
+    key = _review_proposal_key(proposal_id)
+    target = workspace_root / ".playbill" / "review" / key
+    if target.is_symlink() or not target.is_dir():
+        raise ValueError("review workspace is absent or has an unsafe path")
+    removed = _git(workspace_root, ["worktree", "remove", str(target)])
+    if removed.returncode != 0:
+        raise ValueError(
+            "review workspace is modified or could not be closed; preserve or discard "
+            f"its edits explicitly: {_text(removed.stderr)}"
+        )
+    return target
+
+
 __all__ = [
     "advertise_workspace_refs",
+    "close_proposal_review_worktree",
     "containing_git_workspace_root",
+    "open_proposal_review_worktree",
     "workspace_git_object_format",
 ]
