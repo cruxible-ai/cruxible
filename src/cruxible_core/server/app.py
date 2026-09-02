@@ -79,7 +79,7 @@ def create_app() -> FastAPI:
     except Exception as exc:
         # Last-resort isolation: Provider fence recovery must never prevent the
         # non-Provider daemon surfaces from starting.
-        manager.provider_runtime_operator().mark_unavailable(
+        manager.cached_provider_runtime_operator().mark_unavailable(
             "provider_runtime_recovery_failed",
             f"Provider runtime startup recovery failed: {exc}",
             retryable=True,

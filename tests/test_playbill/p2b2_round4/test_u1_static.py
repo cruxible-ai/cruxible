@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import inspect
 import re
+import textwrap
 import typing
 from pathlib import Path
 
@@ -181,10 +182,17 @@ def test_run_child_only_catches_typed_refusals_around_publish() -> None:
     assert "OSError" not in caught and "BaseException" not in caught
 
 
-def test_operator_construction_has_unguarded_filesystem_sites() -> None:
+def test_operator_construction_guards_every_filesystem_stage() -> None:
     from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
 
-    source = inspect.getsource(ProviderRuntimeOperator.__init__)
+    source = "\n".join(
+        (
+            textwrap.dedent(inspect.getsource(ProviderRuntimeOperator.__init__)),
+            textwrap.dedent(
+                inspect.getsource(ProviderRuntimeOperator._initialize_filesystem_components)
+            ),
+        )
+    )
     tree = ast.parse(source.strip())
     guarded_lines: set[int] = set()
     for node in ast.walk(tree):
@@ -201,7 +209,7 @@ def test_operator_construction_has_unguarded_filesystem_sites() -> None:
         and node.func.attr == "mkdir"
         and node.lineno not in guarded_lines
     ]
-    assert unguarded, "state_root.mkdir is guarded now"
+    assert unguarded == []
     # FileProviderSecretStore construction is also outside every guard
     secret_store_lines = [
         node.lineno
@@ -210,7 +218,7 @@ def test_operator_construction_has_unguarded_filesystem_sites() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == "FileProviderSecretStore"
     ]
-    assert secret_store_lines and not set(secret_store_lines) & guarded_lines
+    assert secret_store_lines and set(secret_store_lines) <= guarded_lines
 
 
 def test_lazy_rearm_discards_the_recovery_fold() -> None:

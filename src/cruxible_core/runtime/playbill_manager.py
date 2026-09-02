@@ -205,7 +205,27 @@ class PlaybillInstanceManager:
         with self._lock:
             known = self._provider_runtime_operators.get(state_root)
             if known is None:
-                known = ProviderRuntimeOperator(state_root)
+                try:
+                    known = ProviderRuntimeOperator(state_root)
+                except Exception as exc:
+                    known = ProviderRuntimeOperator.degraded(
+                        state_root,
+                        message=f"Provider runtime construction failed: {exc}",
+                    )
+                self._provider_runtime_operators[state_root] = known
+            return known
+
+    def cached_provider_runtime_operator(self) -> ProviderRuntimeOperator:
+        """Return the already-cached operator without retrying construction."""
+
+        state_root = get_server_state_root()
+        with self._lock:
+            known = self._provider_runtime_operators.get(state_root)
+            if known is None:
+                known = ProviderRuntimeOperator.degraded(
+                    state_root,
+                    message="Provider runtime construction failed before caching",
+                )
                 self._provider_runtime_operators[state_root] = known
             return known
 

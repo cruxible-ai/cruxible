@@ -34,7 +34,7 @@ def _server_state(monkeypatch: pytest.MonkeyPatch, root: Path) -> Path:
 # ------------------------------------------------------------------ U-2 / U-3
 
 
-def test_a_file_at_daemon_provider_secrets_aborts_operator_construction(
+def test_a_file_at_daemon_provider_secrets_degrades_operator_construction(
     short_root: Path,
 ) -> None:
     """T-3: a Provider-lane-only filesystem shape must degrade, not raise."""
@@ -42,11 +42,12 @@ def test_a_file_at_daemon_provider_secrets_aborts_operator_construction(
     secrets = short_root / "daemon" / "provider-secrets"
     secrets.parent.mkdir(parents=True)
     secrets.write_text("occupied", encoding="utf-8")
-    with pytest.raises(OSError):
-        ProviderRuntimeOperator(short_root)
+    operator = ProviderRuntimeOperator(short_root)
+    assert operator.unavailable_code == "provider_process_lease_invalid"
+    assert "secret store" in (operator.unavailable_reason or "")
 
 
-def test_that_abort_also_kills_create_app(
+def test_that_degradation_does_not_kill_create_app(
     short_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The create_app last resort re-enters the same failing constructor."""
@@ -57,21 +58,43 @@ def test_that_abort_also_kills_create_app(
     _server_state(monkeypatch, short_root)
     from cruxible_core.server.app import create_app
 
-    with pytest.raises(OSError):
-        create_app()
+    assert create_app() is not None
+    manager = get_playbill_manager()
+    first = manager.provider_runtime_operator()
+    second = manager.provider_runtime_operator()
+    assert first is second
+    assert first.unavailable_code == "provider_process_lease_invalid"
 
 
-def test_a_read_only_state_root_aborts_operator_construction(short_root: Path) -> None:
+def test_a_read_only_state_root_degrades_operator_construction(short_root: Path) -> None:
     """The lease store's own mkdir is outside its typed guard."""
 
     root = short_root / "ro"
     root.mkdir()
     os.chmod(root, 0o500)
     try:
-        with pytest.raises(OSError):
-            ProviderRuntimeOperator(root)
+        operator = ProviderRuntimeOperator(root)
+        assert operator.unavailable_code == "provider_process_lease_invalid"
+        assert operator.lane_status()[0] == "unavailable"
     finally:
         os.chmod(root, 0o700)
+
+
+def test_lane_status_uses_the_cached_snapshot_without_filesystem_access(
+    short_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    operator = ProviderRuntimeOperator(short_root)
+    operator.mark_unavailable("provider_process_lease_invalid", "offline")
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("lane_status touched the filesystem")
+
+    monkeypatch.setattr(Path, "stat", forbidden)
+    assert operator.lane_status() == (
+        "unavailable",
+        "provider_process_lease_invalid",
+        "provider_process_lease_invalid: offline",
+    )
 
 
 # ------------------------------------------------------------------ U-4 re-arm

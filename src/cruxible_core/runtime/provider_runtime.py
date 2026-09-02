@@ -129,18 +129,47 @@ class ProviderRuntimeOperator:
     """One daemon process's local custody, leases, and installed deployments."""
 
     def __init__(self, state_root: Path) -> None:
-        self.state_root = state_root.resolve()
-        self.state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._initialize_degraded(state_root)
+        try:
+            self.state_root = state_root.resolve()
+            self.state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        except (OSError, ProviderLocalRuntimeRefused) as exc:
+            self._mark_construction_failure("state root", exc)
+            return
+        self._initialize_filesystem_components()
+
+    @classmethod
+    def degraded(cls, state_root: Path, *, message: str) -> ProviderRuntimeOperator:
+        """Build a non-filesystem fallback when manager construction itself fails."""
+
+        operator = cls.__new__(cls)
+        operator._initialize_degraded(state_root)
+        operator.mark_unavailable("provider_runtime_recovery_failed", message, retryable=True)
+        return operator
+
+    def _initialize_degraded(self, state_root: Path) -> None:
+        """Initialize every field needed by refusal and status paths without filesystem I/O."""
+
+        self.state_root = state_root
         self._lock = threading.RLock()
         self._in_flight = 0
         self._rearm_required = False
         self.unavailable_code: ProviderLaneUnavailableCodeV1 | None = None
         self.unavailable_reason: str | None = None
+        self.config = ProviderRuntimeOperationalConfigV1()
+        self.process_leases: ProviderProcessLeaseStore | None = None
+        self.secret_store: FileProviderSecretStore | None = None
+        self.secret_resolvers = ProviderSecretResolverRegistry(
+            (EnvironmentProviderSecretResolver(),)
+        )
+        self.driver = LocalProviderExecutionDriver()
+        self.deployments: dict[str, LocalProviderDeploymentV1] = {}
+
+    def _initialize_filesystem_components(self) -> None:
         try:
             self.config = self._load_config()
-        except ProviderLocalRuntimeRefused as exc:
-            self.config = ProviderRuntimeOperationalConfigV1()
-            self.mark_unavailable(cast(ProviderProcessFenceCodeV1, exc.code), str(exc))
+        except (OSError, ProviderLocalRuntimeRefused) as exc:
+            self._mark_construction_failure("operational config", exc)
         try:
             process_leases = ProviderProcessLeaseStore(
                 self.state_root / "daemon" / "provider-process-leases",
@@ -160,22 +189,35 @@ class ProviderRuntimeOperator:
                 ),
             )
             process_leases.paths("sha256:" + "0" * 64)
-            self.process_leases: ProviderProcessLeaseStore | None = process_leases
-        except ProviderLocalRuntimeRefused as exc:
-            self.process_leases = None
-            self.mark_unavailable(cast(ProviderProcessFenceCodeV1, exc.code), str(exc))
-        self.secret_store = FileProviderSecretStore(self.state_root / "daemon" / "provider-secrets")
-        self.secret_resolvers = ProviderSecretResolverRegistry(
-            (EnvironmentProviderSecretResolver(), self.secret_store)
-        )
-        self.driver = LocalProviderExecutionDriver()
+            self.process_leases = process_leases
+        except (OSError, ProviderLocalRuntimeRefused) as exc:
+            self._mark_construction_failure("process lease store", exc)
+        try:
+            secret_store = FileProviderSecretStore(self.state_root / "daemon" / "provider-secrets")
+            self.secret_store = secret_store
+            self.secret_resolvers = ProviderSecretResolverRegistry(
+                (EnvironmentProviderSecretResolver(), secret_store)
+            )
+        except (OSError, ProviderLocalRuntimeRefused) as exc:
+            self._mark_construction_failure("secret store", exc)
         try:
             self.deployments = {
                 item.deployment_digest: self._deployment(item) for item in self.config.deployments
             }
-        except ProviderLocalRuntimeRefused as exc:
-            self.deployments = {}
-            self.mark_unavailable(cast(ProviderProcessFenceCodeV1, exc.code), str(exc))
+        except (OSError, ProviderLocalRuntimeRefused) as exc:
+            self._mark_construction_failure("deployment", exc)
+
+    def _mark_construction_failure(
+        self,
+        component: str,
+        exc: OSError | ProviderLocalRuntimeRefused,
+    ) -> None:
+        code = (
+            cast(ProviderProcessFenceCodeV1, exc.code)
+            if isinstance(exc, ProviderLocalRuntimeRefused)
+            else "provider_process_lease_invalid"
+        )
+        self.mark_unavailable(code, f"Provider {component} is unavailable: {exc}")
 
     def mark_unavailable(
         self,
