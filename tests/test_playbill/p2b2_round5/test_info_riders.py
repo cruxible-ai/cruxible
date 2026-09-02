@@ -45,11 +45,7 @@ def test_all_process_lease_store_calls_name_the_control_root() -> None:
 def test_short_root_finalizers_retry_cleanup_after_a_wait() -> None:
     for round_name in ("p2b2_round3", "p2b2_round4", "p2b2_round5"):
         source = (
-            REPOSITORY_ROOT
-            / "tests"
-            / "test_playbill"
-            / round_name
-            / "conftest.py"
+            REPOSITORY_ROOT / "tests" / "test_playbill" / round_name / "conftest.py"
         ).read_text(encoding="utf-8")
         assert source.count("shutil.rmtree(root, ignore_errors=True)") == 2
         assert "time.sleep(" in source
