@@ -33,6 +33,7 @@ from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate as ServiceAcceptedCoordinate,
 )
+from cruxible_core.service import playbill_projection_sync
 from cruxible_core.service.playbill_coverage import service_resolve_playbill_coverage
 from cruxible_core.service.playbill_next import (
     PlaybillNextRequestV1,
@@ -131,6 +132,7 @@ entries:
 
 def test_two_writer_successor_sync_converges_without_mutating_accepted_state(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     daemon_root = tmp_path / "daemon"
     workspace_root = tmp_path / "writer-one"
@@ -304,14 +306,40 @@ def test_two_writer_successor_sync_converges_without_mutating_accepted_state(
             }
         ),
     )
+    branched_nodes = {**nodes, terminal_node.artifact_digest: branched_terminal}
     ambiguous = _terminal_node(
-        nodes={**nodes, terminal_node.artifact_digest: branched_terminal},
+        nodes=branched_nodes,
         original_digest=current.original_artifact_digest,
         preferred_successor_digest=None,
     )
     assert isinstance(ambiguous, tuple)
     assert len(ambiguous) == 2
     assert all(candidate.identity == original_stamp.backing[0].identity for candidate in ambiguous)
+    monkeypatch.setattr(
+        playbill_projection_sync,
+        "_claim_nodes",
+        lambda _instance, *, path: branched_nodes,
+    )
+    ambiguous_read = service_read_playbill_block_sync_backing(
+        instance,
+        request=PlaybillBlockSyncReadRequestV1(stamp=original_stamp),
+    )
+    assert ambiguous_read.status == "refused"
+    assert ambiguous_read.reason == "block_successor_ambiguous"
+    assert len(ambiguous_read.successor_candidates) == 2
+    source.write_bytes(b"PREFIX\n" + landed.content + b"SUFFIX\n")
+    ambiguous_sync = sync_projection_blocks(
+        _ServiceClient(instance),  # type: ignore[arg-type]
+        instance.descriptor.instance_id,
+        workspace=workspace_root,
+        paths=(source,),
+    )
+    assert ambiguous_sync.items[0].reason == "block_successor_ambiguous"
+    assert ambiguous_sync.items[0].repair_commands == tuple(
+        "cruxible playbill block repin repo.work-items "
+        f"{original_stamp.block_id} --backing {candidate.artifact_digest}"
+        for candidate in ambiguous_read.successor_candidates
+    )
 
     original_node = nodes[current.original_artifact_digest]
     cyclic_original = replace(
