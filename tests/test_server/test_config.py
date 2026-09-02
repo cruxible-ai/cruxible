@@ -256,6 +256,7 @@ def test_run_server_reaches_uvicorn_for_valid_public_bind(
 
     monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
     reset_runtime_credential_store()
+    reset_registry()
     monkeypatch.setenv("CRUXIBLE_HOST", "0.0.0.0")
     monkeypatch.setenv("CRUXIBLE_PORT", "8123")
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
@@ -268,6 +269,7 @@ def test_run_server_reaches_uvicorn_for_valid_public_bind(
         server_app.run_server()
     finally:
         reset_runtime_credential_store()
+        reset_registry()
 
     assert called["host"] == "0.0.0.0"
     assert called["port"] == 8123

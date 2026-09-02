@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_core.server.registry import reset_registry
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -24,4 +26,5 @@ def _remove_root(root: Path) -> None:
 def short_root(request: pytest.FixtureRequest) -> Path:
     root = Path(tempfile.mkdtemp(prefix=".b2-r3-", dir=REPOSITORY_ROOT))
     request.addfinalizer(lambda: _remove_root(root))
+    request.addfinalizer(reset_registry)
     return root
