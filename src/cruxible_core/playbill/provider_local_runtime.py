@@ -1105,7 +1105,8 @@ def _terminate_process_group(
         kill_descendants(observed_descendants)
         if snapshot_failure is not None:
             if diagnostic_sink is not None:
-                diagnostic_sink(snapshot_failure)
+                with contextlib.suppress(Exception):
+                    diagnostic_sink(snapshot_failure)
             snapshot_failure = None
         try:
             os.killpg(process.pid, 0)
