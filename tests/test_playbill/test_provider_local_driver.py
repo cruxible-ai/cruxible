@@ -442,17 +442,31 @@ def test_secret_channel_read_descriptor_has_exactly_one_parent_owner(tmp_path: P
         os.fstat(secret_fd)
 
 
-def test_successful_invocation_never_signals_an_already_reaped_pid(
+def test_successful_invocation_kills_only_inside_the_unreaped_zombie_window(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     signals: list[tuple[int, int]] = []
+    termination_entry: list[tuple[int | None, bool]] = []
     real_killpg = os.killpg
+    real_terminate = local_runtime_module._terminate_process_group
 
     def observe(process_group_id: int, sent_signal: int) -> None:
         signals.append((process_group_id, sent_signal))
         real_killpg(process_group_id, sent_signal)
 
+    def terminate(process, timeout_seconds, **kwargs):  # type: ignore[no-untyped-def]
+        group_exists = True
+        try:
+            real_killpg(process.pid, 0)
+        except ProcessLookupError:
+            group_exists = False
+        except PermissionError:
+            pass
+        termination_entry.append((process.returncode, group_exists))
+        return real_terminate(process, timeout_seconds, **kwargs)
+
     monkeypatch.setattr(os, "killpg", observe)
+    monkeypatch.setattr(local_runtime_module, "_terminate_process_group", terminate)
     outcome = _run_child(
         _fake_interpreter(tmp_path / "success-python"),
         entrypoint="demo.runtime:Provider",
@@ -463,7 +477,8 @@ def test_successful_invocation_never_signals_an_already_reaped_pid(
         process_leases=_lease_store(tmp_path / "success-leases"),
     )
     assert json.loads(outcome.stdout)["status"] == "ok"
-    assert [item for item in signals if item[1] == signal.SIGKILL] == []
+    assert termination_entry == [(None, True)]
+    assert len([item for item in signals if item[1] == signal.SIGKILL]) == 1
 
 
 def test_process_recovery_kills_an_echo_verified_invocation_group(tmp_path: Path) -> None:
@@ -510,6 +525,7 @@ def test_process_recovery_waits_through_a_transient_permission_probe(
                 "invocation_id": invocation_id,
                 "pid": 101,
                 "process_group_id": 202,
+                "session_id": 303,
                 "boot_id": "boot",
                 "process_start_time": "start",
             }
@@ -519,13 +535,15 @@ def test_process_recovery_waits_through_a_transient_permission_probe(
         invocation_id=invocation_id,
         pid=101,
         process_group_id=202,
+        session_id=303,
         boot_id="boot",
         process_start_time="start",
         control_path=control_path,
         record_path=record_path,
     )
-    monkeypatch.setattr(leases, "require_echo", lambda value: None)
+    monkeypatch.setattr(leases, "require_echo", lambda value: value.pid)
     monkeypatch.setattr(process_lease_module, "descendant_processes", lambda _pid: ())
+    monkeypatch.setattr(process_lease_module, "_current_boot_id", lambda: "boot")
     monkeypatch.setattr("os.waitpid", lambda pid, flags: (0, 0))
     probes = iter((PermissionError(), ProcessLookupError()))
 
@@ -561,11 +579,10 @@ def test_spawned_child_is_killed_when_its_owned_lease_cannot_be_verified(
     monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: _Process())
     monkeypatch.setattr(process_lease_module, "_current_boot_id", lambda: "boot")
     monkeypatch.setattr(process_lease_module, "_process_start_time", lambda _pid: "start")
-    monkeypatch.setattr(local_runtime_module, "descendant_processes", lambda _pid: ())
     monkeypatch.setattr(
         local_runtime_module,
-        "processes_naming_invocation",
-        lambda _invocation_id: (),
+        "snapshot_provider_descendants",
+        lambda _pid, *, invocation_id: (),
     )
     monkeypatch.setattr(
         leases,
@@ -593,6 +610,9 @@ def test_spawned_child_is_killed_when_its_owned_lease_cannot_be_verified(
             process_leases=leases,
         )
     assert killed == [(_Process.pid, signal.SIGKILL)]
+    record_path, control_path = leases.paths(invocation_id)
+    assert not record_path.exists()
+    assert not control_path.exists()
 
 
 def test_wall_clock_escape_is_typed_killed_and_unfenced_only_after_death(
@@ -845,7 +865,7 @@ def test_recovery_isolates_a_survivor_and_continues_to_later_records(
                 }
             )
         )
-    monkeypatch.setattr(leases, "require_echo", lambda _lease: None)
+    monkeypatch.setattr(leases, "require_echo", lambda lease: lease.pid)
 
     def recover(lease: ProviderProcessLeaseV1) -> None:
         if lease.invocation_id == invocation_ids[0]:

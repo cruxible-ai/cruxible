@@ -10,19 +10,34 @@ import platform
 import signal
 import socket
 import stat
+import struct
 import subprocess
 import tempfile
 import time
 import weakref
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import PlaybillExecutionError
 
 DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS = 5.0
 DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS = 5.0
+DEFAULT_PROVIDER_SECRET_WRITER_JOIN_TIMEOUT_SECONDS = 5.0
+DEFAULT_PROVIDER_STDIN_WRITER_JOIN_TIMEOUT_SECONDS = 5.0
+DEFAULT_PROVIDER_DESCENDANT_TRACKER_JOIN_TIMEOUT_SECONDS = 5.0
+DEFAULT_PROVIDER_DESCENDANT_TRACKER_POLL_INTERVAL_SECONDS = 1.0
+DEFAULT_PROVIDER_PROCESS_GROUP_TERMINATION_TIMEOUT_SECONDS = 5.0
+_BOOT_ID_UNSET = object()
+
+ProviderProcessFenceCodeV1 = Literal[
+    "provider_process_lease_invalid",
+    "provider_process_lease_missing",
+    "provider_process_lease_echo_failed",
+    "provider_process_lease_echo_mismatch",
+    "provider_process_group_survived_recovery",
+]
 
 
 class ProviderLocalRuntimeRefused(PlaybillExecutionError):
@@ -47,6 +62,7 @@ class ProviderProcessLeaseV1:
     invocation_id: str
     pid: int
     process_group_id: int
+    session_id: int | None
     boot_id: str | None
     process_start_time: str | None
     control_path: Path
@@ -68,7 +84,7 @@ class ProviderProcessRecoveryFailureV1:
 
     record_name: str
     invocation_id: str | None
-    code: str
+    code: ProviderProcessFenceCodeV1
     message: str
 
 
@@ -107,6 +123,15 @@ class ProviderDescendantProcessV1:
     process_start_time: str
 
 
+@dataclass(frozen=True)
+class _ProviderProcessRow:
+    pid: int
+    parent_pid: int
+    process_group_id: int
+    session_id: int
+    command: str
+
+
 def _current_boot_id() -> str:
     """Return an OS-owned boot identity used only as a local recovery fence."""
 
@@ -118,12 +143,18 @@ def _current_boot_id() -> str:
     if value:
         return value
     if platform.system() == "Darwin":
-        completed = subprocess.run(
-            ["sysctl", "-n", "kern.boottime"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                ["sysctl", "-n", "kern.boottime"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError as exc:
+            raise ProviderLocalRuntimeRefused(
+                "provider_process_lease_invalid",
+                "the operating-system boot identity is unavailable",
+            ) from exc
         value = completed.stdout.strip()
         if completed.returncode == 0 and value:
             return value
@@ -134,7 +165,12 @@ def _current_boot_id() -> str:
 
 
 def _process_start_time(pid: int) -> str:
-    """Return the OS-reported start token for one live pid."""
+    """Return the OS-reported start token for one live pid.
+
+    Linux procfs carries a jiffy token. The portable ``ps lstart`` fallback is
+    whole-second precise, so same-second PID reuse remains a documented local
+    fence limit until a host adapter supplies a finer token.
+    """
 
     stat_path = Path(f"/proc/{pid}/stat")
     try:
@@ -146,12 +182,18 @@ def _process_start_time(pid: int) -> str:
         fields = raw[close + 2 :].split() if close >= 0 else []
         if len(fields) > 19:
             return fields[19]
-    completed = subprocess.run(
-        ["ps", "-o", "lstart=", "-p", str(pid)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            ["ps", "-o", "lstart=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise ProviderLocalRuntimeRefused(
+            "provider_process_lease_invalid",
+            "the operating-system process start time is unavailable",
+        ) from exc
     value = completed.stdout.strip()
     if completed.returncode == 0 and value:
         return " ".join(value.split())
@@ -161,89 +203,126 @@ def _process_start_time(pid: int) -> str:
     )
 
 
-def _process_rows() -> tuple[tuple[int, int, int, int], ...]:
-    completed = subprocess.run(
-        ["ps", "-Ao", "pid=,ppid=,pgid=,sid="],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+def _process_rows() -> tuple[_ProviderProcessRow, ...]:
+    try:
+        completed = subprocess.run(
+            ["ps", "-Ao", "pid=,ppid=,pgid=,sess=,command="],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise ProviderLocalRuntimeRefused(
+            "provider_process_lease_invalid",
+            "the operating-system process table is unavailable",
+        ) from exc
     if completed.returncode != 0:
-        return ()
-    rows: list[tuple[int, int, int, int]] = []
+        raise ProviderLocalRuntimeRefused(
+            "provider_process_lease_invalid",
+            "the operating-system process table is unavailable",
+        )
+    rows: list[_ProviderProcessRow] = []
     for line in completed.stdout.splitlines():
-        fields = line.split()
-        if len(fields) != 4:
+        fields = line.strip().split(maxsplit=4)
+        if len(fields) < 4:
             continue
         try:
-            process_id, parent_id, group_id, session_id = (int(item) for item in fields)
+            process_id, parent_id, group_id, session_id = (int(item) for item in fields[:4])
         except ValueError:
             continue
-        rows.append((process_id, parent_id, group_id, session_id))
+        rows.append(
+            _ProviderProcessRow(
+                pid=process_id,
+                parent_pid=parent_id,
+                process_group_id=group_id,
+                session_id=session_id,
+                command="" if len(fields) == 4 else fields[4],
+            )
+        )
     return tuple(rows)
 
 
-def descendant_processes(pid: int) -> tuple[ProviderDescendantProcessV1, ...]:
-    """Snapshot descendants that escaped the root process's session."""
-
-    rows = _process_rows()
-    root = next((row for row in rows if row[0] == pid), None)
+def _descendant_processes_from_rows(
+    pid: int,
+    rows: tuple[_ProviderProcessRow, ...],
+) -> tuple[ProviderDescendantProcessV1, ...]:
+    root = next((row for row in rows if row.pid == pid), None)
     if root is None:
         return ()
-    root_session = root[3]
-    children: dict[int, list[tuple[int, int, int, int]]] = {}
+    children: dict[int, list[_ProviderProcessRow]] = {}
     for row in rows:
-        children.setdefault(row[1], []).append(row)
+        children.setdefault(row.parent_pid, []).append(row)
     pending = [pid]
     found: list[ProviderDescendantProcessV1] = []
     while pending:
         parent = pending.pop()
         for row in children.get(parent, []):
-            child_pid, _parent_pid, _group_id, session_id = row
-            pending.append(child_pid)
-            if session_id == root_session:
+            pending.append(row.pid)
+            if row.session_id == root.session_id and row.process_group_id == root.process_group_id:
                 continue
             try:
-                start_time = _process_start_time(child_pid)
+                start_time = _process_start_time(row.pid)
             except ProviderLocalRuntimeRefused:
                 continue
             found.append(
                 ProviderDescendantProcessV1(
-                    pid=child_pid,
+                    pid=row.pid,
                     process_start_time=start_time,
                 )
             )
     return tuple(sorted(found, key=lambda item: item.pid))
 
 
-def processes_naming_invocation(invocation_id: str) -> tuple[ProviderDescendantProcessV1, ...]:
-    """Find processes retaining the daemon-injected invocation argv token."""
+def descendant_processes(pid: int) -> tuple[ProviderDescendantProcessV1, ...]:
+    """Snapshot descendants outside the root's exact session-and-group pair."""
 
-    completed = subprocess.run(
-        ["ps", "-Ao", "pid=,command="],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        return ()
+    return _descendant_processes_from_rows(pid, _process_rows())
+
+
+def _processes_naming_invocation_from_rows(
+    invocation_id: str,
+    rows: tuple[_ProviderProcessRow, ...],
+) -> tuple[ProviderDescendantProcessV1, ...]:
     found: list[ProviderDescendantProcessV1] = []
-    for line in completed.stdout.splitlines():
-        fields = line.strip().split(maxsplit=1)
-        if len(fields) != 2 or invocation_id not in fields[1]:
+    for row in rows:
+        if invocation_id not in row.command:
             continue
         try:
-            process_id = int(fields[0])
-            start_time = _process_start_time(process_id)
-        except (ValueError, ProviderLocalRuntimeRefused):
+            start_time = _process_start_time(row.pid)
+        except ProviderLocalRuntimeRefused:
             continue
         found.append(
             ProviderDescendantProcessV1(
-                pid=process_id,
+                pid=row.pid,
                 process_start_time=start_time,
             )
         )
     return tuple(sorted(found, key=lambda item: item.pid))
+
+
+def processes_naming_invocation(invocation_id: str) -> tuple[ProviderDescendantProcessV1, ...]:
+    """Find processes retaining the daemon-injected invocation argv token."""
+
+    return _processes_naming_invocation_from_rows(invocation_id, _process_rows())
+
+
+def snapshot_provider_descendants(
+    pid: int,
+    *,
+    invocation_id: str,
+) -> tuple[ProviderDescendantProcessV1, ...]:
+    """Observe descendants and token-holders from one process-table snapshot."""
+
+    rows = _process_rows()
+    found = {
+        (item.pid, item.process_start_time): item
+        for item in (
+            *_descendant_processes_from_rows(pid, rows),
+            *_processes_naming_invocation_from_rows(invocation_id, rows),
+        )
+        if item.pid != pid
+    }
+    return tuple(sorted(found.values(), key=lambda item: item.pid))
 
 
 def descendant_is_live(identity: ProviderDescendantProcessV1) -> bool:
@@ -265,6 +344,27 @@ def kill_descendants(identities: tuple[ProviderDescendantProcessV1, ...]) -> Non
             os.kill(identity.pid, signal.SIGKILL)
 
 
+def _socket_peer_pid(client: socket.socket) -> int | None:
+    """Return the connected Unix peer pid when the host exposes one."""
+
+    so_peercred = getattr(socket, "SO_PEERCRED", None)
+    if so_peercred is not None:
+        try:
+            raw = client.getsockopt(socket.SOL_SOCKET, so_peercred, struct.calcsize("3i"))
+            return int(struct.unpack("3i", raw)[0])
+        except (OSError, struct.error):
+            return None
+    local_peerpid = getattr(socket, "LOCAL_PEERPID", None)
+    sol_local = getattr(socket, "SOL_LOCAL", None)
+    if local_peerpid is not None and sol_local is not None:
+        try:
+            raw = client.getsockopt(sol_local, local_peerpid, struct.calcsize("i"))
+            return int(struct.unpack("i", raw)[0])
+        except (OSError, struct.error):
+            return None
+    return None
+
+
 class ProviderProcessLeaseStore:
     """A rebuildable 0700 process fence; its records are never governed state."""
 
@@ -275,10 +375,30 @@ class ProviderProcessLeaseStore:
         control_root: Path | None = None,
         acquisition_timeout_seconds: float = DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS,
         recovery_timeout_seconds: float = DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS,
+        secret_writer_join_timeout_seconds: float = (
+            DEFAULT_PROVIDER_SECRET_WRITER_JOIN_TIMEOUT_SECONDS
+        ),
+        stdin_writer_join_timeout_seconds: float = (
+            DEFAULT_PROVIDER_STDIN_WRITER_JOIN_TIMEOUT_SECONDS
+        ),
+        descendant_tracker_join_timeout_seconds: float = (
+            DEFAULT_PROVIDER_DESCENDANT_TRACKER_JOIN_TIMEOUT_SECONDS
+        ),
+        descendant_tracker_poll_interval_seconds: float = (
+            DEFAULT_PROVIDER_DESCENDANT_TRACKER_POLL_INTERVAL_SECONDS
+        ),
+        process_group_termination_timeout_seconds: float = (
+            DEFAULT_PROVIDER_PROCESS_GROUP_TERMINATION_TIMEOUT_SECONDS
+        ),
     ) -> None:
         self.root = root
         self.acquisition_timeout_seconds = acquisition_timeout_seconds
         self.recovery_timeout_seconds = recovery_timeout_seconds
+        self.secret_writer_join_timeout_seconds = secret_writer_join_timeout_seconds
+        self.stdin_writer_join_timeout_seconds = stdin_writer_join_timeout_seconds
+        self.descendant_tracker_join_timeout_seconds = descendant_tracker_join_timeout_seconds
+        self.descendant_tracker_poll_interval_seconds = descendant_tracker_poll_interval_seconds
+        self.process_group_termination_timeout_seconds = process_group_termination_timeout_seconds
         self._ensure_private_directory(root)
         # Control sockets are operational state and must share the daemon's
         # protected state-root boundary.  The short component also preserves
@@ -383,6 +503,13 @@ class ProviderProcessLeaseStore:
             )
         boot_id = _current_boot_id()
         process_start_time = _process_start_time(pid)
+        try:
+            session_id = os.getsid(pid)
+        except OSError as exc:
+            raise ProviderLocalRuntimeRefused(
+                "provider_process_lease_invalid",
+                "the operating-system process session is unavailable",
+            ) from exc
         record_path, _control_path = self.paths(invocation_id)
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=record_path.name + ".tmp-",
@@ -398,6 +525,7 @@ class ProviderProcessLeaseStore:
                             "invocation_id": invocation_id,
                             "pid": pid,
                             "process_group_id": process_group_id,
+                            "session_id": session_id,
                             "boot_id": boot_id,
                             "process_start_time": process_start_time,
                         }
@@ -436,6 +564,9 @@ class ProviderProcessLeaseStore:
                     invocation_id=str(document["invocation_id"]),
                     pid=int(document["pid"]),
                     process_group_id=int(document["process_group_id"]),
+                    session_id=(
+                        None if document.get("session_id") is None else int(document["session_id"])
+                    ),
                     boot_id=(None if document.get("boot_id") is None else str(document["boot_id"])),
                     process_start_time=(
                         None
@@ -466,11 +597,12 @@ class ProviderProcessLeaseStore:
             "provider_process_lease_missing", "child did not publish a process lease"
         )
 
-    def require_echo(self, lease: ProviderProcessLeaseV1) -> None:
+    def require_echo(self, lease: ProviderProcessLeaseV1) -> int | None:
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
                 client.settimeout(self.acquisition_timeout_seconds)
                 client.connect(str(lease.control_path))
+                peer_pid = _socket_peer_pid(client)
                 client.sendall(lease.invocation_id.encode("utf-8"))
                 client.shutdown(socket.SHUT_WR)
                 echoed = client.recv(4096).decode("utf-8")
@@ -482,9 +614,10 @@ class ProviderProcessLeaseStore:
             raise ProviderLocalRuntimeRefused(
                 "provider_process_lease_echo_mismatch", "child lease echo names another invocation"
             )
+        return peer_pid
 
     def release(self, lease: ProviderProcessLeaseV1) -> None:
-        for path in (lease.record_path, lease.control_path):
+        for path in (lease.control_path, lease.record_path):
             with contextlib.suppress(FileNotFoundError):
                 path.unlink()
 
@@ -494,6 +627,12 @@ class ProviderProcessLeaseStore:
         recovered: list[str] = []
         removed: list[ProviderProcessLeaseRemovalV1] = []
         could_not_clean: list[ProviderProcessRecoveryFailureV1] = []
+        boot_identity_failure: ProviderLocalRuntimeRefused | None = None
+        try:
+            current_boot_id = _current_boot_id()
+        except ProviderLocalRuntimeRefused as exc:
+            current_boot_id = None
+            boot_identity_failure = exc
         for record_path in sorted(self.root.glob("*.json"), key=lambda item: item.name.encode()):
             invocation_id: str | None = None
             control_path = self.control_root / f"{record_path.stem[:16]}.sock"
@@ -507,6 +646,9 @@ class ProviderProcessLeaseStore:
                     invocation_id=invocation_id,
                     pid=int(document["pid"]),
                     process_group_id=int(document["process_group_id"]),
+                    session_id=(
+                        None if document.get("session_id") is None else int(document["session_id"])
+                    ),
                     boot_id=(None if document.get("boot_id") is None else str(document["boot_id"])),
                     process_start_time=(
                         None
@@ -520,8 +662,8 @@ class ProviderProcessLeaseStore:
                     raise ValueError("lease process identity is invalid")
                 authorized_to_signal = False
                 try:
-                    self.require_echo(lease)
-                    authorized_to_signal = True
+                    peer_pid = self.require_echo(lease)
+                    authorized_to_signal = peer_pid == lease.pid
                 except ProviderLocalRuntimeRefused as exc:
                     if exc.code not in {
                         "provider_process_lease_echo_failed",
@@ -529,7 +671,12 @@ class ProviderProcessLeaseStore:
                     }:
                         raise
                 if not authorized_to_signal:
-                    authorized_to_signal = self._live_identity_matches(lease)
+                    if boot_identity_failure is not None:
+                        raise boot_identity_failure
+                    authorized_to_signal = self._live_identity_matches(
+                        lease,
+                        current_boot_id=current_boot_id,
+                    )
                 if authorized_to_signal:
                     self._kill_and_verify(lease)
                     recovered.append(invocation_id)
@@ -547,11 +694,22 @@ class ProviderProcessLeaseStore:
                     ProviderProcessRecoveryFailureV1(
                         record_name=record_path.name,
                         invocation_id=invocation_id,
-                        code=exc.code,
+                        code=cast(ProviderProcessFenceCodeV1, exc.code),
                         message=str(exc),
                     )
                 )
-            except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            except OSError as exc:
+                could_not_clean.append(
+                    ProviderProcessRecoveryFailureV1(
+                        record_name=record_path.name,
+                        invocation_id=invocation_id,
+                        code="provider_process_lease_invalid",
+                        message=(
+                            f"provider_process_lease_invalid: process-fence recovery failed: {exc}"
+                        ),
+                    )
+                )
+            except (ValueError, KeyError, TypeError, json.JSONDecodeError):
                 # A malformed record cannot prove a process identity. Remove it
                 # without starving later valid records.
                 for path in (record_path, control_path):
@@ -571,17 +729,30 @@ class ProviderProcessLeaseStore:
         )
 
     @staticmethod
-    def _live_identity_matches(lease: ProviderProcessLeaseV1) -> bool:
+    def _live_identity_matches(
+        lease: ProviderProcessLeaseV1,
+        *,
+        current_boot_id: str | None | object = _BOOT_ID_UNSET,
+    ) -> bool:
         """Authorize recovery signalling only for the published OS identity."""
 
-        if lease.boot_id is None or lease.process_start_time is None:
+        if lease.boot_id is None or lease.process_start_time is None or lease.session_id is None:
+            return False
+        if current_boot_id is _BOOT_ID_UNSET:
+            try:
+                current_boot_id = _current_boot_id()
+            except ProviderLocalRuntimeRefused:
+                return False
+        if current_boot_id is None:
             return False
         try:
             return (
-                _current_boot_id() == lease.boot_id
+                current_boot_id == lease.boot_id
                 and _process_start_time(lease.pid) == lease.process_start_time
+                and os.getpgid(lease.pid) == lease.process_group_id
+                and os.getsid(lease.pid) == lease.session_id
             )
-        except ProviderLocalRuntimeRefused:
+        except (OSError, ProviderLocalRuntimeRefused):
             return False
 
     def _kill_and_verify(self, lease: ProviderProcessLeaseV1) -> None:
@@ -631,6 +802,11 @@ class ProviderProcessLeaseStore:
 __all__ = [
     "DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS",
     "DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS",
+    "DEFAULT_PROVIDER_SECRET_WRITER_JOIN_TIMEOUT_SECONDS",
+    "DEFAULT_PROVIDER_STDIN_WRITER_JOIN_TIMEOUT_SECONDS",
+    "DEFAULT_PROVIDER_DESCENDANT_TRACKER_JOIN_TIMEOUT_SECONDS",
+    "DEFAULT_PROVIDER_DESCENDANT_TRACKER_POLL_INTERVAL_SECONDS",
+    "DEFAULT_PROVIDER_PROCESS_GROUP_TERMINATION_TIMEOUT_SECONDS",
     "ProviderDescendantProcessV1",
     "ProviderLocalRuntimeRefused",
     "ProviderProcessLeaseRemovalV1",
@@ -638,8 +814,10 @@ __all__ = [
     "ProviderProcessLeaseV1",
     "ProviderProcessRecoveryFailureV1",
     "ProviderProcessRecoveryResultV1",
+    "ProviderProcessFenceCodeV1",
     "descendant_is_live",
     "descendant_processes",
     "kill_descendants",
     "processes_naming_invocation",
+    "snapshot_provider_descendants",
 ]
