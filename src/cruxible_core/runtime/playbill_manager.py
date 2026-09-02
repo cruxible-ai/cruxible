@@ -212,9 +212,7 @@ class PlaybillInstanceManager:
                         state_root,
                         message=f"Provider runtime construction failed: {exc}",
                     )
-                known.bind_recovery_fold(
-                    lambda result, operator=known: self._fold_provider_recovery(operator, result)
-                )
+                self._bind_provider_runtime_recovery_fold(known)
                 self._provider_runtime_operators[state_root] = known
             return known
 
@@ -229,11 +227,20 @@ class PlaybillInstanceManager:
                     state_root,
                     message="Provider runtime construction failed before caching",
                 )
-                known.bind_recovery_fold(
-                    lambda result, operator=known: self._fold_provider_recovery(operator, result)
-                )
+                self._bind_provider_runtime_recovery_fold(known)
                 self._provider_runtime_operators[state_root] = known
             return known
+
+    def _bind_provider_runtime_recovery_fold(
+        self,
+        operator: ProviderRuntimeOperator,
+    ) -> None:
+        """Give one operator the manager-owned governed-journal fold."""
+
+        def fold(result: ProviderProcessRecoveryResultV1) -> bool:
+            return self._fold_provider_recovery(operator, result)
+
+        operator.bind_recovery_fold(fold)
 
     def recover_provider_runtime(self) -> ProviderProcessRecoveryResultV1:
         """Recover process fences before the daemon accepts requests."""

@@ -783,9 +783,7 @@ def _run_child(
         "PYTHONNOUSERSITE": "1",
         "PYTHONDONTWRITEBYTECODE": "1",
     }
-    with tempfile.TemporaryDirectory(
-        prefix=".child-", dir=process_leases.root.parent
-    ) as scratch:
+    with tempfile.TemporaryDirectory(prefix=".child-", dir=process_leases.root.parent) as scratch:
         os.chmod(scratch, 0o700)
         environment["HOME"] = scratch
         environment["TMPDIR"] = scratch
@@ -1014,6 +1012,7 @@ def _terminate_process_group(
     """Kill an unreaped group, reap its leader, then sweep exact descendants."""
 
     snapshot_failure: ProviderLocalRuntimeRefused | None = None
+    observed_descendants: tuple[ProviderDescendantProcessV1, ...]
     if descendants is None:
         observed_descendants = ()
     else:
