@@ -763,6 +763,20 @@ def _assert_no_secret(payload: bytes, secrets: Mapping[str, str], *, where: str)
         raise ProviderLocalRuntimeRefused("secret_leak", f"secret material leaked in {where}")
 
 
+def _observe_descendants_best_effort(
+    observe_descendants: Callable[[], None],
+    *,
+    diagnostic_sink: Callable[[ProviderLocalRuntimeRefused], None] | None,
+) -> None:
+    """Record a forced observation failure without changing invocation outcome."""
+
+    try:
+        observe_descendants()
+    except ProviderLocalRuntimeRefused as failure:
+        if diagnostic_sink is not None:
+            diagnostic_sink(failure)
+
+
 def _run_child(
     interpreter: Path,
     *,
@@ -834,7 +848,10 @@ def _run_child(
             # Establish the first observation while the root still owns any
             # already-spawned descendants.  Every later kill point forces
             # another snapshot before signalling the group.
-            descendants.observe()
+            _observe_descendants_best_effort(
+                descendants.observe,
+                diagnostic_sink=process_leases.record_diagnostic,
+            )
             process_leases.publish(
                 invocation_id,
                 pid=process.pid,
@@ -875,6 +892,7 @@ def _run_child(
                 started=started,
                 writer_join_timeout_seconds=process_leases.stdin_writer_join_timeout_seconds,
                 observe_descendants=descendants.observe,
+                observation_diagnostic_sink=process_leases.record_diagnostic,
             )
             return outcome
         except ProviderLocalRuntimeRefused as exc:
@@ -911,14 +929,15 @@ def _collect_child_output(
     started: float,
     writer_join_timeout_seconds: float,
     observe_descendants: Callable[[], None] | None = None,
+    observation_diagnostic_sink: Callable[[ProviderLocalRuntimeRefused], None] | None = None,
 ) -> _ProcessOutcome:
     def observe_best_effort() -> None:
         if observe_descendants is None:
             return
-        try:
-            observe_descendants()
-        except ProviderLocalRuntimeRefused:
-            pass  # retained identities are swept and the lane records the diagnostic
+        _observe_descendants_best_effort(
+            observe_descendants,
+            diagnostic_sink=observation_diagnostic_sink,
+        )
 
     def write_stdin() -> None:
         try:
