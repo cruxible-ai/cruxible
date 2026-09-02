@@ -518,11 +518,22 @@ def test_missing_hidden_or_incomplete_backing_omits_the_entire_block_without_dis
         statement_digest="sha256:" + "b" * 64,
     )
 
-    for request in (
-        _request(accepted_world, backing=(visible, hidden), dirty=True),
-        _request(accepted_world, backing=(visible,), dirty=True, complete=False),
-    ):
-        assert _projection_rows(accepted_world, request) == ()
+    request = _request(accepted_world, backing=(visible, hidden), dirty=True)
+
+    assert _projection_rows(accepted_world, request) == ()
+
+
+def test_incomplete_citation_scan_retains_marker_derived_repairs(
+    accepted_world: PlaybillInstance,
+) -> None:
+    visible = _claim_backing(accepted_world)
+    request = _request(accepted_world, backing=(visible,), dirty=True, complete=False)
+
+    (row,) = _projection_rows(accepted_world, request)
+
+    assert row.reason == "projection_dirty"
+    assert row.subject_identity == "corpus.runbook#status"
+    assert row.related_identities == (visible.identity.qualified,)
 
 
 def test_invalid_projection_marker_surfaces_source_level_blocking_row(
