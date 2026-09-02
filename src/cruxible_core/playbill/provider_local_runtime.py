@@ -667,6 +667,7 @@ class _DescendantTracker:
             ) from exc
         self._observed: dict[tuple[int, str], ProviderDescendantProcessV1] = {}
         self._failure: ProviderLocalRuntimeRefused | None = None
+        self._successful_observation_count = 0
         self._observation_lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._track, daemon=True)
@@ -684,6 +685,7 @@ class _DescendantTracker:
             except ProviderLocalRuntimeRefused as exc:
                 self._failure = exc
                 raise
+            self._successful_observation_count += 1
             for item in observed:
                 self._observed[(item.pid, item.process_start_time)] = item
 
@@ -698,6 +700,12 @@ class _DescendantTracker:
 
         with self._observation_lock:
             return tuple(sorted(self._observed.values(), key=lambda item: item.pid))
+
+    def has_successful_observation(self) -> bool:
+        """Return whether the host process table has ever been read successfully."""
+
+        with self._observation_lock:
+            return self._successful_observation_count > 0
 
     def close(self, *, timeout_seconds: float) -> None:
         self._stop.set()
@@ -775,6 +783,37 @@ def _observe_descendants_best_effort(
     except ProviderLocalRuntimeRefused as failure:
         if diagnostic_sink is not None:
             diagnostic_sink(failure)
+
+
+def _process_table_unavailable_refusal() -> ProviderLocalRuntimeRefused:
+    return ProviderLocalRuntimeRefused(
+        "provider_process_lease_invalid",
+        "Provider process table is unavailable; install ps or fix procfs permissions",
+    )
+
+
+def _require_initial_descendant_observation(
+    descendants: _DescendantTracker,
+    *,
+    timeout_seconds: float,
+    diagnostic_sink: Callable[[ProviderLocalRuntimeRefused], None] | None,
+) -> None:
+    """Prove the descendant fence before releasing Provider input."""
+
+    if descendants.has_successful_observation():
+        return
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        _observe_descendants_best_effort(
+            descendants.observe,
+            diagnostic_sink=diagnostic_sink,
+        )
+        if descendants.has_successful_observation():
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise _process_table_unavailable_refusal()
+        time.sleep(min(descendants.poll_interval_seconds, remaining))
 
 
 def _run_child(
@@ -885,6 +924,11 @@ def _run_child(
 
         refusal: ProviderLocalRuntimeRefused | None = None
         try:
+            _require_initial_descendant_observation(
+                descendants,
+                timeout_seconds=process_leases.acquisition_timeout_seconds,
+                diagnostic_sink=process_leases.record_diagnostic,
+            )
             outcome = _collect_child_output(
                 process,
                 context=context,
@@ -1075,6 +1119,8 @@ def _terminate_process_group(
                 "provider process-group identity cannot be verified",
             ) from exc
         if not group_alive and not any(descendant_is_live(item) for item in observed_descendants):
+            if descendants is not None and not descendants.has_successful_observation():
+                raise _process_table_unavailable_refusal()
             return
     raise ProviderLocalRuntimeRefused(
         "provider_process_group_survived_recovery",
