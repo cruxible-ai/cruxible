@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
-from typing import Literal, cast
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -73,9 +73,6 @@ INTERFACE_PAGE_RECEIPT_DIGEST_DOMAIN = "playbill-interface-discovery-page-v1"
 
 CLAIM_TYPE_CARD_FACETS: tuple[str, ...] = ("interface", "match_bases", "policies", "usage")
 SUBJECT_PROFILE_FACETS: tuple[str, ...] = ("match_bases", "predicates", "vocabulary")
-
-_RELATION_PREDICATES = frozenset({"semantic.distinct_from", "semantic.related_to"})
-
 
 class _StrictCardModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -119,17 +116,23 @@ class InterfaceMatchBasisV1(_StrictCardModel):
 
 
 class SemanticRelationV1(_StrictCardModel):
-    """One accepted typed relation edge, named by its registered descriptor predicate.
+    """One accepted typed relation edge, named by its governed ClaimType predicate.
 
-    Relations use registered ClaimTypes rather than free-form edge labels, so the
-    predicate here is always one of the reserved v1 descriptor predicates and
+    Relations use registered ClaimTypes rather than free-form edge labels, and
     ``inbound`` states which end of the stored Claim this interface sits on.
     """
 
     tag: Literal["playbill-interface-relation-v1"] = "playbill-interface-relation-v1"
-    predicate: Literal["semantic.distinct_from", "semantic.related_to"]
+    predicate: str
     target: SemanticAddress
     inbound: bool = False
+
+    @field_validator("predicate")
+    @classmethod
+    def _predicate(cls, value: str) -> str:
+        if not value or value.strip() != value:
+            raise ValueError("relation predicate must be nonblank and normalized")
+        return value
 
 
 class InterfacePolicySummaryV1(_StrictCardModel):
@@ -523,24 +526,23 @@ def descriptor_relations(
         statement = claim.statement
         if claim.lifecycle.state != "live":
             continue
-        if statement.predicate not in _RELATION_PREDICATES or not isinstance(
-            statement.object, SubjectClaimObject
-        ):
+        if not isinstance(statement.object, SubjectClaimObject):
             continue
-        predicate = cast(
-            Literal["semantic.distinct_from", "semantic.related_to"], statement.predicate
-        )
         add(
             statement.subject,
             SemanticRelationV1(
-                predicate=predicate,
+                predicate=statement.predicate,
                 target=statement.object.address,
                 inbound=False,
             ),
         )
         add(
             statement.object.address,
-            SemanticRelationV1(predicate=predicate, target=statement.subject, inbound=True),
+            SemanticRelationV1(
+                predicate=statement.predicate,
+                target=statement.subject,
+                inbound=True,
+            ),
         )
     return {owner: tuple(edges[key] for key in sorted(edges)) for owner, edges in found.items()}
 

@@ -133,6 +133,7 @@ from cruxible_client.contracts.claims import (
     ClaimRetireRequestV1,
     ClaimUnsupportedFormatError,
     LiteralClaimObject,
+    SubjectClaimObject,
 )
 from cruxible_client.contracts.declared_blocks import ProjectionBlockStampV1
 from cruxible_client.contracts.policies import (
@@ -1189,7 +1190,7 @@ class Playbill:
         *,
         subject: str | SubjectRef,
         predicate: str | ClaimTypeRef,
-        value: CanonicalValue,
+        value: CanonicalValue | SubjectRef,
         role: ClaimRole | str,
         rationale: str,
         supported_by: EvidenceSelection | CaptureRef | None,
@@ -1223,6 +1224,15 @@ class Playbill:
             elif subject_name.endswith(".yaml"):
                 subject_name = subject_name.removesuffix(".yaml")
         predicate_name = _address(predicate, RefKind.CLAIM_TYPE)
+        if isinstance(value, SubjectRef):
+            self._assert_coordinate(value.coordinate)
+            statement_object: LiteralClaimObject | SubjectClaimObject = SubjectClaimObject(
+                address=_subject_address(value.address)
+            )
+        elif isinstance(value, str) and _SUBJECT_RE.fullmatch(value):
+            statement_object = SubjectClaimObject(address=_subject_address(value))
+        else:
+            statement_object = LiteralClaimObject(value=normalize_canonical(value))
         source: Any
         if supported_by is not None:
             if isinstance(supported_by, CaptureRef):
@@ -1269,7 +1279,7 @@ class Playbill:
                 subject=_subject_address(subject_name),
                 predicate=predicate_name,
                 qualifier=qualifier,
-                object=LiteralClaimObject(value=normalize_canonical(value)),
+                object=statement_object,
                 role=claim_role.value,
                 effective_from=(None if effective_period is None else effective_period.starts_at),
                 effective_until=(None if effective_period is None else effective_period.ends_at),
@@ -1313,6 +1323,14 @@ class Playbill:
                 payload_path="statement.predicate",
             ),
         ]
+        if isinstance(value, SubjectRef):
+            expectations.append(
+                _expectation(
+                    value,
+                    expected=RefKind.SUBJECT,
+                    payload_path="statement.object.address",
+                )
+            )
         if revises is not None:
             expectations.append(
                 _expectation(revises, expected=RefKind.CLAIM, payload_path="claim_ref")
@@ -1345,7 +1363,14 @@ class Playbill:
         emitted = {
             "subject": ("statement.subject",),
             "predicate": ("statement.predicate",),
-            "value": ("statement.object", "statement.object.value"),
+            "value": (
+                "statement.object",
+                (
+                    "statement.object.address"
+                    if isinstance(statement_object, SubjectClaimObject)
+                    else "statement.object.value"
+                ),
+            ),
             "role": ("statement.role",),
             "rationale": ("rationale",),
             "supported_by": ("source",),
@@ -1362,7 +1387,11 @@ class Playbill:
         decisions = {
             "subject": subject_name,
             "predicate": predicate_name,
-            "value": normalize_canonical(value),
+            "value": (
+                statement_object.address.model_dump(mode="json")
+                if isinstance(statement_object, SubjectClaimObject)
+                else statement_object.value
+            ),
             "role": claim_role.value,
             "rationale": rationale,
             "source_branch": (

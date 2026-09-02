@@ -18,6 +18,7 @@ from cruxible_client.authoring.inputs import (
     QueryDefinitionInput,
     SelfSourceInput,
     SubjectInput,
+    SubjectObjectInput,
     WorkingSelectionInput,
 )
 from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
@@ -45,6 +46,7 @@ AuthoringExampleName = Literal[
     "claim-existing-capture",
     "claim-flow-a",
     "claim-self-source",
+    "claim-subject-relation",
     "procedure",
     "claim-adjudicate-contradicting-evidence",
     "claim-cite-supporting-evidence",
@@ -154,6 +156,18 @@ def claim_self_source_example() -> ClaimInput:
         role="observation",
         rationale="Replace with why this new statement should be governed.",
         source=SelfSourceInput(kind="self_source", body="status: replace-me\n"),
+    )
+
+
+def claim_subject_relation_example() -> ClaimInput:
+    return ClaimInput(
+        kind="claim",
+        subject="sec.vulnerability/cve-replace-me",
+        predicate="sec.vuln.affects_package",
+        object=SubjectObjectInput(kind="subject", subject="sec.package/replace-me"),
+        role="observation",
+        rationale="Replace with why this vulnerability affects the accepted package.",
+        source=SelfSourceInput(kind="self_source", body="affected package: replace-me\n"),
     )
 
 
@@ -419,6 +433,7 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
     "claim-existing-capture": claim_existing_capture_example,
     "claim-flow-a": claim_flow_a_example,
     "claim-self-source": claim_self_source_example,
+    "claim-subject-relation": claim_subject_relation_example,
     "procedure": procedure_example,
     "query-claims-by-type": query_claims_by_type_example,
     "subject": subject_example,
@@ -436,6 +451,7 @@ AUTHORING_EXAMPLE_NAMES: Final[tuple[AuthoringExampleName, ...]] = (
     "claim-existing-capture",
     "claim-flow-a",
     "claim-self-source",
+    "claim-subject-relation",
     "procedure",
     "claim-adjudicate-contradicting-evidence",
     "claim-cite-supporting-evidence",
@@ -502,6 +518,7 @@ __all__ = [
     "claim_existing_capture_example",
     "claim_flow_a_example",
     "claim_self_source_example",
+    "claim_subject_relation_example",
     "document_example",
     "approval_policy_example",
     "procedure_example",

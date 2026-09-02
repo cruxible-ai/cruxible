@@ -38,6 +38,7 @@ from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicyV1,
     ClaimAttestationConsequenceRuleV1,
 )
+from cruxible_client.contracts.claims import SubjectClaimObject
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
     ProjectionClaimBackingV1,
@@ -826,6 +827,47 @@ def test_cold_claim_prepares_one_payload_with_dependencies_and_program_stamp(
     assert client.compiled["reference_expectations"] == []
     stamp = client.compiled["program_stamp"]
     assert stamp["tag"] == "playbill-authoring-program-stamp-v1"
+
+
+def test_subject_values_build_typed_objects_and_only_refs_pin_a_coordinate(
+    tmp_path: Path,
+) -> None:
+    _workspace(tmp_path)
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        _Client(),
+        instance_id="inst_test",
+        workspace=tmp_path,
+    )
+    common: dict[str, object] = {
+        "subject": "sec.vuln/cve-2026-0001",
+        "predicate": "sec.vuln.affects_package",
+        "role": ClaimRole.OBSERVATION,
+        "rationale": "The vulnerability affects this accepted package.",
+        "supported_by": None,
+        "copied_from": None,
+        "self_source": "affected package",
+        "qualifier": None,
+        "effective_period": None,
+        "revises": None,
+        "dispositions": {},
+        "publish_to": None,
+        "subject_definition": None,
+        "claim_type_definition": None,
+    }
+    subject_ref = SubjectRef("sec.package/demo", pb.coordinate)
+
+    by_ref = pb.claim(value=subject_ref, **common)  # type: ignore[arg-type]
+    by_address = pb.claim(value="sec.package/demo", **common)  # type: ignore[arg-type]
+
+    assert isinstance(by_ref.payload.statement.object, SubjectClaimObject)
+    assert by_ref.payload.statement.object.address.artifact_path == (
+        "subjects/sec.package/demo.json"
+    )
+    assert by_address.payload.statement.object == by_ref.payload.statement.object
+    assert [item.payload_path for item in by_ref.reference_expectations] == [
+        "statement.object.address"
+    ]
+    assert by_address.reference_expectations == ()
 
 
 def test_claim_type_builder_selects_v4_for_attestation_consequences(tmp_path: Path) -> None:

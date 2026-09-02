@@ -550,11 +550,61 @@ def _lower_claim(
         candidate_base_tree, payload.statement.subject, descriptor=descriptor
     )
     statement_object = _exact_object(instance, payload.statement.object)
+    if statement_object.kind != claim_type.object_kind:
+        _refuse(
+            "playbill.claim.object_kind_mismatch",
+            "statement.object",
+            "The Claim object kind differs from its accepted ClaimType.",
+            repair_kind="replace_object",
+            repair_description=(
+                f"Use a {claim_type.object_kind} object for ClaimType "
+                f"{claim_type.predicate!r}."
+            ),
+            replacement={"required_object_kind": claim_type.object_kind},
+        )
     qualifier = payload.statement.qualifier
     object_referent: tuple[ArtifactIdentity, str] | None = None
     if isinstance(statement_object, SubjectClaimObject):
-        object_referent = _referent(
-            candidate_base_tree, statement_object.address, descriptor=descriptor
+        object_path = statement_object.address.artifact_path
+        object_content = candidate_base_tree.get(object_path)
+        object_name = object_path.removeprefix("subjects/").removesuffix(".json")
+        if object_content is None:
+            _refuse(
+                "playbill.authoring.object_subject_not_found",
+                "statement.object.address",
+                f"The object Subject {object_name!r} is not accepted at the intent base.",
+                repair_kind="propose_subject",
+                repair_description=(
+                    f"Propose Subject {object_name!r}, accept it, and preflight again."
+                ),
+                replacement={"subject": object_name},
+            )
+        if not object_path.startswith("subjects/"):
+            _refuse(
+                "playbill.claim.object_subject_kind_forbidden",
+                "statement.object.address",
+                "A subject-valued Claim object must name an accepted Subject artifact.",
+                repair_kind="replace_object_subject",
+                repair_description="Choose an accepted Subject of an admitted kind.",
+            )
+        object_subject = parse_subject(object_content, path=object_path)
+        if object_subject.subject_kind not in claim_type.allowed_object_subject_kinds:
+            _refuse(
+                "playbill.claim.object_subject_kind_forbidden",
+                "statement.object.address",
+                f"Subject kind {object_subject.subject_kind!r} is not admitted by "
+                f"ClaimType {claim_type.predicate!r}.",
+                repair_kind="replace_object_subject",
+                repair_description=(
+                    "Choose an accepted Subject whose kind is listed by the ClaimType."
+                ),
+                replacement={
+                    "allowed_subject_kinds": list(claim_type.allowed_object_subject_kinds)
+                },
+            )
+        object_referent = (
+            object_subject.identity,
+            subject_digest(object_subject).tagged,
         )
     observed_at = _observed_at(intent.canonical_timestamp)
     context = ClaimReferentContext(

@@ -36,6 +36,11 @@ contracts, and recall-only tags are the intended “double-click” points.
 
 ## Write lifecycle
 
+Subject-valued Claims are typed relationships, not string literals. Pass an accepted
+`SubjectRef` (or canonical `<subject-kind>/<subject-id>` address) as
+`Playbill.claim(value=...)`; preflight refuses a missing endpoint with the
+`propose_subject` repair and refuses endpoint kinds outside the accepted ClaimType.
+
 For Documents:
 
 ~~~text

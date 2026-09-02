@@ -271,7 +271,7 @@ between ambiguous histories.
 
 ~~~text
 cruxible playbill authoring create PAYLOAD
-cruxible playbill authoring create --example claim-flow-a|claim-self-source|procedure
+cruxible playbill authoring create --example claim-flow-a|claim-self-source|claim-subject-relation|procedure
 cruxible playbill authoring get INTENT_ID
 cruxible playbill authoring resume INTENT_ID
 cruxible playbill authoring list
@@ -297,6 +297,9 @@ approval or activation conditions without impersonating the actors who own them.
 selects the 1-based `N`th match. The resulting selector records the total number
 observed while its start/end bytes name the selected occurrence; multiple matches
 are therefore truthful input metadata, not an unresolved selection.
+Use `--example claim-subject-relation` for a subject-valued Claim such as
+`sec.vulnerability/<cve> → sec.vuln.affects_package → sec.package/<package>`.
+Both endpoint Subjects must already be accepted and admitted by the ClaimType.
 V2 publication preparation commits a deterministic Claim-backed block against fresh
 whole-source bytes before the client applies it. A successful response includes
 `inserted_block_base64`: standard RFC 4648 base64 for the exact UTF-8 bytes to
