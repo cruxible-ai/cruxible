@@ -214,3 +214,64 @@ def test_daemon_scope_refusal_names_operation_instead_of_a_fake_instance() -> No
             ),
         ):
             require_unscoped_operator("cruxible_playbill_host_create")
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body", "operation", "command"),
+    [
+        (
+            "POST",
+            "/api/v1/runtime/instances",
+            {"instance_id": "inst_ceiling"},
+            "cruxible_playbill_host_create",
+            "playbill host create",
+        ),
+        (
+            "GET",
+            "/api/v1/server/info",
+            None,
+            "cruxible_server_info",
+            "server status",
+        ),
+        (
+            "POST",
+            "/api/v1/server/restart",
+            None,
+            "cruxible_server_restart",
+            "server restart",
+        ),
+    ],
+)
+def test_instance_token_gets_typed_403_for_every_daemon_scope_route(
+    host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    path: str,
+    body: dict[str, str] | None,
+    operation: str,
+    command: str,
+) -> None:
+    credential = get_runtime_credential_store().create_credential(
+        instance_id=host_id,
+        label="instance-admin",
+        created_by="test",
+    )
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    headers = {"Authorization": f"Bearer {credential.token}"}
+
+    with TestClient(create_app(), raise_server_exceptions=False) as client:
+        response = client.request(method, path, json=body, headers=headers)
+
+    assert response.status_code == 403, response.text
+    payload = response.json()
+    assert payload["error_type"] == "DaemonOperationScopeError"
+    assert payload["context"] == {
+        "operation": operation,
+        "credential_scope": host_id,
+    }
+    assert payload["message"] == (
+        f"The bearer token is instance-scoped; `{command}` is a daemon-scope operation. "
+        "Use the operator credential (the bootstrap secret or a daemon-scope token) in "
+        "CRUXIBLE_SERVER_BEARER_TOKEN."
+    )
+    assert payload["message"] != "internal server error"

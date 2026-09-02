@@ -29,6 +29,7 @@ from cruxible_core.errors import (
     ConstraintViolationError,
     CoreError,
     CustomerCodeExecutionUnsupportedError,
+    DaemonOperationScopeError,
     DataValidationError,
     DirectWriteRefusedError,
     EntityNotFoundError,
@@ -89,8 +90,21 @@ __all__ = [
     "response_to_error",
 ]
 
+_DAEMON_OPERATION_LABELS = {
+    "cruxible_playbill_host_create": "playbill host create",
+    "cruxible_server_info": "server status",
+    "cruxible_server_restart": "server restart",
+}
+
 
 def _message_for_error(exc: CoreError) -> str:
+    if isinstance(exc, DaemonOperationScopeError):
+        operation = _DAEMON_OPERATION_LABELS.get(exc.operation, exc.operation)
+        return (
+            f"The bearer token is instance-scoped; `{operation}` is a daemon-scope "
+            "operation. Use the operator credential (the bootstrap secret or a "
+            "daemon-scope token) in CRUXIBLE_SERVER_BEARER_TOKEN."
+        )
     if exc.args:
         return str(exc.args[0])
     return exc.__class__.__name__
@@ -257,7 +271,10 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["trace_id"] = exc.trace_id
     if isinstance(exc, InstanceNotFoundError):
         context["instance_id"] = exc.instance_id
-    if isinstance(exc, InstanceScopeError):
+    if isinstance(exc, DaemonOperationScopeError):
+        context["operation"] = exc.operation
+        context["credential_scope"] = exc.credential_scope
+    elif isinstance(exc, InstanceScopeError):
         context["instance_id"] = exc.instance_id
         context["credential_scope"] = exc.credential_scope
     if isinstance(exc, GroupNotFoundError):
