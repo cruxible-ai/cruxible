@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
@@ -23,6 +24,8 @@ from cruxible_client.contracts.procedures.models import (
 from cruxible_client.contracts.procedures.results import (
     ProcedureAcquisitionPlanV2,
     ProcedureAdmissionMaterialManifestV1,
+    ProcedureInternalFailureCodeV1,
+    ProcedureInternalFailureV1,
     ProcedureNodeRefusalV1,
     ProcedureProviderBindingV2,
     ProcedureRunReceiptV6,
@@ -441,6 +444,7 @@ def test_graph_v4_provider_journals_completed_receipt_before_progress(
         )
     )
     assert payload["receipt"]["duration_microseconds"] == 1234  # type: ignore[index]
+    assert payload["receipt"]["fence_scope"] == "process_group+descendant_sweep"  # type: ignore[index]
     indexed = fixture.run_index.get(prepared.admission.run_id)
     assert indexed is not None
     assert indexed.provider_invocation_started_count == 1
@@ -524,6 +528,67 @@ def test_classifier_failure_projects_as_a_typed_node_refusal(
     )
     assert isinstance(state.terminal, ProcedureNodeRefusalV1)
     assert state.terminal.code == "classifier_not_installed"
+
+
+_PROCESS_FENCE_CODES = (
+    "provider_process_lease_invalid",
+    "provider_process_lease_missing",
+    "provider_process_lease_echo_failed",
+    "provider_process_lease_echo_mismatch",
+    "provider_process_group_survived_recovery",
+)
+
+
+def test_every_process_fence_code_is_in_the_internal_failure_vocabulary() -> None:
+    assert set(_PROCESS_FENCE_CODES).issubset(set(get_args(ProcedureInternalFailureCodeV1)))
+
+
+@pytest.mark.parametrize("code", _PROCESS_FENCE_CODES)
+def test_process_fence_failures_project_their_exact_typed_code(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    code: str,
+) -> None:
+    class _FenceFailure:
+        def bind_provider(self, *, occurrence):  # type: ignore[no-untyped-def]
+            return _Invoker().bind_provider(occurrence=occurrence)
+
+        def invoke_provider(self, **_kwargs):  # type: ignore[no-untyped-def]
+            raise ProviderLocalRuntimeRefused(code, "provider process fence failed")
+
+    accepted = _accepted_one_provider()
+    prepared, fixture = _prepared_v5(accepted, tmp_path)
+    registry = ProviderBucketClassifierRegistry()
+    install_demo_classifier(registry)
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=_FenceFailure(),
+        provider_classifier_registry=registry,
+    ).execute(prepared, accepted)
+    assert result.status == "failed"
+    records = tuple(
+        fixture.journal.all_records(
+            prepared.admission.journal_stream,
+            prepared.admission.journal_partition_id,
+        )
+    )
+    monkeypatch.setattr(procedure_run_service, "_records_for_run", lambda *_args: records)
+
+    class _Instance:
+        def body_store(self):  # type: ignore[no-untyped-def]
+            return fixture.bodies
+
+    state = procedure_run_service._state_from_records(  # noqa: SLF001
+        _Instance(),  # type: ignore[arg-type]
+        run_id=prepared.admission.run_id,
+    )
+    assert isinstance(state.terminal, ProcedureInternalFailureV1)
+    assert state.terminal.code == code
 
 
 @pytest.mark.parametrize("repeat", [False, True])

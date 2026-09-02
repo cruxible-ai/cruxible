@@ -242,6 +242,8 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
                 "playbill-provider-secret-receipt-reference-v1",
                 "playbill-provider-secret-reference-v1",
                 "playbill-provider-secret-resolution-plan-v1",
+                "playbill-pending-admission-material-reservation-v1",
+                "playbill-run-material-reservation-v1",
                 "playbill-verified-provider-binding-v1",
                 "playbill-provider-extras-environment-pin-map-v1",
                 "playbill-provider-implementation-closure-v1",

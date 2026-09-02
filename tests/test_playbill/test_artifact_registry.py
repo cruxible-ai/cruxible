@@ -233,6 +233,7 @@ def test_p2_b2_reserves_every_current_artifact_tag() -> None:
         "playbill-line-slot-binding-v1",
         "playbill-line-v1",
         "playbill-line-v2",
+        "playbill-pending-admission-material-reservation-v1",
         "playbill-prepared-procedure-run-v4",
         "playbill-prepared-procedure-run-v5",
         "playbill-procedure-acquisition-plan-v2",
@@ -285,6 +286,7 @@ def test_p2_b2_reserves_every_current_artifact_tag() -> None:
         "playbill-query-definition-v1",
         "playbill-resolution-claim-endpoint-v1",
         "playbill-resolution-contract-activation-v2",
+        "playbill-run-material-reservation-v1",
         "playbill-settled-outcome-history-v1",
         "playbill-settled-outcome-relation-v1",
         "playbill-settled-outcome-row-v1",
@@ -296,11 +298,13 @@ def test_p2_b2_reserves_every_current_artifact_tag() -> None:
         "playbill-standing-mandate-v1",
         "playbill-verified-provider-binding-v1",
     )
-    assert PLAYBILL_FORMAT_RESERVATIONS.reserved_tags() == (
+    assert PLAYBILL_FORMAT_RESERVATIONS.reserved_tags() == ("playbill-run-material-reservation-v2",)
+    for implemented_tag in (
         "playbill-pending-admission-material-reservation-v1",
         "playbill-run-material-reservation-v1",
-        "playbill-run-material-reservation-v2",
-    )
+    ):
+        with pytest.raises(ValueError, match="already implemented"):
+            PLAYBILL_FORMAT_RESERVATIONS.activate(implemented_tag)
     # Calibration readings are compute-produced, CAS-pinned artifacts. Registering a
     # governed tree path would collapse the ratified policy/readings/mandates split.
     assert "calibration-reading" not in P2_C_ARTIFACT_KINDS.implemented_kinds()

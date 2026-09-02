@@ -446,6 +446,7 @@ class ProviderInvocationReceiptV1(_StrictProviderExecutionModel):
     outcome: ProviderInvocationOutcomeV1
     output: object | None = None
     egress: ProviderEgressObservationV1
+    fence_scope: Literal["process_group+descendant_sweep"]
     secret_references: tuple[ProviderSecretReceiptReferenceV1, ...] = ()
     budget_translation: ProviderBudgetTranslationV1
     duration_microseconds: int = Field(ge=0)

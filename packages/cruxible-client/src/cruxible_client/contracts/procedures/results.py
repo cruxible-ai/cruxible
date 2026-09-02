@@ -153,6 +153,9 @@ ProcedureInternalFailureCodeV1: TypeAlias = Literal[
     "provider_runtime_not_in_materialization",
     "provider_process_lease_invalid",
     "provider_process_lease_missing",
+    "provider_process_lease_echo_failed",
+    "provider_process_lease_echo_mismatch",
+    "provider_process_group_survived_recovery",
 ]
 
 

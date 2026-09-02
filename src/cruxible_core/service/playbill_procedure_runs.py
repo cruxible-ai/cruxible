@@ -1585,6 +1585,7 @@ def service_recover_provider_invocations(
                         observer_backend="child-self-report",
                         observer_grade="attribution",
                     ),
+                    fence_scope="process_group+descendant_sweep",
                     secret_references=tuple(
                         sorted(
                             (

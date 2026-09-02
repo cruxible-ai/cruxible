@@ -3497,6 +3497,7 @@ class ProcedureExecutor:
             outcome=outcome,
             output=output,
             egress=egress,
+            fence_scope="process_group+descendant_sweep",
             secret_references=tuple(
                 sorted(
                     (
