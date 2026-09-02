@@ -1512,6 +1512,10 @@ def service_recover_provider_invocations(
         failed_pending_ids = tuple(sorted(set(failures) & unresolved_ids, key=str.encode))
         for invocation_id in failed_pending_ids:
             observed_failures.append((admission.run_id, invocation_id, failures[invocation_id]))
+        if failed_pending_ids:
+            # One possibly-live process keeps the whole attempt recovery-required;
+            # do not partially complete or terminalize its sibling invocations.
+            continue
         pending_ids = tuple(sorted(wanted & unresolved_ids, key=str.encode))
         if not pending_ids:
             continue

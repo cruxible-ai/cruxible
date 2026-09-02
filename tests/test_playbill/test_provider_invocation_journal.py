@@ -716,6 +716,76 @@ def test_startup_recovery_closes_the_exact_start_and_terminalizes_the_attempt(
     assert executor.execute(prepared, accepted).status == "failed"
 
 
+def test_unclean_start_marks_recovery_required_without_completion_or_terminalization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    accepted = _accepted_one_provider()
+    prepared, fixture = _prepared_v5(accepted, tmp_path)
+    registry = ProviderBucketClassifierRegistry()
+    install_demo_classifier(registry)
+    executor = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=_CrashingInvoker(),
+        provider_classifier_registry=registry,
+    )
+    with pytest.raises(PlaybillExecutionError, match="provider_completion_not_durable"):
+        executor.execute(prepared, accepted)
+    records = fixture.journal.all_records(
+        prepared.admission.journal_stream,
+        prepared.admission.journal_partition_id,
+    )
+    started_record = next(
+        item for item in records if item.record.event_kind == "provider_invocation_started"
+    )
+    started = parse_journal_payload(
+        fixture.bodies.read(
+            started_record.record.payload_digest,
+            access=BodyAccessContext(principal_id="test", can_read_body=True),
+        )
+    )
+    invocation_id = started["invocation_id"]  # type: ignore[index]
+    before = tuple(item.record_digest for item in records)
+
+    class _Instance:
+        def body_store(self):  # type: ignore[no-untyped-def]
+            return fixture.bodies
+
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_journal_for_write",
+        lambda _instance: (fixture.journal, tmp_path),
+    )
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_stream",
+        lambda _instance: prepared.admission.journal_stream,
+    )
+
+    with pytest.raises(procedure_run_service.ProcedureRunRecoveryRequired, match=invocation_id):
+        procedure_run_service.service_recover_provider_invocations(
+            _Instance(),  # type: ignore[arg-type]
+            invocation_ids=(),
+            recovery_failure_codes={
+                invocation_id: "provider_process_group_survived_recovery"
+            },
+            recorded_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        )
+    after = tuple(
+        item.record_digest
+        for item in fixture.journal.all_records(
+            prepared.admission.journal_stream,
+            prepared.admission.journal_partition_id,
+        )
+    )
+    assert after == before
+
+
 def test_recovery_aggregates_prior_provider_receipts_and_budget_observations(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
