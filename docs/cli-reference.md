@@ -61,8 +61,8 @@ for the exact directory contract.
 non-Provider surfaces from starting, so these lines are the operator's recovery
 signal rather than a daemon-startup failure. When transient process-table reads
 fail without degrading the lane, `Provider lane detail:` reports the bounded
-observation-diagnostic count and last typed message; JSON clients read the same
-text in `provider_lane.detail`.
+observation-diagnostic count, retained ring occupancy, and last typed message;
+JSON clients read the same text in `provider_lane.detail`.
 
 ### Provider runtime operational configuration
 

@@ -317,8 +317,10 @@ class ProviderRuntimeOperator:
         if self._last_observation_diagnostic is None:
             return None
         _code, message = self._last_observation_diagnostic
+        retained = 0 if self.process_leases is None else len(self.process_leases.diagnostics)
         return (
-            f"observation_diagnostics: count={self._observation_diagnostic_count}; last={message}"
+            "observation_diagnostics: "
+            f"count={self._observation_diagnostic_count}; retained={retained}; last={message}"
         )
 
     def _reinitialize_failed_construction_stages_locked(self) -> None:

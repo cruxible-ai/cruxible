@@ -30,6 +30,7 @@ def test_available_lane_detail_surfaces_the_bounded_diagnostic_summary(
     assert (state, code) == ("available", None)
     assert detail is not None
     assert "observation_diagnostics: count=2" in detail
+    assert "retained=2" in detail
     assert "provider_process_lease_invalid" in detail
     assert "last table hiccup" in detail
     projected = contracts.ProviderLaneStatusV1(state=state, code=code, detail=detail)
@@ -41,7 +42,8 @@ def test_cli_status_renders_available_lane_diagnostics(
     monkeypatch,
 ) -> None:
     detail = (
-        "observation_diagnostics: count=2; last=provider_process_lease_invalid: last table hiccup"
+        "observation_diagnostics: count=2; retained=2; "
+        "last=provider_process_lease_invalid: last table hiccup"
     )
 
     class StubClient:
@@ -81,7 +83,7 @@ def test_observation_diagnostics_are_documented_without_a_new_status_field() -> 
         repository_root / "packages/cruxible-client/src/cruxible_client/contracts/__init__.py"
     ).read_text(encoding="utf-8")
 
-    assert "observation-diagnostic count and last typed message" in docs
+    assert "observation-diagnostic count, retained ring occupancy, and last typed" in docs
     assert "bounded observation diagnostics in Provider-lane detail" in docs
-    assert "bounded count and last typed message" in changelog
+    assert "bounded count, retained ring occupancy, and" in changelog
     assert "observation_diagnostics" not in contract
