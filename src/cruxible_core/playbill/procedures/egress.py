@@ -450,7 +450,7 @@ class TerminalEgressRequestV1(_StrictEgressModel):
     mandate_basis_digests: tuple[str, ...] = ()
     actor_context: GovernedActorContext
     items: tuple[TerminalEgressItemV1, ...]
-    prepared_at: datetime
+    prepared_at: datetime = Field(description="Reads EVALUATION INSTANT.")
 
     _digests = field_validator("procedure_artifact_digest", "admission_binding_digest")(_tagged)
 
@@ -727,7 +727,7 @@ def _validated_run_admission(
     request: TerminalEgressRequestV1,
     admission: ProcedureRunAdmissionV1,
 ) -> ProcedureRunAdmissionV1:
-    """Revalidate and bind the exact admission before using its authority fields."""
+    """Order two EVALUATION INSTANT values while binding admitted authority."""
 
     from cruxible_core.playbill.procedures.execution import (
         ProcedureRunAdmissionV1,

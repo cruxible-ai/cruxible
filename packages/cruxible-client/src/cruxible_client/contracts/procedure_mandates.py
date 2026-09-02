@@ -292,6 +292,7 @@ def evaluate_procedure_mandate(
     mandate: ProcedureMandateV1,
     invocation: ProcedureMandateInvocationV1,
 ) -> ProcedureMandateEvaluationV1:
+    """Test EVALUATION INSTANT membership in the mandate VALIDITY WINDOW."""
     refusals: set[str] = set()
     digest = procedure_mandate_digest(mandate).tagged
     if invocation.accepted_mandate_digest != digest or mandate.lifecycle.state != "live":

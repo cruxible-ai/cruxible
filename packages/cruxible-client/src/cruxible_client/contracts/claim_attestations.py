@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import (
@@ -64,8 +64,8 @@ class ClaimAttestationStatement(_StrictClaimAttestationModel):
     provider_or_principal: ArtifactIdentity
     signing_key_id: str
     capture_digests: tuple[str, ...]
-    observed_at: datetime
-    valid_until: datetime | None = None
+    observed_at: datetime = Field(description="Reads ASSERTION TIME.")
+    valid_until: datetime | None = Field(default=None, description="Reads VALIDITY WINDOW.")
 
     @field_validator(
         "subject_content_digest",
@@ -103,6 +103,7 @@ class ClaimAttestationStatement(_StrictClaimAttestationModel):
 
     @model_validator(mode="after")
     def _shape(self) -> "ClaimAttestationStatement":
+        """ASSERTION TIME must belong to the declared VALIDITY WINDOW."""
         if self.provider_or_principal.kind not in {"Principal", "Provider"}:
             raise ValueError("ClaimAttestation signer must be a Principal or Provider")
         if self.valid_until is not None and self.valid_until <= self.observed_at:
@@ -273,8 +274,8 @@ class ClaimAttestationStatementV2(_StrictClaimAttestationModel):
     attestation_basis: ClaimAttestationBasis
     stance: ClaimStance
     cited_capture_digests: tuple[str, ...]
-    attested_at: datetime
-    valid_until: datetime | None = None
+    attested_at: datetime = Field(description="Reads ASSERTION TIME.")
+    valid_until: datetime | None = Field(default=None, description="Reads VALIDITY WINDOW.")
 
     @field_validator(
         "claim_artifact_digest",
@@ -307,6 +308,7 @@ class ClaimAttestationStatementV2(_StrictClaimAttestationModel):
 
     @model_validator(mode="after")
     def _v2_shape(self) -> "ClaimAttestationStatementV2":
+        """ASSERTION TIME must belong to the declared VALIDITY WINDOW."""
         if self.claim_identity.kind != "Claim":
             raise ValueError("V2 ClaimAttestation identity kind must be Claim")
         from cruxible_client.contracts.claims import claim_path
@@ -357,8 +359,8 @@ class PreparedClaimAttestationRequestV1(_StrictClaimAttestationModel):
     stance: ClaimStance
     capture_references: tuple[ClaimAttestationCaptureReferenceV1, ...] = ()
     referent_coordinate: AcceptedCoordinate | None = None
-    attested_at: datetime
-    valid_until: datetime | None = None
+    attested_at: datetime = Field(description="Reads ASSERTION TIME.")
+    valid_until: datetime | None = Field(default=None, description="Reads VALIDITY WINDOW.")
     note: str | None = None
 
     @field_validator("capture_references")
@@ -389,6 +391,7 @@ class PreparedClaimAttestationRequestV1(_StrictClaimAttestationModel):
 
     @model_validator(mode="after")
     def _prepared_shape(self) -> "PreparedClaimAttestationRequestV1":
+        """ASSERTION TIME must belong to the declared VALIDITY WINDOW."""
         if self.valid_until is not None and self.valid_until <= self.attested_at:
             raise ValueError("prepared attestation validity interval must be increasing")
         if self.attestation_basis == "new_capture" and not self.capture_references:

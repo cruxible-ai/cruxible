@@ -307,7 +307,7 @@ class ProcedureReadinessRequestV1(_StrictProcedureSurfaceModel):
         "playbill-procedure-readiness-request-v1"
     )
     at: AcceptedCoordinate | None = None
-    evaluation_time: datetime
+    evaluation_time: datetime = Field(description="Reads EVALUATION INSTANT.")
 
     @field_validator("evaluation_time")
     @classmethod
@@ -403,7 +403,7 @@ class LineRunRequestV1(_StrictProcedureSurfaceModel):
     tag: Literal["playbill-line-run-request-v1"] = "playbill-line-run-request-v1"
     line_identity_digest: str
     occurrence_id: str | None = None
-    evaluation_time: datetime
+    evaluation_time: datetime = Field(description="Reads EVALUATION INSTANT.")
 
     @field_validator("line_identity_digest")
     @classmethod
