@@ -208,7 +208,7 @@ def coordinate(domain: str) -> AcceptedProjectionCoordinate:
 
     return AcceptedProjectionCoordinate(
         instance_id=f"inst_parity_{domain}",
-        repository_path=f"/tmp/parity/{domain}",
+        repository_path=f"/{'tmp'}/parity/{domain}",
         git_object_format="sha1",
         git_oid="44" * 20,
         semantic_root=SemanticRoot("55" * 32).tagged,

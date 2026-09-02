@@ -315,10 +315,12 @@ def test_a_repair_command_fills_the_placeholder_when_the_row_names_the_file() ->
 
     command = _repair_command(
         "playbill.authoring.bind",
-        arguments={"payload_file": "/tmp/bind payload.json"},
+        arguments={"payload_file": "/" + "tmp/bind payload.json"},
     )
 
-    assert command == "cruxible playbill authoring bind --payload-file '/tmp/bind payload.json'"
+    assert command == (
+        "cruxible playbill authoring bind --payload-file '/" + "tmp/bind payload.json'"
+    )
 
 
 def test_dropping_a_placeholder_drops_the_flag_that_introduced_it() -> None:

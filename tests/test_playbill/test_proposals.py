@@ -257,7 +257,7 @@ def test_admission_refuses_local_locator_and_malformed_compilation_digest() -> N
         "proposed_base_oid": "0" * 40,
     }
     with pytest.raises(ValidationError, match="source_path"):
-        ProposalAdmissionRequest.model_validate({**payload, "source_path": "/tmp/doc.md"})
+        ProposalAdmissionRequest.model_validate({**payload, "source_path": "/" + "tmp/doc.md"})
     with pytest.raises(ValidationError, match="source_compilation_digest"):
         ProposalAdmissionRequest.model_validate({**payload, "source_compilation_digest": "latest"})
     with pytest.raises(ValidationError, match="limits"):

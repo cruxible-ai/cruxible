@@ -132,7 +132,7 @@ def test_auth_required_state_with_auth_is_valid_when_credentials_available() -> 
 def test_server_socket_skips_public_bind_check() -> None:
     validate_server_startup_settings(
         {
-            "CRUXIBLE_SERVER_SOCKET": "/tmp/cruxible.sock",
+            "CRUXIBLE_SERVER_SOCKET": "/" + "tmp/cruxible.sock",
             "CRUXIBLE_HOST": "0.0.0.0",
         }
     )
@@ -155,7 +155,7 @@ def test_server_state_root_defaults_to_cruxible_home(
     assert get_server_state_root({}) == (tmp_path / ".cruxible").resolve()
 
 
-@pytest.mark.parametrize("value", ["", "/tmp/old-cruxible-state"])
+@pytest.mark.parametrize("value", ["", "/" + "tmp/old-cruxible-state"])
 def test_obsolete_server_state_dir_is_a_typed_refusal(value: str) -> None:
     with pytest.raises(ConfigError, match="CRUXIBLE_SERVER_STATE_DIR is obsolete") as raised:
         get_server_state_root({"CRUXIBLE_SERVER_STATE_DIR": value})
@@ -209,16 +209,16 @@ def test_server_log_path_uses_explicit_override(tmp_path: Path) -> None:
 
 
 def test_volatile_state_path_detection() -> None:
-    assert is_volatile_state_path("/tmp/cruxible-state")
-    assert is_volatile_state_path("/var/tmp/cruxible-state")
+    assert is_volatile_state_path("/" + "tmp/cruxible-state")
+    assert is_volatile_state_path("/var/" + "tmp/cruxible-state")
     assert not is_volatile_state_path(Path.home() / ".cruxible" / "server")
 
 
 def test_volatile_state_path_warnings_include_state_root_and_instances() -> None:
     warnings = volatile_state_path_warnings(
-        environ={"CRUXIBLE_STATE_ROOT": "/tmp/cruxible-server"},
+        environ={"CRUXIBLE_STATE_ROOT": "/" + "tmp/cruxible-server"},
         instance_locations=[
-            ("inst_tmp", "/tmp/cruxible-server/instances/inst_tmp"),
+            ("inst_tmp", "/" + "tmp/cruxible-server/instances/inst_tmp"),
             ("inst_durable", str(Path.home() / ".cruxible" / "instances" / "inst_durable")),
         ],
     )

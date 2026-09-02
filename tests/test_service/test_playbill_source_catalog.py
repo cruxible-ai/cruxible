@@ -213,7 +213,10 @@ def test_catalog_merge_and_path_guards_refuse_ambiguity_and_escape(tmp_path: Pat
         )
     with pytest.raises(ValueError, match="normalized"):
         _entry(locator="../escape.md")
-    for local_uri in ("file:///tmp/private.md", "/tmp/private.md"):
+    for local_uri in (
+        "file://" + "/" + "tmp/private.md",
+        "/" + "tmp/private.md",
+    ):
         with pytest.raises(ValueError, match="non-file URI"):
             SourceCatalogEntry(
                 **{

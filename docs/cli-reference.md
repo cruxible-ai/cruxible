@@ -73,17 +73,28 @@ has tag `cruxible-provider-runtime-operational-config-v1` and these entries:
 | `lease_acquisition_timeout_seconds` | `5.0` | Child lease/echo acquisition deadline. |
 | `lease_recovery_timeout_seconds` | `5.0` | Per-record process-fence recovery deadline. |
 | `recovery_aggregate_timeout_seconds` | `30.0` | Aggregate deadline for one recovery scan; later records remain for the next scan. |
+| `rearm_backoff_seconds` | `5.0` | Minimum delay before another lazy recovery attempt; calls inside the window refuse immediately with the retained reason. |
 | `secret_writer_join_timeout_seconds` | `5.0` | Secret-pipe writer join deadline. |
 | `stdin_writer_join_timeout_seconds` | `5.0` | Provider-input writer join deadline. |
 | `descendant_tracker_join_timeout_seconds` | `5.0` | Descendant-observer join deadline. |
-| `descendant_tracker_poll_interval_seconds` | `0.1` | Cross-session descendant observation interval while a child is alive. |
+| `descendant_tracker_poll_interval_seconds` | `0.1` | Cross-session descendant observation interval while a child is alive; each poll reads the host process table, so shorter intervals trade CPU and process-spawn cost for a smaller best-effort observation window. |
 | `process_group_termination_timeout_seconds` | `5.0` | Child group termination and verification deadline. |
 | `deployments` | `[]` | Digest-keyed local Provider deployment records. |
 
 Unknown entries, non-positive timing values, malformed JSON, unsafe deployment
 paths, and an unreadable file degrade only the Provider lane with a typed cause.
 An exhausted aggregate recovery scan reports untouched records as
-`not_attempted`; a later lazy re-arm resumes from the retained records.
+`not_attempted`; a later lazy re-arm resumes from the retained records after the
+configured backoff. A lazy re-arm also retries exactly the construction stages
+that failed. Repairing the named filesystem cause therefore restores the cached
+operator without a restart when re-initialization succeeds; restart the daemon
+only when the repaired stage continues to fail re-initialization.
+
+As a last-resort process-fence repair, stop the daemon, independently prove the
+recorded process group and descendants are no longer live, and remove only the
+exact stale JSON record under `<state-root>/daemon/provider-process-leases/`.
+Removing a record while its process may still be live abandons the recovery
+identity and is unsafe; prefer repairing the typed cause and allowing re-arm.
 
 ## playbill host
 

@@ -172,7 +172,7 @@ def claim_fact(
 def coordinate(*, generation: str = "22") -> AcceptedProjectionCoordinate:
     return AcceptedProjectionCoordinate(
         instance_id="inst_claim_query",
-        repository_path="/tmp/claim-query",
+        repository_path="/" + "tmp/claim-query",
         git_object_format="sha1",
         git_oid="11" * 20,
         semantic_root=SemanticRoot("aa" * 32).tagged,

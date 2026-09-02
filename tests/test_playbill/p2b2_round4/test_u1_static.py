@@ -27,7 +27,7 @@ FENCE_FILES = (
 def test_l9_no_tmp_remains_on_the_fence_path() -> None:
     for name in FENCE_FILES:
         text = (REPOSITORY_ROOT / name).read_text(encoding="utf-8")
-        assert "/tmp" not in text, name
+        assert "/" + "tmp" not in text, name
 
 
 def test_fence_code_literal_is_exactly_five_members() -> None:

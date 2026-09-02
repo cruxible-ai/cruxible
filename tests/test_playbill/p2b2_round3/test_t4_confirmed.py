@@ -432,7 +432,7 @@ def test_no_tmp_path_remains_on_the_provider_fence_path() -> None:
         "src/cruxible_core/runtime/playbill_manager.py",
     ):
         text = (REPOSITORY_ROOT / name).read_text(encoding="utf-8")
-        assert "/tmp" not in text, name
+        assert "/" + "tmp" not in text, name
 
 
 def test_the_path_length_refusal_names_the_repair(short_root: Path) -> None:

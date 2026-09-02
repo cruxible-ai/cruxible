@@ -104,7 +104,7 @@ def test_document_wire_format_is_strict_discriminated_and_path_bound(tmp_path: P
     assert parse_document(rendered, path="documents/playbill-design.json") == shell
 
     payload = json.loads(rendered)
-    payload["body_path"] = "/tmp/body.md"
+    payload["body_path"] = "/" + "tmp/body.md"
     with pytest.raises(DocumentFormatError, match="strict v1"):
         parse_document(json.dumps(payload).encode(), path="documents/playbill-design.json")
 

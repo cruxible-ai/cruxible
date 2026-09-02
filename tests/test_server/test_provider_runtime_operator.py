@@ -578,7 +578,8 @@ def test_lazy_rearm_is_serialized_and_never_runs_during_an_invocation(
     monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
 ) -> None:
-    state_root = Path(tempfile.mkdtemp(dir="/tmp", prefix="p2b2-"))
+    repository_root = Path(__file__).resolve().parents[2]
+    state_root = Path(tempfile.mkdtemp(dir=repository_root, prefix=".b2-server-"))
     request.addfinalizer(lambda: shutil.rmtree(state_root, ignore_errors=True))
     operator = ProviderRuntimeOperator(state_root)
     assert operator.process_leases is not None

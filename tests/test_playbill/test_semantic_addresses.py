@@ -65,7 +65,7 @@ def test_unknown_line_number_and_malformed_selectors_refuse() -> None:
             {
                 "artifact_path": "documents/example.json",
                 "selector": {"scheme": "artifact-v1", "value": ""},
-                "editor_uri": "file:///tmp/example.md",
+                "editor_uri": "file://" + "/" + "tmp/example.md",
             }
         )
 

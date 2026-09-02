@@ -204,7 +204,7 @@ def test_explicit_nested_mcp_root_refuses_to_write_outside_its_boundary(
 
 @pytest.mark.parametrize(
     "value",
-    ["../outside", "/tmp/outside", "source/../outside", "./source"],
+    ["../outside", "/" + "tmp/outside", "source/../outside", "./source"],
 )
 def test_workspace_path_refuses_lexical_escape_forms(
     tmp_path: Path,

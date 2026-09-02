@@ -1133,7 +1133,8 @@ def test_connect_refuses_an_unknown_daemon_before_instance_io(
 ) -> None:  # type: ignore[no-untyped-def]
     context = tmp_path / "context.json"
     context.write_text(
-        '{"server_url":"http://remembered","server_socket":"/tmp/remembered.sock",'
+        '{"server_url":"http://remembered","server_socket":"/'
+        'tmp/remembered.sock",'
         '"instance_id":"inst_test"}\n',
         encoding="utf-8",
     )

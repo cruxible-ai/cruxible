@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 import cruxible_core.playbill.provider_process_leases as lease_module
+import cruxible_core.runtime.playbill_manager as manager_module
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import PlaybillBootstrapError
 from cruxible_core.playbill.provider_process_leases import ProviderLocalRuntimeRefused
@@ -119,12 +120,29 @@ def test_unclaimed_id_is_terminally_released_when_every_fold_succeeds(
     record = _plant(operator, invocation_id)
     fold = _Fold()
     manager = _wire(monkeypatch, operator, ("inst_one",), fold)
+    warnings: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        manager_module._log,
+        "warning",
+        lambda event, **fields: warnings.append((event, fields)),
+    )
     result = operator.recover_all()
 
     dispositions = manager._fold_provider_recovery(operator, result)
 
     assert dispositions == {invocation_id: "unclaimed"}
     assert not record.exists()
+    assert warnings == [
+        (
+            "provider_recovery_unclaimed",
+            {"invocation_id": invocation_id, "terminal": True},
+        )
+    ]
+
+    restart = ProviderRuntimeOperator(short_root)
+    assert restart.process_leases is not None
+    assert restart.process_leases.recover_all().completion_invocation_ids == ()
+    assert restart.lane_status() == ("available", None, None)
 
 
 def test_uninitialized_instance_is_a_non_owning_skip(
@@ -160,6 +178,35 @@ def test_uninitialized_instance_is_a_non_owning_skip(
 
     assert dispositions == {invocation_id: "handled"}
     assert not record.exists()
+
+
+def test_only_uninitialized_instances_make_the_record_terminally_unclaimed(
+    short_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    operator = ProviderRuntimeOperator(short_root)
+    invocation_id = "sha256:" + "9" * 64
+    record = _plant(operator, invocation_id)
+    manager = PlaybillInstanceManager()
+    bare = SimpleNamespace(backend="governed_daemon", instance_id="inst_bare")
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_manager.get_registry",
+        lambda: SimpleNamespace(list_instances=lambda: (bare,)),
+    )
+    monkeypatch.setattr(lease_module, "_current_boot_id", lambda: "test-boot")
+    monkeypatch.setattr(
+        manager,
+        "get",
+        lambda _instance_id: (_ for _ in ()).throw(
+            PlaybillBootstrapError("Playbill is not initialized")
+        ),
+    )
+    operator.bind_recovery_fold(lambda result: manager._fold_provider_recovery(operator, result))
+    operator.mark_unavailable("provider_process_group_survived_recovery", "startup", retryable=True)
+
+    operator.recover_all_with_bound_fold()
+
+    assert not record.exists()
+    assert operator.lane_status() == ("available", None, None)
 
 
 def test_startup_recovery_holds_the_operator_lock_through_the_fold(

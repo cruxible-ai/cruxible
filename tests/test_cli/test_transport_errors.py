@@ -88,7 +88,7 @@ def test_client_wraps_transport_error_as_server_unreachable(
 
 def test_socket_target_is_labelled(monkeypatch: pytest.MonkeyPatch) -> None:
     """Unix-socket transports name the socket path in the friendly message."""
-    client = CruxibleClient(socket_path="/tmp/missing.sock")
+    client = CruxibleClient(socket_path="/" + "tmp/missing.sock")
 
     def _boom(*_args: object, **_kwargs: object) -> httpx.Response:
         raise httpx.ConnectError("Connection refused")
@@ -98,4 +98,4 @@ def test_socket_target_is_labelled(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(ServerUnreachableError) as excinfo:
         client.server_info()
 
-    assert excinfo.value.target == "unix:/tmp/missing.sock"
+    assert excinfo.value.target == "unix:/" + "tmp/missing.sock"

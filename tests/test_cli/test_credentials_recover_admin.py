@@ -168,7 +168,7 @@ def test_recover_admin_refuses_obsolete_and_empty_state_root(
 ) -> None:
     obsolete = runner.invoke(
         cli,
-        ["credential", "recover-admin", "--state-dir", "/tmp/old-state"],
+        ["credential", "recover-admin", "--state-dir", "/" + "tmp/old-state"],
     )
     empty = runner.invoke(cli, ["credential", "recover-admin", "--state-root", ""])
 

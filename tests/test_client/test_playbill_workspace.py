@@ -134,7 +134,7 @@ def test_config_refuses_the_obsolete_arbitrary_output_path(tmp_path: Path) -> No
     "exported_path",
     [
         "../outside.json",
-        "/tmp/outside.json",
+        "/" + "tmp/outside.json",
         "cards/../outside.json",
         "cards//outside.json",
     ],

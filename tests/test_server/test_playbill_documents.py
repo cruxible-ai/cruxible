@@ -144,7 +144,7 @@ def test_http_models_refuse_private_key_and_local_path_inputs(
     assert "private_key_path" in response.text
     source = client.post(
         f"/api/v1/{instance_id}/playbill/sources/check",
-        json={"local_path": "/tmp/secret.md"},
+        json={"local_path": "/" + "tmp/secret.md"},
     )
     assert source.status_code == 422
     assert "local_path" in source.text

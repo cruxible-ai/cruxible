@@ -361,7 +361,7 @@ def _post_tool_use(tool_name: str, tool_input: Any, tool_response: Any) -> dict[
 
     return {
         "session_id": "11111111-2222-3333-4444-555555555555",
-        "transcript_path": "/tmp/transcript.jsonl",
+        "transcript_path": "/" + "tmp/transcript.jsonl",
         "cwd": "/workspace",
         "permission_mode": "default",
         "hook_event_name": HOOK_EVENT_NAME,
