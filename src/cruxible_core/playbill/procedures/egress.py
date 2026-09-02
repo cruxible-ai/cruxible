@@ -44,6 +44,7 @@ from cruxible_client.contracts.captures import (
     CaptureObjectStoreProtocol,
     CaptureRunCoordinateV1,
     build_cas_capture,
+    build_procedure_capture_v2,
     capture_contract_digest,
 )
 from cruxible_client.contracts.errors import PlaybillFormatError
@@ -988,16 +989,38 @@ class CaptureTerminalEgressSink:
             executable_digest=request.procedure_artifact_digest,
         )
         children: list[TerminalEgressChildReceiptV1] = []
+        request_v2 = request if isinstance(request, TerminalEgressRequestV2) else None
+        producer_receipt_digest = (
+            procedure_producer_receipt_digest(request_v2.producer_receipt)
+            if request_v2 is not None and request_v2.producer_receipt is not None
+            else None
+        )
+        capture_observed_at = (
+            request_v2.evaluation_time if request_v2 is not None else request.prepared_at
+        )
         for item in request.items:
-            built = build_cas_capture(
-                store=self.store,
-                contract=contract,
-                source_body=canonical_bytes(item.value),
-                run_coordinate=run_coordinate,
-                run_receipt_digest=request.admission_binding_digest,
-                producer=self.producer,
-                producer_binding_digest=self.producer_binding_digest,
-                observed_at=request.prepared_at,
+            built = (
+                build_procedure_capture_v2(
+                    store=self.store,
+                    contract=contract,
+                    source_body=canonical_bytes(item.value),
+                    run_coordinate=run_coordinate,
+                    producer_receipt_digest=producer_receipt_digest,
+                    producer=request.procedure_identity,
+                    producer_binding_digest=request.procedure_artifact_digest,
+                    observed_at=capture_observed_at,
+                )
+                if producer_receipt_digest is not None
+                else build_cas_capture(
+                    store=self.store,
+                    contract=contract,
+                    source_body=canonical_bytes(item.value),
+                    run_coordinate=run_coordinate,
+                    run_receipt_digest=request.admission_binding_digest,
+                    producer=self.producer,
+                    producer_binding_digest=self.producer_binding_digest,
+                    observed_at=request.prepared_at,
+                )
             )
             children.append(
                 TerminalEgressChildReceiptV1(
@@ -1005,6 +1028,16 @@ class CaptureTerminalEgressSink:
                     item_key=item.item_key,
                     egress_digest=built.capture_digest,
                 )
+            )
+        if producer_receipt_digest is not None:
+            return TerminalEgressReceiptV2(
+                kind="emit_capture",
+                run_id=request.run_id,
+                node_id=request.node_id,
+                disposition="emitted",
+                bound_artifact_digest=pin.artifact_digest,
+                children=tuple(children),
+                producer_receipt_digest=producer_receipt_digest,
             )
         return TerminalEgressReceiptV1(
             kind="emit_capture",
