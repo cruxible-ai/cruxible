@@ -165,6 +165,53 @@ def test_floor_output_writer_upgrades_and_preserves_safe_coverage_rules(tmp_path
     }
 
 
+def test_replace_upgrades_v1_config_without_dropping_coverage_fields(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    config_path = workspace / ".playbill" / "coverage.json"
+    config_path.parent.mkdir(parents=True)
+    preserved = {
+        "root": "docs",
+        "scan_budget": {"max_scanned_bytes": 4096},
+        "max_observed_paths": 128,
+        "rules": [
+            {
+                "tag": "coverage-path-prefix-rule-v1",
+                "path_prefix": "docs/",
+                "source": {
+                    "tag": "logical-source-identity-v1",
+                    "source_id": "docs",
+                    "revision": 1,
+                },
+            }
+        ],
+    }
+    config_path.write_text(
+        json.dumps(
+            {
+                "tag": "playbill-coverage-workspace-config-v1",
+                "instance_id": "inst_old",
+                "server_url": "https://old.example.test",
+                **preserved,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    write_playbill_workspace_config(
+        workspace,
+        instance_id="inst_new",
+        server_socket=str(tmp_path / "daemon.sock"),
+        replace=True,
+    )
+
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert payload["tag"] == "playbill-coverage-workspace-config-v2"
+    assert payload["instance_id"] == "inst_new"
+    assert payload["server_socket"] == str(tmp_path / "daemon.sock")
+    assert "server_url" not in payload
+    assert {key: payload[key] for key in preserved} == preserved
+
+
 def test_materialization_exactly_replaces_and_reports_current(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     destination = workspace / ".playbill/floor"

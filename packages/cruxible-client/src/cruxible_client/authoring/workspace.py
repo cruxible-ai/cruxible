@@ -174,7 +174,8 @@ def _planned_workspace_config(
         return path, None, False
     desired: dict[str, Any] = (
         dict(existing)
-        if existing is not None and existing.get("tag") == _WORKSPACE_CONFIG_TAG
+        if existing is not None
+        and existing.get("tag") in {"playbill-coverage-workspace-config-v1", _WORKSPACE_CONFIG_TAG}
         else {}
     )
     desired.update(
