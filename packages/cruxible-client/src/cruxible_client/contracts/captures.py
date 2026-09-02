@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import re
@@ -9,7 +11,15 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Literal, Protocol, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -37,6 +47,17 @@ from cruxible_client.contracts.cas_contracts import (
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import PlaybillCasError, PlaybillFormatError
 from cruxible_client.contracts.governance import PermissionTier, governance_identifier
+from cruxible_client.contracts.provider_execution import (
+    ProviderEgressObservationV1,
+    ProviderExternalOccurrencePlanV1,
+    ProviderInvocationReceiptV1,
+    ProviderSecretBindingIdentityV1,
+    ProviderSecretReceiptReferenceV1,
+    ProviderSecretReferenceV1,
+    provider_external_occurrence_plan_digest,
+    provider_invocation_receipt_digest,
+    provider_secret_binding_identity_digest,
+)
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
 from cruxible_client.contracts.source_references import (
     CasSourceReferenceV1,
@@ -51,7 +72,7 @@ if TYPE_CHECKING:
     from cruxible_client.contracts.projection import AcceptedCoordinate
 
 _CONTRACT_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
-_RUN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,255}$")
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")
 
 DIRECT_SELF_ASSERTED_CONTRACT_ID = "playbill.direct-self-asserted-v1"
 DIRECT_SOURCE_IDENTITY = "playbill.direct-authoring"
@@ -840,23 +861,248 @@ class CaptureEnvelopeV1(_StrictCaptureModel):
         return self
 
 
-def render_capture_envelope(envelope: CaptureEnvelopeV1) -> bytes:
+class ProviderInvocationCaptureEvidenceV1(_StrictCaptureModel):
+    """Complete governed and measured evidence for one Source Provider call."""
+
+    tag: Literal["playbill-capture-provider-invocation-evidence-v1"] = (
+        "playbill-capture-provider-invocation-evidence-v1"
+    )
+    provider_artifact_digest: str
+    external_occurrence_plan_digest: str
+    interface_artifact_digest: str
+    interface_id: str
+    interface_digest: str
+    implementation_digest: str
+    materialization_digest: str
+    input_bucket: str
+    invocation_receipt_digest: str
+    secret_references: tuple[ProviderSecretReferenceV1, ...] = ()
+    egress: ProviderEgressObservationV1
+    source_read_receipt_digest: str | None = None
+
+    @field_validator(
+        "provider_artifact_digest",
+        "external_occurrence_plan_digest",
+        "interface_artifact_digest",
+        "interface_digest",
+        "implementation_digest",
+        "materialization_digest",
+        "invocation_receipt_digest",
+        "source_read_receipt_digest",
+    )
+    @classmethod
+    def _digests(cls, value: str | None) -> str | None:
+        if value is not None:
+            Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("secret_references")
+    @classmethod
+    def _secret_references(
+        cls,
+        value: tuple[ProviderSecretReferenceV1, ...],
+    ) -> tuple[ProviderSecretReferenceV1, ...]:
+        def key(item: ProviderSecretReferenceV1) -> tuple[bytes, bytes, bytes, bytes]:
+            return (
+                item.realm.encode("utf-8"),
+                item.name.encode("utf-8"),
+                item.epoch.encode("utf-8"),
+                item.purpose.encode("utf-8"),
+            )
+
+        if value != tuple(sorted(value, key=key)) or len(
+            {(item.realm, item.name, item.epoch, item.purpose) for item in value}
+        ) != len(value):
+            raise ValueError("Capture secret references must be sorted and unique")
+        return value
+
+
+class ProcedureEgressCaptureEvidenceV1(_StrictCaptureModel):
+    """Procedure producer-receipt evidence with no Provider-only fields."""
+
+    tag: Literal["playbill-capture-procedure-egress-evidence-v1"] = (
+        "playbill-capture-procedure-egress-evidence-v1"
+    )
+    procedure_producer_receipt_digest: str
+
+    @field_validator("procedure_producer_receipt_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+
+class ProviderResultToExternalCaptureV1(_StrictCaptureModel):
+    """Canonical Source Provider output from which core reconstructs a Capture."""
+
+    tag: Literal["playbill-provider-result-to-external-capture-v1"] = (
+        "playbill-provider-result-to-external-capture-v1"
+    )
+    source_identity: str
+    coordinate_type: str
+    coordinate: object
+    selector_type: str
+    selector: object
+    replayability: Literal["exact", "attested_only"]
+    content_encoding: Literal["base64"] = "base64"
+    content_base64: str
+    byte_length: int = Field(ge=0)
+    bytes_digest: str
+    observed_at: datetime = Field(description="Reads EVALUATION INSTANT.")
+    source_effective_time: SourceEffectiveTimeV1 | None = Field(
+        default=None,
+        description="Nested effective interval reads ASSERTION TIME.",
+    )
+
+    _canonical_values = field_validator("coordinate", "selector", mode="before")(
+        normalize_canonical
+    )
+
+    @field_validator("bytes_digest")
+    @classmethod
+    def _bytes_digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("observed_at")
+    @classmethod
+    def _observed_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Provider Capture observed_at must be timezone-aware")
+        return value
+
+    @model_validator(mode="after")
+    def _content(self) -> "ProviderResultToExternalCaptureV1":
+        try:
+            content = base64.b64decode(self.content_base64, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise ValueError("Provider Capture content is not canonical base64") from exc
+        if base64.b64encode(content).decode("ascii") != self.content_base64:
+            raise ValueError("Provider Capture content is not canonical base64")
+        if len(content) != self.byte_length:
+            raise ValueError("Provider Capture byte length does not reproduce")
+        if CasDigest(hashlib.sha256(content).hexdigest()).tagged != self.bytes_digest:
+            raise ValueError("Provider Capture bytes digest does not reproduce")
+        ExternalSourceReferenceV1(
+            source_identity=self.source_identity,
+            producer_binding_digest="sha256:" + "0" * 64,
+            coordinate_type=self.coordinate_type,
+            coordinate=self.coordinate,
+            selector_type=self.selector_type,
+            selector=self.selector,
+            replayability=self.replayability,
+        )
+        return self
+
+
+CaptureProductionEvidenceV1 = Annotated[
+    ProviderInvocationCaptureEvidenceV1 | ProcedureEgressCaptureEvidenceV1,
+    Field(discriminator="tag"),
+]
+
+
+class CaptureEnvelopeV2(_StrictCaptureModel):
+    """Capture successor binding one exact topological producer receipt."""
+
+    tag: Literal["playbill-capture-envelope-v2"] = "playbill-capture-envelope-v2"
+    capture_contract_digest: str
+    source: SourceReferenceV1
+    commitment: EvidenceCommitmentV1
+    run_coordinate: CaptureRunCoordinateV1
+    producer_receipt_digest: str
+    producer: ArtifactIdentity
+    producer_binding_digest: str
+    observed_at: datetime = Field(description="Reads EVALUATION INSTANT.")
+    source_effective_time: SourceEffectiveTimeV1 | None = Field(
+        default=None,
+        description="Nested effective interval reads ASSERTION TIME.",
+    )
+    reducer_digest: str | None = None
+    input_receipt_set_manifest_digest: str | None = None
+    production_evidence: CaptureProductionEvidenceV1
+
+    @field_validator(
+        "capture_contract_digest",
+        "producer_receipt_digest",
+        "producer_binding_digest",
+        "reducer_digest",
+        "input_receipt_set_manifest_digest",
+    )
+    @classmethod
+    def _digest(cls, value: str | None) -> str | None:
+        if value is not None:
+            Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("observed_at")
+    @classmethod
+    def _observed_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Capture observed_at must be timezone-aware")
+        return value
+
+    @model_validator(mode="after")
+    def _envelope_shape(self) -> "CaptureEnvelopeV2":
+        validate_source_commitment(self.source, self.commitment)
+        if isinstance(self.source, ExternalSourceReferenceV1) and (
+            self.source.producer_binding_digest != self.producer_binding_digest
+        ):
+            raise ValueError("external source and envelope producer bindings differ")
+        derived = (
+            self.reducer_digest is not None or self.input_receipt_set_manifest_digest is not None
+        )
+        if derived != (
+            self.reducer_digest is not None and self.input_receipt_set_manifest_digest is not None
+        ):
+            raise ValueError("derived Captures require reducer and input receipt-set together")
+        evidence = self.production_evidence
+        if isinstance(evidence, ProviderInvocationCaptureEvidenceV1):
+            if (
+                self.producer.kind != "Provider"
+                or self.run_coordinate.run_kind != "provider"
+                or self.run_coordinate.executable_identity != self.producer
+                or self.run_coordinate.executable_digest != evidence.provider_artifact_digest
+                or self.producer_binding_digest != evidence.external_occurrence_plan_digest
+                or self.producer_receipt_digest != evidence.invocation_receipt_digest
+            ):
+                raise ValueError("provider Capture production evidence does not correspond")
+        elif (
+            self.producer.kind != "Procedure"
+            or self.run_coordinate.run_kind != "procedure"
+            or self.run_coordinate.executable_identity != self.producer
+            or self.run_coordinate.executable_digest != self.producer_binding_digest
+            or self.producer_receipt_digest != evidence.procedure_producer_receipt_digest
+        ):
+            raise ValueError("procedure Capture production evidence does not correspond")
+        return self
+
+
+CaptureEnvelopeAny = Annotated[
+    CaptureEnvelopeV1 | CaptureEnvelopeV2,
+    Field(discriminator="tag"),
+]
+_CAPTURE_ENVELOPE_ADAPTER: TypeAdapter[CaptureEnvelopeV1 | CaptureEnvelopeV2] = TypeAdapter(
+    CaptureEnvelopeAny
+)
+
+
+def render_capture_envelope(envelope: CaptureEnvelopeV1 | CaptureEnvelopeV2) -> bytes:
     """Return the exact CAS object bytes; Capture envelopes carry no newline."""
 
     return canonical_bytes(envelope.model_dump(mode="json"))
 
 
-def parse_capture_envelope(content: bytes) -> CaptureEnvelopeV1:
+def parse_capture_envelope(content: bytes) -> CaptureEnvelopeV1 | CaptureEnvelopeV2:
     try:
-        envelope = CaptureEnvelopeV1.model_validate_json(content)
+        envelope = _CAPTURE_ENVELOPE_ADAPTER.validate_json(content)
     except (ValueError, ValidationError) as exc:
-        raise CaptureFormatError("Capture envelope failed strict v1 validation") from exc
+        raise CaptureFormatError("Capture envelope failed strict versioned validation") from exc
     if render_capture_envelope(envelope) != content:
         raise CaptureFormatError("Capture envelope is not in canonical wire form")
     return envelope
 
 
-def capture_digest(envelope: CaptureEnvelopeV1) -> CasDigest:
+def capture_digest(envelope: CaptureEnvelopeV1 | CaptureEnvelopeV2) -> CasDigest:
     return CasDigest(hashlib.sha256(render_capture_envelope(envelope)).hexdigest())
 
 
@@ -1206,7 +1452,7 @@ def classify_capture_reuse(
 
 class CaptureBuildResult(_StrictCaptureModel):
     contract_digest: str
-    envelope: CaptureEnvelopeV1
+    envelope: CaptureEnvelopeV1 | CaptureEnvelopeV2
     capture_digest: str
     commitment_digest: str
     source_body_materialized: bool
@@ -1642,7 +1888,7 @@ def _store_general_capture(
     *,
     store: CaptureObjectStoreProtocol,
     contract: CaptureContractV1,
-    envelope: CaptureEnvelopeV1,
+    envelope: CaptureEnvelopeV1 | CaptureEnvelopeV2,
     source_body_materialized: bool,
 ) -> CaptureBuildResult:
     metadata = store.store(render_capture_envelope(envelope))
@@ -1655,6 +1901,152 @@ def _store_general_capture(
         capture_digest=expected,
         commitment_digest=envelope.commitment.digest,
         source_body_materialized=source_body_materialized,
+    )
+
+
+def build_provider_external_capture_v2(
+    *,
+    store: CaptureObjectStoreProtocol,
+    contract: CaptureContractV1,
+    result: ProviderResultToExternalCaptureV1,
+    receipt: ProviderInvocationReceiptV1,
+    occurrence: ProviderExternalOccurrencePlanV1,
+    producer: ArtifactIdentity,
+    bound_generation: str,
+    source_read_receipt_digest: str | None = None,
+) -> CaptureBuildResult:
+    """Validate one common-driver Source result and commit its v2 Capture."""
+
+    if occurrence.occurrence_kind != "source":
+        raise CaptureFormatError("Provider Capture conversion requires a Source occurrence")
+    contract_digest_value = capture_contract_digest(contract).tagged
+    if (
+        occurrence.capture_contract_digest != contract_digest_value
+        or receipt.capture_contract_digest != contract_digest_value
+        or receipt.outcome.status != "ok"
+        or receipt.output is None
+    ):
+        raise CaptureFormatError("Provider Capture conversion differs from its admitted contract")
+    try:
+        receipt_result = ProviderResultToExternalCaptureV1.model_validate(receipt.output)
+    except ValidationError as exc:
+        raise CaptureFormatError("Provider Source output is not a Capture result") from exc
+    if receipt_result != result:
+        raise CaptureFormatError("Provider Capture result differs from its invocation receipt")
+    if result.source_identity not in contract.logical_source_identities:
+        raise CaptureFormatError("Provider Capture logical source is not admitted by its contract")
+    if result.coordinate_type not in {
+        pin.target.name for pin in contract.coordinate_schema_pins
+    } or result.selector_type not in {pin.target.name for pin in contract.selector_schema_pins}:
+        raise CaptureFormatError("Provider Capture source schemas are not admitted")
+    if result.byte_length > contract.selection_budget.max_bytes:
+        raise CaptureFormatError("Provider Capture result exceeds its contract byte budget")
+    content = base64.b64decode(result.content_base64, validate=True)
+    stored = store.store(content)
+    if stored.digest != result.bytes_digest:
+        raise PlaybillCasError("Provider Capture material CAS digest did not reproduce")
+    occurrence_digest = provider_external_occurrence_plan_digest(occurrence)
+    receipt_digest = provider_invocation_receipt_digest(receipt)
+    evidence = ProviderInvocationCaptureEvidenceV1(
+        provider_artifact_digest=receipt.provider_artifact_digest,
+        external_occurrence_plan_digest=occurrence_digest,
+        interface_artifact_digest=occurrence.interface_artifact_digest,
+        interface_id=receipt.interface_id,
+        interface_digest=receipt.interface_digest,
+        implementation_digest=receipt.implementation_digest,
+        materialization_digest=receipt.materialization_digest,
+        input_bucket=receipt.input_bucket,
+        invocation_receipt_digest=receipt_digest,
+        secret_references=occurrence.secret_plan.references,
+        egress=receipt.egress,
+        source_read_receipt_digest=source_read_receipt_digest,
+    )
+    envelope = CaptureEnvelopeV2(
+        capture_contract_digest=contract_digest_value,
+        source=ExternalSourceReferenceV1(
+            source_identity=result.source_identity,
+            producer_binding_digest=occurrence_digest,
+            coordinate_type=result.coordinate_type,
+            coordinate=result.coordinate,
+            selector_type=result.selector_type,
+            selector=result.selector,
+            replayability=result.replayability,
+        ),
+        commitment=EvidenceCommitmentV1(
+            digest_kind="exact_bytes",
+            digest=result.bytes_digest,
+            byte_length=result.byte_length,
+            materialization="cas",
+        ),
+        run_coordinate=CaptureRunCoordinateV1(
+            run_kind="provider",
+            run_id=receipt.run_id,
+            bound_generation=bound_generation,
+            executable_identity=producer,
+            executable_digest=receipt.provider_artifact_digest,
+        ),
+        producer_receipt_digest=receipt_digest,
+        producer=producer,
+        producer_binding_digest=occurrence_digest,
+        observed_at=result.observed_at,
+        source_effective_time=result.source_effective_time,
+        production_evidence=evidence,
+    )
+    return _store_general_capture(
+        store=store,
+        contract=contract,
+        envelope=envelope,
+        source_body_materialized=True,
+    )
+
+
+def build_procedure_capture_v2(
+    *,
+    store: CaptureObjectStoreProtocol,
+    contract: CaptureContractV1,
+    source_body: bytes,
+    run_coordinate: CaptureRunCoordinateV1,
+    producer_receipt_digest: str,
+    producer: ArtifactIdentity,
+    producer_binding_digest: str,
+    observed_at: datetime,
+) -> CaptureBuildResult:
+    """Commit procedure egress below its already-authored producer receipt."""
+
+    if producer.kind != "Procedure" or run_coordinate.executable_identity != producer:
+        raise CaptureFormatError("procedure Capture requires its producing Procedure identity")
+    if run_coordinate.executable_digest != producer_binding_digest:
+        raise CaptureFormatError("procedure Capture binding differs from its executable digest")
+    if "cas" not in contract.allowed_source_kinds or "cas" not in (
+        contract.allowed_materialization_modes
+    ):
+        raise CaptureFormatError("CaptureContract does not permit CAS observations")
+    if len(source_body) > contract.selection_budget.max_bytes:
+        raise CaptureFormatError("procedure Capture exceeds its contract byte budget")
+    body = store.store(source_body)
+    envelope = CaptureEnvelopeV2(
+        capture_contract_digest=capture_contract_digest(contract).tagged,
+        source=CasSourceReferenceV1(content_digest=body.digest),
+        commitment=EvidenceCommitmentV1(
+            digest_kind="exact_bytes",
+            digest=body.digest,
+            byte_length=len(source_body),
+            materialization="cas",
+        ),
+        run_coordinate=run_coordinate,
+        producer_receipt_digest=producer_receipt_digest,
+        producer=producer,
+        producer_binding_digest=producer_binding_digest,
+        observed_at=observed_at,
+        production_evidence=ProcedureEgressCaptureEvidenceV1(
+            procedure_producer_receipt_digest=producer_receipt_digest,
+        ),
+    )
+    return _store_general_capture(
+        store=store,
+        contract=contract,
+        envelope=envelope,
+        source_body_materialized=True,
     )
 
 
@@ -1863,7 +2255,10 @@ def verify_capture(
     contract: CaptureContractV1,
     ledger_resolver: LedgerMaterialResolverProtocol | None = None,
     producer_artifact_digests: Mapping[str, str] | None = None,
-) -> CaptureEnvelopeV1:
+    provider_invocation_receipt: ProviderInvocationReceiptV1 | None = None,
+    provider_occurrence: ProviderExternalOccurrencePlanV1 | None = None,
+    procedure_producer_receipt_digest: str | None = None,
+) -> CaptureEnvelopeV1 | CaptureEnvelopeV2:
     """Replay one envelope and every proof available for its source kind."""
 
     CasDigest.from_tagged(digest)
@@ -1878,21 +2273,72 @@ def verify_capture(
     if envelope.capture_contract_digest != expected_contract:
         raise CaptureFormatError("Capture envelope names a different contract digest")
     executable = envelope.run_coordinate.executable_identity
-    if executable == contract.identity:
-        if envelope.run_coordinate.executable_digest != expected_contract:
-            raise CaptureFormatError("Capture run coordinate differs from its contract")
-    elif executable == envelope.producer:
-        if (
-            executable.kind != "Provider"
-            or producer_artifact_digests is None
-            or (
-                producer_artifact_digests.get(executable.qualified)
-                != envelope.run_coordinate.executable_digest
+    if isinstance(envelope, CaptureEnvelopeV1):
+        if executable == contract.identity:
+            if envelope.run_coordinate.executable_digest != expected_contract:
+                raise CaptureFormatError("Capture run coordinate differs from its contract")
+        elif executable == envelope.producer:
+            if (
+                executable.kind != "Provider"
+                or producer_artifact_digests is None
+                or (
+                    producer_artifact_digests.get(executable.qualified)
+                    != envelope.run_coordinate.executable_digest
+                )
+            ):
+                raise CaptureFormatError("Capture producer does not resolve at its exact digest")
+        else:
+            raise CaptureFormatError("Capture executable is neither its contract nor producer")
+    elif (
+        executable != envelope.producer
+        or producer_artifact_digests is None
+        or producer_artifact_digests.get(executable.qualified)
+        != envelope.run_coordinate.executable_digest
+    ):
+        raise CaptureFormatError("Capture v2 producer does not resolve at its exact digest")
+    if isinstance(envelope, CaptureEnvelopeV2):
+        evidence = envelope.production_evidence
+        if isinstance(evidence, ProviderInvocationCaptureEvidenceV1):
+            if provider_invocation_receipt is None or provider_occurrence is None:
+                raise CaptureFormatError("provider Capture verification requires runtime receipts")
+            receipt = provider_invocation_receipt
+            expected_secret_receipts = tuple(
+                sorted(
+                    (
+                        ProviderSecretReceiptReferenceV1(
+                            binding_identity_digest=provider_secret_binding_identity_digest(
+                                ProviderSecretBindingIdentityV1(
+                                    realm=reference.realm,
+                                    name=reference.name,
+                                )
+                            ),
+                            purpose=reference.purpose,
+                        )
+                        for reference in evidence.secret_references
+                    ),
+                    key=lambda item: item.binding_identity_digest.encode("ascii"),
+                )
             )
-        ):
-            raise CaptureFormatError("Capture producer does not resolve at its exact digest")
-    else:
-        raise CaptureFormatError("Capture executable is neither its contract nor producer")
+            if (
+                provider_invocation_receipt_digest(receipt) != evidence.invocation_receipt_digest
+                or provider_external_occurrence_plan_digest(provider_occurrence)
+                != evidence.external_occurrence_plan_digest
+                or receipt.outcome.status != "ok"
+                or receipt.provider_artifact_digest != evidence.provider_artifact_digest
+                or receipt.interface_id != evidence.interface_id
+                or receipt.interface_digest != evidence.interface_digest
+                or receipt.implementation_digest != evidence.implementation_digest
+                or receipt.materialization_digest != evidence.materialization_digest
+                or receipt.input_bucket != evidence.input_bucket
+                or receipt.egress != evidence.egress
+                or receipt.secret_references != expected_secret_receipts
+                or provider_occurrence.secret_plan.references != evidence.secret_references
+                or provider_occurrence.interface_artifact_digest
+                != evidence.interface_artifact_digest
+            ):
+                raise CaptureFormatError("provider Capture runtime evidence does not correspond")
+        elif procedure_producer_receipt_digest != evidence.procedure_producer_receipt_digest:
+            raise CaptureFormatError("procedure Capture producer receipt does not correspond")
     if envelope.source.kind not in contract.allowed_source_kinds:
         raise CaptureFormatError("Capture source kind is not permitted by its contract")
     if envelope.commitment.materialization not in contract.allowed_materialization_modes:
@@ -1998,7 +2444,9 @@ __all__ = [
     "CaptureContractV1",
     "CaptureBuildResult",
     "CaptureComponentRegistry",
+    "CaptureEnvelopeAny",
     "CaptureEnvelopeV1",
+    "CaptureEnvelopeV2",
     "CaptureFormatError",
     "CaptureObjectStoreProtocol",
     "CaptureRetentionErasurePolicyV1",
@@ -2019,6 +2467,7 @@ __all__ = [
     "FOREIGN_SOURCE_SELECTOR_TYPE",
     "FOREIGN_SOURCE_SUBJECT_MAPPING",
     "PLAYBILL_CAPTURE_COMPONENTS",
+    "CaptureProductionEvidenceV1",
     "DirectCaptureBuildResult",
     "DirectByteSpanSelectionV1",
     "DirectClaimSelectionV1",
@@ -2026,12 +2475,17 @@ __all__ = [
     "DirectExternalSelectionV1",
     "DirectForeignSourceSelectionV1",
     "InputReceiptSetManifestV1",
+    "ProcedureEgressCaptureEvidenceV1",
+    "ProviderResultToExternalCaptureV1",
+    "ProviderInvocationCaptureEvidenceV1",
     "LedgerMaterialResolverProtocol",
     "SourceEffectiveTimeV1",
     "build_direct_claim_capture",
     "build_direct_claim_selection_capture",
     "build_coordinator_self_source_capture",
     "build_cas_capture",
+    "build_procedure_capture_v2",
+    "build_provider_external_capture_v2",
     "build_derived_cas_capture",
     "build_foreign_source_capture",
     "build_working_selection_capture",
