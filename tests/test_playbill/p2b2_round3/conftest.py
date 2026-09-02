@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import tempfile
 import time
@@ -14,7 +15,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 def _remove_root(root: Path) -> None:
     shutil.rmtree(root, ignore_errors=True)
-    if root.exists():
+    if os.path.lexists(root):
         time.sleep(0.05)
         shutil.rmtree(root, ignore_errors=True)
 
