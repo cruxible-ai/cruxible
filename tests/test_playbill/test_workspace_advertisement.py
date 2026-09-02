@@ -227,6 +227,10 @@ def test_review_close_prunes_a_missing_registered_worktree(tmp_path: Path) -> No
         workspace_path=workspace,
         proposal_id=PROPOSAL_KEY,
     )
+    unrelated = tmp_path / "unrelated-worktree"
+    _git(workspace, "worktree", "add", "--detach", str(unrelated), "HEAD")
+    moved_unrelated = tmp_path / "moved-unrelated-worktree"
+    shutil.move(unrelated, moved_unrelated)
     shutil.rmtree(opened)
 
     closed = close_proposal_review_worktree(
@@ -237,6 +241,18 @@ def test_review_close_prunes_a_missing_registered_worktree(tmp_path: Path) -> No
     assert closed == opened
     worktrees = _git(workspace, "worktree", "list", "--porcelain")
     assert str(opened) not in worktrees
+    assert str(unrelated) in worktrees
+
+
+def test_review_close_refuses_a_review_that_was_never_opened(tmp_path: Path) -> None:
+    workspace, _ledger = _repositories(tmp_path, "sha1")
+    (workspace / ".playbill" / "review").mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="review workspace was never opened"):
+        close_proposal_review_worktree(
+            workspace_path=workspace,
+            proposal_id="b" * 64,
+        )
 
 
 def test_advertisement_does_not_fetch_ledger_tags(tmp_path: Path) -> None:

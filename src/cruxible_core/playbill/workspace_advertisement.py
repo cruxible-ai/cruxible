@@ -425,10 +425,17 @@ def close_proposal_review_worktree(*, workspace_path: Path, proposal_id: str) ->
     key = _review_proposal_key(proposal_id)
     target = _review_worktree_target(workspace_root, key=key, create_parent=False)
     if not target.exists():
-        pruned = _git(workspace_root, ["worktree", "prune"])
-        if pruned.returncode != 0:
+        listed = _git(workspace_root, ["worktree", "list", "--porcelain", "-z"])
+        if listed.returncode != 0:
             raise ValueError(
-                f"review workspace registration could not be pruned: {_text(pruned.stderr)}"
+                f"review workspace registration could not be inspected: {_text(listed.stderr)}"
+            )
+        if b"worktree " + os.fsencode(target) not in listed.stdout.split(b"\0"):
+            raise ValueError(f"review workspace was never opened: {target}")
+        removed = _git(workspace_root, ["worktree", "remove", "--force", str(target)])
+        if removed.returncode != 0:
+            raise ValueError(
+                f"review workspace registration could not be removed: {_text(removed.stderr)}"
             )
         return target
     if not target.is_dir():
