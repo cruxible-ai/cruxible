@@ -145,9 +145,19 @@ def test_next_workspace_observes_confined_whole_source_bytes(tmp_path: Path) -> 
 
 def test_next_workspace_upgrades_v1_archival_presentation_policy(tmp_path: Path) -> None:
     _catalog(tmp_path)
+    catalog_path = tmp_path / ".playbill" / "sources.yaml"
+    first = catalog_path.read_text(encoding="utf-8").split("entries:\n", maxsplit=1)[1]
+    second = first.replace("corpus.runbook", "alpha.runbook").replace(
+        "document_id: runbook", "document_id: alpha-runbook"
+    )
+    catalog_path.write_text(
+        "tag: playbill-source-catalog-v1\ncatalog_kind: portable\nentries:\n" + first + second,
+        encoding="utf-8",
+    )
     policy_path = tmp_path / ".playbill" / "presentation-policy.json"
     policy_path.write_text(
-        '{"tag":"playbill-presentation-policy-v1","archival_source_ids":["corpus.runbook"]}',
+        '{"tag":"playbill-presentation-policy-v1",'
+        '"archival_source_ids":["corpus.runbook","alpha.runbook"]}',
         encoding="utf-8",
     )
 
@@ -155,7 +165,7 @@ def test_next_workspace_upgrades_v1_archival_presentation_policy(tmp_path: Path)
 
     assert observation["presentation_policy"] == {
         "tag": "playbill-presentation-policy-v2",
-        "archival_source_ids": ["corpus.runbook"],
+        "archival_source_ids": ["alpha.runbook", "corpus.runbook"],
         "projection_advisories": {"claim": False, "procedure": True},
     }
     assert observation["presentation_policy_notes"] == []

@@ -62,8 +62,8 @@ class PlaybillPresentationPolicyV1(_StrictDeclaredBlockModel):
         source_pattern = r"^[a-z][a-z0-9_.-]{0,127}$"
         if any(re.fullmatch(source_pattern, item) is None for item in value):
             raise ValueError("presentation policy contains an invalid source ID")
-        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("archival source IDs must be UTF-8-byte-sorted and unique")
+        if len(value) != len(set(value)):
+            raise ValueError("archival source IDs must be unique")
         return value
 
 
@@ -84,7 +84,10 @@ class PlaybillPresentationPolicyV2(_StrictDeclaredBlockModel):
     @field_validator("archival_source_ids")
     @classmethod
     def _source_ids(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        return PlaybillPresentationPolicyV1._source_ids(value)
+        value = PlaybillPresentationPolicyV1._source_ids(value)
+        if value != tuple(sorted(value, key=lambda item: item.encode("utf-8"))):
+            raise ValueError("archival source IDs must be UTF-8-byte-sorted")
+        return value
 
 
 PlaybillPresentationPolicyAny: TypeAlias = (
@@ -97,7 +100,11 @@ def upgrade_playbill_presentation_policy(
 ) -> PlaybillPresentationPolicyV2:
     if isinstance(policy, PlaybillPresentationPolicyV2):
         return policy
-    return PlaybillPresentationPolicyV2(archival_source_ids=policy.archival_source_ids)
+    return PlaybillPresentationPolicyV2(
+        archival_source_ids=tuple(
+            sorted(policy.archival_source_ids, key=lambda item: item.encode("utf-8"))
+        )
+    )
 
 
 PlaybillPresentationPolicyNoteV1: TypeAlias = Literal[
