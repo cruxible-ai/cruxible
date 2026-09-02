@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
-import shutil
 import time
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from cruxible_client.contracts.canonical import canonical_bytes
 import cruxible_core.runtime.playbill_manager as manager_module
 import cruxible_core.service.playbill_procedure_runs as run_service
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_core.playbill.provider_process_leases import (
     ProviderLocalRuntimeRefused,
     ProviderProcessLeaseStore,

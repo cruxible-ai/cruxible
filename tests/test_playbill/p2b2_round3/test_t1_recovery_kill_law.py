@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 import signal
 import socket
@@ -16,8 +15,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from cruxible_client.contracts.canonical import canonical_bytes
 import cruxible_core.playbill.provider_process_leases as lease_module
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_core.playbill.provider_process_leases import (
     ProviderLocalRuntimeRefused,
     ProviderProcessLeaseStore,
@@ -286,18 +285,21 @@ def test_the_echo_alone_never_authorizes_a_killpg(
             boot_id=None,
             start_time=None,
         )
-        assert store._live_identity_matches(  # noqa: SLF001
-            lease_module.ProviderProcessLeaseV1(
-                invocation_id=invocation_id,
-                pid=victim.pid,
-                process_group_id=victim.pid,
-                session_id=os.getsid(victim.pid),
-                boot_id=None,
-                process_start_time=None,
-                control_path=control_path,
-                record_path=_record,
+        assert (
+            store._live_identity_matches(  # noqa: SLF001
+                lease_module.ProviderProcessLeaseV1(
+                    invocation_id=invocation_id,
+                    pid=victim.pid,
+                    process_group_id=victim.pid,
+                    session_id=os.getsid(victim.pid),
+                    boot_id=None,
+                    process_start_time=None,
+                    control_path=control_path,
+                    record_path=_record,
+                )
             )
-        ) is False
+            is False
+        )
         result = store.recover_all()
         assert result.recovered == (), result
         assert [item.reason for item in result.removed] == ["dead_orphan"]

@@ -8,8 +8,6 @@ import re
 from pathlib import Path
 from typing import get_args
 
-import pytest
-
 import cruxible_core.playbill.provider_local_runtime as runtime_module
 import cruxible_core.playbill.provider_process_leases as lease_module
 from cruxible_core.playbill.procedures.execution import (
@@ -58,9 +56,7 @@ def test_c2_a_line_admission_is_the_only_effect_intent_origin() -> None:
 
 
 def test_f5_no_bare_timeout_literal_remains_on_the_fence_path() -> None:
-    store_signature = inspect.signature(
-        lease_module.ProviderProcessLeaseStore.__init__
-    ).parameters
+    store_signature = inspect.signature(lease_module.ProviderProcessLeaseStore.__init__).parameters
     assert (
         store_signature["acquisition_timeout_seconds"].default
         is lease_module.DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS

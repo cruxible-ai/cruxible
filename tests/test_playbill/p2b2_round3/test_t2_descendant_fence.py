@@ -24,9 +24,8 @@ from cruxible_core.playbill.provider_process_leases import (
     ProviderDescendantProcessV1,
     ProviderLocalRuntimeRefused,
     ProviderProcessLeaseStore,
-    descendant_is_live,
-    descendant_processes,
     _process_start_time,
+    descendant_is_live,
 )
 from cruxible_core.playbill.provider_runtime_contract import ProviderRuntimeBudgetsV1
 
@@ -191,7 +190,9 @@ def test_descendant_identity_defeats_pid_reuse() -> None:
     identity = ProviderDescendantProcessV1(
         pid=victim.pid, process_start_time=_process_start_time(victim.pid)
     )
-    stale = ProviderDescendantProcessV1(pid=victim.pid, process_start_time="Thu Jan 1 00:00:00 1970")
+    stale = ProviderDescendantProcessV1(
+        pid=victim.pid, process_start_time="Thu Jan 1 00:00:00 1970"
+    )
     try:
         assert descendant_is_live(identity) is True
         assert descendant_is_live(stale) is False
@@ -231,17 +232,13 @@ def test_a_descendant_present_before_the_tracker_is_still_observed(short_root: P
             if marker.exists():
                 break
             time.sleep(0.01)
-        tracker = _DescendantTracker(
-            os.getpid(), invocation_id=token, poll_interval_seconds=1.0
-        )
+        tracker = _DescendantTracker(os.getpid(), invocation_id=token, poll_interval_seconds=1.0)
         try:
             observed = {item.pid for item in tracker.snapshot()}
         finally:
             tracker.close(timeout_seconds=1.0)
         assert early.pid in observed
-        assert early.pid in {
-            item.pid for item in lease_module.processes_naming_invocation(token)
-        }
+        assert early.pid in {item.pid for item in lease_module.processes_naming_invocation(token)}
     finally:
         with contextlib.suppress(Exception):
             os.killpg(early.pid, signal.SIGKILL)

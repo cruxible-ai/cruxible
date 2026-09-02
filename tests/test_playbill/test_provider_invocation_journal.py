@@ -771,9 +771,7 @@ def test_unclean_start_marks_recovery_required_without_completion_or_terminaliza
         procedure_run_service.service_recover_provider_invocations(
             _Instance(),  # type: ignore[arg-type]
             invocation_ids=(),
-            recovery_failure_codes={
-                invocation_id: "provider_process_group_survived_recovery"
-            },
+            recovery_failure_codes={invocation_id: "provider_process_group_survived_recovery"},
             recorded_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
         )
     after = tuple(

@@ -979,9 +979,7 @@ def _terminate_process_group(
                 "provider_process_lease_invalid",
                 "provider process-group identity cannot be verified",
             ) from exc
-        if not group_alive and not any(
-            descendant_is_live(item) for item in observed_descendants
-        ):
+        if not group_alive and not any(descendant_is_live(item) for item in observed_descendants):
             return
     raise ProviderLocalRuntimeRefused(
         "provider_process_group_survived_recovery",

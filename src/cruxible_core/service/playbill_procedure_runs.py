@@ -1704,9 +1704,7 @@ def service_recover_provider_invocations(
             f"run {run_id} invocation {invocation_id} requires recovery ({code})"
             for run_id, invocation_id, code in sorted(observed_failures, key=lambda item: item[1])
         )
-        raise ProcedureRunRecoveryRequired(
-            f"{ProcedureRunRecoveryRequired.code}: {detail}"
-        )
+        raise ProcedureRunRecoveryRequired(f"{ProcedureRunRecoveryRequired.code}: {detail}")
     return tuple(sorted(recovered, key=str.encode))
 
 

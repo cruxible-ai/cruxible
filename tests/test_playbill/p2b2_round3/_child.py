@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-SOURCE = r'''#!/usr/bin/env python3
+SOURCE = r"""#!/usr/bin/env python3
 import json, os, socket, subprocess, sys, threading, time
 
 MODE = "@MODE@"
@@ -89,7 +89,7 @@ if MODE in {"escape", "setpgid"}:
     os.close(1)
     os.close(2)
     time.sleep(30)
-'''
+"""
 
 
 def write_child(path: Path, *, mode: str, marker: Path) -> Path:
