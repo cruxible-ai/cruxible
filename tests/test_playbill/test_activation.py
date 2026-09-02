@@ -23,7 +23,7 @@ from cruxible_client.contracts.documents import (
     DocumentShell,
     render_document,
 )
-from cruxible_client.contracts.errors import SettlementIntegrityError
+from cruxible_client.contracts.errors import ProposalIntegrityError, SettlementIntegrityError
 from cruxible_client.contracts.types import GenerationDescriptor, PlaybillTrustRoot
 from cruxible_core.playbill.activation import ActivationPublisher
 from cruxible_core.playbill.bootstrap import generation_root, prepare_genesis
@@ -341,7 +341,7 @@ def test_prepare_generation_refuses_tampered_law_or_candidate_tree(tmp_path: Pat
     tampered_law = candidate.model_copy(
         update={"law_digests": {"playbill.document.v1": "sha256:" + "00" * 32}}
     )
-    with pytest.raises(SettlementIntegrityError, match="cannot be reproduced"):
+    with pytest.raises(ProposalIntegrityError, match="cannot be reproduced"):
         prepare_generation(
             instance._ledger,
             base=base,
