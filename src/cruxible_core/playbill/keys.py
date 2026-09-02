@@ -58,7 +58,8 @@ def assert_outside_roots(path: Path, forbidden_roots: Sequence[Path]) -> None:
         if _is_within(resolved, root):
             raise PlaybillKeyError(
                 "client approval/recovery keys must remain outside workspaces and "
-                "managed Playbill instance storage"
+                "managed Playbill instance storage; "
+                f"custody path={str(resolved)!r}, forbidden root={str(root)!r}"
             )
 
 

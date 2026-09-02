@@ -40,6 +40,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
 )
+from cruxible_core.cli.commands.playbill import _local_git_workspace_root
 from cruxible_core.cli.main import cli
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
@@ -386,6 +387,120 @@ def test_tcp_in_git_worktree_refuses_before_remote_or_key_mutation(
     assert "TCP cannot attach a daemon-local workspace" in result.output
     assert "Use --server-socket" in result.output
     assert reached == []
+
+
+def test_cli_custody_uses_the_git_workspace_across_working_directories(
+    served_cli: _Cli,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cruxible = served_cli
+    cruxible.json("--server-url", "http://cruxible", "playbill", "host", "create")
+    workspace = tmp_path / "workspace"
+    init_directory = workspace / "init-directory"
+    approval_directory = tmp_path / "operator" / "approval-directory"
+    custody = approval_directory / "custody"
+    init_directory.mkdir(parents=True)
+    approval_directory.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(workspace)], check=True)
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill._refuse_tcp_workspace_operation",
+        lambda _workspace: None,
+    )
+
+    monkeypatch.chdir(init_directory)
+    cruxible.json(
+        "playbill",
+        "init",
+        "--key-dir",
+        str(custody),
+        "--principal-id",
+        CREATOR_ID,
+        "--reviewer-key-dir",
+        str(custody),
+    )
+    proposed = cruxible.json(
+        "playbill",
+        "claim-type",
+        "propose",
+        "--envelope",
+        _write(tmp_path / "claim-type-custody.json", _claim_type().model_dump(mode="json")),
+        "--name",
+        "custody-workspace",
+    )
+
+    monkeypatch.chdir(approval_directory)
+    approved = cruxible.json(
+        "playbill",
+        "proposal",
+        "approve",
+        _proposal_id(proposed),
+        "--signer-id",
+        SIGNER_ID,
+        "--key",
+        str(custody / f"{SIGNER_ID}.ed25519"),
+        "--yes",
+    )
+
+    assert approved["signer_id"] == SIGNER_ID
+
+
+def test_cli_custody_refusal_names_the_custody_and_workspace_roots(
+    served_cli: _Cli,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cruxible = served_cli
+    cruxible.json("--server-url", "http://cruxible", "playbill", "host", "create")
+    workspace = tmp_path / "workspace"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(workspace)], check=True)
+    nested = workspace / "nested"
+    nested.mkdir()
+    custody = workspace / "custody"
+    monkeypatch.chdir(nested)
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill._refuse_tcp_workspace_operation",
+        lambda _workspace: None,
+    )
+
+    refused = CliRunner().invoke(
+        cli,
+        [
+            "playbill",
+            "init",
+            "--key-dir",
+            str(custody),
+            "--principal-id",
+            CREATOR_ID,
+        ],
+    )
+
+    assert refused.exit_code != 0
+    assert f"custody path='{custody}'" in refused.output
+    assert f"forbidden root='{workspace}'" in refused.output
+
+
+def test_local_git_workspace_ignores_inherited_repository_selection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cwd_workspace = tmp_path / "cwd-workspace"
+    inherited_workspace = tmp_path / "inherited-workspace"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(cwd_workspace)], check=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(inherited_workspace)], check=True)
+    nested = cwd_workspace / "nested"
+    nested.mkdir()
+    monkeypatch.chdir(nested)
+    monkeypatch.setenv("GIT_DIR", str(inherited_workspace / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(inherited_workspace))
+
+    resolution = _local_git_workspace_root()
+
+    assert resolution.workspace_root == cwd_workspace.resolve()
+    assert resolution.note is not None
+    assert resolution.note.code == "inherited_git_workspace_ignored"
+    assert resolution.note.cwd_workspace_root == cwd_workspace.resolve()
+    assert resolution.note.inherited_workspace_root == inherited_workspace.resolve()
 
 
 def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(

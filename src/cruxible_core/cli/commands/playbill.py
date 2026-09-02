@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast
 
 import click
 import yaml
@@ -332,14 +334,33 @@ def _read_authoring_input(path: str) -> AuthoringInputV1:
         ) from exc
 
 
-def _local_git_workspace_root() -> Path | None:
-    """Resolve the containing worktree root without inventing a non-Git attachment."""
+@dataclass(frozen=True)
+class _GitWorkspaceEnvironmentNote:
+    """Advisory that ambient Git repository selection lost to the process CWD."""
+
+    code: Literal["inherited_git_workspace_ignored"]
+    cwd_workspace_root: Path
+    inherited_workspace_root: Path
+
+
+@dataclass(frozen=True)
+class _LocalGitWorkspaceResult:
+    """The CWD-selected worktree and any ignored ambient-repository advisory."""
+
+    workspace_root: Path | None
+    note: _GitWorkspaceEnvironmentNote | None
+
+
+def _git_workspace_root(environment: Mapping[str, str]) -> Path | None:
+    """Resolve the worktree containing the CWD under one explicit environment."""
 
     try:
         completed = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
             check=False,
             capture_output=True,
+            cwd=Path.cwd(),
+            env=dict(environment),
             text=True,
             timeout=5,
         )
@@ -380,6 +401,57 @@ def _workspace_config_transport() -> dict[str, str]:
     if obj.get("server_url"):
         return {"server_url": str(obj["server_url"])}
     raise click.UsageError("Server mode is required to attach a workspace")
+
+
+def _local_git_workspace_root() -> _LocalGitWorkspaceResult:
+    """Resolve the CWD worktree without trusting an inherited repository selector."""
+
+    inherited_environment = dict(os.environ)
+    clean_environment = dict(inherited_environment)
+    repository_selectors = ("GIT_DIR", "GIT_WORK_TREE")
+    inherited_selector = any(name in clean_environment for name in repository_selectors)
+    for name in repository_selectors:
+        clean_environment.pop(name, None)
+    workspace_root = _git_workspace_root(clean_environment)
+    inherited_root = (
+        _git_workspace_root(inherited_environment) if inherited_selector else workspace_root
+    )
+    note = None
+    if (
+        workspace_root is not None
+        and inherited_root is not None
+        and inherited_root != workspace_root
+    ):
+        note = _GitWorkspaceEnvironmentNote(
+            code="inherited_git_workspace_ignored",
+            cwd_workspace_root=workspace_root,
+            inherited_workspace_root=inherited_root,
+        )
+    return _LocalGitWorkspaceResult(workspace_root=workspace_root, note=note)
+
+
+def _emit_git_workspace_note(resolution: _LocalGitWorkspaceResult) -> None:
+    if resolution.note is None:
+        return
+    note = resolution.note
+    click.echo(
+        f"Note [{note.code}]: CWD worktree {str(note.cwd_workspace_root)!r} takes "
+        f"precedence over inherited Git worktree {str(note.inherited_workspace_root)!r}.",
+        err=True,
+    )
+
+
+def _custody_workspace_root() -> Path | None:
+    """Resolve the one workspace boundary shared by every custody operation."""
+
+    resolution = _local_git_workspace_root()
+    _emit_git_workspace_note(resolution)
+    return resolution.workspace_root
+
+
+def _custody_forbidden_roots() -> tuple[Path, ...]:
+    workspace_root = _custody_workspace_root()
+    return () if workspace_root is None else (workspace_root,)
 
 
 def _refuse_tcp_workspace_operation(git_workspace: Path | None) -> None:
@@ -610,12 +682,12 @@ def create_host(
 ) -> None:
     """Allocate an empty host and remember it as the active instance."""
 
-    git_workspace = (
-        _explicit_git_workspace_root(workspace_path)
-        if workspace_path is not None
-        else _local_git_workspace_root()
-    )
-    if workspace_path is None:
+    if workspace_path is not None:
+        git_workspace = _explicit_git_workspace_root(workspace_path)
+    else:
+        workspace_resolution = _local_git_workspace_root()
+        _emit_git_workspace_note(workspace_resolution)
+        git_workspace = workspace_resolution.workspace_root
         _refuse_tcp_workspace_operation(git_workspace)
     workspace_root = (
         str(git_workspace)
@@ -697,7 +769,7 @@ def init_playbill(
     git_workspace = (
         _explicit_git_workspace_root(workspace_path)
         if workspace_path is not None
-        else _local_git_workspace_root()
+        else _custody_workspace_root()
     )
     if require_independent_approval and reviewer_key_dir is None:
         raise click.UsageError("--require-independent-approval requires --reviewer-key-dir")
@@ -1156,7 +1228,7 @@ def approve_proposal(
         signer_id=signer_id,
         private_key_path=Path(private_key_path),
         expected_public_key=principal.public_key,
-        forbidden_roots=(Path.cwd(),),
+        forbidden_roots=_custody_forbidden_roots(),
     )
     attestation = signer.sign(ApprovalStatement.model_validate(challenge.statement))
     result = _server_call(
@@ -1482,7 +1554,7 @@ def add_principal(
             Path(key_dir).expanduser(),
             principal_id=principal_id,
             kind=principal_kind,
-            forbidden_roots=(Path.cwd(),),
+            forbidden_roots=_custody_forbidden_roots(),
         )
         return client.propose_playbill_principal_change(
             instance_id,
@@ -1510,7 +1582,7 @@ def _principal_successor(
             Path(key_dir).expanduser(),
             principal_id=target_id,
             kind=target.kind,
-            forbidden_roots=(Path.cwd(),),
+            forbidden_roots=_custody_forbidden_roots(),
         )
         return client.propose_playbill_principal_change(
             instance_id,
@@ -1874,7 +1946,7 @@ def attest_claim(
         signer = local_attestation_signer_from_environment(
             client,
             instance_id,
-            workspace_root=Path.cwd(),
+            workspace_root=_custody_workspace_root(),
         )
         return append_prepared_claim_attestation(
             client,
@@ -3589,7 +3661,9 @@ def export_floor(
         lambda client, instance_id: client.export_playbill_floor(instance_id),
         command_name="playbill floor export",
     )
-    workspace_root = _local_git_workspace_root()
+    workspace_resolution = _local_git_workspace_root()
+    _emit_git_workspace_note(workspace_resolution)
+    workspace_root = workspace_resolution.workspace_root
     if workspace_root is None:
         raise click.UsageError("playbill floor export must run inside one Git worktree")
     written = materialize_playbill_floor(workspace_root, export=result, force=force)

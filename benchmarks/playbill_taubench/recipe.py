@@ -48,6 +48,7 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -406,6 +407,7 @@ def export_arm_surface(destination: Path) -> Path:
     """Write floor-v2 artifacts and the coverage boundary as one tree."""
 
     destination.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(destination)], check=True)
     previous = Path.cwd()
     try:
         os.chdir(destination)
