@@ -192,6 +192,7 @@ def test_the_aggregate_budget_marks_the_remainder_not_attempted_and_keeps_it(
         )
         for _ in range(5)
     ]
+    real_killpg = os.killpg
     paths: list[Path] = []
     try:
         boot = lease_module._current_boot_id()
@@ -225,7 +226,7 @@ def test_the_aggregate_budget_marks_the_remainder_not_attempted_and_keeps_it(
     finally:
         for process in survivors:
             with contextlib.suppress(OSError):
-                os.killpg(os.getpgid(process.pid), 9)
+                real_killpg(os.getpgid(process.pid), 9)
             with contextlib.suppress(Exception):
                 process.kill()
                 process.wait(timeout=2)

@@ -98,6 +98,7 @@ def test_one_stuck_record_is_bounded_by_its_configured_deadline(
         [sys.executable, "-c", "import time\nwhile True: time.sleep(0.05)"],
         start_new_session=True,
     )
+    real_killpg = os.killpg
     try:
         _record(
             store,
@@ -118,7 +119,7 @@ def test_one_stuck_record_is_bounded_by_its_configured_deadline(
         assert 0.5 <= elapsed < 3.0, elapsed
     finally:
         with contextlib.suppress(OSError):
-            os.killpg(os.getpgid(live.pid), signal.SIGKILL)
+            real_killpg(os.getpgid(live.pid), signal.SIGKILL)
         with contextlib.suppress(Exception):
             live.wait(timeout=2)
 
@@ -141,6 +142,7 @@ def test_the_recovery_loop_reports_records_beyond_its_aggregate_budget(
         )
         for _ in range(4)
     ]
+    real_killpg = os.killpg
     try:
         boot = lease_module._current_boot_id()
         for index, process in enumerate(processes):
@@ -163,7 +165,7 @@ def test_the_recovery_loop_reports_records_beyond_its_aggregate_budget(
     finally:
         for process in processes:
             with contextlib.suppress(OSError):
-                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                real_killpg(os.getpgid(process.pid), signal.SIGKILL)
             with contextlib.suppress(Exception):
                 process.wait(timeout=2)
 

@@ -195,6 +195,7 @@ def test_only_the_first_degraded_invocation_pays_the_aggregate_budget(
         )
         for _ in range(4)
     ]
+    real_killpg = os.killpg
     try:
         from cruxible_client.contracts.canonical import canonical_bytes
 
@@ -230,7 +231,7 @@ def test_only_the_first_degraded_invocation_pays_the_aggregate_budget(
     finally:
         for process in survivors:
             with contextlib.suppress(OSError):
-                os.killpg(os.getpgid(process.pid), 9)
+                real_killpg(os.getpgid(process.pid), 9)
             with contextlib.suppress(Exception):
                 process.kill()
                 process.wait(timeout=2)
