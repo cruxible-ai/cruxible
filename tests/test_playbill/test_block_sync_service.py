@@ -9,24 +9,33 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client import contracts
 from cruxible_client.authoring.blocks import sync_projection_blocks
+from cruxible_client.authoring.workspace import (
+    observe_playbill_next_workspace,
+    observe_playbill_next_workspace_with_coverage,
+)
 from cruxible_client.contracts.authoring.models import (
     PlaybillBlockSyncReadRequestV1,
     SelfSourceBodyV1,
 )
 from cruxible_client.contracts.claims import claim_path
 from cruxible_client.contracts.declared_blocks import (
-    ProjectionMarkerSummaryV1,
     parse_projection_blocks,
 )
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
+from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1, CoverageCardBudgetV1
+from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
+from cruxible_core.playbill.service.documents import (
+    PlaybillAcceptedCoordinate as ServiceAcceptedCoordinate,
+)
+from cruxible_core.service.playbill_coverage import service_resolve_playbill_coverage
 from cruxible_core.service.playbill_next import (
     PlaybillNextRequestV1,
-    PlaybillNextSourceObservationV3,
     PlaybillNextWorkspaceObservationV1,
     service_playbill_next,
 )
@@ -50,6 +59,41 @@ class _ServiceClient:
     def read_playbill_block_sync_backing(self, instance_id, *, request):  # type: ignore[no-untyped-def]
         assert instance_id == self.instance.descriptor.instance_id
         return service_read_playbill_block_sync_backing(self.instance, request=request)
+
+    def resolve_playbill_coverage(  # type: ignore[no-untyped-def]
+        self,
+        instance_id,
+        *,
+        observations,
+        at=None,
+        budget=None,
+        scan_budget=None,
+    ):
+        assert instance_id == self.instance.descriptor.instance_id
+        result = service_resolve_playbill_coverage(
+            self.instance,
+            instance_id=instance_id,
+            observations=tuple(
+                WorkingSourceObservationV1.model_validate(item) for item in observations
+            ),
+            at=(
+                None
+                if at is None
+                else ServiceAcceptedCoordinate.model_validate(
+                    at.model_dump(mode="json") if hasattr(at, "model_dump") else at
+                )
+            ),
+            budget=None if budget is None else CoverageCardBudgetV1.model_validate(budget),
+            scan_budget=(
+                None if scan_budget is None else CoverageScanBudgetV1.model_validate(scan_budget)
+            ),
+        )
+        return contracts.PlaybillCoverageResult(
+            coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
+                result.at.model_dump(mode="json")
+            ),
+            result=result.model_dump(mode="json"),
+        )
 
 
 def _workspace(root: Path, *, instance_id: str, content: bytes) -> Path:
@@ -189,37 +233,32 @@ def test_two_writer_successor_sync_converges_without_mutating_accepted_state(
     tree_before = instance.tree_at(accepted_before.git_oid)
     history_before = instance.accepted_history()
 
+    access_profile = CoverageAccessProfileV1(
+        profile_id="block-sync-service-test",
+        permitted_access_classes=("instance", "public"),
+    )
+    workspace_observation = observe_playbill_next_workspace(workspace_root)
+    workspace_observation, observed_coordinate = observe_playbill_next_workspace_with_coverage(
+        _ServiceClient(instance),  # type: ignore[arg-type]
+        instance.descriptor.instance_id,
+        workspace_root,
+        observation=workspace_observation,
+        access_profile=access_profile.model_dump(mode="json"),
+    )
+    assert observed_coordinate is not None
+    assert observed_coordinate.git_oid == accepted_before.git_oid
+    (source_observation,) = workspace_observation["source_observations"]  # type: ignore[index]
+    assert source_observation["tag"] == "playbill-next-source-observation-v4"
+    assert source_observation["scan_notes"] == ["coverage_source_mismatch"]
+
     next_result = service_playbill_next(
         instance,
         request=PlaybillNextRequestV1(
             at=AcceptedCoordinate.from_internal(accepted_before),
             evaluation_time=datetime(2026, 8, 21, 13, tzinfo=UTC),
-            access_profile=CoverageAccessProfileV1(
-                profile_id="block-sync-service-test",
-                permitted_access_classes=("instance",),
-            ),
-            workspace_observation=PlaybillNextWorkspaceObservationV1(
-                source_observations=(
-                    PlaybillNextSourceObservationV3(
-                        tag="playbill-next-source-observation-v3",
-                        source_id=original_stamp.source_id,
-                        observed_source_digest="sha256:" + "1" * 64,
-                        byte_length=len(landed.content),
-                        marker_summaries=(
-                            ProjectionMarkerSummaryV1(
-                                stamp=original_stamp,
-                                observed_body_digest=original_stamp.body_digest,
-                                start_byte=0,
-                                end_byte=len(landed.content),
-                            ),
-                        ),
-                        occurrences=(),
-                        scanned_commitment_digests=(),
-                        scan_complete=True,
-                        scan_notes=(),
-                        marker_notes=(),
-                    ),
-                )
+            access_profile=access_profile,
+            workspace_observation=PlaybillNextWorkspaceObservationV1.model_validate(
+                workspace_observation
             ),
         ),
     )
