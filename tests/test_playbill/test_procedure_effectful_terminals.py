@@ -296,7 +296,7 @@ def test_non_effectful_mandate_check_names_the_declared_rung_repair(tmp_path) ->
         require_procedure_mandate(request, admission=admission, accepted_mandates={})
     assert caught.value.codes == ("procedure_mandate_not_applicable",)
     assert caught.value.repair_kind == "use_declared_rung"
-    assert caught.value.repair_command == "Use the terminal's declared rung."
+    assert caught.value.repair.hand_edit.required_change == "use_declared_terminal_rung"
 
 
 def test_mandate_free_fold_stops_below_proposal_even_with_a_standing_grant() -> None:
@@ -361,9 +361,8 @@ def test_proposal_adapter_checks_authority_before_creating_a_ref(tmp_path) -> No
     assert caught.value.required_rung == 2
     assert caught.value.target_namespace == (path,)
     assert caught.value.repair_kind == "create_mandate"
-    assert caught.value.repair_command == (
-        "cruxible playbill authoring create --example procedure-mandate"
-    )
+    assert caught.value.repair.operation == "playbill.authoring.create"
+    assert caught.value.repair.arguments == {"example": "procedure-mandate"}
     assert instance.proposal_service().transport.read_proposal_ref(target_ref) is None
 
 
@@ -817,9 +816,8 @@ def test_procedure_mandate_refusal_reports_every_failed_law_and_repair(tmp_path)
     assert caught.value.required_rung == 3
     assert caught.value.target_namespace == (target_path,)
     assert caught.value.repair_kind == "author_successor"
-    assert caught.value.repair_command == (
-        "cruxible playbill authoring create --example procedure-mandate"
-    )
+    assert caught.value.repair.operation == "playbill.authoring.create"
+    assert caught.value.repair.arguments == {"example": "procedure-mandate"}
     assert door.calls == 0
 
 

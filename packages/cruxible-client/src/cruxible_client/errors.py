@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from cruxible_client._error_base import (
     ConcurrentStateDriftError as ConcurrentStateDriftError,
@@ -24,6 +24,7 @@ from cruxible_client.contracts.errors import (
     ProposalNotFoundError,
     ProposalSelectorAmbiguousError,
 )
+from cruxible_client.contracts.repairs import ServedRepairV1, hand_edit_repair
 
 _MAX_DISPLAY_ERRORS = 10
 
@@ -406,6 +407,17 @@ class ErrorResponse(BaseModel):
     errors: list[str] = Field(default_factory=list)
     context: dict[str, Any] = Field(default_factory=dict)
     mutation_receipt_id: str | None = None
+    repair: ServedRepairV1
+
+    @model_validator(mode="before")
+    @classmethod
+    def _structured_repair(cls, value: object) -> object:
+        if not isinstance(value, dict) or "repair" in value:
+            return value
+        code = value.get("error_code") or value.get("error_type")
+        if not isinstance(code, str):
+            return value
+        return {**value, "repair": hand_edit_repair(code).model_dump(mode="python")}
 
 
 def response_to_error(_status: int, body: ErrorResponse) -> CoreError:

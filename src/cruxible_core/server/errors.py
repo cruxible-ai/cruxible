@@ -21,6 +21,7 @@ from cruxible_client.contracts.errors import (
     ProposalSelectorAmbiguousError,
     SettlementIntegrityError,
 )
+from cruxible_client.contracts.repairs import RepairOperationV1, ServedRepairV1, hand_edit_repair
 from cruxible_client.errors import ErrorResponse, response_to_error
 from cruxible_core.errors import (
     AuthenticationError,
@@ -110,6 +111,30 @@ def _message_for_error(exc: CoreError) -> str:
     if exc.args:
         return str(exc.args[0])
     return exc.__class__.__name__
+
+
+def _repair_for_error(exc: CoreError) -> ServedRepairV1:
+    if isinstance(exc, DaemonOperationScopeError):
+        return RepairOperationV1(
+            operation=exc.operation,
+            arguments={
+                "credential_env": "CRUXIBLE_SERVER_BEARER_TOKEN",
+                "accepted_credentials": ["bootstrap secret", "daemon-scope token"],
+            },
+        )
+    if isinstance(exc, AuthenticationError):
+        return RepairOperationV1(
+            operation="server.authenticate",
+            arguments={
+                "credential_options": [
+                    "--server-bearer-token",
+                    "CRUXIBLE_SERVER_BEARER_TOKEN",
+                    "bootstrap-secret file",
+                ]
+            },
+        )
+    code = getattr(exc, "code", exc.__class__.__name__)
+    return hand_edit_repair(str(code))
 
 
 def _status_for_error(exc: CoreError) -> int:
@@ -360,5 +385,6 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         errors=errors,
         context=context,
         mutation_receipt_id=exc.mutation_receipt_id,
+        repair=_repair_for_error(exc),
     )
     return _status_for_error(exc), body

@@ -275,3 +275,10 @@ def test_instance_token_gets_typed_403_for_every_daemon_scope_route(
         "CRUXIBLE_SERVER_BEARER_TOKEN."
     )
     assert payload["message"] != "internal server error"
+    assert payload["repair"] == {
+        "operation": operation,
+        "arguments": {
+            "credential_env": "CRUXIBLE_SERVER_BEARER_TOKEN",
+            "accepted_credentials": ["bootstrap secret", "daemon-scope token"],
+        },
+    }

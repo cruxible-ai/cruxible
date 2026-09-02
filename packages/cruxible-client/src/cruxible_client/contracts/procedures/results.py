@@ -15,6 +15,7 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_execution import (
     ProviderExternalOccurrencePlanV1,
 )
+from cruxible_client.contracts.repairs import ServedRepairV1, hand_edit_repair
 from cruxible_client.contracts.temporal import ensure_utc
 
 ProcedureAdmissionRefusalCodeV1: TypeAlias = Literal[
@@ -177,6 +178,15 @@ def _digest(value: str | None) -> str | None:
     return value
 
 
+def _with_default_repair(value: object) -> object:
+    if not isinstance(value, dict) or "repair" in value:
+        return value
+    code = value.get("code")
+    if not isinstance(code, str):
+        return value
+    return {**value, "repair": hand_edit_repair(code).model_dump(mode="python")}
+
+
 class ProcedureJournalCoordinateV1(_StrictResultModel):
     tag: Literal["playbill-procedure-journal-coordinate-v1"] = (
         "playbill-procedure-journal-coordinate-v1"
@@ -215,6 +225,9 @@ class ProcedureAdmissionRefusalV1(_StrictResultModel):
     message: str
     details: object = Field(default_factory=dict)
     retryable: bool = False
+    repair: ServedRepairV1
+
+    _repair = model_validator(mode="before")(_with_default_repair)
 
     @field_validator("details", mode="before")
     @classmethod
@@ -233,6 +246,9 @@ class ProcedureNodeRefusalV1(_StrictResultModel):
     details: object = Field(default_factory=dict)
     budget: ProcedureBudgetRefusalDetailV1 | None = None
     retryable: bool = False
+    repair: ServedRepairV1
+
+    _repair = model_validator(mode="before")(_with_default_repair)
 
     @field_validator("details", mode="before")
     @classmethod
@@ -263,6 +279,9 @@ class ProcedureOperationalFailureV1(_StrictResultModel):
     journal_coordinate: ProcedureJournalCoordinateV1 | None = None
     details: object = Field(default_factory=dict)
     retryable: bool = True
+    repair: ServedRepairV1
+
+    _repair = model_validator(mode="before")(_with_default_repair)
 
     @field_validator("details", mode="before")
     @classmethod
@@ -279,6 +298,9 @@ class ProcedureInternalFailureV1(_StrictResultModel):
     message: str
     correlation_id: str
     journal_coordinate: ProcedureJournalCoordinateV1 | None = None
+    repair: ServedRepairV1
+
+    _repair = model_validator(mode="before")(_with_default_repair)
 
 
 class ProcedureRunAttributionV1(_StrictResultModel):

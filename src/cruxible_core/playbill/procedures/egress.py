@@ -55,6 +55,12 @@ from cruxible_client.contracts.procedure_mandates import (
     evaluate_procedure_mandate,
 )
 from cruxible_client.contracts.procedures.models import TERMINAL_REQUIRED_RUNGS, ProcedureHardCapsV3
+from cruxible_client.contracts.repairs import (
+    HandEditInstructionV1,
+    HandEditRepairV1,
+    RepairOperationV1,
+    ServedRepairV1,
+)
 from cruxible_client.contracts.standing_mandates import MandateGrantV1, MandateRuntimeCapV1
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.playbill.actor_context import GovernedActorContext
@@ -700,7 +706,7 @@ class TerminalAuthorityRefusal(TerminalEgressError):
             "rebind_admission",
             "use_declared_rung",
         ],
-        repair_command: str,
+        repair: ServedRepairV1,
     ) -> None:
         normalized = (codes,) if isinstance(codes, str) else tuple(codes)
         if not normalized:
@@ -711,16 +717,24 @@ class TerminalAuthorityRefusal(TerminalEgressError):
         self.required_rung = request.required_rung
         self.target_namespace = tuple(getattr(request, "target_paths", ()))
         self.repair_kind = repair_kind
-        self.repair_command = repair_command
+        self.repair = repair
         super().__init__(
             f"{', '.join(normalized)}: {message} "
             f"Procedure={self.procedure_name!r}; required_rung={self.required_rung}; "
-            f"target_namespace={list(self.target_namespace)!r}. Repair: {repair_command}"
+            f"target_namespace={list(self.target_namespace)!r}."
         )
 
 
-PROCEDURE_MANDATE_REPAIR_COMMAND = "cruxible playbill authoring create --example procedure-mandate"
-PROCEDURE_ADMISSION_REPAIR = "Rebuild the terminal request from its exact admitted run."
+PROCEDURE_MANDATE_REPAIR = RepairOperationV1(
+    operation="playbill.authoring.create",
+    arguments={"example": "procedure-mandate"},
+)
+PROCEDURE_ADMISSION_REPAIR = HandEditRepairV1(
+    hand_edit=HandEditInstructionV1(
+        target="terminal-egress/admission",
+        required_change="rebuild_from_exact_admitted_run",
+    )
+)
 
 
 def _validated_run_admission(
@@ -744,7 +758,7 @@ def _validated_run_admission(
             "The authority source is not a valid admitted Procedure run.",
             request=request,
             repair_kind="rebind_admission",
-            repair_command=PROCEDURE_ADMISSION_REPAIR,
+            repair=PROCEDURE_ADMISSION_REPAIR,
         ) from exc
     common_matches = (
         validated.admission_binding_digest == procedure_admission_digest(validated)
@@ -766,7 +780,7 @@ def _validated_run_admission(
             "The terminal request does not reproduce its admitted authority and monotone time.",
             request=request,
             repair_kind="rebind_admission",
-            repair_command=PROCEDURE_ADMISSION_REPAIR,
+            repair=PROCEDURE_ADMISSION_REPAIR,
         )
     return validated
 
@@ -856,7 +870,12 @@ def require_procedure_mandate(
             "Only rung-2 and rung-3 terminals consume Procedure mandates.",
             request=request,
             repair_kind="use_declared_rung",
-            repair_command="Use the terminal's declared rung.",
+            repair=HandEditRepairV1(
+                hand_edit=HandEditInstructionV1(
+                    target="terminal-egress/required-rung",
+                    required_change="use_declared_terminal_rung",
+                )
+            ),
         )
     digest = request.procedure_mandate_digest
     mandate = None if digest is None else accepted_mandates.get(digest)
@@ -866,7 +885,7 @@ def require_procedure_mandate(
             "An exact accepted Procedure mandate is required before effect.",
             request=request,
             repair_kind="create_mandate",
-            repair_command=PROCEDURE_MANDATE_REPAIR_COMMAND,
+            repair=PROCEDURE_MANDATE_REPAIR,
         )
     assert digest is not None
     evaluation = evaluate_procedure_mandate(
@@ -887,7 +906,7 @@ def require_procedure_mandate(
             "The accepted Procedure mandate does not cover this terminal request.",
             request=request,
             repair_kind="author_successor",
-            repair_command=PROCEDURE_MANDATE_REPAIR_COMMAND,
+            repair=PROCEDURE_MANDATE_REPAIR,
         )
     return mandate
 
@@ -1149,7 +1168,7 @@ __all__ = [
     "verify_terminal_egress_receipt",
     "ProcedureProducerReceiptV1",
     "TerminalAuthorityRefusal",
-    "PROCEDURE_MANDATE_REPAIR_COMMAND",
+    "PROCEDURE_MANDATE_REPAIR",
     "procedure_producer_receipt_digest",
     "producer_receipt_for_request",
     "require_procedure_mandate",
