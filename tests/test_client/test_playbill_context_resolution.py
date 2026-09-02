@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from cruxible_client import Playbill
+from cruxible_client import Playbill, contracts
 from cruxible_client.authoring.context import (
     PlaybillContextResolutionError,
     resolve_playbill_context,
@@ -107,7 +107,8 @@ def test_target_components_use_independent_explicit_env_workspace_global_precede
     tmp_path: Path,
 ) -> None:
     workspace = tmp_path / "workspace"
-    _attach(workspace, instance_id="inst_workspace", server_socket="/tmp/workspace.sock")
+    socket = tmp_path / ".b2-workspace.sock"
+    _attach(workspace, instance_id="inst_workspace", server_socket=str(socket))
 
     resolved = resolve_playbill_context(
         server_url="https://explicit.example.test",
@@ -389,13 +390,53 @@ def test_cli_context_show_reports_environment_override_sources(
     assert payload["workspace_attached"] is True
 
 
+def test_context_show_reports_typed_daemon_config_disagreement(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _clear_target_env(monkeypatch)
+    workspace = tmp_path / "workspace"
+    socket = tmp_path / "daemon.sock"
+    _attach(workspace, instance_id="inst_workspace", server_socket=str(socket))
+    monkeypatch.chdir(workspace)
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+
+    class StubClient:
+        def playbill_host_workspace_registration(
+            self, instance_id: str
+        ) -> contracts.PlaybillHostWorkspaceRegistrationV1:
+            assert instance_id == "inst_workspace"
+            return contracts.PlaybillHostWorkspaceRegistrationV1(
+                instance_id=instance_id,
+                status="not_registered",
+            )
+
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.context._get_client",
+        lambda: StubClient(),
+    )
+
+    result = CliRunner().invoke(cli, ["context", "show", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["workspace_config_attachment"]["status"] == "attached"
+    assert payload["daemon_host_registration"]["status"] == "not_registered"
+    assert payload["attachment_disagreement"] == {
+        "tag": "playbill-workspace-attachment-disagreement-v1",
+        "code": "daemon_registration_missing",
+        "detail": "workspace config is attached but the daemon host is not registered",
+    }
+
+
 def test_sdk_connect_consumes_the_shared_workspace_resolution(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     _clear_target_env(monkeypatch)
     workspace = tmp_path / "workspace"
-    _attach(workspace, instance_id="inst_workspace", server_socket="/tmp/workspace.sock")
+    socket = tmp_path / ".b2-workspace.sock"
+    _attach(workspace, instance_id="inst_workspace", server_socket=str(socket))
     _catalog(workspace)
     context_path = tmp_path / "context.json"
     context_path.write_text(
@@ -420,6 +461,6 @@ def test_sdk_connect_consumes_the_shared_workspace_resolution(
     playbill = Playbill.connect(context=context_path, workspace=workspace)
 
     assert connection["base_url"] is None
-    assert connection["socket_path"] == "/tmp/workspace.sock"
+    assert connection["socket_path"] == str(socket)
     assert playbill._instance_id == "inst_workspace"
     assert playbill._workspace == workspace

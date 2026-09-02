@@ -49,6 +49,7 @@ RuntimeCredentialPermissionMode = Literal[
     "admin",
 ]
 PlaybillHostStatus = Literal["created", "already_exists"]
+PlaybillHostWorkspaceRegistrationStatus = Literal["registered", "not_registered"]
 PlaybillAuthoringExampleName = Literal[
     "claim-existing-capture",
     "claim-flow-a",
@@ -127,6 +128,19 @@ class PlaybillHostResult(BaseModel):
 
     instance_id: str
     status: PlaybillHostStatus
+
+
+class PlaybillHostWorkspaceRegistrationV1(BaseModel):
+    """Whether one daemon host has a daemon-local workspace registration."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-host-workspace-registration-v1"] = (
+        "playbill-host-workspace-registration-v1"
+    )
+    instance_id: str
+    status: PlaybillHostWorkspaceRegistrationStatus
+    workspace_path: str | None = None
 
 
 class RuntimeCredentialBootstrapResult(BaseModel):

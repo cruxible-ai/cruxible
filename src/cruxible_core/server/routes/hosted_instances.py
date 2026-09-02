@@ -9,6 +9,7 @@ from cruxible_core.runtime import host_api
 from cruxible_core.server.config import resolve_server_settings
 from cruxible_core.server.request_models import PlaybillHostCreateRequest
 from cruxible_core.server.route_paths import PLAYBILL_HOST_CREATE_PATH
+from cruxible_core.server.routes import resolve_server_instance_id
 
 router = APIRouter(prefix="/api/v1", tags=["playbill-hosts"])
 
@@ -26,6 +27,25 @@ def create_playbill_host(
         instance_id=req.instance_id,
         workspace_root=req.workspace_root,
         workspace_attachment_authorized=(
+            request.scope.get("client") is None
+            and resolve_server_settings().server_socket is not None
+        ),
+    )
+
+
+@router.get(
+    "/{instance_id}/playbill/workspace-registration",
+    response_model=contracts.PlaybillHostWorkspaceRegistrationV1,
+)
+def playbill_host_workspace_registration(
+    instance_id: str,
+    request: Request,
+) -> contracts.PlaybillHostWorkspaceRegistrationV1:
+    """Report daemon attachment; only local-socket callers receive its path."""
+
+    return host_api.playbill_host_workspace_registration(
+        resolve_server_instance_id(instance_id),
+        expose_workspace_path=(
             request.scope.get("client") is None
             and resolve_server_settings().server_socket is not None
         ),

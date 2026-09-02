@@ -84,6 +84,31 @@ def create_playbill_host(
     )
 
 
+def playbill_host_workspace_registration(
+    instance_id: str,
+    *,
+    expose_workspace_path: bool = False,
+) -> contracts.PlaybillHostWorkspaceRegistrationV1:
+    """Report daemon registration separately from client workspace configuration."""
+
+    check_permission(
+        "cruxible_playbill_host_workspace_registration",
+        instance_id=instance_id,
+    )
+    record = get_registry().get(instance_id)
+    if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
+        raise ConfigError(f"Instance '{instance_id}' is not a governed daemon host")
+    return contracts.PlaybillHostWorkspaceRegistrationV1(
+        instance_id=instance_id,
+        status="registered" if record.workspace_root is not None else "not_registered",
+        workspace_path=(
+            record.workspace_root
+            if expose_workspace_path and record.workspace_root is not None
+            else None
+        ),
+    )
+
+
 def server_info() -> contracts.ServerInfoResult:
     """Return daemon metadata without loading any semantic instance."""
 
@@ -123,4 +148,9 @@ def server_restart() -> contracts.ServerRestartResult:
     )
 
 
-__all__ = ["create_playbill_host", "server_info", "server_restart"]
+__all__ = [
+    "create_playbill_host",
+    "playbill_host_workspace_registration",
+    "server_info",
+    "server_restart",
+]

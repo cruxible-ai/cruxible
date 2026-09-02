@@ -16,6 +16,8 @@ from cruxible_client.authoring.workspace import (
     inspect_workspace_floor,
     materialize_playbill_floor,
     observe_playbill_next_workspace,
+    record_playbill_floor_output,
+    write_playbill_workspace_config,
 )
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 
@@ -80,6 +82,87 @@ def _workspace(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return workspace
+
+
+def test_workspace_config_writer_refuses_differences_and_never_carries_secrets(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    written = write_playbill_workspace_config(
+        workspace,
+        instance_id="inst_one",
+        server_url="https://one.example.test",
+    )
+    original = written.read_bytes()
+
+    with pytest.raises(PlaybillWorkspaceError, match="--replace"):
+        write_playbill_workspace_config(
+            workspace,
+            instance_id="inst_two",
+            server_url="https://two.example.test",
+        )
+    assert written.read_bytes() == original
+
+    written.write_text(
+        json.dumps(
+            {
+                "tag": "playbill-coverage-workspace-config-v2",
+                "server_url": "https://one.example.test",
+                "instance_id": "inst_one",
+                "bearer_token": "must-not-survive",
+            }
+        ),
+        encoding="utf-8",
+    )
+    write_playbill_workspace_config(
+        workspace,
+        instance_id="inst_two",
+        server_socket=str(tmp_path / "daemon.sock"),
+        replace=True,
+    )
+    payload = json.loads(written.read_text(encoding="utf-8"))
+    assert payload == {
+        "floor_output": {
+            "format": "playbill-floor-export-v2",
+            "tag": "playbill-floor-output-v1",
+        },
+        "instance_id": "inst_two",
+        "server_socket": str(tmp_path / "daemon.sock"),
+        "tag": "playbill-coverage-workspace-config-v2",
+    }
+    assert "must-not-survive" not in written.read_text(encoding="utf-8")
+
+
+def test_floor_output_writer_upgrades_and_preserves_safe_coverage_rules(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    config_path = workspace / ".playbill" / "coverage.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "tag": "playbill-coverage-workspace-config-v1",
+                "server_url": "https://playbill.example.test",
+                "instance_id": "inst_floor",
+                "rules": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    record_playbill_floor_output(
+        workspace,
+        instance_id="inst_floor",
+        server_url="https://playbill.example.test",
+    )
+
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert payload["tag"] == "playbill-coverage-workspace-config-v2"
+    assert payload["rules"] == []
+    assert payload["floor_output"] == {
+        "tag": "playbill-floor-output-v1",
+        "format": "playbill-floor-export-v2",
+    }
 
 
 def test_materialization_exactly_replaces_and_reports_current(tmp_path: Path) -> None:

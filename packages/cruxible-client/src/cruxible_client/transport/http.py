@@ -198,6 +198,12 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillHostResult)
 
+    def playbill_host_workspace_registration(
+        self, instance_id: str
+    ) -> contracts.PlaybillHostWorkspaceRegistrationV1:
+        response = self._client.get(f"/api/v1/{instance_id}/playbill/workspace-registration")
+        return self._parse_model(response, contracts.PlaybillHostWorkspaceRegistrationV1)
+
     def claim_runtime_bootstrap(
         self, instance_id: str, bootstrap_secret: str
     ) -> contracts.RuntimeCredentialBootstrapResult:

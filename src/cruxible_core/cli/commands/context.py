@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import click
 
 from cruxible_core.cli.commands._common import (
     _clear_persisted_cli_context,
     _emit_json,
+    _get_client,
     _load_persisted_cli_context,
     _persist_cli_context,
     _root_ctx_obj,
@@ -26,6 +29,57 @@ def connect_group() -> None:
 def context_show(output_json: bool) -> None:
     """Show the resolved workspace-aware CLI context and each value's source."""
     obj = _root_ctx_obj()
+    registration: dict[str, object] = {
+        "tag": "playbill-daemon-host-registration-status-v1",
+        "instance_id": obj.get("instance_id"),
+        "status": "unavailable",
+        "workspace_path": None,
+        "reason": "no_instance",
+    }
+    client = _get_client()
+    if client is not None and obj.get("instance_id"):
+        try:
+            observed = client.playbill_host_workspace_registration(str(obj["instance_id"]))
+            registration = {
+                "tag": "playbill-daemon-host-registration-status-v1",
+                **observed.model_dump(mode="json", exclude={"tag"}),
+                "reason": None,
+            }
+        except Exception as exc:  # noqa: BLE001 - context diagnostics remain locally readable
+            registration["reason"] = f"registration_unavailable: {exc}"
+
+    config_attachment = {
+        "tag": "playbill-workspace-config-attachment-status-v1",
+        "status": "attached" if obj.get("workspace_attached") else "not_attached",
+        "workspace_path": obj.get("playbill_workspace"),
+        "config_path": obj.get("workspace_binding_path"),
+    }
+    disagreement: dict[str, str] | None = None
+    if obj.get("server_socket"):
+        registered = registration["status"] == "registered"
+        configured = bool(obj.get("workspace_attached"))
+        registered_path = registration.get("workspace_path")
+        workspace_path = obj.get("playbill_workspace")
+        if configured and not registered and registration["status"] != "unavailable":
+            disagreement = {
+                "tag": "playbill-workspace-attachment-disagreement-v1",
+                "code": "daemon_registration_missing",
+                "detail": "workspace config is attached but the daemon host is not registered",
+            }
+        elif configured and registered and registered_path is not None and workspace_path:
+            if Path(str(registered_path)).resolve() != Path(str(workspace_path)).resolve():
+                disagreement = {
+                    "tag": "playbill-workspace-attachment-disagreement-v1",
+                    "code": "daemon_workspace_differs",
+                    "detail": "daemon registration names a different local workspace",
+                }
+        elif not configured and registered and registered_path is not None and workspace_path:
+            if Path(str(registered_path)).resolve() == Path(str(workspace_path)).resolve():
+                disagreement = {
+                    "tag": "playbill-workspace-attachment-disagreement-v1",
+                    "code": "workspace_config_missing",
+                    "detail": "daemon host is registered here but the workspace config is absent",
+                }
     payload = {
         "server_url": obj.get("server_url"),
         "server_socket": obj.get("server_socket"),
@@ -36,6 +90,9 @@ def context_show(output_json: bool) -> None:
         "workspace_source": obj.get("workspace_source", "local"),
         "workspace_binding_path": obj.get("workspace_binding_path"),
         "workspace_attached": bool(obj.get("workspace_attached")),
+        "workspace_config_attachment": config_attachment,
+        "daemon_host_registration": registration,
+        "attachment_disagreement": disagreement,
     }
     if output_json:
         _emit_json(payload)
@@ -51,6 +108,10 @@ def context_show(output_json: bool) -> None:
     click.echo(f"Instance ID: {payload['instance_id'] or '<none>'} ({instance_source})")
     attachment = "attached" if payload["workspace_attached"] else "not attached"
     click.echo(f"Workspace: {payload['workspace']} ({payload['workspace_source']}, {attachment})")
+    click.echo(f"Workspace config: {config_attachment['status']}")
+    click.echo(f"Daemon host registration: {registration['status']}")
+    if disagreement is not None:
+        click.echo(f"Attachment disagreement: {disagreement['code']}")
 
 
 @connect_group.command("connect")

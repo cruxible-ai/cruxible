@@ -221,11 +221,12 @@ def test_ambiguous_rules_are_refused_at_load_rather_than_resolved_by_file_order(
 
 def test_the_config_round_trips_through_the_committed_file_shape(workspace: Path) -> None:
     (workspace / ".playbill").mkdir()
+    socket = workspace / ".b2-cruxible-workspace.sock"
     (workspace / CONFIG_RELATIVE_PATH).write_text(
         json.dumps(
             {
                 "instance_id": "inst_0123456789abcdef",
-                "server_socket": "/tmp/cruxible-workspace.sock",
+                "server_socket": str(socket),
                 "scan_budget": {"max_scanned_bytes": 4096},
                 "max_observed_paths": 8,
                 "rules": [
@@ -245,7 +246,7 @@ def test_the_config_round_trips_through_the_committed_file_shape(workspace: Path
     loaded = load_coverage_config(workspace)
 
     assert loaded.instance_id == "inst_0123456789abcdef"
-    assert loaded.server_socket == "/tmp/cruxible-workspace.sock"
+    assert loaded.server_socket == str(socket)
     assert loaded.source_for("corpus/handbook.md").identity == "corpus.handbook.md"  # type: ignore[union-attr]
     # Both budgets survive the round trip: the scan budget rides to the
     # operation with the caller's resolver, and the path bound is applied here.
@@ -261,7 +262,7 @@ def test_workspace_config_refuses_two_transport_bindings(
     with pytest.raises(ValueError, match="both URL and socket"):
         model(
             server_url="https://playbill.example.test",
-            server_socket="/tmp/playbill.sock",
+            server_socket=".b2-playbill.sock",
         )
 
 

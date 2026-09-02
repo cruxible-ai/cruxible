@@ -9,6 +9,7 @@ from click.testing import CliRunner
 
 from cruxible_client import contracts
 from cruxible_core.cli.main import cli
+from cruxible_core.playbill.coverage.middleware import CoverageWorkspaceConfigV2
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
     git_oid="1" * 64,
@@ -106,6 +107,65 @@ def test_cli_init_remembers_the_initialized_instance(monkeypatch, tmp_path) -> N
     assert json.loads(context_path.read_text())["instance_id"] == "inst_cli_init"
 
 
+def test_cli_init_writes_an_explicit_remote_workspace_config(monkeypatch, tmp_path) -> None:
+    workspace = tmp_path / "workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    monkeypatch.chdir(tmp_path)
+
+    class StubClient:
+        def init_playbill(
+            self,
+            instance_id: str,
+            *,
+            principals: list[dict[str, object]],
+            operating_profile: str,
+            require_independent_approval: bool,
+            workspace_root: str | None = None,
+        ) -> contracts.PlaybillInitResult:
+            assert workspace_root is None
+            return contracts.PlaybillInitResult(
+                instance_id=instance_id,
+                coordinate=COORDINATE,
+                trust_root={},
+                recovery_posture="normal",
+                approval_policy_mode="self_approval_allowed",
+                workspace_advertisement={"status": "not_attached", "workspace_path": None},
+            )
+
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client",
+        lambda: StubClient(),
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.example.test",
+            "--instance-id",
+            "inst_cli_init",
+            "playbill",
+            "init",
+            "--workspace",
+            str(workspace),
+            "--key-dir",
+            str(tmp_path / "custody"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    config = json.loads((workspace / ".playbill" / "coverage.json").read_text())
+    assert config["server_url"] == "https://playbill.example.test"
+    assert config["instance_id"] == "inst_cli_init"
+    assert config["floor_output"]["format"] == "playbill-floor-export-v2"
+
+
 def test_unix_socket_host_attach_uses_the_containing_git_worktree(
     monkeypatch,
     tmp_path,
@@ -153,6 +213,68 @@ def test_unix_socket_host_attach_uses_the_containing_git_worktree(
 
     assert result.exit_code == 0, result.output
     assert calls == [str(workspace.resolve())]
+    config = json.loads((workspace / ".playbill" / "coverage.json").read_text())
+    assert config["server_socket"] == str(tmp_path / "cruxible.sock")
+    assert config["instance_id"] == "inst_socket"
+    assert "server_url" not in config
+    assert "token" not in json.dumps(config).casefold()
+
+
+def test_explicit_remote_workspace_config_never_sends_the_client_path(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+
+    class StubClient:
+        def create_playbill_host(
+            self,
+            *,
+            instance_id: str | None = None,
+            workspace_root: str | None = None,
+        ) -> contracts.PlaybillHostResult:
+            assert workspace_root is None
+            return contracts.PlaybillHostResult(instance_id=instance_id or "inst", status="created")
+
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client",
+        lambda: StubClient(),
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.example.test",
+            "playbill",
+            "host",
+            "create",
+            "--instance-id",
+            "inst_remote",
+            "--workspace",
+            str(workspace),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    config = json.loads((workspace / ".playbill" / "coverage.json").read_text())
+    CoverageWorkspaceConfigV2.model_validate(config)
+    assert config == {
+        "floor_output": {
+            "format": "playbill-floor-export-v2",
+            "tag": "playbill-floor-output-v1",
+        },
+        "instance_id": "inst_remote",
+        "server_url": "https://playbill.example.test",
+        "tag": "playbill-coverage-workspace-config-v2",
+    }
 
 
 def test_cli_lists_documents_with_their_canonical_coordinate(monkeypatch) -> None:

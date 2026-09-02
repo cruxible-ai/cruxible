@@ -160,6 +160,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
 # HTTP/CLI operations that share the same runtime boundary without being MCP tools.
 RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_playbill_claim_attestation_recover": PermissionMode.ADMIN,
+    "cruxible_playbill_host_workspace_registration": PermissionMode.READ_ONLY,
     "cruxible_playbill_inspect": PermissionMode.READ_ONLY,
     "cruxible_playbill_read": PermissionMode.READ_ONLY,
     "cruxible_playbill_next": PermissionMode.READ_ONLY,

@@ -44,6 +44,9 @@ from cruxible_client.authoring.sources import (
 from cruxible_client.authoring.workspace import (
     observe_playbill_next_workspace_with_coverage,
     observe_playbill_projection_coverage,
+    record_playbill_floor_output,
+    validate_playbill_workspace_config_write,
+    write_playbill_workspace_config,
 )
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.canonical import canonical_bytes
@@ -349,6 +352,35 @@ def _local_git_workspace_root() -> Path | None:
         return None
 
 
+def _explicit_git_workspace_root(value: str) -> Path:
+    try:
+        selected = Path(value).expanduser().resolve(strict=True)
+    except OSError as exc:
+        raise click.UsageError(f"--workspace is not an accessible directory: {value}") from exc
+    completed = subprocess.run(
+        ["git", "-C", str(selected), "rev-parse", "--show-toplevel"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    if completed.returncode != 0:
+        raise click.UsageError("--workspace must select a path inside one Git worktree")
+    try:
+        return Path(completed.stdout.strip()).resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise click.UsageError("--workspace Git root cannot be resolved") from exc
+
+
+def _workspace_config_transport() -> dict[str, str]:
+    obj = _root_ctx_obj()
+    if obj.get("server_socket"):
+        return {"server_socket": str(obj["server_socket"])}
+    if obj.get("server_url"):
+        return {"server_url": str(obj["server_url"])}
+    raise click.UsageError("Server mode is required to attach a workspace")
+
+
 def _refuse_tcp_workspace_operation(git_workspace: Path | None) -> None:
     if git_workspace is not None and _root_ctx_obj().get("server_url"):
         raise click.UsageError(
@@ -559,18 +591,44 @@ def host_group() -> None:
 
 @host_group.command("create")
 @click.option("--instance-id", default=None, help="Optional caller-selected opaque ID.")
+@click.option(
+    "--workspace",
+    "workspace_path",
+    default=None,
+    type=click.Path(exists=True, file_okay=False),
+    help="Explicit Git workspace to configure; remote paths stay client-local.",
+)
+@click.option("--replace", is_flag=True, help="Replace a differing workspace config.")
 @json_option
 @handle_errors
-def create_host(instance_id: str | None, output_json: bool) -> None:
+def create_host(
+    instance_id: str | None,
+    workspace_path: str | None,
+    replace: bool,
+    output_json: bool,
+) -> None:
     """Allocate an empty host and remember it as the active instance."""
 
-    git_workspace = _local_git_workspace_root()
-    _refuse_tcp_workspace_operation(git_workspace)
+    git_workspace = (
+        _explicit_git_workspace_root(workspace_path)
+        if workspace_path is not None
+        else _local_git_workspace_root()
+    )
+    if workspace_path is None:
+        _refuse_tcp_workspace_operation(git_workspace)
     workspace_root = (
         str(git_workspace)
         if git_workspace is not None and _root_ctx_obj().get("server_socket")
         else None
     )
+    config_transport = _workspace_config_transport() if git_workspace is not None else {}
+    if git_workspace is not None:
+        validate_playbill_workspace_config_write(
+            git_workspace,
+            instance_id=instance_id,
+            replace=replace,
+            **config_transport,
+        )
     result = _dispatch_cli(
         lambda client: client.create_playbill_host(
             instance_id=instance_id,
@@ -581,6 +639,13 @@ def create_host(instance_id: str | None, output_json: bool) -> None:
         command_name="playbill host create",
     )
     assert isinstance(result, contracts.PlaybillHostResult)
+    if git_workspace is not None:
+        write_playbill_workspace_config(
+            git_workspace,
+            instance_id=result.instance_id,
+            replace=replace,
+            **config_transport,
+        )
     _activate_server_instance(result.instance_id)
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -604,6 +669,14 @@ def create_host(instance_id: str | None, output_json: bool) -> None:
 @click.option("--recovery-key-dir", default=None, help="Optional offline recovery custody dir.")
 @click.option("--recovery-principal-id", default="recovery", show_default=True)
 @click.option("--profile", type=click.Choice(["local", "cloud"]), default="local")
+@click.option(
+    "--workspace",
+    "workspace_path",
+    default=None,
+    type=click.Path(exists=True, file_okay=False),
+    help="Explicit Git workspace to configure; remote paths stay client-local.",
+)
+@click.option("--replace", is_flag=True, help="Replace a differing workspace config.")
 @json_option
 @handle_errors
 def init_playbill(
@@ -614,20 +687,35 @@ def init_playbill(
     recovery_key_dir: str | None,
     recovery_principal_id: str,
     profile: str,
+    workspace_path: str | None,
+    replace: bool,
     output_json: bool,
 ) -> None:
     """Create client custody and bootstrap the governed approval policy."""
 
-    git_workspace = _local_git_workspace_root()
+    git_workspace = (
+        _explicit_git_workspace_root(workspace_path)
+        if workspace_path is not None
+        else _local_git_workspace_root()
+    )
     if require_independent_approval and reviewer_key_dir is None:
         raise click.UsageError("--require-independent-approval requires --reviewer-key-dir")
-    _refuse_tcp_workspace_operation(git_workspace)
+    if workspace_path is None:
+        _refuse_tcp_workspace_operation(git_workspace)
     if _get_client() is None:
         raise click.UsageError("Local execution disabled for playbill init; use server mode.")
     selected = _require_instance_id()
     transport = _transport_target(_root_ctx_obj())
     if transport is None:  # pragma: no cover - guarded by _get_client above
         raise click.UsageError("Server mode is required for playbill init")
+    config_transport = _workspace_config_transport() if git_workspace is not None else {}
+    if git_workspace is not None:
+        validate_playbill_workspace_config_write(
+            git_workspace,
+            instance_id=selected,
+            replace=replace,
+            **config_transport,
+        )
     workspace = git_workspace
     specifications: list[tuple[Path, str, PrincipalKind]] = [
         (Path(key_dir).expanduser(), principal_id, "ordinary")
@@ -660,6 +748,13 @@ def init_playbill(
         ),
         command_name="playbill init",
     )
+    if git_workspace is not None:
+        write_playbill_workspace_config(
+            git_workspace,
+            instance_id=result.instance_id,
+            replace=replace,
+            **config_transport,
+        )
     for marker in markers:
         marker.unlink()
     _activate_server_instance(result.instance_id)
@@ -3486,6 +3581,11 @@ def export_floor(
     if workspace_root is None:
         raise click.UsageError("playbill floor export must run inside one Git worktree")
     written = materialize_playbill_floor(workspace_root, export=result, force=force)
+    record_playbill_floor_output(
+        workspace_root,
+        instance_id=_require_instance_id(),
+        **_workspace_config_transport(),
+    )
     if output_json:
         _emit_json(result.manifest)
         return

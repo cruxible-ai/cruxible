@@ -10,12 +10,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import secrets
 import shutil
 import tempfile
 import unicodedata
 from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
+from tempfile import NamedTemporaryFile
 from typing import Any, Literal, Protocol, cast
 
 from cruxible_client import contracts
@@ -45,10 +47,235 @@ from cruxible_client.contracts.workspace_layout import PLAYBILL_FLOOR_PATH
 
 _CONFIG_PATH = PurePosixPath(".playbill/coverage.json")
 _FLOOR_DOMAIN = "playbill-floor-export-v2"
+_WORKSPACE_CONFIG_TAG = "playbill-coverage-workspace-config-v2"
+_FLOOR_OUTPUT = {
+    "tag": "playbill-floor-output-v1",
+    "format": _FLOOR_DOMAIN,
+}
+_WORKSPACE_CONFIG_FIELDS = frozenset(
+    {
+        "tag",
+        "instance_id",
+        "server_url",
+        "server_socket",
+        "root",
+        "rules",
+        "scan_budget",
+        "max_observed_paths",
+        "floor_output",
+    }
+)
+_SECRET_FIELD_FRAGMENTS = ("bearer", "credential", "password", "secret", "token")
 
 
 class PlaybillWorkspaceError(PlaybillError, ValueError):
     """A client workspace or exported floor failed deterministic validation."""
+
+
+def _contains_secret_field(value: object) -> bool:
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            normalized = str(key).casefold().replace("-", "_")
+            if any(fragment in normalized for fragment in _SECRET_FIELD_FRAGMENTS):
+                return True
+            if _contains_secret_field(child):
+                return True
+    elif isinstance(value, list | tuple):
+        return any(_contains_secret_field(child) for child in value)
+    return False
+
+
+def _read_workspace_config(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    if path.is_symlink():
+        raise PlaybillWorkspaceError("coverage config must not be a symbolic link")
+    try:
+        payload: Any = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PlaybillWorkspaceError(f"coverage config is invalid: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise PlaybillWorkspaceError("coverage config is not an object")
+    if _contains_secret_field(payload):
+        raise PlaybillWorkspaceError(
+            "coverage config contains a forbidden bearer, credential, password, secret, or "
+            "token field"
+        )
+    unknown = sorted(set(payload).difference(_WORKSPACE_CONFIG_FIELDS))
+    if unknown:
+        raise PlaybillWorkspaceError(
+            f"coverage config contains unsupported field(s): {', '.join(unknown)}"
+        )
+    return payload
+
+
+def _atomic_write_workspace_config(path: Path, payload: Mapping[str, Any]) -> None:
+    if _contains_secret_field(payload):  # defensive: writer inputs are fixed below
+        raise PlaybillWorkspaceError("coverage config writer refuses secret-bearing data")
+    content = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workspace = path.parent.parent.resolve(strict=True)
+    if path.parent.resolve(strict=True).parent != workspace:
+        raise PlaybillWorkspaceError("coverage config directory escapes the workspace root")
+    temporary: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            mode="wb",
+            prefix=".coverage.json.",
+            dir=path.parent,
+            delete=False,
+        ) as output:
+            temporary = Path(output.name)
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+        temporary = None
+        descriptor = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        raise PlaybillWorkspaceError(
+            f"coverage config could not be written atomically: {exc}"
+        ) from exc
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _planned_workspace_config(
+    workspace: str | Path,
+    *,
+    instance_id: str | None,
+    server_url: str | None = None,
+    server_socket: str | None = None,
+    replace: bool = False,
+) -> tuple[Path, dict[str, Any] | None, bool]:
+    root = _workspace_root(workspace)
+    if instance_id is not None and not instance_id.strip():
+        raise PlaybillWorkspaceError("workspace instance_id must be nonempty")
+    transports = [value for value in (server_url, server_socket) if value is not None]
+    if len(transports) != 1 or not transports[0].strip():
+        raise PlaybillWorkspaceError("workspace config requires exactly one nonempty transport")
+    path = root / _CONFIG_PATH
+    try:
+        existing = _read_workspace_config(path)
+    except PlaybillWorkspaceError:
+        if not replace:
+            raise
+        existing = None
+    if instance_id is None:
+        if existing is not None and not replace:
+            raise PlaybillWorkspaceError(
+                f"refusing to overwrite differing workspace config {path}; rerun with --replace"
+            )
+        return path, None, False
+    desired: dict[str, Any] = (
+        dict(existing)
+        if existing is not None and existing.get("tag") == _WORKSPACE_CONFIG_TAG
+        else {}
+    )
+    desired.update(
+        {
+            "tag": _WORKSPACE_CONFIG_TAG,
+            "instance_id": instance_id,
+            "floor_output": dict(_FLOOR_OUTPUT),
+        }
+    )
+    desired.pop("server_url", None)
+    desired.pop("server_socket", None)
+    desired["server_url" if server_url is not None else "server_socket"] = (
+        server_url if server_url is not None else server_socket
+    )
+    if existing == desired:
+        return path, desired, True
+    if existing is not None and not replace:
+        raise PlaybillWorkspaceError(
+            f"refusing to overwrite differing workspace config {path}; rerun with --replace"
+        )
+    return path, desired, False
+
+
+def validate_playbill_workspace_config_write(
+    workspace: str | Path,
+    *,
+    instance_id: str | None,
+    server_url: str | None = None,
+    server_socket: str | None = None,
+    replace: bool = False,
+) -> None:
+    """Refuse a differing config before a host or init request mutates daemon state."""
+
+    _planned_workspace_config(
+        workspace,
+        instance_id=instance_id,
+        server_url=server_url,
+        server_socket=server_socket,
+        replace=replace,
+    )
+
+
+def write_playbill_workspace_config(
+    workspace: str | Path,
+    *,
+    instance_id: str,
+    server_url: str | None = None,
+    server_socket: str | None = None,
+    replace: bool = False,
+) -> Path:
+    """Attach one workspace target without ever accepting or persisting a secret."""
+
+    path, desired, current = _planned_workspace_config(
+        workspace,
+        instance_id=instance_id,
+        server_url=server_url,
+        server_socket=server_socket,
+        replace=replace,
+    )
+    assert desired is not None
+    if current:
+        return path
+    _atomic_write_workspace_config(path, desired)
+    return path
+
+
+def record_playbill_floor_output(
+    workspace: str | Path,
+    *,
+    instance_id: str,
+    server_url: str | None = None,
+    server_socket: str | None = None,
+) -> Path:
+    """Record the fixed floor output while preserving safe existing coverage fields."""
+
+    root = _workspace_root(workspace)
+    path = root / _CONFIG_PATH
+    existing = _read_workspace_config(path)
+    if existing is None:
+        return write_playbill_workspace_config(
+            root,
+            instance_id=instance_id,
+            server_url=server_url,
+            server_socket=server_socket,
+        )
+    tag = existing.get("tag")
+    if tag not in {
+        "playbill-coverage-workspace-config-v1",
+        _WORKSPACE_CONFIG_TAG,
+    }:
+        raise PlaybillWorkspaceError("coverage config has an unsupported tag")
+    output = existing.get("floor_output")
+    if output is not None:
+        if output != _FLOOR_OUTPUT:
+            raise PlaybillWorkspaceError("coverage floor_output has an unsupported profile")
+        return path
+    desired = dict(existing)
+    desired["tag"] = _WORKSPACE_CONFIG_TAG
+    desired["floor_output"] = dict(_FLOOR_OUTPUT)
+    _atomic_write_workspace_config(path, desired)
+    return path
 
 
 def _presentation_policy(
@@ -1152,5 +1379,8 @@ __all__ = [
     "observe_playbill_next_workspace_with_coverage",
     "observe_playbill_projection_coverage",
     "materialize_playbill_floor",
+    "record_playbill_floor_output",
+    "validate_playbill_workspace_config_write",
     "verified_floor_files",
+    "write_playbill_workspace_config",
 ]

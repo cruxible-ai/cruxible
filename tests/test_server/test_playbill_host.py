@@ -166,6 +166,35 @@ def test_workspace_dedupe_never_replaces_an_explicit_host_id(
     assert not registry.governed_instance_location("inst_workspace_race").exists()
 
 
+def test_host_registration_status_separates_remote_visibility_from_registration(
+    host_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "registered-workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", "--object-format=sha1", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    host_api.create_playbill_host(
+        instance_id="inst_registration_status",
+        workspace_root=str(workspace),
+        workspace_attachment_authorized=True,
+    )
+
+    local = host_api.playbill_host_workspace_registration(
+        "inst_registration_status",
+        expose_workspace_path=True,
+    )
+    assert local.status == "registered"
+    assert local.workspace_path == str(workspace.resolve())
+
+    remote = host_client.get("/api/v1/inst_registration_status/playbill/workspace-registration")
+    assert remote.status_code == 200, remote.text
+    assert remote.json()["status"] == "registered"
+    assert remote.json()["workspace_path"] is None
+
+
 def test_transport_credentials_do_not_initialize_playbill_or_a_legacy_graph(
     host_client: TestClient,
 ) -> None:

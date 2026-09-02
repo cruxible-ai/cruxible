@@ -5,12 +5,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 from typing import Literal
 
 from click.testing import CliRunner
 
 from cruxible_client import contracts
+from cruxible_client.authoring.workspace import observe_playbill_next_workspace
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.errors import ProposalActivationRequestInvalid
 from cruxible_core.cli.context import CliContextState, save_cli_context
@@ -114,6 +116,47 @@ def _install_client(
             return _export(corrupt=corrupt)
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+
+def test_floor_export_records_missing_config_and_clears_floor_missing(
+    monkeypatch,  # type: ignore[no-untyped-def]
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    monkeypatch.chdir(workspace)
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    save_cli_context(CliContextState(server_url="http://test", instance_id="inst_test"))
+
+    class StubClient:
+        def export_playbill_floor(
+            self,
+            instance_id: str,
+            *,
+            at=None,  # type: ignore[no-untyped-def]
+        ) -> contracts.PlaybillFloorExport:
+            assert instance_id == "inst_test"
+            assert at is None
+            return _export()
+
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client",
+        lambda: StubClient(),
+    )
+
+    result = CliRunner().invoke(cli, ["playbill", "floor", "export", "--json"])
+
+    assert result.exit_code == 0, result.output
+    config = json.loads((workspace / ".playbill" / "coverage.json").read_text())
+    assert config["floor_output"]["format"] == "playbill-floor-export-v2"
+    observation = observe_playbill_next_workspace(workspace)
+    assert observation["floor_status"] != "missing"
+    assert observation["floor_status"] != "not_configured"
+    assert observation["installed_coordinate"] == _coordinate().model_dump(mode="json")
 
 
 def test_accepted_activation_exactly_replaces_the_declared_floor(
