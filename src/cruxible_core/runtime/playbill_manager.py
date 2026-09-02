@@ -24,6 +24,7 @@ from cruxible_core.playbill.workspace_advertisement import (
     advertise_workspace_refs,
     workspace_git_object_format,
 )
+from cruxible_core.playbill.workspace_file import WorkspaceFileReader
 from cruxible_core.runtime.provider_runtime import (
     ProviderRecoveryFoldDisposition,
     ProviderRuntimeOperator,
@@ -221,6 +222,22 @@ class PlaybillInstanceManager:
                 self._bind_provider_runtime_recovery_fold(known)
                 self._provider_runtime_operators[state_root] = known
             return known
+
+    def workspace_file_reader(self, instance_id: str) -> WorkspaceFileReader:
+        """Bind workspace reads to registry attachment plus daemon operational config."""
+
+        managed_root, _trust_path, attached_roots = self._paths(instance_id)
+        instance = self.get(instance_id)
+        operator = self.provider_runtime_operator()
+        return WorkspaceFileReader(
+            instance_id=instance_id,
+            operating_profile=instance.descriptor.operating_profile,
+            attached_roots=attached_roots,
+            operational_allowed_roots=tuple(
+                Path(item) for item in operator.config.workspace_allowed_roots
+            ),
+            managed_roots=(managed_root,),
+        )
 
     def cached_provider_runtime_operator(self) -> ProviderRuntimeOperator:
         """Return the already-cached operator without retrying construction."""

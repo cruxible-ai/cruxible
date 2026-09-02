@@ -152,6 +152,18 @@ class ProviderRuntimeOperationalConfigV1(_StrictOperationalModel):
         gt=0,
     )
     deployments: tuple[ProviderDeploymentConfigV1, ...] = ()
+    workspace_allowed_roots: tuple[str, ...] = ()
+
+    @field_validator("workspace_allowed_roots")
+    @classmethod
+    def _workspace_allowed_roots(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("Workspace allowed roots must be sorted and unique")
+        for item in value:
+            path = Path(item)
+            if not path.is_absolute() or item != str(path) or ".." in path.parts:
+                raise ValueError("Workspace allowed roots must be canonical absolute paths")
+        return value
 
     @field_validator("deployments")
     @classmethod
