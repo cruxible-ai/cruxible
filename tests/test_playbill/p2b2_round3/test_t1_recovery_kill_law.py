@@ -20,6 +20,7 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_core.playbill.provider_process_leases import (
     ProviderLocalRuntimeRefused,
     ProviderProcessLeaseStore,
+    ProviderProcessRecoveryResultV1,
     _current_boot_id,
     _process_start_time,
 )
@@ -321,6 +322,14 @@ def test_an_unkillable_group_degrades_the_lane_and_strands_the_durable_start(
     from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
 
     operator = ProviderRuntimeOperator(short_root)
+    folded: list[ProviderProcessRecoveryResultV1] = []
+
+    def fold_recovery(result: ProviderProcessRecoveryResultV1) -> bool:
+        operator.acknowledge_recovery(result.completion_invocation_ids)
+        folded.append(result)
+        return True
+
+    operator.bind_recovery_fold(fold_recovery)
     assert operator.process_leases is not None
     store = operator.process_leases
     store.recovery_timeout_seconds = 0.2
@@ -360,6 +369,7 @@ def test_an_unkillable_group_degrades_the_lane_and_strands_the_durable_start(
         )
         assert operator.unavailable_reason is None
         assert not record_path.exists()
+        assert len(folded) == 1
     finally:
         monkeypatch.undo()
         _reap(victim)
