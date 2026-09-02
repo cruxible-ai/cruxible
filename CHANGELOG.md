@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Playbill workspace context and deterministic repair move together (PC-DF3).**
+  Publication blocks can sync through the read-only sync-backing route while
+  preserving local edits with `block_locally_modified`, `--discard-local`,
+  `--check`, and `--detach`; accepted activation syncs attached workspaces last
+  unless `--no-sync` is selected. Git workspaces now observe
+  `playbill/accepted` and proposal remote branches, with `review open` and
+  `review close` managing detached review worktrees. Attached hosts persist
+  `.playbill/coverage.json` v2 atomically, with `--replace` required for a
+  differing file, and `context show` separates config attachment from daemon
+  registration. The `next` vocabulary now covers workspace attachment,
+  projection repair, curation, and stale publication-block synchronization.
+
 - **Provider local-runtime fences are bounded and observable (P2-B2).** Provider
   child groups are killed and reaped on every completion path, with deterministic
   same-session and best-effort cross-session descendant sweeps, typed process-lease
