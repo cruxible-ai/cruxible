@@ -16,6 +16,7 @@ from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.procedures.calibration import (
     ProcedureCalibrationCohortMembershipWitnessV1,
     ProcedureCalibrationReadingV1,
+    ProcedureCalibrationReadingV2,
     ProcedureCalibrationRelationCohortWitnessV1,
     ProcedureCalibrationWitnessError,
     VerifiedProcedureCalibrationRunReceiptV1,
@@ -24,6 +25,7 @@ from cruxible_core.playbill.procedures.calibration import (
     load_procedure_calibration_reading,
     procedure_calibration_cohort_membership_witness_digest,
     procedure_calibration_reading_digest,
+    procedure_calibration_reading_id,
     produce_procedure_calibration_reading,
     store_procedure_calibration_reading,
 )
@@ -142,6 +144,8 @@ def test_reading_scores_both_settled_outcomes_and_ignores_verdict_fields(tmp_pat
     )
 
     assert reading is not None
+    assert isinstance(reading, ProcedureCalibrationReadingV2)
+    assert reading.derivation == "live"
     assert reading.score.settled_count == 2
     assert reading.score.settled_true_count == 1
     assert reading.score.settled_false_count == 1
@@ -154,6 +158,7 @@ def test_reading_scores_both_settled_outcomes_and_ignores_verdict_fields(tmp_pat
     reading_fields = reading.model_dump(mode="json")
     assert "verdict" not in reading_fields
     assert "claim_attestation_digests" not in reading_fields
+    assert reading_fields["derivation"] == "live"
 
 
 def test_membership_witness_is_built_only_from_reproducing_run_receipts(tmp_path) -> None:
@@ -291,6 +296,54 @@ def test_reading_is_exactly_pinned_to_immutable_cas_bytes(tmp_path) -> None:
     payload["selected_relation_digests"] = tuple(reversed(reading.selected_relation_digests))
     with pytest.raises(ValueError, match="byte-sorted"):
         ProcedureCalibrationReadingV1.model_validate(payload)
+
+
+def test_reading_v2_succeeds_v1_without_reinterpreting_legacy_bytes(tmp_path) -> None:
+    activations, bodies, result, receipt = _query(tmp_path)
+    cohort = _cohort(activations[0].procedure_artifact_digest)
+    current = produce_procedure_calibration_reading(
+        result=result,
+        receipt=receipt,
+        cohort=cohort,
+        cohort_membership_witness=_witness(result, cohort),
+    )
+    assert isinstance(current, ProcedureCalibrationReadingV2)
+
+    legacy_values = current.model_dump(mode="python")
+    legacy_values.pop("derivation")
+    legacy_values["tag"] = "playbill-procedure-calibration-reading-v1"
+    legacy_values["reading_id"] = ""
+    legacy_values["cohort"] = current.cohort
+    legacy_values["accepted_coordinate"] = current.accepted_coordinate
+    legacy_values["score"] = current.score
+    provisional = ProcedureCalibrationReadingV1.model_construct(**legacy_values)
+    legacy_values["reading_id"] = procedure_calibration_reading_id(provisional)
+    legacy = ProcedureCalibrationReadingV1.model_validate(legacy_values)
+
+    assert legacy.derivation == "live"
+    assert "derivation" not in legacy.model_dump(mode="json")
+    assert procedure_calibration_reading_digest(legacy) != procedure_calibration_reading_digest(
+        current
+    )
+    artifact = store_procedure_calibration_reading(bodies, legacy)
+    assert (
+        load_procedure_calibration_reading(
+            bodies,
+            artifact,
+            access=BodyAccessContext(principal_id="legacy-reader", can_read_body=True),
+            expected_cohort_key=cohort.cohort_key,
+        )
+        == legacy
+    )
+
+    missing_derivation = current.model_dump(mode="python")
+    missing_derivation.pop("derivation")
+    with pytest.raises(ValueError, match="derivation"):
+        ProcedureCalibrationReadingV2.model_validate(missing_derivation)
+    with pytest.raises(ValueError, match="derivation"):
+        ProcedureCalibrationReadingV2.model_validate(
+            {**current.model_dump(mode="python"), "derivation": "historical"}
+        )
 
 
 def test_g2_cohort_changes_for_provider_successor_and_never_implicitly_carries(tmp_path) -> None:

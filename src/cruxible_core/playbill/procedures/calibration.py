@@ -342,6 +342,12 @@ class ProcedureCalibrationReadingV1(_StrictCalibrationModel):
     selected_relation_digests: tuple[str, ...]
     score: ProcedureCalibrationScoreV1
 
+    @property
+    def derivation(self) -> Literal["live"]:
+        """Project the frozen v1 reading as its historical live derivation."""
+
+        return "live"
+
     @field_validator(
         "query_request_digest",
         "query_result_digest",
@@ -372,22 +378,82 @@ class ProcedureCalibrationReadingV1(_StrictCalibrationModel):
         return self
 
 
-def procedure_calibration_reading_id(reading: ProcedureCalibrationReadingV1) -> str:
+class ProcedureCalibrationReadingV2(_StrictCalibrationModel):
+    """Successor reading that distinguishes live evidence from replay backtests."""
+
+    tag: Literal["playbill-procedure-calibration-reading-v2"] = (
+        "playbill-procedure-calibration-reading-v2"
+    )
+    reading_id: str
+    cohort: ProcedureCalibrationCohortV1
+    accepted_coordinate: AcceptedCoordinate
+    query_request_digest: str
+    query_result_digest: str
+    query_receipt_digest: str
+    cohort_membership_witness_digest: str
+    selected_relation_digests: tuple[str, ...]
+    score: ProcedureCalibrationScoreV1
+    derivation: Literal["live", "replay-backtest"]
+
+    @field_validator(
+        "query_request_digest",
+        "query_result_digest",
+        "query_receipt_digest",
+        "cohort_membership_witness_digest",
+    )
+    @classmethod
+    def _digests(cls, value: str, info: object) -> str:
+        return _digest(value, label=str(getattr(info, "field_name", "calibration digest")))
+
+    @field_validator("selected_relation_digests")
+    @classmethod
+    def _relations(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for digest in value:
+            _digest(digest, label="selected settled relation digest")
+        if not value or value != tuple(sorted(set(value))):
+            raise ValueError(
+                "selected settled relation digests must be nonempty, byte-sorted, and unique"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _shape(self) -> "ProcedureCalibrationReadingV2":
+        if self.score.settled_count != len(self.selected_relation_digests):
+            raise ValueError("calibration score count differs from selected relation digests")
+        if self.reading_id != procedure_calibration_reading_id(self):
+            raise ValueError("Procedure calibration reading_id does not reproduce")
+        return self
+
+
+ProcedureCalibrationReading = ProcedureCalibrationReadingV1 | ProcedureCalibrationReadingV2
+
+
+def procedure_calibration_reading_id(reading: ProcedureCalibrationReading) -> str:
     payload = reading.model_dump(mode="json")
     payload.pop("tag")
     payload.pop("reading_id")
+    domain = (
+        "playbill-procedure-calibration-reading-identity-v1"
+        if isinstance(reading, ProcedureCalibrationReadingV1)
+        else "playbill-procedure-calibration-reading-identity-v2"
+    )
     digest = typed_digest(
         ArtifactDigest,
-        "playbill-procedure-calibration-reading-identity-v1",
+        domain,
         {"reading": payload},
     ).value
     return f"PCR-{digest[:32]}"
 
 
-def procedure_calibration_reading_digest(reading: ProcedureCalibrationReadingV1) -> str:
+def procedure_calibration_reading_digest(reading: ProcedureCalibrationReading) -> str:
+    domain = (
+        "playbill-procedure-calibration-reading-v1"
+        if isinstance(reading, ProcedureCalibrationReadingV1)
+        else "playbill-procedure-calibration-reading-v2"
+    )
     return typed_digest(
         ArtifactDigest,
-        "playbill-procedure-calibration-reading-v1",
+        domain,
         {"reading": reading.model_dump(mode="json")},
     ).tagged
 
@@ -420,7 +486,7 @@ def produce_procedure_calibration_reading(
     receipt: SettledOutcomesQueryReceiptV1,
     cohort: ProcedureCalibrationCohortV1,
     cohort_membership_witness: ProcedureCalibrationCohortMembershipWitnessV1 | None = None,
-) -> ProcedureCalibrationReadingV1 | None:
+) -> ProcedureCalibrationReadingV2 | None:
     """Produce an exact reading, or honest cold start when no settled rows exist."""
 
     if (
@@ -487,12 +553,13 @@ def produce_procedure_calibration_reading(
         ),
         "selected_relation_digests": relation_digests,
         "score": score,
+        "derivation": "live",
     }
-    provisional = ProcedureCalibrationReadingV1.model_construct(
+    provisional = ProcedureCalibrationReadingV2.model_construct(
         reading_id="",
         **cast(dict[str, Any], values),
     )
-    return ProcedureCalibrationReadingV1.model_validate(
+    return ProcedureCalibrationReadingV2.model_validate(
         {
             **values,
             "reading_id": procedure_calibration_reading_id(provisional),
@@ -524,7 +591,7 @@ class ProcedureCalibrationReadingArtifactV1(_StrictCalibrationModel):
         return self
 
 
-def procedure_calibration_reading_pin(reading: ProcedureCalibrationReadingV1) -> ArtifactPin:
+def procedure_calibration_reading_pin(reading: ProcedureCalibrationReading) -> ArtifactPin:
     return ArtifactPin(
         role="calibration-reading",
         target=ArtifactIdentity(
@@ -537,7 +604,7 @@ def procedure_calibration_reading_pin(reading: ProcedureCalibrationReadingV1) ->
 
 def store_procedure_calibration_reading(
     bodies: ContentAddressedBodyStore,
-    reading: ProcedureCalibrationReadingV1,
+    reading: ProcedureCalibrationReading,
 ) -> ProcedureCalibrationReadingArtifactV1:
     content = canonical_bytes(reading.model_dump(mode="json"))
     metadata = bodies.store(content)
@@ -554,7 +621,7 @@ def load_procedure_calibration_reading(
     *,
     access: BodyAccessContext,
     expected_cohort_key: str,
-) -> ProcedureCalibrationReadingV1:
+) -> ProcedureCalibrationReading:
     """Resolve only the exact pinned bytes in the caller's current G2 cohort."""
 
     _digest(expected_cohort_key, label="expected calibration cohort key")
@@ -568,7 +635,14 @@ def load_procedure_calibration_reading(
     if not isinstance(raw, dict) or canonical_bytes(raw) != content:
         raise PlaybillExecutionError("calibration reading artifact is not exact canonical bytes")
     try:
-        reading = ProcedureCalibrationReadingV1.model_validate(raw)
+        reading: ProcedureCalibrationReading
+        tag = raw.get("tag")
+        if tag == "playbill-procedure-calibration-reading-v1":
+            reading = ProcedureCalibrationReadingV1.model_validate(raw)
+        elif tag == "playbill-procedure-calibration-reading-v2":
+            reading = ProcedureCalibrationReadingV2.model_validate(raw)
+        else:
+            raise ValueError("unsupported calibration reading tag")
     except ValueError as exc:
         raise PlaybillExecutionError("calibration reading artifact is invalid") from exc
     if (
@@ -585,7 +659,9 @@ __all__ = [
     "ProcedureCalibrationCohortV1",
     "ProcedureCalibrationCohortMembershipWitnessV1",
     "ProcedureCalibrationReadingArtifactV1",
+    "ProcedureCalibrationReading",
     "ProcedureCalibrationReadingV1",
+    "ProcedureCalibrationReadingV2",
     "ProcedureCalibrationRelationCohortWitnessV1",
     "ProcedureCalibrationScoreV1",
     "ProcedureCalibrationWitnessError",
