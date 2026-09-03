@@ -3603,7 +3603,14 @@ class ProposalService:
         existing = self.transport.read_proposal_ref(request.target_ref)
         commit_oid, tree_oid = self.transport.create_proposal_commit(
             validated_tree,
-            base_oid=request.proposed_base_oid,
+            # Resubmitting the same ref EXTENDS that ref's lineage, mirroring the
+            # evaluation law below: the new admitted commit is parented on the
+            # commit the ref already holds, so the previous admitted and evaluated
+            # commits stay reachable instead of becoming proposal garbage on every
+            # ref reuse. The coordinate the tree was PROPOSED against remains
+            # `request.proposed_base_oid`; it is the admission record's and the
+            # validation base tree's, never the commit's parent.
+            base_oid=request.proposed_base_oid if existing is None else existing,
             target_ref=request.target_ref,
             actor_id=actor.actor_id,
             timestamp=timestamp,

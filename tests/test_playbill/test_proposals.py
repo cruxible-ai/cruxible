@@ -198,6 +198,50 @@ def test_a_card_bearing_submission_leaves_no_unreachable_proposal_commit(
     assert instance._ledger.unreachable_commits() == ()
 
 
+def test_resubmitting_one_ref_extends_its_lineage_and_orphans_nothing(
+    tmp_path: Path,
+) -> None:
+    """Ref reuse must extend the ref, not restart it from the accepted base.
+
+    A new admitted commit parented on the accepted base left the previous
+    admitted+evaluated pair unreachable — two orphaned commits per resubmit.
+    """
+
+    instance, _owner = initialize_local(tmp_path)
+    service = instance.proposal_service()
+    actor = AuthenticatedActor(actor_id="owner")
+    target_ref = _request(instance).target_ref
+
+    tips: list[str] = []
+    for revision in range(3):
+        body = instance.store_document_body(f"# Revision {revision}\n".encode())
+        result = service.submit(
+            actor=actor,
+            request=_request(instance),
+            candidate_tree=_proposal_tree(
+                instance, _shell(body.digest, title=f"Revision {revision}")
+            ),
+            timestamp=TIMESTAMP,
+        )
+        assert result.candidate is not None
+        tips.append(result.admission.candidate_commit_oid)
+
+    ledger = instance._ledger
+    assert ledger.unreachable_commits() == ()
+    assert service.transport.read_proposal_ref(target_ref) == tips[-1]
+
+    # The ref's history is linear and every earlier tip is still on it.
+    lineage: list[str] = []
+    walker: str | None = tips[-1]
+    accepted_head = instance.inspect().head_oid
+    while walker is not None and walker != accepted_head:
+        lineage.append(walker)
+        walker = ledger.parent_of(walker)
+    assert walker == accepted_head
+    assert set(tips).issubset(set(lineage))
+    assert len(lineage) == len(set(lineage))
+
+
 def test_refusal_keeps_evidence_but_creates_no_candidate(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
     missing = _shell("sha256:" + "ff" * 32)
@@ -384,7 +428,14 @@ def test_submit_advertises_only_after_all_proposal_evidence_is_durable(tmp_path:
     assert calls == ["advertised", "advertised"]
     assert result.workspace_advertisement.status == "failed"
     assert result.candidate is not None
-    assert duplicate.admission.proposal_id == result.admission.proposal_id
+    # Each submission is its own admission event. The resubmission EXTENDS the
+    # ref instead of recreating the first commit from the accepted base, so it
+    # carries its own proposal id and the first pair stays reachable. Under the
+    # previous law the two ids only coincided because this test pins one
+    # timestamp; `admitted_at` is part of the proposal id, so two real
+    # submissions never shared one.
+    assert duplicate.admission.proposal_id != result.admission.proposal_id
+    assert instance._ledger.unreachable_commits() == ()
 
 
 def test_submit_survives_an_advertiser_that_raises(tmp_path: Path) -> None:
