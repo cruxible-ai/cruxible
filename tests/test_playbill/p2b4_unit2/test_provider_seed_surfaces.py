@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import httpx
 from click.testing import CliRunner
@@ -9,6 +10,8 @@ from mcp.server.fastmcp import FastMCP
 from cruxible_client import CruxibleClient, contracts
 from cruxible_core.cli.main import cli
 from cruxible_core.mcp.tools import register_tools
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 COORDINATE = {
     "tag": "playbill-accepted-coordinate-v1",
@@ -85,6 +88,12 @@ def test_cli_seed_names_its_write_target_and_uses_sdk(
 
 
 def test_provider_seed_mcp_parity_gap_is_explicit() -> None:
+    """Follow-on card: Provider write family has no MCP parity (declare before exposing)."""
+
     registered = set(register_tools(FastMCP("provider-seed-gap")))
 
     assert {name for name in registered if "provider" in name and "seed" in name} == set()
+    changelog = (REPOSITORY_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "no MCP parity" in changelog
+    reference = (REPOSITORY_ROOT / "docs" / "cli-reference.md").read_text(encoding="utf-8")
+    assert "the Provider write family does not yet have MCP parity" in reference

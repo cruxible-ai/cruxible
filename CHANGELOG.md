@@ -17,19 +17,22 @@
 
 - **Workspace files enter through bounded reads and governed Provider seeds
   (P2-B4).** The daemon resolves `workspace.file` only inside attached or
-  operationally allowed roots, denies Git/Playbill/custody paths, and commits
-  the exact read receipt alongside Provider invocation evidence. The real
-  adapter remains in `cruxible-providers`; core ships its exact interface,
-  local wheel/materialization pins, conformance double, and an ordinary
-  proposal seed used by initialization and by CLI/SDK/HTTP. The Provider write
-  family has no MCP parity yet, so `provider seed` is deliberately absent from
-  MCP. This prerelease batch also corrects `PlaybillProviderInterfaceEntry` v1
-  in place to match the already-served ProviderInterface discovery row; the
-  generated client snapshot pins that reshape. Core's governed `none` effect
-  class is the no-external-mutation counterpart of the adapter stub's pinned
-  `pure` vocabulary. The governed seed intentionally records only its verified
-  `local_env` launch floor even though the external package manifest also
-  advertises an unseeded container backend.
+  operationally allowed roots. It decides on the real on-disk name of every
+  component and denies Git metadata, Playbill control paths, custody and key
+  files, and the whole daemon state root case-insensitively, so a capitalized
+  spelling refuses on case-folding volumes exactly as it does elsewhere. Each
+  authorized read commits its exact receipt alongside Provider invocation
+  evidence. The real adapter remains in `cruxible-providers`; core ships its
+  exact interface, local wheel/materialization pins, conformance double, and an
+  ordinary proposal seed used by initialization and by CLI/SDK/HTTP. The
+  Provider write family has no MCP parity yet, so `provider seed` is
+  deliberately absent from MCP. This prerelease batch also corrects
+  `PlaybillProviderInterfaceEntry` v1 in place to match the already-served
+  ProviderInterface discovery row; the generated client snapshot pins that
+  reshape. Core's governed `none` effect class is the no-external-mutation
+  counterpart of the adapter stub's pinned `pure` vocabulary. The governed seed
+  intentionally records only its verified `local_env` launch floor even though
+  the external package manifest also advertises an unseeded container backend.
 
 - **Client custody follows one Git-worktree boundary.** Initialization,
   approval, principal changes, and Claim attestations now anchor custody checks
