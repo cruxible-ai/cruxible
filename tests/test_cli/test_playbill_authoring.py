@@ -745,9 +745,10 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
     help_result = runner.invoke(cli, ["playbill", "authoring", "create", "--help"])
     assert help_result.exit_code == 0
     assert "Input kind family: claim | procedure | subject | query_definition" in help_result.output
-    assert "Change-set member kind family: claim | claim_type | claim_retirement" in (
+    assert "Change-set member kind family: claim | claim_type | claim_type_succession" in (
         help_result.output
     )
+    assert "claim_retirement" in help_result.output
     assert "procedure_runtime_policy" in help_result.output
     assert "procedure_mandate" in help_result.output
 
@@ -762,6 +763,7 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
         "procedure-mandate",
         "query-claims-by-type",
         "change-set",
+        "claim-type-succession",
     ):
         result = runner.invoke(cli, ["playbill", "authoring", "create", "--example", name])
         assert result.exit_code == 0, result.output
