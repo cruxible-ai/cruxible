@@ -281,7 +281,11 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
     monkeypatch: pytest.MonkeyPatch,
     playbill_http,
 ) -> None:
-    state_root = Path(tempfile.mkdtemp(prefix=".provider-state-", dir=Path.cwd()))
+    # The operator's control namespace is asserted in place, so the sample socket
+    # path has to stay inside the 103-byte AF_UNIX budget or the store takes the
+    # ruled per-user fallback. The repo's gitignored scratch prefix is the shortest
+    # root available on any checkout; the budget itself is unchanged.
+    state_root = Path(tempfile.mkdtemp(prefix=".b2-", dir=Path(__file__).resolve().parents[2]))
     request.addfinalizer(lambda: shutil.rmtree(state_root, ignore_errors=True))
     materialization = state_root / "materializations" / "demo"
     materialization.mkdir(parents=True)

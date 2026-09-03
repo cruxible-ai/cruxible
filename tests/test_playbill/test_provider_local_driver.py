@@ -1016,13 +1016,21 @@ def test_control_namespaces_are_state_local_and_finalize_without_orphans(
     request: pytest.FixtureRequest,
     tmp_path: Path,
 ) -> None:
-    short_root = Path(tempfile.mkdtemp(prefix=".control-local-", dir=Path.cwd()))
+    # The oracle is in-place locality, so the sample socket path has to stay inside
+    # the 103-byte AF_UNIX budget or the store takes the ruled per-user fallback and
+    # the assertion reads a checkout name rather than the law. The repo's gitignored
+    # scratch prefix is the shortest root available on any checkout. The budget in
+    # provider_process_leases is unchanged.
+    short_root = Path(tempfile.mkdtemp(prefix=".b2-", dir=Path(__file__).resolve().parents[2]))
     request.addfinalizer(lambda: shutil.rmtree(short_root, ignore_errors=True))
     roots = tuple(tmp_path / f"leases-{index}" for index in range(5))
     stores = [
-        ProviderProcessLeaseStore(root, control_root=short_root / f"c-{index}")
+        ProviderProcessLeaseStore(root, control_root=short_root / f"c{index}")
         for index, root in enumerate(roots)
     ]
+    assert all(
+        len(os.fsencode(store.control_root / ("0" * 16 + ".sock"))) <= 103 for store in stores
+    )
     controls = tuple(store.control_root for store in stores)
     assert all(path.is_relative_to(short_root) for path in controls)
     assert all(path.is_dir() for path in controls)
