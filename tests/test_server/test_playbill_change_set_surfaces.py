@@ -14,13 +14,15 @@ from cruxible_client.authoring.inputs import (
     ClaimInput,
     ClaimRetirementInput,
     ClaimTypeInput,
+    ClaimTypeSuccessionInput,
     LiteralObjectInput,
     SelfSourceInput,
     SubjectInput,
 )
-from cruxible_client.authoring.sdk import ChangeSetDraft
+from cruxible_client.authoring.sdk import ChangeSetDraft, carry, re_author, rescind, retire
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
-from cruxible_client.contracts.claim_types import ClaimType
+from cruxible_client.contracts.authoring.models import ClaimTypeSuccessionDependentV1
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV1,
@@ -340,3 +342,138 @@ def test_the_sdk_builder_authors_a_mixed_changeset_that_preflights_clean(
     submitted = intent.submit()
     assert submitted._candidate_status is not None
     assert submitted._candidate_status.proposal_id is not None
+
+
+def _succession_type() -> ClaimType:
+    """The parity ClaimType, narrowed, naming the digest it succeeds."""
+
+    current = _claim_type()
+    return current.model_copy(
+        update={
+            "literal_schema": {"type": "string", "enum": ["ready"]},
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=claim_type_digest(current).tagged,
+            ),
+        }
+    )
+
+
+def test_one_claim_type_succession_has_one_identity_across_sdk_cli_and_mcp(
+    playbill_http: tuple[TestClient, str, Path],
+    tmp_path: Path,
+) -> None:
+    """Evolving vocabulary is one intent whichever surface authored it."""
+
+    http, instance_id, _private_key_path = playbill_http
+    transport = CruxibleClient(base_url="http://cruxible")
+    transport._client = http  # type: ignore[assignment]
+    workspace = tmp_path / "succession-world"
+    (workspace / ".playbill").mkdir(parents=True)
+    (workspace / "corpus").mkdir()
+    (workspace / "corpus" / "notes.md").write_text("# notes\n", encoding="utf-8")
+    (workspace / ".playbill" / "sources.yaml").write_text(
+        "tag: playbill-source-catalog-v1\n"
+        "catalog_kind: portable\n"
+        "entries:\n"
+        "  - name: corpus.notes\n"
+        "    locator: corpus/notes.md\n"
+        "    document_id: notes\n"
+        "    document_kind: note\n"
+        "    title: Notes\n"
+        "    media_type: text/markdown\n"
+        "    governance_scope: [Document:notes]\n",
+        encoding="utf-8",
+    )
+    pb = Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
+
+    successor = _succession_type()
+    claim_id = "CLM-" + "a" * 32
+    tagless = ChangeSetInput(
+        kind="change_set",
+        members=(
+            ClaimTypeSuccessionInput(
+                kind="claim_type_succession",
+                successor=successor,
+                dependents=(
+                    ClaimTypeSuccessionDependentV1(
+                        identity=ArtifactIdentity(kind="Claim", name=claim_id),
+                        disposition="retire",
+                        claim_retirement_reason="was-rescinded",
+                    ),
+                ),
+            ),
+            SubjectInput(kind="subject", subject=_shell()),
+        ),
+    )
+    payload_file = tmp_path / "succession.json"
+    payload_file.write_text(json.dumps(tagless.model_dump(mode="json")), encoding="utf-8")
+    cli_input = ChangeSetInput.model_validate(json.loads(payload_file.read_text(encoding="utf-8")))
+    cli_intent = transport.create_playbill_authoring_input(
+        instance_id,
+        input=cli_input.model_dump(mode="json"),
+    ).intent
+    mcp_intent = transport.create_playbill_authoring_input(
+        instance_id,
+        input=json.loads(json.dumps(tagless.model_dump(mode="json"))),
+    ).intent
+
+    draft = pb.changes(rationale="Narrow the parity vocabulary and settle its closure.")
+    draft.subject(_shell())
+    draft.succeed_claim_type(successor, dependents=[rescind(claim_id)])
+    sdk_intent = draft._compiled()
+
+    identities = {
+        cli_intent["semantic_identity"],
+        mcp_intent["semantic_identity"],
+    }
+    assert len(identities) == 1
+    assert next(iter(identities)).startswith("ChangeSet:")
+    assert _payload_digest(cli_intent) == _payload_digest(mcp_intent)
+    assert sdk_intent.payload.model_dump(mode="json") == cli_intent["payload"]
+    assert any(
+        str(member["tag"]) == "playbill-claim-type-succession-authoring-payload-v1"
+        for member in cli_intent["payload"]["members"]
+    )
+
+
+def test_the_succession_disposition_helpers_spell_one_vocabulary() -> None:
+    """`carry`, `rescind`, `retire` and `re_author` are the standalone words."""
+
+    claim_id = "CLM-" + "b" * 32
+    assert carry(claim_id).disposition == "successor"
+    assert carry(f"Claim:{claim_id}").identity.name == claim_id
+    rescinded = rescind(claim_id)
+    assert (rescinded.disposition, rescinded.claim_retirement_reason) == (
+        "retire",
+        "was-rescinded",
+    )
+    retired = retire(claim_id, reason="was-wrong")
+    assert (retired.disposition, retired.claim_retirement_reason) == ("retire", "was-wrong")
+    said_again = re_author(claim_id)
+    assert said_again.disposition == "re_author"
+    assert said_again.successor_claim_id == claim_id
+    assert re_author(claim_id, with_=3).successor_member == 3
+
+
+def test_the_shipped_succession_example_round_trips_and_creates_one_intent(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    """`--example claim-type-succession` is a set an agent can send back unedited."""
+
+    http, instance_id, _private_key_path = playbill_http
+    transport = CruxibleClient(base_url="http://cruxible")
+    transport._client = http  # type: ignore[assignment]
+
+    example = authoring_example("claim-type-succession")
+    assert isinstance(example, ChangeSetInput)
+    assert {member.kind for member in example.members} == {"claim_type_succession", "claim"}
+
+    round_tripped = ChangeSetInput.model_validate(json.loads(example.model_dump_json()))
+    assert round_tripped == example
+
+    created = transport.create_playbill_authoring_input(
+        instance_id,
+        input=round_tripped.model_dump(mode="json"),
+    ).intent
+    assert created["semantic_identity"].startswith("ChangeSet:")
+    assert len(created["payload"]["members"]) == len(example.members)
