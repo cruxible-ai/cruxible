@@ -136,8 +136,8 @@ def test_body_only_amend_emits_sync_repair_and_converges_green(tmp_path: Path) -
     workspace_root = tmp_path / "writer"
     daemon_root.mkdir()
     workspace_root.mkdir()
-    instance, owner, coordinator, actor, intent_id, preimage, _clock = (
-        _submitted_publication(daemon_root)
+    instance, owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        daemon_root
     )
     prepared = coordinator.prepare_publication(
         intent_id,
@@ -160,11 +160,14 @@ def test_body_only_amend_emits_sync_repair_and_converges_green(tmp_path: Path) -
         observation=_observation(landed.content),
     )
     assert confirmation is not None
-    assert coordinator.confirm_insertion(
-        intent_id,
-        actor=actor,
-        observation=confirmation,
-    ).outcome == "bound"
+    assert (
+        coordinator.confirm_insertion(
+            intent_id,
+            actor=actor,
+            observation=confirmation,
+        ).outcome
+        == "bound"
+    )
     source = _workspace(
         workspace_root,
         instance_id=instance.descriptor.instance_id,
@@ -183,11 +186,15 @@ def test_body_only_amend_emits_sync_repair_and_converges_green(tmp_path: Path) -
             )
         }
     )
-    successor = AuthoringIntentCoordinator.for_instance(instance).create(
-        actor=actor,
-        payload=body_only_payload,
-        canonical_timestamp="2026-08-21T12:00:02.000000Z",
-    ).intent
+    successor = (
+        AuthoringIntentCoordinator.for_instance(instance)
+        .create(
+            actor=actor,
+            payload=body_only_payload,
+            canonical_timestamp="2026-08-21T12:00:02.000000Z",
+        )
+        .intent
+    )
     submitted = AuthoringIntentCoordinator.for_instance(instance).submit(
         successor.intent_id,
         actor=actor,
@@ -233,9 +240,9 @@ def test_body_only_amend_emits_sync_repair_and_converges_green(tmp_path: Path) -
     )
     assert stale.repair.operation == "playbill.block.sync"
     assert stale.detail["stamped_body_digest"] == prepared.preparation.body_digest
-    assert stale.detail["terminal_body_digest"] == "sha256:" + hashlib.sha256(
-        revised_body
-    ).hexdigest()
+    assert (
+        stale.detail["terminal_body_digest"] == "sha256:" + hashlib.sha256(revised_body).hexdigest()
+    )
 
     synced = sync_projection_blocks(
         _ServiceClient(instance),  # type: ignore[arg-type]
@@ -245,9 +252,7 @@ def test_body_only_amend_emits_sync_repair_and_converges_green(tmp_path: Path) -
     )
     assert [item.outcome for item in synced.items] == ["synced"]
     assert revised_body in source.read_bytes()
-    assert not [
-        item for item in observed_next().items if item.reason == "projection_backing_stale"
-    ]
+    assert not [item for item in observed_next().items if item.reason == "projection_backing_stale"]
 
 
 def test_two_writer_successor_sync_converges_without_mutating_accepted_state(

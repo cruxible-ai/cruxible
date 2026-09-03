@@ -557,8 +557,7 @@ def _lower_claim(
             "The Claim object kind differs from its accepted ClaimType.",
             repair_kind="replace_object",
             repair_description=(
-                f"Use a {claim_type.object_kind} object for ClaimType "
-                f"{claim_type.predicate!r}."
+                f"Use a {claim_type.object_kind} object for ClaimType {claim_type.predicate!r}."
             ),
             replacement={"required_object_kind": claim_type.object_kind},
         )

@@ -74,6 +74,7 @@ INTERFACE_PAGE_RECEIPT_DIGEST_DOMAIN = "playbill-interface-discovery-page-v1"
 CLAIM_TYPE_CARD_FACETS: tuple[str, ...] = ("interface", "match_bases", "policies", "usage")
 SUBJECT_PROFILE_FACETS: tuple[str, ...] = ("match_bases", "predicates", "vocabulary")
 
+
 class _StrictCardModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

@@ -272,9 +272,7 @@ def test_subject_claim_object_requires_matching_type_and_existing_allowed_subjec
         for item in literal_result.frontier.diagnostics
         if item.code == "playbill.claim.object_kind_mismatch"
     )
-    assert literal_diagnostic.repairs[0].replacement == {
-        "required_object_kind": "subject"
-    }
+    assert literal_diagnostic.repairs[0].replacement == {"required_object_kind": "subject"}
 
 
 def test_claim_object_kind_mismatch_is_a_typed_preflight_refusal(tmp_path: Path) -> None:
@@ -319,9 +317,7 @@ def test_subject_input_accepts_cve_package_relation_and_populates_floor_profiles
     instance, owner = initialize_local(tmp_path)
     vulnerability = _subject().model_copy(
         update={
-            "identity": ArtifactIdentity(
-                kind="Subject", name="sec.vulnerability/cve-2026-0001"
-            ),
+            "identity": ArtifactIdentity(kind="Subject", name="sec.vulnerability/cve-2026-0001"),
             "subject_kind": "sec.vulnerability",
             "subject_id": "cve-2026-0001",
         }
@@ -383,16 +379,19 @@ def test_subject_input_accepts_cve_package_relation_and_populates_floor_profiles
         attestation=approval.attestation,
         authenticated_submitter="owner",
     )
-    assert service_activate_playbill_proposal(
-        instance,
-        proposal_id=submitted.status.proposal_id,
-        activated_by="owner",
-    ).status == "accepted"
+    assert (
+        service_activate_playbill_proposal(
+            instance,
+            proposal_id=submitted.status.proposal_id,
+            activated_by="owner",
+        ).status
+        == "accepted"
+    )
 
     floor = service_export_playbill_floor(instance)
-    outbound = json.loads(
-        floor["subjects/sec.vulnerability/cve-2026-0001.profile.json"]
-    )["relations"]
+    outbound = json.loads(floor["subjects/sec.vulnerability/cve-2026-0001.profile.json"])[
+        "relations"
+    ]
     inbound = json.loads(floor["subjects/sec.package/demo.profile.json"])["relations"]
     assert outbound == [
         {
