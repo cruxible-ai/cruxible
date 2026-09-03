@@ -49,6 +49,7 @@ def test_every_documented_knob_default_matches_the_model() -> None:
             # so the guardrail reads the shape rather than naming each knob: the
             # exemption named `deployments` alone and went red the moment a second
             # tuple knob shipped.
+            assert field.default == (), (name, field.default)
             assert documented[name] == "[]", (name, documented[name])
             continue
         assert documented[name] == str(field.default), (name, documented[name], field.default)

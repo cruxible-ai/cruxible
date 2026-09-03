@@ -5,22 +5,44 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from tests.test_playbill._support import initialize_local
-from tests.test_playbill.test_wire_succession import TIMESTAMP, _document_tree
+from tests.test_playbill._support import client_material, initialize_local
+from tests.test_playbill.test_activation import _sign
+from tests.test_playbill.test_wire_succession import DOCUMENT_PATH, TIMESTAMP, _document_tree
 
 from cruxible_client.contracts.canonical import canonical_bytes, manifest_root, semantic_projection
-from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.documents import (
+    DocumentAuthority,
+    DocumentLifecycle,
+    DocumentShell,
+    render_document,
+)
+from cruxible_client.contracts.errors import (
+    CanonicalEncodingError,
+    ProposalIntegrityError,
+    SettlementIntegrityError,
+)
+from cruxible_client.contracts.proposal_models import ProposalResult
 from cruxible_core.playbill.candidate_cards import (
     CARD_RENDERER_DIGEST,
     candidate_card_path,
     derive_candidate_cards,
+    render_candidate_card,
 )
+from cruxible_core.playbill.compiler import artifact_kinds_for_compiler
+from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection_artifacts import P2_C_ARTIFACT_KINDS
 from cruxible_core.playbill.proposals import (
+    AuthenticatedActor,
+    ProposalAdmissionRequest,
     ProposalReceiveLimits,
     evaluate_proposal_tree,
     validate_proposal_tree,
 )
+from cruxible_core.playbill.service.documents import (
+    service_activate_playbill_proposal,
+    service_submit_playbill_approval,
+)
+from cruxible_core.playbill.settlement import ChangeActorBinding
 
 
 def _artifact(name: str) -> bytes:
@@ -165,6 +187,206 @@ def test_proposal_admission_admits_card_paths_and_re_derives_their_bytes() -> No
         assert b"# procedure: demo-v2" in derived[card_path]
         assert b"caller-authored" not in derived[card_path]
         assert "cards/procedures/extra.md" not in derived
+
+
+OTHER_DOCUMENT_PATH = "documents/other.json"
+INVENTED_CARD_PATH = "cards/procedures/extra.md"
+CALLER_MARKER = b"caller-authored"
+TOMBSTONE_LIE = b"removed at " + b"0" * 64 + b"\n"
+SOURCE_COMPILATION_DIGEST = "sha256:" + "77" * 32
+
+
+def _submit(instance: PlaybillInstance, tree: dict[str, bytes], *, ref: str) -> ProposalResult:
+    """Drive the one ProposalService.submit every service and HTTP route calls."""
+
+    base = instance.accepted_coordinate()
+    return instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/owner/{ref}",
+            proposed_base_oid=base.git_oid,
+            source_compilation_digest=SOURCE_COMPILATION_DIGEST,
+        ),
+        candidate_tree=tree,
+        timestamp=TIMESTAMP,
+    )
+
+
+def _accept(instance: PlaybillInstance, result: ProposalResult) -> dict[str, bytes]:
+    """Approve and activate through production settlement; return the accepted tree."""
+
+    candidate = result.candidate
+    assert candidate is not None
+    approver = client_material(instance.root.parent, instance)
+    approval = _sign(
+        approver,
+        candidate.candidate_digest,
+        candidate.candidate.parent_semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=result.admission.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter=approver.principal.principal_id,
+    )
+    receipt = service_activate_playbill_proposal(
+        instance,
+        proposal_id=result.admission.proposal_id,
+        activated_by="owner",
+    )
+    assert receipt.status == "accepted"
+    return instance.proposal_tree(instance.accepted_coordinate().git_oid)
+
+
+def _accepted_card_bearing_tree(instance: PlaybillInstance) -> dict[str, bytes]:
+    """Accept one Document so main already carries a derivative card."""
+
+    _base, proposed = _document_tree(instance)
+    accepted = _accept(instance, _submit(instance, proposed, ref="first"))
+    assert candidate_card_path(DOCUMENT_PATH) in accepted
+    return accepted
+
+
+def _other_document(instance: PlaybillInstance) -> bytes:
+    body = instance.store_document_body(b"other")
+    return render_document(
+        DocumentShell(
+            identity="document:other",
+            document_kind="design",
+            title="Other design",
+            media_type="text/markdown",
+            body_digest=body.digest,
+            authority=DocumentAuthority(required_tier="graph_write"),
+            governance_scope=("project:playbill",),
+            lifecycle=DocumentLifecycle(revision=1),
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "forgery",
+    [
+        pytest.param(
+            {
+                candidate_card_path(DOCUMENT_PATH): CALLER_MARKER + b" existing\n",
+                candidate_card_path(OTHER_DOCUMENT_PATH): CALLER_MARKER + b" new\n",
+                INVENTED_CARD_PATH: CALLER_MARKER + b" invented\n",
+            },
+            id="caller-bytes-and-invented-card",
+        ),
+        pytest.param(
+            {
+                candidate_card_path(DOCUMENT_PATH): TOMBSTONE_LIE,
+                candidate_card_path(OTHER_DOCUMENT_PATH): TOMBSTONE_LIE,
+            },
+            id="tombstone-lie",
+        ),
+    ],
+)
+def test_forged_cards_never_reach_the_evaluated_or_accepted_tree(
+    tmp_path: Path, forgery: dict[str, bytes]
+) -> None:
+    """End-to-end twin of the unit oracle above, through submit -> approve -> activate.
+
+    A caller resubmits the accepted card-bearing tree with one real semantic change
+    and forged bytes for the existing card, the new member's card, an invented card
+    path, and a card that lies about the members' settlement. The evaluated tree the
+    daemon commits and the accepted tree activation settles carry only the base
+    card and the re-rendered card; the forged bytes survive nowhere but the
+    admitted commit, which is never settled.
+    """
+
+    instance, _owner = initialize_local(tmp_path)
+    accepted = _accepted_card_bearing_tree(instance)
+    card = candidate_card_path(DOCUMENT_PATH)
+    other_card = candidate_card_path(OTHER_DOCUMENT_PATH)
+    other = _other_document(instance)
+    expected_other_card = render_candidate_card(
+        OTHER_DOCUMENT_PATH,
+        other,
+        artifact_kinds=artifact_kinds_for_compiler(instance.accepted_coordinate().compiler),
+    )
+    forged_markers = (CALLER_MARKER, TOMBSTONE_LIE)
+
+    result = _submit(
+        instance,
+        {**accepted, OTHER_DOCUMENT_PATH: other, **forgery},
+        ref="second",
+    )
+
+    assert result.candidate is not None
+    assert result.evaluation.evaluated_tree_oid is not None
+    assert result.candidate.candidate.scope == (OTHER_DOCUMENT_PATH,)
+    evaluated = instance.proposal_tree(result.evaluation.evaluated_tree_oid)
+    accepted_after = _accept(instance, result)
+    for tree in (evaluated, accepted_after):
+        assert tree[DOCUMENT_PATH] == accepted[DOCUMENT_PATH]
+        assert tree[OTHER_DOCUMENT_PATH] == other
+        assert tree[card] == accepted[card]
+        assert tree[other_card] == expected_other_card
+        assert INVENTED_CARD_PATH not in tree
+        assert not any(marker in value for marker in forged_markers for value in tree.values())
+    # The admitted commit keeps the caller's raw bytes and nothing settles it:
+    # activation settled the evaluated tree, so the parent tree is not authoritative.
+    ledger = instance._ledger
+    admitted_oid = ledger.parent_of(result.admission.candidate_commit_oid)
+    assert admitted_oid is not None
+    admitted = ledger.read_tree(admitted_oid)
+    assert all(admitted[path] == content for path, content in forgery.items())
+    assert ledger.unreachable_commits() == ()
+
+
+def test_odd_card_paths_are_refused_typed_before_any_commit(tmp_path: Path) -> None:
+    """Card-path normalization runs at admission, so no proposal ref is ever created."""
+
+    instance, _owner = initialize_local(tmp_path)
+    accepted = _accepted_card_bearing_tree(instance)
+    main = instance._ledger.read_main()
+    other = _other_document(instance)
+    odd_paths = {
+        "Cards/x.md": "case-fold",
+        "./cards/x.md": "non-canonical",
+        "cards/../cards/x.md": "non-canonical",
+    }
+
+    for path, refusal in odd_paths.items():
+        with pytest.raises(CanonicalEncodingError, match=refusal):
+            _submit(
+                instance,
+                {**accepted, OTHER_DOCUMENT_PATH: other, path: b"x\n"},
+                ref="odd",
+            )
+        assert instance._ledger.read_proposal_ref("refs/proposals/owner/odd") is None
+        assert instance._ledger.read_main() == main
+
+
+def test_settlement_refuses_a_forged_card_handed_straight_to_prepare_generation(
+    tmp_path: Path,
+) -> None:
+    """The second line: settlement re-derives every card and compares the whole tree."""
+
+    instance, _owner = initialize_local(tmp_path)
+    _base, proposed = _document_tree(instance)
+    result = _submit(instance, proposed, ref="first")
+    assert result.candidate is not None
+    assert result.evaluation.evaluated_tree_oid is not None
+    evaluated = instance.proposal_tree(result.evaluation.evaluated_tree_oid)
+    card = candidate_card_path(DOCUMENT_PATH)
+    assert card in evaluated
+
+    with pytest.raises(SettlementIntegrityError, match="derivative cards do not reproduce"):
+        instance.prepare_generation(
+            base=instance.accepted_coordinate(),
+            candidate_tree={**evaluated, card: CALLER_MARKER + b"\n"},
+            candidate=result.candidate,
+            approvals=(),
+            actor_binding=ChangeActorBinding(
+                actor_id="owner",
+                source_compilation_digest=SOURCE_COMPILATION_DIGEST,
+            ),
+            proposal_actor_id="owner",
+            sequence=1,
+        )
 
 
 def test_an_evaluated_card_bearing_tree_can_be_edited_and_resubmitted(tmp_path: Path) -> None:
