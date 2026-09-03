@@ -11,10 +11,14 @@ from cruxible_client import Playbill
 from cruxible_client.authoring.examples import authoring_example
 from cruxible_client.authoring.inputs import (
     ChangeSetInput,
+    ClaimInput,
     ClaimRetirementInput,
     ClaimTypeInput,
+    LiteralObjectInput,
+    SelfSourceInput,
     SubjectInput,
 )
+from cruxible_client.authoring.sdk import ChangeSetDraft
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.policies import (
@@ -61,6 +65,60 @@ def _payload_digest(intent: dict[str, object]) -> str:
     digest = intent.get("payload_digest")
     assert isinstance(digest, str)
     return digest
+
+
+CLAIM_RATIONALE = "The writer observed the current parity value."
+CLAIM_BODY = "parity: ready\n"
+
+
+def _claim_input() -> ClaimInput:
+    """The parity Claim as a CLI payload file or an MCP dict carries it."""
+
+    return ClaimInput(
+        kind="claim",
+        subject=SUBJECT_NAME,
+        predicate=PREDICATE,
+        object=LiteralObjectInput(kind="literal", value="ready"),
+        role="observation",
+        rationale=CLAIM_RATIONALE,
+        source=SelfSourceInput(kind="self_source", body=CLAIM_BODY),
+    )
+
+
+def _add_parity_claim(draft: ChangeSetDraft) -> None:
+    """The same Claim as `_claim_input`, authored through the SDK builder."""
+
+    draft.claim(
+        subject=SUBJECT_NAME,
+        predicate=PREDICATE,
+        value="ready",
+        role="observation",
+        rationale=CLAIM_RATIONALE,
+        supported_by=None,
+        copied_from=None,
+        self_source=CLAIM_BODY,
+        qualifier=None,
+        effective_period=None,
+        revises=None,
+        dispositions={},
+        publish_to=None,
+        subject_definition=None,
+        claim_type_definition=None,
+    )
+
+
+def _claim_member(members: list[dict[str, object]]) -> dict[str, object]:
+    return next(
+        item for item in members if str(item["tag"]).startswith("playbill-claim-authoring-payload-")
+    )
+
+
+def _normalized_member(member: dict[str, object]) -> dict[str, object]:
+    """Strip exactly the two fields the V1/V2 Claim payload split introduces."""
+
+    if not str(member["tag"]).startswith("playbill-claim-authoring-payload-"):
+        return member
+    return {key: value for key, value in member.items() if key not in {"tag", "dependency_drafts"}}
 
 
 def test_one_changeset_has_one_intent_identity_across_sdk_cli_and_mcp(
@@ -138,6 +196,62 @@ def test_one_changeset_has_one_intent_identity_across_sdk_cli_and_mcp(
     }
     assert len(identities) == 1
     assert next(iter(identities)).startswith("ChangeSet:")
+
+    # The same three surfaces again, this time carrying a Claim member. Claims
+    # are where the surfaces could diverge and did not: a Claim member's
+    # identity is its authored statement with the payload tag popped, so the set
+    # identity is still a property of the members alone -- even though a tagless
+    # Claim lowers to a V1 payload and an SDK Claim is always a V2. That
+    # pre-existing version split is the ONE thing that separates the digests.
+    with_claim = ChangeSetInput(
+        kind="change_set",
+        members=(*tagless.members, _claim_input()),
+    )
+    cli_claim_intent = transport.create_playbill_authoring_input(
+        instance_id,
+        input=ChangeSetInput.model_validate(
+            json.loads(json.dumps(with_claim.model_dump(mode="json")))
+        ).model_dump(mode="json"),
+    ).intent
+    mcp_claim_intent = transport.create_playbill_authoring_input(
+        instance_id,
+        input=json.loads(json.dumps(with_claim.model_dump(mode="json"))),
+    ).intent
+
+    sdk_claim_draft = pb.changes(rationale="Open the parity slot and state its first value.")
+    sdk_claim_draft.subject(_shell())
+    sdk_claim_draft.claim_type(_claim_type())
+    _add_parity_claim(sdk_claim_draft)
+    sdk_claim_prepared = sdk_claim_draft.prepare()
+    assert not sdk_claim_prepared.refused, sdk_claim_prepared.diagnostics
+    sdk_claim_intent = sdk_claim_prepared._raw
+
+    claim_identities = {
+        cli_claim_intent["semantic_identity"],
+        mcp_claim_intent["semantic_identity"],
+        sdk_claim_intent["semantic_identity"],
+    }
+    assert len(claim_identities) == 1
+    assert next(iter(claim_identities)).startswith("ChangeSet:")
+    assert claim_identities != identities
+
+    # The tagless and MCP payloads are the same bytes; the SDK's differs, and
+    # only in the Claim member's payload version.
+    assert _payload_digest(cli_claim_intent) == _payload_digest(mcp_claim_intent)
+    assert _payload_digest(sdk_claim_intent) != _payload_digest(cli_claim_intent)
+    tagless_members = cli_claim_intent["payload"]["members"]
+    sdk_members = sdk_claim_intent["payload"]["members"]
+    assert [_normalized_member(item) for item in tagless_members] == [
+        _normalized_member(item) for item in sdk_members
+    ]
+    versions = {
+        _claim_member(tagless_members)["tag"],
+        _claim_member(sdk_members)["tag"],
+    }
+    assert versions == {
+        "playbill-claim-authoring-payload-v1",
+        "playbill-claim-authoring-payload-v2",
+    }
 
 
 def test_the_shipped_change_set_example_round_trips_and_creates_one_intent(
