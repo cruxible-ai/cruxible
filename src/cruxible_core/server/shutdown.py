@@ -19,6 +19,19 @@ import signal
 import threading
 from collections.abc import Callable
 
+from cruxible_core.errors import ConfigError
+
+
+class ServerStopNotConfirmed(ConfigError):
+    """The stop was scheduled but this client never saw the root released.
+
+    A zero exit here would make `cruxible server stop && cruxible server start`
+    walk straight into the state-root lock the stop existed to clear, which is
+    the operations defect the verb was added for.
+    """
+
+    error_code = "cruxible.server.stop_not_confirmed"
+
 # Grace period before the signal lands, leaving uvicorn time to flush the stop
 # acknowledgement response and close the connection.
 _STOP_DELAY_SECONDS = 0.25

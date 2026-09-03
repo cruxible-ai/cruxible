@@ -48,7 +48,8 @@ from cruxible_core.server.service_install import (
     resolved_cruxible_executable,
     service_config_path,
 )
-from cruxible_core.server.state_lock import state_lock_holder_is_alive
+from cruxible_core.server.shutdown import ServerStopNotConfirmed
+from cruxible_core.server.state_lock import state_lock_holder_is_alive, state_lock_path
 
 # Poll cadence while waiting for the re-exec'd daemon to start answering again.
 _RESTART_POLL_INTERVAL_SECONDS = 0.25
@@ -94,18 +95,46 @@ def _wait_for_daemon(client: CruxibleClient, timeout: float) -> str:
     )
 
 
-def _wait_for_state_root_release(state_root: Path, timeout: float) -> bool:
-    """Poll the state-root lock until the daemon is really gone or time runs out.
+def _daemon_still_answers(client: CruxibleClient) -> bool:
+    """Return whether the daemon is still answering over the configured transport."""
+    try:
+        client.version()
+    except Exception:
+        # A closed socket or a refused connection is the daemon's own answer
+        # that it has left; nothing else distinguishes those cases usefully.
+        return False
+    return True
 
-    The stop is acknowledged before the process leaves, so the transport answer
-    alone does not mean the root is free for the next `server start`.
+
+def _observe_stop(
+    client: CruxibleClient,
+    state_root: Path,
+    timeout: float,
+) -> tuple[bool, bool | None]:
+    """Return (daemon exited, state root released) as OBSERVED, not as assumed.
+
+    The stop is acknowledged before the process leaves, so the acknowledgement
+    alone proves nothing. The exit is observed from the DAEMON, over the
+    transport the caller configured. The lock is only consulted when the state
+    root is a path on this filesystem: against a bound-TCP daemon on another
+    host it is not, and polling it there answered "released" instantly for a
+    daemon that had not even begun shutting down.
+
+    The released value is None when release is not observable from this client.
     """
     deadline = time.monotonic() + timeout
+    observable = state_lock_path(state_root).is_file()
+    exited = False
     while True:
-        if not state_lock_holder_is_alive(state_root):
-            return True
+        if not exited:
+            exited = not _daemon_still_answers(client)
+        if exited:
+            if not observable:
+                return True, None
+            if not state_lock_holder_is_alive(state_root):
+                return True, True
         if time.monotonic() >= deadline:
-            return False
+            return exited, False
         time.sleep(_RESTART_POLL_INTERVAL_SECONDS)
 
 
@@ -252,28 +281,48 @@ def server_stop_cmd(output_json: bool, timeout: float) -> None:
     down. Reaching for `kill` or a terminal-multiplexer quit instead kills the
     launching shell and orphans the daemon, leaving a second process serving the
     same state root.
+
+    The release is OBSERVED, never assumed: the daemon must stop answering over
+    that transport, and when its state root is a directory on this filesystem
+    its lock must be free. Against a daemon on another host the lock is not
+    observable from here and the command says so rather than claiming a release
+    it cannot see. Exits non-zero when the root was NOT released, so
+    `server stop && server start` cannot walk into the lock refusal the stop was
+    meant to clear.
     """
     client = _get_client()
     if client is None:
         raise click.UsageError(f"{SERVER_MODE_REQUIRED_MESSAGE} {_DAEMON_REQUIRED_HINT}")
     result = client.server_stop()
-    released = _wait_for_state_root_release(Path(result.state_root), timeout)
+    exited, released = _observe_stop(client, Path(result.state_root), timeout)
 
     if output_json:
         payload = result.model_dump(mode="python")
+        payload["daemon_exited"] = exited
         payload["state_root_released"] = released
         _emit_json(payload)
-        return
+    else:
+        click.echo(f"Stop scheduled (pid {result.pid}, version {result.version}).")
+        click.echo(f"State root: {result.state_root}")
+        if released is True:
+            click.echo("Daemon exited and released its state root.")
+        elif released is None:
+            click.echo(
+                "Stop requested; lock release not observable from this client.",
+                err=True,
+            )
 
-    click.echo(f"Stop scheduled (pid {result.pid}, version {result.version}).")
-    click.echo(f"State root: {result.state_root}")
-    if released:
-        click.echo("Daemon exited and released its state root.")
+    if released is not False:
         return
-    click.echo(
-        f"Daemon still holds its state root after {timeout:.0f}s; "
-        "re-run `cruxible server stop` or check the daemon's logs.",
-        err=True,
+    detail = (
+        f"the daemon was still answering after {timeout:.0f}s"
+        if not exited
+        else f"the daemon exited but its state root was still locked after {timeout:.0f}s"
+    )
+    raise ServerStopNotConfirmed(
+        f"{ServerStopNotConfirmed.error_code}: {detail}; the next `cruxible server start` "
+        "on this state root would refuse. Repair: re-run `cruxible server stop`, then "
+        "`cruxible server status`, and check the daemon's logs"
     )
 
 

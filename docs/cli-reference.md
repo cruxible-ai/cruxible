@@ -65,7 +65,7 @@ cruxible server install-service [SERVER-START FLAGS] [--print] [--replace]
 cruxible server status
 cruxible server info
 cruxible server restart
-cruxible server stop
+cruxible server stop [--timeout SECONDS] [--json]
 ~~~
 
 server start is the long-running daemon process and does not connect to an
@@ -82,10 +82,23 @@ transport rather than sharing its SQLite files and ledger. The lock is an
 killed daemon never blocks the next start.
 
 `server stop` is the way to stop a daemon: it asks the running daemon over the
-configured transport to shut down gracefully, then waits for the state-root lock
-to be released and says whether it was. Reaching for `kill` or a terminal
-multiplexer's quit instead kills the launching shell and orphans the daemon,
-which is how one state root ends up served by several live processes.
+configured transport to shut down gracefully, then waits for the release and
+says what it actually observed. Reaching for `kill` or a terminal multiplexer's
+quit instead kills the launching shell and orphans the daemon, which is how one
+state root ends up served by several live processes.
+
+The release is observed, never assumed. The daemon must stop answering over the
+configured transport; when its state root is a directory on the machine running
+the command, its `flock` must also be free. `--timeout` (default 30s) bounds
+that wait. The command exits NON-ZERO with the typed
+`cruxible.server.stop_not_confirmed` when the root was not released, so
+`cruxible server stop && cruxible server start` cannot walk into the lock
+refusal the stop existed to clear. Against a daemon bound to TCP on another
+host, the state root is not a path this machine has: the command then prints
+`Stop requested; lock release not observable from this client.` and exits zero
+rather than claiming a release it cannot see. `--json` reports the same two
+observations as `daemon_exited` and `state_root_released` (`null` when the lock
+is not observable from here).
 
 `server install-service` renders a per-user launchd agent on macOS or systemd
 user unit on Linux. It records the resolved `cruxible` executable and explicit
