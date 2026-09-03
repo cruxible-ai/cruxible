@@ -8,7 +8,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import NoReturn
+from typing import NoReturn, TypeAlias
 
 from pydantic import BaseModel, ValidationError
 
@@ -31,6 +31,7 @@ from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV3,
     ClaimRetirementMemberV1,
     ClaimTypeAuthoringPayloadV1,
+    ClaimTypeSuccessionMemberV1,
     ExistingCaptureCitationSourceV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
@@ -141,6 +142,13 @@ from cruxible_core.playbill.claim_retirement import (
     ClaimRetireError,
     build_claim_retirement_candidate,
     claim_retirement_inventory,
+)
+from cruxible_core.playbill.claim_type_migrations import (
+    ClaimTypeDependentDispositionV3,
+    ClaimTypeMigrationError,
+    build_claim_type_migration_candidate,
+    claim_type_migration_inventory,
+    resolve_claim_type_succession,
 )
 from cruxible_core.playbill.compiler import (
     artifact_codec_for_compiler,
@@ -1531,6 +1539,7 @@ def _lower_non_procedure(
 
 MEMBER_STAGING_ORDER = (
     "definition",
+    "claim_type_succession",
     "claim",
     "procedure",
     "procedure_mandate",
@@ -1547,10 +1556,17 @@ def _member_stage(member: AuthoringChangeSetMemberV1) -> str:
     order instead -- definitions, then the Claims that read them, then the
     Procedures and mandates that pin those, then the retirements that withdraw
     Claims the same set may just have written.
+
+    A ClaimType succession sits between the definitions and the Claims: it
+    reads the definitions (a set may define a ClaimType and succeed it later),
+    and every Claim after it -- the ones it re-authors included -- is lowered
+    against the successor vocabulary rather than the one it replaces.
     """
 
     if isinstance(member, ClaimAuthoringPayloadV1):
         return "claim"
+    if isinstance(member, ClaimTypeSuccessionMemberV1):
+        return "claim_type_succession"
     if isinstance(member, ClaimRetirementMemberV1):
         return "claim_retirement"
     if isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
@@ -1569,6 +1585,8 @@ def _member_primary_path(
 
     if isinstance(member, ClaimAuthoringPayloadV1):
         return claim_path(claim_identities[authoring_member_identity(member)])
+    if isinstance(member, ClaimTypeSuccessionMemberV1):
+        return claim_type_path(member.predicate)
     if isinstance(member, ClaimRetirementMemberV1):
         return claim_path(member.claim_id)
     if isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
@@ -1712,6 +1730,17 @@ def _lower_change_set(
                 replacement={"members": [owner, index], "path": path},
             )
         owner_by_path[path] = index
+    re_author_siblings = _resolve_re_author_siblings(
+        payload.members,
+        claim_identities=claim_identities,
+        sibling_member_by_claim_id=sibling_member_by_claim_id,
+    )
+    consumed = {
+        sibling_index
+        for siblings in re_author_siblings.values()
+        for sibling_index in siblings.values()
+    }
+    sibling_resolved: dict[int, dict[str, object]] = {}
 
     staged_tree = dict(base_tree)
     member_paths: set[str] = set()
@@ -1728,28 +1757,42 @@ def _lower_change_set(
                 continue
             path = primary_paths[index]
             member_paths.add(path)
-            try:
-                staged_tree, member_resolved, extra_paths = _stage_change_set_member(
-                    instance,
-                    member=member,
-                    intent=intent,
-                    actor_id=actor_id,
-                    base=base,
-                    base_tree=base_tree,
-                    staged_tree=staged_tree,
-                    path=path,
-                    claim_identities=claim_identities,
-                    candidate_identities=candidate_identities,
-                )
-            except AuthoringLoweringError as error:
-                raise _rescope_member_error(
-                    error,
-                    index=index,
-                    sibling_member_by_claim_id=sibling_member_by_claim_id,
-                ) from error
-            member_paths.update(extra_paths)
-            for extra_path in extra_paths:
-                installed_by.setdefault(extra_path, set()).add(index)
+            if index in consumed:
+                # A re-authored Claim is lowered by the succession that names it,
+                # under the successor vocabulary; staging it again here would
+                # lower it a second time against a tree it has already changed.
+                member_resolved = sibling_resolved[index]
+            else:
+                try:
+                    (
+                        staged_tree,
+                        member_resolved,
+                        extra_paths,
+                        staged_siblings,
+                    ) = _stage_change_set_member(
+                        instance,
+                        member=member,
+                        intent=intent,
+                        actor_id=actor_id,
+                        base=base,
+                        base_tree=base_tree,
+                        staged_tree=staged_tree,
+                        path=path,
+                        members=payload.members,
+                        claim_identities=claim_identities,
+                        candidate_identities=candidate_identities,
+                        re_author_siblings=re_author_siblings.get(index, {}),
+                    )
+                except AuthoringLoweringError as error:
+                    raise _rescope_member_error(
+                        error,
+                        index=index,
+                        sibling_member_by_claim_id=sibling_member_by_claim_id,
+                    ) from error
+                sibling_resolved.update(staged_siblings)
+                member_paths.update(extra_paths)
+                for extra_path in extra_paths:
+                    installed_by.setdefault(extra_path, set()).add(index)
             member_resolved["identity"] = authoring_member_identity(member)
             member_resolved["member"] = index
             member_resolved["path"] = path
@@ -1780,6 +1823,16 @@ def _lower_change_set(
     )
 
 
+StagedMember: TypeAlias = tuple[
+    dict[str, bytes],
+    dict[str, object],
+    set[str],
+    dict[int, dict[str, object]],
+]
+"""The staged tree, what this member resolved to, the extra paths it wrote, and
+what any sibling member it consumed resolved to."""
+
+
 def _stage_change_set_member(
     instance: PlaybillInstance,
     *,
@@ -1790,9 +1843,11 @@ def _stage_change_set_member(
     base_tree: dict[str, bytes],
     staged_tree: dict[str, bytes],
     path: str,
+    members: tuple[AuthoringChangeSetMemberV1, ...],
     claim_identities: Mapping[str, str],
     candidate_identities: frozenset[str],
-) -> tuple[dict[str, bytes], dict[str, object], set[str]]:
+    re_author_siblings: Mapping[str, int],
+) -> StagedMember:
     """Write one member into the staged tree and report what it resolved to."""
 
     if isinstance(member, ClaimAuthoringPayloadV1):
@@ -1809,15 +1864,29 @@ def _stage_change_set_member(
         member_resolved = dict(lowered.resolved_authoring)
         member_resolved["claim_id"] = claim_id
         extra = {member_path for member_path, _content in lowered.changed_members}
-        return dict(lowered.proposed_tree), member_resolved, extra
+        return dict(lowered.proposed_tree), member_resolved, extra, {}
+    if isinstance(member, ClaimTypeSuccessionMemberV1):
+        return _stage_claim_type_succession(
+            instance,
+            member=member,
+            intent=intent,
+            actor_id=actor_id,
+            base=base,
+            staged_tree=staged_tree,
+            path=path,
+            members=members,
+            claim_identities=claim_identities,
+            re_author_siblings=re_author_siblings,
+        )
     if isinstance(member, ClaimRetirementMemberV1):
-        return _stage_claim_retirement(
+        tree, resolved, extra = _stage_claim_retirement(
             instance,
             member=member,
             base=base,
             staged_tree=staged_tree,
             path=path,
         )
+        return tree, resolved, extra, {}
     if isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
         lowered = _lower_procedure(
             intent=intent.model_copy(update={"payload": member}),
@@ -1826,16 +1895,320 @@ def _stage_change_set_member(
             accepted_reference_tree=base_tree,
             candidate_identities=candidate_identities,
         )
-        return dict(lowered.proposed_tree), dict(lowered.resolved_authoring), set()
+        return dict(lowered.proposed_tree), dict(lowered.resolved_authoring), set(), {}
     if isinstance(member, ProcedureMandateAuthoringPayloadV1):
         mandate_path, content, digest = _render_procedure_mandate_member(member, tree=staged_tree)
         staged_tree = dict(staged_tree)
         staged_tree[mandate_path] = content
-        return staged_tree, {"artifact_digest": digest}, set()
+        return staged_tree, {"artifact_digest": digest}, set(), {}
     _path, content, digest = _render_non_procedure_member(member)
     staged_tree = dict(staged_tree)
     staged_tree[path] = content
-    return staged_tree, {"artifact_digest": digest}, set()
+    return staged_tree, {"artifact_digest": digest}, set(), {}
+
+
+def _resolve_re_author_siblings(
+    members: tuple[AuthoringChangeSetMemberV1, ...],
+    *,
+    claim_identities: Mapping[str, str],
+    sibling_member_by_claim_id: Mapping[str, int],
+) -> dict[int, dict[str, int]]:
+    """Bind every `re_author` disposition to the sibling Claim member it names.
+
+    Resolved once, before anything is staged, so a set whose successions and
+    Claims disagree about who re-authors what refuses before it writes a byte,
+    naming both the succession member and the member it pointed at.
+
+    A re-authored Claim keeps the identity it re-authors: the successor of a
+    dependent is that dependent, said again under the new vocabulary, with its
+    slot and its exact predecessor digest. A sibling that revises some other
+    Claim would be a different decision wearing this one's disposition.
+    """
+
+    resolved: dict[int, dict[str, int]] = {}
+    owner: dict[int, int] = {}
+    for index, member in enumerate(members):
+        if not isinstance(member, ClaimTypeSuccessionMemberV1):
+            continue
+        bound: dict[str, int] = {}
+        for position, dependent in enumerate(member.dependents):
+            if dependent.disposition != "re_author":
+                continue
+            element = f"members[{index}].dependents[{position}]"
+            named: object = dependent.successor_member
+            if dependent.successor_member is not None:
+                sibling_index: int | None = dependent.successor_member
+                if not 0 <= dependent.successor_member < len(members):
+                    sibling_index = None
+            else:
+                named = dependent.successor_claim_id
+                sibling_index = sibling_member_by_claim_id.get(str(dependent.successor_claim_id))
+            if sibling_index is None:
+                _refuse(
+                    "playbill.authoring.claim_type_succession_re_author_invalid",
+                    f"{element}.successor_member",
+                    "The re-authoring sibling Claim member this dependent names is not "
+                    "in this change set.",
+                    repair_kind="replace_re_author_member",
+                    repair_description=(
+                        "Name a Claim member of this same change set, by index or by the "
+                        "Claim ID it revises."
+                    ),
+                    replacement={
+                        "member": index,
+                        "successor_member": named,
+                        "reason": "member_not_found",
+                    },
+                )
+            sibling = members[sibling_index]
+            if not isinstance(sibling, ClaimAuthoringPayloadV1):
+                _refuse(
+                    "playbill.authoring.claim_type_succession_re_author_invalid",
+                    f"{element}.successor_member",
+                    "A dependent can only be re-authored as a Claim member.",
+                    repair_kind="replace_re_author_member",
+                    repair_description="Name the Claim member that says this dependent again.",
+                    replacement={
+                        "member": index,
+                        "successor_member": sibling_index,
+                        "reason": "not_a_claim_member",
+                    },
+                )
+            if sibling.statement.predicate != member.predicate:
+                _refuse(
+                    "playbill.authoring.claim_type_succession_re_author_invalid",
+                    f"{element}.successor_member",
+                    "A re-authoring sibling Claim member lowers under the succeeded "
+                    "ClaimType, not another one.",
+                    repair_kind="replace_re_author_member",
+                    repair_description=(f"Author the sibling Claim under {member.predicate!r}."),
+                    replacement={
+                        "member": index,
+                        "successor_member": sibling_index,
+                        "reason": "predicate_mismatch",
+                        "predicate": sibling.statement.predicate,
+                        "expected_predicate": member.predicate,
+                    },
+                )
+            claim_id = claim_identities[authoring_member_identity(sibling)]
+            if claim_id != dependent.identity.name:
+                _refuse(
+                    "playbill.authoring.claim_type_succession_re_author_invalid",
+                    f"{element}.successor_member",
+                    "A re-authored dependent keeps its own Claim identity.",
+                    repair_kind="replace_re_author_member",
+                    repair_description=(
+                        f"Have the sibling Claim member revise {dependent.identity.name}."
+                    ),
+                    replacement={
+                        "member": index,
+                        "successor_member": sibling_index,
+                        "reason": "identity_mismatch",
+                        "claim_id": claim_id,
+                        "expected_claim_id": dependent.identity.name,
+                    },
+                )
+            claimed_by = owner.get(sibling_index)
+            if claimed_by is not None:
+                _refuse(
+                    "playbill.authoring.claim_type_succession_re_author_invalid",
+                    f"{element}.successor_member",
+                    f"Members {claimed_by} and {index} both re-author member {sibling_index}.",
+                    repair_kind="replace_re_author_member",
+                    repair_description="Re-author one Claim member from one succession.",
+                    replacement={
+                        "member": index,
+                        "successor_member": sibling_index,
+                        "reason": "member_already_re_authored",
+                        "claimed_by": claimed_by,
+                    },
+                )
+            owner[sibling_index] = index
+            bound[dependent.identity.qualified] = sibling_index
+        resolved[index] = bound
+    return resolved
+
+
+def _stage_claim_type_succession(
+    instance: PlaybillInstance,
+    *,
+    member: ClaimTypeSuccessionMemberV1,
+    intent: AuthoringIntentV1,
+    actor_id: str,
+    base: AcceptedProjectionCoordinate,
+    staged_tree: dict[str, bytes],
+    path: str,
+    members: tuple[AuthoringChangeSetMemberV1, ...],
+    claim_identities: Mapping[str, str],
+    re_author_siblings: Mapping[str, int],
+) -> StagedMember:
+    """Succeed one ClaimType and settle its whole closure inside this change set.
+
+    The closure is computed over the STAGED tree, so a Claim an earlier member
+    of this same set wrote under the predecessor is a dependent of the
+    succession and must be dispositioned like any accepted one. The candidate
+    itself is built by the same function the standalone `/claim-types/proposals`
+    migration builds it with: what a succession does to its dependents is one
+    law, and this road only supplies one more way to answer it -- `re_author`,
+    where a sibling Claim member of this intent is the dependent's successor.
+    """
+
+    try:
+        type_path, predecessor, successor = resolve_claim_type_succession(
+            staged_tree,
+            member.successor,
+        )
+    except ClaimTypeMigrationError as error:
+        _refuse(
+            "playbill.authoring.claim_type_succession_invalid",
+            "successor",
+            str(error),
+            repair_kind="replace_successor",
+            repair_description=(
+                "Name the ClaimType this set succeeds and pin its exact current digest."
+            ),
+        )
+    try:
+        inventory = claim_type_migration_inventory(staged_tree, root=successor.identity)
+    except ClaimTypeMigrationError as error:
+        _refuse(
+            "playbill.authoring.claim_type_succession_closure_unsupported",
+            "dependents",
+            str(error),
+            repair_kind="split_change_set",
+            repair_description=(
+                "Settle the dependents this succession cannot reach through their own "
+                "governed change first."
+            ),
+        )
+    required = {item.identity.qualified: item for item in inventory}
+    supplied = {item.identity.qualified: item for item in member.dependents}
+    if set(required) != set(supplied):
+        _refuse(
+            "playbill.authoring.claim_type_succession_closure_incomplete",
+            "dependents",
+            "A ClaimType succession must disposition its exact reverse-pin closure.",
+            repair_kind="replace_dependents",
+            repair_description="Carry exactly the listed dependents at their exact digests.",
+            replacement={
+                "required_dependents": [item.model_dump(mode="json") for item in inventory],
+                "supplied_dependents": sorted(supplied, key=lambda item: item.encode("utf-8")),
+            },
+        )
+    if successor.object_kind != predecessor.object_kind:
+        for position, dependent in enumerate(member.dependents):
+            row = required[dependent.identity.qualified]
+            live_claim = row.artifact_kind == "claim" and "retire" in row.permitted_dispositions
+            if dependent.disposition == "successor" and live_claim:
+                _refuse(
+                    "playbill.authoring.claim_type_succession_object_kind_change",
+                    f"dependents[{position}].disposition",
+                    "A successor that changes object_kind cannot carry a live Claim "
+                    "dependent unchanged: its object no longer says what the ClaimType "
+                    "now means.",
+                    repair_kind="replace_disposition",
+                    repair_description=(
+                        "Retire this dependent, or re-author it as a sibling Claim member "
+                        "under the successor."
+                    ),
+                    replacement={
+                        "identity": dependent.identity.qualified,
+                        "permitted_dispositions": ["retire", "re_author"],
+                        "predecessor_object_kind": predecessor.object_kind,
+                        "successor_object_kind": successor.object_kind,
+                    },
+                )
+    # Two trees, deliberately. A re-authoring sibling is lowered against the
+    # SUCCESSOR vocabulary, or its own object-kind and schema laws would be
+    # judged by the ClaimType this set is replacing. The builder, meanwhile,
+    # takes the tree with the PREDECESSOR still installed: what it migrates
+    # every dependent away from is exactly the digest it reads there.
+    lowering_tree = dict(staged_tree)
+    lowering_tree[type_path] = render_claim_type(successor)
+    working = dict(staged_tree)
+    authored: dict[str, bytes] = {}
+    sibling_resolved: dict[int, dict[str, object]] = {}
+    extra: set[str] = set()
+    for position, dependent in enumerate(member.dependents):
+        if dependent.disposition != "re_author":
+            continue
+        sibling_index = re_author_siblings[dependent.identity.qualified]
+        sibling = members[sibling_index]
+        assert isinstance(sibling, ClaimAuthoringPayloadV1)
+        claim_id = claim_identities[authoring_member_identity(sibling)]
+        try:
+            lowered = _lower_claim(
+                instance,
+                intent=intent,
+                actor_id=actor_id,
+                base=base,
+                base_tree=lowering_tree,
+                payload=sibling,
+                claim_identity=claim_id,
+            )
+        except AuthoringLoweringError as error:
+            _refuse(
+                "playbill.authoring.claim_type_succession_re_author_refused",
+                f"dependents[{position}].successor_member",
+                error.message,
+                repair_kind="edit_re_author_member",
+                repair_description=(
+                    "Repair the sibling Claim member this dependent is re-authored as."
+                ),
+                replacement={
+                    "successor_member": sibling_index,
+                    "code": error.code,
+                    "offending_element": (f"members[{sibling_index}].{error.offending_element}"),
+                },
+            )
+        sibling_path = claim_path(claim_id)
+        authored[dependent.identity.qualified] = lowered.proposed_tree[sibling_path]
+        for extra_path, content in lowered.changed_members:
+            if extra_path == sibling_path:
+                continue
+            lowering_tree[extra_path] = content
+            working[extra_path] = content
+            extra.add(extra_path)
+        member_resolved = dict(lowered.resolved_authoring)
+        member_resolved["claim_id"] = claim_id
+        sibling_resolved[sibling_index] = member_resolved
+    dispositions = tuple(
+        ClaimTypeDependentDispositionV3(
+            identity=item.identity,
+            disposition="successor" if item.disposition == "re_author" else item.disposition,
+            claim_retirement_reason=item.claim_retirement_reason,
+            claim_effective_until=item.claim_effective_until,
+        )
+        for item in member.dependents
+    )
+    try:
+        candidate_tree, normalized, _warnings = build_claim_type_migration_candidate(
+            tree=working,
+            type_path=type_path,
+            successor=successor,
+            inventory=inventory,
+            dispositions=dispositions,
+            authored_successors=authored,
+        )
+    except ClaimTypeMigrationError as error:
+        _refuse(
+            "playbill.authoring.claim_type_succession_dependent_invalid",
+            "dependents",
+            str(error),
+            repair_kind="replace_dependents",
+            repair_description=(
+                "Re-read the closure this succession owes and disposition it exactly."
+            ),
+        )
+    for changed_path, content in candidate_tree.items():
+        if changed_path != path and working.get(changed_path) != content:
+            extra.add(changed_path)
+    resolved: dict[str, object] = {
+        "artifact_digest": claim_type_digest(successor).tagged,
+        "predecessor_digest": claim_type_digest(predecessor).tagged,
+        "dependents": [item.model_dump(mode="json") for item in normalized],
+    }
+    return candidate_tree, resolved, extra, sibling_resolved
 
 
 def _stage_claim_retirement(

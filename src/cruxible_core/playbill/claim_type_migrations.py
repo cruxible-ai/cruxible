@@ -666,8 +666,8 @@ def _canonical_successor_bytes(
     else:
         payload = supplied
     try:
-        candidate = supplied_content if supplied_content is not None else (
-            pretty_canonical_bytes(payload)
+        candidate = (
+            supplied_content if supplied_content is not None else (pretty_canonical_bytes(payload))
         )
         parsed = parse_dependency_artifact(current.path, candidate)
     except (PlaybillError, TypeError, ValueError) as exc:
