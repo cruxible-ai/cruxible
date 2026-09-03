@@ -14495,8 +14495,15 @@
           "json_name": "managed_root",
           "required": true,
           "schema": {
-            "title": "Managed Root",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Managed Root"
           }
         },
         "reason": {
@@ -14638,8 +14645,15 @@
             "type": "string"
           },
           "managed_root": {
-            "title": "Managed Root",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Managed Root"
           },
           "reason": {
             "anyOf": [
@@ -27984,6 +27998,7 @@
           "schema": {
             "anyOf": [
               {
+                "pattern": "^sha256:[0-9a-f]{64}$",
                 "type": "string"
               },
               {
@@ -28158,8 +28173,15 @@
                 "type": "string"
               },
               "managed_root": {
-                "title": "Managed Root",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Managed Root"
               },
               "reason": {
                 "anyOf": [
@@ -28273,6 +28295,7 @@
           "compiler_coordinate": {
             "anyOf": [
               {
+                "pattern": "^sha256:[0-9a-f]{64}$",
                 "type": "string"
               },
               {
