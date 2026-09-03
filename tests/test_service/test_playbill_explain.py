@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import PlaybillFormatError, SubjectNotFoundError
 from cruxible_client.contracts.semantic import SemanticAddress, SemanticSelector
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.service.documents import (
@@ -106,6 +106,30 @@ def test_summary_and_evidence_preserve_coverage_without_body_leakage(tmp_path: P
     assert "Secret reviewable prose" not in serialized
     assert "deterministic_actions" not in serialized
     assert "private_key" not in serialized
+
+
+def test_a_card_path_is_a_typed_refusal_not_an_escaping_format_error(tmp_path: Path) -> None:
+    """Explain resolves a caller-supplied path, and cards live in the accepted tree."""
+
+    instance, _proposal = _accepted(tmp_path)
+    coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    cards = [
+        path
+        for path in instance.tree_at(instance.accepted_coordinate().git_oid)
+        if path.startswith("cards/")
+    ]
+    assert cards
+
+    with pytest.raises(SubjectNotFoundError) as refused:
+        service_explain_playbill_subject(
+            instance,
+            subject=SemanticAddress.whole_artifact(cards[0]),
+            at=coordinate,
+            detail="summary",
+            access=BodyAccessContext(principal_id="auditor"),
+        )
+
+    assert cards[0] in str(refused.value)
 
 
 def test_proof_is_typed_deferred_and_coordinate_mixing_refuses(tmp_path: Path) -> None:

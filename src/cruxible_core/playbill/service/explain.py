@@ -6,6 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from cruxible_client.contracts.canonical import is_candidate_card_path
 from cruxible_client.contracts.documents import parse_document
 from cruxible_client.contracts.errors import (
     DocumentNotFoundError,
@@ -219,6 +220,11 @@ def service_explain_playbill_subject(
     content = tree.get(subject.artifact_path)
     if content is None:
         raise DocumentNotFoundError(subject.artifact_path)
+    if is_candidate_card_path(subject.artifact_path):
+        # Cards are derivative Markdown renderings with no registered artifact
+        # format, so resolving one here raised an untyped ProjectionFormatError.
+        # They are not explainable subjects; the artifact they render is.
+        raise SubjectNotFoundError(subject.artifact_path)
     kind = registered_path_kind(
         subject.artifact_path,
         artifact_kinds=artifact_kinds_for_compiler(coordinate.compiler),
