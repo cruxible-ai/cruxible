@@ -14,12 +14,18 @@ from cruxible_client.contracts.documents import (
     DocumentShell,
     render_document,
 )
-from cruxible_client.contracts.errors import PlaybillInstanceDecommissioned
+from cruxible_client.contracts.errors import (
+    PlaybillInstanceDecommissioned,
+    SubjectNotFoundError,
+)
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.instance import DESCRIPTOR_FILE, PlaybillInstance
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
-from cruxible_core.playbill.service.subjects import service_list_playbill_subjects
+from cruxible_core.playbill.service.subjects import (
+    service_get_playbill_subject,
+    service_list_playbill_subjects,
+)
 from cruxible_core.service.playbill_next import (
     PlaybillNextRequestV1,
     service_playbill_next,
@@ -80,8 +86,11 @@ def test_a_decommissioned_instance_refuses_writes_typed_and_keeps_serving_reads(
     assert "nothing" in str(refused.value)
     assert refused.value.repair_commands
 
-    # Reads keep serving at the accepted coordinate.
+    # Reads keep serving at the accepted coordinate: the Subject read reaches the
+    # projection and answers "no such Subject", not "this instance is closed".
     assert service_list_playbill_subjects(instance).subjects == ()
+    with pytest.raises(SubjectNotFoundError):
+        service_get_playbill_subject(instance, identity="Subject:sec.package/absent")
     orientation = service_search_playbill(
         instance,
         request=PlaybillSearchRequestV1(
