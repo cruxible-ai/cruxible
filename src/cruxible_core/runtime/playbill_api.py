@@ -23,8 +23,10 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringPayloadV1,
     AuthoringProgramStampV1,
     AuthoringReferenceExpectationV1,
+    ChangeSetAuthoringPayloadV1,
     ClaimAuthoringPayloadV2,
     ClaimAuthoringPayloadV3,
+    ClaimTypeSuccessionMemberV1,
     InsertionConfirmationObservationV2,
     PreflightResultV1,
     PublicationSourceObservationV2,
@@ -74,6 +76,7 @@ from cruxible_core.playbill.claim_retirement import (
 from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1, lint_claim_type_input
 from cruxible_core.playbill.claim_type_migrations import (
     ClaimTypeMigrationRequest,
+    lint_claim_type_successors,
     service_migrate_claim_type,
 )
 from cruxible_core.playbill.consumption import (
@@ -86,7 +89,7 @@ from cruxible_core.playbill.consumption import (
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
 from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
-from cruxible_core.playbill.projection import AcceptedCoordinate
+from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.provider_classifiers import PROVIDER_BUCKET_CLASSIFIER_REGISTRY
 from cruxible_core.playbill.search import (
@@ -1176,16 +1179,19 @@ def _authoring_preflight_result(
         result.certificate.intent_id,
         actor_id=actor.actor_id,
     ).payload
+
+    def _at() -> AcceptedProjectionCoordinate:
+        at = result.certificate.accepted_coordinate
+        return coordinator.instance.resolve_accepted_coordinate(
+            git_oid=at.git_oid,
+            semantic_root=at.semantic_root,
+            generation_root=at.generation_root,
+            compiler_digest=at.compiler_digest,
+        )
+
     if isinstance(payload, ClaimAuthoringPayloadV2 | ClaimAuthoringPayloadV3):
         claim_type = payload.dependency_drafts.claim_type
         if claim_type is not None:
-            at = result.certificate.accepted_coordinate
-            coordinate = coordinator.instance.resolve_accepted_coordinate(
-                git_oid=at.git_oid,
-                semantic_root=at.semantic_root,
-                generation_root=at.generation_root,
-                compiler_digest=at.compiler_digest,
-            )
             source_ids = (
                 (payload.source.source_id,)
                 if isinstance(payload.source, WorkingSelectionObservationV1)
@@ -1194,11 +1200,27 @@ def _authoring_preflight_result(
             lint = lint_claim_type_input(
                 coordinator.instance,
                 claim_type,
-                coordinate=coordinate,
+                coordinate=_at(),
                 anticipated_source_ids=source_ids,
             )
             if lint.warnings:
                 values["lint"] = lint.model_dump(mode="json")
+    elif isinstance(payload, ChangeSetAuthoringPayloadV1):
+        # A succession authored as a member is the same decision the operator
+        # road takes, so it owes the same evidence-policy reading.
+        successors = tuple(
+            member.successor
+            for member in payload.members
+            if isinstance(member, ClaimTypeSuccessionMemberV1)
+        )
+        if successors:
+            change_set_lint = lint_claim_type_successors(
+                coordinator.instance,
+                successors,
+                coordinate=_at(),
+            )
+            if change_set_lint is not None:
+                values["lint"] = change_set_lint.model_dump(mode="json")
     return contracts.PlaybillAuthoringPreflightResult.model_validate(values)
 
 

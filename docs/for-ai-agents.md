@@ -105,7 +105,11 @@ a retired Claim keeps the shape it was accepted with.
 Evidence admission policies ride the successor: a dependent carried to a
 successor with a stricter policy is re-graded under that policy, not refused, so
 the succession lands and the re-grading is visible in the dependent's admission
-accounts afterwards.
+accounts afterwards. A successor whose policy admits no accepted capture
+contract is linted on both roads: preflight carries the same
+`playbill.claim_type.evidence_policy_admits_no_accepted_contract` warning
+`cruxible playbill claim-type migrate` reports, in the result's `lint`, as a
+warning rather than a refusal.
 
 `cruxible playbill claim-type migrate` remains the operator form of the same
 law -- one succession, no siblings to re-author. Both roads build the candidate

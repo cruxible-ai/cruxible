@@ -35,6 +35,7 @@ from cruxible_client.contracts.claims import (
     claim_path,
     parse_claim,
 )
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV1
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
@@ -54,6 +55,7 @@ from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
+from cruxible_core.runtime.playbill_api import _authoring_preflight_result
 from cruxible_core.service.playbill_claims import service_explain_playbill_claim
 from cruxible_core.service.playbill_next import (
     PlaybillNextRequestV1,
@@ -621,6 +623,59 @@ def test_a_re_author_sibling_under_another_type_refuses_with_both_indices(
     assert replacement["reason"] == "predicate_mismatch"
     assert replacement["member"] == positions[authoring_member_identity(succession)]
     assert replacement["sibling_member"] == positions[authoring_member_identity(other)]
+
+
+def test_a_successor_admitting_no_accepted_contract_lints_on_both_roads(
+    tmp_path: Path,
+) -> None:
+    """The operator road said it and the agent road said nothing; now both do."""
+
+    instance, _owner, coordinator, claims = _affects_package_world(
+        tmp_path,
+        values=(("wi-42", "ready"),),
+    )
+    actor = AuthenticatedActor(actor_id="owner")
+    successor = _enum_successor(instance, enum=["ready"]).model_copy(
+        update={"evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1()}
+    )
+
+    operator = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequestV3(
+            mode="preflight",
+            successor=successor,
+            dependents=(
+                ClaimTypeDependentDispositionV3(
+                    identity=ArtifactIdentity(kind="Claim", name=claims["wi-42"]),
+                    disposition="successor",
+                ),
+            ),
+        ),
+        actor=actor,
+    )
+    assert operator.lint is not None
+    expected = [warning.model_dump(mode="json") for warning in operator.lint.warnings]
+    assert {str(warning["code"]) for warning in expected} == {
+        "playbill.claim_type.evidence_policy_admits_no_accepted_contract"
+    }
+
+    intent = coordinator.create(
+        actor=actor,
+        payload=_change_set(
+            ClaimTypeSuccessionMemberV1(
+                successor=successor,
+                dependents=(_dependent(claims["wi-42"], disposition="successor"),),
+            )
+        ),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    served = _authoring_preflight_result(
+        coordinator,
+        actor=actor,
+        result=coordinator.preflight(intent.intent_id, actor=actor),
+    )
+    assert served.lint is not None
+    assert served.lint.warnings == expected
 
 
 def test_the_deprecated_invalidation_word_refuses_typed(tmp_path: Path) -> None:
