@@ -78,10 +78,13 @@ user unit on Linux. It records the resolved `cruxible` executable and explicit
 state-root, transport, capability-ceiling, and auth settings under the daemon
 state root; a later `--print` with that state root revalidates and renders the
 record without writing. Installation refuses an existing unit unless
-`--replace`, loads/enables the unit, and does not start it. Start it with the
-service manager or run `cruxible server start`. Service files contain no bearer
-or bootstrap secret; auth-on installation requires an active durable runtime
-credential first.
+`--replace`, loads/enables the unit, and does not start it. Start it separately
+with `launchctl start ai.cruxible.daemon` on macOS,
+`systemctl --user start cruxible.service` on Linux, or run
+`cruxible server start`. Auth defaults to the state root's durable auth latch;
+an explicit `--auth`/`--no-auth` disagreement is refused. Service files contain
+no bearer or bootstrap secret, and auth-on installation requires an active
+durable runtime credential first.
 
 `server status` lists the daemon's exact current compiler coordinate and each
 governed host as `uninitialized`, `writable`, or `reseed_required`, retaining a

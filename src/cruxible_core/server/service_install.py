@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import plistlib
-import shlex
 import shutil
 import sqlite3
 import stat
@@ -18,6 +17,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from cruxible_core.errors import ConfigError
+from cruxible_core.server.credentials import RuntimeCredentialStore
 
 SERVICE_LABEL = "ai.cruxible.daemon"
 SERVICE_CONFIG_NAME = "service-install-v1.json"
@@ -44,6 +44,14 @@ class ServiceInstallConfigV1(BaseModel):
             raise ValueError("service settings must select exactly one complete transport")
         if self.port is not None and not 1 <= self.port <= 65535:
             raise ValueError("service TCP port must be between 1 and 65535")
+        for field_name in ("executable", "state_root", "socket_path", "host"):
+            value = getattr(self, field_name)
+            if value is None:
+                continue
+            if value.startswith("="):
+                raise ValueError(f"service {field_name} must not start with '='")
+            if any(ord(character) < 32 or ord(character) == 127 for character in value):
+                raise ValueError(f"service {field_name} must not contain control characters")
         return self
 
 
@@ -88,7 +96,7 @@ def render_launchd_service(config: ServiceInstallConfigV1) -> bytes:
         "Label": SERVICE_LABEL,
         "ProgramArguments": _start_arguments(config),
         "RunAtLoad": False,
-        "KeepAlive": True,
+        "KeepAlive": False,
         "EnvironmentVariables": {
             "CRUXIBLE_SERVER_AUTH": "true" if config.auth_enabled else "false"
         },
@@ -97,7 +105,7 @@ def render_launchd_service(config: ServiceInstallConfigV1) -> bytes:
 
 
 def render_systemd_service(config: ServiceInstallConfigV1) -> bytes:
-    command = shlex.join(_start_arguments(config))
+    command = " ".join(_systemd_quote(value) for value in _start_arguments(config))
     auth = "true" if config.auth_enabled else "false"
     return (
         "[Unit]\n"
@@ -111,6 +119,13 @@ def render_systemd_service(config: ServiceInstallConfigV1) -> bytes:
     ).encode("utf-8")
 
 
+def _systemd_quote(value: str) -> str:
+    """Quote one already-validated argv value for systemd's non-shell parser."""
+
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    return f'"{escaped}"'
+
+
 def render_service(config: ServiceInstallConfigV1) -> bytes:
     if config.platform == "darwin":
         return render_launchd_service(config)
@@ -122,15 +137,40 @@ def durable_credentials_available(state_root: Path) -> bool:
     if not database.is_file():
         return False
     try:
-        with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as connection:
-            return (
-                connection.execute(
-                    "SELECT 1 FROM runtime_credentials WHERE revoked_at IS NULL LIMIT 1"
-                ).fetchone()
-                is not None
-            )
+        return RuntimeCredentialStore(database, initialize=False).has_active_credentials()
     except sqlite3.Error:
         return False
+
+
+def service_auth_required(state_root: Path) -> bool:
+    """Read the durable auth latch without creating daemon state."""
+
+    database = state_root / "daemon" / "runtime_credentials.db"
+    if not database.is_file():
+        return False
+    try:
+        return RuntimeCredentialStore(database, initialize=False).is_auth_required()
+    except sqlite3.Error:
+        return False
+
+
+def resolve_service_auth_posture(state_root: Path, requested: bool | None) -> bool:
+    """Mirror the state root's live auth latch and refuse explicit disagreement."""
+
+    required = service_auth_required(state_root)
+    if requested is None or requested == required:
+        return required
+    if requested:
+        repair = (
+            "run `cruxible server start --bootstrap-secret-file PATH`, claim the bootstrap "
+            "credential, then rerun install-service with --auth"
+        )
+    else:
+        repair = "rerun install-service with --auth"
+    raise ConfigError(
+        "service_install.auth_posture_mismatch: explicit auth setting disagrees with the "
+        f"state root's durable auth latch (required={required}); repair: {repair}"
+    )
 
 
 def service_config_path(state_root: Path) -> Path:
@@ -183,7 +223,7 @@ def _atomic_write(path: Path, content: bytes, *, mode: int) -> None:
 
 def install_service(config: ServiceInstallConfigV1, *, replace: bool = False) -> Path:
     destination = service_destination(config.platform)
-    if destination.exists() and not replace:
+    if (destination.exists() or destination.is_symlink()) and not replace:
         raise ConfigError(
             f"service unit already exists at {destination}; rerun with --replace to replace it"
         )
@@ -222,7 +262,9 @@ __all__ = [
     "render_launchd_service",
     "render_service",
     "render_systemd_service",
+    "resolve_service_auth_posture",
     "resolved_cruxible_executable",
     "service_destination",
     "service_config_path",
+    "service_auth_required",
 ]

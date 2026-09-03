@@ -44,6 +44,7 @@ from cruxible_core.server.service_install import (
     install_service,
     load_service_config,
     render_service,
+    resolve_service_auth_posture,
     resolved_cruxible_executable,
     service_config_path,
 )
@@ -262,6 +263,7 @@ def server_install_service_cmd(
                 "recorded service platform differs from this host; rerun --print with explicit "
                 "server settings"
             )
+        resolve_service_auth_posture(root, config.auth_enabled)
         if config.auth_enabled and not durable_credentials_available(root):
             raise click.UsageError(
                 "recorded auth-on service no longer has an active durable runtime credential; "
@@ -271,7 +273,7 @@ def server_install_service_cmd(
         click.echo(render_service(config).decode("utf-8"), nl=False)
         return
 
-    auth_enabled = bool(auth)
+    auth_enabled = resolve_service_auth_posture(root, auth)
     if auth_enabled and not durable_credentials_available(root):
         raise click.UsageError(
             "auth-on unattended startup requires an active durable runtime credential; "
