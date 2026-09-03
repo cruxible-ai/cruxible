@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 from click.testing import CliRunner
 
 from cruxible_client import CruxibleClient, contracts
+from cruxible_client.contracts.errors import ProposalSelectorAmbiguousError
 from cruxible_core.cli.main import cli
 from tests.test_cli.test_playbill_search import COORDINATE
 
@@ -82,3 +84,89 @@ def test_cli_reports_the_new_proposal_without_hiding_its_source(monkeypatch) -> 
         "target: inst_test @ https://playbill.invalid (explicit)",
         f"candidate  {NEW_ID}  from {SOURCE_ID}",
     ]
+
+
+def test_cli_renders_typed_selector_candidates_and_repair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubClient:
+        def readmit_playbill_proposal(self, *args: object, **kwargs: object) -> object:
+            raise AssertionError("selector refusal must precede readmission")
+
+        def resolve_playbill_proposal_selector(self, _instance_id: str, selector: str):
+            raise ProposalSelectorAmbiguousError(selector, (SOURCE_ID, NEW_ID))
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_test",
+            "playbill",
+            "proposal",
+            "readmit",
+            "sha256:11111111",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert SOURCE_ID in result.stderr and NEW_ID in result.stderr
+    assert "Repair: cruxible playbill proposal list" in result.stderr
+
+
+def test_proposal_list_rows_match_the_labelled_columns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubClient:
+        def list_playbill_proposals(self, _instance_id: str, *, status: str | None):
+            assert status is None
+            return contracts.PlaybillProposalList(
+                coordinate=COORDINATE,
+                status_filter=None,
+                entries=[
+                    contracts.PlaybillProposalListEntry(
+                        proposal_id=SOURCE_ID,
+                        actor_id="operator",
+                        target_ref="refs/proposals/operator/open",
+                        admitted_at="2026-09-02T12:00:00.000000Z",
+                        verdict="candidate",
+                        candidate_digest="sha256:" + "4" * 64,
+                        status="open",
+                        terminal_reason=None,
+                    ),
+                    contracts.PlaybillProposalListEntry(
+                        proposal_id=NEW_ID,
+                        actor_id="operator",
+                        target_ref="refs/proposals/operator/refused",
+                        admitted_at="2026-09-02T12:01:00.000000Z",
+                        verdict="refused",
+                        candidate_digest=None,
+                        status="settled",
+                        terminal_reason="refused",
+                    ),
+                ],
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_test",
+            "playbill",
+            "proposal",
+            "list",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    assert lines[0] == "STATUS  TERMINAL_REASON  PROPOSAL_ID  TARGET_REF  COORDINATE_TIME"
+    assert lines[1].startswith(f"open  -  {SOURCE_ID}  ")
+    assert lines[2].startswith(f"settled  refused  {NEW_ID}  ")

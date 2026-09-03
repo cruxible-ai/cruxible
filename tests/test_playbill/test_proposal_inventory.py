@@ -126,6 +126,7 @@ def test_whoami_binds_transport_identity_to_current_principal_registry(tmp_path:
 
 def test_proposal_selector_resolves_full_prefix_and_current_target_ref(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     instance, _owner = seed_claims(tmp_path)
     proposed = submit_query_definition_candidate(
@@ -162,6 +163,25 @@ def test_proposal_selector_resolves_full_prefix_and_current_target_ref(
     assert refused.value.error_code == "playbill.proposal_not_found"
     assert refused.value.repair_commands == ("cruxible playbill proposal list",)
 
+    forced = (
+        admission.model_copy(update={"proposal_id": "sha256:" + "a" * 8 + "1" * 56}),
+        admission.model_copy(update={"proposal_id": "sha256:" + "a" * 8 + "2" * 56}),
+    )
+
+    class AmbiguousEvidence:
+        def list_admissions(self):  # type: ignore[no-untyped-def]
+            return forced
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(instance, "proposal_evidence", lambda: AmbiguousEvidence())
+        with pytest.raises(ProposalSelectorAmbiguousError) as ambiguous_prefix:
+            service_resolve_playbill_proposal_selector(
+                instance,
+                selector="sha256:" + "a" * 8,
+            )
+    assert ambiguous_prefix.value.candidates == tuple(item.proposal_id for item in forced)
+    assert ambiguous_prefix.value.repair_commands == ("cruxible playbill proposal list",)
+
     original_target = instance.proposal_ref_target
     instance.proposal_ref_target = lambda _selector: None  # type: ignore[method-assign]
     try:
@@ -173,6 +193,8 @@ def test_proposal_selector_resolves_full_prefix_and_current_target_ref(
     finally:
         instance.proposal_ref_target = original_target  # type: ignore[method-assign]
     assert historical.value.candidates == (admission.proposal_id,)
+    assert "no longer names a current admission" in str(historical.value)
+    assert "cruxible playbill proposal list" in str(historical.value)
 
 
 def test_runtime_whoami_uses_the_runtime_credential_label_as_actor_id(

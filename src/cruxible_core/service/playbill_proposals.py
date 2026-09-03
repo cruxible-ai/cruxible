@@ -14,7 +14,7 @@ from cruxible_client.contracts.errors import (
     ProposalReadmitRequiresResubmission,
     ProposalSelectorAmbiguousError,
 )
-from cruxible_core.playbill.id_prefixes import resolve_id_prefix
+from cruxible_core.playbill.id_prefixes import AmbiguousIdPrefix, resolve_id_prefix
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
@@ -160,12 +160,21 @@ def service_resolve_playbill_proposal_selector(
 
     admissions = tuple(instance.proposal_evidence().list_admissions())
     proposal_ids = tuple(item.proposal_id for item in admissions)
-    resolved = resolve_id_prefix(
-        selector,
-        proposal_ids,
-        marker="sha256:",
-        label="proposal",
-    )
+    try:
+        resolved = resolve_id_prefix(
+            selector,
+            proposal_ids,
+            marker="sha256:",
+            label="proposal",
+        )
+    except AmbiguousIdPrefix as exc:
+        matches = tuple(
+            sorted(
+                {proposal_id for proposal_id in proposal_ids if proposal_id.startswith(selector)},
+                key=lambda item: item.encode("utf-8"),
+            )
+        )
+        raise ProposalSelectorAmbiguousError(selector, matches) from exc
     if resolved in proposal_ids:
         return PlaybillProposalSelectorResultV1(selector=selector, proposal_id=resolved)
 

@@ -1120,11 +1120,11 @@ def list_proposals(status: str | None, output_json: bool) -> None:
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    click.echo("STATUS  PROPOSAL_ID  TARGET_REF  COORDINATE_TIME")
+    click.echo("STATUS  TERMINAL_REASON  PROPOSAL_ID  TARGET_REF  COORDINATE_TIME")
     for entry in result.entries:
-        terminal = "" if entry.terminal_reason is None else f" {entry.terminal_reason}"
+        terminal = entry.terminal_reason or "-"
         click.echo(
-            f"{entry.status}{terminal}  {entry.proposal_id}  "
+            f"{entry.status}  {terminal}  {entry.proposal_id}  "
             f"{entry.target_ref}  {entry.admitted_at}"
         )
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
@@ -2280,10 +2280,11 @@ def create_authoring_intent(
         )
         return
     assert payload is not None
+    parsed_input = _read_authoring_input(payload)
     _echo_write_target("active", ctx.params)
     result = _server_call(
         lambda client, instance_id: client.create_playbill_authoring_input(
-            instance_id, input=_read_authoring_input(payload).model_dump(mode="json")
+            instance_id, input=parsed_input.model_dump(mode="json")
         ),
         command_name="playbill authoring create",
     )

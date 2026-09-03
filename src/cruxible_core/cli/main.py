@@ -174,6 +174,8 @@ def handle_errors(f: Any) -> Any:
                     fg="red",
                     err=True,
                 )
+                for repair in getattr(exc, "repair_commands", ()):
+                    click.secho(f"Repair: {repair}", fg="red", err=True)
                 sys.exit(1)
 
             import httpx

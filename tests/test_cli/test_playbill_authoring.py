@@ -336,6 +336,63 @@ def test_cli_claim_type_migration_delivers_nonblocking_source_lint(
     assert "evidence_admission_policy.rules" in human.stdout
 
 
+def test_cli_claim_type_migration_submit_names_the_proposal_and_next_step(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    proposal_id = "sha256:" + "7" * 64
+    payload = tmp_path / "migration-submit.json"
+    payload.write_text(
+        json.dumps(
+            {
+                "tag": "playbill-claim-type-migration-request-v2",
+                "mode": "submit",
+                "successor": claim_type_input_example().model_dump(mode="json"),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class StubClient:
+        def migrate_playbill_claim_type(
+            self,
+            instance_id: str,
+            *,
+            request: dict[str, object],
+        ) -> contracts.PlaybillClaimTypeMigrationResultV2:
+            assert instance_id == "inst_authoring"
+            assert request["mode"] == "submit"
+            return contracts.PlaybillClaimTypeMigrationResultV2(
+                operation_digest="sha256:" + "6" * 64,
+                semantic_delta=[],
+                dependents=[],
+                proposal=contracts.PlaybillProposalInspection(
+                    proposal={"admission": {"proposal_id": proposal_id}},
+                    accepted_coordinate=COORDINATE,
+                ),
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://authoring.example.test",
+            "--instance-id",
+            "inst_authoring",
+            "playbill",
+            "claim-type",
+            "migrate",
+            str(payload),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert f"Proposal: {proposal_id}" in result.stdout
+    assert f"Next: cruxible playbill proposal approve {proposal_id}" in result.stdout
+
+
 def test_cli_claim_retire_passes_the_model_validated_request(
     monkeypatch,
     tmp_path: Path,
@@ -482,7 +539,7 @@ def test_cli_whoami_explains_credential_binding_and_lists_open_proposals(
     assert identity.exit_code == proposals.exit_code == 0
     assert "Actor ID comes from credential label: owner" in identity.output
     assert "governed_write" in identity.output
-    assert "open  sha256:" in proposals.output
+    assert "open  -  sha256:" in proposals.output
     assert calls == ["whoami:inst_authoring", "proposals:inst_authoring:open"]
 
 

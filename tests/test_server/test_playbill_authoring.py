@@ -645,6 +645,49 @@ def test_http_whoami_and_proposal_inventory_are_typed_reads(
     ]
 
 
+def test_http_proposal_selector_resolves_against_a_live_instance(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    from cruxible_client.contracts.documents import (
+        DocumentAuthority,
+        DocumentLifecycle,
+        DocumentShell,
+    )
+    from cruxible_core.playbill.service.documents import service_propose_playbill_document
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
+
+    client, instance_id, _private_key = playbill_http
+    proposed = service_propose_playbill_document(
+        get_playbill_manager().get(instance_id),
+        shell=DocumentShell(
+            identity="document:http-selector",
+            document_kind="design",
+            title="HTTP selector",
+            media_type="text/markdown",
+            body_digest="sha256:" + "f" * 64,
+            authority=DocumentAuthority(required_tier="graph_write"),
+            governance_scope=("project:playbill",),
+            lifecycle=DocumentLifecycle(revision=1),
+        ),
+        actor_id="operator",
+        proposal_name="http-selector",
+        timestamp="2026-09-02T12:00:00.000000Z",
+    )
+    admission = proposed.proposal.admission
+
+    response = client.get(
+        f"/api/v1/{instance_id}/playbill/proposal-selector",
+        params={"selector": admission.target_ref},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "tag": "playbill-proposal-selector-result-v1",
+        "selector": admission.target_ref,
+        "proposal_id": admission.proposal_id,
+    }
+
+
 def test_http_insertion_confirm_and_abandon_are_typed(
     playbill_http: tuple[TestClient, str, Path],
     monkeypatch,

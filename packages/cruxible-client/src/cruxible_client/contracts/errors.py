@@ -216,11 +216,19 @@ class ProposalSelectorAmbiguousError(PlaybillError):
         self.selector = selector
         self.candidates = candidates
         self.repair_commands = ("cruxible playbill proposal list",)
-        super().__init__(
-            message
-            or f"{self.error_code}: proposal selector {selector!r} names multiple current "
-            f"admissions: {', '.join(candidates)}; use one full proposal digest"
-        )
+        if message is not None:
+            rendered = message
+        elif len(candidates) == 1:
+            rendered = (
+                f"{self.error_code}: proposal selector {selector!r} no longer names a "
+                f"current admission; historical candidate: {candidates[0]}"
+            )
+        else:
+            rendered = (
+                f"{self.error_code}: proposal selector {selector!r} names multiple current "
+                f"admissions: {', '.join(candidates)}"
+            )
+        super().__init__(f"{rendered}; run `cruxible playbill proposal list`")
 
 
 class ProposalReadmitRequiresResubmission(ProposalAdmissionError):
