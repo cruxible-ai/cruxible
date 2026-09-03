@@ -7,6 +7,10 @@ landed durable writes into an instance that had stopped accepting them. The set
 below is the declared write plane; adding a governed-write door without gating
 it, or dropping a gate, has to move this inventory deliberately.
 
+An authoring draft is on it too: creating an intent persists a record in the
+exhaust, so a decommissioned instance refuses it rather than accumulating
+drafts that can never be submitted.
+
 Reads, replay, crash roll-forward and consumption exhaust are deliberately NOT
 here: a decommissioned instance keeps serving what it already accepted, so the
 observation and recovery planes stay open.
@@ -29,6 +33,9 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
             "PlaybillInstance.store_document_body",
             "PlaybillInstance.prepare_generation",
         }
+    ),
+    "cruxible_core/playbill/authoring/coordinator.py": frozenset(
+        {"AuthoringIntentCoordinator.create"}
     ),
     "cruxible_core/playbill/proposals.py": frozenset({"ProposalService.submit"}),
     "cruxible_core/playbill/service/documents.py": frozenset({"service_submit_playbill_approval"}),

@@ -282,6 +282,15 @@ class AuthoringIntentCoordinator:
         reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
         program_stamp: AuthoringProgramStampV1 | None = None,
     ) -> AuthoringIntentViewV1:
+        """Open one authoring draft against the accepted coordinate.
+
+        A draft is a durable write to the exhaust, not a read, so it takes the
+        same terminal-state gate as every other governed-write door: an instance
+        that has stopped accepting writes must not accumulate new intents that
+        can never be submitted.
+        """
+
+        self.instance.require_writable()
         at = base_coordinate or AcceptedCoordinate.from_internal(
             self.instance.accepted_coordinate()
         )

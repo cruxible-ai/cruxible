@@ -169,6 +169,7 @@ def _write_doors() -> tuple[tuple[str, object], ...]:
     fail on the placeholders instead.
     """
 
+    from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
     from cruxible_core.playbill.service.documents import service_submit_playbill_approval
     from cruxible_core.service.playbill_claim_attestations import (
         service_append_claim_attestation,
@@ -191,6 +192,14 @@ def _write_doors() -> tuple[tuple[str, object], ...]:
     none = None  # placeholders the gate must refuse before dereferencing
 
     return (
+        (
+            "authoring_create",
+            lambda instance: AuthoringIntentCoordinator.for_instance(instance).create(
+                actor=none,  # type: ignore[arg-type]
+                payload=none,  # type: ignore[arg-type]
+                canonical_timestamp=TIMESTAMP,
+            ),
+        ),
         (
             "approval",
             lambda instance: service_submit_playbill_approval(
