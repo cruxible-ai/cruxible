@@ -108,6 +108,7 @@ def test_mcp_init_carries_the_seed_decision_and_reports_the_unseeded_repair(
             operating_profile: str,
             require_independent_approval: bool,
             seed: bool = True,
+            git_object_format: str | None = None,
         ) -> contracts.PlaybillInitResult:
             seeds.append(seed)
             return contracts.PlaybillInitResult.model_validate(UNSEEDED_INIT)
@@ -196,6 +197,7 @@ def test_cli_no_seed_is_an_explicit_opt_out_that_reports_the_repair(monkeypatch,
             operating_profile: str,
             require_independent_approval: bool,
             seed: bool = True,
+            git_object_format: str | None = None,
         ) -> contracts.PlaybillInitResult:
             seeds.append(seed)
             return contracts.PlaybillInitResult.model_validate(UNSEEDED_INIT)
