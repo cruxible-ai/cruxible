@@ -385,6 +385,20 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
             accepted, accepted_interface(), implementation.implementation_digest, deployment
         )
     assert absent_seal.value.code == "cache_integrity"
+    environment_manifest.write_bytes(seal_bytes)
+
+    # A RECORD entry that really does leave the environment names itself in the
+    # refusal instead of dissolving into an unexplained closure mismatch.
+    record = next(tmp_path.rglob("RECORD"))
+    original_record = record.read_text(encoding="utf-8")
+    record.write_text(f"{original_record}../../../../escaped-payload,,\n", encoding="utf-8")
+    with pytest.raises(ProviderLocalRuntimeRefused) as escaping_record:
+        LocalProviderExecutionDriver().bind(
+            accepted, accepted_interface(), implementation.implementation_digest, deployment
+        )
+    assert escaping_record.value.code == "environment_divergence"
+    assert "../../../../escaped-payload" in str(escaping_record.value)
+    record.write_text(original_record, encoding="utf-8")
 
 
 def test_local_driver_runs_in_isolated_directory_with_fd_secret_and_attribution_egress(

@@ -754,12 +754,19 @@ class LocalProviderExecutionDriver:
                 raise ProviderLocalRuntimeRefused(
                     "environment_divergence", "runtime RECORD contains an empty path"
                 )
-            target = site_root / row[0]
+            # A RECORD path is relative to site-packages and a real wheel spells
+            # console scripts and `.data` payloads with `..`, so the join has to
+            # be normalized before it is compared. `Path.relative_to` is purely
+            # lexical: without this an entry like `../../../bin/x` produced a
+            # path no seal could ever declare, and the bind refused
+            # `environment_divergence` naming no cause at all.
+            target = Path(os.path.normpath(site_root / row[0]))
             try:
                 required.add(target.relative_to(environment_root).as_posix())
             except ValueError as exc:
                 raise ProviderLocalRuntimeRefused(
-                    "environment_divergence", "runtime RECORD path escapes the environment"
+                    "environment_divergence",
+                    f"runtime RECORD entry {row[0]!r} resolves outside the environment",
                 ) from exc
 
         module_name = entrypoint.partition(":")[0]

@@ -35,13 +35,23 @@ def write_test_provider_seal_v2(
     runtime_file = site_root / "cruxible_provider_runtime/__init__.py"
     runtime_file.parent.mkdir(parents=True, exist_ok=True)
     runtime_file.write_bytes(b'__version__ = "1.0.0"\n')
+    # A real wheel's RECORD spells console scripts and `.data` payloads relative
+    # to site-packages with `..`, so the fixture carries one: a seal that cannot
+    # represent that shape cannot seal any real environment.
+    console_script = environment_root / "bin/cruxible-provider-runtime"
+    console_script.parent.mkdir(parents=True, exist_ok=True)
+    console_script.write_bytes(b"#!/bin/sh\nexit 0\n")
     record = site_root / f"cruxible_provider_runtime-{runtime_version}.dist-info/RECORD"
     record.parent.mkdir(parents=True, exist_ok=True)
     record.write_text(
-        f"cruxible_provider_runtime/__init__.py,,\n{record.parent.name}/RECORD,,\n",
+        "cruxible_provider_runtime/__init__.py,,\n"
+        f"{record.parent.name}/RECORD,,\n"
+        "../../bin/cruxible-provider-runtime,,\n",
         encoding="utf-8",
     )
-    covered = tuple(sorted((interpreter_path, package_init, module_path, runtime_file, record)))
+    covered = tuple(
+        sorted((interpreter_path, package_init, module_path, runtime_file, record, console_script))
+    )
     seal_path.write_bytes(
         canonical_bytes(
             {
