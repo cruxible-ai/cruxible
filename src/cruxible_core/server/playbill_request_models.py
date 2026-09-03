@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.inputs import AuthoringInputV1
@@ -33,6 +33,7 @@ from cruxible_client.contracts.types import (
     GitObjectFormat,
     OperatingProfile,
     PrincipalRecord,
+    validate_decommission_prose,
 )
 from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
@@ -87,6 +88,15 @@ class PlaybillInstanceDecommissionRequest(_StrictPlaybillRequest):
     """The operator's stated reason for ending this instance's governed writes."""
 
     reason: str = Field(min_length=1, max_length=DECOMMISSION_REASON_MAX_LENGTH)
+
+    @field_validator("reason")
+    @classmethod
+    def _prose(cls, value: str) -> str:
+        # The bound alone is not the record's constraint: a control character
+        # passes it here and then fails strict validation inside the write,
+        # where the ValidationError is an untyped 500 rather than a refusal the
+        # caller can read. The same function decides at both layers.
+        return validate_decommission_prose(value)
 
 
 class PlaybillStoreBodyRequest(_StrictPlaybillRequest):

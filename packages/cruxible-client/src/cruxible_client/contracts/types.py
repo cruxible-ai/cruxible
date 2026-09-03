@@ -244,6 +244,27 @@ def initial_authority_matrix() -> AuthorityMatrix:
 DECOMMISSION_REASON_MAX_LENGTH = 512
 
 
+def validate_decommission_prose(value: str) -> str:
+    """Bound one line of operator prose that is stored and then echoed back.
+
+    The terminal record and the served request model both hold this constraint,
+    and they hold it by calling this one function rather than by each restating
+    it: a value the record refuses must never be admitted at the boundary and
+    then rejected from inside the write, where the refusal is a pydantic
+    ``ValidationError`` nothing on the wire can type.
+    """
+
+    if not value.strip() or value.strip() != value:
+        raise ValueError("decommission fields must be nonblank and already normalized")
+    # The reason is rendered back to an operator in the CLI refusal and in the
+    # `next` row detail. A control character there forges daemon output (a
+    # newline plus "Error: ..." reads as the daemon's own line), so it is
+    # refused rather than left to each renderer to escape.
+    if any(character.isprintable() is False for character in value):
+        raise ValueError("decommission fields may not contain control characters")
+    return value
+
+
 class PlaybillDecommissionV1(StrictModel):
     """The terminal lifecycle state of one governed instance.
 
@@ -261,15 +282,7 @@ class PlaybillDecommissionV1(StrictModel):
     @field_validator("reason", "decommissioned_by")
     @classmethod
     def _nonblank(cls, value: str) -> str:
-        if not value.strip() or value.strip() != value:
-            raise ValueError("decommission fields must be nonblank and already normalized")
-        # The reason is rendered back to an operator in the CLI refusal and in
-        # the `next` row detail. A control character there forges daemon output
-        # (a newline plus "Error: ..." reads as the daemon's own line), so the
-        # record refuses it rather than leaving each renderer to escape it.
-        if any(character.isprintable() is False for character in value):
-            raise ValueError("decommission fields may not contain control characters")
-        return value
+        return validate_decommission_prose(value)
 
 
 class PlaybillDescriptor(StrictModel):
