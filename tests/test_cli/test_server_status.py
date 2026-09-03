@@ -18,6 +18,7 @@ from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
 from cruxible_client import CruxibleClient, contracts
+from cruxible_client.authoring.sdk_types import IncompatibleDaemonVersion
 from cruxible_client.errors import ServerUnreachableError
 from cruxible_core.cli.main import cli
 from cruxible_core.mcp.handlers import reset_client_cache
@@ -64,6 +65,39 @@ def test_status_down_daemon_errors_clearly(monkeypatch, runner: CliRunner) -> No
     assert "could not reach Cruxible server" in result.output
     assert "Connection refused" in result.output
     assert "Daemon reachable; credential missing" not in result.output
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        ("server", "status"),
+        ("server", "info"),
+        ("playbill", "host", "show", "inst_mismatch"),
+    ),
+)
+def test_cli_renders_daemon_contract_mismatch(
+    command: tuple[str, ...],
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    daemon_digest = "sha256:" + "9" * 64
+    monkeypatch.setattr(
+        CruxibleClient,
+        "_version_info",
+        lambda _self: ("9.9.9", daemon_digest),
+    )
+
+    result = runner.invoke(cli, ["--server-url", "http://daemon.invalid", *command])
+
+    assert result.exit_code == 1
+    assert result.exception is not None
+    assert not isinstance(result.exception, IncompatibleDaemonVersion)
+    assert "playbill.sdk.daemon_version_incompatible" in result.stderr
+    assert "client_version=" in result.stderr
+    assert "daemon_version=9.9.9" in result.stderr
+    assert "client_snapshot_digest=sha256:" in result.stderr
+    assert f"daemon_snapshot_digest={daemon_digest}" in result.stderr
+    assert "Repair: upgrade the client or daemon" in result.stderr
 
 
 def test_status_reachable_daemon_missing_credential_names_repair(

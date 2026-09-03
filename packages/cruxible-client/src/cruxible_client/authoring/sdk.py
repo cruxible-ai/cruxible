@@ -18,6 +18,7 @@ from typing import Any, Literal, TypeVar, cast
 
 from pydantic import SecretStr, TypeAdapter
 
+import cruxible_client.compatibility as client_compatibility
 from cruxible_client import contracts as api
 from cruxible_client.authoring.attestations import (
     ClaimAttestationV2Signer,
@@ -881,9 +882,7 @@ class Playbill:
             token=raw_token,
         )
         try:
-            from cruxible_client.compatibility import check_daemon_compatibility
-
-            check_daemon_compatibility(client)
+            client_compatibility.check_daemon_compatibility(client)
             result = cls(
                 client=client,
                 instance_id=resolved.instance_id,

@@ -11,6 +11,7 @@ from datetime import datetime
 from enum import Enum
 from typing import ClassVar, Literal, Protocol, runtime_checkable
 
+from cruxible_client._error_base import CoreError
 from cruxible_client.contracts.canonical import CanonicalValue
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import ensure_utc
@@ -248,7 +249,7 @@ class DerivationSpec:
     name: str
 
 
-class PlaybillSdkError(ValueError):
+class PlaybillSdkError(CoreError, ValueError):
     code = "playbill.sdk.refused"
 
     def __init__(self, message: str) -> None:

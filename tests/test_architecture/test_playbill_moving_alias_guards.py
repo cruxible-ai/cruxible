@@ -57,6 +57,18 @@ def test_gate_selectors_never_compare_against_moving_current_aliases() -> None:
 
 
 def test_cli_and_sdk_consume_the_one_daemon_compatibility_function() -> None:
+    import cruxible_client.compatibility as client_compatibility
+    from cruxible_client.authoring import sdk
+    from cruxible_core.cli.commands import _common
+
+    assert (
+        sdk.client_compatibility.check_daemon_compatibility
+        is client_compatibility.check_daemon_compatibility
+    )
+    assert (
+        _common.client_compatibility.check_daemon_compatibility
+        is client_compatibility.check_daemon_compatibility
+    )
     consumers = (
         ROOT / "src" / "cruxible_core" / "cli" / "commands" / "_common.py",
         ROOT / "packages" / "cruxible-client" / "src" / "cruxible_client" / "authoring" / "sdk.py",
@@ -64,9 +76,9 @@ def test_cli_and_sdk_consume_the_one_daemon_compatibility_function() -> None:
     for path in consumers:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         calls = {
-            node.func.id
+            node.func.attr
             for node in ast.walk(tree)
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
         }
         assert "check_daemon_compatibility" in calls, path.relative_to(ROOT)
         assert "SUPPORTED_DAEMON_CONTRACTS" not in path.read_text(encoding="utf-8")
