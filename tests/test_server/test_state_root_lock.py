@@ -122,6 +122,29 @@ def test_releasing_the_lock_lets_the_next_daemon_take_the_root(tmp_path: Path) -
         second.release()
 
 
+def test_the_lock_descriptor_is_close_on_exec_so_restart_cannot_deadlock(
+    tmp_path: Path,
+) -> None:
+    """`server restart` re-execs in place; the lock must not outlive the old image.
+
+    An inheritable descriptor would survive `os.execv` and the replacement image
+    would refuse its own state root, turning the dev-loop restart into a
+    permanent outage.
+    """
+
+    import fcntl
+
+    root = _root(tmp_path)
+    lock = StateRootLock(root, transport="127.0.0.1:8100").acquire()
+    try:
+        descriptor = lock._descriptor
+        assert descriptor is not None
+        assert os.get_inheritable(descriptor) is False
+        assert bool(fcntl.fcntl(descriptor, fcntl.F_GETFD) & fcntl.FD_CLOEXEC)
+    finally:
+        lock.release()
+
+
 def test_schedule_server_stop_signals_this_process_after_the_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
