@@ -1442,7 +1442,7 @@ class Playbill:
         predicate_name: str,
         predicate: str | ClaimTypeRef,
         claim_type_definition: ClaimTypeDraft | None,
-    ) -> Literal["literal", "subject"]:
+    ) -> Literal["literal", "subject", "exact_content"]:
         """Resolve the exact ClaimType before interpreting address-shaped strings."""
 
         if claim_type_definition is not None:
