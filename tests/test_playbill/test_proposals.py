@@ -47,6 +47,9 @@ from cruxible_core.playbill.service.documents import (
 )
 from cruxible_core.playbill.service.proposal_names import canonical_playbill_proposal_name
 from cruxible_core.service.playbill_evidence import service_propose_claim_attestation
+from cruxible_core.service.playbill_proposals import (
+    service_resolve_playbill_proposal_selector,
+)
 from tests.test_playbill._support import initialize_local
 
 TIMESTAMP = "2026-08-11T12:30:00.000000Z"
@@ -132,6 +135,44 @@ def test_store_then_propose_creates_complete_candidate_without_changing_main(
     persisted = json.loads(admissions[0].read_bytes())
     assert persisted["source_compilation_digest"] == "sha256:" + "73" * 32
     assert "source_path" not in persisted
+
+
+def test_admission_names_the_commit_the_ref_holds_after_card_derivation(
+    tmp_path: Path,
+) -> None:
+    """Evaluation re-commits the card-bearing tree, so the admission must follow it.
+
+    A proposal resolved by its target ref matches the admission whose
+    candidate_commit_oid equals the ref target, so an admission left naming the
+    pre-evaluation commit makes `playbill proposal show <ref>` unresolvable.
+    """
+
+    instance, _owner = initialize_local(tmp_path)
+    body = instance.store_document_body("# Cards\n".encode())
+    service = instance.proposal_service()
+
+    result = service.submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=_request(instance),
+        candidate_tree=_proposal_tree(instance, _shell(body.digest)),
+        timestamp=TIMESTAMP,
+    )
+
+    assert result.candidate is not None
+    assert result.evaluation.evaluated_tree_oid is not None
+    evaluated = instance.proposal_tree(result.evaluation.evaluated_tree_oid)
+    assert [path for path in evaluated if path.startswith("cards/")]
+    assert service.transport.read_proposal_ref(_request(instance).target_ref) == (
+        result.admission.candidate_commit_oid
+    )
+    assert result.admission.candidate_tree_oid == result.evaluation.evaluated_tree_oid
+    assert (
+        service_resolve_playbill_proposal_selector(
+            instance,
+            selector=result.admission.target_ref,
+        ).proposal_id
+        == result.admission.proposal_id
+    )
 
 
 def test_refusal_keeps_evidence_but_creates_no_candidate(tmp_path: Path) -> None:

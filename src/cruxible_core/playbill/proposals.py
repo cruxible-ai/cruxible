@@ -3600,28 +3600,6 @@ class ProposalService:
             timestamp=timestamp,
             expected_ref_oid=existing,
         )
-        proposal_id = _proposal_id_payload(
-            actor_id=actor.actor_id,
-            request=request,
-            candidate_commit_oid=commit_oid,
-            candidate_tree_oid=tree_oid,
-            admitted_at=timestamp,
-            limits=self.receive_limits,
-        )
-        admission = ProposalAdmissionRecord(
-            proposal_id=proposal_id,
-            actor_id=actor.actor_id,
-            target_ref=request.target_ref,
-            proposed_base_oid=request.proposed_base_oid,
-            candidate_commit_oid=commit_oid,
-            candidate_tree_oid=tree_oid,
-            source_compilation_digest=request.source_compilation_digest,
-            claim_type_expansions=request.claim_type_expansions,
-            limits=self.receive_limits,
-            admitted_at=timestamp,
-        )
-        self.evidence.write_admission(admission)
-
         is_rebase = current.git_oid != request.proposed_base_oid
         outcome = evaluate_proposal_tree(
             base_tree=base_tree,
@@ -3648,6 +3626,31 @@ class ProposalService:
                 timestamp=timestamp,
                 expected_ref_oid=commit_oid,
             )
+        # The admission names the commit the proposal ref actually holds. Evaluation
+        # re-commits whenever it derives cards or rebases, so the record is written
+        # once, here, against the final OID: written before, it named a commit the
+        # ref no longer points at and no selector could resolve the ref back to it.
+        proposal_id = _proposal_id_payload(
+            actor_id=actor.actor_id,
+            request=request,
+            candidate_commit_oid=commit_oid,
+            candidate_tree_oid=evaluated_tree_oid or tree_oid,
+            admitted_at=timestamp,
+            limits=self.receive_limits,
+        )
+        admission = ProposalAdmissionRecord(
+            proposal_id=proposal_id,
+            actor_id=actor.actor_id,
+            target_ref=request.target_ref,
+            proposed_base_oid=request.proposed_base_oid,
+            candidate_commit_oid=commit_oid,
+            candidate_tree_oid=evaluated_tree_oid or tree_oid,
+            source_compilation_digest=request.source_compilation_digest,
+            claim_type_expansions=request.claim_type_expansions,
+            limits=self.receive_limits,
+            admitted_at=timestamp,
+        )
+        self.evidence.write_admission(admission)
         candidate_value = outcome.candidate.candidate_digest if outcome.candidate else None
         try:
             evaluation = ProposalEvaluationRecord(
