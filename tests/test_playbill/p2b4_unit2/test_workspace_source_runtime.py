@@ -4,6 +4,7 @@ import base64
 from pathlib import Path
 
 import pytest
+from tests.support.case_folding import volume_folds_case
 from tests.test_playbill.p2b4_unit1.test_source_v4_runtime import _source_fixture
 from tests.test_playbill.test_procedure_execution import _Authority, _Contracts
 
@@ -424,9 +425,20 @@ def test_receipt_resolution_is_scoped_by_run_id_not_semantic_key(tmp_path: Path)
     ("actual_path", "requested_path", "path_class", "managed"),
     (
         (".git/config", ".GIT/config", "git_metadata", False),
+        (".git/config", ".Git/config", "git_metadata", False),
         (".playbill/coverage.json", ".PLAYBILL/coverage.json", "playbill_control", False),
+        (".playbill/coverage.json", ".PlayBill/coverage.json", "playbill_control", False),
         ("owner.ed25519", "OWNER.ED25519", "client_custody", False),
+        ("daemon_ed25519", "DAEMON_ED25519", "client_custody", False),
+        ("allowed_signers", "Allowed_Signers", "client_custody", False),
+        (
+            ".playbill-init-resume-owner.json",
+            ".Playbill-Init-Resume-Owner.JSON",
+            "client_custody",
+            False,
+        ),
         ("managed/secret.txt", "MANAGED/secret.txt", "managed_root", True),
+        ("managed/secret.txt", "Managed/secret.txt", "managed_root", True),
     ),
 )
 def test_forbidden_workspace_path_refuses_before_provider_bind_or_spawn(
@@ -442,6 +454,9 @@ def test_forbidden_workspace_path_refuses_before_provider_bind_or_spawn(
     target = root / actual_path
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(b"secret")
+    # On a folding volume the requested spelling really does reach the secret,
+    # so the refusal below is the only thing standing between it and the child.
+    assert (root / requested_path).exists() is volume_folds_case(root)
     if managed:
         reader = WorkspaceFileReader(
             instance_id=prepared.admission.instance_id,

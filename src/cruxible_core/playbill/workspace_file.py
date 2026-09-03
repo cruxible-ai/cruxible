@@ -104,7 +104,7 @@ class WorkspaceFileReader:
                 root = raw.expanduser().resolve(strict=require_directory)
             except OSError as exc:
                 raise WorkspaceFileReadRefused("binding", "authorized root is unavailable") from exc
-            if require_directory and (root.is_symlink() or not root.is_dir()):
+            if require_directory and not root.is_dir():
                 raise WorkspaceFileReadRefused("binding", "authorized root is not a directory")
             resolved.add(root)
         return tuple(sorted(resolved, key=lambda item: str(item).encode("utf-8")))
@@ -126,8 +126,14 @@ class WorkspaceFileReader:
         raise WorkspaceFileReadRefused("binding", "workspace binding is not authorized")
 
     @staticmethod
-    def _deny_path(parts: tuple[str, ...]) -> None:
-        folded = tuple(unicodedata.normalize("NFC", part).casefold() for part in parts)
+    def _fold(component: str) -> str:
+        """Fold one component the way a case-insensitive volume compares names."""
+
+        return unicodedata.normalize("NFC", component).casefold()
+
+    @classmethod
+    def _deny_path(cls, parts: tuple[str, ...]) -> None:
+        folded = tuple(cls._fold(part) for part in parts)
         if any(part == ".git" for part in folded):
             raise WorkspaceFileReadRefused("git_metadata", "Git metadata is never readable")
         if any(part == ".playbill" for part in folded):
@@ -149,8 +155,16 @@ class WorkspaceFileReader:
     def _within(candidate: Path, root: Path) -> bool:
         return candidate == root or root in candidate.parents
 
+    @classmethod
+    def _within_folded(cls, candidate: Path, root: Path) -> bool:
+        """Contain case-insensitively so a case flip never under-denies a root."""
+
+        root_parts = tuple(cls._fold(part) for part in root.parts)
+        candidate_parts = tuple(cls._fold(part) for part in candidate.parts)
+        return candidate_parts[: len(root_parts)] == root_parts
+
     def _check_managed_root(self, candidate: Path) -> None:
-        if any(self._within(candidate, root) for root in self._managed_roots):
+        if any(self._within_folded(candidate, root) for root in self._managed_roots):
             raise WorkspaceFileReadRefused(
                 "managed_root", "Playbill managed roots are never readable"
             )
@@ -229,6 +243,9 @@ class WorkspaceFileReader:
         root = self._root_for(request.workspace_binding_digest)
         parts = tuple(request.relative_path.split("/"))
         self._deny_path(parts)
+        # The requested spelling is denied before any descriptor exists, so a
+        # managed root refuses identically on case-sensitive and folding volumes.
+        self._check_managed_root(root.joinpath(*parts))
         descriptors: list[int] = []
         flags_directory = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
         flags_file = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)

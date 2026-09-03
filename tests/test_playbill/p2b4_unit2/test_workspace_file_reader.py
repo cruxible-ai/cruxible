@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from tests.support.case_folding import volume_folds_case
 
 import cruxible_core.playbill.workspace_file as workspace_file_module
 from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -122,12 +123,24 @@ def test_path_grammar_refuses_absolute_and_escape(path: str, tmp_path: Path) -> 
     (
         (".git/config", "git_metadata"),
         (".GIT/config", "git_metadata"),
+        (".Git/config", "git_metadata"),
+        (".gIt/config", "git_metadata"),
+        ("nested/.GIT/config", "git_metadata"),
         (".playbill/coverage.json", "playbill_control"),
         (".PLAYBILL/coverage.json", "playbill_control"),
+        (".PlayBill/coverage.json", "playbill_control"),
         ("owner.ed25519", "client_custody"),
         ("OWNER.ED25519", "client_custody"),
+        ("Owner.Ed25519", "client_custody"),
         ("owner.ed25519.pub", "client_custody"),
+        ("OWNER.ED25519.PUB", "client_custody"),
+        ("daemon_ed25519", "client_custody"),
+        ("DAEMON_ED25519", "client_custody"),
+        ("Daemon_Ed25519.pub", "client_custody"),
+        ("allowed_signers", "client_custody"),
+        ("Allowed_Signers", "client_custody"),
         (".playbill-init-resume-owner.json", "client_custody"),
+        (".PLAYBILL-INIT-RESUME-OWNER.JSON", "client_custody"),
     ),
 )
 def test_control_and_custody_path_classes_are_denied(
@@ -138,6 +151,50 @@ def test_control_and_custody_path_classes_are_denied(
     with pytest.raises(WorkspaceFileReadRefused) as caught:
         _read(_reader(root), _request(root, path))
     assert caught.value.path_class == path_class
+
+
+DENIED_ON_DISK: tuple[tuple[str, str, str], ...] = (
+    (".git/config", ".GIT/config", "git_metadata"),
+    (".git/config", ".Git/CONFIG", "git_metadata"),
+    (".playbill/coverage.json", ".PLAYBILL/coverage.json", "playbill_control"),
+    ("owner.ed25519", "OWNER.ED25519", "client_custody"),
+    ("daemon_ed25519", "DAEMON_ED25519", "client_custody"),
+    ("allowed_signers", "Allowed_Signers", "client_custody"),
+    (".playbill-init-resume-owner.json", ".Playbill-Init-Resume-Owner.JSON", "client_custody"),
+    ("managed/state.db", "MANAGED/state.db", "managed_root"),
+)
+
+
+def test_case_variants_never_reach_a_denied_file_that_really_exists(tmp_path: Path) -> None:
+    """The bypass premise: a folding volume resolves the variant to the real entry."""
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "docs").mkdir()
+    (root / "docs" / "note.txt").write_bytes(b"hello\n")
+    folds = volume_folds_case(root)
+    reader = _reader(root, managed_roots=(root / "managed",))
+    if folds:
+        # The volume really does fold, so every refusal below had a live bypass.
+        assert _read(reader, _request(root, "DOCS/note.txt")).receipt.byte_length == 6
+
+    for actual, requested, path_class in DENIED_ON_DISK:
+        target = root / actual
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"secret")
+        assert (root / requested).exists() is folds
+        with pytest.raises(WorkspaceFileReadRefused) as caught:
+            _read(reader, _request(root, requested))
+        assert caught.value.path_class == path_class, requested
+        with pytest.raises(WorkspaceFileReadRefused) as caught:
+            _read(reader, _request(root, actual))
+        assert caught.value.path_class == path_class, actual
+
+
+def test_missing_authorized_root_is_a_typed_binding_refusal(tmp_path: Path) -> None:
+    with pytest.raises(WorkspaceFileReadRefused) as caught:
+        _reader(tmp_path / "deleted-workspace")
+    assert caught.value.path_class == "binding"
 
 
 def test_authorized_root_cannot_turn_control_directory_into_plain_workspace(
