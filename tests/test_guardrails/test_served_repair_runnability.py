@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from cruxible_client.contracts.authoring.models import PlaybillBlockSyncItemV1
+from cruxible_client.contracts.procedures.results import ProcedureAdmissionRefusalV1
 from cruxible_client.contracts.repairs import (
     DECLARED_HAND_EDIT_CHANGES,
     UNDECLARED_HAND_EDIT_CHANGE,
@@ -126,3 +128,63 @@ def test_unregistered_free_string_is_not_promoted_to_authority() -> None:
         assert "unregistered served refusal" in str(exc)
     else:  # pragma: no cover - decisive guard
         raise AssertionError("free diagnostic prose entered the v1 refusal catalog")
+
+
+def _admission_refusal_repair(code: str) -> RepairOperationV1 | HandEditRepairV1:
+    """Build the served admission refusal exactly as a producer that carries none."""
+
+    return ProcedureAdmissionRefusalV1.model_validate({"code": code, "message": "refused"}).repair
+
+
+def _block_sync_repair(code: str) -> RepairOperationV1 | HandEditRepairV1:
+    """Build the served block-sync item exactly as a producer that carries none."""
+
+    item = PlaybillBlockSyncItemV1.model_validate(
+        {"path": ".", "outcome": "refused", "reason": code}
+    )
+    assert item.repair is not None
+    return item.repair
+
+
+def _prediction_refusal_repair(code: str) -> object:
+    from cruxible_core.server.errors import error_to_response
+    from cruxible_core.service.playbill_predictions import _refuse
+
+    _status, response = error_to_response(_refuse(code, "refused"))  # type: ignore[arg-type]
+    return response.repair
+
+
+def test_every_runnable_repair_reaches_a_live_wire_response() -> None:
+    """A declared runnable repair that never reaches a served payload is prose."""
+
+    from cruxible_core.service.playbill_next import _repair_command
+
+    seen: dict[str, str] = {}
+    for code, declared in RUNNABLE_REFUSAL_REPAIRS.items():
+        owners = {
+            name for name, members in CLOSED_SERVED_REFUSAL_VOCABULARIES.items() if code in members
+        }
+        assert owners, code
+        if "procedure_admission_refusal" in owners:
+            built = _admission_refusal_repair(code)
+            assert built == declared, code
+            seen[code] = "procedure_admission_refusal"
+        elif owners & {"block_sync_reason", "block_sync_read_reason"}:
+            built = _block_sync_repair(code)
+            assert built == declared, code
+            seen[code] = "block_sync"
+        elif "prediction_refusal" in owners:
+            built = _prediction_refusal_repair(code)
+            assert isinstance(built, RepairOperationV1), code
+            assert built.operation == declared.operation, code
+            seen[code] = "prediction_refusal"
+        elif "playbill_next_reason" in owners:
+            # The next lane carries its own structured repair; the catalog entry
+            # is honest only if that lane really composes a runnable command for
+            # the same served operation.
+            command = _repair_command(declared.operation, arguments=declared.arguments)
+            assert command is not None and command.startswith("cruxible "), code
+            seen[code] = "playbill_next_reason"
+        else:  # pragma: no cover - decisive guard
+            raise AssertionError(f"{code} has no live served carrier")
+    assert set(seen) == set(RUNNABLE_REFUSAL_REPAIRS)

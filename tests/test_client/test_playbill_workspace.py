@@ -21,6 +21,7 @@ from cruxible_client.authoring.workspace import (
     write_playbill_workspace_config,
 )
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.repairs import RepairOperationV1
 
 
 def _coordinate(seed: str = "1") -> contracts.PlaybillAcceptedCoordinate:
@@ -451,4 +452,6 @@ def test_accepted_activation_skips_sync_for_an_unattached_workspace(tmp_path: Pa
     (item,) = result.block_sync.items
     assert item.outcome == "skipped"
     assert item.reason == "workspace_not_attached"
-    assert item.repair_commands == ("cruxible playbill host create --workspace .",)
+    assert item.repair == RepairOperationV1(
+        operation="playbill.host.create", arguments={"workspace": "."}
+    )

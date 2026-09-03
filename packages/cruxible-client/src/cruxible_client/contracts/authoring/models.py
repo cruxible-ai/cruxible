@@ -47,6 +47,7 @@ from cruxible_client.contracts.procedures.models import ProcedureHardCapsV3
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import AuthenticatedActor, ProposalReceiveLimits
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
+from cruxible_client.contracts.repairs import ServedRepairV1, served_repair_for_refusal
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
@@ -2085,18 +2086,30 @@ class PlaybillBlockSyncItemV1(_StrictAuthoringModel):
     block_id: str | None = None
     outcome: PlaybillBlockSyncOutcome
     reason: PlaybillBlockSyncReason | None = None
-    repair_commands: tuple[str, ...] = ()
+    # The prose ``repair_commands`` this replaced were free strings a caller had
+    # to parse; the structured carrier names the served operation and its
+    # arguments, and a producer that carries none projects the declared repair
+    # its typed reason resolves to.
+    repair: ServedRepairV1 | None = None
     detail: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _declared_repair(cls, value: object) -> object:
+        if not isinstance(value, dict) or value.get("repair") is not None:
+            return value
+        reason = value.get("reason")
+        if not isinstance(reason, str):
+            return value
+        return {**value, "repair": served_repair_for_refusal(reason).model_dump(mode="python")}
 
     @model_validator(mode="after")
     def _item_shape(self) -> "PlaybillBlockSyncItemV1":
         reasoned = self.outcome in {"skipped", "refused", "unsyncable"}
         if reasoned != (self.reason is not None):
             raise ValueError("block sync skipped/refusal outcomes require exactly one typed reason")
-        if self.repair_commands != tuple(
-            sorted(set(self.repair_commands), key=lambda item: item.encode("utf-8"))
-        ):
-            raise ValueError("block sync repair commands must be byte-sorted and unique")
+        if reasoned != (self.repair is not None):
+            raise ValueError("block sync refusal outcomes carry exactly one structured repair")
         return self
 
 

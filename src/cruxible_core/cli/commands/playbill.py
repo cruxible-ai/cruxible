@@ -69,6 +69,7 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
+from cruxible_client.contracts.repairs import render_served_repair
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
 from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
@@ -3027,8 +3028,8 @@ def sync_projection(
                 target += f"#{item.block_id}"
             suffix = "" if item.reason is None else f":{item.reason}"
             click.echo(f"{target}: {item.outcome}{suffix}")
-            for repair in item.repair_commands:
-                click.echo(f"  repair: {repair}")
+            if item.repair is not None:
+                click.echo(f"  repair: {render_served_repair(item.repair)}")
     if (check and result.would_change) or result.has_refusals:
         raise click.exceptions.Exit(1)
 

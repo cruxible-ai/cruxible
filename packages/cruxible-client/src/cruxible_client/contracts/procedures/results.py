@@ -15,7 +15,7 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_execution import (
     ProviderExternalOccurrencePlanV1,
 )
-from cruxible_client.contracts.repairs import ServedRepairV1, hand_edit_repair
+from cruxible_client.contracts.repairs import ServedRepairV1, served_repair_for_refusal
 from cruxible_client.contracts.temporal import ensure_utc
 
 ProcedureAdmissionRefusalCodeV1: TypeAlias = Literal[
@@ -194,7 +194,7 @@ def _with_default_repair(value: object) -> object:
     code = value.get("code")
     if not isinstance(code, str):
         return value
-    return {**value, "repair": hand_edit_repair(code).model_dump(mode="python")}
+    return {**value, "repair": served_repair_for_refusal(code).model_dump(mode="python")}
 
 
 class ProcedureJournalCoordinateV1(_StrictResultModel):

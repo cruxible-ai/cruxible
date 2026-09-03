@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from typing import Any, TypeAlias
 
@@ -70,6 +71,62 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
 }
 
 
+# Codes whose repair is one served CLI leaf. The operation is the leaf's dotted
+# path, so the guardrail resolves it against the live lazy command map instead
+# of trusting the string; a repair naming a command that does not exist is worse
+# than no repair at all. The table lives beside the vocabularies it covers so
+# every served refusal producer -- core service, client authoring, CLI -- reads
+# the same one instead of re-inventing prose at its own boundary.
+RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperationV1] = {
+    "binding_required": RepairOperationV1(operation="playbill.procedure.bind"),
+    "line_mandate_required": RepairOperationV1(
+        operation="playbill.authoring.create",
+        arguments={"example": "procedure-mandate"},
+    ),
+    "prediction_unsettleable_rule": RepairOperationV1(operation="playbill.predict"),
+    "prediction_deadline_passed": RepairOperationV1(operation="playbill.predict"),
+    "settlement_evidence_mismatch": RepairOperationV1(operation="playbill.settle"),
+    "block_backing_changed": RepairOperationV1(
+        operation="playbill.block.sync", arguments={"all": True}
+    ),
+    "block_backing_missing": RepairOperationV1(
+        operation="playbill.block.sync", arguments={"all": True}
+    ),
+    "block_backing_retired": RepairOperationV1(
+        operation="playbill.block.sync", arguments={"all": True}
+    ),
+    "block_concurrent_edit": RepairOperationV1(
+        operation="playbill.block.sync", arguments={"all": True}
+    ),
+    "block_locally_modified": RepairOperationV1(
+        operation="playbill.block.sync", arguments={"all": True}
+    ),
+    "block_successor_ambiguous": RepairOperationV1(operation="playbill.block.repin"),
+    "block_sync_failed": RepairOperationV1(
+        operation="playbill.block.sync", arguments={"all": True}
+    ),
+    "projection_backing_stale": RepairOperationV1(
+        operation="playbill.block.sync", arguments={"all": True}
+    ),
+    "projection_dirty": RepairOperationV1(operation="playbill.block.sync", arguments={"all": True}),
+    "occurrence_not_due": RepairOperationV1(operation="playbill.line.run"),
+    "occurrence_id_mismatch": RepairOperationV1(operation="playbill.line.run"),
+    "line_identity_mismatch": RepairOperationV1(operation="playbill.line.run"),
+    "document_modified": RepairOperationV1(operation="playbill.document.propose"),
+    "workspace_binding_invalid": RepairOperationV1(
+        operation="playbill.host.create",
+        arguments={"workspace": ".", "replace": True},
+    ),
+    "workspace_instance_mismatch": RepairOperationV1(
+        operation="playbill.host.create",
+        arguments={"workspace": ".", "replace": True},
+    ),
+    "workspace_not_attached": RepairOperationV1(
+        operation="playbill.host.create", arguments={"workspace": "."}
+    ),
+}
+
+
 class ServedRepairEnvelopeV1(BaseModel):
     """Validation utility proving the repair union has exactly one branch."""
 
@@ -99,8 +156,41 @@ def hand_edit_repair(code: str, *, required_change: str | None = None) -> HandEd
     )
 
 
+def render_served_repair(repair: ServedRepairV1) -> str:
+    """Render one structured repair for a terminal without inventing a command.
+
+    A runnable repair prints the served operation and the exact arguments it
+    carries; a hand edit prints its target and the change it requires. Neither
+    branch composes an invocation the caller could paste and have fail.
+    """
+
+    if isinstance(repair, HandEditRepairV1):
+        return f"hand edit {repair.hand_edit.target}: {repair.hand_edit.required_change}"
+    if not repair.arguments:
+        return repair.operation
+    arguments = json.dumps(repair.arguments, sort_keys=True, separators=(",", ":"))
+    return f"{repair.operation} {arguments}"
+
+
+def served_repair_for_refusal(code: str) -> ServedRepairV1:
+    """Resolve one served refusal code to its declared structured repair.
+
+    Producers call this instead of building a repair at their own boundary, so
+    a code that has a served command always reaches the wire with it and a code
+    that needs judgment reaches it with the declared change. Membership in a
+    closed vocabulary is checked by the source-owned catalog, not here: this
+    module is imported by the vocabularies themselves.
+    """
+
+    runnable = RUNNABLE_REFUSAL_REPAIRS.get(code)
+    if runnable is not None:
+        return runnable
+    return hand_edit_repair(code)
+
+
 __all__ = [
     "DECLARED_HAND_EDIT_CHANGES",
+    "RUNNABLE_REFUSAL_REPAIRS",
     "UNDECLARED_HAND_EDIT_CHANGE",
     "HandEditInstructionV1",
     "HandEditRepairV1",
@@ -108,4 +198,6 @@ __all__ = [
     "ServedRepairEnvelopeV1",
     "ServedRepairV1",
     "hand_edit_repair",
+    "render_served_repair",
+    "served_repair_for_refusal",
 ]

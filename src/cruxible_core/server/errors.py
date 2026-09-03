@@ -74,6 +74,10 @@ from cruxible_core.playbill.review_operational import (
 from cruxible_core.service.playbill_audit import PlaybillAuditError
 from cruxible_core.service.playbill_curation import PlaybillCurationError
 from cruxible_core.service.playbill_next import PlaybillNextError
+from cruxible_core.service.playbill_refusal_catalog import (
+    ALL_SERVED_REFUSAL_CODES,
+    repair_for_refusal,
+)
 from cruxible_core.service.playbill_since import PlaybillSinceError
 
 STANDARD_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
@@ -143,7 +147,13 @@ def _repair_for_error(exc: CoreError) -> ServedRepairV1:
                 ]
             },
         )
-    code = getattr(exc, "error_code", None) or getattr(exc, "code", None)
+    # A refusal whose code is a registered member of a closed served vocabulary
+    # renders the repair the catalog declares for it, so the wire carries the
+    # same runnable operation the refusal detail would have carried.
+    error_code = getattr(exc, "error_code", None)
+    if isinstance(error_code, str) and error_code in ALL_SERVED_REFUSAL_CODES:
+        return repair_for_refusal(error_code)
+    code = error_code or getattr(exc, "code", None)
     return hand_edit_repair(str(code or exc.__class__.__name__))
 
 

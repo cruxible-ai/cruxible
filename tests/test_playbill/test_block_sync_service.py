@@ -25,6 +25,7 @@ from cruxible_client.contracts.declared_blocks import (
     parse_projection_blocks,
 )
 from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1, CoverageCardBudgetV1
@@ -495,10 +496,15 @@ def test_two_writer_successor_sync_converges_without_mutating_accepted_state(
         paths=(source,),
     )
     assert ambiguous_sync.items[0].reason == "block_successor_ambiguous"
-    assert ambiguous_sync.items[0].repair_commands == tuple(
-        "cruxible playbill block repin repo.work-items "
-        f"{original_stamp.block_id} --backing {candidate.artifact_digest}"
-        for candidate in ambiguous_read.successor_candidates
+    assert ambiguous_sync.items[0].repair == RepairOperationV1(
+        operation="playbill.block.repin",
+        arguments={
+            "source_id": "repo.work-items",
+            "block_id": original_stamp.block_id,
+            "backing_candidates": [
+                candidate.artifact_digest for candidate in ambiguous_read.successor_candidates
+            ],
+        },
     )
 
     original_node = nodes[current.original_artifact_digest]

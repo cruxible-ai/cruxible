@@ -23,10 +23,10 @@ from cruxible_client.contracts.procedures.results import (
 )
 from cruxible_client.contracts.repairs import (
     DECLARED_HAND_EDIT_CHANGES,
+    RUNNABLE_REFUSAL_REPAIRS,
     UNDECLARED_HAND_EDIT_CHANGE,
-    RepairOperationV1,
     ServedRepairV1,
-    hand_edit_repair,
+    served_repair_for_refusal,
 )
 from cruxible_client.contracts.workspace_advertisement import WorkspaceAdvertisementFailureCode
 
@@ -46,47 +46,10 @@ CLOSED_SERVED_REFUSAL_VOCABULARIES: dict[str, frozenset[str]] = {
 
 ALL_SERVED_REFUSAL_CODES = frozenset().union(*CLOSED_SERVED_REFUSAL_VOCABULARIES.values())
 
-# Codes whose repair is one served CLI leaf. The operation is the leaf's dotted
-# path, so the guardrail resolves it against the live lazy command map instead
-# of trusting the string; a repair naming a command that does not exist is worse
-# than no repair at all.
-RUNNABLE_REFUSAL_REPAIRS: dict[str, RepairOperationV1] = {
-    "line_mandate_required": RepairOperationV1(
-        operation="playbill.authoring.create",
-        arguments={"example": "procedure-mandate"},
-    ),
-    "prediction_unsettleable_rule": RepairOperationV1(operation="playbill.predict"),
-    "prediction_deadline_passed": RepairOperationV1(operation="playbill.predict"),
-    "settlement_evidence_mismatch": RepairOperationV1(operation="playbill.settle"),
-    "block_backing_changed": RepairOperationV1(
-        operation="playbill.block.sync", arguments={"all": True}
-    ),
-    "block_backing_missing": RepairOperationV1(
-        operation="playbill.block.sync", arguments={"all": True}
-    ),
-    "block_backing_retired": RepairOperationV1(
-        operation="playbill.block.sync", arguments={"all": True}
-    ),
-    "block_locally_modified": RepairOperationV1(
-        operation="playbill.block.sync", arguments={"all": True}
-    ),
-    "block_sync_failed": RepairOperationV1(
-        operation="playbill.block.sync", arguments={"all": True}
-    ),
-    "projection_backing_stale": RepairOperationV1(
-        operation="playbill.block.sync", arguments={"all": True}
-    ),
-    "projection_dirty": RepairOperationV1(operation="playbill.block.sync", arguments={"all": True}),
-    "occurrence_not_due": RepairOperationV1(operation="playbill.line.run"),
-    "occurrence_id_mismatch": RepairOperationV1(operation="playbill.line.run"),
-    "line_identity_mismatch": RepairOperationV1(operation="playbill.line.run"),
-    "document_modified": RepairOperationV1(operation="playbill.document.propose"),
-}
-
 # Everything else resolves to the truthful undeclared hand edit. The count is
 # pinned by the guardrail so a new closed refusal member cannot join silently:
 # adding one forces either a declared repair or an explicit re-pin here.
-UNDECLARED_REFUSAL_CODE_COUNT = 170
+UNDECLARED_REFUSAL_CODE_COUNT = 164
 
 
 def repair_for_refusal(code: str) -> ServedRepairV1:
@@ -94,10 +57,7 @@ def repair_for_refusal(code: str) -> ServedRepairV1:
 
     if code not in ALL_SERVED_REFUSAL_CODES:
         raise KeyError(f"unregistered served refusal code: {code}")
-    runnable = RUNNABLE_REFUSAL_REPAIRS.get(code)
-    if runnable is not None:
-        return runnable
-    return hand_edit_repair(code)
+    return served_repair_for_refusal(code)
 
 
 def undeclared_refusal_codes() -> frozenset[str]:

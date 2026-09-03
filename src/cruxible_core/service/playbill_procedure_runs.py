@@ -138,7 +138,7 @@ from cruxible_client.contracts.providers import (
     parse_provider,
     provider_digest,
 )
-from cruxible_client.contracts.repairs import hand_edit_repair
+from cruxible_client.contracts.repairs import served_repair_for_refusal
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
@@ -220,11 +220,23 @@ class _StrictProcedureSurfaceModel(BaseModel):
 
 
 class ProcedureSurfaceError(PlaybillError):
+    """A served Procedure/Line surface refusal the caller can repair.
+
+    Every subclass is a REQUEST fault, never a daemon fault, so the served
+    envelope carries a 4xx status. ``error_code`` names the closed vocabulary
+    member the refusal belongs to, so the envelope carries the same code a
+    refusal detail would and the repair resolves out of the served catalog
+    instead of a class name.
+    """
+
     code = "playbill.procedure.refused"
+    error_code: str | None = None
+    http_status = 400
 
 
 class ProcedureNotFound(ProcedureSurfaceError):
     code = "playbill.procedure.not_found"
+    http_status = 404
 
 
 class ProcedureRetired(ProcedureSurfaceError):
@@ -265,6 +277,7 @@ class ProcedureRunNotCurrent(ProcedureSurfaceError):
 
 class ProcedureRunNotFound(ProcedureSurfaceError):
     code = "playbill.procedure.run.not_found"
+    http_status = 404
 
 
 class ProcedureRunRecoveryRequired(ProcedureSurfaceError):
@@ -273,10 +286,13 @@ class ProcedureRunRecoveryRequired(ProcedureSurfaceError):
 
 class LineRunNotAccepted(ProcedureSurfaceError):
     code = "playbill.line.run.line_not_accepted"
+    error_code = "line_not_accepted"
+    http_status = 404
 
 
 class LineRunIdentityMismatch(ProcedureSurfaceError):
     code = "playbill.line.run.line_identity_mismatch"
+    error_code = "line_identity_mismatch"
 
 
 class ProcedureNextOperationV1(_StrictProcedureSurfaceModel):
@@ -1745,7 +1761,7 @@ def _state_from_records(
                         message="Procedure execution failed unexpectedly; inspect daemon logs.",
                         correlation_id=run_id,
                         journal_coordinate=_journal_coordinate(final_record),
-                        repair=hand_edit_repair("unexpected_exception"),
+                        repair=served_repair_for_refusal("unexpected_exception"),
                     )
         except (ValidationError, TypeError, ValueError):
             status = "internal_failed"
@@ -1756,7 +1772,7 @@ def _state_from_records(
                 message="Procedure run record is invalid; inspect daemon logs.",
                 correlation_id=run_id,
                 journal_coordinate=_journal_coordinate(final_record),
-                repair=hand_edit_repair("run_record_invalid"),
+                repair=served_repair_for_refusal("run_record_invalid"),
             )
     attribution = ProcedureRunAttributionV1(
         actor_type=admission.actor_context.actor_type,
@@ -2016,7 +2032,7 @@ def service_run_playbill_procedure(
                 code="binding_required",
                 message="Procedure accepted bindings are incomplete.",
                 details={"required_slots": list(readiness.required_slots)},
-                repair=hand_edit_repair("binding_required"),
+                repair=served_repair_for_refusal("binding_required"),
             ),
         )
     if readiness.state == "unsupported":
@@ -2059,7 +2075,7 @@ def service_run_playbill_procedure(
                     ],
                     "legacy_external_occurrences": list(legacy_external),
                 },
-                repair=hand_edit_repair(refusal_code),
+                repair=served_repair_for_refusal(refusal_code),
             ),
         )
     current_digest = _CurrentProcedureAuthority(instance).current_procedure_digest(
@@ -2395,7 +2411,7 @@ def service_run_playbill_line(
                 node_id="line-admission",
                 details={"reason": {"code": exc.code, "detail": str(exc)}, **exc.details},
                 retryable=True,
-                repair=hand_edit_repair("provider_unavailable"),
+                repair=served_repair_for_refusal("provider_unavailable"),
             ),
         )
     selection = ProcedureSelectionDecisionV1(
@@ -2897,7 +2913,7 @@ def service_prepare_playbill_line_admission(
                 "exhaust_input_count": len(admission.exhaust_inputs),
                 "carrier_present": admission.exhaust_access_binding_digest is not None,
             },
-            repair=hand_edit_repair("exhaust_binding_carrier_required"),
+            repair=served_repair_for_refusal("exhaust_binding_carrier_required"),
         )
     tree = instance.tree_at(admission.bound_coordinate.git_oid)
     try:
@@ -2907,7 +2923,7 @@ def service_prepare_playbill_line_admission(
             code="procedure_runtime_policy_absent",
             message=str(exc),
             details={"policy_path": PROCEDURE_RUNTIME_POLICY_PATH},
-            repair=hand_edit_repair("procedure_runtime_policy_absent"),
+            repair=served_repair_for_refusal("procedure_runtime_policy_absent"),
         )
     try:
         bound = bind_line_admission_runtime_policy(admission, policy)
@@ -2920,7 +2936,7 @@ def service_prepare_playbill_line_admission(
                 "accepted_line_identity": accepted_line.line.identity.qualified,
                 "accepted_line_spec_digest": accepted_line.artifact_digest,
             },
-            repair=hand_edit_repair("artifact_binding_mismatch"),
+            repair=served_repair_for_refusal("artifact_binding_mismatch"),
         )
     return bound
 

@@ -1503,7 +1503,6 @@ def activate_with_workspace_refresh(
                         path=".",
                         outcome="refused",
                         reason="block_sync_failed",
-                        repair_commands=("cruxible playbill block sync --all",),
                         detail={"message": str(exc)},
                     ),
                 ),

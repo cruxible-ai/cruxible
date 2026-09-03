@@ -23,6 +23,7 @@ from cruxible_client.contracts.declared_blocks import (
     parse_projection_blocks,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.repairs import RepairOperationV1
 
 INSTANCE_ID = "inst_block_sync"
 OLD_BODY = b"status: old\n"
@@ -304,7 +305,13 @@ def test_local_edit_survives_and_names_both_repairs_until_explicitly_discarded(
 
     assert client.requests == []
     assert refused.items[0].reason == "block_locally_modified"
-    assert len(refused.items[0].repair_commands) == 2
+    assert refused.items[0].repair == RepairOperationV1(
+        operation="playbill.block.sync",
+        arguments={
+            "paths": [refused.items[0].path],
+            "discard_local": [refused.items[0].path],
+        },
+    )
     assert b"hand edited" in source.read_bytes()
 
     discarded = sync_projection_blocks(
@@ -332,7 +339,10 @@ def test_retired_block_refuses_then_detaches_markers_without_changing_body(tmp_p
         paths=(source,),
     )
     assert refused.items[0].reason == "block_backing_retired"
-    assert "--detach" in refused.items[0].repair_commands[0]
+    assert refused.items[0].repair == RepairOperationV1(
+        operation="playbill.block.sync",
+        arguments={"paths": [refused.items[0].path], "detach": True},
+    )
 
     detached = sync_projection_blocks(
         client,  # type: ignore[arg-type]
@@ -359,9 +369,13 @@ def test_ambiguous_live_successors_emit_exact_repin_selections(tmp_path: Path) -
     )
 
     assert result.items[0].reason == "block_successor_ambiguous"
-    assert result.items[0].repair_commands == (
-        "cruxible playbill block repin corpus.runbook pub-example --backing sha256:" + "a" * 64,
-        "cruxible playbill block repin corpus.runbook pub-example --backing sha256:" + "b" * 64,
+    assert result.items[0].repair == RepairOperationV1(
+        operation="playbill.block.repin",
+        arguments={
+            "source_id": "corpus.runbook",
+            "block_id": "pub-example",
+            "backing_candidates": ["sha256:" + "a" * 64, "sha256:" + "b" * 64],
+        },
     )
 
 

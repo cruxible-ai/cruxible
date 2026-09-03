@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shlex
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
@@ -45,6 +44,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.repairs import RepairOperationV1, ServedRepairV1
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_client.transport.http import CruxibleClient
 
@@ -207,10 +207,6 @@ def _relative_path(root: Path, path: Path) -> str:
         raise ProjectionSyncError(f"source path escapes workspace: {path}") from exc
 
 
-def _repair_commands(*values: str) -> tuple[str, ...]:
-    return tuple(sorted(set(values), key=lambda item: item.encode("utf-8")))
-
-
 def _result(items: Sequence[PlaybillBlockSyncItemV1]) -> PlaybillBlockSyncResultV1:
     ordered = tuple(
         sorted(
@@ -292,7 +288,6 @@ def _discover_source(
             path=path.name or ".",
             outcome="refused",
             reason="source_path_invalid",
-            repair_commands=("cruxible playbill block sync --all",),
             detail={"message": str(exc)},
         )
     try:
@@ -337,7 +332,6 @@ def _discover_workspace_sources(
                         path=".",
                         outcome="refused",
                         reason="source_path_invalid",
-                        repair_commands=("cruxible playbill block sync PATH",),
                         detail={
                             "message": "workspace marker scan exceeded its 32 MiB byte ceiling"
                         },
@@ -380,24 +374,27 @@ def _sync_item_from_read_refusal(
     reason = getattr(read, "reason", None)
     detail = getattr(read, "detail", None)
     values: dict[str, object] = {"message": detail or "block sync read refused"}
-    repairs: tuple[str, ...]
+    repair: ServedRepairV1 | None
     if reason == "block_backing_retired":
-        repairs = _repair_commands(f"cruxible playbill block sync --detach {shlex.quote(path)}")
+        repair = RepairOperationV1(
+            operation="playbill.block.sync",
+            arguments={"paths": [path], "detach": True},
+        )
     elif reason == "block_successor_ambiguous":
         candidates = getattr(read, "successor_candidates", ())
         values["successor_candidates"] = [
             candidate.model_dump(mode="json") for candidate in candidates
         ]
-        repairs = _repair_commands(
-            *(
-                "cruxible playbill block repin "
-                f"{shlex.quote(source_id)} {shlex.quote(block_id)} "
-                f"--backing {candidate.artifact_digest}"
-                for candidate in candidates
-            )
+        repair = RepairOperationV1(
+            operation="playbill.block.repin",
+            arguments={
+                "source_id": source_id,
+                "block_id": block_id,
+                "backing_candidates": [candidate.artifact_digest for candidate in candidates],
+            },
         )
     else:
-        repairs = _repair_commands("cruxible playbill authoring create --example claim-self-source")
+        repair = None
     mapped = {
         "block_workspace_instance_mismatch": "workspace_instance_mismatch",
         "block_backing_missing": "block_backing_missing",
@@ -418,7 +415,7 @@ def _sync_item_from_read_refusal(
             "block_id": block_id,
             "outcome": "refused" if getattr(read, "status", None) == "refused" else "unsyncable",
             "reason": local_reason,
-            "repair_commands": repairs,
+            "repair": None if repair is None else repair.model_dump(mode="python"),
             "detail": values,
         }
     )
@@ -447,7 +444,6 @@ def sync_projection_blocks(
                     path=".playbill/coverage.json",
                     outcome="refused",
                     reason="workspace_binding_invalid",
-                    repair_commands=("cruxible playbill host create --workspace . --replace",),
                     detail={"message": str(exc)},
                 ),
             )
@@ -459,7 +455,6 @@ def sync_projection_blocks(
                     path=".",
                     outcome="refused",
                     reason="workspace_not_attached",
-                    repair_commands=("cruxible playbill host create --workspace .",),
                     detail={"binding": ".playbill/coverage.json"},
                 ),
             )
@@ -471,7 +466,6 @@ def sync_projection_blocks(
                     path=".",
                     outcome="refused",
                     reason="workspace_instance_mismatch",
-                    repair_commands=("cruxible playbill host create --workspace . --replace",),
                     detail={
                         "workspace_instance_id": binding.instance_id,
                         "selected_instance_id": instance_id,
@@ -502,7 +496,6 @@ def sync_projection_blocks(
                         path=".playbill/sources.yaml",
                         outcome="refused",
                         reason="workspace_source_catalog_invalid",
-                        repair_commands=("cruxible playbill block sync PATH",),
                         detail={"message": str(exc)},
                     ),
                 )
@@ -521,7 +514,6 @@ def sync_projection_blocks(
                         source_id=entry.name,
                         outcome="refused",
                         reason="source_path_invalid",
-                        repair_commands=("cruxible playbill block sync --all",),
                         detail={"message": str(exc)},
                     )
                 )
@@ -548,7 +540,6 @@ def sync_projection_blocks(
                             path=display,
                             outcome="refused",
                             reason="source_path_invalid",
-                            repair_commands=("cruxible playbill block sync --all",),
                             detail={"message": str(exc)},
                         )
                     )
@@ -599,9 +590,6 @@ def sync_projection_blocks(
                         block_id=block.block_id,
                         outcome="unsyncable",
                         reason="block_multi_backing",
-                        repair_commands=(
-                            "cruxible playbill authoring create --example claim-self-source",
-                        ),
                         detail={"backing_count": len(stamp.backing)},
                     )
                 )
@@ -616,9 +604,6 @@ def sync_projection_blocks(
                         block_id=block.block_id,
                         outcome="unsyncable",
                         reason="block_query_backing",
-                        repair_commands=(
-                            "cruxible playbill authoring create --example claim-self-source",
-                        ),
                         detail={"backing": stamp.backing[0].identity.qualified},
                     )
                 )
@@ -631,10 +616,12 @@ def sync_projection_blocks(
                         block_id=block.block_id,
                         outcome="refused",
                         reason="block_locally_modified",
-                        repair_commands=_repair_commands(
-                            "cruxible playbill authoring create --example claim-self-source",
-                            "cruxible playbill block sync "
-                            f"{shlex.quote(relative)} --discard-local {shlex.quote(relative)}",
+                        repair=RepairOperationV1(
+                            operation="playbill.block.sync",
+                            arguments={
+                                "paths": [relative],
+                                "discard_local": [relative],
+                            },
                         ),
                         detail={
                             "last_synced_body_digest": stamp.body_digest,
@@ -706,9 +693,6 @@ def sync_projection_blocks(
                         block_id=block.block_id,
                         outcome="refused",
                         reason="block_frame_invalid",
-                        repair_commands=(
-                            "cruxible playbill authoring create --example claim-self-source",
-                        ),
                         detail={"message": str(exc)},
                     )
                 )
@@ -801,7 +785,6 @@ def sync_projection_blocks(
                     block_id=items[index].block_id,
                     outcome="refused",
                     reason="block_frame_invalid",
-                    repair_commands=("cruxible playbill block sync --all",),
                     detail={"message": str(exc)},
                 )
             continue
@@ -817,7 +800,6 @@ def sync_projection_blocks(
                     block_id=items[index].block_id,
                     outcome="refused",
                     reason="block_concurrent_edit",
-                    repair_commands=("cruxible playbill block sync --all",),
                     detail={"message": str(exc)},
                 )
     return _result(items)

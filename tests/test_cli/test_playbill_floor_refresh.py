@@ -232,7 +232,6 @@ def test_attached_sync_refusal_reports_accepted_truth_and_runnable_repair(
                     path="runbook.md",
                     outcome="refused",
                     reason="block_locally_modified",
-                    repair_commands=("cruxible playbill block sync --all",),
                 ),
             ),
             changed_file_count=0,
