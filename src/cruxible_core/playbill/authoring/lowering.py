@@ -1735,7 +1735,6 @@ def _lower_change_set(
     re_author_siblings = _resolve_re_author_siblings(
         payload.members,
         base_tree=base_tree,
-        claim_identities=claim_identities,
         sibling_member_by_claim_id=sibling_member_by_claim_id,
     )
     consumed = {
@@ -1922,7 +1921,6 @@ def _resolve_re_author_siblings(
     members: tuple[AuthoringChangeSetMemberV1, ...],
     *,
     base_tree: Mapping[str, bytes],
-    claim_identities: Mapping[str, str],
     sibling_member_by_claim_id: Mapping[str, int],
 ) -> dict[int, dict[str, int]]:
     """Bind every `re_author` disposition to the sibling Claim member it names.
@@ -1952,7 +1950,8 @@ def _resolve_re_author_siblings(
             # Every repair names the key the payload actually carries, at the
             # value that key may hold: a re-authoring sibling revises the
             # dependent itself, so the only admissible spelling is the
-            # dependent's own Claim ID.
+            # dependent's own Claim ID. The map below is keyed by the sibling's
+            # minted Claim ID, so binding it also settles whose Claim it is.
             required = dependent.identity.name
             sibling_index = sibling_member_by_claim_id.get(named)
             if sibling_index is None:
