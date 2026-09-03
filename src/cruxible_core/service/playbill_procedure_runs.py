@@ -147,7 +147,7 @@ from cruxible_client.contracts.workspace_advertisement import (
 )
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.closure import build_dependency_index
+from cruxible_core.playbill.closure import DEFERRED_PIN_TARGET_KINDS, build_dependency_index
 from cruxible_core.playbill.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
@@ -597,17 +597,9 @@ def _assert_line_closure_complete(
         target_path = index.paths_by_identity.get(pin.target.qualified)
         if target_path is None:
             # These component families are exact registry pins until they gain
-            # ledger envelopes. Their owning law, not name lookup, verifies them.
-            if pin.target.kind in {
-                "Contract",
-                "EffectPolicy",
-                "EnvironmentManifest",
-                "ExhaustReducer",
-                "LandingFilter",
-                "Policy",
-                "ReceiptSetManifest",
-                "Reducer",
-            }:
+            # ledger envelopes. Their owning law, not name lookup, verifies
+            # them, and the closure evaluator owns the one list of them.
+            if pin.target.kind in DEFERRED_PIN_TARGET_KINDS:
                 continue
             raise PlaybillExecutionError(
                 f"accepted Line closure lost {pin.target.qualified} ({pin.role})"

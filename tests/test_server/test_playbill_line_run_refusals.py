@@ -35,6 +35,7 @@ from cruxible_client.contracts.repairs import (
     DECLARED_HAND_EDIT_CHANGES,
     RUNNABLE_REFUSAL_REPAIRS,
 )
+from cruxible_core.playbill.closure import DEFERRED_PIN_TARGET_KINDS
 from cruxible_core.playbill.keys import GeneratedKeyMaterial
 from cruxible_core.playbill.procedures.execution import procedure_line_partition
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -255,6 +256,65 @@ def _accept_members(instance, reviewer_key_path: Path, members, *, timestamp: st
     projection = publisher.prebuild(bundle, base=base)
     assert publisher.activate(bundle, projection, base=base).status == "accepted"
     instance.refresh()
+
+
+def test_a_line_pinning_a_query_definition_runs_through_the_live_route(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    """What acceptance admits as a deferred pin, the route cannot refuse.
+
+    A QueryDefinition is pinned by digest and carries no ledger artifact
+    envelope, so the closure evaluator admits a Line that pins one with no tree
+    member. The route re-checks that closure, and it reads the evaluator's own
+    set rather than a copy, or an accepted Line would refuse where it runs.
+    """
+
+    client, instance_id, reviewer_key_path = playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    accepted = _slotless_procedure("query-pinning-triage")
+    policy = _acquisition_policy("query-pinning-inputs")
+    line = _served_line("query-pinning-hourly", accepted=accepted, policy=policy)
+    query_pin = ArtifactPin(
+        role="query-definition",
+        target=ArtifactIdentity(kind="QueryDefinition", name="query-pinning-open-work"),
+        artifact_digest="sha256:" + "e" * 64,
+    )
+    assert query_pin.target.kind in DEFERRED_PIN_TARGET_KINDS
+    line = line.model_copy(
+        update={
+            "pins": tuple(
+                sorted(
+                    (*line.pins, query_pin),
+                    key=lambda pin: (pin.role, pin.target.qualified, pin.artifact_digest),
+                )
+            )
+        }
+    )
+    mandate = _line_mandate(accepted)
+    _accept_members(
+        instance,
+        reviewer_key_path,
+        {
+            accepted.path: render_procedure(accepted.procedure),
+            acquisition_policy_path(policy.identity.name): render_acquisition_policy(policy),
+            line_spec_path(line.identity.name): render_line_spec(line),
+            procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
+        },
+        timestamp="2026-09-03T09:00:00.000000Z",
+    )
+    # The pinned QueryDefinition really is absent from the accepted tree.
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    assert [path for path in tree if path.startswith("query-definitions/")] == []
+
+    identity_digest = line_identity_digest(line.identity)
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/lines/{identity_digest}/runs",
+        json=_body(identity_digest),
+    )
+
+    assert response.status_code == 200, response.text
+    state = response.json()
+    assert state["status"] == "succeeded", state["terminal"]
 
 
 def test_a_real_accepted_line_runs_through_the_live_route_with_no_patch(
