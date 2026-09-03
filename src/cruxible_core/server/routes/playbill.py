@@ -852,6 +852,7 @@ async def prepare_authoring_publication(
         resolve_server_instance_id(instance_id),
         intent_id,
         observation=req.observation,
+        expectation_id=req.expectation_id,
     )
 
 
@@ -868,6 +869,7 @@ async def confirm_authoring_insertion(
         resolve_server_instance_id(instance_id),
         intent_id,
         observation=req.observation,
+        expectation_id=req.expectation_id,
     )
 
 
@@ -878,11 +880,12 @@ async def confirm_authoring_insertion(
 async def abandon_authoring_insertion(
     instance_id: str,
     intent_id: str,
-    _req: PlaybillInsertionAbandonRequest,
+    req: PlaybillInsertionAbandonRequest,
 ) -> contracts.PlaybillInsertionAbandonResult:
     return playbill_api.playbill_authoring_abandon_insertion(
         resolve_server_instance_id(instance_id),
         intent_id,
+        expectation_id=req.expectation_id,
     )
 
 

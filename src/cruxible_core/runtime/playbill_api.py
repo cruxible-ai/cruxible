@@ -1249,10 +1249,16 @@ def playbill_authoring_confirm_insertion(
     intent_id: str,
     *,
     observation: InsertionConfirmationObservationV2,
+    expectation_id: str | None = None,
 ) -> contracts.PlaybillInsertionConfirmResultV2:
     check_permission("cruxible_playbill_authoring_confirm_insertion", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
-    result = coordinator.confirm_insertion(intent_id, actor=actor, observation=observation)
+    result = coordinator.confirm_insertion(
+        intent_id,
+        actor=actor,
+        observation=observation,
+        expectation_id=expectation_id,
+    )
     return contracts.PlaybillInsertionConfirmResultV2.model_validate(result.model_dump(mode="json"))
 
 
@@ -1261,20 +1267,28 @@ def playbill_authoring_prepare_publication(
     intent_id: str,
     *,
     observation: PublicationSourceObservationV2,
+    expectation_id: str | None = None,
 ) -> contracts.PlaybillInsertionPrepareResult:
     check_permission("cruxible_playbill_authoring_prepare_publication", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
-    result = coordinator.prepare_publication(intent_id, actor=actor, observation=observation)
+    result = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=observation,
+        expectation_id=expectation_id,
+    )
     return contracts.PlaybillInsertionPrepareResult.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_authoring_abandon_insertion(
     instance_id: str,
     intent_id: str,
+    *,
+    expectation_id: str | None = None,
 ) -> contracts.PlaybillInsertionAbandonResult:
     check_permission("cruxible_playbill_authoring_abandon_insertion", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
-    result = coordinator.abandon_insertion(intent_id, actor=actor)
+    result = coordinator.abandon_insertion(intent_id, actor=actor, expectation_id=expectation_id)
     return contracts.PlaybillInsertionAbandonResult.model_validate(result.model_dump(mode="json"))
 
 

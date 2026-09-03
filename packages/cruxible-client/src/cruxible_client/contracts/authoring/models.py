@@ -2029,6 +2029,9 @@ class AuthoringSubmitResultV1(_StrictAuthoringModel):
 class InsertionPrepareRequestV2(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-prepare-request-v2"] = "playbill-insertion-prepare-request-v2"
     observation: PublicationSourceObservationV2
+    # Omitted, the intent's sole expectation is meant; a change set that
+    # publishes several Claims has no sole expectation and must name one.
+    expectation_id: str | None = None
 
 
 class PublicationPrepareWarningV1(_StrictAuthoringModel):
@@ -2118,6 +2121,7 @@ class InsertionPrepareResultV2(_StrictAuthoringModel):
 class InsertionConfirmRequestV2(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-confirm-request-v2"] = "playbill-insertion-confirm-request-v2"
     observation: InsertionConfirmationObservationV2
+    expectation_id: str | None = None
 
 
 class InsertionConfirmResultV2(_StrictAuthoringModel):

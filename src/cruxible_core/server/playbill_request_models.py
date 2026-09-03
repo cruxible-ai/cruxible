@@ -176,6 +176,7 @@ class PlaybillAuthoringSubmitRequest(_StrictPlaybillRequest):
 
 class PlaybillInsertionAbandonRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-insertion-abandon-request-v1"] = "playbill-insertion-abandon-request-v1"
+    expectation_id: str | None = None
 
 
 PlaybillInsertionPrepareRequest = InsertionPrepareRequestV2

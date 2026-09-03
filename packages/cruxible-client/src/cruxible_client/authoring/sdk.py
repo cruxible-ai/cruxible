@@ -40,6 +40,7 @@ from cruxible_client.authoring.insertions import (
 from cruxible_client.authoring.sdk_types import (
     AccessProfile,
     ActivationPolicy,
+    CallSite,
     CapabilityNotServed,
     CaptureRef,
     Cardinality,
@@ -57,6 +58,7 @@ from cruxible_client.authoring.sdk_types import (
     ReferentSensitivity,
     RefKind,
     SlotRef,
+    SourceMapEntry,
     SourceRef,
     SubjectRef,
     TypedRef,
@@ -85,20 +87,25 @@ from cruxible_client.contracts.artifacts import (
 from cruxible_client.contracts.authoring.models import (
     AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
     AUTHORING_SDK_VERSION,
+    AuthoringChangeSetMemberV1,
     AuthoringClaimStatementV1,
     AuthoringExistingClaimDispositionV1,
     AuthoringProgramOperationV1,
     AuthoringProgramStampV1,
     AuthoringReferenceExpectationV1,
+    ChangeSetAuthoringPayloadV1,
     ClaimAuthoringPayloadV1,
     ClaimAuthoringPayloadV2,
     ClaimAuthoringPayloadV3,
     ClaimDependencyDraftsV1,
+    ClaimRetirementMemberV1,
+    ClaimTypeAuthoringPayloadV1,
     ExistingCaptureCitationSourceV1,
     ProcedureAuthoringPayloadV2,
     PublicationSourceObservationV2,
     SelfSourceBodyV1,
     SubjectAuthoringPayloadV1,
+    authoring_member_identity,
     authoring_program_digest,
 )
 from cruxible_client.contracts.canonical import (
@@ -449,6 +456,7 @@ class _IntentDraft:
         | ClaimAuthoringPayloadV3
         | ProcedureAuthoringPayloadV2
         | SubjectAuthoringPayloadV1
+        | ChangeSetAuthoringPayloadV1
     )
     reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
     program_stamp: AuthoringProgramStampV1
@@ -503,6 +511,169 @@ class PredictionSettlement:
 @dataclass(frozen=True)
 class ProcedureDraft(_IntentDraft):
     pass
+
+
+@dataclass(frozen=True)
+class _ChangeSetMember:
+    payload: AuthoringChangeSetMemberV1
+    expectations: tuple[AuthoringReferenceExpectationV1, ...]
+    source_map: DiagnosticSourceMap
+    decisions: dict[str, object]
+
+
+@dataclass
+class ChangeSetDraft:
+    """One authoring intent under construction, carrying any mix of members.
+
+    Authoring surfaces and changesets are one-to-one: everything added here
+    lowers once, proposes once and generates once, and the whole intent admits
+    or refuses together. There is no member ceiling -- how many members one
+    daemon will receive in a single submission is an operator admission knob.
+    """
+
+    _playbill: Playbill = field(repr=False, compare=False)
+    rationale: str | None = None
+    _members: list[_ChangeSetMember] = field(default_factory=list, repr=False)
+
+    def claim(
+        self,
+        *,
+        subject: str | SubjectRef,
+        predicate: str | ClaimTypeRef,
+        value: CanonicalValue | SubjectRef,
+        role: ClaimRole | str,
+        rationale: str,
+        supported_by: EvidenceSelection | CaptureRef | None,
+        copied_from: EvidenceSelection | CaptureRef | None,
+        self_source: str | None,
+        qualifier: str | None,
+        effective_period: EffectivePeriod | None,
+        revises: str | ClaimRef | None,
+        dispositions: Mapping[str | ClaimRef, Disposition | str],
+        publish_to: InsertionSelection | None,
+        subject_definition: SubjectDraft | None,
+        claim_type_definition: ClaimTypeDraft | None,
+    ) -> ChangeSetDraft:
+        """Add one Claim to this changeset; the signature is `Playbill.claim`'s."""
+
+        draft = self._playbill._claim_draft(
+            sites=capture_keyword_sites("claim", stacklevel=1),
+            subject=subject,
+            predicate=predicate,
+            value=value,
+            role=role,
+            rationale=rationale,
+            supported_by=supported_by,
+            copied_from=copied_from,
+            self_source=self_source,
+            qualifier=qualifier,
+            effective_period=effective_period,
+            revises=revises,
+            dispositions=dispositions,
+            publish_to=publish_to,
+            subject_definition=subject_definition,
+            claim_type_definition=claim_type_definition,
+        )
+        assert isinstance(draft.payload, ClaimAuthoringPayloadV1)
+        self._members.append(
+            _ChangeSetMember(
+                payload=draft.payload,
+                expectations=draft.reference_expectations,
+                source_map=draft.source_map,
+                decisions={"kind": "claim", "predicate": _address(predicate, RefKind.CLAIM_TYPE)},
+            )
+        )
+        return self
+
+    def claim_type(self, definition: ClaimTypeDraft | ClaimType) -> ChangeSetDraft:
+        """Define one whole ClaimType inside this changeset.
+
+        Succeeding an accepted ClaimType stays on `/claim-types/proposals`,
+        where the migration a succession demands is decided.
+        """
+
+        value = definition.definition if isinstance(definition, ClaimTypeDraft) else definition
+        self._members.append(
+            _ChangeSetMember(
+                payload=ClaimTypeAuthoringPayloadV1(claim_type=value),
+                expectations=(),
+                source_map=DiagnosticSourceMap(()),
+                decisions={"kind": "claim_type", "predicate": value.predicate},
+            )
+        )
+        return self
+
+    def retire(
+        self,
+        claim: str | ClaimRef,
+        *,
+        reason: ClaimRetirementReason,
+        effective_until: datetime | None = None,
+        dependents: Sequence[ClaimRetireDependentV1] = (),
+    ) -> ChangeSetDraft:
+        """Retire one accepted Claim, and its live closure, inside this changeset."""
+
+        address = _address(claim, RefKind.CLAIM)
+        self._members.append(
+            _ChangeSetMember(
+                payload=ClaimRetirementMemberV1(
+                    claim_ref=address,
+                    reason=reason,
+                    effective_until=effective_until,
+                    dependents=tuple(dependents),
+                ),
+                expectations=(),
+                source_map=DiagnosticSourceMap(()),
+                decisions={"kind": "retire", "claim": address, "reason": reason},
+            )
+        )
+        return self
+
+    def prepare(self) -> Intent:
+        """Compile and preflight the whole changeset as one intent."""
+
+        if not self._members:
+            raise ValueError("a changeset needs at least one member")
+        payload = ChangeSetAuthoringPayloadV1(
+            members=tuple(
+                sorted(
+                    (member.payload for member in self._members),
+                    key=lambda item: authoring_member_identity(item).encode("utf-8"),
+                )
+            )
+        )
+        index_by_identity = {
+            authoring_member_identity(member): index for index, member in enumerate(payload.members)
+        }
+        expectations: list[AuthoringReferenceExpectationV1 | None] = []
+        entries: list[SourceMapEntry] = []
+        decisions: list[dict[str, object]] = []
+        for member in sorted(
+            self._members,
+            key=lambda item: index_by_identity[authoring_member_identity(item.payload)],
+        ):
+            prefix = f"members[{index_by_identity[authoring_member_identity(member.payload)]}]."
+            expectations.extend(
+                expectation.model_copy(update={"payload_path": prefix + expectation.payload_path})
+                for expectation in member.expectations
+            )
+            entries.extend(
+                SourceMapEntry(
+                    builder_path=entry.builder_path,
+                    emitted_paths=tuple(prefix + path for path in entry.emitted_paths),
+                    call_site=entry.call_site,
+                )
+                for entry in member.source_map.entries
+            )
+            decisions.append(dict(member.decisions))
+        draft = _IntentDraft(
+            self._playbill,
+            payload,
+            _sorted_expectations(expectations),
+            _program_stamp("changes", {"members": decisions, "rationale": self.rationale}),
+            DiagnosticSourceMap(tuple(entries)),
+        )
+        return draft.prepare()
 
 
 @dataclass(frozen=True)
@@ -614,15 +785,34 @@ class Intent:
 
     @property
     def publication(self) -> Publication | None:
+        """The one publication a singular Claim intent owns, if it has one."""
+
         expectation = self._raw.get("insertion_expectation")
         if not isinstance(expectation, Mapping):
-            self._raw = self._playbill._client.get_playbill_authoring_intent(
-                self._playbill._instance_id, self.intent_id
-            ).intent
+            self._refresh_raw()
             expectation = self._raw.get("insertion_expectation")
         if not isinstance(expectation, Mapping):
             return None
         return Publication(self, dict(expectation))
+
+    @property
+    def publications(self) -> tuple[Publication, ...]:
+        """Every publication this intent owns, one per publishing Claim member."""
+
+        expectations = self._raw.get("insertion_expectations")
+        if not isinstance(expectations, list) or not expectations:
+            self._refresh_raw()
+            expectations = self._raw.get("insertion_expectations")
+        if not isinstance(expectations, list):
+            return ()
+        return tuple(
+            Publication(self, dict(item)) for item in expectations if isinstance(item, Mapping)
+        )
+
+    def _refresh_raw(self) -> None:
+        self._raw = self._playbill._client.get_playbill_authoring_intent(
+            self._playbill._instance_id, self.intent_id
+        ).intent
 
     def prepare(self) -> Intent:
         result = self._playbill._client.preflight_playbill_authoring_intent(
@@ -748,6 +938,43 @@ class Publication:
     def state(self) -> str:
         return str(self._expectation.get("state", "terminal"))
 
+    @property
+    def expectation_id(self) -> str:
+        value = self._expectation.get("expectation_id")
+        if not isinstance(value, str):
+            raise ValueError("insertion expectation omitted its ID")
+        return value
+
+    def _retained_body(self) -> bytes:
+        """Return the authored body this one expectation publishes.
+
+        A changeset publishes one Claim per member, so the body comes from the
+        member whose minted Claim ID the expectation names, not from "the"
+        payload -- there is no single payload to take it from.
+        """
+
+        payload = self._intent._draft.payload
+        member: ClaimAuthoringPayloadV1 | None = None
+        if isinstance(payload, ChangeSetAuthoringPayloadV1):
+            claim_identity = self._expectation.get("claim_identity")
+            raw_identities = self._intent._raw.get("change_set_claim_identities")
+            minted = {
+                str(item.get("member_identity")): item.get("claim_id")
+                for item in (raw_identities if isinstance(raw_identities, list) else [])
+                if isinstance(item, Mapping)
+            }
+            for candidate in payload.members:
+                if not isinstance(candidate, ClaimAuthoringPayloadV1):
+                    continue
+                if minted.get(authoring_member_identity(candidate)) == claim_identity:
+                    member = candidate
+                    break
+        elif isinstance(payload, ClaimAuthoringPayloadV1):
+            member = payload
+        if member is None or not isinstance(member.source, SelfSourceBodyV1):
+            raise ValueError("publication requires a retained self-source body")
+        return member.source.content
+
     def _path(self) -> Path:
         target = self._expectation.get("target")
         patch = self._expectation.get("patch")
@@ -770,6 +997,7 @@ class Publication:
             self._intent._playbill._instance_id,
             self._intent.intent_id,
             observation=observation.model_dump(mode="json"),
+            expectation_id=self.expectation_id,
         )
         self._intent._raw = result.intent
         self._expectation = result.expectation
@@ -782,17 +1010,13 @@ class Publication:
         if self.state != "prepared":
             raise ValueError(f"publication cannot apply from state {self.state!r}")
         path = self._path()
-        payload = self._intent._draft.payload
-        if not isinstance(
-            payload, ClaimAuthoringPayloadV2 | ClaimAuthoringPayloadV3
-        ) or not isinstance(payload.source, SelfSourceBodyV1):
-            raise ValueError("publication requires a retained self-source body")
+        retained_body = self._retained_body()
         expected = path.read_bytes()
         application = apply_playbill_publication(
             expected,
             intent_id=self._intent.intent_id,
             expectation=self._expectation,
-            retained_body=payload.source.content,
+            retained_body=retained_body,
         )
         if application.outcome == "applied":
             replace_publication_file(
@@ -804,23 +1028,27 @@ class Publication:
             self._intent._playbill._instance_id,
             self._intent.intent_id,
             observation=application.observation,
+            expectation_id=self.expectation_id,
         )
         self._intent._raw = result.intent
         self._expectation = result.expectation
         return self
 
     def status(self) -> str:
-        self._intent._raw = self._intent._playbill._client.get_playbill_authoring_intent(
-            self._intent._playbill._instance_id, self._intent.intent_id
-        ).intent
-        expectation = self._intent._raw.get("insertion_expectation")
-        if isinstance(expectation, Mapping):
-            self._expectation = dict(expectation)
+        self._intent._refresh_raw()
+        expectations = self._intent._raw.get("insertion_expectations")
+        if isinstance(expectations, list):
+            for item in expectations:
+                if isinstance(item, Mapping) and item.get("expectation_id") == self.expectation_id:
+                    self._expectation = dict(item)
+                    break
         return self.state
 
     def abandon(self) -> Publication:
         result = self._intent._playbill._client.abandon_playbill_authoring_insertion(
-            self._intent._playbill._instance_id, self._intent.intent_id
+            self._intent._playbill._instance_id,
+            self._intent.intent_id,
+            expectation_id=self.expectation_id,
         )
         self._intent._raw = result.intent
         self._expectation = result.expectation
@@ -1310,6 +1538,16 @@ class Playbill:
         )
         return ClaimTypeDraft(self, definition)
 
+    def changes(self, *, rationale: str | None = None) -> ChangeSetDraft:
+        """Open one changeset that any mix of members can be authored into.
+
+        `pb.claim(...)` still authors exactly one Claim. This is the same
+        authoring surface for an intent that carries more than one: it lowers
+        once, proposes once, and admits or refuses whole.
+        """
+
+        return ChangeSetDraft(self, rationale)
+
     def claim(
         self,
         *,
@@ -1329,7 +1567,52 @@ class Playbill:
         subject_definition: SubjectDraft | None,
         claim_type_definition: ClaimTypeDraft | None,
     ) -> ClaimDraft:
-        sites = capture_keyword_sites("claim", stacklevel=1)
+        return self._claim_draft(
+            sites=capture_keyword_sites("claim", stacklevel=1),
+            subject=subject,
+            predicate=predicate,
+            value=value,
+            role=role,
+            rationale=rationale,
+            supported_by=supported_by,
+            copied_from=copied_from,
+            self_source=self_source,
+            qualifier=qualifier,
+            effective_period=effective_period,
+            revises=revises,
+            dispositions=dispositions,
+            publish_to=publish_to,
+            subject_definition=subject_definition,
+            claim_type_definition=claim_type_definition,
+        )
+
+    def _claim_draft(
+        self,
+        *,
+        sites: dict[str, CallSite],
+        subject: str | SubjectRef,
+        predicate: str | ClaimTypeRef,
+        value: CanonicalValue | SubjectRef,
+        role: ClaimRole | str,
+        rationale: str,
+        supported_by: EvidenceSelection | CaptureRef | None,
+        copied_from: EvidenceSelection | CaptureRef | None,
+        self_source: str | None,
+        qualifier: str | None,
+        effective_period: EffectivePeriod | None,
+        revises: str | ClaimRef | None,
+        dispositions: Mapping[str | ClaimRef, Disposition | str],
+        publish_to: InsertionSelection | None,
+        subject_definition: SubjectDraft | None,
+        claim_type_definition: ClaimTypeDraft | None,
+    ) -> ClaimDraft:
+        """Build one authored Claim from decisions plus its caller's call sites.
+
+        The call sites arrive as an argument so a Claim authored inside
+        `pb.changes(...)` still points its diagnostics at the author's own
+        keyword, not at the builder that forwarded it.
+        """
+
         claim_role = _enum(role, ClaimRole, label="claim role")
         resolved_dispositions = {
             key: _enum(value, Disposition, label="claim disposition")
@@ -2404,6 +2687,7 @@ class ProcedureRun:
 
 
 __all__ = [
+    "ChangeSetDraft",
     "ClaimDraft",
     "ClaimTypeDraft",
     "Intent",

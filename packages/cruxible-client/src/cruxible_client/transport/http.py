@@ -964,8 +964,11 @@ class CruxibleClient:
         intent_id: str,
         *,
         observation: Mapping[str, Any],
+        expectation_id: str | None = None,
     ) -> contracts.PlaybillInsertionConfirmResultV2:
-        request = InsertionConfirmRequestV2.model_validate({"observation": dict(observation)})
+        request = InsertionConfirmRequestV2.model_validate(
+            {"observation": dict(observation), "expectation_id": expectation_id}
+        )
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/confirm",
             json=request.model_dump(mode="json"),
@@ -978,8 +981,11 @@ class CruxibleClient:
         intent_id: str,
         *,
         observation: Mapping[str, Any],
+        expectation_id: str | None = None,
     ) -> contracts.PlaybillInsertionPrepareResult:
-        request = InsertionPrepareRequestV2.model_validate({"observation": dict(observation)})
+        request = InsertionPrepareRequestV2.model_validate(
+            {"observation": dict(observation), "expectation_id": expectation_id}
+        )
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/prepare",
             json=request.model_dump(mode="json"),
@@ -990,10 +996,15 @@ class CruxibleClient:
         self,
         instance_id: str,
         intent_id: str,
+        *,
+        expectation_id: str | None = None,
     ) -> contracts.PlaybillInsertionAbandonResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/abandon",
-            json={"tag": "playbill-insertion-abandon-request-v1"},
+            json={
+                "tag": "playbill-insertion-abandon-request-v1",
+                "expectation_id": expectation_id,
+            },
         )
         return self._parse_model(response, contracts.PlaybillInsertionAbandonResult)
 
