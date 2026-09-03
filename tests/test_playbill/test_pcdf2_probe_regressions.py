@@ -127,6 +127,7 @@ def test_rev15_and_rev12_remain_exact_codec_lineage_members() -> None:
         PC_DF2_COMPILER,
         P2_B2_COMPILER,
         P2_B4_COMPILER,
+        P2_B4_UNIT2_COMPILER,
     ],
 )
 def test_retained_codec_instance_stays_writable_and_replays_under_current_revision(
