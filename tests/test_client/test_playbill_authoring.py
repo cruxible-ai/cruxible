@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -10,10 +12,11 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 import cruxible_client
-from cruxible_client import CruxibleClient, Playbill
+from cruxible_client import AccessProfile, ClaimRef, CruxibleClient, Playbill
 from cruxible_client.authoring.inputs import AuthoringInputError, AuthoringInputV1
 from cruxible_client.authoring.insertions import apply_playbill_publication
 from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.projection import AcceptedCoordinate
 from tests.test_client.test_playbill_publication_v2 import _prepared
 
 COORDINATE = {
@@ -408,6 +411,148 @@ def test_removed_brief_has_no_sdk_export_builder_or_authoring_union_arm() -> Non
     assert not hasattr(Playbill, "brief")
     with pytest.raises(ValidationError):
         TypeAdapter(AuthoringInputV1).validate_python({"kind": "brief"})
+
+
+RETIRED_CLAIM_ID = "CLM-" + "a" * 32
+RETIREMENT_RATIONALE = "Retire the superseded Claim."
+
+
+def _authored_change_set(captured: list[httpx.Request]) -> dict[str, Any]:
+    """The change-set payload one prepared draft actually put on the wire."""
+
+    request = next(item for item in captured if item.url.path.endswith("/compile"))
+    payload = json.loads(request.content)["payload"]
+    assert isinstance(payload, dict)
+    return payload
+
+
+def _workspace(path: Path) -> Path:
+    """The smallest workspace a `Playbill` will open: one source catalog."""
+
+    catalog = path / ".playbill"
+    catalog.mkdir(parents=True, exist_ok=True)
+    (catalog / "sources.yaml").write_text(
+        """\
+tag: playbill-source-catalog-v1
+catalog_kind: portable
+entries:
+  - name: corpus.runbook
+    locator: corpus/runbook.md
+    document_id: runbook
+    document_kind: runbook
+    title: Runbook
+    media_type: text/markdown
+    compiler_profile: document-v1
+    required_tier: governed_write
+    governance_scope: [Document:runbook]
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _retirement_playbill(workspace: Path) -> tuple[Playbill, list[httpx.Request]]:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        if request.url.path.endswith("/compile"):
+            return httpx.Response(
+                200,
+                json={
+                    "tag": "playbill-authoring-preflight-result-v1",
+                    "verdict": "passed",
+                    "certificate": {
+                        "intent_id": INTENT_ID,
+                        "certificate_digest": "sha256:" + "6" * 64,
+                    },
+                    "frontier": {"diagnostics": []},
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "tag": "playbill-authoring-intent-view-v1",
+                "intent": {"intent_id": INTENT_ID, "intent_revision": 1},
+            },
+        )
+
+    pb = Playbill(
+        client=_client(handler),
+        instance_id="inst",
+        workspace=_workspace(workspace),
+        access_profile=AccessProfile(
+            profile_id="changeset-retire",
+            permitted_access_classes=("instance", "public"),
+            disclose_restricted_existence=True,
+        ),
+        clock=lambda: datetime(2026, 9, 4, 12, tzinfo=UTC),
+    )
+    return pb, captured
+
+
+@pytest.mark.parametrize("spelling", ["bare", "prefixed", "ref"])
+def test_change_set_retire_takes_every_spelling_the_standalone_route_takes(
+    tmp_path: Path,
+    spelling: str,
+) -> None:
+    """`pb.changes().retire(...)` accepts exactly what `pb.retire_claim(...)` does.
+
+    The SDK hands a Claim identity back as `Claim:CLM-...` -- off a search row,
+    off a `KnowledgeCard`, on a `ClaimRef` -- and the standalone retirement
+    route takes that spelling. The builder used to raise `ClaimFormatError` on
+    it, so one string worked on one route and not the other. It is normalized
+    at the boundary now, and the member on the wire is the one canonical bare
+    Claim ID whichever spelling the caller had to hand.
+    """
+
+    pb, captured = _retirement_playbill(tmp_path / "workspace")
+    claim: str | ClaimRef = RETIRED_CLAIM_ID
+    if spelling == "prefixed":
+        claim = f"Claim:{RETIRED_CLAIM_ID}"
+    elif spelling == "ref":
+        claim = ClaimRef(
+            address=f"Claim:{RETIRED_CLAIM_ID}",
+            coordinate=AcceptedCoordinate(**COORDINATE),
+        )
+
+    draft = pb.changes(rationale=RETIREMENT_RATIONALE).retire(claim, reason="was-wrong")
+
+    assert draft.prepare().intent_id == INTENT_ID
+    payload = _authored_change_set(captured)
+    assert payload["tag"] == "playbill-change-set-authoring-payload-v1"
+    assert [member["claim_ref"] for member in payload["members"]] == [RETIRED_CLAIM_ID]
+    assert [member["tag"] for member in payload["members"]] == [
+        "playbill-claim-retirement-authoring-payload-v1"
+    ]
+
+
+def test_change_set_retire_dedups_the_prefixed_and_bare_spellings(tmp_path: Path) -> None:
+    """One retirement is one member however the caller spelled the Claim.
+
+    Create-dedup keys on the payload digest, so a spelling that survived into
+    the member would have opened two live intents for one retirement. Both
+    drafts must put byte-identical change-set payloads on the wire, and a draft
+    naming one Claim under both spellings must refuse as the duplicate member
+    it is rather than authoring two.
+    """
+
+    payloads = []
+    for name, spelling in (("bare", RETIRED_CLAIM_ID), ("prefixed", f"Claim:{RETIRED_CLAIM_ID}")):
+        pb, captured = _retirement_playbill(tmp_path / name)
+        pb.changes(rationale=RETIREMENT_RATIONALE).retire(spelling, reason="was-wrong").prepare()
+        payloads.append(_authored_change_set(captured))
+
+    assert payloads[0] == payloads[1]
+
+    pb, _captured = _retirement_playbill(tmp_path / "duplicate")
+    duplicated = (
+        pb.changes(rationale=RETIREMENT_RATIONALE)
+        .retire(RETIRED_CLAIM_ID, reason="was-wrong")
+        .retire(f"Claim:{RETIRED_CLAIM_ID}", reason="was-wrong")
+    )
+    with pytest.raises(ValidationError, match="member identities must be unique"):
+        duplicated.prepare()
 
 
 def test_publication_warning_client_mirror_refuses_non_sha256_citation_ids() -> None:

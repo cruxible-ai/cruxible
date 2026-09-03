@@ -629,9 +629,16 @@ class ChangeSetDraft:
         effective_until: datetime | None = None,
         dependents: Sequence[ClaimRetireDependentV1] = (),
     ) -> ChangeSetDraft:
-        """Retire one accepted Claim, and its live closure, inside this changeset."""
+        """Retire one accepted Claim, and its live closure, inside this changeset.
 
-        address = _address(claim, RefKind.CLAIM)
+        Takes exactly what `Playbill.retire_claim` takes: the SDK's own rows
+        and refs spell a Claim identity `Claim:CLM-...`, so a builder that
+        refused the prefix made one library disagree with itself. The member
+        carries the one canonical bare spelling, which is what keeps two
+        spellings of one retirement on one member identity and one digest.
+        """
+
+        address = _address(claim, RefKind.CLAIM).removeprefix("Claim:")
         self._members.append(
             _ChangeSetMember(
                 payload=ClaimRetirementMemberV1(
