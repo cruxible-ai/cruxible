@@ -2502,9 +2502,10 @@ def create_authoring_intent(
     change_set (tagless).
 
     \b
-    Change-set member kind family: claim | claim_type | claim_retirement |
-    subject | query_definition | procedure_mandate | procedure. claim_type and
-    claim_retirement are member kinds only -- neither is a top-level input.
+    Change-set member kind family: claim | claim_type | claim_type_succession |
+    claim_retirement | subject | query_definition | procedure_mandate |
+    procedure. claim_type, claim_type_succession and claim_retirement are member
+    kinds only -- none is a top-level input.
     approval_policy and procedure_runtime_policy are the reverse: the member
     union parses either, but a change set refuses either, so author each as its
     own singleton input.
@@ -2512,11 +2513,13 @@ def create_authoring_intent(
     \b
     One intent is one changeset: a change_set input carries any mix of those
     member kinds, lowers once, and admits or refuses whole, typed to the member
-    index that offends. Succeeding an accepted ClaimType stays on the claim-type
-    proposal route.
+    index that offends. A claim_type_succession member succeeds an accepted
+    ClaimType and dispositions its whole reverse-pin closure in the same
+    generation, so a Claim member that speaks the new vocabulary lands with it.
 
     Use --example for a model-generated starting point; --example change-set
-    prints a mixed set.
+    prints a mixed set and --example claim-type-succession a vocabulary
+    evolution.
     """
 
     if (payload is None) == (example_name is None):

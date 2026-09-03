@@ -33,8 +33,9 @@ from cruxible_client.contracts.claims import (
     claim_path,
     parse_claim,
 )
+from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.subjects import SubjectShell, subject_path
+from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.authoring.lowering import AuthoringLoweringError, lower_authoring
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
@@ -60,6 +61,7 @@ from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_authoring_preflight import TIMESTAMP, _seed_claim_surface
 from tests.test_playbill.test_claims import _claim_type
+from tests.test_playbill.test_resolution_contracts import _accept_tree
 
 PREDICATE = "sec.vuln.affects_package"
 SUBJECT_KIND = "project.work_item"
@@ -706,3 +708,53 @@ def test_both_roads_build_the_same_succession_candidate(tmp_path: Path) -> None:
     standalone_tree = instance.proposal_tree(tree_oid)
     for changed_path, content in lowered.changed_members:
         assert standalone_tree[changed_path] == content, changed_path
+
+
+def test_a_succession_rebases_and_replays_byte_identically(tmp_path: Path) -> None:
+    """One vocabulary change advances over an unrelated acceptance, then replays."""
+
+    instance, owner, coordinator, claims = _affects_package_world(
+        tmp_path,
+        values=(("wi-42", "ready"),),
+    )
+    actor = AuthenticatedActor(actor_id="owner")
+    successor = _enum_successor(instance, enum=["ready"])
+    payload = _change_set(
+        ClaimTypeSuccessionMemberV1(
+            successor=successor,
+            dependents=(_dependent(claims["wi-42"], disposition="successor"),),
+        ),
+        # This Claim member speaks the successor vocabulary about a Subject the
+        # instance has not accepted yet, so the whole set refuses until it has.
+        _claim(subject_id="wi-late", value=LiteralClaimObject(value="ready")),
+    )
+    intent = coordinator.create(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    assert coordinator.preflight(intent.intent_id, actor=actor).verdict == "refused"
+
+    # The missing Subject lands underneath the intent's base.
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[subject_path(SUBJECT_KIND, "wi-late")] = render_subject(_shell(SUBJECT_KIND, "wi-late"))
+    _accept_tree(
+        instance,
+        owner,
+        tree,
+        timestamp="2026-08-21T12:01:00.000000Z",
+        proposal_name="advance-for-succession-rebase",
+    )
+
+    rebased = coordinator.rebase(intent.intent_id, actor=actor).intent
+    assert rebased.base_coordinate == AcceptedCoordinate.from_internal(
+        instance.accepted_coordinate()
+    )
+    _accept(instance, owner, coordinator, intent.intent_id, actor)
+
+    accepted = instance.accepted_coordinate()
+    before = instance.tree_at(accepted.git_oid)
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    replayed = reopened.accepted_coordinate()
+    assert replayed == accepted
+    assert reopened.tree_at(replayed.git_oid) == before
