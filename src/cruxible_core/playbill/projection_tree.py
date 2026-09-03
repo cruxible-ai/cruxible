@@ -75,7 +75,8 @@ def read_registered_tree(
         try:
             if normalize_ledger_path(path) != path:
                 raise ProjectionFormatError(f"ledger path is not canonical: {path}")
-            registered_path_kind(path, artifact_kinds=artifact_kinds)
+            if not path.startswith("cards/"):
+                registered_path_kind(path, artifact_kinds=artifact_kinds)
         except Exception as exc:
             if isinstance(exc, ProjectionFormatError):
                 raise

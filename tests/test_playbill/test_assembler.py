@@ -85,6 +85,21 @@ def test_request_and_result_are_serializable_and_coordinate_mismatch_precedes_tr
     }
 
 
+def test_projection_ignores_verified_candidate_card_derivatives(tmp_path: Path) -> None:
+    artifact = fixture_bytes("one", {"enabled": True})
+    repository = MemoryLedger(
+        tmp_path / "repository",
+        {
+            "artifacts/fixtures/one.yaml": artifact,
+            "cards/artifacts/fixtures/one.md": b"# fixture: one\n",
+        },
+    )
+
+    _assembler_value, result = _build(tmp_path, repository)
+
+    assert result.row_counts["artifact_envelopes"] == 1
+
+
 def test_result_refuses_echo_fields_that_differ_from_embedded_manifest(tmp_path: Path) -> None:
     repository = MemoryLedger(
         tmp_path / "repository",
