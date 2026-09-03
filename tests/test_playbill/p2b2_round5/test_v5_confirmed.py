@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import platform
 import re
 import signal
 import socket
@@ -536,7 +537,17 @@ def test_k10_a_deployment_path_escape_degrades_and_never_raises(short_root: Path
             outside.rmdir()
 
 
-def test_k3_the_retry_path_and_the_path_length_refusal(short_root: Path) -> None:
+def test_k3_the_retry_path_and_the_path_length_refusal(
+    short_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U8-C succeeded the shorter-root repair this oracle still named.
+
+    The retraction rewrote the two oracles it cited and missed this third copy:
+    an overlong control namespace now falls back to the verified per-user runtime
+    directory, and refuses typed only when neither namespace fits.
+    """
+
     store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     invocation = "sha256:" + "3" * 64
     _record, control_path = store.paths(invocation)
@@ -550,11 +561,34 @@ def test_k3_the_retry_path_and_the_path_length_refusal(short_root: Path) -> None
     with pytest.raises(ProviderLocalRuntimeRefused) as excinfo:
         store.prepare_control_path(invocation)
     assert excinfo.value.code == "provider_process_lease_invalid"
+
     deep = short_root / ("x" * 90)
     deep.mkdir()
+    runtime_root = short_root / "rt"
+    runtime_root.mkdir()
+    runtime_root.chmod(0o700)
+    variable = "XDG_RUNTIME_DIR" if platform.system() == "Linux" else "TMPDIR"
+    monkeypatch.setenv(variable, str(runtime_root))
+    # No checkout is short enough to hold the fallback namespace and a socket name
+    # inside 103 bytes, so the budget is measured as if the verified runtime root
+    # were the short per-user path the ruling names. The budget itself never moves.
+    real_fsencode = os.fsencode
+    monkeypatch.setattr(
+        lease_module.os,
+        "fsencode",
+        lambda value: (
+            b"f" * 80 if str(value).startswith(str(runtime_root)) else real_fsencode(value)
+        ),
+    )
+    fallback = ProviderProcessLeaseStore(deep / "l", control_root=deep / "c")
+    assert fallback.control_root.is_relative_to(runtime_root)
+    assert fallback.paths(invocation)[1].parent == fallback.control_root
+
+    monkeypatch.delenv(variable, raising=False)
     with pytest.raises(ProviderLocalRuntimeRefused) as long_refusal:
-        ProviderProcessLeaseStore(deep / "l", control_root=deep / "c").paths(invocation)
-    assert "shorter CRUXIBLE_STATE_ROOT" in str(long_refusal.value)
+        ProviderProcessLeaseStore(deep / "l2", control_root=deep / "c2")
+    assert long_refusal.value.code == "provider_process_lease_invalid"
+    assert "private per-user runtime directory" in str(long_refusal.value)
 
 
 # ---------------------------------------------------------------------- L-8 / L-9 / L-12 / M-11
