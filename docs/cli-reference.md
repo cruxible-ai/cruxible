@@ -442,9 +442,13 @@ cruxible playbill line run LINE_IDENTITY_DIGEST
 
 Triggers one daemon-derived due occurrence. The occurrence's evaluation
 instant is the daemon's; `--evaluation-time` only asserts the instant the
-caller believes it is running at, and an assertion outside the mandate skew
-bound is refused. The accepted Line's governed mandate authorizes execution;
-without one the operation returns a typed no-mandate refusal.
+caller believes it is running at, and an assertion outside the daemon's skew
+bound is refused. That bound is operational, not wire: the daemon reads
+`evaluation_instant_skew_seconds` from `daemon/procedure-runs.json` in its own
+state root, defaulting to the 300-second ProcedureMandate skew the bound
+protects, and refuses the run if that file exists but cannot be read as one.
+The accepted Line's governed mandate authorizes execution; without one the
+operation returns a typed no-mandate refusal.
 
 ## playbill predictions
 

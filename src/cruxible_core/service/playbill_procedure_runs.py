@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -449,6 +450,56 @@ class LineRunRequestV1(_StrictProcedureSurfaceModel):
     @classmethod
     def _evaluation_time(cls, value: datetime | None) -> datetime | None:
         return None if value is None else ensure_utc(value)
+
+
+PROCEDURE_RUN_CONFIG_PATH = Path("daemon/procedure-runs.json")
+
+
+class ProcedureRunOperationalConfigV1(_StrictProcedureSurfaceModel):
+    """One daemon's operational bounds for served Procedure and Line runs.
+
+    Operational, not wire: an operator whose hosts keep looser time than the
+    ratified default widens this bound in the daemon's own state root, and no
+    caller can read or move it. The default is the ProcedureMandate skew the
+    bound protects.
+    """
+
+    tag: Literal["cruxible-procedure-run-operational-config-v1"] = (
+        "cruxible-procedure-run-operational-config-v1"
+    )
+    evaluation_instant_skew_seconds: float = Field(
+        default=PROCEDURE_MANDATE_CLOCK_SKEW.total_seconds(),
+        gt=0,
+        description="Reads VALIDITY WINDOW.",
+    )
+
+    @property
+    def evaluation_instant_skew(self) -> timedelta:
+        return timedelta(seconds=self.evaluation_instant_skew_seconds)
+
+
+def load_procedure_run_config(state_root: Path) -> ProcedureRunOperationalConfigV1:
+    """Read one daemon state root's served-run bounds, or the ratified defaults.
+
+    An absent file is the default configuration. A file that exists and cannot
+    be read as one is a daemon fault, not a caller's: it refuses loudly rather
+    than falling back, or an operator's typo would silently restore a bound the
+    operator meant to move.
+    """
+
+    path = state_root / PROCEDURE_RUN_CONFIG_PATH
+    if not path.exists():
+        return ProcedureRunOperationalConfigV1()
+    if path.is_symlink() or not path.is_file():
+        raise PlaybillExecutionError(
+            f"daemon procedure-run config is not a regular file: {PROCEDURE_RUN_CONFIG_PATH}"
+        )
+    try:
+        return ProcedureRunOperationalConfigV1.model_validate(json.loads(path.read_bytes()))
+    except (OSError, ValueError, ValidationError) as exc:
+        raise PlaybillExecutionError(
+            f"daemon procedure-run config is malformed: {PROCEDURE_RUN_CONFIG_PATH}"
+        ) from exc
 
 
 class ProcedureRunOutcomeV1(_StrictProcedureSurfaceModel):
@@ -2192,6 +2243,7 @@ def service_run_playbill_line(
     caller_rung: int,
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None = None,
     daemon_clock: ProcedureClockProtocol | None = None,
+    evaluation_instant_skew: timedelta | None = None,
 ) -> ProcedureRunStateV2:
     """Derive, admit, and execute one occurrence of an accepted Line.
 
@@ -2200,8 +2252,8 @@ def service_run_playbill_line(
     all, because advancing the claimed instant mints a fresh occurrence in zero
     wall time. A request may still assert the instant it believes it is running
     at, and that assertion is checked against the daemon clock within the
-    ProcedureMandate skew bound so a mandate validity window cannot be entered
-    by claiming a time.
+    operator's configured skew bound -- defaulting to the ProcedureMandate
+    skew -- so a mandate validity window cannot be entered by claiming a time.
     """
 
     if request.line_identity_digest != path_identity_digest:
@@ -2211,10 +2263,13 @@ def service_run_playbill_line(
     clock = daemon_clock or SystemProcedureClock()
     evaluation_time = ensure_utc(clock.now())
     asserted = request.evaluation_time
-    if asserted is not None and abs(asserted - evaluation_time) > PROCEDURE_MANDATE_CLOCK_SKEW:
+    skew = (
+        PROCEDURE_MANDATE_CLOCK_SKEW if evaluation_instant_skew is None else evaluation_instant_skew
+    )
+    if asserted is not None and abs(asserted - evaluation_time) > skew:
         raise LineRunEvaluationInstantSkewed(
             f"{LineRunEvaluationInstantSkewed.code}: asserted evaluation instant is outside the "
-            f"{int(PROCEDURE_MANDATE_CLOCK_SKEW.total_seconds())}s daemon clock skew bound"
+            f"{int(skew.total_seconds())}s daemon clock skew bound"
         )
     coordinate = instance.accepted_coordinate()
     head_at_admission = coordinate

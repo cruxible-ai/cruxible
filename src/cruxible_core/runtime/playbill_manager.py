@@ -31,6 +31,10 @@ from cruxible_core.runtime.provider_runtime import (
 )
 from cruxible_core.server.config import get_server_state_root
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
+from cruxible_core.service.playbill_procedure_runs import (
+    ProcedureRunOperationalConfigV1,
+    load_procedure_run_config,
+)
 
 _log = structlog.get_logger("cruxible.provider_runtime")
 
@@ -245,6 +249,15 @@ class PlaybillInstanceManager:
                 trust_path.parent,
             ),
         )
+
+    def procedure_run_config(self) -> ProcedureRunOperationalConfigV1:
+        """Return the daemon-local served-run bounds for the active state root.
+
+        Read per call rather than cached: the file is small, and an operator who
+        widens a bound should not have to restart the daemon to mean it.
+        """
+
+        return load_procedure_run_config(get_server_state_root())
 
     def cached_provider_runtime_operator(self) -> ProviderRuntimeOperator:
         """Return the already-cached operator without retrying construction."""

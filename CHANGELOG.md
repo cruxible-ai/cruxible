@@ -16,7 +16,9 @@
   advances to semantic revision 19, labelled `p2-b5`, to commit the card
   renderer while every earlier coordinate stays installed and replayable. A
   Line occurrence's evaluation instant comes from the daemon clock; a caller
-  may assert one only within the mandate skew bound.
+  may assert one only within the daemon's skew bound, which an operator
+  configures in `daemon/procedure-runs.json` and which defaults to the
+  ProcedureMandate skew.
 
 - **Operator and agent workflows now close their setup and selection loops.**
   Server status reports exact compiler compatibility per governed host, and

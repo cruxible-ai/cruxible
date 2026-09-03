@@ -1562,6 +1562,7 @@ def playbill_line_run(
         actor_context=actor,
         caller_rung=get_current_mode().value - 1,
         provider_runtime_operator=manager.provider_runtime_operator(),
+        evaluation_instant_skew=manager.procedure_run_config().evaluation_instant_skew,
     )
     return contracts.PlaybillProcedureRunState.model_validate(result.model_dump(mode="json"))
 

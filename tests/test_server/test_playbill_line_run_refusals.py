@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -17,7 +17,9 @@ from cruxible_client.contracts.acquisition_policies import (
     render_acquisition_policy,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedure_mandates import (
+    PROCEDURE_MANDATE_CLOCK_SKEW,
     ProcedureMandateV1,
     procedure_mandate_path,
     render_procedure_mandate,
@@ -41,6 +43,11 @@ from cruxible_core.playbill.procedures.execution import procedure_line_partition
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.settlement import ChangeActorBinding
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
+from cruxible_core.server.config import get_server_state_root
+from cruxible_core.service.playbill_procedure_runs import (
+    PROCEDURE_RUN_CONFIG_PATH,
+    ProcedureRunOperationalConfigV1,
+)
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_procedure_run_surface import _slotless_procedure
 
@@ -218,6 +225,59 @@ def test_an_instant_outside_the_daemon_skew_bound_refuses_typed_over_http(
     assert payload["repair"] == RUNNABLE_REFUSAL_REPAIRS["evaluation_instant_skewed"].model_dump(
         mode="json"
     )
+
+
+def test_the_daemon_not_the_caller_configures_the_evaluation_instant_skew(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    """The bound a caller's assertion is checked against is operational state.
+
+    An operator whose hosts keep looser time widens it in the daemon's own
+    state root; nothing on the wire carries it, and the ratified ProcedureMandate
+    skew is what an unconfigured daemon uses.
+    """
+
+    client, instance_id, _reviewer_key = playbill_http
+    assert ProcedureRunOperationalConfigV1().evaluation_instant_skew == PROCEDURE_MANDATE_CLOCK_SKEW
+    asserted = datetime.now(UTC) + timedelta(seconds=60)
+    body = {
+        "tag": "playbill-line-run-request-v1",
+        "line_identity_digest": _ABSENT,
+        "occurrence_id": None,
+        "evaluation_time": asserted.isoformat().replace("+00:00", "Z"),
+    }
+
+    # A minute of drift is inside the default bound, so the run reaches the Line.
+    admitted = client.post(f"/api/v1/{instance_id}/playbill/lines/{_ABSENT}/runs", json=body)
+    assert admitted.status_code == 404, admitted.text
+    assert admitted.json()["error_code"] == "line_not_accepted"
+
+    config_path = get_server_state_root() / PROCEDURE_RUN_CONFIG_PATH
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_bytes(
+        canonical_bytes(
+            {
+                "tag": "cruxible-procedure-run-operational-config-v1",
+                "evaluation_instant_skew_seconds": 1,
+            }
+        )
+    )
+
+    refused = client.post(f"/api/v1/{instance_id}/playbill/lines/{_ABSENT}/runs", json=body)
+    assert refused.status_code == 400, refused.text
+    payload = refused.json()
+    assert payload["error_code"] == "evaluation_instant_skewed"
+    assert "1s daemon clock skew bound" in payload["message"]
+    assert payload["repair"] == RUNNABLE_REFUSAL_REPAIRS["evaluation_instant_skewed"].model_dump(
+        mode="json"
+    )
+
+    # A configuration that exists and cannot be read is a daemon fault; falling
+    # back would silently restore the bound the operator meant to move.
+    config_path.write_text("not-json", encoding="utf-8")
+    malformed = client.post(f"/api/v1/{instance_id}/playbill/lines/{_ABSENT}/runs", json=body)
+    assert malformed.status_code == 500, malformed.text
+    assert "daemon/procedure-runs.json" in malformed.json()["message"]
 
 
 def _accept_members(instance, reviewer_key_path: Path, members, *, timestamp: str) -> None:  # type: ignore[no-untyped-def]

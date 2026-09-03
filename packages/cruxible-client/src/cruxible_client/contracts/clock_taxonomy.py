@@ -292,6 +292,13 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ProcedureRunBudgetObservedV1", "wall_clock_microseconds"): "VALIDITY WINDOW",
     ("ProcedureRunIndexEntryV1", "first_sequence"): "SETTLEMENT ORDER",
     ("ProcedureRunIndexEntryV1", "last_sequence"): "SETTLEMENT ORDER",
+    # The daemon-configured bound on how far a caller's asserted evaluation
+    # instant may sit from the daemon clock; it guards a ProcedureMandate's
+    # validity window, so it is a window, not an instant.
+    (
+        "ProcedureRunOperationalConfigV1",
+        "evaluation_instant_skew_seconds",
+    ): "VALIDITY WINDOW",
     ("ProcedureRunOutcomeV1", "sequence"): "SETTLEMENT ORDER",
     ("ProcedureRunReceiptV1", "first_sequence"): "SETTLEMENT ORDER",
     ("ProcedureRunReceiptV1", "last_sequence"): "SETTLEMENT ORDER",
