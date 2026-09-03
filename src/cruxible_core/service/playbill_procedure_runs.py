@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -48,6 +47,7 @@ from cruxible_client.contracts.procedures.line_specs import (
     CaptureLandingTriggerPolicyV1,
     LineSpecV2,
     ManualTriggerPolicyV1,
+    WindowCloseTriggerPolicyV1,
     evaluate_line_spec_law,
     line_identity_digest,
     line_spec_digest,
@@ -652,42 +652,26 @@ def _line_admissions(
     return tuple(admissions)
 
 
-def _trigger_interval_seconds(
-    tree: Mapping[str, bytes],
-    accepted_line: AcceptedLineSpecV1,
-) -> int | None:
+def _trigger_interval_seconds(accepted_line: AcceptedLineSpecV1) -> int:
+    """Read the accepted Line's own cadence or window period.
+
+    The period is a field of the accepted LineSpec, which is the artifact the
+    projection registry produces at `lines/<name>.json` and which
+    `_accepted_line_by_identity_digest` already resolved by identity. Reading it
+    from anywhere else means reading a path no accepted tree can hold: the
+    trigger Policy pin's target kind is a deferred pin kind with no ledger
+    artifact envelope, so no registry produces it and no digest verifies it.
+    """
+
     trigger = accepted_line.line.trigger_policy
-    role = (
-        "trigger-cadence-policy"
-        if isinstance(trigger, CadenceTriggerPolicyV1)
-        else "trigger-window-policy"
-    )
-    pin = next((item for item in accepted_line.line.pins if item.role == role), None)
-    if pin is None:
-        return None
-    candidates = (
-        f"policies/{pin.target.name}.json",
-        f"policies/{pin.target.name}.yaml",
-    )
-    for path in candidates:
-        content = tree.get(path)
-        if content is None:
-            continue
-        try:
-            value = json.loads(content)
-        except (UnicodeDecodeError, ValueError):
-            return None
-        if not isinstance(value, dict):
-            return None
-        for key in ("interval_seconds", "cadence_seconds", "window_seconds"):
-            seconds = value.get(key)
-            if isinstance(seconds, int) and not isinstance(seconds, bool) and seconds > 0:
-                return seconds
-    return None
+    if isinstance(trigger, CadenceTriggerPolicyV1):
+        return int(trigger.interval_seconds)
+    if isinstance(trigger, WindowCloseTriggerPolicyV1):
+        return int(trigger.window_seconds)
+    raise PlaybillExecutionError("accepted Line trigger policy carries no scheduled period")
 
 
 def _line_occurrence(
-    tree: Mapping[str, bytes],
     accepted_line: AcceptedLineSpecV1,
     *,
     coordinate: AcceptedProjectionCoordinate,
@@ -705,16 +689,9 @@ def _line_occurrence(
             awaited = trigger.anchor_capture_contract_digest
         occurrence_basis = coordinate.git_oid
     else:
-        interval = _trigger_interval_seconds(tree, accepted_line)
+        interval = _trigger_interval_seconds(accepted_line)
         if last is not None:
-            if interval is None:
-                awaited = (
-                    trigger.cadence_policy_digest
-                    if isinstance(trigger, CadenceTriggerPolicyV1)
-                    else trigger.window_policy_digest
-                )
-            else:
-                next_due = last.occurrence_evaluation_time + timedelta(seconds=interval)
+            next_due = last.occurrence_evaluation_time + timedelta(seconds=interval)
         occurrence_basis = format_datetime(next_due or evaluation_time)
     occurrence_id = typed_digest(
         Sha256Value,
@@ -2303,7 +2280,6 @@ def service_run_playbill_line(
         )
     prior = _line_admissions(instance, accepted_line)
     occurrence_id, next_due, awaited = _line_occurrence(
-        tree,
         accepted_line,
         coordinate=coordinate,
         evaluation_time=request.evaluation_time,
@@ -2342,7 +2318,7 @@ def service_run_playbill_line(
             head_at_admission=head_at_admission,
             evaluation_time=request.evaluation_time,
             code="occurrence_not_due",
-            message="The Line is waiting for a newer capture landing or trigger policy event.",
+            message="The Line is waiting for a newer capture landing.",
             details={"awaited_source": awaited, "repair": "Retry after the awaited source lands."},
         )
     if any(item.occurrence_id == occurrence_id for item in prior):

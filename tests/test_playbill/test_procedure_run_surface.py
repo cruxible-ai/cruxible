@@ -11,6 +11,7 @@ import pytest
 import cruxible_core.service.playbill_procedure_runs as procedure_run_service
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.captures import CanonicalDurationV1
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandateV1,
     procedure_mandate_digest,
@@ -18,10 +19,12 @@ from cruxible_client.contracts.procedure_mandates import (
 )
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedureV1,
+    ProcedureArtifactV1,
     ProcedureArtifactV2,
     procedure_artifact_digest,
     procedure_owned_contract_digest,
     procedure_path,
+    render_procedure,
 )
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.graph import (
@@ -32,17 +35,24 @@ from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpecV1,
     CadenceTriggerPolicyV1,
     CaptureLandingTriggerPolicyV1,
+    LineSpecV1,
+    WindowCloseTriggerPolicyV1,
     line_identity_digest,
     line_spec_digest,
     line_spec_path,
+    render_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
     GuardNodeV3,
     GuardPredicateV1,
     HaltNodeV3,
     PredicateOperandV1,
+    ProcedureBudgetV3,
+    ProcedureDefinitionV3,
+    ProcedureHardCapsV3,
     ProcedurePinSlotRefV1,
     ProcedurePinSlotV1,
+    ProjectNodeV3,
     ProviderNodeV4,
     RepeatBodyNodeV4,
     RepeatNodeV4,
@@ -89,7 +99,10 @@ from cruxible_core.service.playbill_procedure_runs import (
     service_playbill_procedure_readiness,
     service_run_playbill_procedure,
 )
-from tests.test_playbill._candidate_support import submit_query_definition_candidate
+from tests.test_playbill._candidate_support import (
+    submit_member_candidate,
+    submit_query_definition_candidate,
+)
 from tests.test_playbill._knowledge_loop_support import (
     QUERY_NAME,
     TIMESTAMP,
@@ -213,12 +226,143 @@ def test_line_closure_loss_refuses_before_mandate_or_occurrence(
     assert "Restore or succeed" in str(result.terminal.details)
 
 
-def test_daemon_derives_manual_cadence_and_capture_occurrences() -> None:
+def _slotless_procedure(name: str) -> AcceptedProcedureV1:
+    """One accepted Procedure with exact pins only, so a Line binds no slot."""
+
+    contract_in = ArtifactPin(
+        role="contract-in",
+        target=ArtifactIdentity(kind="Contract", name="empty-input"),
+        artifact_digest=_line_digest("empty-input"),
+    )
+    contract_out = ArtifactPin(
+        role="contract-out",
+        target=ArtifactIdentity(kind="Contract", name="scheduled-rows"),
+        artifact_digest=_line_digest("scheduled-rows"),
+    )
+    definition = ProcedureDefinitionV3(
+        name=name,
+        contract_in=contract_in,
+        contract_out=contract_out,
+        nodes=(
+            ProjectNodeV3(
+                node_id="shape",
+                fields={"status": "$input.status"},
+                contract_out=contract_out,
+                as_="result",
+            ),
+        ),
+        returns="result",
+        budget=ProcedureBudgetV3(
+            wall_clock=CanonicalDurationV1(microseconds=1_000_000),
+            max_provider_calls=0,
+            max_capture_bytes=0,
+            max_items=100,
+        ),
+        hard_caps=ProcedureHardCapsV3(
+            max_wall_clock=CanonicalDurationV1(microseconds=2_000_000),
+            max_provider_calls=0,
+            max_capture_bytes=0,
+            max_items=200,
+            max_repeat_attempts=1,
+        ),
+        terminal_capability=2,
+    )
+    procedure = ProcedureArtifactV1(
+        identity=ArtifactIdentity(kind="Procedure", name=name),
+        definition=definition,
+        definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
+        pins=tuple(
+            sorted(
+                (contract_in, contract_out),
+                key=lambda pin: (pin.role, pin.target.qualified, pin.artifact_digest),
+            )
+        ),
+        activation_policy="drain",
+    )
+    return AcceptedProcedureV1(
+        path=procedure_path(name),
+        procedure=procedure,
+        artifact_digest=procedure_artifact_digest(procedure).tagged,
+    )
+
+
+def _scheduled_line(name: str, *, trigger, accepted: AcceptedProcedureV1) -> LineSpecV1:  # type: ignore[no-untyped-def]
+    return LineSpecV1(
+        identity=ArtifactIdentity(kind="Line", name=name),
+        occurrence_epoch=1,
+        procedure=ArtifactPin(
+            role="procedure",
+            target=accepted.procedure.identity,
+            artifact_digest=accepted.artifact_digest,
+        ),
+        parameters={"status": "open"},
+        slot_bindings=(),
+        trigger_policy=trigger,
+        requested_terminal_rung=2,  # type: ignore[arg-type]
+        budgets={
+            "max_capture_bytes": 0,
+            "max_items": 100,
+            "max_provider_calls": 0,
+            "max_wall_clock_microseconds": 1_000_000,
+        },
+        epsilon={"$decimal": "0.1"},
+        pins=(
+            ArtifactPin(
+                role="procedure",
+                target=accepted.procedure.identity,
+                artifact_digest=accepted.artifact_digest,
+            ),
+            ArtifactPin(
+                role=(
+                    "trigger-cadence-policy"
+                    if isinstance(trigger, CadenceTriggerPolicyV1)
+                    else "trigger-window-policy"
+                ),
+                target=ArtifactIdentity(kind="Policy", name=f"{name}-policy"),
+                artifact_digest=(
+                    trigger.cadence_policy_digest
+                    if isinstance(trigger, CadenceTriggerPolicyV1)
+                    else trigger.window_policy_digest
+                ),
+            ),
+        ),
+    )
+
+
+def _accept_line_tree(
+    instance,  # type: ignore[no-untyped-def]
+    owner,  # type: ignore[no-untyped-def]
+    *,
+    line,  # type: ignore[no-untyped-def]
+    accepted,  # type: ignore[no-untyped-def]
+    proposal_name: str,
+) -> AcceptedLineSpecV1:
+    """Accept one Line and its bound Procedure into a real accepted tree."""
+
+    inspection = submit_member_candidate(
+        instance,
+        members={
+            accepted.path: render_procedure(accepted.procedure),
+            line_spec_path(line.identity.name): render_line_spec(line),
+        },
+        actor_id="owner",
+        proposal_name=proposal_name,
+        proposal_family="line",
+        timestamp="2026-08-24T15:00:00.000000Z",
+    )
+    accept_proposal(instance, owner, inspection)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    return procedure_run_service._accepted_line_by_identity_digest(  # noqa: SLF001
+        tree,
+        identity_digest=line_identity_digest(line.identity),
+    )
+
+
+def test_daemon_derives_manual_and_capture_occurrences() -> None:
     manual, _accepted, _interfaces = _line()
     manual_line = _accepted_line(manual)
     coordinate = SimpleNamespace(git_oid="a" * 40)
     first, next_due, awaited = procedure_run_service._line_occurrence(  # noqa: SLF001
-        {},
         manual_line,
         coordinate=coordinate,
         evaluation_time=READ_TIME,
@@ -227,24 +371,6 @@ def test_daemon_derives_manual_cadence_and_capture_occurrences() -> None:
     assert first.startswith("sha256:")
     assert next_due is None and awaited is None
 
-    cadence, _accepted, _interfaces = _line(
-        trigger=CadenceTriggerPolicyV1(cadence_policy_digest=_line_digest("hourly"))
-    )
-    cadence_line = _accepted_line(cadence)
-    prior = SimpleNamespace(
-        occurrence_evaluation_time=READ_TIME,
-        bound_coordinate=SimpleNamespace(git_oid="9" * 40),
-    )
-    _occurrence, next_due, awaited = procedure_run_service._line_occurrence(  # noqa: SLF001
-        {"policies/hourly.json": b'{"interval_seconds":3600}'},
-        cadence_line,
-        coordinate=coordinate,
-        evaluation_time=READ_TIME + timedelta(minutes=30),
-        prior=(prior,),  # type: ignore[arg-type]
-    )
-    assert next_due == READ_TIME + timedelta(hours=1)
-    assert awaited is None
-
     capture, _accepted, _interfaces = _line(
         trigger=CaptureLandingTriggerPolicyV1(
             anchor_capture_contract_digest=_line_digest("anchor-capture"),
@@ -252,7 +378,6 @@ def test_daemon_derives_manual_cadence_and_capture_occurrences() -> None:
         )
     )
     _occurrence, next_due, awaited = procedure_run_service._line_occurrence(  # noqa: SLF001
-        {},
         _accepted_line(capture),
         coordinate=coordinate,
         evaluation_time=READ_TIME + timedelta(hours=1),
@@ -265,6 +390,113 @@ def test_daemon_derives_manual_cadence_and_capture_occurrences() -> None:
     )
     assert next_due is None
     assert awaited == capture.trigger_policy.anchor_capture_contract_digest
+
+
+def test_a_cadence_line_admits_two_occurrences_one_period_apart_over_a_real_tree(
+    tmp_path: Path,
+) -> None:
+    """The period is read from the accepted artifact, never a fabricated path."""
+
+    instance, owner = initialize_local(tmp_path)
+    accepted = _slotless_procedure("scheduled-triage")
+    line = _scheduled_line(
+        "scheduled-triage-hourly",
+        trigger=CadenceTriggerPolicyV1(
+            cadence_policy_digest=_line_digest("hourly"),
+            interval_seconds=3600,
+        ),
+        accepted=accepted,
+    )
+    accepted_line = _accept_line_tree(
+        instance,
+        owner,
+        line=line,
+        accepted=accepted,
+        proposal_name="cadence-line",
+    )
+    # The Line really is in the accepted tree, and the invented `policies/`
+    # directory the period used to be read from is not.
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    assert accepted_line.path in tree
+    assert [path for path in tree if path.startswith("policies/")] == []
+
+    coordinate = SimpleNamespace(git_oid="a" * 40)
+    first, next_due, awaited = procedure_run_service._line_occurrence(  # noqa: SLF001
+        accepted_line,
+        coordinate=coordinate,
+        evaluation_time=READ_TIME,
+        prior=(),
+    )
+    assert next_due is None and awaited is None
+
+    prior = SimpleNamespace(
+        occurrence_evaluation_time=READ_TIME,
+        bound_coordinate=SimpleNamespace(git_oid="9" * 40),
+    )
+    _early, next_due, awaited = procedure_run_service._line_occurrence(  # noqa: SLF001
+        accepted_line,
+        coordinate=coordinate,
+        evaluation_time=READ_TIME + timedelta(minutes=30),
+        prior=(prior,),  # type: ignore[arg-type]
+    )
+    assert next_due == READ_TIME + timedelta(hours=1)
+    assert awaited is None
+
+    second, next_due, awaited = procedure_run_service._line_occurrence(  # noqa: SLF001
+        accepted_line,
+        coordinate=coordinate,
+        evaluation_time=READ_TIME + timedelta(hours=1),
+        prior=(prior,),  # type: ignore[arg-type]
+    )
+    assert next_due == READ_TIME + timedelta(hours=1)
+    assert awaited is None
+    assert second != first
+
+
+def test_a_window_line_becomes_due_across_its_boundary_over_a_real_tree(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    accepted = _slotless_procedure("scheduled-window")
+    line = _scheduled_line(
+        "scheduled-window-daily",
+        trigger=WindowCloseTriggerPolicyV1(
+            window_policy_digest=_line_digest("window-policy"),
+            window_seconds=86_400,
+        ),
+        accepted=accepted,
+    )
+    accepted_line = _accept_line_tree(
+        instance,
+        owner,
+        line=line,
+        accepted=accepted,
+        proposal_name="window-line",
+    )
+    coordinate = SimpleNamespace(git_oid="a" * 40)
+    prior = SimpleNamespace(
+        occurrence_evaluation_time=READ_TIME,
+        bound_coordinate=SimpleNamespace(git_oid="9" * 40),
+    )
+    boundary = READ_TIME + timedelta(days=1)
+
+    _before, next_due, awaited = procedure_run_service._line_occurrence(  # noqa: SLF001
+        accepted_line,
+        coordinate=coordinate,
+        evaluation_time=boundary - timedelta(seconds=1),
+        prior=(prior,),  # type: ignore[arg-type]
+    )
+    assert next_due == boundary
+    assert awaited is None
+
+    _after, next_due, awaited = procedure_run_service._line_occurrence(  # noqa: SLF001
+        accepted_line,
+        coordinate=coordinate,
+        evaluation_time=boundary,
+        prior=(prior,),  # type: ignore[arg-type]
+    )
+    assert next_due == boundary
+    assert awaited is None
 
 
 def test_genesis_evaluation_time_comes_from_the_signed_commit(tmp_path: Path) -> None:
@@ -1531,7 +1763,6 @@ def test_a_replayed_occurrence_refuses_instead_of_running_twice(
     accepted_line = _accepted_line(line)
     coordinate = instance.accepted_coordinate()
     occurrence_id, _next_due, _awaited = procedure_run_service._line_occurrence(  # noqa: SLF001
-        {},
         accepted_line,
         coordinate=coordinate,
         evaluation_time=READ_TIME,

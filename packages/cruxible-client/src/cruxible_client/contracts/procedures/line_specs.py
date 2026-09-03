@@ -81,9 +81,22 @@ def _artifact_digest(value: str) -> str:
 
 
 class CadenceTriggerPolicyV1(_StrictLineModel):
+    """A cadence trigger whose period is part of the accepted Line artifact.
+
+    ``cadence_policy_digest`` still pins the governing Policy exactly, but the
+    Policy pin target kind has no ledger artifact envelope, so nothing in an
+    accepted tree can be read for the period. The period therefore lives here,
+    on the artifact the registry does produce, and is accepted, digested, and
+    succeeded with the Line itself.
+    """
+
     tag: Literal["playbill-cadence-trigger-v1"] = "playbill-cadence-trigger-v1"
     kind: Literal["cadence"] = "cadence"
     cadence_policy_digest: str
+    interval_seconds: int = Field(
+        gt=0,
+        description="Reads VALIDITY WINDOW.",
+    )
 
     _digest = field_validator("cadence_policy_digest")(_artifact_digest)
 
@@ -100,9 +113,15 @@ class CaptureLandingTriggerPolicyV1(_StrictLineModel):
 
 
 class WindowCloseTriggerPolicyV1(_StrictLineModel):
+    """A window-close trigger whose window is part of the accepted Line artifact."""
+
     tag: Literal["playbill-window-close-trigger-v1"] = "playbill-window-close-trigger-v1"
     kind: Literal["window_close"] = "window_close"
     window_policy_digest: str
+    window_seconds: int = Field(
+        gt=0,
+        description="Reads VALIDITY WINDOW.",
+    )
 
     _digest = field_validator("window_policy_digest")(_artifact_digest)
 

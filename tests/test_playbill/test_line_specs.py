@@ -299,7 +299,7 @@ def test_line_trigger_change_advances_epoch_but_rebinding_does_not() -> None:
         == "accepted"
     )
 
-    cadence = CadenceTriggerPolicyV1(cadence_policy_digest=_digest("hourly"))
+    cadence = CadenceTriggerPolicyV1(cadence_policy_digest=_digest("hourly"), interval_seconds=3600)
     changed, _accepted, _interfaces = _line(
         trigger=cadence,
         epoch=2,
@@ -335,7 +335,7 @@ def test_line_trigger_change_advances_epoch_but_rebinding_does_not() -> None:
     ("trigger", "pin_role"),
     (
         (
-            CadenceTriggerPolicyV1(cadence_policy_digest=_digest("hourly")),
+            CadenceTriggerPolicyV1(cadence_policy_digest=_digest("hourly"), interval_seconds=3600),
             "trigger-cadence-policy",
         ),
         (
@@ -353,7 +353,9 @@ def test_line_trigger_change_advances_epoch_but_rebinding_does_not() -> None:
             "trigger-landing-filter",
         ),
         (
-            WindowCloseTriggerPolicyV1(window_policy_digest=_digest("window-policy")),
+            WindowCloseTriggerPolicyV1(
+                window_policy_digest=_digest("window-policy"), window_seconds=86400
+            ),
             "trigger-window-policy",
         ),
     ),
