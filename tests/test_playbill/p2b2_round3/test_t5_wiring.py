@@ -117,6 +117,16 @@ def test_r6_regression_shape() -> None:
     patches = set(re.findall(r'monkeypatch\.setattr\(\s*([\w_.]+),\s*\n?\s*"([\w_]+)"', text))
     assert patches == {("execution_module", "PROVIDER_BUCKET_CLASSIFIER_REGISTRY")}, patches
     assert "prepare_direct_procedure_run" not in text
+    # The served Line route's own regression sits past that window; the same
+    # anti-double law has to reach it or the one test proving the route is
+    # un-doubled would be the one test nothing polices.
+    served = whole[whole.index("def test_the_live_line_route_runs_a_real_daemon_owned_provider") :]
+    served_patches = set(
+        re.findall(r'monkeypatch\.setattr\(\s*([\w_.]+),\s*\n?\s*"([\w_]+)"', served)
+    )
+    assert served_patches == {("execution_module", "PROVIDER_BUCKET_CLASSIFIER_REGISTRY")}, (
+        served_patches
+    )
 
 
 def test_the_control_socket_budget_selects_the_private_namespace_once() -> None:
