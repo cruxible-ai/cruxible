@@ -9,7 +9,7 @@ from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_wire_succession import TIMESTAMP, _document_tree
 
 from cruxible_client.contracts.canonical import canonical_bytes, manifest_root, semantic_projection
-from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.errors import ProposalAdmissionError, ProposalIntegrityError
 from cruxible_core.playbill.candidate_cards import (
     CARD_RENDERER_DIGEST,
     candidate_card_path,
@@ -17,7 +17,11 @@ from cruxible_core.playbill.candidate_cards import (
     verify_candidate_cards,
 )
 from cruxible_core.playbill.projection_artifacts import P2_C_ARTIFACT_KINDS
-from cruxible_core.playbill.proposals import evaluate_proposal_tree
+from cruxible_core.playbill.proposals import (
+    ProposalReceiveLimits,
+    evaluate_proposal_tree,
+    validate_proposal_tree,
+)
 
 
 def _artifact(name: str) -> bytes:
@@ -78,6 +82,35 @@ def test_card_verifier_rejects_missing_stale_and_extra_derivatives() -> None:
                 candidate_tree=variant,
                 coordinate="b" * 40,
                 artifact_kinds=P2_C_ARTIFACT_KINDS,
+            )
+
+
+def test_proposal_admission_allows_card_rederivation_but_rejects_caller_card_bytes() -> None:
+    artifact_path = "procedures/demo.json"
+    card_path = candidate_card_path(artifact_path)
+    base = {
+        artifact_path: _artifact("demo"),
+        card_path: b"# procedure: demo\n",
+    }
+    changed = {artifact_path: _artifact("demo-v2")}
+
+    assert (
+        validate_proposal_tree(
+            changed,
+            limits=ProposalReceiveLimits(),
+            base_tree=base,
+        )
+        == changed
+    )
+    for caller_tree in (
+        {**changed, card_path: b"caller-authored\n"},
+        {**changed, "cards/procedures/extra.md": b"caller-authored\n"},
+    ):
+        with pytest.raises(ProposalAdmissionError, match="daemon-controlled"):
+            validate_proposal_tree(
+                caller_tree,
+                limits=ProposalReceiveLimits(),
+                base_tree=base,
             )
 
 

@@ -94,6 +94,7 @@ from cruxible_core.playbill.authoring.insertions import (
 )
 from cruxible_core.playbill.authoring.preflight import ComputedPreflight, compute_preflight
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
+from cruxible_core.playbill.candidate_cards import is_candidate_card_path
 from cruxible_core.playbill.citation_relations import (
     RELATION_CONTRACT_SCHEMA,
     capture_contract_relation_subject,
@@ -715,7 +716,11 @@ class AuthoringIntentCoordinator:
                 target_ref=certificate.proposal_ref,
                 proposed_base_oid=certificate.accepted_coordinate.git_oid,
             ),
-            candidate_tree=computed.evaluated_tree,
+            candidate_tree={
+                path: content
+                for path, content in computed.evaluated_tree.items()
+                if not is_candidate_card_path(path)
+            },
             timestamp=current.canonical_timestamp,
         )
         if result.candidate is None:

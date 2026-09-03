@@ -536,9 +536,10 @@ def _accept_tree(instance, owner, tree, *, timestamp: str, proposal_name: str) -
         timestamp=timestamp,
     )
     assert proposed.candidate is not None
+    assert proposed.evaluation.evaluated_tree_oid is not None
     bundle = instance.prepare_generation(
         base=base,
-        candidate_tree=tree,
+        candidate_tree=instance.proposal_tree(proposed.evaluation.evaluated_tree_oid),
         candidate=proposed.candidate,
         approvals=(
             _sign(

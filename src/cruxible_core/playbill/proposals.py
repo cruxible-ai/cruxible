@@ -251,6 +251,7 @@ from cruxible_core.playbill.candidate_cards import (
     CARD_RENDERER_DIGEST,
     candidate_card_renderer_digest_for_compiler,
     derive_candidate_cards,
+    is_candidate_card_path,
 )
 from cruxible_core.playbill.closure import (
     ArtifactDependencyStateV1,
@@ -425,7 +426,7 @@ def validate_proposal_tree(
             raise ProposalAdmissionError("proposal exceeds its total-byte limit")
         result[path] = content
     for path in normalize_manifest_paths(list(base)):
-        if not _authorable(path) and path not in result:
+        if not _authorable(path) and not is_candidate_card_path(path) and path not in result:
             raise ProposalAdmissionError(
                 f"proposal removed a daemon-controlled or unregistered path: {path}"
             )
