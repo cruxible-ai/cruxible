@@ -35,7 +35,19 @@ class DeprecationNotice:
         return asdict(self)
 
 
-DEPRECATION_REGISTRY: tuple[DeprecationNotice, ...] = ()
+SUBJECT_GET_TWO_ARGUMENT_FORM = DeprecationNotice(
+    surface="playbill subject get KIND ID two-argument form",
+    replacement="one `kind/name` Subject address argument",
+)
+SUBJECT_HISTORY_TWO_ARGUMENT_FORM = DeprecationNotice(
+    surface="playbill subject history KIND ID two-argument form",
+    replacement="one `kind/name` Subject address argument",
+)
+
+DEPRECATION_REGISTRY: tuple[DeprecationNotice, ...] = (
+    SUBJECT_GET_TWO_ARGUMENT_FORM,
+    SUBJECT_HISTORY_TWO_ARGUMENT_FORM,
+)
 """Every warning-emitting deprecation registered by cruxible-core."""
 
 

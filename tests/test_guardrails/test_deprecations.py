@@ -89,7 +89,15 @@ def test_registry_surfaces_are_unique() -> None:
 
 
 def test_removed_050_surfaces_are_absent_from_code_and_registry() -> None:
-    assert DEPRECATION_REGISTRY == ()
+    # The registry is no longer empty (the Subject-address rows are live), so the
+    # law is stated over the 0.5.0 removals themselves rather than over emptiness.
+    removed_050_surfaces = {
+        "legacy outcome record functions",
+        "legacy outcome profile functions",
+        "ProcedureTransitionResult.warnings string list",
+        "playbill.claim.propose.legacy_wire_deprecated",
+    }
+    assert {notice.surface for notice in DEPRECATION_REGISTRY} & removed_050_surfaces == set()
 
     removed_source_markers = {
         "LEGACY_OUTCOME_RECORD",

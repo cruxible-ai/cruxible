@@ -89,6 +89,7 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.deprecation import DeprecationNotice, emit_cli_deprecation
 from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1, claim_type_input_template
 from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.playbill.coverage.adapter import (
@@ -149,6 +150,11 @@ from cruxible_core.service.playbill_procedure_runs import (
 )
 
 ResultT = TypeVar("ResultT")
+# The canonical Subject address grammar, mirroring the SDK's `_SUBJECT_RE`.
+_SUBJECT_ADDRESS_RE = re.compile(
+    r"^(?P<kind>[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*)/"
+    r"(?P<identifier>[a-z][a-z0-9_.-]{0,255})$"
+)
 _ISO8601_DURATION = re.compile(
     r"P(?:(?P<weeks>[0-9]+)W|(?:(?P<days>[0-9]+)D)?"
     r"(?:T(?:(?P<hours>[0-9]+)H)?(?:(?P<minutes>[0-9]+)M)?"
@@ -1527,26 +1533,33 @@ def whoami(output_json: bool) -> None:
 
 
 # `playbill explain` resolves a Document identity and explains the Subject that
-# Document is. An identity of another kind used to reach the daemon and come back
-# as a bare `CoreError: <what you typed>`, naming neither the accepted shape nor
-# the command that does answer for that kind. Each entry routes one recognizable
-# identity shape to the verb that actually explains it.
+# Document is; a Subject address resolves directly. An identity of another kind
+# used to reach the daemon and come back as a bare `CoreError: <what you typed>`,
+# naming neither the accepted shape nor the command that does answer for that
+# kind. Each entry routes one recognizable identity shape to the verb that
+# actually explains it.
 _EXPLAIN_ROUTES: tuple[tuple[re.Pattern[str], str, str], ...] = (
     (re.compile(r"^(?:Claim:)?(?P<rest>CLM-[0-9a-f]+)$"), "Claim", "claim explain {rest}"),
     (re.compile(r"^ClaimType:(?P<rest>.+)$"), "ClaimType", "claim-type get {rest}"),
-    (
-        re.compile(r"^Subject:(?P<kind>[^/]+)/(?P<id>.+)$"),
-        "Subject",
-        "subject get {kind} {id}",
-    ),
     (re.compile(r"^Procedure:(?P<rest>.+)$"), "Procedure", "procedure readiness {rest}"),
     (re.compile(r"^QueryDefinition:(?P<rest>.+)$"), "QueryDefinition", "query get {rest}"),
 )
 
 _EXPLAIN_ACCEPTS = (
     "playbill explain accepts one accepted Document identity "
-    "(for example document:fleet.policy-note)"
+    "(for example document:fleet.policy-note) or one Subject address "
+    "(for example sec.package/click)"
 )
+
+
+def _subject_reference(identity: str) -> tuple[str, str] | None:
+    """Return `(kind, id)` when the identity names a Subject, in either spelling."""
+
+    candidate = identity.removeprefix("Subject:")
+    if _SUBJECT_ADDRESS_RE.fullmatch(candidate) is None:
+        return None
+    subject_kind, subject_id = candidate.split("/", 1)
+    return subject_kind, subject_id
 
 
 def _explain_route(identity: str) -> tuple[str, str] | None:
@@ -1565,7 +1578,7 @@ def _explain_route(identity: str) -> tuple[str, str] | None:
 @json_option
 @handle_errors
 def explain(identity: str, detail: str, include_body: bool, output_json: bool) -> None:
-    """Explain one accepted Document by identity."""
+    """Explain one accepted Document, or one accepted Subject by its address."""
 
     route = _explain_route(identity)
     if route is not None:
@@ -1575,9 +1588,25 @@ def explain(identity: str, detail: str, include_body: bool, output_json: bool) -
             f"{_EXPLAIN_ACCEPTS}. Use `{command}` to explain this {kind}."
         )
 
+    # A Subject address is what every other surface hands you, so `explain
+    # sec.package/click` resolves the Subject instead of 404ing on a Document
+    # lookup that could never have matched.
+    subject_address = _subject_reference(identity)
+
     def call(
         client: CruxibleClient, instance_id: str
     ) -> contracts.PlaybillExplainResult | contracts.PlaybillExplainUnsupportedDetail:
+        if subject_address is not None:
+            subject_kind, subject_id = subject_address
+            subject = client.get_playbill_subject(instance_id, subject_kind, subject_id)
+            subject_path = str(subject.envelope["path"])
+            return client.explain_playbill_subject(
+                instance_id,
+                subject=SemanticAddress.whole_artifact(subject_path).model_dump(mode="json"),
+                at=subject.coordinate,
+                detail=cast(Any, detail),
+                include_body=include_body,
+            )
         try:
             document = client.get_playbill_document(instance_id, identity)
         except DocumentNotFoundError as exc:
@@ -1851,6 +1880,39 @@ def revoke_principal(principal_id: str, proposal_name: str, output_json: bool) -
     _emit_json(result.model_dump(mode="json"))
 
 
+# Every other surface -- the SDK, claim objects, floor profiles, explain -- names
+# a Subject by its canonical `kind/name` address. `subject get KIND ID` was the
+# only surface that split it into two arguments, so a pasted address failed with
+# "Missing argument SUBJECT_ID". The address is canonical here now; the two-
+# argument form stays accepted for its deprecation window and says so.
+SUBJECT_ADDRESS_DEPRECATION_REPLACEMENT = "one `kind/name` Subject address argument"
+
+
+def _subject_address(
+    address: str,
+    legacy_subject_id: str | None,
+    *,
+    surface: str,
+) -> tuple[str, str]:
+    """Return `(kind, id)` from either the address or the deprecated two-arg form."""
+
+    if legacy_subject_id is not None:
+        emit_cli_deprecation(
+            DeprecationNotice(
+                surface=surface,
+                replacement=SUBJECT_ADDRESS_DEPRECATION_REPLACEMENT,
+            )
+        )
+        return address, legacy_subject_id
+    if _SUBJECT_ADDRESS_RE.fullmatch(address) is None:
+        raise click.UsageError(
+            f"{address!r} is not a Subject address: pass one `kind/name` argument, "
+            "for example `sec.package/click`."
+        )
+    subject_kind, subject_id = address.split("/", 1)
+    return subject_kind, subject_id
+
+
 @playbill_group.group("subject")
 def subject_group() -> None:
     """Propose and read identity-only governed Subjects."""
@@ -1899,11 +1961,22 @@ def list_subjects(output_json: bool) -> None:
 
 
 @subject_group.command("get")
-@click.argument("subject_kind")
-@click.argument("subject_id")
+@click.argument("address")
+@click.argument("legacy_subject_id", required=False, metavar="[SUBJECT_ID]")
 @json_option
 @handle_errors
-def get_subject(subject_kind: str, subject_id: str, output_json: bool) -> None:
+def get_subject(address: str, legacy_subject_id: str | None, output_json: bool) -> None:
+    """Read one accepted Subject by its `kind/name` address.
+
+    The two-argument `KIND ID` form is deprecated and still accepted; every
+    other surface speaks the address.
+    """
+
+    subject_kind, subject_id = _subject_address(
+        address,
+        legacy_subject_id,
+        surface="playbill subject get KIND ID two-argument form",
+    )
     result = _server_call(
         lambda client, instance_id: client.get_playbill_subject(
             instance_id, subject_kind, subject_id
@@ -1914,11 +1987,18 @@ def get_subject(subject_kind: str, subject_id: str, output_json: bool) -> None:
 
 
 @subject_group.command("history")
-@click.argument("subject_kind")
-@click.argument("subject_id")
+@click.argument("address")
+@click.argument("legacy_subject_id", required=False, metavar="[SUBJECT_ID]")
 @json_option
 @handle_errors
-def subject_history(subject_kind: str, subject_id: str, output_json: bool) -> None:
+def subject_history(address: str, legacy_subject_id: str | None, output_json: bool) -> None:
+    """Read one Subject's accepted lineage by its `kind/name` address."""
+
+    subject_kind, subject_id = _subject_address(
+        address,
+        legacy_subject_id,
+        surface="playbill subject history KIND ID two-argument form",
+    )
     result = _server_call(
         lambda client, instance_id: client.playbill_subject_history(
             instance_id, subject_kind, subject_id

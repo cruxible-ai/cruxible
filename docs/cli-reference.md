@@ -271,12 +271,14 @@ cruxible playbill document history IDENTITY
 ~~~text
 cruxible playbill subject propose --envelope FILE --name NAME
 cruxible playbill subject list
-cruxible playbill subject get KIND ID
-cruxible playbill subject history KIND ID
+cruxible playbill subject get KIND/ID
+cruxible playbill subject history KIND/ID
 ~~~
 
-A Subject is an identity-only referent. KIND and ID are the two halves of its
-`Subject:<kind>/<id>` identity.
+A Subject is an identity-only referent named by its canonical `kind/name`
+address — the spelling the SDK, claim objects, floor profiles, and `explain` all
+use. The two-argument `KIND ID` form is deprecated and still accepted; it emits
+the structured deprecation warning on stderr and is removed in 0.6.0.
 
 `subject get` renders the Subject's own facts and an `incoming` section: every
 live Claim whose subject-valued object is this Subject, grouped by predicate and
@@ -856,6 +858,10 @@ cruxible playbill explain IDENTITY
   [--detail summary|evidence|proof]
   [--include-body]
 ~~~
+
+IDENTITY is one accepted Document identity (`document:fleet.policy-note`) or one
+Subject address (`sec.package/click`, or the `Subject:`-prefixed spelling), which
+resolves to that Subject rather than refusing.
 
 summary and evidence are implemented. proof is reserved and returns a typed
 unsupported-detail result.
