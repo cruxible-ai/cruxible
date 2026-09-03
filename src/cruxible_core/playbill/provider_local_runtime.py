@@ -570,6 +570,10 @@ class LocalProviderExecutionDriver:
         invocation_id: str,
         process_leases: ProviderProcessLeaseStore,
     ) -> ProviderDriverOutcomeV1:
+        # Before any tenant secret is resolved, not merely before the spawn: a
+        # run this profile will refuse must not decrypt customer secret material
+        # into the daemon on its way to the refusal.
+        enforce_customer_code_execution_supported()
         if context.implementation_digest != binding.binding.implementation_digest:
             raise ProviderLocalRuntimeRefused(
                 "provider_protocol_violation", "run context names another implementation"

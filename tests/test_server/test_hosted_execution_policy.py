@@ -165,3 +165,28 @@ def test_the_cli_renders_the_refusal_through_handle_errors(
     assert result.output.strip() != ""
     assert "CustomerCodeExecutionUnsupportedError" in result.output
     assert "not supported in this hosted runtime profile" in result.output
+
+
+def test_the_driver_refuses_before_it_resolves_a_tenant_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    no_spawn: None,
+) -> None:
+    """No customer secret material is decrypted for a run that will be refused."""
+
+    _shared_without_backend(monkeypatch)
+
+    class _ForbiddenResolvers:
+        def resolve(self, _plan: object) -> object:
+            raise AssertionError("a tenant secret was resolved for a refused run")
+
+    driver = runtime_module.LocalProviderExecutionDriver()
+
+    with pytest.raises(CustomerCodeExecutionUnsupportedError):
+        driver.invoke(
+            None,  # type: ignore[arg-type]
+            None,  # type: ignore[arg-type]
+            secret_plan=None,  # type: ignore[arg-type]
+            secret_resolvers=_ForbiddenResolvers(),  # type: ignore[arg-type]
+            invocation_id="INV-secret-order",
+            process_leases=None,  # type: ignore[arg-type]
+        )
