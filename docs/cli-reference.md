@@ -356,20 +356,27 @@ cruxible playbill authoring rebase INTENT_ID
 cruxible playbill authoring submit INTENT_ID
 cruxible playbill authoring status INTENT_ID
 cruxible playbill authoring prepare-publication INTENT_ID OBSERVATION
+  [--expectation-id ID]
 cruxible playbill authoring confirm-insertion INTENT_ID OBSERVATION
-cruxible playbill authoring abandon-insertion INTENT_ID
+  [--expectation-id ID]
+cruxible playbill authoring abandon-insertion INTENT_ID [--expectation-id ID]
 ~~~
 
 One authoring intent is one changeset. The tagless `change_set` input carries
 any mix of members -- `claim`, `claim_type`, `claim_retirement`, `subject`,
-`query_definition`, `procedure`, `procedure_mandate` -- and the whole intent
-lowers once, proposes once and admits or refuses together, typed to the member
-index that offends. A Claim member may define the Subject and ClaimType it
-needs in the same set, and may retire a Claim the set does not otherwise touch.
+`query_definition`, `approval_policy`, `procedure_runtime_policy`, `procedure`,
+`procedure_mandate` -- and the whole intent lowers once, proposes once and
+admits or refuses together, typed to the member index that offends. A Claim
+member may define the Subject and ClaimType it needs in the same set, and may
+retire a Claim the set does not otherwise touch.
 Succeeding an accepted ClaimType stays on the claim-type proposal route, where
-the migration a succession demands is decided. `--example change-set` prints a
-mixed set to start from. There is no semantic member ceiling; how many changed
-members one daemon will receive in a single submission is the operator's
+the migration a succession demands is decided. Two sibling Claims contending for
+one cardinality-one slot are un-authorable in a single set by construction, not
+merely unrepaired: dispositioning one needs the other's Claim ID, which the
+daemon mints only at create from the already-frozen payload, so that refusal's
+repair is to merge the two decisions or split the set. `--example change-set`
+prints a mixed set to start from. There is no semantic member ceiling; how many
+changed members one daemon will receive in a single submission is the operator's
 `max_changed_members` bound in `daemon/proposal-receive.json`.
 
 An intent that publishes more than one Claim owns one publication expectation

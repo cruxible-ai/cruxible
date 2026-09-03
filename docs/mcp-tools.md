@@ -132,8 +132,8 @@ It reports approval conditions but never obtains or impersonates an approval.
 
 `cruxible_playbill_authoring_create` takes one tagless input, and the
 `change_set` kind carries any mix of members -- `claim`, `claim_type`,
-`claim_retirement`, `subject`, `query_definition`, `procedure`,
-`procedure_mandate` -- as one intent that admits or refuses whole, typed to the
+`claim_retirement`, `subject`, `query_definition`, `approval_policy`,
+`procedure_runtime_policy`, `procedure`, `procedure_mandate` -- as one intent that admits or refuses whole, typed to the
 offending member index. There is no second batch tool.
 `cruxible_playbill_authoring_example` serves `change-set` as a starting point.
 The publication tools take an `expectation_id` because a set that publishes

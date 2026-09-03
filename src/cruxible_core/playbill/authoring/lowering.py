@@ -1592,6 +1592,12 @@ def _rescope_member_error(
     names the sibling members whose Claims contend for the slot, because when the
     contender is another member of the same submission "disposition this Claim
     ID" is not yet a repair the author can carry out.
+
+    That door is closed by construction, not merely unrepaired: the disposition
+    needs the sibling's Claim ID, and Claim IDs are minted at create from a
+    payload that is frozen by then. Two sibling Claims contending for one
+    cardinality-one slot are therefore un-authorable in a single set, and the
+    repair says so -- merge the two decisions, or split the set.
     """
 
     repairs = tuple(

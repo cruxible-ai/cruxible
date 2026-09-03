@@ -42,7 +42,11 @@ Claim; `pb.changes(rationale=...)` opens a changeset that `.claim(...)`,
 `.prepare()` compiles the whole set as one intent. The set lowers once,
 proposes once and generates once, and it admits or refuses whole -- one
 malformed member refuses the intent, typed to that member's index. A Claim in
-the set may read a Subject or ClaimType the same set defines. Succeeding an
+the set may read a Subject or ClaimType the same set defines. Two sibling Claims
+contending for one cardinality-one slot cannot be authored in a single set at
+all: dispositioning one needs the other's Claim ID, which the daemon mints only
+at create from the already-frozen payload, so that refusal asks you to merge the
+two decisions or split the set rather than to add a disposition. Succeeding an
 accepted ClaimType stays on the claim-type proposal route, where the migration
 a succession demands is decided. There is no member ceiling in the model; how
 many changed members one daemon receives in a single submission is that
