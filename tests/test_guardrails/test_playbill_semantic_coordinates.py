@@ -459,7 +459,12 @@ def test_succeeding_the_semantic_revision_keeps_candidate_cards_deriving(
 
 
 def test_no_revision_literal_lives_outside_the_compiler_and_this_guard() -> None:
-    """One preimage, one place: a second copy is how the card path went dark."""
+    """One preimage, one place: a second copy is how the card path went dark.
+
+    Scoped to `src/cruxible_core`, which owns the semantic compiler lineage. The
+    client package carries its own `semantic_revision` literals for the
+    acceptance-law lineage, which is a different succession and not this guard's.
+    """
 
     source_root = Path(compiler_module.__file__).resolve().parents[3]
     offenders: list[str] = []

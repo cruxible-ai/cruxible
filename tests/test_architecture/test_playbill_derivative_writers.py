@@ -27,7 +27,7 @@ PRIMITIVE_DEFINITION = (
 PRIMITIVES = {"frame_projection_block", "render_projection_opening"}
 # The card renderers live beside the writer that calls them, so the scan skips
 # nothing: every caller in the tree is enumerated and must be sanctioned.
-CARD_PRIMITIVE_DEFINITION = REPO_ROOT / "src/cruxible_core/playbill/never-a-real-module.py"
+CARD_PRIMITIVE_DEFINITION: Path | None = None
 # One persistent tree writer, plus the read-only block-sync renderer that shows a
 # card without ever writing one into a candidate tree.
 SANCTIONED_CARD_CALLERS = {
@@ -103,13 +103,18 @@ def _primitive_callers(
     primitives: set[str],
     repo_root: Path = REPO_ROOT,
     source_roots: tuple[Path, ...] | None = None,
-    primitive_definition: Path = PRIMITIVE_DEFINITION,
+    primitive_definition: Path | None = PRIMITIVE_DEFINITION,
 ) -> set[str]:
     callers: set[str] = set()
     roots = source_roots or (repo_root / "src", repo_root / "packages")
     for source_root in roots:
         for path in source_root.rglob("*.py"):
-            if path.resolve() == primitive_definition.resolve():
+            # `None` excludes nothing: the primitive's own definition is scanned
+            # like every other module.
+            excluded = primitive_definition is not None and (
+                path.resolve() == primitive_definition.resolve()
+            )
+            if excluded:
                 continue
             tree = ast.parse(path.read_text(), filename=str(path))
             relative = path.relative_to(repo_root).as_posix()

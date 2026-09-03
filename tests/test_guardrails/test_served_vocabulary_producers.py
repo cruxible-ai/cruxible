@@ -2,9 +2,10 @@
 
 The v1 wire freeze makes an un-emitted member permanent: a caller can never
 observe it, and removing it later costs a ratified succession. The guard scans
-the shipped source for the exact code string, ignoring the modules that only
-declare or classify the vocabularies, so a member whose only producer is a test
-double reads as absent here.
+the shipped source for the exact code string in a value position -- prose that
+only names a code produces nothing -- ignoring the modules that only declare or
+classify the vocabularies, so a member whose only producer is a test double
+reads as absent here.
 """
 
 from __future__ import annotations
@@ -40,13 +41,57 @@ def _production_modules() -> Iterator[Path]:
         yield path
 
 
+def _prose_constants(tree: ast.AST) -> set[int]:
+    """Return the ids of every string that is a bare statement, not a value.
+
+    Module, class, function and attribute docstrings all take this shape. Prose
+    naming a refusal code does not produce it, so counting one would let a
+    member reach the frozen wire with nothing but a mention behind it.
+    """
+
+    return {
+        id(node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    }
+
+
 def _produced_strings() -> frozenset[str]:
     produced: set[str] = set()
     for path in _production_modules():
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        prose = _prose_constants(tree)
+        for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if id(node) in prose:
+                    continue
                 produced.add(node.value)
     return frozenset(produced)
+
+
+def test_prose_naming_a_code_is_not_a_producer_of_it() -> None:
+    """A docstring is a mention; a raise, a return or a mapping value is a producer."""
+
+    module = ast.parse(
+        '"""occurrence_not_due is refused when the schedule says so."""\n'
+        'CODE = "occurrence_already_admitted"\n'
+        "\n"
+        "def refuse() -> str:\n"
+        '    """line_not_accepted names the refusal this guard would miss."""\n'
+        '    return "line_identity_mismatch"\n'
+    )
+    prose = _prose_constants(module)
+    produced = {
+        node.value
+        for node in ast.walk(module)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in prose
+    }
+
+    assert "occurrence_already_admitted" in produced
+    assert "line_identity_mismatch" in produced
+    assert not {"occurrence_not_due", "line_not_accepted"} & produced
 
 
 def test_every_admission_refusal_member_is_produced_in_production_source() -> None:
