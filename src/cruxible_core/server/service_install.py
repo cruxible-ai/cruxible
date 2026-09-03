@@ -173,6 +173,32 @@ def resolve_service_auth_posture(state_root: Path, requested: bool | None) -> bo
     )
 
 
+def build_service_config(**values: object) -> ServiceInstallConfigV1:
+    """Construct the settings record, refusing hostile values with a typed error.
+
+    ``ServiceInstallConfigV1``'s validators reject control characters, leading
+    ``=``, and out-of-range ports so nothing hostile is ever rendered into a
+    service unit. Raised bare, that refusal is a ``pydantic.ValidationError``,
+    which is not a ``CoreError``: the CLI's ``handle_errors`` re-raises it and
+    the operator sees an empty stdout and stderr. Converting it here keeps the
+    security refusal on the same typed channel as every other refusal on this
+    surface.
+    """
+
+    try:
+        return ServiceInstallConfigV1(**values)  # type: ignore[arg-type]
+    except ValidationError as exc:
+        reasons = "; ".join(
+            f"{'.'.join(str(part) for part in error['loc']) or 'settings'}: {error['msg']}"
+            for error in exc.errors()
+        )
+        raise ConfigError(
+            f"service_install.settings_invalid: {reasons}; repair: rerun install-service with "
+            "server settings that carry no control characters, no leading '=', and a port "
+            "between 1 and 65535"
+        ) from exc
+
+
 def service_config_path(state_root: Path) -> Path:
     return state_root / "daemon" / SERVICE_CONFIG_NAME
 

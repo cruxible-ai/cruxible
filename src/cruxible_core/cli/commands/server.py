@@ -38,7 +38,7 @@ from cruxible_core.server.config import (
     is_server_auth_enabled,
 )
 from cruxible_core.server.service_install import (
-    ServiceInstallConfigV1,
+    build_service_config,
     current_service_platform,
     durable_credentials_available,
     install_service,
@@ -280,7 +280,7 @@ def server_install_service_cmd(
             "repair: run `cruxible server start --bootstrap-secret-file PATH`, claim the "
             "bootstrap credential, then rerun install-service"
         )
-    config = ServiceInstallConfigV1(
+    config = build_service_config(
         platform=current_service_platform(),
         executable=str(resolved_cruxible_executable()),
         state_root=str(root),

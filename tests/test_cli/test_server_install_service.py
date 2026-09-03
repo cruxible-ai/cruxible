@@ -332,3 +332,88 @@ def test_install_service_refuses_an_explicit_auth_latch_disagreement(
     assert "service_install.auth_posture_mismatch" in result.output
     assert "repair:" in result.output
     reset_registry()
+
+
+@pytest.mark.parametrize(
+    ("option", "hostile"),
+    (
+        ("--socket", "/tmp/a\nExecStartPre=/bin/echo pwned/daemon.sock"),
+        ("--host", "=unit-directive"),
+    ),
+)
+def test_install_service_renders_a_hostile_value_refusal_the_operator_can_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    option: str,
+    hostile: str,
+) -> None:
+    """The hostile-value refusal must not reach the operator as empty output.
+
+    The validators raise `pydantic.ValidationError`, which is not a `CoreError`;
+    raised bare it escapes `handle_errors` and the operator sees exit 1 with an
+    empty stdout and stderr.
+    """
+
+    config = _config(tmp_path, "linux")
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.server.current_service_platform", lambda: "linux"
+    )
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.server.resolved_cruxible_executable",
+        lambda: Path(config.executable),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.server.install_service",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("install called")),
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "server",
+            "install-service",
+            "--state-root",
+            config.state_root,
+            option,
+            hostile,
+            "--print",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert result.output.strip() != ""
+    assert "service_install.settings_invalid" in result.output
+    assert "repair:" in result.output
+    assert not isinstance(result.exception, ValidationError)
+    assert "ExecStartPre" not in result.output.replace(hostile, "")
+
+
+def test_install_service_refuses_an_out_of_range_port_with_the_same_typed_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path, "linux")
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.server.current_service_platform", lambda: "linux"
+    )
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.server.resolved_cruxible_executable",
+        lambda: Path(config.executable),
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "server",
+            "install-service",
+            "--state-root",
+            config.state_root,
+            "--port",
+            "99999",
+            "--print",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "service_install.settings_invalid" in result.output
+    assert "port must be between 1 and 65535" in result.output
