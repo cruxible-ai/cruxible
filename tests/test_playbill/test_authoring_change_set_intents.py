@@ -1034,10 +1034,15 @@ def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
     path, not an index. Each case below is a compiler-stage refusal, and each
     asserts the member index alongside the artifact path.
 
-    Cardinality has no compiler-stage refusal to address: the cardinality-one
+    The four cases are illustrative, not exhaustive: the re-address is generic
+    over every compiler code whose artifact path this lowering attributes to
+    exactly one member. Evidence admission is the case worth naming, because it
+    does refuse -- corroboration issues and a ClaimType admission policy's
+    `refusal_codes` become diagnostics at the Claim's own artifact path, which
+    is a member path, so they are re-addressed by the same generic rule. Only
+    cardinality has no compiler-stage refusal to re-address: the cardinality-one
     slot law is decided in lowering (`existing_claim_dispositions_incomplete`,
-    pinned above), and evidence admission grades evidence rather than refusing
-    a candidate, so both are already member-addressed or never member-owned.
+    pinned above) and is member-addressed there.
     """
 
     instance, owner = initialize_local(tmp_path)
