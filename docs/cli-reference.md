@@ -206,6 +206,7 @@ cruxible playbill init --key-dir DIR
   [--profile local|cloud]
   [--workspace DIR] [--replace]
   [--no-seed]
+  [--object-format sha1|sha256]
 ~~~
 
 Generates a client-held ordinary key outside the workspace and bootstraps the
@@ -236,6 +237,16 @@ Explicit `--workspace DIR` over TCP writes only the client-local URL binding.
 An instance initialized without daemon registration cannot acquire one later;
 archive and rebuild an attached host through the local socket when ledger-ref
 advertisement is required.
+
+The ledger's Git object format follows `--object-format`: with no flag it
+inherits an attached workspace's format, and with no workspace it is `sha1`.
+SHA-1 is the default because common Git viewers do not recognize a SHA-256
+repository, and a ledger nobody can open is not evidence anyone can read
+(maintainer ruling, 2026-09-03). An explicit `--object-format` that contradicts
+the attached workspace refuses with `object_format_mismatch` before any state is
+written; instances already initialized keep their pinned format forever. The
+equivalent request field is `git_object_format` on the HTTP/SDK init body and on
+MCP `cruxible_playbill_init`.
 
 Initialization seeds the compiler-owned `workspace.file` Provider by default and
 refuses when its `seed_materializations` entry is absent, so a host is never

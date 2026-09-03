@@ -16,9 +16,14 @@ from cruxible_client.contracts.errors import (
     PlaybillReseedRequired,
 )
 from cruxible_client.contracts.temporal import utc_now
-from cruxible_client.contracts.types import OperatingProfile, PlaybillTrustRoot, PrincipalRecord
+from cruxible_client.contracts.types import (
+    GitObjectFormat,
+    OperatingProfile,
+    PlaybillTrustRoot,
+    PrincipalRecord,
+)
 from cruxible_core.errors import InstanceNotFoundError
-from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.instance import DEFAULT_GIT_OBJECT_FORMAT, PlaybillInstance
 from cruxible_core.playbill.provider_process_leases import ProviderProcessRecoveryResultV1
 from cruxible_core.playbill.workspace_advertisement import (
     advertise_workspace_refs,
@@ -98,6 +103,7 @@ class PlaybillInstanceManager:
         client_principals: tuple[PrincipalRecord, ...],
         operating_profile: OperatingProfile = "local",
         require_independent_approval: bool = False,
+        git_object_format: GitObjectFormat | None = None,
     ) -> PlaybillInstance:
         managed_root, trust_path, workspaces = self._paths(instance_id)
         with self._lock:
@@ -135,13 +141,33 @@ class PlaybillInstanceManager:
                     )
                 return instance
             try:
-                object_format = (
-                    workspace_git_object_format(workspaces[0]) if workspaces else "sha256"
+                workspace_format = (
+                    workspace_git_object_format(workspaces[0]) if workspaces else None
                 )
             except ValueError as exc:
                 raise PlaybillBootstrapError(
                     "attached workspace must be one exact local Git worktree"
                 ) from exc
+            # An attached workspace's own format wins, because the advisory
+            # remote refuses across formats. With no workspace the ledger is
+            # SHA-1: common Git viewers do not recognize a SHA-256 repository,
+            # and a ledger nobody can open is not evidence anyone can read
+            # (maintainer ruling, 2026-09-03).
+            if (
+                git_object_format is not None
+                and workspace_format is not None
+                and git_object_format != workspace_format
+            ):
+                raise PlaybillBootstrapError(
+                    "object_format_mismatch: the requested Git object format differs from the "
+                    f"attached workspace's {workspace_format!r}; repair: omit --object-format to "
+                    "inherit the workspace, or attach a workspace in the requested format"
+                )
+            object_format: GitObjectFormat = (
+                workspace_format
+                if workspace_format is not None
+                else (git_object_format or DEFAULT_GIT_OBJECT_FORMAT)
+            )
             instance = PlaybillInstance.initialize(
                 managed_root,
                 instance_id=instance_id,

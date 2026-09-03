@@ -58,7 +58,11 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import utc_now
-from cruxible_client.contracts.types import OperatingProfile, PrincipalRecord
+from cruxible_client.contracts.types import (
+    GitObjectFormat,
+    OperatingProfile,
+    PrincipalRecord,
+)
 from cruxible_core.errors import AuthenticationError, ConfigError, DataValidationError
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
@@ -345,6 +349,7 @@ def playbill_init(
     workspace_root: str | None = None,
     workspace_attachment_authorized: bool = False,
     seed: bool = True,
+    git_object_format: GitObjectFormat | None = None,
 ) -> contracts.PlaybillInitResult:
     check_permission("cruxible_playbill_init", instance_id=instance_id)
     actor_id = _actor_id()
@@ -388,6 +393,7 @@ def playbill_init(
             client_principals=principals,
             operating_profile=operating_profile,
             require_independent_approval=require_independent_approval,
+            git_object_format=git_object_format,
         )
     except BaseException:
         if attached_for_init and workspace_root is not None:

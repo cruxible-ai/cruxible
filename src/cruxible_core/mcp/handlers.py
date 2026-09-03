@@ -267,6 +267,7 @@ def handle_playbill_init(
     require_independent_approval: bool = False,
     *,
     seed: bool = True,
+    git_object_format: str | None = None,
 ) -> contracts.PlaybillInitResult:
     records = tuple(PrincipalRecord.model_validate(item) for item in principals)
     return _dispatch_remote_or_local(
@@ -276,6 +277,7 @@ def handle_playbill_init(
             operating_profile=cast(Any, operating_profile),
             require_independent_approval=require_independent_approval,
             seed=seed,
+            git_object_format=cast(Any, git_object_format),
         ),
         lambda: playbill_api.playbill_init(
             instance_id,
@@ -283,6 +285,7 @@ def handle_playbill_init(
             operating_profile=cast(Any, operating_profile),
             require_independent_approval=require_independent_approval,
             seed=seed,
+            git_object_format=cast(Any, git_object_format),
         ),
         operation_name="cruxible_playbill_init",
     )

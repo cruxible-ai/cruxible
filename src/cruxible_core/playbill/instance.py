@@ -106,6 +106,11 @@ if TYPE_CHECKING:
     from cruxible_core.playbill.query.backends import ClaimQueryFactsV1
 
 DESCRIPTOR_FILE = "instance.json"
+# Ledgers are SHA-1 unless a workspace or caller says otherwise: common Git
+# viewers do not recognize a SHA-256 repository, and a ledger nobody can open is
+# not evidence anyone can read (maintainer ruling, 2026-09-03). Descriptors
+# written before this ruling keep their pinned format and reopen unchanged.
+DEFAULT_GIT_OBJECT_FORMAT: GitObjectFormat = "sha1"
 
 
 def _resolved(path: Path) -> Path:
@@ -226,7 +231,7 @@ class PlaybillInstance:
         instance_id: str,
         client_principals: Sequence[PrincipalRecord],
         workspace_roots: Sequence[Path],
-        git_object_format: GitObjectFormat = "sha256",
+        git_object_format: GitObjectFormat = DEFAULT_GIT_OBJECT_FORMAT,
         operating_profile: OperatingProfile = "local",
         require_independent_approval: bool = False,
         timestamp: str | None = None,

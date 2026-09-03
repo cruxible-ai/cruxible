@@ -900,6 +900,16 @@ def create_host(
         "the result names the repair."
     ),
 )
+@click.option(
+    "--object-format",
+    "object_format",
+    type=click.Choice(["sha1", "sha256"]),
+    default=None,
+    help=(
+        "Ledger Git object format. Default: inherit an attached workspace, else sha1. "
+        "A value that contradicts the attached workspace is refused."
+    ),
+)
 @json_option
 @handle_errors
 def init_playbill(
@@ -913,6 +923,7 @@ def init_playbill(
     workspace_path: str | None,
     replace: bool,
     no_seed: bool,
+    object_format: str | None,
     output_json: bool,
 ) -> None:
     """Create client custody and bootstrap the governed approval policy."""
@@ -965,6 +976,7 @@ def init_playbill(
             operating_profile=cast(Any, profile),
             require_independent_approval=require_independent_approval,
             seed=not no_seed,
+            git_object_format=cast(Any, object_format),
             **(
                 {"workspace_root": str(git_workspace)}
                 if git_workspace is not None and _root_ctx_obj().get("server_socket")

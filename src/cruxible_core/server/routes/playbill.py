@@ -129,6 +129,7 @@ def playbill_init(
             and resolve_server_settings().server_socket is not None
         ),
         seed=req.seed,
+        git_object_format=req.git_object_format,
     )
 
 

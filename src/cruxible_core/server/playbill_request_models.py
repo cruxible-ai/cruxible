@@ -28,7 +28,11 @@ from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.subjects import SubjectShell
-from cruxible_client.contracts.types import OperatingProfile, PrincipalRecord
+from cruxible_client.contracts.types import (
+    GitObjectFormat,
+    OperatingProfile,
+    PrincipalRecord,
+)
 from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
@@ -68,6 +72,10 @@ class PlaybillInitRequest(_StrictPlaybillRequest):
     require_independent_approval: bool = False
     workspace_root: str | None = None
     seed: bool = True
+    # None inherits an attached workspace's format, else the SHA-1 default. An
+    # explicit value that contradicts the workspace refuses before any state is
+    # written.
+    git_object_format: GitObjectFormat | None = None
 
 
 class PlaybillProviderSeedRequest(_StrictPlaybillRequest):

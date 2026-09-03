@@ -275,6 +275,7 @@ class CruxibleClient:
         require_independent_approval: bool = False,
         workspace_root: str | None = None,
         seed: bool = True,
+        git_object_format: Literal["sha1", "sha256"] | None = None,
     ) -> contracts.PlaybillInitResult:
         payload: dict[str, Any] = {
             "principals": [dict(item) for item in principals],
@@ -284,6 +285,8 @@ class CruxibleClient:
         }
         if workspace_root is not None:
             payload["workspace_root"] = workspace_root
+        if git_object_format is not None:
+            payload["git_object_format"] = git_object_format
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/init",
             json=payload,

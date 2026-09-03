@@ -75,6 +75,7 @@ def register_tools(
         operating_profile: Literal["local", "cloud"] = "local",
         require_independent_approval: bool = False,
         seed: bool = True,
+        git_object_format: Literal["sha1", "sha256"] | None = None,
     ) -> contracts.PlaybillInitResult:
         """Bootstrap Playbill from client-generated public principals.
 
@@ -89,6 +90,7 @@ def register_tools(
             operating_profile,
             require_independent_approval,
             seed=seed,
+            git_object_format=git_object_format,
         )
 
     @_tool
