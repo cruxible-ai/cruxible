@@ -84,6 +84,7 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
         "claim-existing-capture",
         "claim-flow-a",
         "claim-self-source",
+        "claim-subject-relation",
         "procedure",
         "claim-adjudicate-contradicting-evidence",
         "claim-cite-supporting-evidence",

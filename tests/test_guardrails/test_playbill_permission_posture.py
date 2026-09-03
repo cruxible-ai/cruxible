@@ -46,5 +46,6 @@ def test_runtime_bootstrap_secret_is_single_use_for_host_create_only() -> None:
 def test_repeatable_bootstrap_server_operations_are_exactly_info_and_restart() -> None:
     assert set(auth_module._SERVER_OPERATION_ROUTES) == {
         ("GET", "/api/v1/server/info"),
+        ("GET", "/api/v1/{instance_id}/playbill/host"),
         ("POST", "/api/v1/server/restart"),
     }

@@ -69,6 +69,7 @@ playbill explain
 playbill floor export
 playbill hook post-tool-use
 playbill host create
+playbill host show
 playbill init
 playbill list
 playbill next
@@ -109,7 +110,9 @@ playbill subject history
 playbill subject list
 playbill subject propose
 playbill whoami
+playbill workspace attach
 server info
+server install-service
 server restart
 server start
 server status
@@ -135,6 +138,7 @@ GET  /api/v1/{instance_id}/runtime/credentials
 POST /api/v1/{instance_id}/runtime/credentials
 POST /api/v1/{instance_id}/runtime/credentials/{credential_id}/revoke
 POST /api/v1/{instance_id}/runtime/credentials/{credential_id}/rotate
+GET  /api/v1/{instance_id}/playbill/host
 POST /api/v1/{instance_id}/playbill/init
 POST /api/v1/{instance_id}/playbill/bodies
 GET  /api/v1/{instance_id}/playbill/authoring/intents
@@ -159,6 +163,7 @@ GET  /api/v1/{instance_id}/playbill/principals
 POST /api/v1/{instance_id}/playbill/principals/proposals
 GET  /api/v1/{instance_id}/playbill/proposals/{proposal_id}
 GET  /api/v1/{instance_id}/playbill/proposals
+GET  /api/v1/{instance_id}/playbill/proposal-selector
 GET  /api/v1/{instance_id}/playbill/proposals/{proposal_id}/refusal
 POST /api/v1/{instance_id}/playbill/proposals/{proposal_id}/review
 POST /api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge
