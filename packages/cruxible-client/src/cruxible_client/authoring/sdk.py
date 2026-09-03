@@ -141,6 +141,17 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRuleV1,
     ClaimResolutionPolicyV1,
 )
+from cruxible_client.contracts.predictions import (
+    ObservationSettlementEvidenceV1,
+    PlaybillPredictRequestV1,
+    PredictionClaimPayloadV1,
+    PredictionEqualityRuleV1,
+    PredictionObservationSelectorV1,
+    PredictionPresenceRuleV1,
+    PredictionRuleV1,
+    PredictionThresholdRuleV1,
+    TerminalSettlementEvidenceV1,
+)
 from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -156,6 +167,7 @@ _SUBJECT_RE = re.compile(
     r"(?P<identifier>[a-z][a-z0-9_.-]{0,255})$"
 )
 _CLAIM_ADAPTER: TypeAdapter[ClaimArtifactAny] = TypeAdapter(ClaimArtifactAny)
+_PREDICTION_RULE_ADAPTER: TypeAdapter[PredictionRuleV1] = TypeAdapter(PredictionRuleV1)
 _RETIRE_CLOSURE_MISMATCH_CODE = "playbill.claim.retire_closure_mismatch"
 _CLAIM_RETIRE_OPERATION_DOMAIN = "playbill-claim-retire-operation-v1"
 _RETIREMENT_SUBMISSION_CACHE_LIMIT = 128
@@ -463,6 +475,29 @@ class ClaimDraft(_IntentDraft):
             capability="derivation_carry",
             repair=("Remove derived_by() or use a separately approved derivation-carry contract."),
         )
+
+
+@dataclass(frozen=True)
+class Prediction:
+    """A submitted predicted Claim and its immutable settlement declaration."""
+
+    _playbill: Playbill = field(repr=False, compare=False)
+    prediction_id: str
+    intent_id: str
+    proposal_id: str
+    predicted_claim_id: str
+    declaration_digest: str
+
+    @property
+    def proposal(self) -> Proposal:
+        return Proposal(self._playbill, self.proposal_id)
+
+
+@dataclass(frozen=True)
+class PredictionSettlement:
+    prediction_id: str
+    outcome: bool
+    relation: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -1008,6 +1043,113 @@ class Playbill:
                 )
                 for account in view.admission_accounts
             ),
+        )
+
+    def predict(
+        self,
+        prediction: ClaimDraft,
+        *,
+        procedure: str | ProcedureRef,
+        measurement_name: str,
+        observation_subject: str | SubjectRef,
+        observation_predicate: str | ClaimTypeRef,
+        rule: PredictionRuleV1 | Mapping[str, object],
+        deadline: datetime,
+        observation_qualifier: str | None = None,
+        outcome_class: str = "prediction-correctness",
+    ) -> Prediction:
+        """Submit a predicted Claim and bind its later settlement rule."""
+
+        if prediction._playbill is not self:
+            raise ValueError("prediction draft belongs to another Playbill connection")
+        procedure_name = _address(procedure, RefKind.PROCEDURE)
+        subject_name = _address(observation_subject, RefKind.SUBJECT)
+        predicate_name = _address(observation_predicate, RefKind.CLAIM_TYPE)
+        for reference in (procedure, observation_subject, observation_predicate):
+            if isinstance(reference, TypedRef):
+                self._assert_coordinate(reference.coordinate)
+        typed_rule = (
+            rule
+            if isinstance(
+                rule,
+                (
+                    PredictionEqualityRuleV1,
+                    PredictionThresholdRuleV1,
+                    PredictionPresenceRuleV1,
+                ),
+            )
+            else _PREDICTION_RULE_ADAPTER.validate_python(dict(rule))
+        )
+        result = self._client.predict_playbill(
+            self._instance_id,
+            request=PlaybillPredictRequestV1(
+                prediction=cast(PredictionClaimPayloadV1, prediction.payload),
+                procedure=procedure_name,
+                measurement_name=measurement_name,
+                observation=PredictionObservationSelectorV1(
+                    subject=_subject_address(subject_name),
+                    predicate=predicate_name,
+                    qualifier=observation_qualifier,
+                ),
+                rule=typed_rule,
+                deadline=deadline,
+                outcome_class=outcome_class,
+            ),
+        )
+        declaration = result.declaration
+        return Prediction(
+            self,
+            prediction_id=declaration.prediction_id,
+            intent_id=declaration.intent_id,
+            proposal_id=declaration.proposal_id,
+            predicted_claim_id=declaration.predicted_claim_id,
+            declaration_digest=declaration.declaration_digest,
+        )
+
+    def settle(
+        self,
+        prediction: Prediction | str,
+        *,
+        observation: ClaimRef | str,
+        terminal_run_id: str | None = None,
+        terminal_record_digest: str | None = None,
+    ) -> PredictionSettlement:
+        """Settle a prediction from a later observation or retained terminal record."""
+
+        if isinstance(prediction, Prediction):
+            if prediction._playbill is not self:
+                raise ValueError("prediction belongs to another Playbill connection")
+            prediction_id = prediction.prediction_id
+        else:
+            prediction_id = prediction
+        claim_id = _address(observation, RefKind.CLAIM)
+        if isinstance(observation, ClaimRef):
+            self._assert_coordinate(observation.coordinate)
+        if (terminal_run_id is None) != (terminal_record_digest is None):
+            raise ValueError(
+                "terminal settlement requires both terminal_run_id and terminal_record_digest"
+            )
+        evidence = (
+            ObservationSettlementEvidenceV1(claim_id=claim_id)
+            if terminal_run_id is None
+            else TerminalSettlementEvidenceV1(
+                claim_id=claim_id,
+                run_id=terminal_run_id,
+                terminal_record_digest=cast(str, terminal_record_digest),
+            )
+        )
+        result = self._client.settle_playbill_prediction(
+            self._instance_id,
+            prediction_id,
+            request=api.PlaybillSettleRequestV1(evidence=evidence),
+        )
+        outcome = result.resolution.get("settlement_outcome")
+        if not isinstance(outcome, bool):
+            raise ValueError("prediction settlement response omitted its mechanical outcome")
+        return PredictionSettlement(
+            prediction_id=result.prediction_id,
+            outcome=outcome,
+            relation=result.relation,
         )
 
     def activate(
@@ -2268,6 +2410,8 @@ __all__ = [
     "KnowledgeCard",
     "NextPage",
     "Playbill",
+    "Prediction",
+    "PredictionSettlement",
     "Procedure",
     "ProcedureDraft",
     "ProcedureRun",

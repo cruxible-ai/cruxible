@@ -1236,6 +1236,37 @@ def handle_playbill_line_run(
     )
 
 
+def handle_playbill_predict(
+    instance_id: str,
+    request: contracts.PlaybillPredictRequestV1,
+) -> contracts.PlaybillPredictResultV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.predict_playbill(instance_id, request=request),
+        lambda: playbill_api.playbill_predict(instance_id, request=request),
+        operation_name="cruxible_playbill_predict",
+    )
+
+
+def handle_playbill_settle_prediction(
+    instance_id: str,
+    prediction_id: str,
+    request: contracts.PlaybillSettleRequestV1,
+) -> contracts.PlaybillSettleResultV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.settle_playbill_prediction(
+            instance_id,
+            prediction_id,
+            request=request,
+        ),
+        lambda: playbill_api.playbill_settle_prediction(
+            instance_id,
+            prediction_id,
+            request=request,
+        ),
+        operation_name="cruxible_playbill_settle",
+    )
+
+
 def handle_playbill_discover(
     instance_id: str,
     *,

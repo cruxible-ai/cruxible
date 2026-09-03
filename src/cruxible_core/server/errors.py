@@ -114,6 +114,9 @@ def _message_for_error(exc: CoreError) -> str:
 
 
 def _repair_for_error(exc: CoreError) -> ServedRepairV1:
+    carried = getattr(exc, "repair", None)
+    if isinstance(carried, RepairOperationV1):
+        return carried
     if isinstance(exc, DaemonOperationScopeError):
         return RepairOperationV1(
             operation=exc.operation,

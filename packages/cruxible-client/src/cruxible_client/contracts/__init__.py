@@ -27,6 +27,33 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.claims import ClaimStatementCardV1 as ClaimStatementCardV1
+from cruxible_client.contracts.predictions import (
+    ObservationSettlementEvidenceV1 as ObservationSettlementEvidenceV1,
+)
+from cruxible_client.contracts.predictions import (
+    PlaybillPredictionDeclarationV1 as PlaybillPredictionDeclarationV1,
+)
+from cruxible_client.contracts.predictions import (
+    PlaybillPredictRequestV1 as PlaybillPredictRequestV1,
+)
+from cruxible_client.contracts.predictions import PlaybillPredictResultV1 as PlaybillPredictResultV1
+from cruxible_client.contracts.predictions import PlaybillSettleRequestV1 as PlaybillSettleRequestV1
+from cruxible_client.contracts.predictions import PlaybillSettleResultV1 as PlaybillSettleResultV1
+from cruxible_client.contracts.predictions import (
+    PredictionEqualityRuleV1 as PredictionEqualityRuleV1,
+)
+from cruxible_client.contracts.predictions import (
+    PredictionObservationSelectorV1 as PredictionObservationSelectorV1,
+)
+from cruxible_client.contracts.predictions import (
+    PredictionPresenceRuleV1 as PredictionPresenceRuleV1,
+)
+from cruxible_client.contracts.predictions import (
+    PredictionThresholdRuleV1 as PredictionThresholdRuleV1,
+)
+from cruxible_client.contracts.predictions import (
+    TerminalSettlementEvidenceV1 as TerminalSettlementEvidenceV1,
+)
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedures.results import (
     ProcedurePendingSuccessorV1,

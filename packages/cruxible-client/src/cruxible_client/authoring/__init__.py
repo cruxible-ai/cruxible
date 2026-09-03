@@ -9,20 +9,22 @@ if TYPE_CHECKING:
         ClaimAttestationV2Signer,
         LocalEd25519ClaimAttestationSigner,
     )
-    from cruxible_client.authoring.sdk import Playbill
+    from cruxible_client.authoring.sdk import Playbill, Prediction, PredictionSettlement
 
 __all__ = [
     "ClaimAttestationV2Signer",
     "LocalEd25519ClaimAttestationSigner",
     "Playbill",
+    "Prediction",
+    "PredictionSettlement",
 ]
 
 
 def __getattr__(name: str) -> Any:
-    if name == "Playbill":
-        from cruxible_client.authoring.sdk import Playbill
+    if name in {"Playbill", "Prediction", "PredictionSettlement"}:
+        from cruxible_client.authoring import sdk
 
-        return Playbill
+        return getattr(sdk, name)
     if name in {"ClaimAttestationV2Signer", "LocalEd25519ClaimAttestationSigner"}:
         from cruxible_client.authoring import attestations
 

@@ -216,6 +216,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Trigger one due accepted Line occurrence. Reuse a returned occurrence id only as an "
         "idempotency assertion; the daemon derives occurrence identity."
     ),
+    "cruxible_playbill_predict": (
+        "Use when an uncertain Claim can be tested later. Supply the exact accepted Procedure "
+        "measurement, observation selector, mechanical rule, and validity-window deadline."
+    ),
+    "cruxible_playbill_settle": (
+        "Use when a predicted Claim and its matching later observation are accepted, optionally "
+        "binding the exact retained mandate-settlement terminal record."
+    ),
     "cruxible_playbill_discover": (
         "Use when you do not yet know which interface or Subject names the state you want."
     ),

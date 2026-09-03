@@ -752,6 +752,31 @@ class CruxibleClient:
         )
         self._check_error(response)
 
+    def predict_playbill(
+        self,
+        instance_id: str,
+        *,
+        request: contracts.PlaybillPredictRequestV1,
+    ) -> contracts.PlaybillPredictResultV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/predictions",
+            json=request.model_dump(mode="json"),
+        )
+        return self._parse_model(response, contracts.PlaybillPredictResultV1)
+
+    def settle_playbill_prediction(
+        self,
+        instance_id: str,
+        prediction_id: str,
+        *,
+        request: contracts.PlaybillSettleRequestV1,
+    ) -> contracts.PlaybillSettleResultV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/predictions/{prediction_id}/settlements",
+            json=request.model_dump(mode="json"),
+        )
+        return self._parse_model(response, contracts.PlaybillSettleResultV1)
+
     def create_playbill_authoring_intent(
         self,
         instance_id: str,

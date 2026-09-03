@@ -59,6 +59,17 @@ def test_line_run_schema_exposes_only_daemon_occurrence_assertions() -> None:
     }
 
 
+def test_prediction_tools_expose_the_same_typed_requests_as_http_and_sdk() -> None:
+    schemas = _schemas()
+    predict = schemas["cruxible_playbill_predict"].inputSchema
+    settle = schemas["cruxible_playbill_settle"].inputSchema
+
+    assert set(predict["properties"]) == {"instance_id", "request"}
+    assert set(predict["required"]) == {"instance_id", "request"}
+    assert set(settle["properties"]) == {"instance_id", "prediction_id", "request"}
+    assert set(settle["required"]) == {"instance_id", "prediction_id", "request"}
+
+
 def test_agent_schema_never_accepts_private_keys_or_local_paths() -> None:
     forbidden = {"private_key", "private_key_path", "local_path", "workspace_root"}
     violations: list[str] = []

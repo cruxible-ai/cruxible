@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Literal, Mapping
 
 from pydantic import (
@@ -696,6 +697,117 @@ def _expectation_holds(
     return bool(matches) and (all(matches) if condition_scope == "all" else any(matches))
 
 
+def _prediction_decimal(value: object) -> Decimal | None:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return Decimal(value)
+    if isinstance(value, dict) and tuple(value) == ("$decimal",):
+        spelling = value.get("$decimal")
+        if isinstance(spelling, str):
+            try:
+                return Decimal(spelling)
+            except InvalidOperation:
+                return None
+    return None
+
+
+def evaluate_prediction_correctness_condition(
+    condition: object,
+    *,
+    prediction_value: object,
+    settlement_value: object,
+    evidence_present: bool,
+) -> bool | None:
+    """Evaluate the closed served equality/threshold/presence rule vocabulary."""
+
+    if not isinstance(condition, dict):
+        return None
+    operator = condition.get("operator")
+    if operator == "equality":
+        return normalize_canonical(prediction_value) == normalize_canonical(settlement_value)
+    if operator == "presence":
+        return prediction_value is evidence_present if isinstance(prediction_value, bool) else None
+    if operator != "threshold" or not isinstance(prediction_value, bool):
+        return None
+    observed = _prediction_decimal(settlement_value)
+    threshold = _prediction_decimal(condition.get("threshold"))
+    comparison = condition.get("comparison")
+    if not isinstance(comparison, str):
+        return None
+    if observed is None or threshold is None:
+        return None
+    actual = {
+        "gt": observed > threshold,
+        "gte": observed >= threshold,
+        "lt": observed < threshold,
+        "lte": observed <= threshold,
+    }.get(comparison)
+    return None if actual is None else actual == prediction_value
+
+
+def _evaluate_served_prediction_settlement(
+    activation: ResolutionContractActivationV2,
+    resolution: ProcedureResolutionV2,
+) -> ProcedureResolutionLawResultV1 | None:
+    value = resolution.value
+    if not isinstance(value, dict) or value.get("tag") != (
+        "playbill-prediction-settlement-value-v1"
+    ):
+        return None
+    evidence_kind = value.get("evidence_kind")
+    if not isinstance(evidence_kind, str):
+        return _resolution_refused(
+            "resolution.prediction_value_invalid",
+            "Served prediction settlement must name its evidence kind.",
+        )
+    required_proof = {
+        "observation_claim": "claim_statement",
+        "terminal": "run_receipt",
+    }.get(evidence_kind)
+    if required_proof is None:
+        return _resolution_refused(
+            "resolution.prediction_value_invalid",
+            "Served prediction settlement names an unknown evidence kind.",
+        )
+    proofs = tuple(proof for proof in resolution.evidence_refs if proof.kind == required_proof)
+    if not proofs:
+        return _resolution_refused(
+            "resolution.measurement_proof_missing",
+            f"Served prediction settlement requires {required_proof!r} proof.",
+        )
+    if required_proof == "claim_statement" and any(
+        proof.subject != resolution.settlement.statement_address for proof in proofs
+    ):
+        return _resolution_refused(
+            "resolution.measurement_subject_mismatch",
+            "Settlement proof targets another Claim statement.",
+        )
+    if resolution.observed_at > activation.expires_at:
+        return _resolution_refused(
+            "resolution.prediction_deadline_passed",
+            "Settlement evidence falls outside the prediction validity window.",
+        )
+    outcome = evaluate_prediction_correctness_condition(
+        activation.correctness_condition,
+        prediction_value=value.get("prediction_value"),
+        settlement_value=value.get("settlement_value"),
+        evidence_present=value.get("evidence_present") is True,
+    )
+    if outcome is None:
+        return _resolution_refused(
+            "resolution.prediction_unsettleable_rule",
+            "Prediction correctness rule cannot evaluate these canonical values.",
+        )
+    if outcome != resolution.settlement_outcome:
+        return _resolution_refused(
+            "resolution.settlement_evidence_mismatch",
+            "Settlement outcome does not reproduce from its correctness rule and evidence.",
+        )
+    return ProcedureResolutionLawResultV1(
+        verdict="accepted",
+        resolution_digest=procedure_resolution_digest(resolution),
+    )
+
+
 def evaluate_procedure_resolution(
     activation: ResolutionContractActivationV1,
     resolution: ProcedureResolutionV1,
@@ -733,6 +845,12 @@ def evaluate_procedure_resolution(
             "resolution.before_check_at",
             "A satisfied resolution must be observed at or after check_at.",
         )
+    if isinstance(activation, ResolutionContractActivationV2) and isinstance(
+        resolution, ProcedureResolutionV2
+    ):
+        served = _evaluate_served_prediction_settlement(activation, resolution)
+        if served is not None:
+            return served
     measurement = activation.declaration.measurement
     required_proof_kind = {
         "accepted_query": "query_receipt",
@@ -1216,6 +1334,7 @@ __all__ = [
     "build_resolution_disposition",
     "build_settled_outcome_relation",
     "derive_resolution_activations",
+    "evaluate_prediction_correctness_condition",
     "evaluate_procedure_resolution",
     "procedure_resolution_digest",
     "procedure_resolution_id",

@@ -13,6 +13,7 @@ from cruxible_client.contracts.authoring.models import (
     PlaybillBlockSyncReadReason,
     PlaybillBlockSyncReason,
 )
+from cruxible_client.contracts.predictions import PredictionRefusalCodeV1
 from cruxible_client.contracts.procedures.results import (
     ProcedureAdmissionRefusalCodeV1,
     ProcedureInternalFailureCodeV1,
@@ -20,7 +21,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureOperationalFailureCodeV1,
     ProcedureSettlementRefusalCodeV1,
 )
-from cruxible_client.contracts.repairs import ServedRepairV1, hand_edit_repair
+from cruxible_client.contracts.repairs import RepairOperationV1, ServedRepairV1, hand_edit_repair
 from cruxible_client.contracts.workspace_advertisement import WorkspaceAdvertisementFailureCode
 
 CLOSED_SERVED_REFUSAL_VOCABULARIES: dict[str, frozenset[str]] = {
@@ -34,6 +35,7 @@ CLOSED_SERVED_REFUSAL_VOCABULARIES: dict[str, frozenset[str]] = {
     "procedure_operational_failure": frozenset(get_args(ProcedureOperationalFailureCodeV1)),
     "procedure_internal_failure": frozenset(get_args(ProcedureInternalFailureCodeV1)),
     "procedure_settlement_refusal": frozenset(get_args(ProcedureSettlementRefusalCodeV1)),
+    "prediction_refusal": frozenset(get_args(PredictionRefusalCodeV1)),
 }
 
 ALL_SERVED_REFUSAL_CODES = frozenset().union(*CLOSED_SERVED_REFUSAL_VOCABULARIES.values())
@@ -44,6 +46,16 @@ def repair_for_refusal(code: str) -> ServedRepairV1:
 
     if code not in ALL_SERVED_REFUSAL_CODES:
         raise KeyError(f"unregistered served refusal code: {code}")
+    if code == "prediction_unsettleable_rule":
+        return RepairOperationV1(operation="playbill.predict", arguments={"rule": "equality"})
+    if code == "prediction_deadline_passed":
+        return RepairOperationV1(
+            operation="playbill.predict", arguments={"replace_prediction": "current"}
+        )
+    if code == "settlement_evidence_mismatch":
+        return RepairOperationV1(
+            operation="playbill.settle", arguments={"prediction_id": "required"}
+        )
     return hand_edit_repair(code)
 
 

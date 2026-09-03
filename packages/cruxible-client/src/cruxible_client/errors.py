@@ -568,6 +568,7 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
         exc = CoreError(body.message)
     if body.error_code is not None:
         setattr(exc, "error_code", body.error_code)
+    setattr(exc, "repair", body.repair)
 
     exc.mutation_receipt_id = body.mutation_receipt_id
     return exc

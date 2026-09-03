@@ -655,6 +655,23 @@ def register_tools(
         )
 
     @_tool
+    def cruxible_playbill_predict(
+        instance_id: str,
+        request: contracts.PlaybillPredictRequestV1,
+    ) -> contracts.PlaybillPredictResultV1:
+        """Propose a predicted Claim with an exact settlement rule and deadline."""
+        return handlers.handle_playbill_predict(instance_id, request)
+
+    @_tool
+    def cruxible_playbill_settle(
+        instance_id: str,
+        prediction_id: str,
+        request: contracts.PlaybillSettleRequestV1,
+    ) -> contracts.PlaybillSettleResultV1:
+        """Settle one prediction from an accepted observation or mandated terminal."""
+        return handlers.handle_playbill_settle_prediction(instance_id, prediction_id, request)
+
+    @_tool
     def cruxible_playbill_discover(
         instance_id: str,
         query: str | None = None,

@@ -396,6 +396,31 @@ In this phase:
 
 Keep this phase focused on real recurring review and outcome surfaces for both human and agent reviewers. Do not invent `feedback_profiles`, `outcome_profiles`, or governance rules unless there is a real review or outcome loop to support.
 
+### Example: uncertain → predict → settle
+
+When the uncertainty is about a fact that later evidence can decide, do not
+record a guessed observation as settled truth. Author it through the served
+prediction path instead:
+
+1. Build an ordinary Claim draft containing the predicted value and call
+   `Playbill.predict(...)` with the accepted Procedure measurement, the exact
+   later-observation selector, an equality/threshold/presence rule, and a
+   validity-window deadline. Prediction uses ordinary Claim proposal authority;
+   it does not require a Procedure rung.
+2. Review and activate `prediction.proposal` through the normal governed
+   proposal flow. The prediction has no calibration weight until that Claim is
+   accepted and later settled.
+3. When the matching observation Claim is accepted, call
+   `Playbill.settle(prediction, observation=<ClaimRef>)`. If an authorized
+   Procedure terminal is the evidence, also pass its run ID and retained
+   terminal-record digest; the settlement then retains the terminal's mandate.
+4. Treat the returned settled-outcome relation—not the prediction prose—as the
+   calibration input. A deadline or evidence mismatch is a typed refusal whose
+   repair is another `predict` or `settle` call.
+
+The CLI equivalents are `cruxible playbill predict REQUEST_FILE` followed by
+`cruxible playbill settle PREDICTION_ID REQUEST_FILE`.
+
 ## Write Step D: Add feedback and outcome structure
 
 Add the later-stage governance pieces that are actually justified:

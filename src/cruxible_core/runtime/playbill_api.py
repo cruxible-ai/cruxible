@@ -44,6 +44,12 @@ from cruxible_client.contracts.discovery import (
 )
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import PlaybillBootstrapError, PlaybillDeprecatedWriteError
+from cruxible_client.contracts.predictions import (
+    PlaybillPredictRequestV1,
+    PlaybillPredictResultV1,
+    PlaybillSettleRequestV1,
+    PlaybillSettleResultV1,
+)
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.procedures.artifacts import procedure_path
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
@@ -183,6 +189,10 @@ from cruxible_core.service.playbill_next import (
     validate_playbill_next_request,
 )
 from cruxible_core.service.playbill_policies import list_playbill_policies_in_force
+from cruxible_core.service.playbill_predictions import (
+    service_predict_playbill,
+    service_settle_playbill_prediction,
+)
 from cruxible_core.service.playbill_procedure_runs import (
     LineRunRequestV1,
     ProcedureBindRequestV1,
@@ -1048,6 +1058,46 @@ def playbill_authoring_create_input(
         canonical_timestamp=canonical_candidate_timestamp(utc_now()),
     )
     return contracts.PlaybillAuthoringIntentView.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_predict(
+    instance_id: str,
+    *,
+    request: PlaybillPredictRequestV1,
+) -> PlaybillPredictResultV1:
+    """Create and submit one governed predicted Claim plus its settlement declaration."""
+
+    check_permission("cruxible_playbill_predict", instance_id=instance_id)
+    actor_context = _actor_context()
+    if actor_context is None:
+        raise AuthenticationError("Prediction authoring requires an authenticated actor identity")
+    return service_predict_playbill(
+        get_playbill_manager().get(instance_id),
+        request=request,
+        actor=AuthenticatedActor(actor_id=actor_context.actor_id),
+        evaluation_time=actor_context.timestamp,
+    )
+
+
+def playbill_settle_prediction(
+    instance_id: str,
+    prediction_id: str,
+    *,
+    request: PlaybillSettleRequestV1,
+) -> PlaybillSettleResultV1:
+    """Settle one prediction through admission or retained terminal authority."""
+
+    check_permission("cruxible_playbill_settle", instance_id=instance_id)
+    actor_context = _actor_context()
+    if actor_context is None:
+        raise AuthenticationError("Prediction settlement requires an authenticated actor identity")
+    return service_settle_playbill_prediction(
+        get_playbill_manager().get(instance_id),
+        prediction_id=prediction_id,
+        request=request,
+        actor_context=actor_context,
+        recorded_at=actor_context.timestamp,
+    )
 
 
 def playbill_authoring_get(

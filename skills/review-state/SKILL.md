@@ -128,6 +128,13 @@ Use this to answer:
 - do the configured review and outcome surfaces match the real recurring loops the state actually has?
 - are governance rules present where they are justified, and absent where they would just add noise?
 
+For a time-bounded uncertainty that later evidence can decide, recommend the
+served uncertain → predict → settle loop: author the predicted value as an
+ordinary Claim proposal with `Playbill.predict(...)`, activate it through the
+normal review path, then call `Playbill.settle(...)` with the later accepted
+observation (or an authorized retained terminal record). Only the resulting
+settled-outcome relation enters calibration; an open prediction does not.
+
 ### Source-to-state audit
 
 If source files, cleaned files, or `prepare-data` outputs are available, compare them against the current state design and behavior.

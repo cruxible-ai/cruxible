@@ -9,7 +9,7 @@ if TYPE_CHECKING:
         ClaimAttestationV2Signer,
         LocalEd25519ClaimAttestationSigner,
     )
-    from cruxible_client.authoring.sdk import Playbill
+    from cruxible_client.authoring.sdk import Playbill, Prediction, PredictionSettlement
     from cruxible_client.authoring.sdk_types import (
         AccessProfile,
         ActivationPolicy,
@@ -91,6 +91,8 @@ __all__ = [
     "EffectivePeriod",
     "LocalEd25519ClaimAttestationSigner",
     "Playbill",
+    "Prediction",
+    "PredictionSettlement",
     "PlaybillInsertionApplication",
     "PlaybillInsertionApplyError",
     "PlaybillWorkspaceError",
@@ -126,10 +128,10 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.transport.http import CruxibleClient
 
         return CruxibleClient
-    if name == "Playbill":
-        from cruxible_client.authoring.sdk import Playbill
+    if name in {"Playbill", "Prediction", "PredictionSettlement"}:
+        from cruxible_client.authoring import sdk
 
-        return Playbill
+        return getattr(sdk, name)
     if name in {"ClaimAttestationV2Signer", "LocalEd25519ClaimAttestationSigner"}:
         from cruxible_client.authoring import attestations
 

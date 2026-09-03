@@ -644,6 +644,36 @@ async def recover_claim_attestations(instance_id: str) -> Response:
 
 
 @router.post(
+    "/{instance_id}/playbill/predictions",
+    response_model=contracts.PlaybillPredictResultV1,
+)
+async def predict(
+    instance_id: str,
+    req: contracts.PlaybillPredictRequestV1,
+) -> contracts.PlaybillPredictResultV1:
+    return playbill_api.playbill_predict(
+        resolve_server_instance_id(instance_id),
+        request=req,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/predictions/{prediction_id}/settlements",
+    response_model=contracts.PlaybillSettleResultV1,
+)
+async def settle_prediction(
+    instance_id: str,
+    prediction_id: str,
+    req: contracts.PlaybillSettleRequestV1,
+) -> contracts.PlaybillSettleResultV1:
+    return playbill_api.playbill_settle_prediction(
+        resolve_server_instance_id(instance_id),
+        prediction_id,
+        request=req,
+    )
+
+
+@router.post(
     "/{instance_id}/playbill/authoring/intents",
     response_model=contracts.PlaybillAuthoringIntentView,
 )

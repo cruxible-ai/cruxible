@@ -2093,6 +2093,56 @@ def claim_group() -> None:
     """Propose, read, and explain first-class governed Claims."""
 
 
+@playbill_group.command("predict")
+@click.argument("request_file", type=click.Path(exists=True, dir_okay=False))
+@json_option
+@handle_errors
+def predict(request_file: str, output_json: bool) -> None:
+    """Submit a predicted Claim and its settlement declaration."""
+
+    try:
+        request = contracts.PlaybillPredictRequestV1.model_validate(_read_mapping(request_file))
+    except ValidationError as exc:
+        raise click.ClickException(f"Invalid prediction request: {exc}") from exc
+    result = _server_call(
+        lambda client, instance_id: client.predict_playbill(instance_id, request=request),
+        command_name="playbill predict",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(f"Prediction: {result.declaration.prediction_id}")
+    click.echo(f"Proposal: {result.declaration.proposal_id}")
+    click.echo(f"Claim: Claim:{result.declaration.predicted_claim_id}")
+
+
+@playbill_group.command("settle")
+@click.argument("prediction_id")
+@click.argument("request_file", type=click.Path(exists=True, dir_okay=False))
+@json_option
+@handle_errors
+def settle(prediction_id: str, request_file: str, output_json: bool) -> None:
+    """Settle one prediction from a later observation or retained terminal."""
+
+    try:
+        request = contracts.PlaybillSettleRequestV1.model_validate(_read_mapping(request_file))
+    except ValidationError as exc:
+        raise click.ClickException(f"Invalid settlement request: {exc}") from exc
+    result = _server_call(
+        lambda client, instance_id: client.settle_playbill_prediction(
+            instance_id,
+            prediction_id,
+            request=request,
+        ),
+        command_name="playbill settle",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(f"Prediction {result.prediction_id}: settled")
+    click.echo(f"Outcome: {result.resolution['settlement_outcome']}")
+
+
 @playbill_group.group("claim-attestation")
 def claim_attestation_group() -> None:
     """Operate the principal-authored Claim-attestation evidence ledger."""
