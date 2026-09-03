@@ -27,6 +27,8 @@ from cruxible_client.contracts.authoring.models import (
     ClaimDependencyDraftsV1,
     ClaimRetirementMemberV1,
     ClaimTypeAuthoringPayloadV1,
+    ClaimTypeSuccessionDependentV1,
+    ClaimTypeSuccessionMemberV1,
     ExistingCaptureCitationSourceV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
@@ -192,6 +194,14 @@ class ClaimTypeInput(_StrictInputModel):
     claim_type: ClaimType
 
 
+class ClaimTypeSuccessionInput(_StrictInputModel):
+    """Succeed one accepted ClaimType, and disposition its closure, in this set."""
+
+    kind: Literal["claim_type_succession"]
+    successor: ClaimType
+    dependents: tuple[ClaimTypeSuccessionDependentV1, ...] = ()
+
+
 class ClaimRetirementInput(_StrictInputModel):
     kind: Literal["claim_retirement"]
     claim_id: str
@@ -216,6 +226,7 @@ class ProcedureMandateInputV1(_StrictInputModel):
 AuthoringChangeSetMemberInputV1: TypeAlias = Annotated[
     ClaimInput
     | ClaimTypeInput
+    | ClaimTypeSuccessionInput
     | ClaimRetirementInput
     | SubjectInput
     | QueryDefinitionInput
@@ -548,6 +559,11 @@ def _change_set_member(member: AuthoringChangeSetMemberInputV1) -> AuthoringChan
         return _claim_payload(member)
     if isinstance(member, ClaimTypeInput):
         return ClaimTypeAuthoringPayloadV1(claim_type=member.claim_type)
+    if isinstance(member, ClaimTypeSuccessionInput):
+        return ClaimTypeSuccessionMemberV1(
+            successor=member.successor,
+            dependents=member.dependents,
+        )
     if isinstance(member, ClaimRetirementInput):
         return ClaimRetirementMemberV1(
             claim_ref=member.claim_id,
@@ -642,6 +658,7 @@ __all__ = [
     "ClaimDispositionInput",
     "ClaimRetirementInput",
     "ClaimTypeInput",
+    "ClaimTypeSuccessionInput",
     "ClaimInput",
     "ExistingCaptureInput",
     "ExactContentObjectInput",

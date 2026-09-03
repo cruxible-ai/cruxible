@@ -880,8 +880,10 @@ class ProcedureAuthoringPayloadV2(_StrictAuthoringModel):
 class ClaimTypeAuthoringPayloadV1(_StrictAuthoringModel):
     """One whole ClaimType definition authored inside an ordinary change set.
 
-    Successions and the migrations they demand stay on `/claim-types/proposals`:
-    this member defines a ClaimType, it never succeeds one.
+    A succession -- a ClaimType that names a predecessor, and the migration its
+    whole reverse-pin closure then owes -- is `ClaimTypeSuccessionMemberV1`, a
+    member of its own, because the closure is the decision. This member defines
+    a ClaimType nothing yet depends on.
     """
 
     tag: Literal["playbill-claim-type-authoring-payload-v1"] = (
@@ -893,8 +895,127 @@ class ClaimTypeAuthoringPayloadV1(_StrictAuthoringModel):
     @classmethod
     def _claim_type(cls, value: ClaimType) -> ClaimType:
         if value.lifecycle.state != "live" or value.lifecycle.predecessor_digest is not None:
-            raise ValueError("a ClaimType change-set member cannot carry a succession")
+            raise ValueError(
+                "a ClaimType definition member cannot carry a succession; "
+                "author it as a claim_type_succession member"
+            )
         return value
+
+
+ClaimTypeSuccessionDisposition: TypeAlias = Literal["successor", "retire", "re_author"]
+
+
+class ClaimTypeSuccessionDependentV1(_StrictAuthoringModel):
+    """What one member of a succession's closure becomes in the same generation.
+
+    The vocabulary is the standalone migration route's own, so an author who
+    knows one road knows the other: `successor` carries the dependent to the
+    successor type by re-pinning it, `retire` tombstones it -- with
+    `claim_retirement_reason` `was-rescinded` that is a rescission, with any
+    other reason and an optional `claim_effective_until` it is an ordinary
+    attributed retirement.
+
+    `re_author` is the disposition only a change set can offer: the dependent's
+    successor is a sibling Claim member of the same intent, named by
+    `successor_member` (its index in `members`) or by `successor_claim_id` (the
+    Claim ID it revises). That sibling is lowered under the successor type, so
+    it may say under the new vocabulary what the predecessor could not say --
+    and it keeps the dependent's identity, slot and exact predecessor digest,
+    which is what makes it a re-authoring of that Claim rather than a new one.
+
+    The deprecated `invalidation` spelling the standalone route still tolerates
+    is not admitted here: it is `retire` under another name, and a surface born
+    after the deprecation should not learn the deprecated word.
+    """
+
+    tag: Literal["playbill-claim-type-succession-dependent-v1"] = (
+        "playbill-claim-type-succession-dependent-v1"
+    )
+    identity: ArtifactIdentity
+    disposition: ClaimTypeSuccessionDisposition
+    successor_member: int | None = Field(default=None, ge=0)
+    successor_claim_id: str | None = None
+    claim_retirement_reason: ClaimRetirementReason | None = None
+    claim_effective_until: datetime | None = None
+
+    @field_validator("successor_claim_id")
+    @classmethod
+    def _successor_claim_id(cls, value: str | None) -> str | None:
+        if value is not None:
+            claim_path(value)
+        return value
+
+    @field_validator("claim_effective_until")
+    @classmethod
+    def _time(cls, value: datetime | None) -> datetime | None:
+        return None if value is None else ensure_utc(value)
+
+    @field_serializer("claim_effective_until", when_used="json")
+    def _serialize_time(self, value: datetime | None) -> str | None:
+        return None if value is None else format_datetime(value)
+
+    @model_validator(mode="after")
+    def _disposition_shape(self) -> "ClaimTypeSuccessionDependentV1":
+        named = (self.successor_member is not None) + (self.successor_claim_id is not None)
+        if self.disposition == "re_author":
+            if named != 1:
+                raise ValueError(
+                    "a re_author dependent names its sibling member exactly once, by "
+                    "successor_member or successor_claim_id"
+                )
+        elif named:
+            raise ValueError("only a re_author dependent names a sibling member")
+        if self.disposition != "retire" and (
+            self.claim_retirement_reason is not None or self.claim_effective_until is not None
+        ):
+            raise ValueError("retirement attribution belongs to a retire disposition")
+        return self
+
+
+class ClaimTypeSuccessionMemberV1(_StrictAuthoringModel):
+    """One ClaimType succession, its whole closure disposed, as one member.
+
+    Evolving a committed vocabulary is one epistemic move -- "I need this
+    distinction, and here is everything it changes" -- so it is one member of
+    one change set, and it admits or refuses with the Claims that speak the new
+    vocabulary rather than days after them.
+
+    `successor` is a whole ClaimType that names its predecessor by identity and
+    pins its exact digest, which is what makes it a succession rather than the
+    definition `ClaimTypeAuthoringPayloadV1` carries. `dependents` is the exact
+    reverse-pin closure of the predecessor computed over the staged tree, so a
+    Claim an earlier member of the same set wrote under the predecessor is a
+    dependent too; a closure that is not exact refuses.
+    """
+
+    tag: Literal["playbill-claim-type-succession-authoring-payload-v1"] = (
+        "playbill-claim-type-succession-authoring-payload-v1"
+    )
+    successor: ClaimType
+    dependents: tuple[ClaimTypeSuccessionDependentV1, ...] = ()
+
+    @field_validator("successor")
+    @classmethod
+    def _successor(cls, value: ClaimType) -> ClaimType:
+        if value.lifecycle.state != "live":
+            raise ValueError("a ClaimType succession installs a live successor")
+        if value.lifecycle.predecessor_digest is None:
+            raise ValueError(
+                "a ClaimType succession member names the predecessor it succeeds; "
+                "author a new ClaimType as a claim_type member"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _ordered_dependents(self) -> "ClaimTypeSuccessionMemberV1":
+        identities = tuple(item.identity.qualified for item in self.dependents)
+        if identities != tuple(sorted(set(identities), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("succession dependents must be UTF-8 byte-sorted and unique")
+        return self
+
+    @property
+    def predicate(self) -> str:
+        return self.successor.predicate
 
 
 class ClaimRetirementMemberV1(_StrictAuthoringModel):
@@ -953,6 +1074,7 @@ AuthoringChangeSetMemberV1: TypeAlias = Annotated[
     | ClaimAuthoringPayloadV2
     | ClaimAuthoringPayloadV3
     | ClaimTypeAuthoringPayloadV1
+    | ClaimTypeSuccessionMemberV1
     | ClaimRetirementMemberV1
     | SubjectAuthoringPayloadV1
     | QueryDefinitionAuthoringPayloadV1
@@ -992,6 +1114,8 @@ def authoring_member_identity(payload: AuthoringChangeSetMemberV1) -> str:
         return authoring_claim_member_identity(payload)
     if isinstance(payload, ClaimTypeAuthoringPayloadV1):
         return f"ClaimType:{payload.claim_type.predicate}"
+    if isinstance(payload, ClaimTypeSuccessionMemberV1):
+        return f"ClaimTypeSuccession:{payload.predicate}"
     if isinstance(payload, ClaimRetirementMemberV1):
         return f"ClaimRetirement:{payload.claim_id}"
     if isinstance(payload, SubjectAuthoringPayloadV1):
@@ -2427,6 +2551,9 @@ __all__ = [
     "ChangeSetClaimIdentityV1",
     "ClaimRetirementMemberV1",
     "ClaimTypeAuthoringPayloadV1",
+    "ClaimTypeSuccessionDependentV1",
+    "ClaimTypeSuccessionDisposition",
+    "ClaimTypeSuccessionMemberV1",
     "ClaimAuthoringSourceV3",
     "ClaimDependencyDraftsV1",
     "DiagnosticFrontierLimitsV1",
