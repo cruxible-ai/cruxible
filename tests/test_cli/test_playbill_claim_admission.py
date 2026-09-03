@@ -102,3 +102,11 @@ def test_claim_get_and_explain_render_one_actionable_line_per_capture(monkeypatc
     assert explain_result.exit_code == 0, explain_result.output
     assert explain_result.output.count(f"Capture {CAPTURE}") == 1
     assert "verdict=uncovered" in explain_result.output
+
+
+def test_claim_get_brief_help_describes_the_statement_card() -> None:
+    result = CliRunner().invoke(cli, ["playbill", "claim", "get", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "Render the statement-first claim card only." in result.output
+    assert "outcome, the ids" not in result.output

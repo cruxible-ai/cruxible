@@ -119,16 +119,20 @@ def _target_source_qualifier(instance_source: str, transport_source: str) -> str
     return f"instance={instance_source}, transport={transport_source}"
 
 
-def _echo_active_write_target() -> None:
+def _echo_active_write_target(
+    *,
+    instance_id: str | None = None,
+    instance_source: str | None = None,
+) -> None:
     obj = _root_ctx_obj()
     transport = _transport_target(obj)
-    instance_id = obj.get("instance_id")
-    if transport is not None and instance_id:
+    selected = instance_id or obj.get("instance_id")
+    if transport is not None and selected:
         qualifier = _target_source_qualifier(
-            str(obj.get("target_instance_source") or "explicit"),
+            instance_source or str(obj.get("target_instance_source") or "explicit"),
             str(obj.get("target_transport_source") or "explicit"),
         )
-        click.echo(f"target: {instance_id} @ {transport} ({qualifier})", err=True)
+        click.echo(f"target: {selected} @ {transport} ({qualifier})", err=True)
 
 
 def _echo_creation_write_target(params: Mapping[str, Any]) -> None:

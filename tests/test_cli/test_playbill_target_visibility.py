@@ -546,7 +546,7 @@ def test_workspace_attach_writes_config_only_after_exact_daemon_registration(
     assert payload["instance_id"] == "inst_attached"
     assert payload["workspace_root"] == str(workspace.resolve())
     assert payload["transport"] == str(socket.resolve())
-    assert result.stderr == f"target: inst_attached @ {socket.resolve()} (explicit)\n"
+    assert result.stderr == f"target: inst_attached @ unix://{socket.resolve()} (explicit)\n"
     config = json.loads((workspace / ".playbill" / "coverage.json").read_text())
     assert config["instance_id"] == "inst_attached"
     assert config["server_socket"] == str(socket.resolve())
@@ -554,6 +554,41 @@ def test_workspace_attach_writes_config_only_after_exact_daemon_registration(
         fragment in json.dumps(config).lower()
         for fragment in ("bearer", "password", "secret", "token")
     )
+
+
+def test_workspace_attach_marks_a_remembered_target_as_remembered(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "remembered-workspace"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(workspace)], check=True)
+    socket = tmp_path / "remembered-daemon.sock"
+    monkeypatch.chdir(workspace)
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    save_cli_context(
+        CliContextState(
+            server_socket=str(socket),
+            instance_id="inst_remembered",
+            instance_transport=f"unix://{socket.resolve()}",
+        )
+    )
+
+    class StubClient:
+        def playbill_host_workspace_registration(
+            self, instance_id: str
+        ) -> contracts.PlaybillHostWorkspaceRegistrationV1:
+            assert instance_id == "inst_remembered"
+            return contracts.PlaybillHostWorkspaceRegistrationV1(
+                instance_id=instance_id,
+                status="registered",
+                workspace_path=str(workspace.resolve()),
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(cli, ["playbill", "workspace", "attach", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == (f"target: inst_remembered @ unix://{socket.resolve()} (remembered)\n")
 
 
 def test_workspace_attach_refuses_a_different_registration_without_writing(

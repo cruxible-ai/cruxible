@@ -175,6 +175,8 @@ def test_review_open_not_attached_url_branch_keeps_a_valid_local_repair(
     repair = result.output.split("repair: ", maxsplit=1)[1].strip()
     assert shlex.split(repair) == [
         "cruxible",
+        "--server-url",
+        "https://review.example.test",
         "playbill",
         "host",
         "create",

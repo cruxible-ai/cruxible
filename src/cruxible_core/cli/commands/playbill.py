@@ -76,6 +76,7 @@ from cruxible_client.errors import DataValidationError
 from cruxible_core.cli.commands._common import (
     _activate_server_instance,
     _dispatch_cli,
+    _echo_active_write_target,
     _echo_write_target,
     _emit_brief,
     _emit_json,
@@ -724,7 +725,10 @@ def attach_workspace(
         )
     transport_values = _workspace_config_transport()
     transport = str(next(iter(transport_values.values())))
-    click.echo(f"target: {selected} @ {transport} (explicit)", err=True)
+    _echo_active_write_target(
+        instance_id=selected,
+        instance_source="explicit" if instance_id is not None else None,
+    )
     config_path = write_playbill_workspace_config(
         workspace,
         instance_id=selected,
@@ -1219,6 +1223,8 @@ def open_review(
             repair = ["cruxible"]
             if server_socket := _root_ctx_obj().get("server_socket"):
                 repair.extend(("--server-socket", str(server_socket)))
+            elif server_url := _root_ctx_obj().get("server_url"):
+                repair.extend(("--server-url", str(server_url)))
             repair.extend(("playbill", "host", "create", "--workspace", str(workspace)))
             raise click.ClickException(
                 "review_workspace_not_attached: this host has no registered review worktree; "
@@ -2680,7 +2686,13 @@ def list_claims(
 @claim_group.command("get")
 @click.argument("identity")
 @click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
-@brief_option
+@click.option(
+    "--brief",
+    "output_brief",
+    is_flag=True,
+    default=False,
+    help="Render the statement-first claim card only.",
+)
 @json_option
 @handle_errors
 def get_claim(
