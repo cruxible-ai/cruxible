@@ -72,6 +72,7 @@ def test_http_catalog_is_playbill_plus_generic_host_transport_only() -> None:
         "/api/v1/runtime/instances",
         "/api/v1/server/info",
         "/api/v1/server/restart",
+        "/api/v1/server/stop",
         "/api/v1/{instance_id}/runtime/bootstrap/claim",
         "/api/v1/{instance_id}/runtime/credentials",
         "/api/v1/{instance_id}/runtime/credentials/{credential_id}/revoke",

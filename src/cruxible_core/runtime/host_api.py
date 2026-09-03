@@ -7,6 +7,7 @@ a caller may reach; Playbill bootstrap establishes governed state separately.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TypedDict
 
@@ -282,10 +283,27 @@ def server_restart() -> contracts.ServerRestartResult:
     )
 
 
+def server_stop() -> contracts.ServerStopResult:
+    """Schedule a graceful daemon shutdown that releases the state-root lock."""
+
+    check_permission("cruxible_server_stop")
+    require_unscoped_operator("cruxible_server_stop")
+    from cruxible_core.server.shutdown import schedule_server_stop
+
+    schedule_server_stop()
+    return contracts.ServerStopResult(
+        scheduled=True,
+        version=__version__,
+        state_root=str(get_server_state_root()),
+        pid=os.getpid(),
+    )
+
+
 __all__ = [
     "create_playbill_host",
     "playbill_host_workspace_registration",
     "show_playbill_host",
     "server_info",
     "server_restart",
+    "server_stop",
 ]

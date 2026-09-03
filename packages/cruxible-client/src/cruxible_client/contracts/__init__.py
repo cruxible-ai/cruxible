@@ -299,6 +299,15 @@ class ServerRestartResult(BaseModel):
     state_root: str
 
 
+class ServerStopResult(BaseModel):
+    """Acknowledgement that this daemon will exit and release its state root."""
+
+    scheduled: bool
+    version: str
+    state_root: str
+    pid: int
+
+
 class PlaybillAcceptedCoordinate(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

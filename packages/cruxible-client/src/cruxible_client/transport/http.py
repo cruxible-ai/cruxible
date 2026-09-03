@@ -183,6 +183,10 @@ class CruxibleClient:
         response = self._client.post("/api/v1/server/restart")
         return self._parse_model(response, contracts.ServerRestartResult)
 
+    def server_stop(self) -> contracts.ServerStopResult:
+        response = self._client.post("/api/v1/server/stop")
+        return self._parse_model(response, contracts.ServerStopResult)
+
     def create_playbill_host(
         self,
         *,

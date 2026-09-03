@@ -174,6 +174,7 @@ RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_playbill_principal_change": PermissionMode.ADMIN,
     "cruxible_runtime_credentials": PermissionMode.ADMIN,
     "cruxible_server_restart": PermissionMode.ADMIN,
+    "cruxible_server_stop": PermissionMode.ADMIN,
 }
 
 # Unserved operations retained only for donor behavior and parity tests. Keeping

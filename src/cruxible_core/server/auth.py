@@ -33,6 +33,7 @@ from cruxible_core.server.route_paths import (
     RUNTIME_BOOTSTRAP_CLAIM_PATH,
     SERVER_INFO_PATH,
     SERVER_RESTART_PATH,
+    SERVER_STOP_PATH,
     VERSION_PATH,
     api_v1_path,
     route_template_matches,
@@ -194,6 +195,7 @@ _PLAYBILL_HOST_SHOW_ROUTE = api_v1_path(PLAYBILL_HOST_SHOW_PATH)
 _SERVER_OPERATION_ROUTES: tuple[tuple[str, str], ...] = (
     ("GET", api_v1_path(SERVER_INFO_PATH)),
     ("POST", api_v1_path(SERVER_RESTART_PATH)),
+    ("POST", api_v1_path(SERVER_STOP_PATH)),
     ("GET", _PLAYBILL_HOST_SHOW_ROUTE),
 )
 

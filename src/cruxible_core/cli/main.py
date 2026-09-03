@@ -816,6 +816,9 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "status": _command("server", "server_status_cmd", "Report daemon status."),
             "info": _command("server", "server_info_cmd", "Show daemon metadata."),
             "restart": _command("server", "server_restart_cmd", "Re-exec the daemon in place."),
+            "stop": _command(
+                "server", "server_stop_cmd", "Stop the daemon and release its state root."
+            ),
         },
         module="server",
         attr="server_group",

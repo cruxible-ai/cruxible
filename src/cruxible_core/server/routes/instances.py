@@ -53,3 +53,9 @@ async def server_info() -> contracts.ServerInfoResult:
 async def server_restart() -> contracts.ServerRestartResult:
     """Schedule an in-place daemon re-exec, preserving port, state dir, and env."""
     return host_api.server_restart()
+
+
+@router.post("/server/stop", response_model=contracts.ServerStopResult)
+async def server_stop() -> contracts.ServerStopResult:
+    """Schedule a graceful daemon shutdown that releases the state-root lock."""
+    return host_api.server_stop()

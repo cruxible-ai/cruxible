@@ -48,6 +48,7 @@ from cruxible_core.server.service_install import (
     resolved_cruxible_executable,
     service_config_path,
 )
+from cruxible_core.server.state_lock import state_lock_holder_is_alive
 
 # Poll cadence while waiting for the re-exec'd daemon to start answering again.
 _RESTART_POLL_INTERVAL_SECONDS = 0.25
@@ -91,6 +92,21 @@ def _wait_for_daemon(client: CruxibleClient, timeout: float) -> str:
         f"Daemon did not come back within {timeout:.0f}s after restart"
         + (f": {last_error}" if last_error is not None else "")
     )
+
+
+def _wait_for_state_root_release(state_root: Path, timeout: float) -> bool:
+    """Poll the state-root lock until the daemon is really gone or time runs out.
+
+    The stop is acknowledged before the process leaves, so the transport answer
+    alone does not mean the root is free for the next `server start`.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        if not state_lock_holder_is_alive(state_root):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(_RESTART_POLL_INTERVAL_SECONDS)
 
 
 def _write_bootstrap_secret_file(path: Path, secret: str) -> Path:
@@ -215,6 +231,49 @@ def server_start_cmd(
         state_root=state_root,
         socket_path=socket_path,
         capability_ceiling=capability_ceiling,
+    )
+
+
+@server_group.command("stop")
+@click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
+@click.option(
+    "--timeout",
+    type=float,
+    default=30.0,
+    show_default=True,
+    help="Seconds to wait for the daemon to release its state root.",
+)
+@handle_errors
+def server_stop_cmd(output_json: bool, timeout: float) -> None:
+    """Stop the running daemon gracefully and release its state-root lock.
+
+    A CLIENT command: it asks the daemon over the configured transport
+    (`--server-url` / `--server-socket` or the matching env vars) to shut itself
+    down. Reaching for `kill` or a terminal-multiplexer quit instead kills the
+    launching shell and orphans the daemon, leaving a second process serving the
+    same state root.
+    """
+    client = _get_client()
+    if client is None:
+        raise click.UsageError(f"{SERVER_MODE_REQUIRED_MESSAGE} {_DAEMON_REQUIRED_HINT}")
+    result = client.server_stop()
+    released = _wait_for_state_root_release(Path(result.state_root), timeout)
+
+    if output_json:
+        payload = result.model_dump(mode="python")
+        payload["state_root_released"] = released
+        _emit_json(payload)
+        return
+
+    click.echo(f"Stop scheduled (pid {result.pid}, version {result.version}).")
+    click.echo(f"State root: {result.state_root}")
+    if released:
+        click.echo("Daemon exited and released its state root.")
+        return
+    click.echo(
+        f"Daemon still holds its state root after {timeout:.0f}s; "
+        "re-run `cruxible server stop` or check the daemon's logs.",
+        err=True,
     )
 
 

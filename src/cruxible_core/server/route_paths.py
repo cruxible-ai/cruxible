@@ -16,6 +16,7 @@ PLAYBILL_HOST_SHOW_PATH = "/{instance_id}/playbill/host"
 # secret) rather than an instance-scoped one.
 SERVER_INFO_PATH = "/server/info"
 SERVER_RESTART_PATH = "/server/restart"
+SERVER_STOP_PATH = "/server/stop"
 
 
 def api_v1_path(path: str) -> str:

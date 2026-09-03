@@ -28,6 +28,7 @@ from cruxible_core.runtime.permissions import init_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.auth import token_auth_middleware
 from cruxible_core.server.config import (
+    get_server_state_root,
     is_server_auth_enabled,
     validate_server_startup_settings,
     volatile_state_path_warnings,
@@ -46,6 +47,7 @@ from cruxible_core.server.routes.playbill import router as playbill_router
 from cruxible_core.server.routes.runtime_credentials import (
     router as runtime_credentials_router,
 )
+from cruxible_core.server.state_lock import StateRootLock
 
 _log = structlog.get_logger("cruxible.server.app")
 
@@ -248,6 +250,23 @@ def run_server(
     if capability_ceiling is not None:
         os.environ["CRUXIBLE_MODE"] = capability_ceiling
 
+    # Take exclusive ownership of the state root BEFORE any store is opened, so
+    # a second daemon over the same root refuses without touching its SQLite
+    # files or its ledger. Two daemons over one root can both answer a probe and
+    # both write the accepted tree.
+    resolved_socket = os.environ.get("CRUXIBLE_SERVER_SOCKET")
+    transport = (
+        f"unix socket {resolved_socket}"
+        if resolved_socket
+        else f"{os.environ.get('CRUXIBLE_HOST', '127.0.0.1')}:"
+        f"{os.environ.get('CRUXIBLE_PORT', '8100')}"
+    )
+    with StateRootLock(get_server_state_root(), transport=transport):
+        _serve(resolved_socket)
+
+
+def _serve(resolved_socket: str | None) -> None:
+    """Start uvicorn under an already-held state-root lock."""
     # Resolve and freeze the process ceiling before registry/config access or
     # uvicorn startup. Unknown names and attempts to reinitialize this process
     # at a different tier therefore fail closed before the daemon serves.
@@ -275,7 +294,6 @@ def run_server(
     configure_request_logging()
     app = create_app()
 
-    resolved_socket = os.environ.get("CRUXIBLE_SERVER_SOCKET")
     if resolved_socket:
         socket_file = Path(resolved_socket)
         socket_file.parent.mkdir(parents=True, exist_ok=True)

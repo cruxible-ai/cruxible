@@ -65,6 +65,7 @@ cruxible server install-service [SERVER-START FLAGS] [--print] [--replace]
 cruxible server status
 cruxible server info
 cruxible server restart
+cruxible server stop
 ~~~
 
 server start is the long-running daemon process and does not connect to an
@@ -72,6 +73,19 @@ existing server. State defaults to `~/.cruxible`; `--state-root` overrides
 `CRUXIBLE_STATE_ROOT`. The obsolete `CRUXIBLE_SERVER_STATE_DIR` name is
 refused. See [Canonical repository and daemon layout](canonical-repository-layout.md)
 for the exact directory contract.
+
+`server start` takes an exclusive lock on `<state-root>/daemon/lock` before it
+opens any store, so a second daemon over the same state root refuses with a
+typed `cruxible.server.state_root_locked` error naming the holder's pid and
+transport rather than sharing its SQLite files and ledger. The lock is an
+`flock`, so the kernel frees it however the holder died and a stale file from a
+killed daemon never blocks the next start.
+
+`server stop` is the way to stop a daemon: it asks the running daemon over the
+configured transport to shut down gracefully, then waits for the state-root lock
+to be released and says whether it was. Reaching for `kill` or a terminal
+multiplexer's quit instead kills the launching shell and orphans the daemon,
+which is how one state root ends up served by several live processes.
 
 `server install-service` renders a per-user launchd agent on macOS or systemd
 user unit on Linux. It records the resolved `cruxible` executable and explicit
