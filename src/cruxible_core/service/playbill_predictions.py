@@ -13,7 +13,7 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.authoring.models import AuthoringIntentViewV1
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
-from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.canonical import CanonicalValue, canonical_bytes
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     LiteralClaimObject,
@@ -640,11 +640,18 @@ def service_settle_playbill_prediction(
         )
     predicted_value = prediction_object.value
     settlement_value = observation_object.value
+    # Presence is read off the settling observation, not assumed. An accepted
+    # observation whose object is null is an explicit record of absence, so a
+    # prediction of `False` -- "no such value will be observed" -- settles
+    # correct when one lands, and incorrect when a real value does. Hardcoding
+    # presence made every `False` presence prediction settle incorrect and
+    # biased every calibration row derived from one.
+    evidence_present = settlement_value is not None
     outcome = evaluate_prediction_correctness_condition(
         activation.correctness_condition,
         prediction_value=predicted_value,
         settlement_value=settlement_value,
-        evidence_present=True,
+        evidence_present=evidence_present,
     )
     if outcome is None:
         raise _refuse(
@@ -658,18 +665,38 @@ def service_settle_playbill_prediction(
     proof_subject: SemanticAddress | None = claim_statement_address(
         claim_path(observation.identity.name)
     )
-    settlement_actor = actor_context
+    authorization_source: CanonicalValue = {
+        "tag": "playbill-prediction-settlement-authorization-v1",
+        "kind": "observation_admission",
+    }
     if isinstance(request.evidence, TerminalSettlementEvidenceV1):
         terminal = _terminal_record(
             instance,
             evidence=request.evidence,
             procedure_digest=declaration.procedure_artifact_digest,
         )
+        # The terminal's mandate is the AUTHORITY; the caller is the ACTOR. A
+        # settlement journaled under the mandate holder's actor context would
+        # let anyone who can name a delivered record mint a settlement
+        # attributed to someone else, so the caller must hold that mandate and
+        # the record it authorizes is recorded under the caller.
+        mandate_actor = terminal.record.actor_context
+        if mandate_actor.actor_id != actor_context.actor_id:
+            raise _refuse(
+                "settlement_evidence_mismatch",
+                "Terminal settlement requires the principal the mandate settlement ran under.",
+                prediction_id=prediction_id,
+            )
         evidence_kind = "terminal"
         proof_kind = "run_receipt"
         proof_digest = terminal.record_digest
         proof_subject = None
-        settlement_actor = terminal.record.actor_context
+        authorization_source = {
+            "tag": "playbill-prediction-settlement-authorization-v1",
+            "kind": "terminal_mandate",
+            "terminal_record_digest": terminal.record_digest,
+            "mandate_actor_id": mandate_actor.actor_id,
+        }
     elif not isinstance(request.evidence, ObservationSettlementEvidenceV1):
         raise _refuse(
             "settlement_evidence_mismatch",
@@ -690,9 +717,10 @@ def service_settle_playbill_prediction(
         value={
             "tag": "playbill-prediction-settlement-value-v1",
             "evidence_kind": evidence_kind,
-            "evidence_present": True,
+            "evidence_present": evidence_present,
             "prediction_value": predicted_value,
             "settlement_value": settlement_value,
+            "authorization_source": authorization_source,
         },
         evidence_refs=(
             ProcedureProofReferenceV1(
@@ -703,7 +731,7 @@ def service_settle_playbill_prediction(
         ),
         observed_at=observed_at,
         recorded_at=ensure_utc(recorded_at),
-        actor_context=settlement_actor,
+        actor_context=actor_context,
     )
     resolution = _append_settlement(
         instance,

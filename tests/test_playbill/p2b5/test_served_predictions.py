@@ -12,16 +12,23 @@ from tests.test_playbill._knowledge_loop_support import (
     accept_proposal,
     subject_address,
 )
+from tests.test_playbill.test_claims import _claim_type as _work_item_claim_type
 from tests.test_playbill.test_query_execution_service import _instance_with_query
 from tests.test_playbill.test_resolution_contracts import _accept_tree, _accepted, _digest
 
 from cruxible_client import ClaimRole, Playbill
 from cruxible_client import contracts as api
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatementV1,
     ClaimAuthoringPayloadV3,
     ClaimDependencyDraftsV1,
     ExistingCaptureCitationSourceV1,
+)
+from cruxible_client.contracts.claim_types import (
+    ClaimType,
+    claim_type_path,
+    render_claim_type,
 )
 from cruxible_client.contracts.claims import LiteralClaimObject, parse_claim
 from cruxible_client.contracts.predictions import (
@@ -187,10 +194,24 @@ def test_prediction_rules_are_closed_and_mechanical() -> None:
         settlement_value=2,
         evidence_present=True,
     )
+    presence = PredictionPresenceRuleV1().model_dump(mode="json")
     assert evaluate_prediction_correctness_condition(
-        PredictionPresenceRuleV1().model_dump(mode="json"),
+        presence,
         prediction_value=True,
         settlement_value=None,
+        evidence_present=True,
+    )
+    # A prediction of absence is correct exactly when the evidence is absent.
+    assert evaluate_prediction_correctness_condition(
+        presence,
+        prediction_value=False,
+        settlement_value=None,
+        evidence_present=False,
+    )
+    assert not evaluate_prediction_correctness_condition(
+        presence,
+        prediction_value=False,
+        settlement_value="ready",
         evidence_present=True,
     )
     assert (
@@ -267,9 +288,137 @@ def test_observation_settlement_replays_into_the_existing_calibration_fold(
     assert folded.rows[0].relation == relation
 
 
-def test_terminal_settlement_reuses_the_verified_terminal_actor_and_exact_record(
+PRESENCE_PREDICATE = "project.work_item.presence"
+
+
+def _presence_claim_type() -> ClaimType:
+    """A ClaimType whose literal may be a boolean or an explicit absence."""
+
+    base = _work_item_claim_type()
+    return base.model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ClaimType", name=PRESENCE_PREDICATE),
+            "predicate": PRESENCE_PREDICATE,
+            "literal_schema": {"enum": [False, True, None]},
+        }
+    )
+
+
+def _accept_presence_claim_type(instance, owner) -> None:  # type: ignore[no-untyped-def]
+    claim_type = _presence_claim_type()
+    _accept_tree(
+        instance,
+        owner,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            claim_type_path(PRESENCE_PREDICATE): render_claim_type(claim_type),
+        },
+        timestamp="2026-09-02T12:00:30.000000Z",
+        proposal_name="presence-claim-type",
+    )
+
+
+def _presence_payload(
+    capture_digest: str, *, qualifier: str, value: object
+) -> ClaimAuthoringPayloadV3:
+    return ClaimAuthoringPayloadV3(
+        statement=AuthoringClaimStatementV1(
+            subject=subject_address("wi-42"),
+            predicate=PRESENCE_PREDICATE,
+            qualifier=qualifier,
+            object=LiteralClaimObject(value=value),
+            role="observation",
+        ),
+        rationale=f"Record {qualifier} for the served presence prediction test.",
+        source=ExistingCaptureCitationSourceV1(capture_digest=capture_digest),
+        citation_role="copy",
+        dependency_drafts=ClaimDependencyDraftsV1(),
+    )
+
+
+def _predict_presence(instance, capture_digest: str, *, predicted: bool):  # type: ignore[no-untyped-def]
+    return service_predict_playbill(
+        instance,
+        request=PlaybillPredictRequestV1(
+            prediction=_presence_payload(capture_digest, qualifier="prediction", value=predicted),
+            procedure="measured-procedure",
+            measurement_name="unit-health",
+            observation=PredictionObservationSelectorV1(
+                subject=subject_address("wi-42"),
+                predicate=PRESENCE_PREDICATE,
+                qualifier="prediction-outcome",
+            ),
+            rule=PredictionPresenceRuleV1(),
+            deadline=PREDICTED_AT + timedelta(hours=1),
+        ),
+        actor=AuthenticatedActor(actor_id="owner"),
+        evaluation_time=PREDICTED_AT,
+    )
+
+
+def _accept_presence_observation(instance, owner, capture_digest: str, *, value: object) -> str:  # type: ignore[no-untyped-def]
+    actor = AuthenticatedActor(actor_id="owner")
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    created = coordinator.create(
+        actor=actor,
+        payload=_presence_payload(capture_digest, qualifier="prediction-outcome", value=value),
+        canonical_timestamp="2026-09-02T12:02:00.000000Z",
+    )
+    submitted = coordinator.submit(created.intent.intent_id, actor=actor)
+    assert submitted.status.proposal_id is not None, submitted.status
+    accept_proposal(
+        instance,
+        owner,
+        service_inspect_playbill_proposal(
+            instance,
+            proposal_id=submitted.status.proposal_id,
+        ),
+    )
+    return created.intent.semantic_identity
+
+
+@pytest.mark.parametrize(
+    ("predicted", "observed", "expected"),
+    (
+        (True, True, True),
+        (False, True, False),
+        (True, None, False),
+        (False, None, True),
+    ),
+)
+def test_presence_settles_from_the_observation_in_both_directions(
+    tmp_path: Path,
+    predicted: bool,
+    observed: object,
+    expected: bool,
+) -> None:
+    """An observation whose object is null records absence, not presence."""
+
+    instance, owner, capture_digest = _world(tmp_path)
+    _accept_presence_claim_type(instance, owner)
+    prediction = _predict_presence(instance, capture_digest, predicted=predicted)
+    _accept_prediction(instance, owner, prediction)
+    observation_id = _accept_presence_observation(instance, owner, capture_digest, value=observed)
+
+    result = service_settle_playbill_prediction(
+        instance,
+        prediction_id=prediction.declaration.prediction_id,
+        request=PlaybillSettleRequestV1(
+            evidence=ObservationSettlementEvidenceV1(claim_id=observation_id)
+        ),
+        actor_context=_actor(),
+        recorded_at=RECORDED_AT,
+    )
+    relation = SettledOutcomeRelationV1.model_validate(result.relation)
+    assert relation.resolution.settlement_outcome is expected
+    assert relation.resolution.value["evidence_present"] is (observed is not None)
+
+
+def test_terminal_settlement_records_the_caller_and_names_the_mandate_authority(
     tmp_path: Path,
 ) -> None:
+    """The mandate authorizes; the authenticated caller is the recorded actor."""
+
     instance, owner, capture_digest = _world(tmp_path)
     predicted = _predict(instance, capture_digest)
     _accept_prediction(instance, owner, predicted)
@@ -324,21 +473,40 @@ def test_terminal_settlement_reuses_the_verified_terminal_actor_and_exact_record
         expected_fencing_token="terminal-writer",
     )
 
+    evidence = TerminalSettlementEvidenceV1(
+        claim_id=observation_id,
+        run_id="run-prediction",
+        terminal_record_digest=stored.record_digest,
+    )
+
+    # A caller who can name the delivered record but does not hold the mandate
+    # cannot mint a settlement attributed to the mandate holder.
+    with pytest.raises(PredictionRefused) as refused:
+        service_settle_playbill_prediction(
+            instance,
+            prediction_id=predicted.declaration.prediction_id,
+            request=PlaybillSettleRequestV1(evidence=evidence),
+            actor_context=_actor("unrelated-caller"),
+            recorded_at=RECORDED_AT,
+        )
+    assert refused.value.code == "settlement_evidence_mismatch"
+
+    caller = _actor("terminal-operator")
     result = service_settle_playbill_prediction(
         instance,
         prediction_id=predicted.declaration.prediction_id,
-        request=PlaybillSettleRequestV1(
-            evidence=TerminalSettlementEvidenceV1(
-                claim_id=observation_id,
-                run_id="run-prediction",
-                terminal_record_digest=stored.record_digest,
-            )
-        ),
-        actor_context=_actor("unrelated-caller"),
+        request=PlaybillSettleRequestV1(evidence=evidence),
+        actor_context=caller,
         recorded_at=RECORDED_AT,
     )
     relation = SettledOutcomeRelationV1.model_validate(result.relation)
-    assert relation.resolution.actor_context == terminal_actor
+    assert relation.resolution.actor_context == caller
+    assert relation.resolution.value["authorization_source"] == {
+        "tag": "playbill-prediction-settlement-authorization-v1",
+        "kind": "terminal_mandate",
+        "terminal_record_digest": stored.record_digest,
+        "mandate_actor_id": terminal_actor.actor_id,
+    }
     assert relation.resolution.evidence_refs[0].kind == "run_receipt"
     assert relation.resolution.evidence_refs[0].digest == stored.record_digest
 
