@@ -243,8 +243,9 @@ inherits an attached workspace's format, and with no workspace it is `sha1`.
 SHA-1 is the default because common Git viewers do not recognize a SHA-256
 repository, and a ledger nobody can open is not evidence anyone can read
 (maintainer ruling, 2026-09-03). An explicit `--object-format` that contradicts
-the attached workspace refuses with `object_format_mismatch` before any state is
-written; instances already initialized keep their pinned format forever. The
+the attached workspace refuses with the typed
+`playbill.init.object_format_conflict` before any state is written; instances
+already initialized keep their pinned format forever. The
 equivalent request field is `git_object_format` on the HTTP/SDK init body and on
 MCP `cruxible_playbill_init`.
 

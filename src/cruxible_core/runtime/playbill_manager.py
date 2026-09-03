@@ -13,6 +13,7 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import (
     PlaybillBootstrapError,
     PlaybillFormatError,
+    PlaybillObjectFormatConflict,
     PlaybillReseedRequired,
 )
 from cruxible_client.contracts.temporal import utc_now
@@ -158,10 +159,12 @@ class PlaybillInstanceManager:
                 and workspace_format is not None
                 and git_object_format != workspace_format
             ):
-                raise PlaybillBootstrapError(
-                    "object_format_mismatch: the requested Git object format differs from the "
-                    f"attached workspace's {workspace_format!r}; repair: omit --object-format to "
-                    "inherit the workspace, or attach a workspace in the requested format"
+                raise PlaybillObjectFormatConflict(
+                    f"{PlaybillObjectFormatConflict.error_code}: the requested Git object "
+                    f"format differs from the attached workspace's {workspace_format!r}; "
+                    "repair: omit --object-format to inherit the workspace, or attach a "
+                    "workspace in the requested format",
+                    workspace_format=workspace_format,
                 )
             object_format: GitObjectFormat = (
                 workspace_format

@@ -20,6 +20,7 @@ from cruxible_client._error_base import (
 )
 from cruxible_client.contracts.errors import (
     PlaybillInstanceDecommissioned,
+    PlaybillObjectFormatConflict,
     PlaybillSinceRequestInvalid,
     ProposalActivationRequestInvalid,
     ProposalNotFoundError,
@@ -556,6 +557,11 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
         exc = ConcurrentStateDriftError(
             int(context.get("opening_revision") or 0),
             int(context.get("closing_revision") or 0),
+        )
+    elif body.error_type == "PlaybillObjectFormatConflict":
+        exc = PlaybillObjectFormatConflict(
+            body.message,
+            workspace_format=context.get("workspace_format"),
         )
     elif body.error_type == "PlaybillInstanceDecommissioned":
         exc = PlaybillInstanceDecommissioned(

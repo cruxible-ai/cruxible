@@ -161,6 +161,25 @@ class PlaybillBootstrapError(PlaybillError):
     """Genesis does not reproduce from the supplied out-of-band trust root."""
 
 
+class PlaybillObjectFormatConflict(PlaybillBootstrapError):
+    """An explicit ledger object format contradicts the attached workspace's.
+
+    Its own code, not the advertisement vocabulary's ``object_format_mismatch``:
+    that identifier already names a ``WorkspaceAdvertisementFailureCode`` member
+    for a refresh that failed AFTER an instance existed, and an init that
+    refuses never reaches advertisement at all.
+    """
+
+    error_code = "playbill.init.object_format_conflict"
+
+    def __init__(self, message: str, *, workspace_format: str | None = None) -> None:
+        self.workspace_format = workspace_format
+        self.repair_commands = (
+            "cruxible playbill init  # omit --object-format to inherit the workspace",
+        )
+        super().__init__(message)
+
+
 class PlaybillGitError(PlaybillError):
     """System Git refused or failed a ledger operation."""
 

@@ -9,7 +9,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cruxible_client.contracts.errors import PlaybillBootstrapError
+from cruxible_client.contracts.errors import (
+    PlaybillBootstrapError,
+    PlaybillObjectFormatConflict,
+)
 from cruxible_core.playbill.instance import DEFAULT_GIT_OBJECT_FORMAT, PlaybillInstance
 from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.runtime import host_api, playbill_api
@@ -139,7 +142,7 @@ def test_a_format_contradicting_the_workspace_refuses_before_writing_state(
     )
     managed = Path(get_registry().get(created.instance_id).location)  # type: ignore[union-attr]
 
-    with pytest.raises(PlaybillBootstrapError) as refused:
+    with pytest.raises(PlaybillObjectFormatConflict) as refused:
         playbill_api.playbill_init(
             "inst_conflict",
             principals=(_owner(tmp_path, "conflict"),),  # type: ignore[arg-type]
@@ -148,9 +151,35 @@ def test_a_format_contradicting_the_workspace_refuses_before_writing_state(
             git_object_format="sha1",
         )
 
-    assert "object_format_mismatch" in str(refused.value)
+    assert isinstance(refused.value, PlaybillBootstrapError)
+    assert refused.value.error_code == "playbill.init.object_format_conflict"
+    assert refused.value.workspace_format == "sha256"
     assert "repair:" in str(refused.value)
+    assert refused.value.repair_commands
     assert not managed.exists()
+
+
+def test_the_object_format_conflict_is_typed_on_the_wire_and_in_the_client() -> None:
+    """A client must discriminate this refusal by code, not by substring."""
+
+    from cruxible_client.errors import PlaybillObjectFormatConflict as ClientRefusal
+    from cruxible_client.errors import response_to_error
+    from cruxible_core.server.errors import error_to_response
+
+    status, body = error_to_response(
+        PlaybillObjectFormatConflict(
+            "playbill.init.object_format_conflict: the requested Git object format differs "
+            "from the attached workspace's 'sha256'; repair: omit --object-format",
+            workspace_format="sha256",
+        )
+    )
+
+    assert status == 409
+    assert body.error_type == "PlaybillObjectFormatConflict"
+    assert body.error_code == "playbill.init.object_format_conflict"
+    reconstructed = response_to_error(status, body)
+    assert isinstance(reconstructed, ClientRefusal)
+    assert reconstructed.workspace_format == "sha256"
 
 
 def test_a_sha256_instance_reopens_unchanged(tmp_path: Path) -> None:
