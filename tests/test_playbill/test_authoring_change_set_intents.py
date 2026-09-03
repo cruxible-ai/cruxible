@@ -14,6 +14,11 @@ import pytest
 
 from cruxible_client.authoring.insertions import apply_playbill_publication
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
+from cruxible_client.contracts.authoring.inputs import (
+    ChangeSetInput,
+    ClaimRetirementInput,
+    lower_authoring_input,
+)
 from cruxible_client.contracts.authoring.models import (
     AUTHORING_CHANGE_SET_MEMBERSHIP_DIGEST_DOMAIN,
     AuthoringClaimStatementV1,
@@ -39,6 +44,7 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path
 from cruxible_client.contracts.claims import (
+    ClaimFormatError,
     ClaimRetireDependentV1,
     LiteralClaimObject,
     claim_artifact_digest,
@@ -1330,3 +1336,58 @@ def test_a_one_member_change_set_lands_and_keeps_its_change_set_identity(
     assert authoring_payload_digest(singular.payload) == authoring_payload_digest(
         created.payload.members[0]  # type: ignore[union-attr]
     )
+
+
+def test_a_retirement_member_spells_its_claim_ref_the_way_a_claim_does(
+    tmp_path: Path,
+) -> None:
+    """One retirement has one spelling, so create-dedup cannot miss it.
+
+    `Claim:CLM-...` and `CLM-...` name the same Claim, so both gave the same
+    member identity -- and therefore the same `ChangeSet:` semantic identity --
+    while digesting to different payloads. Two live intents could then carry one
+    semantic identity and the create fingerprint would never match. The Claim
+    member kind has never tolerated the prefix; the retirement member now agrees.
+    """
+
+    claim_id = "CLM-" + "1" * 32
+    member = ClaimRetirementMemberV1(claim_ref=claim_id, reason="was-rescinded")
+    assert member.claim_id == claim_id
+    assert authoring_member_identity(member) == f"ClaimRetirement:{claim_id}"
+
+    # Both Claim-addressing member kinds refuse the prefixed spelling, the same
+    # way, with the same message.
+    with pytest.raises(ClaimFormatError, match="Claim ID must be CLM-"):
+        ClaimRetirementMemberV1(claim_ref=f"Claim:{claim_id}", reason="was-rescinded")
+    with pytest.raises(ClaimFormatError, match="Claim ID must be CLM-"):
+        _claim(claim_ref=f"Claim:{claim_id}")
+
+    # The tagless surface carries the same rule through its own lowering.
+    prefixed = ChangeSetInput(
+        kind="change_set",
+        members=(
+            ClaimRetirementInput(
+                kind="claim_retirement",
+                claim_id=f"Claim:{claim_id}",
+                reason="was-rescinded",
+            ),
+        ),
+    )
+    with pytest.raises(ClaimFormatError, match="Claim ID must be CLM-"):
+        lower_authoring_input(prefixed, tree={})
+
+    # And the one admissible spelling still creates exactly one intent twice.
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    accepted = _accept_one_claim(instance, owner, coordinator, actor)
+    payload = _change_set(
+        ClaimRetirementMemberV1(claim_ref=accepted, reason="was-rescinded"),
+        SubjectAuthoringPayloadV1(subject=_shell("wi-dedup")),
+    )
+    first = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
+    again = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
+    assert again.intent_id == first.intent_id
+    assert again.create_fingerprint == first.create_fingerprint
+    assert again.payload_digest == first.payload_digest
