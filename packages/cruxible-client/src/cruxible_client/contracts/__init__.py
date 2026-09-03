@@ -310,6 +310,26 @@ class ServerStopResult(BaseModel):
     pid: int
 
 
+class IsolatedExecutorRegistrationV1(BaseModel):
+    """What a runtime must publish to be a REGISTERED isolated executor.
+
+    A shared hosted profile executes Provider code only through an executor
+    that is registered in the running build. Core registers none, so the record
+    exists here as the seam an out-of-tree executor registers through, and so
+    the thing being claimed is a pinned artifact rather than an environment
+    string: the backend id selects it, the implementation digest says exactly
+    which bytes are isolating, and the capabilities say what that isolation
+    covers.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["isolated-executor-registration-v1"] = "isolated-executor-registration-v1"
+    backend_id: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9._-]*$")
+    implementation_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    capabilities: tuple[str, ...] = ()
+
+
 class PlaybillAcceptedCoordinate(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

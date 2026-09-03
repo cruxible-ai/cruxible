@@ -10,14 +10,17 @@ from cruxible_core.errors import (
     CustomerCodeExecutionUnsupportedError,
     HostedProfileUnknownError,
 )
+from cruxible_client import contracts
 from cruxible_core.playbill import provider_local_runtime as runtime_module
 from cruxible_core.playbill.service import provider_seed as seed_module
+from cruxible_core.runtime import execution_policy as policy_module
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.execution_policy import (
     ISOLATION_BACKEND_NOT_IMPLEMENTED,
-    REGISTERED_ISOLATED_EXECUTION_BACKENDS,
     customer_code_execution_supported,
     enforce_customer_code_execution_supported,
+    register_isolated_executor,
+    registered_isolated_executors,
 )
 
 PROFILE = "CRUXIBLE_HOSTED_SERVER_PROFILE"
@@ -75,11 +78,15 @@ def test_the_shared_profile_refuses_until_an_executor_is_registered(
     for name, value in environment.items():
         monkeypatch.setenv(name, value)
 
-    assert REGISTERED_ISOLATED_EXECUTION_BACKENDS == frozenset()
+    assert registered_isolated_executors() == {}
     assert customer_code_execution_supported() is False
     with pytest.raises(CustomerCodeExecutionUnsupportedError) as refused:
         enforce_customer_code_execution_supported()
-    assert refused.value.detail == ISOLATION_BACKEND_NOT_IMPLEMENTED
+    assert refused.value.detail is not None
+    assert refused.value.detail.startswith(ISOLATION_BACKEND_NOT_IMPLEMENTED)
+    configured = environment.get(BACKEND)
+    if configured is not None:
+        assert f"backend {configured!r} is not registered" in refused.value.detail
 
 
 def test_execution_proceeds_when_no_hosted_profile_is_configured(
@@ -246,3 +253,61 @@ def test_the_driver_refuses_before_it_resolves_a_tenant_secret(
             invocation_id="INV-secret-order",
             process_leases=None,  # type: ignore[arg-type]
         )
+
+
+class _StubIsolatedExecutor:
+    """A minimal out-of-tree executor registering through the typed seam."""
+
+    def __init__(self, backend_id: str) -> None:
+        self._backend_id = backend_id
+
+    def registration(self) -> contracts.IsolatedExecutorRegistrationV1:
+        return contracts.IsolatedExecutorRegistrationV1(
+            backend_id=self._backend_id,
+            implementation_digest="sha256:" + "5" * 64,
+            capabilities=("process-isolation",),
+        )
+
+
+def test_core_registers_no_isolated_executor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The empty registry is the law, not an accident of import order."""
+
+    monkeypatch.setattr(policy_module, "_REGISTERED_ISOLATED_EXECUTORS", {})
+    assert registered_isolated_executors() == {}
+
+
+def test_a_registered_executor_is_what_permits_shared_profile_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Registration, not an environment string, is what unlocks execution."""
+
+    monkeypatch.setattr(policy_module, "_REGISTERED_ISOLATED_EXECUTORS", {})
+    monkeypatch.setenv(PROFILE, "shared")
+    monkeypatch.setenv(BACKEND, "stub-isolation")
+
+    with pytest.raises(CustomerCodeExecutionUnsupportedError):
+        enforce_customer_code_execution_supported()
+
+    record = register_isolated_executor(_StubIsolatedExecutor("stub-isolation"))
+
+    assert record.backend_id == "stub-isolation"
+    assert registered_isolated_executors() == {"stub-isolation": record}
+    assert customer_code_execution_supported() is True
+    enforce_customer_code_execution_supported()
+
+
+def test_a_second_executor_cannot_silently_take_over_a_backend_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(policy_module, "_REGISTERED_ISOLATED_EXECUTORS", {})
+    register_isolated_executor(_StubIsolatedExecutor("stub-isolation"))
+
+    class _Impostor(_StubIsolatedExecutor):
+        def registration(self) -> contracts.IsolatedExecutorRegistrationV1:
+            return contracts.IsolatedExecutorRegistrationV1(
+                backend_id="stub-isolation",
+                implementation_digest="sha256:" + "6" * 64,
+            )
+
+    with pytest.raises(ValueError, match="already registered"):
+        register_isolated_executor(_Impostor("stub-isolation"))

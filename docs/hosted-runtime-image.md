@@ -190,12 +190,18 @@ detail `isolation backend not implemented`, and the refusal happens before any
 tenant secret is resolved and before any child process exists.
 
 Execution is permitted only when an isolated executor is REGISTERED in the
-running build, not when one is merely named in the environment. This repository
-registers none, so `CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND` cannot re-enable
-execution today; setting it to `docker` previously unlocked spawning the
-Provider directly on the host, which is the opposite of what the name promised
-(maintainer ruling 2026-09-03). The variable stays as the selector an executor
-will be chosen by once one ships.
+running build, not when one is merely named in the environment. Registration
+goes through the typed seam in `runtime/execution_policy.py`:
+`register_isolated_executor()` takes an object publishing an
+`IsolatedExecutorRegistrationV1` record -- a `backend_id`, the exact
+`implementation_digest` doing the isolating, and its `capabilities` -- and
+`registered_isolated_executors()` reports what this process has. Core registers
+none, so `CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND` cannot re-enable execution
+today; setting it to `docker` previously unlocked spawning the Provider directly
+on the host, which is the opposite of what the name promised (maintainer ruling
+2026-09-03). The variable remains the selector: it names which REGISTERED
+backend to use, and a value naming an unregistered backend refuses with that
+backend named in the detail.
 
 A non-empty `CRUXIBLE_HOSTED_SERVER_PROFILE` this build does not declare —
 a misspelling, or a profile from a newer image — refuses typed with

@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from typing import Protocol, runtime_checkable
 
+from cruxible_client.contracts import IsolatedExecutorRegistrationV1
 from cruxible_core.errors import (
     CustomerCodeExecutionUnsupportedError,
     HostedProfileUnknownError,
@@ -34,12 +36,49 @@ HOSTED_PROFILE_UNKNOWN = "hosted_profile_unknown"
 #: a hosted profile, not a profile of its own.
 KNOWN_HOSTED_SERVER_PROFILES = frozenset({SHARED_HOSTED_SERVER_PROFILE})
 
-#: Isolated execution backends this build actually IMPLEMENTS. Empty on
-#: purpose: there is no container executor in this repository, so no environment
-#: value can make execution under the shared profile isolated.
-REGISTERED_ISOLATED_EXECUTION_BACKENDS: frozenset[str] = frozenset()
-
 ISOLATION_BACKEND_NOT_IMPLEMENTED = "isolation backend not implemented"
+
+
+@runtime_checkable
+class IsolatedExecutor(Protocol):
+    """An executor that can run Provider code away from the daemon's host."""
+
+    def registration(self) -> IsolatedExecutorRegistrationV1:
+        """Return the pinned record this executor is selected and audited by."""
+
+
+#: Isolated executors registered in THIS process. Empty in core on purpose:
+#: there is no container executor in this repository, so no environment value
+#: can make execution under the shared profile isolated. An out-of-tree
+#: executor registers itself here at import time, which is what turns
+#: `CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND` from a claim into a selector.
+_REGISTERED_ISOLATED_EXECUTORS: dict[str, IsolatedExecutorRegistrationV1] = {}
+
+
+def register_isolated_executor(executor: IsolatedExecutor) -> IsolatedExecutorRegistrationV1:
+    """Register one isolated executor under its own backend id.
+
+    The record, not the environment, is the evidence: it names the backend id
+    the environment selects and the exact implementation digest that is doing
+    the isolating. Registering a second executor under one backend id is
+    refused rather than silently replacing the first.
+    """
+
+    registration = executor.registration()
+    existing = _REGISTERED_ISOLATED_EXECUTORS.get(registration.backend_id)
+    if existing is not None and existing != registration:
+        raise ValueError(
+            f"isolated executor backend {registration.backend_id!r} is already registered "
+            f"with implementation {existing.implementation_digest}"
+        )
+    _REGISTERED_ISOLATED_EXECUTORS[registration.backend_id] = registration
+    return registration
+
+
+def registered_isolated_executors() -> Mapping[str, IsolatedExecutorRegistrationV1]:
+    """Return every isolated executor registered in this process, by backend id."""
+
+    return dict(_REGISTERED_ISOLATED_EXECUTORS)
 
 
 def hosted_server_profile(environ: Mapping[str, str] | None = None) -> str | None:
@@ -64,7 +103,14 @@ def isolated_execution_backend(environ: Mapping[str, str] | None = None) -> str 
 def isolated_execution_available(environ: Mapping[str, str] | None = None) -> bool:
     """Return whether a REGISTERED isolated executor is selected and available."""
     backend = isolated_execution_backend(environ)
-    return backend is not None and backend in REGISTERED_ISOLATED_EXECUTION_BACKENDS
+    return backend is not None and backend in registered_isolated_executors()
+
+
+def _unsupported_detail(environ: Mapping[str, str] | None = None) -> str:
+    backend = isolated_execution_backend(environ)
+    if backend is None:
+        return ISOLATION_BACKEND_NOT_IMPLEMENTED
+    return f"{ISOLATION_BACKEND_NOT_IMPLEMENTED}: backend {backend!r} is not registered"
 
 
 def customer_code_execution_supported(environ: Mapping[str, str] | None = None) -> bool:
@@ -93,4 +139,4 @@ def enforce_customer_code_execution_supported(
     if profile not in KNOWN_HOSTED_SERVER_PROFILES:
         raise HostedProfileUnknownError(profile)
     if profile == SHARED_HOSTED_SERVER_PROFILE and not isolated_execution_available(environ):
-        raise CustomerCodeExecutionUnsupportedError(ISOLATION_BACKEND_NOT_IMPLEMENTED)
+        raise CustomerCodeExecutionUnsupportedError(_unsupported_detail(environ))
