@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from cruxible_client.contracts.repairs import (
+    DECLARED_HAND_EDIT_CHANGES,
     UNDECLARED_HAND_EDIT_CHANGE,
     HandEditRepairV1,
     RepairOperationV1,
@@ -12,7 +13,6 @@ from cruxible_core.cli.main import CLI_COMMANDS, LazyCommandSpec
 from cruxible_core.service.playbill_refusal_catalog import (
     ALL_SERVED_REFUSAL_CODES,
     CLOSED_SERVED_REFUSAL_VOCABULARIES,
-    DECLARED_HAND_EDIT_REPAIRS,
     RUNNABLE_REFUSAL_REPAIRS,
     UNDECLARED_REFUSAL_CODE_COUNT,
     hand_edit_next_reasons,
@@ -71,8 +71,27 @@ def test_server_envelope_repairs_name_commands_the_cli_actually_serves() -> None
     assert unauthenticated.operation in leaves
 
 
+def test_the_served_refusal_models_read_the_declared_change() -> None:
+    """A producer that carries no repair still projects the declared change."""
+
+    from cruxible_client.contracts.procedures.results import ProcedureSettlementRefusalV1
+
+    refusal = ProcedureSettlementRefusalV1.model_validate(
+        {
+            "code": "settlement_candidate_scope_mismatch",
+            "message": "the candidate scope differs from its admission",
+            "node_id": "settlement",
+        }
+    )
+    assert isinstance(refusal.repair, HandEditRepairV1)
+    assert (
+        refusal.repair.hand_edit.required_change
+        == (DECLARED_HAND_EDIT_CHANGES["settlement_candidate_scope_mismatch"])
+    )
+
+
 def test_declared_hand_edits_are_membership_not_derivation() -> None:
-    for code, required_change in DECLARED_HAND_EDIT_REPAIRS.items():
+    for code, required_change in DECLARED_HAND_EDIT_CHANGES.items():
         assert code in ALL_SERVED_REFUSAL_CODES, code
         assert code not in RUNNABLE_REFUSAL_REPAIRS, code
         assert required_change != UNDECLARED_HAND_EDIT_CHANGE

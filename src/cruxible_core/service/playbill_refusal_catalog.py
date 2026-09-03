@@ -22,6 +22,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureSettlementRefusalCodeV1,
 )
 from cruxible_client.contracts.repairs import (
+    DECLARED_HAND_EDIT_CHANGES,
     UNDECLARED_HAND_EDIT_CHANGE,
     RepairOperationV1,
     ServedRepairV1,
@@ -82,26 +83,10 @@ RUNNABLE_REFUSAL_REPAIRS: dict[str, RepairOperationV1] = {
     "document_modified": RepairOperationV1(operation="playbill.document.propose"),
 }
 
-# Codes whose repair needs judgment. Each names the artifact to open and the
-# change to make; membership is declared here, never derived from the code.
-DECLARED_HAND_EDIT_REPAIRS: dict[str, str] = {
-    "line_not_accepted": "accept_the_line_before_triggering_it",
-    "line_closure_incomplete": "restore_or_succeed_the_missing_accepted_closure_member",
-    "occurrence_already_admitted": "read_the_existing_run_state_instead_of_readmitting",
-    "procedure_runtime_policy_absent": "accept_a_procedure_runtime_policy",
-    "provider_lane_unavailable": "restore_the_daemon_provider_lane_then_retry",
-    "procedure_projection_missing": "add_procedure_projection_catalog_entries",
-    "exhaust_binding_carrier_required": "trigger_through_a_carrier_aware_line_scheduler",
-    "environment_divergence": "rematerialize_the_provider_environment_against_its_seal",
-    "provider_replay_receipt_required": "record_the_durable_provider_completion_before_replay",
-    "state_tap_refused": "restore_the_accepted_state_query_backend",
-    "settlement_lost_cas": "resubmit_the_settlement_against_the_current_accepted_coordinate",
-}
-
 # Everything else resolves to the truthful undeclared hand edit. The count is
 # pinned by the guardrail so a new closed refusal member cannot join silently:
 # adding one forces either a declared repair or an explicit re-pin here.
-UNDECLARED_REFUSAL_CODE_COUNT = 177
+UNDECLARED_REFUSAL_CODE_COUNT = 170
 
 
 def repair_for_refusal(code: str) -> ServedRepairV1:
@@ -112,7 +97,7 @@ def repair_for_refusal(code: str) -> ServedRepairV1:
     runnable = RUNNABLE_REFUSAL_REPAIRS.get(code)
     if runnable is not None:
         return runnable
-    return hand_edit_repair(code, required_change=DECLARED_HAND_EDIT_REPAIRS.get(code))
+    return hand_edit_repair(code)
 
 
 def undeclared_refusal_codes() -> frozenset[str]:
@@ -121,7 +106,7 @@ def undeclared_refusal_codes() -> frozenset[str]:
     return frozenset(
         code
         for code in ALL_SERVED_REFUSAL_CODES
-        if code not in RUNNABLE_REFUSAL_REPAIRS and code not in DECLARED_HAND_EDIT_REPAIRS
+        if code not in RUNNABLE_REFUSAL_REPAIRS and code not in DECLARED_HAND_EDIT_CHANGES
     )
 
 
@@ -134,7 +119,7 @@ def hand_edit_next_reasons() -> frozenset[str]:
 __all__ = [
     "ALL_SERVED_REFUSAL_CODES",
     "CLOSED_SERVED_REFUSAL_VOCABULARIES",
-    "DECLARED_HAND_EDIT_REPAIRS",
+    "DECLARED_HAND_EDIT_CHANGES",
     "RUNNABLE_REFUSAL_REPAIRS",
     "UNDECLARED_HAND_EDIT_CHANGE",
     "UNDECLARED_REFUSAL_CODE_COUNT",

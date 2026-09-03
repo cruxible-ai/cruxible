@@ -272,6 +272,8 @@ def test_settlement_refusal_projects_as_its_dedicated_public_terminal(
     )
     assert isinstance(state.terminal, ProcedureSettlementRefusalV1)
     assert state.terminal.code == "settlement_candidate_scope_mismatch"
+    # The declared change, not the code restated: the settlement family carries
+    # real instructions from the source-owned catalog.
     assert state.terminal.repair.hand_edit.required_change == (
-        "repair_settlement_candidate_scope_mismatch"
+        "resubmit_the_candidate_whose_scope_matches_its_admission"
     )
