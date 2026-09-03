@@ -17649,7 +17649,8 @@
                     "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                     "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                     "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
-                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
+                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1",
+                    "playbill-procedure-settlement-refusal-v1": "#/$defs/ProcedureSettlementRefusalV1"
                   },
                   "propertyName": "tag"
                 },
@@ -17665,6 +17666,9 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedureInternalFailureV1"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureSettlementRefusalV1"
                   },
                   {
                     "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
@@ -17852,6 +17856,40 @@
             "title": "CanonicalDurationV1",
             "type": "object"
           },
+          "HandEditInstructionV1": {
+            "additionalProperties": false,
+            "properties": {
+              "required_change": {
+                "minLength": 1,
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "minLength": 1,
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "required_change"
+            ],
+            "title": "HandEditInstructionV1",
+            "type": "object"
+          },
+          "HandEditRepairV1": {
+            "additionalProperties": false,
+            "properties": {
+              "hand_edit": {
+                "$ref": "#/$defs/HandEditInstructionV1"
+              }
+            },
+            "required": [
+              "hand_edit"
+            ],
+            "title": "HandEditRepairV1",
+            "type": "object"
+          },
           "PlaybillAcceptedCoordinate": {
             "additionalProperties": false,
             "properties": {
@@ -18023,7 +18061,15 @@
                   "procedure_runtime_policy_absent",
                   "provider_explicit_implementation_required",
                   "provider_replay_receipt_required",
-                  "exhaust_binding_carrier_required"
+                  "exhaust_binding_carrier_required",
+                  "evaluation_instant_skewed",
+                  "line_identity_mismatch",
+                  "line_not_accepted",
+                  "line_closure_incomplete",
+                  "line_mandate_required",
+                  "occurrence_id_mismatch",
+                  "occurrence_not_due",
+                  "occurrence_already_admitted"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -18034,6 +18080,17 @@
               "message": {
                 "title": "Message",
                 "type": "string"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperationV1"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepairV1"
+                  }
+                ],
+                "title": "Repair"
               },
               "retryable": {
                 "default": false,
@@ -18049,7 +18106,8 @@
             },
             "required": [
               "code",
-              "message"
+              "message",
+              "repair"
             ],
             "title": "ProcedureAdmissionRefusalV1",
             "type": "object"
@@ -18468,6 +18526,17 @@
                 "title": "Message",
                 "type": "string"
               },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperationV1"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepairV1"
+                  }
+                ],
+                "title": "Repair"
+              },
               "tag": {
                 "const": "playbill-procedure-internal-failure-v1",
                 "default": "playbill-procedure-internal-failure-v1",
@@ -18478,7 +18547,8 @@
             "required": [
               "code",
               "message",
-              "correlation_id"
+              "correlation_id",
+              "repair"
             ],
             "title": "ProcedureInternalFailureV1",
             "type": "object"
@@ -18650,6 +18720,17 @@
                 "title": "Node Id",
                 "type": "string"
               },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperationV1"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepairV1"
+                  }
+                ],
+                "title": "Repair"
+              },
               "retryable": {
                 "default": false,
                 "title": "Retryable",
@@ -18665,7 +18746,8 @@
             "required": [
               "code",
               "message",
-              "node_id"
+              "node_id",
+              "repair"
             ],
             "title": "ProcedureNodeRefusalV1",
             "type": "object"
@@ -18737,6 +18819,17 @@
                 "title": "Message",
                 "type": "string"
               },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperationV1"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepairV1"
+                  }
+                ],
+                "title": "Repair"
+              },
               "retryable": {
                 "default": true,
                 "title": "Retryable",
@@ -18751,7 +18844,8 @@
             },
             "required": [
               "code",
-              "message"
+              "message",
+              "repair"
             ],
             "title": "ProcedureOperationalFailureV1",
             "type": "object"
@@ -19406,7 +19500,8 @@
                         "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                         "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                         "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
-                        "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
+                        "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1",
+                        "playbill-procedure-settlement-refusal-v1": "#/$defs/ProcedureSettlementRefusalV1"
                       },
                       "propertyName": "tag"
                     },
@@ -19422,6 +19517,9 @@
                       },
                       {
                         "$ref": "#/$defs/ProcedureInternalFailureV1"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureSettlementRefusalV1"
                       },
                       {
                         "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
@@ -19698,7 +19796,8 @@
                         "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                         "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                         "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
-                        "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
+                        "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1",
+                        "playbill-procedure-settlement-refusal-v1": "#/$defs/ProcedureSettlementRefusalV1"
                       },
                       "propertyName": "tag"
                     },
@@ -19714,6 +19813,9 @@
                       },
                       {
                         "$ref": "#/$defs/ProcedureInternalFailureV1"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureSettlementRefusalV1"
                       },
                       {
                         "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
@@ -20011,7 +20113,8 @@
                         "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                         "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                         "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
-                        "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
+                        "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1",
+                        "playbill-procedure-settlement-refusal-v1": "#/$defs/ProcedureSettlementRefusalV1"
                       },
                       "propertyName": "tag"
                     },
@@ -20027,6 +20130,9 @@
                       },
                       {
                         "$ref": "#/$defs/ProcedureInternalFailureV1"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureSettlementRefusalV1"
                       },
                       {
                         "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
@@ -20356,7 +20462,8 @@
                         "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                         "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                         "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
-                        "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
+                        "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1",
+                        "playbill-procedure-settlement-refusal-v1": "#/$defs/ProcedureSettlementRefusalV1"
                       },
                       "propertyName": "tag"
                     },
@@ -20372,6 +20479,9 @@
                       },
                       {
                         "$ref": "#/$defs/ProcedureInternalFailureV1"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureSettlementRefusalV1"
                       },
                       {
                         "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
@@ -20492,6 +20602,83 @@
             "title": "ProcedureSelectionDecisionV1",
             "type": "object"
           },
+          "ProcedureSettlementRefusalV1": {
+            "additionalProperties": false,
+            "properties": {
+              "classification": {
+                "const": "settlement_refusal",
+                "default": "settlement_refusal",
+                "title": "Classification",
+                "type": "string"
+              },
+              "code": {
+                "enum": [
+                  "settlement_proposal_id_mismatch",
+                  "settlement_candidate_mismatch",
+                  "settlement_base_semantic_root_mismatch",
+                  "settlement_activation_coordinate_changed",
+                  "settlement_actor_principal_invalid",
+                  "settlement_candidate_scope_mismatch",
+                  "settlement_receipt_mismatch",
+                  "settlement_lost_cas"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "details": {
+                "title": "Details"
+              },
+              "journal_coordinate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureJournalCoordinateV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperationV1"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepairV1"
+                  }
+                ],
+                "title": "Repair"
+              },
+              "retryable": {
+                "default": false,
+                "title": "Retryable",
+                "type": "boolean"
+              },
+              "tag": {
+                "const": "playbill-procedure-settlement-refusal-v1",
+                "default": "playbill-procedure-settlement-refusal-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "node_id",
+              "repair"
+            ],
+            "title": "ProcedureSettlementRefusalV1",
+            "type": "object"
+          },
           "ProcedureSourceCaptureAssociationV1": {
             "additionalProperties": false,
             "description": "Reserved B4 association between one Provider occurrence and one Capture.",
@@ -20570,6 +20757,26 @@
               "accepted_bucket_selectors"
             ],
             "title": "ProviderBucketClassificationPlanV1",
+            "type": "object"
+          },
+          "RepairOperationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "additionalProperties": true,
+                "title": "Arguments",
+                "type": "object"
+              },
+              "operation": {
+                "minLength": 1,
+                "title": "Operation",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "title": "RepairOperationV1",
             "type": "object"
           }
         },
@@ -20737,7 +20944,8 @@
                     "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                     "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                     "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
-                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
+                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1",
+                    "playbill-procedure-settlement-refusal-v1": "#/$defs/ProcedureSettlementRefusalV1"
                   },
                   "propertyName": "tag"
                 },
@@ -20753,6 +20961,9 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedureInternalFailureV1"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureSettlementRefusalV1"
                   },
                   {
                     "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
@@ -26830,6 +27041,40 @@
       },
       "json_schema": {
         "$defs": {
+          "HandEditInstructionV1": {
+            "additionalProperties": false,
+            "properties": {
+              "required_change": {
+                "minLength": 1,
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "minLength": 1,
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "required_change"
+            ],
+            "title": "HandEditInstructionV1",
+            "type": "object"
+          },
+          "HandEditRepairV1": {
+            "additionalProperties": false,
+            "properties": {
+              "hand_edit": {
+                "$ref": "#/$defs/HandEditInstructionV1"
+              }
+            },
+            "required": [
+              "hand_edit"
+            ],
+            "title": "HandEditRepairV1",
+            "type": "object"
+          },
           "PlaybillAcceptedCoordinate": {
             "additionalProperties": false,
             "properties": {
@@ -26943,13 +27188,20 @@
                 "default": null,
                 "title": "Reason"
               },
-              "repair_commands": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Repair Commands",
-                "type": "array"
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperationV1"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepairV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Repair"
               },
               "source_id": {
                 "anyOf": [
@@ -27161,6 +27413,26 @@
               "workspace_path"
             ],
             "title": "PlaybillWorkspaceAdvertisement",
+            "type": "object"
+          },
+          "RepairOperationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "additionalProperties": true,
+                "title": "Arguments",
+                "type": "object"
+              },
+              "operation": {
+                "minLength": 1,
+                "title": "Operation",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "title": "RepairOperationV1",
             "type": "object"
           }
         },

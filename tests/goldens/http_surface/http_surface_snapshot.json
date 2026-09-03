@@ -129,11 +129,20 @@
   "/api/v1/{instance_id}/playbill/init": {
     "POST": "PlaybillInitResult"
   },
+  "/api/v1/{instance_id}/playbill/lines/{line_identity_digest}/runs": {
+    "POST": "PlaybillProcedureRunState"
+  },
   "/api/v1/{instance_id}/playbill/next": {
     "POST": "PlaybillNextResult"
   },
   "/api/v1/{instance_id}/playbill/policies": {
     "GET": "PlaybillPolicyInForceList"
+  },
+  "/api/v1/{instance_id}/playbill/predictions": {
+    "POST": "PlaybillPredictResultV1"
+  },
+  "/api/v1/{instance_id}/playbill/predictions/{prediction_id}/settlements": {
+    "POST": "PlaybillSettleResultV1"
   },
   "/api/v1/{instance_id}/playbill/principals": {
     "GET": "PlaybillPrincipalList"
