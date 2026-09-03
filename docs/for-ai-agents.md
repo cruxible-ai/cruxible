@@ -78,15 +78,15 @@ by the SDK helpers `carry`, `rescind`, `retire` and `re_author`:
 | `retire(claim, reason=..., effective_until=...)` | `retire` | An attributed retirement, landing with the succession. |
 | `re_author(claim)` | `re_author` | Said again by a sibling Claim member of the same set, lowered under the successor. |
 
-A re-authored dependent keeps its own identity, its slot and its exact
-predecessor digest: the sibling member is that Claim revised (`revises=` the
-same Claim ID), stated under the new vocabulary, which is why `explain` on the
-re-authored Claim still names what it succeeds. The sibling is named by
-`successor_claim_id` (what `re_author(claim)` writes) or by `successor_member`,
-its index in the compiled member list. A sibling that does not exist, is not a
-Claim member, lowers under another ClaimType, or revises another Claim refuses
+A re-authored dependent keeps its own identity and its exact predecessor
+digest: the sibling member is that Claim revised (`revises=` the same Claim ID),
+stated under the new vocabulary, which is why `explain` on the re-authored Claim
+still names what it succeeds. The sibling is named once, by
+`successor_claim_id` -- the Claim ID it revises, which is the dependent's own,
+and what `re_author(claim)` writes. A sibling that does not exist, lowers under
+another ClaimType, or revises another Claim refuses
 `playbill.authoring.claim_type_succession_re_author_invalid`, naming both member
-indices.
+indices and the Claim ID the dependent requires.
 
 A successor that changes `object_kind` refuses `carry` for any live Claim
 dependent: its object no longer says what the ClaimType now means, so each such

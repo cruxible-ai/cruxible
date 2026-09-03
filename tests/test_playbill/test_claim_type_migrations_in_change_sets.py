@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import itertools
+import re
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -266,15 +267,21 @@ def _dependent(
     claim_id: str,
     *,
     disposition: str,
-    successor_member: int | None = None,
+    successor_claim_id: str | None = None,
     reason: str | None = None,
 ) -> ClaimTypeSuccessionDependentV1:
     return ClaimTypeSuccessionDependentV1(
         identity=ArtifactIdentity(kind="Claim", name=claim_id),
         disposition=disposition,  # type: ignore[arg-type]
-        successor_member=successor_member,
+        successor_claim_id=successor_claim_id,
         claim_retirement_reason=reason,  # type: ignore[arg-type]
     )
+
+
+def _re_author(claim_id: str) -> ClaimTypeSuccessionDependentV1:
+    """Re-author one dependent as the sibling Claim member that revises it."""
+
+    return _dependent(claim_id, disposition="re_author", successor_claim_id=claim_id)
 
 
 def test_the_affects_package_migration_lands_as_one_generation(tmp_path: Path) -> None:
@@ -309,29 +316,15 @@ def test_the_affects_package_migration_lands_as_one_generation(tmp_path: Path) -
         rationale="A fourth work item is affected, stated under the new vocabulary.",
     )
 
-    # The succession sorts among the Claim members by identity, so the sibling
-    # indices are only knowable once the whole membership is ordered.
-    def _payload(succession: ClaimTypeSuccessionMemberV1) -> ChangeSetAuthoringPayloadV1:
-        return _change_set(succession, edge_a, edge_b, fresh)
-
-    provisional = ClaimTypeSuccessionMemberV1(successor=successor, dependents=())
-    ordered = _payload(provisional).members
-    positions = {authoring_member_identity(member): index for index, member in enumerate(ordered)}
+    # A re-authoring sibling revises the dependent it re-authors, so the whole
+    # set is expressible before anything is compiled: no member index is named.
     succession = ClaimTypeSuccessionMemberV1(
         successor=successor,
         dependents=tuple(
             sorted(
                 (
-                    _dependent(
-                        claims["wi-42"],
-                        disposition="re_author",
-                        successor_member=positions[authoring_member_identity(edge_a)],
-                    ),
-                    _dependent(
-                        claims["wi-2"],
-                        disposition="re_author",
-                        successor_member=positions[authoring_member_identity(edge_b)],
-                    ),
+                    _re_author(claims["wi-42"]),
+                    _re_author(claims["wi-2"]),
                     _dependent(claims["wi-3"], disposition="retire", reason="was-rescinded"),
                 ),
                 key=lambda item: item.identity.qualified.encode("utf-8"),
@@ -340,7 +333,7 @@ def test_the_affects_package_migration_lands_as_one_generation(tmp_path: Path) -
     )
     intent = coordinator.create(
         actor=actor,
-        payload=_payload(succession),
+        payload=_change_set(succession, edge_a, edge_b, fresh),
         canonical_timestamp=TIMESTAMP,
     ).intent
     _accept(instance, owner, coordinator, intent.intent_id, actor)
@@ -449,20 +442,13 @@ def test_an_enum_narrowing_carries_what_fits_and_re_authors_what_does_not(
         claim_ref=claims["wi-2"],
         rationale="The narrowed vocabulary has one word for this state.",
     )
-    provisional = ClaimTypeSuccessionMemberV1(successor=successor, dependents=())
-    ordered = _change_set(provisional, repaired).members
-    positions = {authoring_member_identity(member): index for index, member in enumerate(ordered)}
     succession = ClaimTypeSuccessionMemberV1(
         successor=successor,
         dependents=tuple(
             sorted(
                 (
                     _dependent(claims["wi-42"], disposition="successor"),
-                    _dependent(
-                        claims["wi-2"],
-                        disposition="re_author",
-                        successor_member=positions[authoring_member_identity(repaired)],
-                    ),
+                    _re_author(claims["wi-2"]),
                     _dependent(claims["wi-3"], disposition="retire", reason="was-rescinded"),
                 ),
                 key=lambda item: item.identity.qualified.encode("utf-8"),
@@ -548,20 +534,17 @@ def test_object_kind_change_refuses_a_carried_live_claim(tmp_path: Path) -> None
     assert replacement["permitted_dispositions"] == ["retire", "re_author"]
 
 
-@pytest.mark.parametrize(
-    ("successor_member", "reason"),
-    [(9, "member_not_found"), (0, "not_a_claim_member")],
-)
-def test_a_re_author_that_names_no_claim_member_refuses_with_both_indices(
+def test_a_re_author_that_names_no_sibling_refuses_naming_the_claim_it_needs(
     tmp_path: Path,
-    successor_member: int,
-    reason: str,
 ) -> None:
+    """The repair names the key the payload carries, at the only value it may hold."""
+
     instance, _owner, coordinator, claims = _affects_package_world(
         tmp_path,
         values=(("wi-42", "demo-package"),),
     )
     actor = AuthenticatedActor(actor_id="owner")
+    unknown = "CLM-" + "9" * 32
     payload = _change_set(
         ClaimTypeSuccessionMemberV1(
             successor=_subject_valued_successor(instance),
@@ -569,7 +552,7 @@ def test_a_re_author_that_names_no_claim_member_refuses_with_both_indices(
                 _dependent(
                     claims["wi-42"],
                     disposition="re_author",
-                    successor_member=successor_member,
+                    successor_claim_id=unknown,
                 ),
             ),
         )
@@ -583,11 +566,15 @@ def test_a_re_author_that_names_no_claim_member_refuses_with_both_indices(
         lower_authoring(instance, intent=intent, actor_id="owner")
     error = raised.value
     assert error.code == "playbill.authoring.claim_type_succession_re_author_invalid"
-    assert error.offending_element == "members[0].dependents[0].successor_member"
+    assert error.offending_element == "members[0].dependents[0].successor_claim_id"
     replacement = error.repairs[0].replacement
     assert isinstance(replacement, dict)
-    assert replacement["reason"] == reason
+    assert replacement["reason"] == "member_not_found"
     assert replacement["member"] == 0
+    assert replacement["named_claim_id"] == unknown
+    # The repaired value is a Claim ID, under the key the member really carries.
+    assert replacement["successor_claim_id"] == claims["wi-42"]
+    assert claim_path(str(replacement["successor_claim_id"]))
 
 
 def test_a_re_author_sibling_under_another_type_refuses_with_both_indices(
@@ -611,25 +598,17 @@ def test_a_re_author_sibling_under_another_type_refuses_with_both_indices(
         ),
         claim_ref=claims["wi-42"],
     )
-    provisional = ClaimTypeSuccessionMemberV1(
-        successor=_subject_valued_successor(instance),
-        dependents=(),
-    )
-    ordered = _change_set(provisional, other).members
-    positions = {authoring_member_identity(member): index for index, member in enumerate(ordered)}
     succession = ClaimTypeSuccessionMemberV1(
         successor=_subject_valued_successor(instance),
-        dependents=(
-            _dependent(
-                claims["wi-42"],
-                disposition="re_author",
-                successor_member=positions[authoring_member_identity(other)],
-            ),
-        ),
+        dependents=(_re_author(claims["wi-42"]),),
     )
+    payload = _change_set(succession, other)
+    positions = {
+        authoring_member_identity(member): index for index, member in enumerate(payload.members)
+    }
     intent = coordinator.create(
         actor=actor,
-        payload=_change_set(succession, other),
+        payload=payload,
         canonical_timestamp=TIMESTAMP,
     ).intent
     with pytest.raises(AuthoringLoweringError) as raised:
@@ -639,7 +618,82 @@ def test_a_re_author_sibling_under_another_type_refuses_with_both_indices(
     replacement = error.repairs[0].replacement
     assert isinstance(replacement, dict)
     assert replacement["reason"] == "predicate_mismatch"
-    assert replacement["successor_member"] == positions[authoring_member_identity(other)]
+    assert replacement["member"] == positions[authoring_member_identity(succession)]
+    assert replacement["sibling_member"] == positions[authoring_member_identity(other)]
+
+
+def test_a_machine_applying_the_re_author_repair_lands_the_set(tmp_path: Path) -> None:
+    """A repair is only a repair if writing it back produces a payload that lowers."""
+
+    instance, _owner, coordinator, claims = _affects_package_world(
+        tmp_path,
+        values=(("wi-42", "demo-package"), ("wi-2", "demo-package")),
+    )
+    actor = AuthenticatedActor(actor_id="owner")
+    successor = _subject_valued_successor(instance)
+    package = SemanticAddress.whole_artifact(subject_path("package", "demo-package"))
+    edges = [
+        _claim(
+            subject_id=subject_id,
+            value=SubjectClaimObject(address=package),
+            claim_ref=claims[subject_id],
+            rationale="The advisory names the package, so say which package it is.",
+        )
+        for subject_id in ("wi-42", "wi-2")
+    ]
+    # Both pointers name the sibling that re-authors the OTHER dependent.
+    pointers = {claims["wi-42"]: claims["wi-2"], claims["wi-2"]: claims["wi-42"]}
+    element_re = re.compile(r"^members\[(\d+)\]\.dependents\[(\d+)\]\.successor_claim_id$")
+
+    for _attempt in range(4):
+        payload = _change_set(
+            ClaimTypeSuccessionMemberV1(
+                successor=successor,
+                dependents=tuple(
+                    sorted(
+                        (
+                            _dependent(
+                                claim_id,
+                                disposition="re_author",
+                                successor_claim_id=named,
+                            )
+                            for claim_id, named in pointers.items()
+                        ),
+                        key=lambda item: item.identity.qualified.encode("utf-8"),
+                    )
+                ),
+            ),
+            *edges,
+        )
+        intent = coordinator.create(
+            actor=actor,
+            payload=payload,
+            canonical_timestamp=TIMESTAMP,
+        ).intent
+        try:
+            lowered = lower_authoring(instance, intent=intent, actor_id="owner")
+        except AuthoringLoweringError as error:
+            assert error.code == "playbill.authoring.claim_type_succession_re_author_invalid"
+            replacement = error.repairs[0].replacement
+            assert isinstance(replacement, dict)
+            assert replacement["reason"] == "identity_mismatch"
+            matched = element_re.match(error.offending_element)
+            assert matched is not None, error.offending_element
+            member = payload.members[int(matched.group(1))]
+            assert isinstance(member, ClaimTypeSuccessionMemberV1)
+            offending = member.dependents[int(matched.group(2))]
+            # Exactly what a machine does: write the repair back under the key
+            # the refusal named, at the value it carried.
+            pointers[offending.identity.name] = str(replacement["successor_claim_id"])
+            continue
+        break
+    else:  # pragma: no cover - the loop below asserts the repair converges
+        raise AssertionError("the re_author repair did not converge")
+
+    assert pointers == {claims["wi-42"]: claims["wi-42"], claims["wi-2"]: claims["wi-2"]}
+    changed = dict(lowered.changed_members)
+    for claim_id in claims.values():
+        assert claim_path(claim_id) in changed
 
 
 def test_two_successions_of_one_type_cannot_share_a_change_set(tmp_path: Path) -> None:

@@ -1934,93 +1934,83 @@ def _resolve_re_author_siblings(
         for position, dependent in enumerate(member.dependents):
             if dependent.disposition != "re_author":
                 continue
-            element = f"members[{index}].dependents[{position}]"
-            named: object = dependent.successor_member
-            if dependent.successor_member is not None:
-                sibling_index: int | None = dependent.successor_member
-                if not 0 <= dependent.successor_member < len(members):
-                    sibling_index = None
-            else:
-                named = dependent.successor_claim_id
-                sibling_index = sibling_member_by_claim_id.get(str(dependent.successor_claim_id))
+            element = f"members[{index}].dependents[{position}].successor_claim_id"
+            named = str(dependent.successor_claim_id)
+            # Every repair names the key the payload actually carries, at the
+            # value that key may hold: a re-authoring sibling revises the
+            # dependent itself, so the only admissible spelling is the
+            # dependent's own Claim ID.
+            required = dependent.identity.name
+            sibling_index = sibling_member_by_claim_id.get(named)
             if sibling_index is None:
                 _refuse(
                     "playbill.authoring.claim_type_succession_re_author_invalid",
-                    f"{element}.successor_member",
-                    "The re-authoring sibling Claim member this dependent names is not "
-                    "in this change set.",
+                    element,
+                    "No Claim member of this change set revises the Claim this dependent "
+                    "is re-authored as.",
                     repair_kind="replace_re_author_member",
                     repair_description=(
-                        "Name a Claim member of this same change set, by index or by the "
-                        "Claim ID it revises."
+                        f"Name {required} here, and author the sibling Claim member that "
+                        "revises it."
                     ),
                     replacement={
                         "member": index,
-                        "successor_member": named,
+                        "named_claim_id": named,
                         "reason": "member_not_found",
+                        "successor_claim_id": required,
                     },
                 )
             sibling = members[sibling_index]
-            if not isinstance(sibling, ClaimAuthoringPayloadV1):
-                _refuse(
-                    "playbill.authoring.claim_type_succession_re_author_invalid",
-                    f"{element}.successor_member",
-                    "A dependent can only be re-authored as a Claim member.",
-                    repair_kind="replace_re_author_member",
-                    repair_description="Name the Claim member that says this dependent again.",
-                    replacement={
-                        "member": index,
-                        "successor_member": sibling_index,
-                        "reason": "not_a_claim_member",
-                    },
-                )
+            # Only Claim members are in the map above, so the sibling is one.
+            assert isinstance(sibling, ClaimAuthoringPayloadV1)
             if sibling.statement.predicate != member.predicate:
                 _refuse(
                     "playbill.authoring.claim_type_succession_re_author_invalid",
-                    f"{element}.successor_member",
+                    element,
                     "A re-authoring sibling Claim member lowers under the succeeded "
                     "ClaimType, not another one.",
                     repair_kind="replace_re_author_member",
                     repair_description=(f"Author the sibling Claim under {member.predicate!r}."),
                     replacement={
-                        "member": index,
-                        "successor_member": sibling_index,
-                        "reason": "predicate_mismatch",
-                        "predicate": sibling.statement.predicate,
                         "expected_predicate": member.predicate,
+                        "member": index,
+                        "named_claim_id": named,
+                        "predicate": sibling.statement.predicate,
+                        "reason": "predicate_mismatch",
+                        "sibling_member": sibling_index,
+                        "successor_claim_id": required,
                     },
                 )
-            claim_id = claim_identities[authoring_member_identity(sibling)]
-            if claim_id != dependent.identity.name:
+            if named != required:
                 _refuse(
                     "playbill.authoring.claim_type_succession_re_author_invalid",
-                    f"{element}.successor_member",
+                    element,
                     "A re-authored dependent keeps its own Claim identity.",
                     repair_kind="replace_re_author_member",
-                    repair_description=(
-                        f"Have the sibling Claim member revise {dependent.identity.name}."
-                    ),
+                    repair_description=f"Name {required}, the Claim this dependent re-authors.",
                     replacement={
                         "member": index,
-                        "successor_member": sibling_index,
+                        "named_claim_id": named,
                         "reason": "identity_mismatch",
-                        "claim_id": claim_id,
-                        "expected_claim_id": dependent.identity.name,
+                        "sibling_member": sibling_index,
+                        "successor_claim_id": required,
                     },
                 )
             claimed_by = owner.get(sibling_index)
             if claimed_by is not None:
                 _refuse(
                     "playbill.authoring.claim_type_succession_re_author_invalid",
-                    f"{element}.successor_member",
+                    element,
                     f"Members {claimed_by} and {index} both re-author member {sibling_index}.",
                     repair_kind="replace_re_author_member",
                     repair_description="Re-author one Claim member from one succession.",
                     replacement={
-                        "member": index,
-                        "successor_member": sibling_index,
-                        "reason": "member_already_re_authored",
                         "claimed_by": claimed_by,
+                        "member": index,
+                        "named_claim_id": named,
+                        "reason": "member_already_re_authored",
+                        "sibling_member": sibling_index,
+                        "successor_claim_id": required,
                     },
                 )
             owner[sibling_index] = index
@@ -2149,16 +2139,17 @@ def _stage_claim_type_succession(
         except AuthoringLoweringError as error:
             _refuse(
                 "playbill.authoring.claim_type_succession_re_author_refused",
-                f"dependents[{position}].successor_member",
+                f"dependents[{position}].successor_claim_id",
                 error.message,
                 repair_kind="edit_re_author_member",
                 repair_description=(
                     "Repair the sibling Claim member this dependent is re-authored as."
                 ),
                 replacement={
-                    "successor_member": sibling_index,
                     "code": error.code,
                     "offending_element": (f"members[{sibling_index}].{error.offending_element}"),
+                    "sibling_member": sibling_index,
+                    "successor_claim_id": dependent.identity.name,
                 },
             )
         sibling_path = claim_path(claim_id)

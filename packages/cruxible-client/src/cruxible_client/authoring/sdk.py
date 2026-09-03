@@ -566,23 +566,16 @@ def retire(
 def re_author(
     claim: str | ClaimRef,
     *,
-    with_: str | ClaimRef | int | None = None,
+    with_: str | ClaimRef | None = None,
 ) -> ClaimTypeSuccessionDependentV1:
     """Say this dependent again, under the successor, as a sibling Claim member.
 
     The sibling revises this same Claim -- a re-authoring keeps the identity,
-    the slot and the exact predecessor digest of what it re-states -- so `with_`
-    is only ever an explicit spelling of what `claim` already says. Pass an
-    `int` to name the sibling by its index in the compiled member list instead;
-    the SDK sorts members by identity, so prefer the Claim ID.
+    the subject, the predicate and the exact predecessor digest of what it
+    re-states -- so `with_` is only ever an explicit spelling of what `claim`
+    already says, and `re_author(claim)` alone is complete.
     """
 
-    if isinstance(with_, int):
-        return ClaimTypeSuccessionDependentV1(
-            identity=_claim_identity(claim),
-            disposition="re_author",
-            successor_member=with_,
-        )
     return ClaimTypeSuccessionDependentV1(
         identity=_claim_identity(claim),
         disposition="re_author",

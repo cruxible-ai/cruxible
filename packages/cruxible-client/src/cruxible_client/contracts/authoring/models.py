@@ -917,11 +917,13 @@ class ClaimTypeSuccessionDependentV1(_StrictAuthoringModel):
 
     `re_author` is the disposition only a change set can offer: the dependent's
     successor is a sibling Claim member of the same intent, named by
-    `successor_member` (its index in `members`) or by `successor_claim_id` (the
-    Claim ID it revises). That sibling is lowered under the successor type, so
-    it may say under the new vocabulary what the predecessor could not say --
-    and it keeps the dependent's identity, slot and exact predecessor digest,
-    which is what makes it a re-authoring of that Claim rather than a new one.
+    `successor_claim_id` -- the Claim ID that member revises, which is this
+    dependent's own. That sibling is lowered under the successor type, so it may
+    say under the new vocabulary what the predecessor could not say -- and it
+    keeps the dependent's identity, its subject and its predicate, and its exact
+    predecessor digest, which is what makes it a re-authoring of that Claim
+    rather than a new one. There is no second spelling by member index: an index
+    could only ever name the member this Claim ID already names.
 
     The deprecated `invalidation` spelling the standalone route still tolerates
     is not admitted here: it is `retire` under another name, and a surface born
@@ -933,7 +935,6 @@ class ClaimTypeSuccessionDependentV1(_StrictAuthoringModel):
     )
     identity: ArtifactIdentity
     disposition: ClaimTypeSuccessionDisposition
-    successor_member: int | None = Field(default=None, ge=0)
     successor_claim_id: str | None = None
     claim_retirement_reason: ClaimRetirementReason | None = None
     claim_effective_until: datetime | None = None
@@ -956,14 +957,13 @@ class ClaimTypeSuccessionDependentV1(_StrictAuthoringModel):
 
     @model_validator(mode="after")
     def _disposition_shape(self) -> "ClaimTypeSuccessionDependentV1":
-        named = (self.successor_member is not None) + (self.successor_claim_id is not None)
         if self.disposition == "re_author":
-            if named != 1:
+            if self.successor_claim_id is None:
                 raise ValueError(
-                    "a re_author dependent names its sibling member exactly once, by "
-                    "successor_member or successor_claim_id"
+                    "a re_author dependent names the sibling Claim member that says it "
+                    "again, as successor_claim_id"
                 )
-        elif named:
+        elif self.successor_claim_id is not None:
             raise ValueError("only a re_author dependent names a sibling member")
         if self.disposition != "retire" and (
             self.claim_retirement_reason is not None or self.claim_effective_until is not None

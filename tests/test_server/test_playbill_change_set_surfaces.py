@@ -452,7 +452,8 @@ def test_the_succession_disposition_helpers_spell_one_vocabulary() -> None:
     said_again = re_author(claim_id)
     assert said_again.disposition == "re_author"
     assert said_again.successor_claim_id == claim_id
-    assert re_author(claim_id, with_=3).successor_member == 3
+    # `with_` is only ever an explicit spelling of what `claim` already says.
+    assert re_author(claim_id, with_=f"Claim:{claim_id}") == said_again
 
 
 def test_the_shipped_succession_example_round_trips_and_creates_one_intent(
