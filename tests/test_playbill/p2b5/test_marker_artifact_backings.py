@@ -24,9 +24,8 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_core.playbill.candidate_cards import CARD_RENDERER_DIGEST, render_candidate_card
+from cruxible_core.playbill.candidate_cards import render_candidate_card
 from cruxible_core.playbill.compiler import artifact_kinds_for_compiler
-from cruxible_core.service import playbill_projection_sync
 from cruxible_core.service.playbill_projection_sync import (
     service_read_playbill_block_sync_backing,
 )
@@ -52,7 +51,6 @@ def test_artifact_backing_accepts_only_governed_vocabulary_and_entity_kinds() ->
 
 def test_claim_type_block_sync_renders_current_artifact_with_compiler_pin(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     instance, owner = _instance_with_query(tmp_path)
     predicate = "sec.vuln.severity"
@@ -107,11 +105,6 @@ def test_claim_type_block_sync_renders_current_artifact_with_compiler_pin(
         tree,
         timestamp=TIMESTAMP,
         proposal_name="migrate-sync-vulnerability-severity-vocabulary",
-    )
-    monkeypatch.setattr(
-        playbill_projection_sync,
-        "candidate_card_renderer_digest_for_compiler",
-        lambda compiler: CARD_RENDERER_DIGEST,
     )
 
     result = service_read_playbill_block_sync_backing(
