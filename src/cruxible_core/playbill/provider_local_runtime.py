@@ -68,6 +68,9 @@ from cruxible_core.playbill.provider_runtime_contract import (
     ProviderRuntimeWireError,
     parse_provider_runtime_result,
 )
+from cruxible_core.runtime.execution_policy import (
+    enforce_customer_code_execution_supported,
+)
 
 _READ_CHUNK = 65_536
 
@@ -1028,8 +1031,16 @@ def _run_child(
     invocation_id: str,
     process_leases: ProviderProcessLeaseStore,
 ) -> _ProcessOutcome:
-    """Run one child; ``started``/``deadline``/elapsed duration read VALIDITY WINDOW."""
+    """Run one child; ``started``/``deadline``/elapsed duration read VALIDITY WINDOW.
 
+    This is the ONLY place the daemon spawns a Provider child, so the hosted
+    execution policy is enforced here: a shared hosted profile with no isolated
+    execution backend refuses before the process exists, not after. Served verbs
+    gate earlier so the operator sees a clean refusal; this gate is what makes
+    "no customer code runs" true of every path, including ones added later.
+    """
+
+    enforce_customer_code_execution_supported()
     started = time.monotonic()
     environment = {
         "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",

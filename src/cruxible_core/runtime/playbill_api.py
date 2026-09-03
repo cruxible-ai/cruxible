@@ -140,6 +140,9 @@ from cruxible_core.playbill.service.subjects import (
 )
 from cruxible_core.playbill.workspace_advertisement import workspace_git_object_format
 from cruxible_core.playbill.workspace_file import WorkspaceFileReadRefused
+from cruxible_core.runtime.execution_policy import (
+    enforce_customer_code_execution_supported,
+)
 from cruxible_core.runtime.permissions import check_permission, get_current_mode
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.actor_identity import local_operator_actor_context
@@ -487,6 +490,7 @@ def playbill_provider_seed(instance_id: str) -> contracts.PlaybillProviderSeedRe
     """Submit the compiler-owned workspace Provider as an ordinary proposal."""
 
     check_permission("cruxible_playbill_provider_seed", instance_id=instance_id)
+    enforce_customer_code_execution_supported()
     manager = get_playbill_manager()
     operator = manager.provider_runtime_operator()
     configured_seed = next(
@@ -1537,6 +1541,10 @@ def playbill_procedure_run(
     request: ProcedureRunRequestV2,
 ) -> contracts.PlaybillProcedureRunState:
     check_permission("cruxible_playbill_procedure_run", instance_id=instance_id)
+    # A shared hosted profile with no isolated execution backend cannot run
+    # customer code at all; refuse at the served boundary so the operator gets
+    # the mapped error instead of a node refusal buried in a run journal.
+    enforce_customer_code_execution_supported()
     actor = _actor_context()
     if actor is None:
         raise AuthenticationError("Procedure run requires an authenticated actor identity")
@@ -1591,6 +1599,7 @@ def playbill_line_run(
     request: LineRunRequestV1,
 ) -> contracts.PlaybillProcedureRunState:
     check_permission("cruxible_playbill_line_run", instance_id=instance_id)
+    enforce_customer_code_execution_supported()
     actor = _actor_context()
     if actor is None:
         raise AuthenticationError("Line run requires an authenticated actor identity")

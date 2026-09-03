@@ -40,6 +40,9 @@ from cruxible_core.playbill.seed_artifacts.workspace_file import (
     workspace_file_provider,
 )
 from cruxible_core.playbill.service.documents import service_activate_playbill_proposal
+from cruxible_core.runtime.execution_policy import (
+    enforce_customer_code_execution_supported,
+)
 from cruxible_core.runtime.provider_runtime import ProviderSeedMaterializationConfigV1
 
 
@@ -115,6 +118,13 @@ def _public_coordinate(instance: PlaybillInstance) -> contracts.PlaybillAccepted
 
 
 def _git(checkout: Path, *arguments: str) -> str:
+    """Read the checkout's identity with fixed, core-owned Git argv.
+
+    Exempt from the hosted execution policy: the argv is a constant here, the
+    subcommands (`rev-parse`, `status`) run no repository hooks, and nothing
+    from the checkout is executed.
+    """
+
     try:
         completed = subprocess.run(
             ("git", "-C", str(checkout), *arguments),
@@ -132,8 +142,14 @@ def _git(checkout: Path, *arguments: str) -> str:
 
 @lru_cache(maxsize=8)
 def _derive_local_seed_pins(checkout_text: str, provider_commit: str) -> dict[str, Any]:
-    """Build the pinned wheel and run the provider repository's authoritative derivation."""
+    """Build the pinned wheel and run the provider repository's authoritative derivation.
 
+    Both spawns run code from the adapter checkout rather than core-owned
+    argv -- a wheel build and the repository's own derivation script -- so they
+    are customer-code execution under the hosted policy and are gated here.
+    """
+
+    enforce_customer_code_execution_supported()
     checkout = Path(checkout_text)
     uv = shutil.which("uv")
     if uv is None:
@@ -215,6 +231,9 @@ def _validate_local_materialization(
         ) from exc
     if str(checkout) != configured.checkout_path or not checkout.is_dir():
         raise ProposalIntegrityError("workspace.file seed checkout is not one canonical directory")
+    # Gate before the cached derivation as well: a cache hit must not become a
+    # way past the policy in a process whose profile changed.
+    enforce_customer_code_execution_supported()
     if _git(checkout, "rev-parse", "HEAD") != WORKSPACE_FILE_SEED_MANIFEST.provider_commit:
         raise ProposalIntegrityError(
             "workspace.file seed checkout commit or lock differs from the pinned adapter"
