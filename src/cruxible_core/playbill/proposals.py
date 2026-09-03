@@ -3620,7 +3620,12 @@ class ProposalService:
         if outcome.candidate is not None and (is_rebase or outcome.tree != validated_tree):
             commit_oid, evaluated_tree_oid = self.transport.create_proposal_commit(
                 outcome.tree,
-                base_oid=current.git_oid,
+                # The evaluated commit extends the admitted one on the same ref, so
+                # the tree the actor submitted stays reachable instead of becoming an
+                # unreachable object on every card-bearing proposal. The coordinate
+                # the members were evaluated at is the evaluation record's, not the
+                # commit's parent.
+                base_oid=commit_oid,
                 target_ref=request.target_ref,
                 actor_id=actor.actor_id,
                 timestamp=timestamp,

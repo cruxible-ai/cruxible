@@ -175,6 +175,29 @@ def test_admission_names_the_commit_the_ref_holds_after_card_derivation(
     )
 
 
+def test_a_card_bearing_submission_leaves_no_unreachable_proposal_commit(
+    tmp_path: Path,
+) -> None:
+    """Evaluation re-commits on the same ref, so the admitted commit must stay reachable."""
+
+    instance, _owner = initialize_local(tmp_path)
+    body = instance.store_document_body("# Reachable\n".encode())
+    service = instance.proposal_service()
+
+    result = service.submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=_request(instance),
+        candidate_tree=_proposal_tree(instance, _shell(body.digest)),
+        timestamp=TIMESTAMP,
+    )
+
+    assert result.candidate is not None
+    assert result.evaluation.evaluated_tree_oid is not None
+    evaluated = instance.proposal_tree(result.evaluation.evaluated_tree_oid)
+    assert [path for path in evaluated if path.startswith("cards/")]
+    assert instance._ledger.unreachable_commits() == ()
+
+
 def test_refusal_keeps_evidence_but_creates_no_candidate(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
     missing = _shell("sha256:" + "ff" * 32)
