@@ -131,7 +131,10 @@ entries:
     return source
 
 
-def test_body_only_amend_emits_sync_repair_and_converges_green(tmp_path: Path) -> None:
+def test_body_only_amend_emits_sync_repair_and_converges_green(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     daemon_root = tmp_path / "daemon"
     workspace_root = tmp_path / "writer"
     daemon_root.mkdir()
@@ -242,6 +245,27 @@ def test_body_only_amend_emits_sync_repair_and_converges_green(tmp_path: Path) -
     assert stale.detail["stamped_body_digest"] == prepared.preparation.body_digest
     assert (
         stale.detail["terminal_body_digest"] == "sha256:" + hashlib.sha256(revised_body).hexdigest()
+    )
+
+    def corrupt_lineage(*_args: object, **_kwargs: object) -> None:
+        raise ProposalIntegrityError("accepted Claim block-sync lineage contains a cycle")
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            "cruxible_core.service.playbill_next.service_read_playbill_block_sync_backing",
+            corrupt_lineage,
+        )
+        degraded = observed_next()
+    (lineage_row,) = tuple(
+        item
+        for item in degraded.items
+        if item.detail.get("error_code") == "playbill.projection.backing_lineage_unreadable"
+    )
+    claim_id = prepared.preparation.stamp.backing[0].identity.name
+    assert lineage_row.reason == "projection_marker_invalid"
+    assert lineage_row.repair.command == (
+        "cruxible playbill block repin repo.work-items "
+        f"{prepared.preparation.stamp.block_id} --claim {claim_id}"
     )
 
     synced = sync_projection_blocks(
@@ -409,6 +433,8 @@ def test_two_writer_successor_sync_converges_without_mutating_accepted_state(
 
     assert [item.outcome for item in result.items] == ["skipped", "synced"]
     assert result.items[0].reason == "block_unstamped"
+    assert result.items[0].repair_commands == ()
+    assert "explicit --claim or --query" in result.items[0].detail["message"]
     assert result.has_refusals is False
     content = source.read_bytes()
     assert content.startswith(b"PREFIX\n") and content.endswith(b"SUFFIX\n")

@@ -580,11 +580,13 @@ def sync_projection_blocks(
                         block_id=block.block_id,
                         outcome="skipped",
                         reason="block_unstamped",
-                        repair_commands=(
-                            "cruxible playbill block repin "
-                            f"{shlex.quote(source_id)} {shlex.quote(block.block_id)}",
-                        ),
-                        detail={"message": "unstamped draft blocks are not synchronized"},
+                        repair_commands=(),
+                        detail={
+                            "message": (
+                                "unstamped draft blocks are not synchronized; the first "
+                                "stamp requires explicit --claim or --query backing refs"
+                            )
+                        },
                     )
                 )
                 continue
@@ -771,11 +773,12 @@ def sync_projection_blocks(
                     final = final_by_id[block_id]
                     assert final.stamp is not None
                     assert_projection_block_frame(
-                        replacement[final.opening_start : final.closing_end],
+                        replacement,
                         source_id=source_id,
                         block_id=block_id,
                         stamp=final.stamp,
                         body_digest=final.body_digest,
+                        allow_bootstrap=True,
                     )
             for index in changed_item_indexes:
                 items[index] = items[index].model_copy(
@@ -946,6 +949,7 @@ def repin_projection_block(
             block_id=block_id,
             stamp=stamp,
             body_digest=stamp.body_digest,
+            allow_bootstrap=True,
         )
     except ProjectionMarkerError as exc:
         raise ProjectionRepinError("replacement does not reproduce the declared block") from exc

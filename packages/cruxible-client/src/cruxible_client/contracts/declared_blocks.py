@@ -570,12 +570,17 @@ def assert_projection_block_frame(
     body_digest: str,
     start_byte: int | None = None,
     end_byte: int | None = None,
+    allow_bootstrap: bool = False,
 ) -> ParsedProjectionBlock:
     """Return the one exact block or refuse a malformed sanctioned write."""
 
     matches = tuple(
         block
-        for block in parse_projection_blocks(content, source_id=source_id)
+        for block in parse_projection_blocks(
+            content,
+            source_id=source_id,
+            allow_bootstrap=allow_bootstrap,
+        )
         if block.block_id == block_id
     )
     if len(matches) != 1:

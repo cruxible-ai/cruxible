@@ -682,6 +682,9 @@ def _repair_command(
             parts.extend([shlex.quote(source_id), shlex.quote(block_id)])
         else:
             return None
+        claim_id = values.get("claim_id")
+        if isinstance(claim_id, str) and claim_id:
+            parts.extend(["--claim", shlex.quote(claim_id)])
     elif operation == "playbill.block.sync":
         if values.get("all") is True:
             parts.append("--all")
@@ -3072,22 +3075,52 @@ def _projection_items(
                 and isinstance(marker.stamp.backing[0], ProjectionClaimBackingV1)
             )
             if syncable:
-                sync_read = service_read_playbill_block_sync_backing(
-                    instance,
-                    request=PlaybillBlockSyncReadRequestV1(stamp=marker.stamp),
-                )
-                if (
-                    sync_read.status in {"current", "successor"}
-                    and sync_read.body_digest != marker.stamp.body_digest
-                ):
-                    identity = marker.stamp.backing[0].identity.qualified
-                    if identity not in stale:
-                        stale.append(identity)
-                    assert sync_read.body_digest is not None
-                    body_digest_detail = {
-                        "stamped_body_digest": marker.stamp.body_digest,
-                        "terminal_body_digest": sync_read.body_digest,
-                    }
+                claim_backing = marker.stamp.backing[0]
+                try:
+                    sync_read = service_read_playbill_block_sync_backing(
+                        instance,
+                        request=PlaybillBlockSyncReadRequestV1(stamp=marker.stamp),
+                    )
+                except PlaybillError as exc:
+                    items.append(
+                        _item(
+                            severity="blocking",
+                            reason="projection_marker_invalid",
+                            subject_identity=target,
+                            related_identities=(claim_backing.identity.qualified,),
+                            detail={
+                                "source_id": source.source_id,
+                                "block_id": marker.stamp.block_id,
+                                "error_code": "playbill.projection.backing_lineage_unreadable",
+                                "message": str(exc),
+                            },
+                            repair=PlaybillNextRepairV1(
+                                operation="playbill.block.repin",
+                                target=target,
+                                required_change="repin_explicit_current_claim_backing",
+                                arguments={
+                                    "source_id": source.source_id,
+                                    "block_id": marker.stamp.block_id,
+                                    "claim_id": claim_backing.identity.name,
+                                },
+                            ),
+                        )
+                    )
+                    syncable = False
+                else:
+                    terminal_body_digest = sync_read.body_digest
+                    if (
+                        sync_read.status in {"current", "successor"}
+                        and terminal_body_digest is not None
+                        and terminal_body_digest != marker.stamp.body_digest
+                    ):
+                        identity = claim_backing.identity.qualified
+                        if identity not in stale:
+                            stale.append(identity)
+                        body_digest_detail = {
+                            "stamped_body_digest": marker.stamp.body_digest,
+                            "terminal_body_digest": terminal_body_digest,
+                        }
             identities = tuple(
                 sorted(
                     (backing.identity.qualified for backing in marker.stamp.backing),

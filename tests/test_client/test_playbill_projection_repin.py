@@ -203,6 +203,26 @@ def test_body_edit_is_preserved_and_repin_updates_only_its_commitment(tmp_path: 
     )
 
 
+def test_repin_of_a_stamped_block_preserves_an_adjacent_unstamped_draft(
+    tmp_path: Path,
+) -> None:
+    source = _workspace(tmp_path)
+    client = _RepinClient()
+    _repin(client, tmp_path, claims=("CLM-first",))
+    draft = b"<!-- playbill:block:draft -->\nagent-owned draft\n<!-- /playbill:block:draft -->\n"
+    source.write_bytes(source.read_bytes() + draft)
+
+    refreshed = _repin(client, tmp_path)
+
+    assert refreshed.backing[0].identity.name == "CLM-first"
+    assert source.read_bytes().endswith(draft)
+    blocks = parse_projection_blocks(
+        source.read_bytes(), source_id="corpus.runbook", allow_bootstrap=True
+    )
+    assert [block.block_id for block in blocks] == ["summary", "draft"]
+    assert blocks[1].stamp is None
+
+
 def test_whole_file_cas_preserves_concurrent_author_edits(tmp_path: Path) -> None:
     source = _workspace(tmp_path)
     client = _RepinClient()
