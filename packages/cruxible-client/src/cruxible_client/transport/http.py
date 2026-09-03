@@ -1195,7 +1195,7 @@ class CruxibleClient:
         line_identity_digest: str,
         *,
         occurrence_id: str | None,
-        evaluation_time: str,
+        evaluation_time: str | None = None,
     ) -> contracts.PlaybillProcedureRunState:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/lines/{line_identity_digest}/runs",

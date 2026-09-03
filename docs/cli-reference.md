@@ -436,13 +436,15 @@ journal records and `status` reconstructs the one-read run state from those reco
 ## playbill line
 
 ~~~text
-cruxible playbill line run LINE_IDENTITY_DIGEST --evaluation-time TS
-  [--occurrence-id ID] [--json]
+cruxible playbill line run LINE_IDENTITY_DIGEST
+  [--evaluation-time TS] [--occurrence-id ID] [--json]
 ~~~
 
-Triggers one daemon-derived due occurrence. The accepted Line's governed
-mandate authorizes execution; without one the operation returns a typed
-no-mandate refusal.
+Triggers one daemon-derived due occurrence. The occurrence's evaluation
+instant is the daemon's; `--evaluation-time` only asserts the instant the
+caller believes it is running at, and an assertion outside the mandate skew
+bound is refused. The accepted Line's governed mandate authorizes execution;
+without one the operation returns a typed no-mandate refusal.
 
 ## playbill predictions
 

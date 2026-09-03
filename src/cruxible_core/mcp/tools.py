@@ -643,7 +643,7 @@ def register_tools(
     def cruxible_playbill_line_run(
         instance_id: str,
         line_identity_digest: str,
-        evaluation_time: str,
+        evaluation_time: str | None = None,
         occurrence_id: str | None = None,
     ) -> contracts.PlaybillProcedureRunState:
         """Trigger one due occurrence of an accepted Line."""

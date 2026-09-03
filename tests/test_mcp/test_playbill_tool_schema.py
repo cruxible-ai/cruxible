@@ -52,10 +52,11 @@ def test_line_run_schema_exposes_only_daemon_occurrence_assertions() -> None:
         "evaluation_time",
         "occurrence_id",
     }
+    # The evaluation instant is an assertion the daemon checks, never the
+    # occurrence's own instant, so it is optional on every surface.
     assert set(schema["required"]) == {
         "instance_id",
         "line_identity_digest",
-        "evaluation_time",
     }
 
 

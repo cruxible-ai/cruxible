@@ -111,6 +111,7 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperationV1] = {
     "projection_dirty": RepairOperationV1(operation="playbill.block.sync", arguments={"all": True}),
     "occurrence_not_due": RepairOperationV1(operation="playbill.line.run"),
     "occurrence_id_mismatch": RepairOperationV1(operation="playbill.line.run"),
+    "evaluation_instant_skewed": RepairOperationV1(operation="playbill.line.run"),
     "line_identity_mismatch": RepairOperationV1(operation="playbill.line.run"),
     "document_modified": RepairOperationV1(operation="playbill.document.propose"),
     "workspace_binding_invalid": RepairOperationV1(

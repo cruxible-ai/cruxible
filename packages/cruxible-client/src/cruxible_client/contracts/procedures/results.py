@@ -31,6 +31,7 @@ ProcedureAdmissionRefusalCodeV1: TypeAlias = Literal[
     "provider_explicit_implementation_required",
     "provider_replay_receipt_required",
     "exhaust_binding_carrier_required",
+    "evaluation_instant_skewed",
     "line_identity_mismatch",
     "line_not_accepted",
     "line_closure_incomplete",

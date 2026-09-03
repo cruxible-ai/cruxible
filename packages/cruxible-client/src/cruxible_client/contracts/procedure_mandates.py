@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
-from typing import Literal
+from datetime import datetime, timedelta
+from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, field_serializer, field_validator, model_validator
 
@@ -42,6 +42,17 @@ class _StrictProcedureMandateModel(BaseModel):
 
 def _namespace_key(value: str) -> bytes:
     return value.encode("utf-8")
+
+
+PROCEDURE_MANDATE_CLOCK_SKEW: Final = timedelta(minutes=5)
+"""Tolerance between a caller's asserted instant and the daemon clock.
+
+A ProcedureMandate's ``valid_from``/``expires_at`` are VALIDITY WINDOW bounds
+and the instant tested against them is an EVALUATION INSTANT. A served caller
+may assert that instant, so the assertion is admitted only within this bound:
+without it a caller could enter a mandate window, or mint a scheduled
+occurrence, by claiming a time rather than by waiting for one.
+"""
 
 
 class ProcedureMandateV1(_StrictProcedureMandateModel):

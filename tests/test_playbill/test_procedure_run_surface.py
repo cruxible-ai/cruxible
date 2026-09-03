@@ -123,6 +123,9 @@ from tests.test_playbill.test_procedure_owned_contracts import (
 )
 
 READ_TIME = datetime(2026, 8, 24, 16, 0, tzinfo=UTC)
+# The Line route derives its EVALUATION INSTANT from the daemon clock, so a
+# fixture that asserts a fixed instant has to supply the daemon one too.
+_DAEMON_CLOCK = procedure_run_service._DeterministicClock(READ_TIME)  # noqa: SLF001
 
 
 def _accepted_line(line) -> AcceptedLineSpecV1:  # type: ignore[no-untyped-def]
@@ -145,6 +148,7 @@ def test_line_run_request_requires_one_route_and_body_identity() -> None:
             ),
             actor_context=SimpleNamespace(),  # type: ignore[arg-type]
             caller_rung=0,
+            daemon_clock=_DAEMON_CLOCK,
         )
 
 
@@ -183,6 +187,7 @@ def test_line_without_current_exact_mandate_refuses_typed(
         ),
         actor_context=_actor(instance),
         caller_rung=3,
+        daemon_clock=_DAEMON_CLOCK,
     )
 
     assert result.status == "admission_refused"
@@ -218,6 +223,7 @@ def test_line_closure_loss_refuses_before_mandate_or_occurrence(
         ),
         actor_context=_actor(instance),
         caller_rung=3,
+        daemon_clock=_DAEMON_CLOCK,
     )
 
     assert result.status == "admission_refused"
@@ -451,6 +457,47 @@ def test_a_cadence_line_admits_two_occurrences_one_period_apart_over_a_real_tree
     assert next_due == READ_TIME + timedelta(hours=1)
     assert awaited is None
     assert second != first
+
+
+def test_a_caller_cannot_walk_the_cadence_by_advancing_the_claimed_instant(
+    tmp_path: Path,
+) -> None:
+    """The reviewer's probe: five hourly occurrences in zero wall time."""
+
+    instance, _owner = initialize_local(tmp_path)
+    line, accepted, _interfaces = _line(
+        trigger=CadenceTriggerPolicyV1(
+            cadence_policy_digest=_line_digest("hourly"),
+            interval_seconds=3600,
+        )
+    )
+    accepted_line = _accepted_line(line)
+    digest = line_identity_digest(line.identity)
+
+    with pytest.raises(procedure_run_service.LineRunEvaluationInstantSkewed) as caught:
+        procedure_run_service.service_run_playbill_line(
+            instance,
+            path_identity_digest=digest,
+            request=LineRunRequestV1(
+                line_identity_digest=digest,
+                evaluation_time=READ_TIME + timedelta(hours=5),
+            ),
+            actor_context=_actor(instance),
+            caller_rung=3,
+            daemon_clock=_DAEMON_CLOCK,
+        )
+    assert "daemon clock skew bound" in str(caught.value)
+    assert caught.value.error_code == "evaluation_instant_skewed"
+
+    # An assertion inside the bound is admitted, and the instant the occurrence
+    # is derived from is the daemon's, not the caller's.
+    inside = procedure_run_service._line_occurrence(  # noqa: SLF001
+        accepted_line,
+        coordinate=instance.accepted_coordinate(),
+        evaluation_time=READ_TIME,
+        prior=(),
+    )
+    assert inside[0].startswith("sha256:")
 
 
 def test_a_window_line_becomes_due_across_its_boundary_over_a_real_tree(
@@ -1790,6 +1837,7 @@ def test_a_replayed_occurrence_refuses_instead_of_running_twice(
         ),
         actor_context=_actor(instance),
         caller_rung=3,
+        daemon_clock=_DAEMON_CLOCK,
     )
 
     assert result.status == "admission_refused"
@@ -1817,6 +1865,7 @@ def test_an_asserted_occurrence_the_daemon_did_not_derive_refuses(
         ),
         actor_context=_actor(instance),
         caller_rung=3,
+        daemon_clock=_DAEMON_CLOCK,
     )
 
     assert result.status == "admission_refused"
@@ -1842,6 +1891,7 @@ def test_an_unaccepted_line_identity_refuses_before_any_authority_read(
             ),
             actor_context=_actor(instance),
             caller_rung=3,
+            daemon_clock=_DAEMON_CLOCK,
         )
 
     assert caught.value.code == "playbill.line.run.line_not_accepted"
@@ -1896,6 +1946,7 @@ def test_a_degraded_provider_lane_refuses_typed_without_granting_authority(
         ),
         actor_context=_actor(instance),
         caller_rung=3,
+        daemon_clock=_DAEMON_CLOCK,
     )
 
     assert result.status == "node_refused"

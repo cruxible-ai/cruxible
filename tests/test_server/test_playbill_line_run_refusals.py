@@ -13,15 +13,15 @@ from cruxible_client.contracts.repairs import (
 
 _ABSENT = "sha256:" + "c" * 64
 _OTHER = "sha256:" + "d" * 64
-_EVALUATION_TIME = "2026-08-21T12:00:00Z"
 
 
 def _body(digest: str) -> dict[str, object]:
+    # No asserted instant: the occurrence's EVALUATION INSTANT is the daemon's.
     return {
         "tag": "playbill-line-run-request-v1",
         "line_identity_digest": digest,
         "occurrence_id": None,
-        "evaluation_time": _EVALUATION_TIME,
+        "evaluation_time": None,
     }
 
 
@@ -75,7 +75,7 @@ def test_the_sibling_procedure_run_route_refuses_typed_in_the_same_family(
         f"/api/v1/{instance_id}/playbill/procedures/no-such-procedure/runs",
         json={
             "tag": "playbill-procedure-run-request-v2",
-            "evaluation_time": _EVALUATION_TIME,
+            "evaluation_time": None,
             "input": {},
         },
     )
@@ -84,3 +84,28 @@ def test_the_sibling_procedure_run_route_refuses_typed_in_the_same_family(
     payload = response.json()
     assert payload["error_type"] == "ProcedureNotFound"
     assert payload["message"] != "internal server error"
+
+
+def test_an_instant_outside_the_daemon_skew_bound_refuses_typed_over_http(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    """A due proof the caller controls is not a rate: the bound is served."""
+
+    client, instance_id, _reviewer_key = playbill_http
+
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/lines/{_ABSENT}/runs",
+        json={
+            "tag": "playbill-line-run-request-v1",
+            "line_identity_digest": _ABSENT,
+            "occurrence_id": None,
+            "evaluation_time": "2099-01-01T00:00:00Z",
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    payload = response.json()
+    assert payload["error_code"] == "evaluation_instant_skewed"
+    assert payload["repair"] == RUNNABLE_REFUSAL_REPAIRS["evaluation_instant_skewed"].model_dump(
+        mode="json"
+    )

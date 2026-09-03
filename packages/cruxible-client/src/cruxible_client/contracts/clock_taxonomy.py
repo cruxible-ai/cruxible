@@ -180,6 +180,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("JournalWriterStateV1", "generation"): "SETTLEMENT ORDER",
     ("LineEgressReadingV1", "sequence"): "SETTLEMENT ORDER",
     ("LineRunRequestV1", "evaluation_time"): "EVALUATION INSTANT",
+    ("CadenceTriggerPolicyV1", "interval_seconds"): "VALIDITY WINDOW",
+    ("WindowCloseTriggerPolicyV1", "window_seconds"): "VALIDITY WINDOW",
     ("MandateInvocationV1", "evaluation_time"): "EVALUATION INSTANT",
     ("MandateRuntimeCapV1", "valid_until"): "VALIDITY WINDOW",
     ("MemberLawEvaluationV2", "evaluation_time"): "EVALUATION INSTANT",

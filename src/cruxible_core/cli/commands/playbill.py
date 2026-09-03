@@ -3169,7 +3169,11 @@ def procedure_group() -> None:
 
 @procedure_group.command("readiness")
 @click.argument("name")
-@click.option("--evaluation-time", required=True, help="Explicit ISO-8601 evaluation time.")
+@click.option(
+    "--evaluation-time",
+    default=None,
+    help="Assert the ISO-8601 instant this run believes it is at (daemon-clock checked).",
+)
 @json_option
 @handle_errors
 def procedure_readiness(name: str, evaluation_time: str, output_json: bool) -> None:
@@ -3276,7 +3280,7 @@ def line_group() -> None:
 def run_line(
     line_identity_digest: str,
     occurrence_id: str | None,
-    evaluation_time: str,
+    evaluation_time: str | None,
     output_json: bool,
 ) -> None:
     request = LineRunRequestV1.model_validate(
@@ -3291,7 +3295,9 @@ def run_line(
             instance_id,
             line_identity_digest,
             occurrence_id=request.occurrence_id,
-            evaluation_time=request.evaluation_time.isoformat(),
+            evaluation_time=(
+                None if request.evaluation_time is None else request.evaluation_time.isoformat()
+            ),
         ),
         command_name="playbill line run",
     )

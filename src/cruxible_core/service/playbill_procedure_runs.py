@@ -22,6 +22,7 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.captures import CanonicalDurationV1
 from cruxible_client.contracts.errors import PlaybillError, PlaybillExecutionError
 from cruxible_client.contracts.procedure_mandates import (
+    PROCEDURE_MANDATE_CLOCK_SKEW,
     ProcedureMandateV1,
     parse_procedure_mandate,
     procedure_mandate_digest,
@@ -178,6 +179,7 @@ from cruxible_core.playbill.procedures.execution import (
     ProcedureRunReceiptV1,
     ProcedureRuntimePolicyAbsent,
     ProviderRuntimeInvokerProtocol,
+    SystemProcedureClock,
     bind_line_admission_runtime_policy,
     prepare_direct_procedure_run,
     procedure_admission_digest,
@@ -293,6 +295,11 @@ class LineRunNotAccepted(ProcedureSurfaceError):
 class LineRunIdentityMismatch(ProcedureSurfaceError):
     code = "playbill.line.run.line_identity_mismatch"
     error_code = "line_identity_mismatch"
+
+
+class LineRunEvaluationInstantSkewed(ProcedureSurfaceError):
+    code = "playbill.line.run.evaluation_instant_skewed"
+    error_code = "evaluation_instant_skewed"
 
 
 class ProcedureNextOperationV1(_StrictProcedureSurfaceModel):
@@ -423,7 +430,14 @@ class LineRunRequestV1(_StrictProcedureSurfaceModel):
     tag: Literal["playbill-line-run-request-v1"] = "playbill-line-run-request-v1"
     line_identity_digest: str
     occurrence_id: str | None = None
-    evaluation_time: datetime = Field(description="Reads EVALUATION INSTANT.")
+    evaluation_time: datetime | None = Field(
+        default=None,
+        description=(
+            "Reads EVALUATION INSTANT. An assertion only: the occurrence's instant "
+            "is the daemon clock's, and an assertion outside the ProcedureMandate "
+            "skew bound refuses."
+        ),
+    )
 
     @field_validator("line_identity_digest")
     @classmethod
@@ -433,8 +447,8 @@ class LineRunRequestV1(_StrictProcedureSurfaceModel):
 
     @field_validator("evaluation_time")
     @classmethod
-    def _evaluation_time(cls, value: datetime) -> datetime:
-        return ensure_utc(value)
+    def _evaluation_time(cls, value: datetime | None) -> datetime | None:
+        return None if value is None else ensure_utc(value)
 
 
 class ProcedureRunOutcomeV1(_StrictProcedureSurfaceModel):
@@ -2185,12 +2199,30 @@ def service_run_playbill_line(
     actor_context: GovernedActorContext,
     caller_rung: int,
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None = None,
+    daemon_clock: ProcedureClockProtocol | None = None,
 ) -> ProcedureRunStateV2:
-    """Derive, admit, and execute one occurrence of an accepted Line."""
+    """Derive, admit, and execute one occurrence of an accepted Line.
+
+    The occurrence's EVALUATION INSTANT is the daemon's, never the caller's: a
+    schedule whose due proof is an instant the caller chooses is not a rate at
+    all, because advancing the claimed instant mints a fresh occurrence in zero
+    wall time. A request may still assert the instant it believes it is running
+    at, and that assertion is checked against the daemon clock within the
+    ProcedureMandate skew bound so a mandate validity window cannot be entered
+    by claiming a time.
+    """
 
     if request.line_identity_digest != path_identity_digest:
         raise LineRunIdentityMismatch(
             f"{LineRunIdentityMismatch.code}: route and request Line identities differ"
+        )
+    clock = daemon_clock or SystemProcedureClock()
+    evaluation_time = ensure_utc(clock.now())
+    asserted = request.evaluation_time
+    if asserted is not None and abs(asserted - evaluation_time) > PROCEDURE_MANDATE_CLOCK_SKEW:
+        raise LineRunEvaluationInstantSkewed(
+            f"{LineRunEvaluationInstantSkewed.code}: asserted evaluation instant is outside the "
+            f"{int(PROCEDURE_MANDATE_CLOCK_SKEW.total_seconds())}s daemon clock skew bound"
         )
     coordinate = instance.accepted_coordinate()
     head_at_admission = coordinate
@@ -2210,7 +2242,7 @@ def service_run_playbill_line(
             accepted_line,
             coordinate=coordinate,
             head_at_admission=head_at_admission,
-            evaluation_time=request.evaluation_time,
+            evaluation_time=evaluation_time,
             code="line_closure_incomplete",
             message="The accepted Line binds another Procedure artifact.",
             details={
@@ -2225,7 +2257,7 @@ def service_run_playbill_line(
             accepted_line,
             coordinate=coordinate,
             head_at_admission=head_at_admission,
-            evaluation_time=request.evaluation_time,
+            evaluation_time=evaluation_time,
             code="line_closure_incomplete",
             message=str(exc),
             details={"repair": "Restore or succeed the missing accepted closure member."},
@@ -2252,7 +2284,7 @@ def service_run_playbill_line(
             accepted_line,
             coordinate=coordinate,
             head_at_admission=head_at_admission,
-            evaluation_time=request.evaluation_time,
+            evaluation_time=evaluation_time,
             code="artifact_binding_mismatch",
             message="The accepted Line no longer reproduces its complete Procedure closure.",
             details={
@@ -2263,7 +2295,7 @@ def service_run_playbill_line(
     mandates = _accepted_line_mandates(
         tree,
         accepted,
-        evaluation_time=request.evaluation_time,
+        evaluation_time=evaluation_time,
     )
     if not mandates:
         return _line_refusal_state(
@@ -2271,7 +2303,7 @@ def service_run_playbill_line(
             accepted_line,
             coordinate=coordinate,
             head_at_admission=head_at_admission,
-            evaluation_time=request.evaluation_time,
+            evaluation_time=evaluation_time,
             code="line_mandate_required",
             message="The Line's bound Procedure has no current accepted ProcedureMandate.",
             details={
@@ -2282,7 +2314,7 @@ def service_run_playbill_line(
     occurrence_id, next_due, awaited = _line_occurrence(
         accepted_line,
         coordinate=coordinate,
-        evaluation_time=request.evaluation_time,
+        evaluation_time=evaluation_time,
         prior=prior,
     )
     if request.occurrence_id is not None and request.occurrence_id != occurrence_id:
@@ -2291,18 +2323,18 @@ def service_run_playbill_line(
             accepted_line,
             coordinate=coordinate,
             head_at_admission=head_at_admission,
-            evaluation_time=request.evaluation_time,
+            evaluation_time=evaluation_time,
             code="occurrence_id_mismatch",
             message="The asserted occurrence id differs from the daemon-derived occurrence.",
             details={"derived_occurrence_id": occurrence_id, "repair": "Retry with this id."},
         )
-    if next_due is not None and request.evaluation_time < next_due:
+    if next_due is not None and evaluation_time < next_due:
         return _line_refusal_state(
             accepted,
             accepted_line,
             coordinate=coordinate,
             head_at_admission=head_at_admission,
-            evaluation_time=request.evaluation_time,
+            evaluation_time=evaluation_time,
             code="occurrence_not_due",
             message="The next scheduled Line occurrence is not due.",
             details={
@@ -2316,7 +2348,7 @@ def service_run_playbill_line(
             accepted_line,
             coordinate=coordinate,
             head_at_admission=head_at_admission,
-            evaluation_time=request.evaluation_time,
+            evaluation_time=evaluation_time,
             code="occurrence_not_due",
             message="The Line is waiting for a newer capture landing.",
             details={"awaited_source": awaited, "repair": "Retry after the awaited source lands."},
@@ -2327,7 +2359,7 @@ def service_run_playbill_line(
             accepted_line,
             coordinate=coordinate,
             head_at_admission=head_at_admission,
-            evaluation_time=request.evaluation_time,
+            evaluation_time=evaluation_time,
             code="occurrence_already_admitted",
             message="This daemon-derived Line occurrence is already admitted.",
             details={"occurrence_id": occurrence_id, "repair": "Read the existing run state."},
@@ -2338,7 +2370,7 @@ def service_run_playbill_line(
             accepted_line,
             coordinate=coordinate,
             head_at_admission=head_at_admission,
-            evaluation_time=request.evaluation_time,
+            evaluation_time=evaluation_time,
             code="exhaust_binding_carrier_required",
             message="This Line requires an opaque Exhaust access-binding carrier.",
             details={"repair": "Trigger through a carrier-aware Line scheduler."},
@@ -2349,7 +2381,7 @@ def service_run_playbill_line(
             accepted_line,
             coordinate=coordinate,
             head_at_admission=head_at_admission,
-            evaluation_time=request.evaluation_time,
+            evaluation_time=evaluation_time,
             code="artifact_binding_mismatch",
             message="Served Line execution requires an accepted acquisition-policy pin.",
             details={"repair": "Accept a Line successor with an acquisition policy."},
@@ -2376,7 +2408,7 @@ def service_run_playbill_line(
             bound_coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
             head_at_admission=PlaybillAcceptedCoordinate.from_internal(head_at_admission),
             lane="current",
-            evaluation_time=request.evaluation_time,
+            evaluation_time=evaluation_time,
             status="node_refused",
             pending_inputs=(),
             outcomes=(),
@@ -2402,7 +2434,7 @@ def service_run_playbill_line(
         line_identity=accepted_line.line.identity,
         line_spec_digest=accepted_line.artifact_digest,
         occurrence_id=occurrence_id,
-        occurrence_evaluation_time=request.evaluation_time,
+        occurrence_evaluation_time=evaluation_time,
         acquisition_policy_format="playbill-source-acquisition-policy-v1",
         acquisition_policy_digest=accepted_line.line.acquisition_policy.artifact_digest,
         selection_decision=selection,
@@ -2414,7 +2446,7 @@ def service_run_playbill_line(
         instance,
         accepted,
         coordinate=coordinate,
-        evaluation_time=request.evaluation_time,
+        evaluation_time=evaluation_time,
         slot_pins=slot_pins,
     )
     full_pins = close_procedure_pin_slots(
@@ -2487,7 +2519,7 @@ def service_run_playbill_line(
         "exhaust_inputs": (),
         "budget": budget,
         "hard_caps": accepted.procedure.definition.hard_caps,
-        "actor_context": actor_context.model_copy(update={"timestamp": request.evaluation_time}),
+        "actor_context": actor_context.model_copy(update={"timestamp": evaluation_time}),
         "invocation_origin": "line",
         "journal_stream": procedure_line_journal_stream(instance.descriptor.instance_id),
         "journal_partition_id": procedure_line_partition(accepted_line.line.identity),
@@ -2501,14 +2533,14 @@ def service_run_playbill_line(
         "calibration_coordinate_digest": calibration_coordinate_digest,
         "taint_labels": (),
         "epsilon_member": False,
-        "admitted_at": request.evaluation_time,
+        "admitted_at": evaluation_time,
         "admission_binding_digest": "sha256:" + "0" * 64,
         "bound_coordinate": accepted_coordinate,
         "head_at_admission": AcceptedCoordinate.from_internal(head_at_admission),
         "lane": "current",
         "semantic_replay_key_digest": "sha256:" + "0" * 64,
         "line_identity": accepted_line.line.identity,
-        "occurrence_evaluation_time": request.evaluation_time,
+        "occurrence_evaluation_time": evaluation_time,
         "resolved_provider_bindings": bindings,
         "selection_decision": selection,
         "selection_decision_digest": selection_digest,
@@ -2529,7 +2561,7 @@ def service_run_playbill_line(
                 occurrence_id=occurrence_id,
                 attempt=1,
                 admission_binding_digest=admission_digest,
-                occurrence_evaluation_time=request.evaluation_time,
+                occurrence_evaluation_time=evaluation_time,
             ),
         }
     )
@@ -2544,7 +2576,7 @@ def service_run_playbill_line(
             accepted_line,
             coordinate=coordinate,
             head_at_admission=head_at_admission,
-            evaluation_time=request.evaluation_time,
+            evaluation_time=evaluation_time,
             code=prepared_admission.code,
             message=prepared_admission.message,
             details=prepared_admission.details,
@@ -2568,7 +2600,7 @@ def service_run_playbill_line(
         taint_labels=(),
         mandate_grants={},
         calibration_caps=(),
-        evaluation_time=request.evaluation_time,
+        evaluation_time=evaluation_time,
         procedure_definition_digest=accepted.procedure.definition_digest,
         line_spec_digest=accepted_line.artifact_digest,
         sensitivity_policy_digest=sensitivity_policy_digest,
@@ -2604,7 +2636,7 @@ def service_run_playbill_line(
         ),
         slot_pins=slot_pins,
         effective_rung=effective_rung,
-        clock=_DeterministicClock(request.evaluation_time),
+        clock=_DeterministicClock(evaluation_time),
     )
     return _state_from_records(
         instance,
