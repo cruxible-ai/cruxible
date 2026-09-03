@@ -117,6 +117,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillHostInspectionV1",
         "PlaybillHostWorkspaceRegistrationV1",
         "PlaybillInitResult",
+        "PlaybillInstanceDecommissionResultV1",
         "PlaybillPrincipalList",
         "PlaybillProposalInspection",
         "PlaybillProposalReview",
@@ -128,6 +129,8 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillSemanticFieldValue",
         "PlaybillSourceCheckResult",
         "PlaybillSourceContext",
+        "PlaybillSubjectIncomingClaimV1",
+        "PlaybillSubjectIncomingGroupV1",
         "PlaybillSubjectView",
         "PlaybillSubjectList",
         "PlaybillSubjectHistory",
@@ -200,6 +203,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "RuntimeCredentialResult",
         "ServerInfoResult",
         "ServerRestartResult",
+        "ServerStopResult",
         "ProviderLaneStatusV1",
     }
     assert set(current["literal_aliases"]) == {
