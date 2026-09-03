@@ -16,6 +16,7 @@ from typing import get_args, get_type_hints
 import pytest
 
 import cruxible_core.playbill.provider_local_runtime as runtime_module
+import cruxible_core.playbill.provider_process_leases as lease_module
 import cruxible_core.service.playbill_procedure_runs as procedure_run_service
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedures.results import (
@@ -435,14 +436,47 @@ def test_no_tmp_path_remains_on_the_provider_fence_path() -> None:
         assert "/" + "tmp" not in text, name
 
 
-def test_the_path_length_refusal_names_the_repair(short_root: Path) -> None:
+def test_the_path_length_selects_the_private_namespace_or_refuses_typed(
+    short_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Succeeds the retracted P2-B2 refusal oracle (U8, manager 2026-09-02).
+
+    The retracted law said an overlong control path refuses and names the
+    shorter-root repair. U8 replaced it with a fallback to a verified per-user
+    private runtime namespace, refusing typed only when neither namespace fits.
+    This oracle was left asserting the retracted law and was red at the P2-B5
+    tip; it now asserts both halves of the replacement.
+    """
+
     deep = short_root / ("d" * 40) / ("e" * 40)
     deep.mkdir(parents=True)
     store_root = deep / "l"
+    runtime_root = short_root / "r"
+    runtime_root.mkdir(mode=0o700)
+    monkeypatch.setattr(lease_module.platform, "system", lambda: "Linux")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_root))
+    # The fixture's runtime root sits under the repository, whose absolute path
+    # is environment-dependent, so the namespace budget is measured against a
+    # fixed-width stand-in for a real per-user runtime directory.
+    real_fsencode = os.fsencode
+    monkeypatch.setattr(
+        lease_module.os,
+        "fsencode",
+        lambda value: (
+            b"f" * 80 if str(value).startswith(str(runtime_root)) else real_fsencode(value)
+        ),
+    )
+
+    store = ProviderProcessLeaseStore(store_root, control_root=deep / "c")
+    assert store.control_root.is_relative_to(runtime_root)
+    assert store.paths("sha256:" + "f" * 64)[1].parent == store.control_root
+
+    monkeypatch.delenv("XDG_RUNTIME_DIR")
     with pytest.raises(ProviderLocalRuntimeRefused) as caught:
-        ProviderProcessLeaseStore(store_root, control_root=deep / "c").paths("sha256:" + "f" * 64)
+        ProviderProcessLeaseStore(store_root, control_root=deep / "c")
     assert caught.value.code == "provider_process_lease_invalid"
-    assert "shorter CRUXIBLE_STATE_ROOT" in str(caught.value)
+    assert "private per-user runtime" in str(caught.value)
 
 
 # ------------------------------------------------------------------ K-4

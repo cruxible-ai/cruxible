@@ -112,14 +112,10 @@ def test_r6_regression_shape() -> None:
     assert "provider_runtime_invoker=invoker," in text
     # Real subprocess (the fake interpreter is an executable python shim).
     assert "_fake_interpreter" in text
-    # The classifier and served-route observation seams are patched; direct
-    # preparation and the daemon-owned subprocess invoker remain real.
+    # Only the classifier registry is patched: no double may stand in for the
+    # daemon-owned invoker, the direct preparation, or the served Line service.
     patches = set(re.findall(r'monkeypatch\.setattr\(\s*([\w_.]+),\s*\n?\s*"([\w_]+)"', text))
-    assert patches == {
-        ("execution_module", "PROVIDER_BUCKET_CLASSIFIER_REGISTRY"),
-        ("playbill_api", "service_run_playbill_line"),
-        ("procedure_run_service", "_records_for_run"),
-    }, patches
+    assert patches == {("execution_module", "PROVIDER_BUCKET_CLASSIFIER_REGISTRY")}, patches
     assert "prepare_direct_procedure_run" not in text
 
 

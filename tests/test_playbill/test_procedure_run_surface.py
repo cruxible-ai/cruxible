@@ -19,14 +19,17 @@ from cruxible_client.contracts.procedure_mandates import (
 )
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedureV1,
-    ProcedureArtifactV1,
     ProcedureArtifactV2,
+    ProcedureOwnedContractV1,
     procedure_artifact_digest,
     procedure_owned_contract_digest,
     procedure_path,
     render_procedure,
 )
-from cruxible_client.contracts.procedures.contract_schema import PropertySchema
+from cruxible_client.contracts.procedures.contract_schema import (
+    ContractSchema,
+    PropertySchema,
+)
 from cruxible_client.contracts.procedures.graph import (
     compute_procedure_definition_digest_v3,
     compute_procedure_definition_digest_v4,
@@ -233,17 +236,30 @@ def test_line_closure_loss_refuses_before_mandate_or_occurrence(
 
 
 def _slotless_procedure(name: str) -> AcceptedProcedureV1:
-    """One accepted Procedure with exact pins only, so a Line binds no slot."""
+    """One accepted Procedure with owner-carried contracts and no pin slots.
 
+    No state tap, no Provider node and no slot, so a Line binding it closes with
+    nothing but its own acquisition policy: the smallest Procedure that can run
+    end to end through the served Line route.
+    """
+
+    input_contract = ProcedureOwnedContractV1(
+        identity=ArtifactIdentity(kind="Contract", name=f"{name}-input"),
+        schema=ContractSchema(fields={"status": PropertySchema(type="string")}),
+    )
+    output_contract = ProcedureOwnedContractV1(
+        identity=ArtifactIdentity(kind="Contract", name=f"{name}-output"),
+        schema=ContractSchema(fields={"status": PropertySchema(type="string")}),
+    )
     contract_in = ArtifactPin(
         role="contract-in",
-        target=ArtifactIdentity(kind="Contract", name="empty-input"),
-        artifact_digest=_line_digest("empty-input"),
+        target=input_contract.identity,
+        artifact_digest=procedure_owned_contract_digest(input_contract).tagged,
     )
     contract_out = ArtifactPin(
         role="contract-out",
-        target=ArtifactIdentity(kind="Contract", name="scheduled-rows"),
-        artifact_digest=_line_digest("scheduled-rows"),
+        target=output_contract.identity,
+        artifact_digest=procedure_owned_contract_digest(output_contract).tagged,
     )
     definition = ProcedureDefinitionV3(
         name=name,
@@ -273,7 +289,7 @@ def _slotless_procedure(name: str) -> AcceptedProcedureV1:
         ),
         terminal_capability=2,
     )
-    procedure = ProcedureArtifactV1(
+    procedure = ProcedureArtifactV2(
         identity=ArtifactIdentity(kind="Procedure", name=name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
@@ -281,6 +297,14 @@ def _slotless_procedure(name: str) -> AcceptedProcedureV1:
             sorted(
                 (contract_in, contract_out),
                 key=lambda pin: (pin.role, pin.target.qualified, pin.artifact_digest),
+            )
+        ),
+        owned_contracts=tuple(
+            sorted(
+                (input_contract, output_contract),
+                key=lambda contract: canonical_bytes(
+                    contract.model_dump(mode="json", by_alias=True)
+                ),
             )
         ),
         activation_policy="drain",

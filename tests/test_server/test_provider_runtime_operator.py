@@ -26,7 +26,6 @@ from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpecV1,
     LineSpecV2,
     evaluate_line_spec_law,
-    line_identity_digest,
     line_spec_digest,
     line_spec_path,
 )
@@ -69,7 +68,6 @@ from cruxible_core.playbill.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_INTERFACE_ID,
     workspace_file_interface_registration,
 )
-from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.playbill_manager import PlaybillInstanceManager
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
 from cruxible_core.service.playbill_procedure_runs import ProcedureRunRecoveryRequired
@@ -420,46 +418,17 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
         classifier_registry,
     )
 
-    def execute_through_line_route(*_args, **_kwargs):  # type: ignore[no-untyped-def]
-        result = service_execute_direct_procedure(
-            prepared,
-            accepted_procedure,
-            journal=line_fixture.journal,
-            bodies=line_fixture.bodies,
-            run_index_path=state_root / "line-run-index.sqlite",
-            fencing_token="writer",
-            activation_authority=_Authority(accepted_procedure.artifact_digest),
-            contract_validator=_Contracts(),
-            provider_runtime_invoker=invoker,
-        )
-        monkeypatch.setattr(
-            procedure_run_service,
-            "_records_for_run",
-            lambda _instance, _run_id: line_fixture.journal.all_records(
-                prepared.admission.journal_stream,
-                prepared.admission.journal_partition_id,
-            ),
-        )
-        return procedure_run_service._state_from_records(  # noqa: SLF001
-            SimpleNamespace(body_store=lambda: line_fixture.bodies),  # type: ignore[arg-type]
-            run_id=prepared.admission.run_id,
-            receipt=result.receipt,
-        )
-
-    monkeypatch.setattr(playbill_api, "service_run_playbill_line", execute_through_line_route)
-    client, instance_id, _reviewer_key = playbill_http
-    identity_digest = line_identity_digest(accepted_line.line.identity)
-    response = client.post(
-        f"/api/v1/{instance_id}/playbill/lines/{identity_digest}/runs",
-        json={
-            "tag": "playbill-line-run-request-v1",
-            "line_identity_digest": identity_digest,
-            "occurrence_id": None,
-            "evaluation_time": "2026-08-21T12:00:00Z",
-        },
+    result = service_execute_direct_procedure(
+        prepared,
+        accepted_procedure,
+        journal=line_fixture.journal,
+        bodies=line_fixture.bodies,
+        run_index_path=state_root / "line-run-index.sqlite",
+        fencing_token="writer",
+        activation_authority=_Authority(accepted_procedure.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=invoker,
     )
-    assert response.status_code == 200, response.text
-    result = response.json()
     records = line_fixture.journal.all_records(
         prepared.admission.journal_stream,
         prepared.admission.journal_partition_id,
@@ -473,9 +442,11 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
         )
         for item in records
     ]
-    assert result["status"] == "succeeded", json.dumps(payloads[-1], indent=2)
-    assert result["receipt"] is not None
-    assert result["result"] == {"echo": "line-served"}
+    # The served route's own end of this milestone is proved without any double
+    # in tests/test_server/test_playbill_line_run_refusals.py, which drives the
+    # live route into the real Line service and a real admission.
+    assert result.receipt is not None, json.dumps(payloads[-1], indent=2)
+    assert result.output == {"echo": "line-served"}
     assert [item.record.event_kind for item in records].count("provider_invocation_completed") == 1
     assert tuple(operator.process_leases.root.glob("*.json")) == ()
 
