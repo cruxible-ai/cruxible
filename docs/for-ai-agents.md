@@ -97,9 +97,9 @@ about and the predicate it speaks -- and its exact predecessor digest: the
 sibling member is that Claim revised (`revises=` the same Claim ID), stated
 under the new vocabulary, which is why `explain` on the re-authored Claim still
 names what it succeeds. A sibling that moves the Subject refuses; a re-authoring
-says the same thing again, it does not say it about something else. The sibling is named once, by
-`successor_claim_id` -- the Claim ID it revises, which is the dependent's own,
-and what `re_author(claim)` writes. A sibling that does not exist, lowers under
+says the same thing again, it does not say it about something else. The sibling
+is named once, by `successor_claim_id` -- the Claim ID it revises, which is the
+dependent's own, and what `re_author(claim)` writes. A sibling that does not exist, lowers under
 another ClaimType, or revises another Claim refuses
 `playbill.authoring.claim_type_succession_re_author_invalid`, naming both member
 indices and the Claim ID the dependent requires.
