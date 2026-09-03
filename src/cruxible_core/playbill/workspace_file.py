@@ -194,7 +194,7 @@ class WorkspaceFileReader:
                 value = os.readlink(f"/proc/self/fd/{descriptor}")
             else:
                 raise OSError(errno.ENOTSUP, "descriptor paths are unsupported")
-        except (OSError, UnicodeDecodeError) as exc:
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
             raise WorkspaceFileReadRefused(
                 "changed_during_read", "workspace source path cannot be confirmed"
             ) from exc
@@ -230,7 +230,6 @@ class WorkspaceFileReader:
         parts = tuple(request.relative_path.split("/"))
         self._deny_path(parts)
         descriptors: list[int] = []
-        actual_parts: list[str] = []
         flags_directory = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
         flags_file = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
         try:
@@ -249,7 +248,6 @@ class WorkspaceFileReader:
                         "non_regular", "workspace source parent must be a directory"
                     )
                 descriptors.append(os.open(actual, flags_directory, dir_fd=descriptors[-1]))
-                actual_parts.append(actual)
             actual_leaf = self._actual_component(descriptors[-1], parts[-1])
             before = os.stat(actual_leaf, dir_fd=descriptors[-1], follow_symlinks=False)
             if stat.S_ISLNK(before.st_mode):
@@ -257,7 +255,6 @@ class WorkspaceFileReader:
                     "symlink", "workspace source may not be a symbolic link"
                 )
             descriptors.append(os.open(actual_leaf, flags_file, dir_fd=descriptors[-1]))
-            actual_parts.append(actual_leaf)
             opened = os.fstat(descriptors[-1])
             if not stat.S_ISREG(opened.st_mode):
                 raise WorkspaceFileReadRefused(
@@ -268,7 +265,7 @@ class WorkspaceFileReader:
                     "hardlink", "workspace source must have exactly one hard link"
                 )
             opened_path = self._fd_path(descriptors[-1])
-            self._deny_path(tuple(actual_parts))
+            self._deny_path(tuple(opened_path.parts))
             if not self._within(opened_path, root_real):
                 raise WorkspaceFileReadRefused(
                     "changed_during_read", "workspace source escaped its authorized root"
@@ -295,7 +292,7 @@ class WorkspaceFileReader:
                     "changed_during_read", "workspace source changed while it was read"
                 )
             self._check_managed_root(resolved)
-            self._deny_path(tuple(actual_parts))
+            self._deny_path(tuple(resolved.parts))
         except WorkspaceFileReadRefused:
             raise
         except FileNotFoundError as exc:

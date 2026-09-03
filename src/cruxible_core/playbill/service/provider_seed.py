@@ -261,7 +261,6 @@ def _validate_local_materialization(
 def _pending_seed(
     instance: PlaybillInstance,
     *,
-    actor_id: str,
     candidate_tree: dict[str, bytes],
     changed_paths: tuple[str, ...],
 ) -> contracts.PlaybillProviderSeedResultV1 | None:
@@ -273,8 +272,6 @@ def _pending_seed(
     }
     evidence = instance.proposal_evidence()
     for admission in evidence.list_admissions():
-        if admission.actor_id != actor_id:
-            continue
         evaluation = evidence.read_evaluation(admission.proposal_id)
         if (
             evaluation.verdict != "candidate"
@@ -325,7 +322,6 @@ def service_seed_workspace_file_provider(
 
     pending = _pending_seed(
         instance,
-        actor_id=actor_id,
         candidate_tree=candidate_tree,
         changed_paths=changed_paths,
     )

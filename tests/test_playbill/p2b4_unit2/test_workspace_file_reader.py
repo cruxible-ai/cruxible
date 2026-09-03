@@ -140,6 +140,18 @@ def test_control_and_custody_path_classes_are_denied(
     assert caught.value.path_class == path_class
 
 
+def test_authorized_root_cannot_turn_control_directory_into_plain_workspace(
+    tmp_path: Path,
+) -> None:
+    control_root = tmp_path / ".GiT"
+    control_root.mkdir()
+    (control_root / "config").write_bytes(b"secret")
+
+    with pytest.raises(WorkspaceFileReadRefused) as caught:
+        _read(_reader(control_root), _request(control_root, "config"))
+    assert caught.value.path_class == "git_metadata"
+
+
 def test_unknown_binding_and_cloud_refuse(tmp_path: Path) -> None:
     root = tmp_path / "workspace"
     root.mkdir()
