@@ -12,6 +12,7 @@ from tests.support import provider_seed as provider_seed_support
 from cruxible_client import CruxibleClient, contracts
 from cruxible_core.cli.main import cli
 from cruxible_core.mcp.tools import register_tools
+from cruxible_core.playbill.seed_artifacts.workspace_file import WORKSPACE_FILE_SEED_MANIFEST
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
@@ -236,8 +237,54 @@ def test_absent_provider_checkout_skips_seeding_tests_naming_the_follow_on_card(
 
     reason = str(absent.value)
     assert reason == provider_seed_support.MISSING_CHECKOUT_SKIP_REASON
-    assert "CI job with a deploy-key checkout of cruxible-providers" in reason
+    assert provider_seed_support.PROVIDERS_CHECKOUT_ENV in reason
+    assert "deploy-key" not in reason
     with pytest.raises(pytest.skip.Exception):
         provider_seed_support.workspace_seed_materialization()
     with pytest.raises(pytest.skip.Exception):
         provider_seed_support.write_workspace_seed_config(tmp_path)
+
+
+def test_the_configured_checkout_env_var_wins_over_the_sibling_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """CI checks the adapter repository out at a path no sibling search would find."""
+
+    configured = tmp_path / "ci-providers"
+    (configured / "scripts").mkdir(parents=True)
+    (configured / "scripts" / "seed_pins.py").write_text("", encoding="utf-8")
+    monkeypatch.setenv(provider_seed_support.PROVIDERS_CHECKOUT_ENV, str(configured))
+
+    assert provider_seed_support.find_workspace_provider_checkout() == configured.resolve(
+        strict=True
+    )
+
+
+def test_an_unset_or_incomplete_checkout_env_var_falls_back_to_the_siblings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A pointer at a directory that is not an adapter checkout must not win."""
+
+    monkeypatch.setenv(provider_seed_support.PROVIDERS_CHECKOUT_ENV, str(tmp_path / "not-a-repo"))
+    with_env = provider_seed_support.find_workspace_provider_checkout()
+
+    monkeypatch.delenv(provider_seed_support.PROVIDERS_CHECKOUT_ENV, raising=False)
+    without_env = provider_seed_support.find_workspace_provider_checkout()
+
+    assert with_env == without_env
+
+
+def test_the_ci_workflow_checks_out_the_commit_the_seed_manifest_pins() -> None:
+    """A drifting ref would make CI skip the seeding tests instead of failing."""
+
+    workflow = (REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert "repository: cruxible-ai/cruxible-providers" in workflow
+    assert f"CRUXIBLE_PROVIDERS_COMMIT: {WORKSPACE_FILE_SEED_MANIFEST.provider_commit}" in workflow
+    assert (
+        f"{provider_seed_support.PROVIDERS_CHECKOUT_ENV}: "
+        "${{ github.workspace }}/cruxible-providers"
+    ) in workflow
+    assert "/cruxible-providers/" in (REPOSITORY_ROOT / ".gitignore").read_text(encoding="utf-8")

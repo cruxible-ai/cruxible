@@ -30,3 +30,8 @@ docs/llms-full.txt
 # Local operation-instance config (customized agent-operation + project-domain overlay); never shipped
 /ops/
 /.b2-*
+
+# CI checks the public cruxible-providers adapter repository out here so the
+# seeding tests can reproduce the real local materialization. It is a second
+# repository inside the workspace, never core content.
+/cruxible-providers/

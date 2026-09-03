@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  # The commit the workspace.file seed manifest pins
+  # (WORKSPACE_FILE_SEED_MANIFEST.provider_commit). The adapter checkout must be
+  # at exactly this commit and clean, or the seeding tests skip instead of
+  # reproducing the real local materialization.
+  CRUXIBLE_PROVIDERS_COMMIT: aed9c1735e915adfeaa0d3d201942609bb7a8eae
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -13,8 +20,20 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
 
+    env:
+      CRUXIBLE_PROVIDERS_CHECKOUT: ${{ github.workspace }}/cruxible-providers
+
     steps:
       - uses: actions/checkout@v4
+
+      # cruxible-providers is public, so this is an ordinary second checkout and
+      # needs no credential. Without it the five seeding tests skip and the
+      # local materialization law is never exercised in CI.
+      - uses: actions/checkout@v4
+        with:
+          repository: cruxible-ai/cruxible-providers
+          ref: ${{ env.CRUXIBLE_PROVIDERS_COMMIT }}
+          path: cruxible-providers
 
       - uses: astral-sh/setup-uv@v4
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -19,18 +20,26 @@ from cruxible_core.runtime.provider_runtime import (
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
+#: The environment variable CI sets to the checked-out adapter repository. The
+#: providers repository is public, so this is an ordinary second checkout rather
+#: than anything credential-bearing.
+PROVIDERS_CHECKOUT_ENV = "CRUXIBLE_PROVIDERS_CHECKOUT"
+
 #: Named in every skip so a green run on a host without the adapter checkout still
-#: points at the work that removes the gap rather than reading as coverage.
+#: points at what would make it real coverage rather than reading as coverage.
 MISSING_CHECKOUT_SKIP_REASON = (
     "the cruxible-providers checkout is absent, so the real local materialization cannot be "
-    "reproduced; follow-on card: CI job with a deploy-key checkout of cruxible-providers"
+    f"reproduced; point {PROVIDERS_CHECKOUT_ENV} at a checkout of cruxible-providers at the "
+    "commit the seed manifest pins, or place one beside this repository"
 )
 
 
 def find_workspace_provider_checkout() -> Path | None:
     """Locate the separately governed adapter checkout without a developer path literal."""
 
+    configured = os.environ.get(PROVIDERS_CHECKOUT_ENV, "").strip()
     candidates = (
+        *((Path(configured),) if configured else ()),
         REPOSITORY_ROOT.parent / "cruxible-providers",
         REPOSITORY_ROOT.parent.parent / "cruxible-providers",
     )
@@ -78,6 +87,7 @@ def write_workspace_seed_config(state_root: Path, checkout: Path | None = None) 
 
 __all__ = [
     "MISSING_CHECKOUT_SKIP_REASON",
+    "PROVIDERS_CHECKOUT_ENV",
     "find_workspace_provider_checkout",
     "workspace_provider_checkout",
     "workspace_seed_materialization",
