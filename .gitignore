@@ -35,3 +35,7 @@ docs/llms-full.txt
 # seeding tests can reproduce the real local materialization. It is a second
 # repository inside the workspace, never core content.
 /cruxible-providers/
+
+# Playbill program instance: client custody and the captured raw history
+.playbill/
+playbill-history/
