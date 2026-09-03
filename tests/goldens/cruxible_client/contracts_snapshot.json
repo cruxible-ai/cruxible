@@ -11,6 +11,7 @@
         "claim-existing-capture",
         "claim-flow-a",
         "claim-self-source",
+        "claim-subject-relation",
         "procedure",
         "claim-adjudicate-contradicting-evidence",
         "claim-cite-supporting-evidence",
@@ -26,6 +27,21 @@
       "values": [
         "procedure_projection_missing",
         "provider_lane_unavailable"
+      ]
+    },
+    "PlaybillHostCompatibilityReasonCodeV1": {
+      "values": [
+        "legacy_layout_requires_reseed",
+        "host_state_incomplete",
+        "host_state_malformed",
+        "compiler_lineage_not_writable"
+      ]
+    },
+    "PlaybillHostCompatibilityV1": {
+      "values": [
+        "uninitialized",
+        "writable",
+        "reseed_required"
       ]
     },
     "PlaybillHostStatus": {
@@ -106,6 +122,72 @@
   },
   "manifest_version": 1,
   "models": {
+    "GitWorkspaceNoteV1": {
+      "fields": {
+        "code": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "code",
+          "required": true,
+          "schema": {
+            "const": "inherited_git_workspace_ignored",
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "cwd_workspace_root": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "cwd_workspace_root",
+          "required": true,
+          "schema": {
+            "title": "Cwd Workspace Root",
+            "type": "string"
+          }
+        },
+        "inherited_workspace_root": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "inherited_workspace_root",
+          "required": true,
+          "schema": {
+            "title": "Inherited Workspace Root",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "Client-side advisory when CWD wins over inherited Git selectors.",
+        "properties": {
+          "code": {
+            "const": "inherited_git_workspace_ignored",
+            "title": "Code",
+            "type": "string"
+          },
+          "cwd_workspace_root": {
+            "title": "Cwd Workspace Root",
+            "type": "string"
+          },
+          "inherited_workspace_root": {
+            "title": "Inherited Workspace Root",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "cwd_workspace_root",
+          "inherited_workspace_root"
+        ],
+        "title": "GitWorkspaceNoteV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "code",
+        "cwd_workspace_root",
+        "inherited_workspace_root"
+      ]
+    },
     "PlaybillAcceptedCoordinate": {
       "fields": {
         "compiler_digest": {
@@ -1021,6 +1103,25 @@
             "type": "string"
           }
         },
+        "git_workspace_note": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "git_workspace_note",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/GitWorkspaceNoteV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "key_history_ref": {
           "has_default": false,
           "has_default_factory": false,
@@ -1087,6 +1188,34 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "GitWorkspaceNoteV1": {
+            "additionalProperties": false,
+            "description": "Client-side advisory when CWD wins over inherited Git selectors.",
+            "properties": {
+              "code": {
+                "const": "inherited_git_workspace_ignored",
+                "title": "Code",
+                "type": "string"
+              },
+              "cwd_workspace_root": {
+                "title": "Cwd Workspace Root",
+                "type": "string"
+              },
+              "inherited_workspace_root": {
+                "title": "Inherited Workspace Root",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "cwd_workspace_root",
+              "inherited_workspace_root"
+            ],
+            "title": "GitWorkspaceNoteV1",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "properties": {
           "attestation_digest": {
@@ -1096,6 +1225,17 @@
           "candidate_digest": {
             "title": "Candidate Digest",
             "type": "string"
+          },
+          "git_workspace_note": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/GitWorkspaceNoteV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "key_history_ref": {
             "title": "Key History Ref",
@@ -3022,6 +3162,7 @@
               "claim-existing-capture",
               "claim-flow-a",
               "claim-self-source",
+              "claim-subject-relation",
               "procedure",
               "claim-adjudicate-contradicting-evidence",
               "claim-cite-supporting-evidence",
@@ -5362,6 +5503,7 @@
               "claim-existing-capture",
               "claim-flow-a",
               "claim-self-source",
+              "claim-subject-relation",
               "procedure",
               "claim-adjudicate-contradicting-evidence",
               "claim-cite-supporting-evidence",
@@ -11461,6 +11603,15 @@
             "type": "array"
           }
         },
+        "statement": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "statement",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ClaimStatementCardV1"
+          }
+        },
         "tag": {
           "has_default": false,
           "has_default_factory": false,
@@ -11475,6 +11626,179 @@
       },
       "json_schema": {
         "$defs": {
+          "ClaimStatementCardV1": {
+            "additionalProperties": false,
+            "description": "Flat, typed statement-first projection shared by read and floor surfaces.",
+            "properties": {
+              "lifecycle": {
+                "enum": [
+                  "live",
+                  "retired"
+                ],
+                "title": "Lifecycle",
+                "type": "string"
+              },
+              "object": {
+                "discriminator": {
+                  "mapping": {
+                    "exact_content": "#/$defs/ExactContentClaimObject",
+                    "literal": "#/$defs/LiteralClaimObject",
+                    "subject": "#/$defs/SubjectClaimObject"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/LiteralClaimObject"
+                  },
+                  {
+                    "$ref": "#/$defs/SubjectClaimObject"
+                  },
+                  {
+                    "$ref": "#/$defs/ExactContentClaimObject"
+                  }
+                ],
+                "title": "Object"
+              },
+              "predecessor_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Predecessor Digest"
+              },
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              },
+              "qualifier": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Qualifier"
+              },
+              "role": {
+                "enum": [
+                  "normative",
+                  "observation",
+                  "environment_binding",
+                  "derivation"
+                ],
+                "title": "Role",
+                "type": "string"
+              },
+              "subject": {
+                "$ref": "#/$defs/SemanticAddress"
+              },
+              "tag": {
+                "const": "playbill-claim-statement-card-v1",
+                "default": "playbill-claim-statement-card-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject",
+              "predicate",
+              "object",
+              "role",
+              "lifecycle"
+            ],
+            "title": "ClaimStatementCardV1",
+            "type": "object"
+          },
+          "ContentSpan": {
+            "additionalProperties": false,
+            "description": "One exact zero-based, end-exclusive occurrence in immutable bytes.",
+            "properties": {
+              "content_digest": {
+                "title": "Content Digest",
+                "type": "string"
+              },
+              "end_byte": {
+                "title": "End Byte",
+                "type": "integer"
+              },
+              "start_byte": {
+                "title": "Start Byte",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-content-span-v1",
+                "default": "playbill-content-span-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "content_digest",
+              "start_byte",
+              "end_byte"
+            ],
+            "title": "ContentSpan",
+            "type": "object"
+          },
+          "ExactContentClaimObject": {
+            "additionalProperties": false,
+            "properties": {
+              "content_digest": {
+                "title": "Content Digest",
+                "type": "string"
+              },
+              "kind": {
+                "const": "exact_content",
+                "default": "exact_content",
+                "title": "Kind",
+                "type": "string"
+              },
+              "span": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContentSpan"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [
+              "content_digest"
+            ],
+            "title": "ExactContentClaimObject",
+            "type": "object"
+          },
+          "LiteralClaimObject": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "literal",
+                "default": "literal",
+                "title": "Kind",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "LiteralClaimObject",
+            "type": "object"
+          },
           "PlaybillAcceptedCoordinate": {
             "additionalProperties": false,
             "properties": {
@@ -11669,6 +11993,69 @@
             ],
             "title": "PlaybillCaptureEvidenceKindAdmission",
             "type": "object"
+          },
+          "SemanticAddress": {
+            "additionalProperties": false,
+            "description": "Stable meaning identity, independent of source-line presentation.",
+            "properties": {
+              "artifact_path": {
+                "title": "Artifact Path",
+                "type": "string"
+              },
+              "selector": {
+                "$ref": "#/$defs/SemanticSelector"
+              },
+              "tag": {
+                "const": "playbill-semantic-address-v1",
+                "default": "playbill-semantic-address-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifact_path",
+              "selector"
+            ],
+            "title": "SemanticAddress",
+            "type": "object"
+          },
+          "SemanticSelector": {
+            "additionalProperties": false,
+            "properties": {
+              "scheme": {
+                "title": "Scheme",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "scheme",
+              "value"
+            ],
+            "title": "SemanticSelector",
+            "type": "object"
+          },
+          "SubjectClaimObject": {
+            "additionalProperties": false,
+            "properties": {
+              "address": {
+                "$ref": "#/$defs/SemanticAddress"
+              },
+              "kind": {
+                "const": "subject",
+                "default": "subject",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "address"
+            ],
+            "title": "SubjectClaimObject",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -11705,6 +12092,9 @@
             "title": "Facts",
             "type": "array"
           },
+          "statement": {
+            "$ref": "#/$defs/ClaimStatementCardV1"
+          },
           "tag": {
             "const": "playbill-claim-read-v2",
             "title": "Tag",
@@ -11718,7 +12108,8 @@
           "envelope",
           "facts",
           "admission_evaluation_time",
-          "admission_accounts"
+          "admission_accounts",
+          "statement"
         ],
         "title": "PlaybillClaimViewV2",
         "type": "object"
@@ -11730,6 +12121,7 @@
         "coordinate_kind",
         "envelope",
         "facts",
+        "statement",
         "tag"
       ]
     },
@@ -13948,8 +14340,379 @@
         "status"
       ]
     },
+    "PlaybillHostCompatibilityReasonV1": {
+      "fields": {
+        "code": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "code",
+          "required": true,
+          "schema": {
+            "enum": [
+              "legacy_layout_requires_reseed",
+              "host_state_incomplete",
+              "host_state_malformed",
+              "compiler_lineage_not_writable"
+            ],
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "detail": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "detail",
+          "required": true,
+          "schema": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "repair_commands": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "repair_commands",
+          "required": true,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Repair Commands",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "legacy_layout_requires_reseed",
+              "host_state_incomplete",
+              "host_state_malformed",
+              "compiler_lineage_not_writable"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "repair_commands": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Repair Commands",
+            "type": "array"
+          }
+        },
+        "required": [
+          "code",
+          "detail",
+          "repair_commands"
+        ],
+        "title": "PlaybillHostCompatibilityReasonV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "code",
+        "detail",
+        "repair_commands"
+      ]
+    },
+    "PlaybillHostInspectionV1": {
+      "fields": {
+        "compatibility": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "compatibility",
+          "required": true,
+          "schema": {
+            "enum": [
+              "uninitialized",
+              "writable",
+              "reseed_required"
+            ],
+            "title": "Compatibility",
+            "type": "string"
+          }
+        },
+        "compiler_coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "compiler_coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Compiler Coordinate"
+          }
+        },
+        "compiler_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "compiler_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Compiler Revision"
+          }
+        },
+        "instance_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance_id",
+          "required": true,
+          "schema": {
+            "title": "Instance Id",
+            "type": "string"
+          }
+        },
+        "managed_root": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "managed_root",
+          "required": true,
+          "schema": {
+            "title": "Managed Root",
+            "type": "string"
+          }
+        },
+        "reason": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillHostCompatibilityReasonV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "tag": {
+          "default": "playbill-host-inspection-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-host-inspection-v1",
+            "default": "playbill-host-inspection-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "workspace_root": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "workspace_root",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Root"
+          }
+        },
+        "writable": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "writable",
+          "required": true,
+          "schema": {
+            "title": "Writable",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillHostCompatibilityReasonV1": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "enum": [
+                  "legacy_layout_requires_reseed",
+                  "host_state_incomplete",
+                  "host_state_malformed",
+                  "compiler_lineage_not_writable"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "detail": {
+                "title": "Detail",
+                "type": "string"
+              },
+              "repair_commands": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Repair Commands",
+                "type": "array"
+              }
+            },
+            "required": [
+              "code",
+              "detail",
+              "repair_commands"
+            ],
+            "title": "PlaybillHostCompatibilityReasonV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Credential-safe compatibility view of one governed daemon host.",
+        "properties": {
+          "compatibility": {
+            "enum": [
+              "uninitialized",
+              "writable",
+              "reseed_required"
+            ],
+            "title": "Compatibility",
+            "type": "string"
+          },
+          "compiler_coordinate": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Compiler Coordinate"
+          },
+          "compiler_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Compiler Revision"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "managed_root": {
+            "title": "Managed Root",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillHostCompatibilityReasonV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tag": {
+            "const": "playbill-host-inspection-v1",
+            "default": "playbill-host-inspection-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "workspace_root": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Root"
+          },
+          "writable": {
+            "title": "Writable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "instance_id",
+          "managed_root",
+          "workspace_root",
+          "compatibility",
+          "writable"
+        ],
+        "title": "PlaybillHostInspectionV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "compatibility",
+        "instance_id",
+        "managed_root",
+        "workspace_root",
+        "writable"
+      ]
+    },
     "PlaybillHostResult": {
       "fields": {
+        "git_workspace_note": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "git_workspace_note",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/GitWorkspaceNoteV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "instance_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -13976,8 +14739,47 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "GitWorkspaceNoteV1": {
+            "additionalProperties": false,
+            "description": "Client-side advisory when CWD wins over inherited Git selectors.",
+            "properties": {
+              "code": {
+                "const": "inherited_git_workspace_ignored",
+                "title": "Code",
+                "type": "string"
+              },
+              "cwd_workspace_root": {
+                "title": "Cwd Workspace Root",
+                "type": "string"
+              },
+              "inherited_workspace_root": {
+                "title": "Inherited Workspace Root",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "cwd_workspace_root",
+              "inherited_workspace_root"
+            ],
+            "title": "GitWorkspaceNoteV1",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "properties": {
+          "git_workspace_note": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/GitWorkspaceNoteV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "instance_id": {
             "title": "Instance Id",
             "type": "string"
@@ -14136,6 +14938,25 @@
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
           }
         },
+        "git_workspace_note": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "git_workspace_note",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/GitWorkspaceNoteV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "instance_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -14193,6 +15014,32 @@
       },
       "json_schema": {
         "$defs": {
+          "GitWorkspaceNoteV1": {
+            "additionalProperties": false,
+            "description": "Client-side advisory when CWD wins over inherited Git selectors.",
+            "properties": {
+              "code": {
+                "const": "inherited_git_workspace_ignored",
+                "title": "Code",
+                "type": "string"
+              },
+              "cwd_workspace_root": {
+                "title": "Cwd Workspace Root",
+                "type": "string"
+              },
+              "inherited_workspace_root": {
+                "title": "Inherited Workspace Root",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "cwd_workspace_root",
+              "inherited_workspace_root"
+            ],
+            "title": "GitWorkspaceNoteV1",
+            "type": "object"
+          },
           "PlaybillAcceptedCoordinate": {
             "additionalProperties": false,
             "properties": {
@@ -14318,6 +15165,17 @@
           },
           "coordinate": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "git_workspace_note": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/GitWorkspaceNoteV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "instance_id": {
             "title": "Instance Id",
@@ -21676,6 +22534,73 @@
         "settlement_base"
       ]
     },
+    "PlaybillProposalSelectorResultV1": {
+      "fields": {
+        "proposal_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": true,
+          "schema": {
+            "title": "Proposal Id",
+            "type": "string"
+          }
+        },
+        "selector": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "selector",
+          "required": true,
+          "schema": {
+            "title": "Selector",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-proposal-selector-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-proposal-selector-result-v1",
+            "default": "playbill-proposal-selector-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "selector": {
+            "title": "Selector",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-proposal-selector-result-v1",
+            "default": "playbill-proposal-selector-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "selector",
+          "proposal_id"
+        ],
+        "title": "PlaybillProposalSelectorResultV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "proposal_id",
+        "selector"
+      ]
+    },
     "PlaybillProviderInterfaceEntry": {
       "fields": {
         "artifact_digest": {
@@ -25448,6 +26373,7 @@
                       "workspace_source_catalog_invalid",
                       "source_path_invalid",
                       "block_marker_malformed",
+                      "block_unstamped",
                       "block_multi_backing",
                       "block_query_backing",
                       "block_locally_modified",
@@ -25766,6 +26692,164 @@
         "workspace_advertisement"
       ]
     },
+    "PlaybillWorkspaceAttachResultV1": {
+      "fields": {
+        "config_path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "config_path",
+          "required": true,
+          "schema": {
+            "title": "Config Path",
+            "type": "string"
+          }
+        },
+        "git_workspace_note": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "git_workspace_note",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/GitWorkspaceNoteV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "instance_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance_id",
+          "required": true,
+          "schema": {
+            "title": "Instance Id",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-workspace-attach-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-workspace-attach-result-v1",
+            "default": "playbill-workspace-attach-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "transport": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "transport",
+          "required": true,
+          "schema": {
+            "title": "Transport",
+            "type": "string"
+          }
+        },
+        "workspace_root": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "workspace_root",
+          "required": true,
+          "schema": {
+            "title": "Workspace Root",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "GitWorkspaceNoteV1": {
+            "additionalProperties": false,
+            "description": "Client-side advisory when CWD wins over inherited Git selectors.",
+            "properties": {
+              "code": {
+                "const": "inherited_git_workspace_ignored",
+                "title": "Code",
+                "type": "string"
+              },
+              "cwd_workspace_root": {
+                "title": "Cwd Workspace Root",
+                "type": "string"
+              },
+              "inherited_workspace_root": {
+                "title": "Inherited Workspace Root",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "cwd_workspace_root",
+              "inherited_workspace_root"
+            ],
+            "title": "GitWorkspaceNoteV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Client-owned result of binding local config to an existing daemon host.",
+        "properties": {
+          "config_path": {
+            "title": "Config Path",
+            "type": "string"
+          },
+          "git_workspace_note": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/GitWorkspaceNoteV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-workspace-attach-result-v1",
+            "default": "playbill-workspace-attach-result-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "transport": {
+            "title": "Transport",
+            "type": "string"
+          },
+          "workspace_root": {
+            "title": "Workspace Root",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instance_id",
+          "workspace_root",
+          "config_path",
+          "transport"
+        ],
+        "title": "PlaybillWorkspaceAttachResultV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "config_path",
+        "instance_id",
+        "transport",
+        "workspace_root"
+      ]
+    },
     "PlaybillWorkspaceFloorStatus": {
       "fields": {
         "current_coordinate": {
@@ -26071,6 +27155,25 @@
             "type": "string"
           }
         },
+        "git_workspace_note": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "git_workspace_note",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/GitWorkspaceNoteV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "path": {
           "has_default": false,
           "has_default_factory": false,
@@ -26112,6 +27215,32 @@
       },
       "json_schema": {
         "$defs": {
+          "GitWorkspaceNoteV1": {
+            "additionalProperties": false,
+            "description": "Client-side advisory when CWD wins over inherited Git selectors.",
+            "properties": {
+              "code": {
+                "const": "inherited_git_workspace_ignored",
+                "title": "Code",
+                "type": "string"
+              },
+              "cwd_workspace_root": {
+                "title": "Cwd Workspace Root",
+                "type": "string"
+              },
+              "inherited_workspace_root": {
+                "title": "Inherited Workspace Root",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "cwd_workspace_root",
+              "inherited_workspace_root"
+            ],
+            "title": "GitWorkspaceNoteV1",
+            "type": "object"
+          },
           "PlaybillAcceptedCoordinate": {
             "additionalProperties": false,
             "properties": {
@@ -26170,6 +27299,17 @@
           "floor_digest": {
             "title": "Floor Digest",
             "type": "string"
+          },
+          "git_workspace_note": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/GitWorkspaceNoteV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "path": {
             "title": "Path",
@@ -26834,6 +27974,62 @@
             "type": "boolean"
           }
         },
+        "compiler_coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "compiler_coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Compiler Coordinate"
+          }
+        },
+        "compiler_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "compiler_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Compiler Revision"
+          }
+        },
+        "hosts": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "hosts",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/PlaybillHostInspectionV1"
+            },
+            "title": "Hosts",
+            "type": "array"
+          }
+        },
         "instance_count": {
           "has_default": false,
           "has_default_factory": false,
@@ -26886,6 +28082,128 @@
       },
       "json_schema": {
         "$defs": {
+          "PlaybillHostCompatibilityReasonV1": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "enum": [
+                  "legacy_layout_requires_reseed",
+                  "host_state_incomplete",
+                  "host_state_malformed",
+                  "compiler_lineage_not_writable"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "detail": {
+                "title": "Detail",
+                "type": "string"
+              },
+              "repair_commands": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Repair Commands",
+                "type": "array"
+              }
+            },
+            "required": [
+              "code",
+              "detail",
+              "repair_commands"
+            ],
+            "title": "PlaybillHostCompatibilityReasonV1",
+            "type": "object"
+          },
+          "PlaybillHostInspectionV1": {
+            "additionalProperties": false,
+            "description": "Credential-safe compatibility view of one governed daemon host.",
+            "properties": {
+              "compatibility": {
+                "enum": [
+                  "uninitialized",
+                  "writable",
+                  "reseed_required"
+                ],
+                "title": "Compatibility",
+                "type": "string"
+              },
+              "compiler_coordinate": {
+                "anyOf": [
+                  {
+                    "pattern": "^sha256:[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Compiler Coordinate"
+              },
+              "compiler_revision": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Compiler Revision"
+              },
+              "instance_id": {
+                "title": "Instance Id",
+                "type": "string"
+              },
+              "managed_root": {
+                "title": "Managed Root",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillHostCompatibilityReasonV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "tag": {
+                "const": "playbill-host-inspection-v1",
+                "default": "playbill-host-inspection-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "workspace_root": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Workspace Root"
+              },
+              "writable": {
+                "title": "Writable",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "instance_id",
+              "managed_root",
+              "workspace_root",
+              "compatibility",
+              "writable"
+            ],
+            "title": "PlaybillHostInspectionV1",
+            "type": "object"
+          },
           "ProviderLaneStatusV1": {
             "additionalProperties": false,
             "properties": {
@@ -26951,6 +28269,38 @@
           "auth_required": {
             "title": "Auth Required",
             "type": "boolean"
+          },
+          "compiler_coordinate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Compiler Coordinate"
+          },
+          "compiler_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Compiler Revision"
+          },
+          "hosts": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/PlaybillHostInspectionV1"
+            },
+            "title": "Hosts",
+            "type": "array"
           },
           "instance_count": {
             "title": "Instance Count",

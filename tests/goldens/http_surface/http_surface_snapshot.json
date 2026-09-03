@@ -123,6 +123,9 @@
   "/api/v1/{instance_id}/playbill/floor/export": {
     "POST": "PlaybillFloorExport"
   },
+  "/api/v1/{instance_id}/playbill/host": {
+    "GET": "PlaybillHostInspectionV1"
+  },
   "/api/v1/{instance_id}/playbill/init": {
     "POST": "PlaybillInitResult"
   },
@@ -152,6 +155,9 @@
   },
   "/api/v1/{instance_id}/playbill/projections/sync-backing": {
     "POST": "PlaybillBlockSyncReadResultV1"
+  },
+  "/api/v1/{instance_id}/playbill/proposal-selector": {
+    "GET": "PlaybillProposalSelectorResultV1"
   },
   "/api/v1/{instance_id}/playbill/proposals": {
     "GET": "PlaybillProposalList"

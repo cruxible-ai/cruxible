@@ -65,6 +65,7 @@
     "playbill_readmit_proposal",
     "playbill_recover_claim_attestations",
     "playbill_resolve_coverage",
+    "playbill_resolve_proposal_selector",
     "playbill_retire_claim",
     "playbill_review_proposal",
     "playbill_run_query",
@@ -76,6 +77,6 @@
     "playbill_submit_approval",
     "playbill_whoami"
   ],
-  "http_delegate_count": 74,
+  "http_delegate_count": 75,
   "mcp_delegate_count": 69
 }
