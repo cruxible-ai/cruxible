@@ -170,9 +170,7 @@ class WorkspaceFileReader:
         try:
             os.stat(requested, dir_fd=parent_fd, follow_symlinks=False)
         except FileNotFoundError as exc:
-            raise WorkspaceFileReadRefused(
-                "missing", "workspace source is unavailable"
-            ) from exc
+            raise WorkspaceFileReadRefused("missing", "workspace source is unavailable") from exc
         requested_key = unicodedata.normalize("NFC", requested).casefold()
         matches = tuple(
             entry
