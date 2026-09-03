@@ -1558,9 +1558,11 @@ def _member_stage(member: AuthoringChangeSetMemberV1) -> str:
     Claims the same set may just have written.
 
     A ClaimType succession sits between the definitions and the Claims: it
-    reads the definitions (a set may define a ClaimType and succeed it later),
-    and every Claim after it -- the ones it re-authors included -- is lowered
-    against the successor vocabulary rather than the one it replaces.
+    reads the definitions, and every Claim after it -- the ones it re-authors
+    included -- is lowered against the successor vocabulary rather than the one
+    it replaces. Defining a ClaimType and succeeding it in one set is not one of
+    the shapes this order admits: both members author the same artifact path, so
+    member-path ownership refuses the set before any of these passes run.
     """
 
     if isinstance(member, ClaimAuthoringPayloadV1):
@@ -2109,13 +2111,16 @@ def _stage_claim_type_succession(
 ) -> StagedMember:
     """Succeed one ClaimType and settle its whole closure inside this change set.
 
-    The closure is computed over the STAGED tree, so a Claim an earlier member
-    of this same set wrote under the predecessor is a dependent of the
-    succession and must be dispositioned like any accepted one. The candidate
-    itself is built by the same function the standalone `/claim-types/proposals`
-    migration builds it with: what a succession does to its dependents is one
-    law, and this road only supplies one more way to answer it -- `re_author`,
-    where a sibling Claim member of this intent is the dependent's successor.
+    The closure is computed over the STAGED tree -- the accepted tree as this
+    set's definition members left it -- so a definition this set writes is read
+    at its staged bytes. A sibling Claim member is never in it: successions
+    stage before Claims, so a Claim of the succeeded predicate authored in this
+    same set lowers under the SUCCESSOR and lands as an ordinary member. The
+    candidate itself is built by the same function the standalone
+    `/claim-types/proposals` migration builds it with: what a succession does to
+    its dependents is one law, and this road only supplies one more way to
+    answer it -- `re_author`, where a sibling Claim member of this intent is the
+    dependent's successor.
     """
 
     for position, dependent in enumerate(member.dependents):

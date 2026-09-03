@@ -425,8 +425,10 @@ def resolve_claim_type_succession(
     `/claim-types/proposals` migration and the change-set succession member --
     and a second implementation of "what succeeds what" is a second law. `tree`
     is whatever that road writes onto: the accepted tree for the standalone
-    route, the staged tree for a change set, so a set that defines a ClaimType
-    in one member and succeeds it in another resolves against its own sibling.
+    route, the staged tree for a change set, which is the accepted tree as that
+    set's definition members left it. Defining a ClaimType and succeeding it in
+    one set is not one of the shapes this resolves: both members author the same
+    path, so the set refuses on member-path ownership before reaching here.
     """
 
     successor = (
@@ -504,8 +506,10 @@ def claim_type_migration_inventory(
 
     Public for the reason `resolve_claim_type_succession` is: the closure a
     succession owes is computed over the tree that succession is written onto,
-    which for a change set is the staged tree, so a sibling Claim authored under
-    the predecessor earlier in the same set is a dependent of the succession.
+    which for a change set is the staged tree -- the accepted tree as that set's
+    own definition members left it, so a definition this set writes is read at
+    its staged bytes. Sibling Claims are not in that tree: they lower after the
+    succession, under the successor.
     """
 
     try:

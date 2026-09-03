@@ -19,6 +19,7 @@ from cruxible_client.contracts.authoring.models import (
     ChangeSetAuthoringPayloadV1,
     ClaimAuthoringPayloadV1,
     ClaimRetirementMemberV1,
+    ClaimTypeAuthoringPayloadV1,
     ClaimTypeSuccessionDependentV1,
     ClaimTypeSuccessionDisposition,
     ClaimTypeSuccessionMemberV1,
@@ -627,6 +628,86 @@ def test_a_re_author_sibling_under_another_type_refuses_with_both_indices(
     assert replacement["reason"] == "predicate_mismatch"
     assert replacement["member"] == positions[authoring_member_identity(succession)]
     assert replacement["sibling_member"] == positions[authoring_member_identity(other)]
+
+
+def test_a_sibling_claim_of_the_succeeded_type_is_not_a_dependent(tmp_path: Path) -> None:
+    """Members lower in dependency order, so a same-set Claim speaks the successor."""
+
+    instance, owner, coordinator, claims = _affects_package_world(
+        tmp_path,
+        values=(("wi-42", "ready"),),
+    )
+    actor = AuthenticatedActor(actor_id="owner")
+    successor = _enum_successor(instance, enum=["ready"])
+    generations_before = len(instance.accepted_history())
+    fresh = _claim(
+        subject_id="wi-2",
+        value=LiteralClaimObject(value="ready"),
+        rationale="A second work item, stated in the same set that narrows the type.",
+    )
+    # The closure names the ACCEPTED Claim only; the sibling is not owed a
+    # disposition, and a set that dispositioned it would not know its ID anyway.
+    succession = ClaimTypeSuccessionMemberV1(
+        successor=successor,
+        dependents=(_dependent(claims["wi-42"], disposition="successor"),),
+    )
+    intent = coordinator.create(
+        actor=actor,
+        payload=_change_set(succession, fresh),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    _accept(instance, owner, coordinator, intent.intent_id, actor)
+
+    assert len(instance.accepted_history()) == generations_before + 1
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    type_path = claim_type_path(PREDICATE)
+    migrated = parse_claim_type(tree[type_path], path=type_path)
+    minted = {item.member_identity: item.claim_id for item in intent.change_set_claim_identities}
+    fresh_path = claim_path(minted[authoring_member_identity(fresh)])
+    sibling = parse_claim(tree[fresh_path], path=fresh_path)
+    assert sibling.statement.claim_type_digest == claim_type_digest(migrated).tagged
+    assert sibling.lifecycle.predecessor_digest is None
+
+
+def test_a_set_cannot_define_a_claim_type_and_succeed_it(tmp_path: Path) -> None:
+    """One member per authored path: define-then-succeed is not a shape."""
+
+    instance, _owner, coordinator, _claims = _affects_package_world(
+        tmp_path,
+        values=(("wi-42", "ready"),),
+    )
+    actor = AuthenticatedActor(actor_id="owner")
+    defined = _accepted_type(instance).model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ClaimType", name="project.work_item.owner"),
+            "predicate": "project.work_item.owner",
+            "lifecycle": ArtifactLifecycle(),
+        }
+    )
+    succeeded = defined.model_copy(
+        update={
+            "literal_schema": {"type": "string", "enum": ["ready"]},
+            "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(defined).tagged),
+        }
+    )
+    payload = _change_set(
+        ClaimTypeAuthoringPayloadV1(claim_type=defined),
+        ClaimTypeSuccessionMemberV1(successor=succeeded, dependents=()),
+    )
+    intent = coordinator.create(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    with pytest.raises(AuthoringLoweringError) as raised:
+        lower_authoring(instance, intent=intent, actor_id="owner")
+    error = raised.value
+    assert error.code == "playbill.authoring.change_set_member_path_collision"
+    replacement = error.repairs[0].replacement
+    assert isinstance(replacement, dict)
+    assert replacement["path"] == claim_type_path("project.work_item.owner")
+    assert replacement["members"] == [0, 1]
 
 
 def test_the_member_disposition_cannot_drift_from_the_migration_disposition() -> None:

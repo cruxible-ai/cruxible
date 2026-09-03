@@ -1001,9 +1001,11 @@ class ClaimTypeSuccessionMemberV1(_StrictAuthoringModel):
     `successor` is a whole ClaimType that names its predecessor by identity and
     pins its exact digest, which is what makes it a succession rather than the
     definition `ClaimTypeAuthoringPayloadV1` carries. `dependents` is the exact
-    reverse-pin closure of the predecessor computed over the staged tree, so a
-    Claim an earlier member of the same set wrote under the predecessor is a
-    dependent too; a closure that is not exact refuses.
+    reverse-pin closure of the predecessor over the staged tree -- the accepted
+    tree as this set's definition members left it -- and a closure that is not
+    exact refuses. Sibling Claims are not in it: members lower in dependency
+    order, so a Claim of the succeeded predicate authored in this same set is
+    lowered under the successor and lands as an ordinary member.
     """
 
     tag: Literal["playbill-claim-type-succession-authoring-payload-v1"] = (

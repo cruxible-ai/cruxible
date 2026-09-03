@@ -456,7 +456,10 @@ vocabulary evolution.
 A `claim_type_succession` member succeeds an accepted ClaimType and settles its
 whole reverse-pin closure in the same generation. Members lower in dependency
 order -- definitions, then successions, then Claims, then retirements -- so a
-Claim member after a succession is lowered under the successor vocabulary. The
+Claim member after a succession is lowered under the successor vocabulary and is
+never one of its dependents. A set cannot define a ClaimType and succeed it:
+both members author the same artifact path, and the set refuses
+`playbill.authoring.change_set_member_path_collision`. The
 `successor` is a whole ClaimType naming its predecessor by identity and pinning
 that predecessor's exact digest; `dependents` is the exact closure computed over
 the staged tree. Each dependent takes `successor` (carry it, re-pinned),

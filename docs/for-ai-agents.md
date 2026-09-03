@@ -64,9 +64,16 @@ vocabulary. The successor is a whole ClaimType that names the predecessor by
 identity and pins its exact current digest; a ClaimType with no predecessor is
 a definition, and `.claim_type(...)` carries that instead.
 
-`dependents` must be the exact reverse-pin closure of the predecessor, computed
-over the STAGED tree -- so a Claim an earlier member of this same set wrote
-under the predecessor is a dependent too. An inexact closure refuses
+Members lower in dependency order -- definitions, then successions, then the
+Claims that read them, then retirements -- and `dependents` must be the exact
+reverse-pin closure of the predecessor over the tree at that point: the accepted
+tree as this set's own definition members left it, read at their staged bytes
+rather than the accepted ones. A sibling Claim is never a dependent. It lowers
+after the succession, under the SUCCESSOR vocabulary, and lands as an ordinary
+member of the same generation. Defining a ClaimType and succeeding it in one set
+is not expressible either -- both members author the same artifact path, so the
+set refuses `playbill.authoring.change_set_member_path_collision` naming the two.
+An inexact closure refuses
 `playbill.authoring.claim_type_succession_closure_incomplete`, whose repair
 lists every required dependent at its exact digest. Four dispositions, spelled
 by the SDK helpers `carry`, `rescind`, `retire` and `re_author`:
@@ -113,7 +120,12 @@ warning rather than a refusal.
 
 `cruxible playbill claim-type migrate` remains the operator form of the same
 law -- one succession, no siblings to re-author. Both roads build the candidate
-with the same function, so they cannot drift.
+with the same function, so `carry` and `retire` produce the same bytes whichever
+road authored them. `re_author` has no operator analogue by design: the
+standalone route cannot carry a live Claim through an object-kind change, so
+there it can only rescind and mint a new lineage, and the identity does not
+survive. Saying a committed Claim again, in place, under a new vocabulary is
+what the change set adds.
 
 The 2026-09-02 `sec.vuln.affects_package` migration -- a literal-valued
 ClaimType becoming subject-valued, which took three generations days apart --
