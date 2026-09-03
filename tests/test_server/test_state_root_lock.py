@@ -207,3 +207,16 @@ def test_the_stop_route_schedules_a_graceful_shutdown_and_names_the_daemon_pid(
     assert payload["scheduled"] is True
     assert payload["pid"] == os.getpid()
     assert signalled.wait(timeout=2.0)
+
+
+def test_a_pre_existing_world_writable_lock_is_narrowed_to_0600(tmp_path: Path) -> None:
+    """`O_CREAT`'s mode never touches a file that already exists."""
+
+    root = _root(tmp_path)
+    path = state_lock_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}", encoding="utf-8")
+    os.chmod(path, 0o666)
+
+    with StateRootLock(root, transport="unix socket /run/a.sock"):
+        assert path.stat().st_mode & 0o777 == 0o600

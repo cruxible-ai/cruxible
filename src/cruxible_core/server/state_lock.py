@@ -126,6 +126,12 @@ class StateRootLock:
                 "repair: stop it with `cruxible server stop`, or start this daemon on a "
                 "different --state-root"
             ) from exc
+        # `O_CREAT`'s mode applies only to a file this call creates: a lock file
+        # left world-writable by an earlier daemon (or pre-created by another
+        # local user) would otherwise keep its mode, and its recorded pid and
+        # transport are what the refusal names. `flock` still decides ownership,
+        # so this closes a spoof of the holder, not a theft of the root.
+        os.fchmod(descriptor, 0o600)
         # Only now is the record ours to replace: a stale body from a dead
         # holder is overwritten, never merged.
         os.ftruncate(descriptor, 0)

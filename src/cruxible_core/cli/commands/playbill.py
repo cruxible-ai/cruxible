@@ -25,6 +25,7 @@ from cruxible_client import (
     materialize_playbill_floor,
     observe_playbill_next_workspace,
 )
+from cruxible_client._error_base import printable
 from cruxible_client.authoring.attestations import (
     append_prepared_claim_attestation,
     local_attestation_signer_from_environment,
@@ -1075,8 +1076,10 @@ def decommission_instance(reason: str, confirmed: bool, output_json: bool) -> No
         _emit_json(result.model_dump(mode="json"))
         return
     click.echo(f"Instance {result.instance_id} decommissioned at {result.decommissioned_at}.")
-    click.echo(f"Reason: {result.reason}")
-    click.echo(f"By: {result.decommissioned_by}")
+    # Operator prose reaches the terminal here; escape it so a control
+    # character in the reason cannot forge a line of daemon output.
+    click.echo(f"Reason: {printable(result.reason)}")
+    click.echo(f"By: {printable(result.decommissioned_by)}")
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
     click.echo("Reads keep serving; nothing was deleted. Archive the directory yourself.")
 

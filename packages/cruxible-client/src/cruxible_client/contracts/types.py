@@ -238,6 +238,12 @@ def initial_authority_matrix() -> AuthorityMatrix:
     )
 
 
+#: Upper bound on the operator's decommission reason. It is stored in the
+#: canonical descriptor and echoed in every refusal, so it is bounded prose,
+#: not a place to park a document.
+DECOMMISSION_REASON_MAX_LENGTH = 512
+
+
 class PlaybillDecommissionV1(StrictModel):
     """The terminal lifecycle state of one governed instance.
 
@@ -248,15 +254,21 @@ class PlaybillDecommissionV1(StrictModel):
     """
 
     tag: Literal["playbill-instance-decommission-v1"] = "playbill-instance-decommission-v1"
-    reason: str
+    reason: str = Field(min_length=1, max_length=DECOMMISSION_REASON_MAX_LENGTH)
     decommissioned_at: str
-    decommissioned_by: str
+    decommissioned_by: str = Field(min_length=1, max_length=256)
 
     @field_validator("reason", "decommissioned_by")
     @classmethod
     def _nonblank(cls, value: str) -> str:
         if not value.strip() or value.strip() != value:
             raise ValueError("decommission fields must be nonblank and already normalized")
+        # The reason is rendered back to an operator in the CLI refusal and in
+        # the `next` row detail. A control character there forges daemon output
+        # (a newline plus "Error: ..." reads as the daemon's own line), so the
+        # record refuses it rather than leaving each renderer to escape it.
+        if any(character.isprintable() is False for character in value):
+            raise ValueError("decommission fields may not contain control characters")
         return value
 
 

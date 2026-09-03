@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any, Self
 
-from cruxible_client._error_base import CoreError
+from cruxible_client._error_base import CoreError, printable
 
 
 class PlaybillError(CoreError):
@@ -134,7 +134,8 @@ class PlaybillInstanceDecommissioned(PlaybillFormatError):
         )
         super().__init__(
             f"{self.error_code}: instance {instance_id!r} was decommissioned at "
-            f"{decommissioned_at} ({reason}); its accepted state stays readable and nothing "
+            f"{decommissioned_at} ({printable(reason)}); its accepted state stays readable "
+            "and nothing "
             "was deleted, but it accepts no further governed writes. Repair: allocate a new "
             "instance with `cruxible playbill host create`, or archive this directory yourself"
         )

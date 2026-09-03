@@ -29,6 +29,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.types import (
+    DECOMMISSION_REASON_MAX_LENGTH,
     GitObjectFormat,
     OperatingProfile,
     PrincipalRecord,
@@ -85,7 +86,7 @@ class PlaybillProviderSeedRequest(_StrictPlaybillRequest):
 class PlaybillInstanceDecommissionRequest(_StrictPlaybillRequest):
     """The operator's stated reason for ending this instance's governed writes."""
 
-    reason: str
+    reason: str = Field(min_length=1, max_length=DECOMMISSION_REASON_MAX_LENGTH)
 
 
 class PlaybillStoreBodyRequest(_StrictPlaybillRequest):
