@@ -68,7 +68,7 @@ def test_service_destinations_are_canonical_user_paths(tmp_path: Path) -> None:
     )
 
 
-def test_print_is_pure_and_auth_without_durable_credential_refuses(
+def test_print_is_pure_and_an_auth_flag_against_an_auth_off_latch_refuses(
     tmp_path: Path,
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
@@ -115,6 +115,7 @@ def test_print_is_pure_and_auth_without_durable_credential_refuses(
         ],
     )
     assert refused.exit_code == 1
+    assert "service_install.auth_posture_mismatch" in refused.output
     assert "cruxible server start --bootstrap-secret-file PATH" in refused.output
 
 
@@ -417,3 +418,62 @@ def test_install_service_refuses_an_out_of_range_port_with_the_same_typed_error(
     assert result.exit_code != 0
     assert "service_install.settings_invalid" in result.output
     assert "port must be between 1 and 65535" in result.output
+
+
+def _latch_auth_required_without_credentials(
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Latch the state root auth-on while leaving it with no active credential."""
+
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(root))
+    reset_registry()
+    store = RuntimeCredentialStore(root / "daemon" / "runtime_credentials.db")
+    store.mark_auth_required("test_durable_credential_gate")
+
+
+def test_install_service_refuses_an_auth_required_root_with_no_durable_credential(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The durable-credential gate is the refusal, not the auth-latch disagreement.
+
+    An auth-required root with no active credential would otherwise install a
+    service unit that can never authenticate on boot.
+    """
+
+    config = _config(tmp_path, "linux")
+    root = Path(config.state_root)
+    _latch_auth_required_without_credentials(root, monkeypatch)
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.server.current_service_platform", lambda: "linux"
+    )
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.server.resolved_cruxible_executable",
+        lambda: Path(config.executable),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.server.install_service",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("install called")),
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "server",
+            "install-service",
+            "--state-root",
+            str(root),
+            "--socket",
+            str(config.socket_path),
+            "--print",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "auth-on unattended startup requires an active durable runtime credential" in (
+        result.output
+    )
+    assert "cruxible server start --bootstrap-secret-file PATH" in result.output
+    assert not (root / "daemon" / SERVICE_CONFIG_NAME).exists()
+    reset_registry()
