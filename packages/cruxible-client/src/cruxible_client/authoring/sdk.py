@@ -1214,7 +1214,16 @@ class Playbill:
                 address=_subject_address(value.address)
             )
         elif isinstance(value, str) and _SUBJECT_RE.fullmatch(value):
-            statement_object = SubjectClaimObject(address=_subject_address(value))
+            object_kind = self._claim_type_object_kind(
+                predicate_name=predicate_name,
+                predicate=predicate,
+                claim_type_definition=claim_type_definition,
+            )
+            statement_object = (
+                SubjectClaimObject(address=_subject_address(value))
+                if object_kind == "subject"
+                else LiteralClaimObject(value=value)
+            )
         else:
             statement_object = LiteralClaimObject(value=normalize_canonical(value))
         source: Any
@@ -1427,6 +1436,34 @@ class Playbill:
                 entries_for_keywords(builder="claim", emitted=emitted, sites=sites)
             ),
         )
+
+    def _claim_type_object_kind(
+        self,
+        *,
+        predicate_name: str,
+        predicate: str | ClaimTypeRef,
+        claim_type_definition: ClaimTypeDraft | None,
+    ) -> Literal["literal", "subject"]:
+        """Resolve the exact ClaimType before interpreting address-shaped strings."""
+
+        if claim_type_definition is not None:
+            return claim_type_definition.definition.object_kind
+        coordinate = (
+            predicate.coordinate if isinstance(predicate, ClaimTypeRef) else self.coordinate
+        )
+        if isinstance(predicate, ClaimTypeRef):
+            self._assert_coordinate(coordinate)
+        view = self._client.get_playbill_claim_type(
+            self._instance_id,
+            predicate_name,
+            at=_api_coordinate(coordinate),
+        )
+        object_kind = view.envelope.get("object_kind")
+        if object_kind not in {"literal", "subject"}:
+            raise ValueError(
+                f"accepted ClaimType {predicate_name!r} has unsupported object_kind {object_kind!r}"
+            )
+        return cast(Literal["literal", "subject"], object_kind)
 
     def retire_claim(
         self,

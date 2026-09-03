@@ -38,7 +38,7 @@ from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicyV1,
     ClaimAttestationConsequenceRuleV1,
 )
-from cruxible_client.contracts.claims import SubjectClaimObject
+from cruxible_client.contracts.claims import LiteralClaimObject, SubjectClaimObject
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
     ProjectionClaimBackingV1,
@@ -48,6 +48,7 @@ from cruxible_client.contracts.policies import (
     ClaimResolutionPolicyV1,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.errors import CoreError
 from cruxible_core import __version__ as DAEMON_VERSION
 
@@ -68,6 +69,23 @@ class _Client:
         self.curation_actions: list[tuple[str, dict[str, object]]] = []
         self.audit_request: dict[str, object] | None = None
         self.retirement_request: dict[str, object] | None = None
+        self.claim_type_object_kinds: dict[str, str] = {"sec.vuln.affects_package": "subject"}
+
+    def get_playbill_claim_type(
+        self,
+        _instance_id: str,
+        predicate: str,
+        *,
+        at: api.PlaybillAcceptedCoordinate,
+    ) -> api.PlaybillClaimTypeView:
+        return api.PlaybillClaimTypeView(
+            coordinate=at,
+            path=f"claim-types/{predicate}.json",
+            predicate=predicate,
+            identity=f"ClaimType:{predicate}",
+            artifact_digest=_DIGEST,
+            envelope={"object_kind": self.claim_type_object_kinds.get(predicate, "literal")},
+        )
 
     def search_playbill(self, _instance_id: str, **values: object) -> api.PlaybillSearchResult:
         return api.PlaybillSearchResult(
@@ -868,6 +886,51 @@ def test_subject_values_build_typed_objects_and_only_refs_pin_a_coordinate(
         "statement.object.address"
     ]
     assert by_address.reference_expectations == ()
+
+
+def test_address_shaped_strings_follow_the_accepted_claim_type_object_kind(
+    tmp_path: Path,
+) -> None:
+    _workspace(tmp_path)
+    client = _Client()
+    client.claim_type_object_kinds.update(
+        {
+            "docs.reference": "literal",
+            "sec.vuln.affects_package": "subject",
+        }
+    )
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_test",
+        workspace=tmp_path,
+    )
+    common: dict[str, object] = {
+        "subject": "sec.vuln/cve-2026-0001",
+        "role": ClaimRole.OBSERVATION,
+        "rationale": "Preserve the ClaimType's governed object kind.",
+        "supported_by": None,
+        "copied_from": None,
+        "self_source": "object kind matrix",
+        "qualifier": None,
+        "effective_period": None,
+        "revises": None,
+        "dispositions": {},
+        "publish_to": None,
+        "subject_definition": None,
+        "claim_type_definition": None,
+    }
+
+    literal = pb.claim(predicate="docs.reference", value="docs/readme", **common)  # type: ignore[arg-type]
+    subject = pb.claim(
+        predicate="sec.vuln.affects_package",
+        value="sec.package/demo",
+        **common,  # type: ignore[arg-type]
+    )
+
+    assert literal.payload.statement.object == LiteralClaimObject(value="docs/readme")
+    assert subject.payload.statement.object == SubjectClaimObject(
+        address=SemanticAddress.whole_artifact("subjects/sec.package/demo.json")
+    )
 
 
 def test_claim_type_builder_selects_v4_for_attestation_consequences(tmp_path: Path) -> None:

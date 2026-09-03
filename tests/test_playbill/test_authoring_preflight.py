@@ -275,6 +275,29 @@ def test_subject_claim_object_requires_matching_type_and_existing_allowed_subjec
     assert literal_diagnostic.repairs[0].replacement == {"required_object_kind": "subject"}
 
 
+def test_address_shaped_literal_preflights_for_a_literal_claim_type(tmp_path: Path) -> None:
+    instance, owner = initialize_local(tmp_path)
+    literal_type = _claim_type().model_copy(
+        update={"literal_schema": {"enum": ["docs/readme"], "type": "string"}}
+    )
+    _seed_claim_surface(instance, owner, claim_type_override=literal_type)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    address_shaped_literal = _self_source_payload().model_copy(
+        update={
+            "statement": _self_source_payload().statement.model_copy(
+                update={"object": LiteralClaimObject(value="docs/readme")}
+            )
+        }
+    )
+    literal_intent = coordinator.create(
+        actor=actor,
+        payload=address_shaped_literal,
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    assert coordinator.preflight(literal_intent.intent_id, actor=actor).verdict == "passed"
+
+
 def test_claim_object_kind_mismatch_is_a_typed_preflight_refusal(tmp_path: Path) -> None:
     instance, owner = initialize_local(tmp_path)
     _seed_claim_surface(instance, owner)
