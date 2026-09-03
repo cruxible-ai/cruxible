@@ -436,8 +436,8 @@ journal records and `status` reconstructs the one-read run state from those reco
 ## playbill line
 
 ~~~text
-cruxible playbill line run LINE_IDENTITY_DIGEST
-  [--evaluation-time TS] [--occurrence-id ID] [--json]
+cruxible playbill line run LINE_IDENTITY_DIGEST --evaluation-time TS
+  [--occurrence-id ID] [--json]
 ~~~
 
 Triggers one daemon-derived due occurrence. The occurrence's evaluation
