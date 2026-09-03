@@ -238,7 +238,12 @@ class PlaybillInstanceManager:
             ),
             # The state root contains every daemon config, trust, custody, and
             # instance substrate. Explicit roots cover restored layouts too.
-            managed_roots=(get_server_state_root(), managed_root, trust_path.parent),
+            managed_roots=(
+                get_server_state_root(),
+                get_registry().state_root,
+                managed_root,
+                trust_path.parent,
+            ),
         )
 
     def cached_provider_runtime_operator(self) -> ProviderRuntimeOperator:

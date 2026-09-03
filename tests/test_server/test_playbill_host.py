@@ -18,14 +18,22 @@ from cruxible_client.contracts.documents import (
     DocumentShell,
 )
 from cruxible_client.contracts.errors import PlaybillBootstrapError, PlaybillReseedRequired
+from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.temporal import utc_now
+from cruxible_client.contracts.workspace_file import WorkspaceFileSourceRequestV1
 from cruxible_core.errors import ConfigError
 from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
-from cruxible_core.playbill.workspace_file import WorkspaceFileReadRefused
+from cruxible_core.playbill.workspace_file import (
+    WorkspaceFileReader,
+    WorkspaceFileReadRefused,
+    workspace_binding_digest,
+)
 from cruxible_core.runtime import host_api, playbill_api
+from cruxible_core.runtime import playbill_manager as playbill_manager_module
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
@@ -472,6 +480,92 @@ def test_playbill_init_retry_is_idempotent_only_for_the_exact_bootstrap_request(
             "inst_exact_init_retry",
             principals=(different_owner.principal,),
         )
+
+
+def _read_workspace_path(reader: WorkspaceFileReader, root: Path, relative_path: str) -> None:
+    request = WorkspaceFileSourceRequestV1(
+        logical_source="workspace.docs",
+        workspace_binding_digest=workspace_binding_digest(
+            instance_id=reader.instance_id, canonical_root=root
+        ),
+        relative_path=relative_path,
+        coordinate_type="workspace-snapshot-v1",
+        coordinate={"revision": "working"},
+        selector_type="workspace-file-v1",
+        selector={"document": "docs"},
+    )
+    reader.read(
+        request,
+        run_id="RUN-state-root",
+        admission_binding_digest="sha256:" + "1" * 64,
+        occurrence_path="source:read",
+        policy_coordinate=AcceptedCoordinate(
+            git_oid="a" * 64,
+            semantic_root="sha256:" + "b" * 64,
+            generation_root="sha256:" + "c" * 64,
+            compiler_digest="sha256:" + "d" * 64,
+        ),
+        resolved_max_bytes=1024,
+        derived_request_digest="sha256:" + "2" * 64,
+        read_at=utc_now(),
+    )
+
+
+def test_every_daemon_state_root_path_is_refused_even_inside_an_allowed_root(
+    host_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del host_client
+    host_api.create_playbill_host(instance_id="inst_state_root_denied")
+    record = get_registry().get("inst_state_root_denied")
+    assert record is not None
+    owner = generate_client_principal_key(
+        tmp_path / "state-root-owner",
+        principal_id="operator",
+        kind="ordinary",
+        forbidden_roots=(Path(record.location),),
+    )
+    playbill_api.playbill_init("inst_state_root_denied", principals=(owner.principal,))
+
+    manager = get_playbill_manager()
+    state_root = get_registry().state_root
+    allowed_root = state_root.parent.resolve(strict=True)
+    operator = manager.provider_runtime_operator()
+    monkeypatch.setattr(
+        operator,
+        "config",
+        operator.config.model_copy(update={"workspace_allowed_roots": (str(allowed_root),)}),
+    )
+    leaked = (
+        state_root / "trust" / "inst_state_root_denied.json",
+        state_root / "daemon" / "provider-secrets" / "realm.json",
+        state_root / "daemon" / "provider-runtime.json",
+        state_root / "instances" / "inst_other_tenant" / "ledger",
+    )
+    for path in leaked:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_bytes(b"daemon secret")
+    reader = manager.workspace_file_reader("inst_state_root_denied")
+
+    relatives = tuple(path.resolve().relative_to(allowed_root).as_posix() for path in leaked)
+    for relative in relatives:
+        with pytest.raises(WorkspaceFileReadRefused) as caught:
+            _read_workspace_path(reader, allowed_root, relative)
+        assert caught.value.path_class == "managed_root", relative
+
+    # The registry freezes its state root, so a later environment move must not
+    # unprotect the substrate the instance actually lives in.
+    moved_root = tmp_path / "moved-state"
+    moved_root.mkdir()
+    monkeypatch.setattr(playbill_manager_module, "get_server_state_root", lambda: moved_root)
+    monkeypatch.setattr(manager, "provider_runtime_operator", lambda: operator)
+    moved_reader = manager.workspace_file_reader("inst_state_root_denied")
+    for relative in relatives:
+        with pytest.raises(WorkspaceFileReadRefused) as caught:
+            _read_workspace_path(moved_reader, allowed_root, relative)
+        assert caught.value.path_class == "managed_root", relative
 
 
 def test_unavailable_workspace_configuration_reaches_run_service_as_typed_absence(
