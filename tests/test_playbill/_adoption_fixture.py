@@ -48,6 +48,7 @@ from cruxible_client.contracts.candidates import (
     PRODUCED_CANDIDATE_VERSION,
     CandidateWireVersion,
 )
+from cruxible_client.contracts.canonical import semantic_projection
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     build_direct_claim_capture,
@@ -709,7 +710,10 @@ def build_fixture(
             phase="accept-generations",
         )
 
-    member_count = sum(1 for path in builder.tree if not path.startswith("changesets/"))
+    # The declared composition counts semantic members. semantic_projection is the
+    # ledger's own answer for which paths those are, and it already excludes the
+    # changeset records and the derivative card sidecars a candidate tree carries.
+    member_count = len(semantic_projection(builder.tree))
     return AdoptionFixture(
         profile=profile,
         managed_root=managed_root,
