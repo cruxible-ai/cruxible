@@ -763,10 +763,14 @@ def test_procedure_runtime_policy_is_a_real_singleton_authoring_scope(tmp_path: 
 
 def test_change_set_membership_and_candidate_reference_refusals(tmp_path: Path) -> None:
     query = _change_set_query()
-    with pytest.raises(ValueError, match="at least 2 items"):
-        ChangeSetAuthoringPayloadV1(
-            members=(QueryDefinitionAuthoringPayloadV1(query_definition=query),)
-        )
+    # One authoring intent is one changeset at every size. The two-member floor
+    # this line once pinned made the uniform builder refuse the smallest real
+    # set an author writes, so a one-member set is admitted and keeps its own
+    # ChangeSet identity rather than collapsing into a singleton payload.
+    single = ChangeSetAuthoringPayloadV1(
+        members=(QueryDefinitionAuthoringPayloadV1(query_definition=query),)
+    )
+    assert len(single.members) == 1
     with pytest.raises(ValueError, match="sorted by semantic identity"):
         ChangeSetAuthoringPayloadV1(members=tuple(reversed(_change_set_payload(query).members)))
 

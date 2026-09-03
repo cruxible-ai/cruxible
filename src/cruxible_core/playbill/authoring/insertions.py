@@ -110,25 +110,37 @@ def mint_insertion_expectation_v2(
     original_claim_artifact_digest: str,
     claim_statement_digest: str,
     expires_at: datetime,
+    payload: ClaimAuthoringPayloadV1 | None = None,
+    claim_identity: str | None = None,
+    member_identity: str | None = None,
 ) -> InsertionExpectationV2:
-    payload = intent.payload
-    if not isinstance(payload, ClaimAuthoringPayloadV1):
+    """Mint one Claim's publication expectation, singular intent or set member.
+
+    `payload`, `claim_identity` and `member_identity` name the publishing member
+    when the intent is a change set. Omitted, they fall back to the singular
+    Claim intent's own payload and identity, whose expectation ID preimage is
+    exactly the one it has always had.
+    """
+
+    authored = intent.payload if payload is None else payload
+    if not isinstance(authored, ClaimAuthoringPayloadV1):
         raise InsertionProtocolError("only a Claim intent can mint an insertion expectation")
-    if not isinstance(payload.insertion_target, InsertionTargetV2):
+    if not isinstance(authored.insertion_target, InsertionTargetV2):
         raise InsertionProtocolError("publication v2 requires its frozen v2 target")
-    if not isinstance(payload.source, SelfSourceBodyV1):
+    if not isinstance(authored.source, SelfSourceBodyV1):
         raise InsertionProtocolError("publication v2 requires a Flow-B self-source")
     return build_insertion_expectation_v2(
         expectation_id=insertion_expectation_id(
             instance_id=intent.instance_id,
             intent_id=intent.intent_id,
             intent_revision=intent.intent_revision,
+            member_identity=member_identity,
         ),
         state="awaiting_claim_acceptance",
-        claim_identity=intent.semantic_identity,
+        claim_identity=intent.semantic_identity if claim_identity is None else claim_identity,
         original_claim_artifact_digest=original_claim_artifact_digest,
         claim_statement_digest=claim_statement_digest,
-        target=payload.insertion_target,
+        target=authored.insertion_target,
         expires_at=ensure_utc(expires_at),
     )
 

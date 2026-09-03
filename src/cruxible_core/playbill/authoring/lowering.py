@@ -22,12 +22,15 @@ from cruxible_client.contracts.authoring.models import (
     ApprovalPolicyAuthoringPayloadV1,
     AuthoringArtifactReferenceV1,
     AuthoringCandidateReferenceV1,
+    AuthoringChangeSetMemberV1,
     AuthoringExactContentObjectV1,
     AuthoringIntentV1,
     ChangeSetAuthoringPayloadV1,
     ClaimAuthoringPayloadV1,
     ClaimAuthoringPayloadV2,
     ClaimAuthoringPayloadV3,
+    ClaimRetirementMemberV1,
+    ClaimTypeAuthoringPayloadV1,
     ExistingCaptureCitationSourceV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
@@ -71,6 +74,7 @@ from cruxible_client.contracts.claims import (
     ClaimArtifactV3,
     ClaimBackingV2,
     ClaimReferentContext,
+    ClaimRetireDependentV1,
     ClaimStatement,
     ExactContentClaimObject,
     LiteralClaimObject,
@@ -132,6 +136,11 @@ from cruxible_client.contracts.subjects import (
 from cruxible_core.playbill.citation_relations import (
     RELATION_CONTRACT_SCHEMA,
     capture_contract_relation_subject,
+)
+from cruxible_core.playbill.claim_retirement import (
+    ClaimRetireError,
+    build_claim_retirement_candidate,
+    claim_retirement_inventory,
 )
 from cruxible_core.playbill.compiler import (
     artifact_codec_for_compiler,
@@ -413,6 +422,17 @@ def _install_claim_dependencies(
     *,
     base_tree: dict[str, bytes],
 ) -> tuple[dict[str, bytes], set[str]]:
+    """Install a Claim's Subject and ClaimType drafts against the tree it lowers on.
+
+    `base_tree` is the STAGED tree, so a sibling member that defines the Subject
+    or the ClaimType earlier in the same change set already satisfies the draft.
+    The withdrawn `dependency_not_one_claim` refusal read a succession in a draft
+    as proof that the author meant a second change; a change set IS one change,
+    so the staged tree decides instead: a draft that differs from what is already
+    staged or accepted at that identity still refuses, and one that agrees with
+    it installs nothing.
+    """
+
     candidate_tree = dict(base_tree)
     changed_paths: set[str] = set()
     if not isinstance(payload, ClaimAuthoringPayloadV2 | ClaimAuthoringPayloadV3):
@@ -433,17 +453,6 @@ def _install_claim_dependencies(
                 "The Subject draft does not equal this Claim's exact subject.",
                 repair_kind="replace_dependency_subject",
                 repair_description="Use the Subject named by statement.subject.",
-            )
-        if (
-            subject_draft.lifecycle.state != "live"
-            or subject_draft.lifecycle.predecessor_digest is not None
-        ):
-            _refuse(
-                "playbill.authoring.dependency_not_one_claim",
-                "dependency_drafts.subject.lifecycle",
-                "A one-Claim dependency closure cannot carry a Subject succession.",
-                repair_kind="remove_dependency_successor",
-                repair_description="Submit the Subject successor as a separate governed change.",
             )
         rendered = render_subject(subject_draft)
         accepted = base_tree.get(draft_path)
@@ -479,17 +488,6 @@ def _install_claim_dependencies(
                 repair_kind="replace_dependency_claim_type",
                 repair_description="Use the ClaimType named by statement.predicate.",
             )
-        if (
-            claim_type_draft.lifecycle.state != "live"
-            or claim_type_draft.lifecycle.predecessor_digest is not None
-        ):
-            _refuse(
-                "playbill.authoring.dependency_not_one_claim",
-                "dependency_drafts.claim_type.lifecycle",
-                "A one-Claim dependency closure cannot carry a ClaimType succession.",
-                repair_kind="remove_dependency_successor",
-                repair_description="Submit the ClaimType successor as a separate governed change.",
-            )
         rendered = render_claim_type(claim_type_draft)
         accepted = base_tree.get(draft_path)
         if accepted is not None and accepted != rendered:
@@ -522,9 +520,22 @@ def _lower_claim(
     actor_id: str,
     base: AcceptedProjectionCoordinate,
     base_tree: dict[str, bytes],
+    payload: ClaimAuthoringPayloadV1 | None = None,
+    claim_identity: str | None = None,
 ) -> LoweredAuthoring:
-    payload = intent.payload
-    assert isinstance(payload, ClaimAuthoringPayloadV1)
+    """Lower one authored Claim against the tree it is being written onto.
+
+    `payload` and `claim_identity` are explicit so a change-set member lowers the
+    same way a singular Claim intent does: the member carries its own payload and
+    its own minted Claim ID, and `base_tree` is the staged tree its siblings have
+    already written into, so dependency installs, the slot law and predecessor
+    lookup all see the rest of the same change.
+    """
+
+    authored = intent.payload if payload is None else payload
+    assert isinstance(authored, ClaimAuthoringPayloadV1)
+    payload = authored
+    claim_id = intent.semantic_identity if claim_identity is None else claim_identity
     type_path = claim_type_path(payload.statement.predicate)
     candidate_base_tree, dependency_paths = _install_claim_dependencies(
         payload,
@@ -663,7 +674,6 @@ def _lower_claim(
             },
         )
 
-    claim_id = intent.semantic_identity
     path = claim_path(claim_id)
     predecessor: ClaimArtifactAny | None = None
     if path in candidate_base_tree:
@@ -1408,9 +1418,17 @@ def _lower_procedure(
 def _render_non_procedure_member(
     payload: SubjectAuthoringPayloadV1
     | QueryDefinitionAuthoringPayloadV1
+    | ClaimTypeAuthoringPayloadV1
     | ApprovalPolicyAuthoringPayloadV1
     | ProcedureRuntimePolicyAuthoringPayloadV1,
 ) -> tuple[str, bytes, str]:
+    if isinstance(payload, ClaimTypeAuthoringPayloadV1):
+        definition = payload.claim_type
+        return (
+            claim_type_path(definition.predicate),
+            render_claim_type(definition),
+            claim_type_digest(definition).tagged,
+        )
     if isinstance(payload, SubjectAuthoringPayloadV1):
         shell = payload.subject
         return (
@@ -1503,9 +1521,108 @@ def _lower_non_procedure(
     )
 
 
+MEMBER_STAGING_ORDER = (
+    "definition",
+    "claim",
+    "procedure",
+    "procedure_mandate",
+    "claim_retirement",
+)
+
+
+def _member_stage(member: AuthoringChangeSetMemberV1) -> str:
+    """Say which staging pass writes this member into the change set's tree.
+
+    Members are byte-sorted by semantic identity on the wire so one intent has
+    one canonical form, which is the wrong order to *lower* in: a Claim sorts
+    before the ClaimType that admits it. The passes below are the dependency
+    order instead -- definitions, then the Claims that read them, then the
+    Procedures and mandates that pin those, then the retirements that withdraw
+    Claims the same set may just have written.
+    """
+
+    if isinstance(member, ClaimAuthoringPayloadV1):
+        return "claim"
+    if isinstance(member, ClaimRetirementMemberV1):
+        return "claim_retirement"
+    if isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
+        return "procedure"
+    if isinstance(member, ProcedureMandateAuthoringPayloadV1):
+        return "procedure_mandate"
+    return "definition"
+
+
+def _member_primary_path(
+    member: AuthoringChangeSetMemberV1,
+    *,
+    claim_identities: Mapping[str, str],
+) -> str:
+    """Return the one artifact path this member is authoring."""
+
+    if isinstance(member, ClaimAuthoringPayloadV1):
+        return claim_path(claim_identities[authoring_member_identity(member)])
+    if isinstance(member, ClaimRetirementMemberV1):
+        return claim_path(member.claim_id)
+    if isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
+        return procedure_path(str(member.definition["name"]))
+    if isinstance(member, ProcedureMandateAuthoringPayloadV1):
+        return procedure_mandate_path(member.name)
+    path, _content, _digest = _render_non_procedure_member(member)
+    return path
+
+
+def _rescope_member_error(
+    error: AuthoringLoweringError,
+    *,
+    index: int,
+    sibling_member_by_claim_id: Mapping[str, int],
+) -> AuthoringLoweringError:
+    """Re-address one member's refusal to the member that owns it.
+
+    A change set admits or refuses whole, so the caller needs the offending
+    member's index, not just the field path inside it. The slot law additionally
+    names the sibling members whose Claims contend for the slot, because when the
+    contender is another member of the same submission "disposition this Claim
+    ID" is not yet a repair the author can carry out.
+    """
+
+    repairs = tuple(
+        repair.model_copy(
+            update={
+                "replacement": {
+                    **repair.replacement,
+                    "sibling_members": sorted(
+                        (
+                            {"claim_id": claim_id, "member": member_index}
+                            for claim_id, member_index in sibling_member_by_claim_id.items()
+                            if any(
+                                claim_id == entry.get("claim_id")
+                                for entry in repair.replacement.get("required_claims", [])
+                                if isinstance(entry, dict)
+                            )
+                        ),
+                        key=lambda item: str(item["claim_id"]).encode("ascii"),
+                    ),
+                }
+            }
+        )
+        if isinstance(repair.replacement, dict) and "required_claims" in repair.replacement
+        else repair
+        for repair in error.repairs
+    )
+    return AuthoringLoweringError(
+        code=error.code,
+        offending_element=f"members[{index}].{error.offending_element}",
+        message=error.message,
+        repairs=repairs,
+    )
+
+
 def _lower_change_set(
+    instance: PlaybillInstance,
     *,
     intent: AuthoringIntentV1,
+    actor_id: str,
     base: AcceptedProjectionCoordinate,
     base_tree: dict[str, bytes],
 ) -> LoweredAuthoring:
@@ -1533,6 +1650,33 @@ def _lower_change_set(
                 "Author and accept the ProcedureRuntimePolicy separately from the change set."
             ),
         )
+    claim_identities = {
+        item.member_identity: item.claim_id for item in intent.change_set_claim_identities
+    }
+    sibling_member_by_claim_id = {
+        claim_identities[authoring_member_identity(member)]: index
+        for index, member in enumerate(payload.members)
+        if isinstance(member, ClaimAuthoringPayloadV1)
+    }
+    owner_by_path: dict[str, int] = {}
+    primary_paths: list[str] = []
+    for index, member in enumerate(payload.members):
+        path = _member_primary_path(member, claim_identities=claim_identities)
+        primary_paths.append(path)
+        owner = owner_by_path.get(path)
+        if owner is not None:
+            _refuse(
+                "playbill.authoring.change_set_member_path_collision",
+                f"members[{index}]",
+                f"Members {owner} and {index} both author {path!r}.",
+                repair_kind="drop_or_merge_member",
+                repair_description=(
+                    "Keep one member per authored artifact path, or merge the two decisions."
+                ),
+                replacement={"members": [owner, index], "path": path},
+            )
+        owner_by_path[path] = index
+
     staged_tree = dict(base_tree)
     member_paths: set[str] = set()
     resolved: list[dict[str, object]] = []
@@ -1541,54 +1685,36 @@ def _lower_change_set(
         for member in payload.members
         if not isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2)
     )
-    for member in payload.members:
-        if isinstance(
-            member,
-            ProcedureAuthoringPayloadV1
-            | ProcedureAuthoringPayloadV2
-            | ProcedureMandateAuthoringPayloadV1,
-        ):
-            continue
-        path, content, digest = _render_non_procedure_member(member)
-        member_paths.add(path)
-        staged_tree[path] = content
-        resolved.append(
-            {
-                "artifact_digest": digest,
-                "identity": authoring_member_identity(member),
-                "path": path,
-            }
-        )
-    for member in payload.members:
-        if not isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
-            continue
-        path = procedure_path(str(member.definition["name"]))
-        member_paths.add(path)
-        lowered = _lower_procedure(
-            intent=intent.model_copy(update={"payload": member}),
-            base=base,
-            base_tree=staged_tree,
-            accepted_reference_tree=base_tree,
-            candidate_identities=candidate_identities,
-        )
-        staged_tree = lowered.proposed_tree
-        member_resolved = dict(lowered.resolved_authoring)
-        member_resolved["identity"] = authoring_member_identity(member)
-        member_resolved["path"] = path
-        resolved.append(member_resolved)
-    for member in payload.members:
-        if not isinstance(member, ProcedureMandateAuthoringPayloadV1):
-            continue
-        path, content, digest = _render_procedure_mandate_member(member, tree=staged_tree)
-        member_paths.add(path)
-        staged_tree[path] = content
-        resolved.append(
-            {
-                "artifact_digest": digest,
-                "identity": authoring_member_identity(member),
-                "path": path,
-            }
-        )
+    for stage in MEMBER_STAGING_ORDER:
+        for index, member in enumerate(payload.members):
+            if _member_stage(member) != stage:
+                continue
+            path = primary_paths[index]
+            member_paths.add(path)
+            try:
+                staged_tree, member_resolved, extra_paths = _stage_change_set_member(
+                    instance,
+                    member=member,
+                    intent=intent,
+                    actor_id=actor_id,
+                    base=base,
+                    base_tree=base_tree,
+                    staged_tree=staged_tree,
+                    path=path,
+                    claim_identities=claim_identities,
+                    candidate_identities=candidate_identities,
+                )
+            except AuthoringLoweringError as error:
+                raise _rescope_member_error(
+                    error,
+                    index=index,
+                    sibling_member_by_claim_id=sibling_member_by_claim_id,
+                ) from error
+            member_paths.update(extra_paths)
+            member_resolved["identity"] = authoring_member_identity(member)
+            member_resolved["member"] = index
+            member_resolved["path"] = path
+            resolved.append(member_resolved)
     changed = tuple(
         (path, staged_tree[path])
         for path in sorted(member_paths, key=lambda item: item.encode("utf-8"))
@@ -1604,6 +1730,170 @@ def _lower_change_set(
             ),
         },
         changed_members=changed,
+    )
+
+
+def _stage_change_set_member(
+    instance: PlaybillInstance,
+    *,
+    member: AuthoringChangeSetMemberV1,
+    intent: AuthoringIntentV1,
+    actor_id: str,
+    base: AcceptedProjectionCoordinate,
+    base_tree: dict[str, bytes],
+    staged_tree: dict[str, bytes],
+    path: str,
+    claim_identities: Mapping[str, str],
+    candidate_identities: frozenset[str],
+) -> tuple[dict[str, bytes], dict[str, object], set[str]]:
+    """Write one member into the staged tree and report what it resolved to."""
+
+    if isinstance(member, ClaimAuthoringPayloadV1):
+        claim_id = claim_identities[authoring_member_identity(member)]
+        lowered = _lower_claim(
+            instance,
+            intent=intent,
+            actor_id=actor_id,
+            base=base,
+            base_tree=staged_tree,
+            payload=member,
+            claim_identity=claim_id,
+        )
+        member_resolved = dict(lowered.resolved_authoring)
+        member_resolved["claim_id"] = claim_id
+        extra = {member_path for member_path, _content in lowered.changed_members}
+        return dict(lowered.proposed_tree), member_resolved, extra
+    if isinstance(member, ClaimRetirementMemberV1):
+        return _stage_claim_retirement(
+            instance,
+            member=member,
+            base=base,
+            staged_tree=staged_tree,
+            path=path,
+        )
+    if isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
+        lowered = _lower_procedure(
+            intent=intent.model_copy(update={"payload": member}),
+            base=base,
+            base_tree=staged_tree,
+            accepted_reference_tree=base_tree,
+            candidate_identities=candidate_identities,
+        )
+        return dict(lowered.proposed_tree), dict(lowered.resolved_authoring), set()
+    if isinstance(member, ProcedureMandateAuthoringPayloadV1):
+        mandate_path, content, digest = _render_procedure_mandate_member(member, tree=staged_tree)
+        staged_tree = dict(staged_tree)
+        staged_tree[mandate_path] = content
+        return staged_tree, {"artifact_digest": digest}, set()
+    _path, content, digest = _render_non_procedure_member(member)
+    staged_tree = dict(staged_tree)
+    staged_tree[path] = content
+    return staged_tree, {"artifact_digest": digest}, set()
+
+
+def _stage_claim_retirement(
+    instance: PlaybillInstance,
+    *,
+    member: ClaimRetirementMemberV1,
+    base: AcceptedProjectionCoordinate,
+    staged_tree: dict[str, bytes],
+    path: str,
+) -> tuple[dict[str, bytes], dict[str, object], set[str]]:
+    """Retire one Claim and its live closure inside the same change set."""
+
+    content = staged_tree.get(path)
+    if content is None:
+        _refuse(
+            "playbill.authoring.claim_predecessor_not_found",
+            "claim_ref",
+            "The Claim named for retirement does not exist in this change set's tree.",
+            repair_kind="replace_claim_ref",
+            repair_description="Retire a Claim accepted at the intent base.",
+        )
+    claim = parse_claim(content, path=path)
+    if claim.lifecycle.state != "live":
+        _refuse(
+            "playbill.authoring.claim_terminal",
+            "claim_ref",
+            "A retired Claim cannot be retired again.",
+            repair_kind="drop_member",
+            repair_description="Remove this retirement member; the Claim is already retired.",
+        )
+    root = ClaimRetireDependentV1(
+        artifact_identity=claim.identity,
+        predecessor_digest=claim_artifact_digest(claim).tagged,
+        reason=member.reason,
+        effective_until=member.effective_until,
+    )
+    try:
+        inventory = claim_retirement_inventory(
+            instance,
+            tree=staged_tree,
+            coordinate=AcceptedCoordinate.from_internal(base),
+            claim=claim,
+        )
+    except ClaimRetireError as error:
+        _refuse(
+            "playbill.authoring.claim_retirement_closure_unsupported",
+            "dependents",
+            str(error),
+            repair_kind="split_change_set",
+            repair_description=(
+                "Retire the non-Claim dependents through their own governed change first."
+            ),
+        )
+    expected = {item.artifact_identity.qualified: item.predecessor_digest for item in inventory}
+    supplied = {
+        item.artifact_identity.qualified: item.predecessor_digest for item in member.dependents
+    }
+    if supplied != expected:
+        _refuse(
+            "playbill.authoring.claim_retirement_closure_incomplete",
+            "dependents",
+            "A retirement member must carry its exact live Claim closure.",
+            repair_kind="replace_dependents",
+            repair_description="Carry exactly the listed dependents at their exact digests.",
+            replacement={
+                "required_dependents": [item.model_dump(mode="json") for item in inventory],
+                "supplied_dependents": sorted(
+                    supplied,
+                    key=lambda item: item.encode("utf-8"),
+                ),
+            },
+        )
+    try:
+        candidate_tree, retirements = build_claim_retirement_candidate(
+            staged_tree,
+            root=root,
+            dependents=member.dependents,
+        )
+    except ClaimRetireError as error:
+        _refuse(
+            "playbill.authoring.claim_retirement_stale",
+            "dependents",
+            str(error),
+            repair_kind="replace_dependents",
+            repair_description="Re-read the closure at the intent base and resubmit.",
+        )
+    extra = {
+        claim_path(item.artifact_identity.name)
+        for item in retirements
+        if item.artifact_identity.name != claim.identity.name
+    }
+    successor = next(
+        item.successor_digest
+        for item in retirements
+        if item.artifact_identity.qualified == claim.identity.qualified
+    )
+    return (
+        dict(candidate_tree),
+        {
+            "artifact_digest": successor,
+            "claim_id": claim.identity.name,
+            "predecessor_digest": root.predecessor_digest,
+            "retirements": [item.model_dump(mode="json") for item in retirements],
+        },
+        extra,
     )
 
 
@@ -1660,7 +1950,13 @@ def lower_authoring(
             changed_members=changed,
         )
     if isinstance(intent.payload, ChangeSetAuthoringPayloadV1):
-        return _lower_change_set(intent=intent, base=base, base_tree=base_tree)
+        return _lower_change_set(
+            instance,
+            intent=intent,
+            actor_id=actor_id,
+            base=base,
+            base_tree=base_tree,
+        )
     return _lower_non_procedure(payload=intent.payload, base_tree=base_tree)
 
 

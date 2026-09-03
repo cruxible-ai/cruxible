@@ -396,8 +396,17 @@ def validate_proposal_tree(
     if base_tree is not None:
         # Counted before any member is parsed, and counted in both directions so
         # that dropping ten thousand members is bounded exactly as adding them is.
-        changed = sum(1 for path, content in tree.items() if base_tree.get(path) != content)
-        changed += sum(1 for path in base_tree if path not in tree)
+        # Derivative cards are excluded: nobody authors them, the compiler emits
+        # one per authored member, and counting them halved the members an author
+        # was actually allowed to change.
+        changed = sum(
+            1
+            for path, content in tree.items()
+            if base_tree.get(path) != content and not is_candidate_card_path(path)
+        )
+        changed += sum(
+            1 for path in base_tree if path not in tree and not is_candidate_card_path(path)
+        )
         if changed > limits.max_changed_members:
             raise ProposalAdmissionError("proposal exceeds its changed-member limit")
     for raw_path in tree:

@@ -81,6 +81,7 @@ from cruxible_core.playbill.projection import (
 from cruxible_core.playbill.proposal_evidence import ProposalEvidenceStore
 from cruxible_core.playbill.proposals import (
     ExhaustPromotionVerifierProtocol,
+    ProposalReceiveLimits,
     ProposalService,
 )
 from cruxible_core.playbill.recovery import (
@@ -180,6 +181,7 @@ class PlaybillInstance:
         self._promotion_verifier = promotion_verifier
         self._claim_attestation_store: ClaimAttestationEvidenceStore | None = None
         self._workspace_advertiser: Callable[[], PlaybillWorkspaceAdvertisement] | None = None
+        self._receive_limits = ProposalReceiveLimits()
 
     @staticmethod
     def _accepted_query_facts(
@@ -582,7 +584,18 @@ class PlaybillInstance:
             ),
             query_facts_provider=lambda coordinate: self._accepted_query_facts(self, coordinate),
             workspace_advertiser=self.advertise_workspace,
+            receive_limits=self._receive_limits,
         )
+
+    def bind_receive_limits(self, limits: ProposalReceiveLimits) -> None:
+        """Bind this daemon's operational receive ceiling for the running process.
+
+        The changed-member ceiling is an operator admission knob, so it reaches
+        the instance from the daemon's own state root rather than from anything
+        an author can send.
+        """
+
+        self._receive_limits = limits
 
     def bind_workspace_advertiser(
         self,

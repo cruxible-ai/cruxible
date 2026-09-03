@@ -35,6 +35,7 @@ from cruxible_core.service.playbill_procedure_runs import (
     ProcedureRunOperationalConfigV1,
     load_procedure_run_config,
 )
+from cruxible_core.service.playbill_proposal_receive import load_proposal_receive_config
 
 _log = structlog.get_logger("cruxible.provider_runtime")
 
@@ -194,6 +195,9 @@ class PlaybillInstanceManager:
             if canonical_bytes(trust.model_dump(mode="json")) + b"\n" != raw:
                 raise PlaybillFormatError("persisted Playbill trust root is not canonical")
             instance = PlaybillInstance.open(managed_root, trust_root=trust)
+            instance.bind_receive_limits(
+                load_proposal_receive_config(get_server_state_root()).limits()
+            )
             self._bind_workspace(instance, _workspaces)
             self._instances[instance_id] = instance
             return instance

@@ -6,7 +6,7 @@ import base64
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Literal
+from typing import Callable, Literal, cast
 
 from cruxible_client.contracts.attestations import (
     VerifiedApproval,
@@ -26,10 +26,12 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringPayloadV1,
     AuthoringProgramStampV1,
     AuthoringReferenceExpectationV1,
+    AuthoringSubmitMemberV1,
     AuthoringSubmitResultV1,
     CandidateStatusState,
     CandidateStatusV1,
     ChangeSetAuthoringPayloadV1,
+    ChangeSetClaimIdentityV1,
     ClaimAuthoringPayloadV1,
     ExistingCaptureCitationSourceV1,
     InsertionAbandonResultV1,
@@ -64,6 +66,7 @@ from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     ClaimArtifactV2,
+    claim_artifact_digest,
     claim_citation_references,
     claim_path,
     claim_statement_digest,
@@ -170,6 +173,72 @@ def _rendered_publication_block(
     return base64.b64encode(framed).decode("ascii")
 
 
+def _select_expectation(
+    intent: AuthoringIntentV1,
+    expectation_id: str | None,
+) -> InsertionExpectationV2:
+    """Pick the expectation a publication call is about.
+
+    A singular Claim intent has exactly one, so naming it is optional. A change
+    set that publishes several Claims has no default: guessing one would apply a
+    body to whichever page sorted first.
+    """
+
+    expectations = intent.insertion_expectations
+    if not expectations:
+        raise InsertionProtocolError("AuthoringIntent has no publication v2 expectation")
+    if expectation_id is None:
+        if len(expectations) != 1:
+            raise InsertionProtocolError(
+                "this change set publishes several Claims; name one expectation_id"
+            )
+        return expectations[0]
+    for item in expectations:
+        if item.expectation_id == expectation_id:
+            return item
+    raise InsertionProtocolError("AuthoringIntent has no such publication expectation")
+
+
+def _replaced_expectation(
+    intent: AuthoringIntentV1,
+    expectation: InsertionExpectationV2,
+) -> dict[str, object]:
+    """Write one expectation back, keeping the singular mirror consistent."""
+
+    updated = tuple(
+        expectation if item.expectation_id == expectation.expectation_id else item
+        for item in intent.insertion_expectations
+    )
+    return {
+        "insertion_expectation": (
+            expectation if isinstance(intent.payload, ClaimAuthoringPayloadV1) else None
+        ),
+        "insertion_expectations": updated,
+    }
+
+
+def _matching_expectation(
+    intent: AuthoringIntentV1 | None,
+    expectation_id: str,
+) -> InsertionExpectationV2 | None:
+    if intent is None:
+        return None
+    for item in intent.insertion_expectations:
+        if item.expectation_id == expectation_id:
+            return item
+    return None
+
+
+def _live_expectation(
+    intent: AuthoringIntentV1,
+    expectation: InsertionExpectationV2,
+) -> InsertionExpectationV2:
+    for item in intent.insertion_expectations:
+        if item.expectation_id == expectation.expectation_id:
+            return item
+    raise InsertionProtocolError("publication expectation disappeared")
+
+
 @dataclass(frozen=True)
 class AuthoringIntentCoordinator:
     instance: PlaybillInstance
@@ -250,6 +319,7 @@ class AuthoringIntentCoordinator:
                 payload=payload,
             ),
             "candidate_status": status,
+            "change_set_claim_identities": self._mint_change_set_claim_identities(payload),
         }
         intent = (
             AuthoringIntentV1.model_validate(intent_values)
@@ -602,18 +672,87 @@ class AuthoringIntentCoordinator:
         artifact_digest = lowered.resolved_authoring.get("artifact_digest")
         if not isinstance(artifact_digest, str):
             return False, None
-        path = claim_path(preflighted.semantic_identity)
+        return True, self._projected_claim_revision(
+            claim_id=preflighted.semantic_identity,
+            artifact_digest=artifact_digest,
+        )
+
+    def _projected_claim_revision(self, *, claim_id: str, artifact_digest: str) -> int:
+        path = claim_path(claim_id)
         records = tuple(
             (path, generation.record)
             for generation in self.instance.accepted_history()
             if generation.record is not None
         )
-        return True, projected_revision(
+        return projected_revision(
             records,
             path=path,
             input_digest=artifact_digest,
             artifact_digest=artifact_digest,
         )
+
+    def _submit_members(
+        self,
+        computed: ComputedPreflight,
+        preflighted: AuthoringIntentV1,
+    ) -> tuple[AuthoringSubmitMemberV1, ...]:
+        """Say what every submitted member became, one row per member.
+
+        One intent is one changeset, so the amend-in-place answer the singular
+        fields give for a Claim intent is owed once per member for a set --
+        otherwise a caller who submitted eighty members has to re-read eighty
+        artifacts to learn which of them reused a lineage.
+        """
+
+        lowered = computed.lowered
+        if lowered is None:
+            return ()
+        if isinstance(preflighted.payload, ClaimAuthoringPayloadV1):
+            artifact_digest = lowered.resolved_authoring.get("artifact_digest")
+            if not isinstance(artifact_digest, str):
+                return ()
+            identity_stable, claim_revision = self._revision_marker(computed, preflighted)
+            predecessor = lowered.resolved_authoring.get("predecessor_digest")
+            return (
+                AuthoringSubmitMemberV1(
+                    identity=f"Claim:{preflighted.semantic_identity}",
+                    artifact_digest=artifact_digest,
+                    predecessor_digest=predecessor if isinstance(predecessor, str) else None,
+                    identity_stable=identity_stable,
+                    claim_revision=claim_revision,
+                ),
+            )
+        raw_members = lowered.resolved_authoring.get("members")
+        if not isinstance(raw_members, list):
+            return ()
+        members: list[AuthoringSubmitMemberV1] = []
+        for raw in raw_members:
+            if not isinstance(raw, dict):  # pragma: no cover - lowering invariant
+                continue
+            identity = raw.get("identity")
+            artifact_digest = raw.get("artifact_digest")
+            if not isinstance(identity, str) or not isinstance(artifact_digest, str):
+                continue
+            predecessor = raw.get("predecessor_digest")
+            claim_id = raw.get("claim_id")
+            amends = isinstance(predecessor, str) and isinstance(claim_id, str)
+            members.append(
+                AuthoringSubmitMemberV1(
+                    identity=identity,
+                    artifact_digest=artifact_digest,
+                    predecessor_digest=predecessor if isinstance(predecessor, str) else None,
+                    identity_stable=amends,
+                    claim_revision=(
+                        self._projected_claim_revision(
+                            claim_id=cast(str, claim_id),
+                            artifact_digest=artifact_digest,
+                        )
+                        if amends
+                        else None
+                    ),
+                )
+            )
+        return tuple(sorted(members, key=lambda item: item.identity.encode("utf-8")))
 
     def submit(
         self,
@@ -759,33 +898,17 @@ class AuthoringIntentCoordinator:
             proposal_id=result.admission.proposal_id,
             candidate_digest=result.candidate.candidate_digest,
         )
-        insertion_expectation = preflighted.insertion_expectation
-        payload = preflighted.payload
-        if (
-            isinstance(payload, ClaimAuthoringPayloadV1)
-            and payload.insertion_target is not None
-            and insertion_expectation is None
-        ):
-            if computed.lowered is None:  # pragma: no cover - passing preflight invariant
-                raise RuntimeError("passing insertion preflight omitted its lowered Claim")
-            artifact_digest = computed.lowered.resolved_authoring.get("artifact_digest")
-            lowered_path = claim_path(preflighted.semantic_identity)
-            lowered_claim = parse_claim(
-                computed.lowered.proposed_tree[lowered_path],
-                path=lowered_path,
-            )
-            if not isinstance(artifact_digest, str):
-                raise RuntimeError("lowered insertion Claim omitted its frozen identities")
-            statement_digest = claim_statement_digest(lowered_claim.statement).tagged
-            created_at = parse_datetime(preflighted.canonical_timestamp)
-            if created_at is None:  # pragma: no cover - validated timestamp
-                raise RuntimeError("AuthoringIntent timestamp did not parse")
-            insertion_expectation = mint_insertion_expectation_v2(
+        insertion_expectations = preflighted.insertion_expectations
+        if not insertion_expectations:
+            insertion_expectations = self._mint_publication_expectations(
                 preflighted,
-                original_claim_artifact_digest=artifact_digest,
-                claim_statement_digest=statement_digest,
-                expires_at=created_at + PUBLICATION_EXPECTATION_EXPIRY,
+                computed=computed,
             )
+        singular = (
+            insertion_expectations[0]
+            if insertion_expectations and isinstance(preflighted.payload, ClaimAuthoringPayloadV1)
+            else None
+        )
 
         def bind_submit(intent: AuthoringIntentV1) -> AuthoringIntentV1:
             if (
@@ -797,7 +920,8 @@ class AuthoringIntentCoordinator:
             return intent.model_copy(
                 update={
                     "candidate_status": submitted_status,
-                    "insertion_expectation": insertion_expectation,
+                    "insertion_expectation": singular,
+                    "insertion_expectations": insertion_expectations,
                 }
             )
 
@@ -814,7 +938,67 @@ class AuthoringIntentCoordinator:
             workspace_advertisement=result.workspace_advertisement,
             identity_stable=identity_stable,
             claim_revision=claim_revision,
+            members=self._submit_members(computed, preflighted),
         )
+
+    def _mint_publication_expectations(
+        self,
+        preflighted: AuthoringIntentV1,
+        *,
+        computed: ComputedPreflight,
+    ) -> tuple[InsertionExpectationV2, ...]:
+        """Mint one publication expectation per publishing Claim, set or singleton."""
+
+        payload = preflighted.payload
+        publishing: tuple[tuple[str | None, ClaimAuthoringPayloadV1, str], ...]
+        if isinstance(payload, ClaimAuthoringPayloadV1):
+            publishing = (
+                ((None, payload, preflighted.semantic_identity),)
+                if payload.insertion_target is not None
+                else ()
+            )
+        elif isinstance(payload, ChangeSetAuthoringPayloadV1):
+            claim_ids = {
+                item.member_identity: item.claim_id
+                for item in preflighted.change_set_claim_identities
+            }
+            publishing = tuple(
+                (identity, member, claim_ids[identity])
+                for identity, member in (
+                    (authoring_member_identity(item), item)
+                    for item in payload.members
+                    if isinstance(item, ClaimAuthoringPayloadV1)
+                )
+                if member.insertion_target is not None
+            )
+        else:
+            publishing = ()
+        if not publishing:
+            return ()
+        if computed.lowered is None:  # pragma: no cover - passing preflight invariant
+            raise RuntimeError("passing insertion preflight omitted its lowered Claim")
+        created_at = parse_datetime(preflighted.canonical_timestamp)
+        if created_at is None:  # pragma: no cover - validated timestamp
+            raise RuntimeError("AuthoringIntent timestamp did not parse")
+        minted: list[InsertionExpectationV2] = []
+        for member_identity, member, claim_id in publishing:
+            lowered_path = claim_path(claim_id)
+            lowered_claim = parse_claim(
+                computed.lowered.proposed_tree[lowered_path],
+                path=lowered_path,
+            )
+            minted.append(
+                mint_insertion_expectation_v2(
+                    preflighted,
+                    original_claim_artifact_digest=claim_artifact_digest(lowered_claim).tagged,
+                    claim_statement_digest=claim_statement_digest(lowered_claim.statement).tagged,
+                    expires_at=created_at + PUBLICATION_EXPECTATION_EXPIRY,
+                    payload=member,
+                    claim_identity=claim_id,
+                    member_identity=member_identity,
+                )
+            )
+        return tuple(sorted(minted, key=lambda item: item.expectation_id.encode("ascii")))
 
     def status(self, intent_id: str, *, actor: AuthenticatedActor) -> CandidateStatusV1:
         intent = self._refresh_protocol(
@@ -829,12 +1013,11 @@ class AuthoringIntentCoordinator:
         *,
         actor: AuthenticatedActor,
         observation: PublicationSourceObservationV2,
+        expectation_id: str | None = None,
     ) -> InsertionPrepareResultV2:
         before = self.store.get(intent_id, actor_id=actor.actor_id)
         current = self._refresh_protocol(before, actor=actor)
-        expectation = current.insertion_expectation
-        if not isinstance(expectation, InsertionExpectationV2):
-            raise InsertionProtocolError("AuthoringIntent has no publication v2 expectation")
+        expectation = _select_expectation(current, expectation_id)
         if expectation.state == "awaiting_claim_acceptance":
             raise PublicationClaimNotAccepted(
                 f"{PublicationClaimNotAccepted.code}: the governed Claim is not accepted"
@@ -874,8 +1057,12 @@ class AuthoringIntentCoordinator:
                 actor_id=actor.actor_id,
                 operation_key=terminal_operation_key,
             )
-            replayed_expectation = None if replayed is None else replayed.insertion_expectation
-            before_expectation = before.insertion_expectation
+            replayed_expectation = (
+                None
+                if replayed is None
+                else _matching_expectation(replayed, expectation.expectation_id)
+            )
+            before_expectation = _matching_expectation(before, expectation.expectation_id)
             if (
                 replayed is None
                 and isinstance(before_expectation, InsertionExpectationV2)
@@ -889,7 +1076,10 @@ class AuthoringIntentCoordinator:
                     operation_key=terminal_operation_key,
                     transform=lambda intent: intent,
                 )
-                replayed_expectation = replayed.insertion_expectation
+                replayed_expectation = _matching_expectation(
+                    replayed,
+                    expectation.expectation_id,
+                )
             if (
                 replayed is None
                 or not isinstance(replayed_expectation, InsertionExpectationV2)
@@ -915,18 +1105,17 @@ class AuthoringIntentCoordinator:
         if exact is not None:
 
             def bind_applied(intent: AuthoringIntentV1) -> AuthoringIntentV1:
-                live = intent.insertion_expectation
-                if not isinstance(live, InsertionExpectationV2):
-                    raise InsertionProtocolError("publication expectation changed version")
+                live = _live_expectation(intent, expectation)
                 return intent.model_copy(
-                    update={
-                        "insertion_expectation": mark_publication_bound(
+                    update=_replaced_expectation(
+                        intent,
+                        mark_publication_bound(
                             intent,
                             live,
                             observation=exact,
                             finalized_at=evaluation_time,
-                        )
-                    }
+                        ),
+                    )
                 )
 
             bound = self.store.transition(
@@ -935,8 +1124,7 @@ class AuthoringIntentCoordinator:
                 operation_key=operation_key,
                 transform=bind_applied,
             )
-            bound_expectation = bound.insertion_expectation
-            assert isinstance(bound_expectation, InsertionExpectationV2)
+            bound_expectation = _select_expectation(bound, expectation.expectation_id)
             return InsertionPrepareResultV2(
                 outcome="bound",
                 intent=bound,
@@ -962,8 +1150,7 @@ class AuthoringIntentCoordinator:
                 evaluation_time=evaluation_time,
                 operation_key=terminal_operation_key,
             )
-            terminal_expectation = terminal.insertion_expectation
-            assert isinstance(terminal_expectation, InsertionExpectationV2)
+            terminal_expectation = _select_expectation(terminal, expectation.expectation_id)
             return InsertionPrepareResultV2(
                 outcome=terminal_state,
                 intent=terminal,
@@ -974,10 +1161,10 @@ class AuthoringIntentCoordinator:
                     terminal_expectation.preparation,
                 ),
             )
-        current_claim = self._current_claim(current)
+        current_claim = self._current_claim_by_identity(expectation.claim_identity)
         if current_claim is None:
             raise InsertionProtocolError("accepted publication Claim is missing")
-        body = self._publication_body(current, current_claim)
+        body = self._publication_body(current, current_claim, expectation=expectation)
         coordinate = expectation.accepted_claim_coordinate
         if coordinate is None:  # pragma: no cover - expectation invariant
             raise RuntimeError("accepted publication omitted its Claim coordinate")
@@ -995,18 +1182,14 @@ class AuthoringIntentCoordinator:
         )
 
         def persist_preparation(intent: AuthoringIntentV1) -> AuthoringIntentV1:
-            live = intent.insertion_expectation
-            if not isinstance(live, InsertionExpectationV2):
-                raise InsertionProtocolError("publication expectation changed version")
+            live = _live_expectation(intent, expectation)
             if live.expectation_digest != expectation.expectation_digest:
                 raise InsertionProtocolError("publication expectation changed during prepare")
             return intent.model_copy(
-                update={
-                    "insertion_expectation": mark_publication_prepared(
-                        live,
-                        preparation=preparation,
-                    )
-                }
+                update=_replaced_expectation(
+                    intent,
+                    mark_publication_prepared(live, preparation=preparation),
+                )
             )
 
         prepared = self.store.transition(
@@ -1015,8 +1198,7 @@ class AuthoringIntentCoordinator:
             operation_key=operation_key,
             transform=persist_preparation,
         )
-        prepared_expectation = prepared.insertion_expectation
-        assert isinstance(prepared_expectation, InsertionExpectationV2)
+        prepared_expectation = _select_expectation(prepared, expectation.expectation_id)
         return InsertionPrepareResultV2(
             outcome="already_prepared" if was_prepared else "prepared",
             intent=prepared,
@@ -1035,12 +1217,11 @@ class AuthoringIntentCoordinator:
         *,
         actor: AuthenticatedActor,
         observation: InsertionConfirmationObservationV2,
+        expectation_id: str | None = None,
     ) -> InsertionConfirmResultV2:
         before = self.store.get(intent_id, actor_id=actor.actor_id)
         current = self._refresh_protocol(before, actor=actor)
-        expectation = current.insertion_expectation
-        if not isinstance(expectation, InsertionExpectationV2):
-            raise InsertionProtocolError("AuthoringIntent has no publication v2 expectation")
+        expectation = _select_expectation(current, expectation_id)
         operation_key = insertion_confirm_operation_v2_key(
             expectation.expectation_id,
             observation,
@@ -1065,8 +1246,12 @@ class AuthoringIntentCoordinator:
                 actor_id=actor.actor_id,
                 operation_key=operation_key,
             )
-            replayed_expectation = None if replayed is None else replayed.insertion_expectation
-            before_expectation = before.insertion_expectation
+            replayed_expectation = (
+                None
+                if replayed is None
+                else _matching_expectation(replayed, expectation.expectation_id)
+            )
+            before_expectation = _matching_expectation(before, expectation.expectation_id)
             if (
                 replayed is None
                 and isinstance(before_expectation, InsertionExpectationV2)
@@ -1080,7 +1265,10 @@ class AuthoringIntentCoordinator:
                     operation_key=operation_key,
                     transform=lambda intent: intent,
                 )
-                replayed_expectation = replayed.insertion_expectation
+                replayed_expectation = _matching_expectation(
+                    replayed,
+                    expectation.expectation_id,
+                )
             if (
                 replayed is not None
                 and isinstance(replayed_expectation, InsertionExpectationV2)
@@ -1112,18 +1300,17 @@ class AuthoringIntentCoordinator:
         ):
 
             def bind(intent: AuthoringIntentV1) -> AuthoringIntentV1:
-                live = intent.insertion_expectation
-                if not isinstance(live, InsertionExpectationV2):
-                    raise InsertionProtocolError("publication expectation changed version")
+                live = _live_expectation(intent, expectation)
                 return intent.model_copy(
-                    update={
-                        "insertion_expectation": mark_publication_bound(
+                    update=_replaced_expectation(
+                        intent,
+                        mark_publication_bound(
                             intent,
                             live,
                             observation=observation,
                             finalized_at=evaluation_time,
-                        )
-                    }
+                        ),
+                    )
                 )
 
             bound = self.store.transition(
@@ -1132,8 +1319,7 @@ class AuthoringIntentCoordinator:
                 operation_key=operation_key,
                 transform=bind,
             )
-            bound_expectation = bound.insertion_expectation
-            assert isinstance(bound_expectation, InsertionExpectationV2)
+            bound_expectation = _select_expectation(bound, expectation.expectation_id)
             return InsertionConfirmResultV2(
                 outcome="bound",
                 intent=bound,
@@ -1154,8 +1340,7 @@ class AuthoringIntentCoordinator:
                 evaluation_time=evaluation_time,
                 operation_key=operation_key,
             )
-            terminal_expectation = terminal.insertion_expectation
-            assert isinstance(terminal_expectation, InsertionExpectationV2)
+            terminal_expectation = _select_expectation(terminal, expectation.expectation_id)
             return InsertionConfirmResultV2(
                 outcome=terminal_state,
                 intent=terminal,
@@ -1170,14 +1355,13 @@ class AuthoringIntentCoordinator:
         intent_id: str,
         *,
         actor: AuthenticatedActor,
+        expectation_id: str | None = None,
     ) -> InsertionAbandonResultV1:
         current = self._refresh_protocol(
             self.store.get(intent_id, actor_id=actor.actor_id),
             actor=actor,
         )
-        expectation = current.insertion_expectation
-        if expectation is None:
-            raise InsertionProtocolError("AuthoringIntent has no insertion expectation")
+        expectation = _select_expectation(current, expectation_id)
         operation_key = typed_digest(
             Sha256Value,
             "playbill-insertion-abandon-v1",
@@ -1194,18 +1378,17 @@ class AuthoringIntentCoordinator:
             )
 
         def abandon_publication(intent: AuthoringIntentV1) -> AuthoringIntentV1:
-            live = intent.insertion_expectation
-            if live is None:
-                raise InsertionProtocolError("publication expectation disappeared")
+            live = _live_expectation(intent, expectation)
             return intent.model_copy(
-                update={
-                    "insertion_expectation": mark_publication_terminal(
+                update=_replaced_expectation(
+                    intent,
+                    mark_publication_terminal(
                         intent,
                         live,
                         state="abandoned",
                         finalized_at=self.clock(),
-                    )
-                }
+                    ),
+                )
             )
 
         updated = self.store.transition(
@@ -1214,8 +1397,7 @@ class AuthoringIntentCoordinator:
             operation_key=operation_key,
             transform=abandon_publication,
         )
-        updated_expectation = updated.insertion_expectation
-        assert updated_expectation is not None
+        updated_expectation = _select_expectation(updated, expectation.expectation_id)
         return InsertionAbandonResultV1(intent=updated, expectation=updated_expectation)
 
     def replace_payload(
@@ -1402,6 +1584,31 @@ class AuthoringIntentCoordinator:
             transform=replace,
         )
 
+    def _mint_change_set_claim_identities(
+        self,
+        payload: AuthoringPayloadV1,
+    ) -> tuple[ChangeSetClaimIdentityV1, ...]:
+        """Mint one Claim ID per new Claim member, once, at create.
+
+        A singular Claim intent has minted its ID into `semantic_identity` since
+        PC-G1b. A change set has no single identity to mint into, and its members
+        still need durable IDs that survive preflight, rebase and replay, so each
+        Claim member's ID is frozen here beside the payload-derived member
+        identity it belongs to.
+        """
+
+        if not isinstance(payload, ChangeSetAuthoringPayloadV1):
+            return ()
+        minted = tuple(
+            ChangeSetClaimIdentityV1(
+                member_identity=authoring_member_identity(member),
+                claim_id=member.claim_ref or self.claim_id_factory(),
+            )
+            for member in payload.members
+            if isinstance(member, ClaimAuthoringPayloadV1)
+        )
+        return tuple(sorted(minted, key=lambda item: item.member_identity.encode("utf-8")))
+
     def _mint_semantic_identity(self, payload: AuthoringPayloadV1) -> str:
         if isinstance(payload, ClaimAuthoringPayloadV1):
             return payload.claim_ref or self.claim_id_factory()
@@ -1424,15 +1631,36 @@ class AuthoringIntentCoordinator:
         content = self.instance.tree_at(self.instance.accepted_coordinate().git_oid).get(path)
         return None if content is None else parse_claim(content, path=path)
 
+    def _publication_payload(
+        self,
+        intent: AuthoringIntentV1,
+        expectation: InsertionExpectationV2,
+    ) -> ClaimAuthoringPayloadV1:
+        """Return the authored Claim whose body this expectation publishes."""
+
+        payload = intent.payload
+        if isinstance(payload, ClaimAuthoringPayloadV1):
+            return payload
+        if isinstance(payload, ChangeSetAuthoringPayloadV1):
+            claim_ids = {
+                item.member_identity: item.claim_id for item in intent.change_set_claim_identities
+            }
+            for member in payload.members:
+                if not isinstance(member, ClaimAuthoringPayloadV1):
+                    continue
+                if claim_ids.get(authoring_member_identity(member)) == expectation.claim_identity:
+                    return member
+        raise InsertionProtocolError("publication intent lost its Flow-B self-source")
+
     def _publication_body(
         self,
         intent: AuthoringIntentV1,
         claim: ClaimArtifactAny,
+        *,
+        expectation: InsertionExpectationV2,
     ) -> bytes:
-        payload = intent.payload
-        if not isinstance(payload, ClaimAuthoringPayloadV1) or not isinstance(
-            payload.source, SelfSourceBodyV1
-        ):
+        payload = self._publication_payload(intent, expectation)
+        if not isinstance(payload.source, SelfSourceBodyV1):
             raise InsertionProtocolError("publication intent lost its Flow-B self-source")
         if not isinstance(claim, ClaimArtifactV2):
             raise InsertionProtocolError("publication Claim has no citation-backed retained body")
@@ -1570,18 +1798,17 @@ class AuthoringIntentCoordinator:
         )
 
         def terminalize(current: AuthoringIntentV1) -> AuthoringIntentV1:
-            live = current.insertion_expectation
-            if not isinstance(live, InsertionExpectationV2):
-                raise InsertionProtocolError("publication expectation changed version")
+            live = _live_expectation(current, expectation)
             return current.model_copy(
-                update={
-                    "insertion_expectation": mark_publication_terminal(
+                update=_replaced_expectation(
+                    current,
+                    mark_publication_terminal(
                         current,
                         live,
                         state=state,
                         finalized_at=evaluation_time,
-                    )
-                }
+                    ),
+                )
             )
 
         return self.store.transition(
@@ -1610,16 +1837,32 @@ class AuthoringIntentCoordinator:
         actor: AuthenticatedActor,
     ) -> AuthoringIntentV1:
         reduced = self._reduce_status(intent)
-        expectation = intent.insertion_expectation
-        if expectation is None:
+        if not intent.insertion_expectations:
             return intent.model_copy(update={"candidate_status": reduced})
-        return self._refresh_publication_v2(
-            intent,
-            expectation=expectation,
-            reduced=reduced,
-            actor=actor,
-            evaluation_time=self.clock(),
-        )
+        evaluation_time = self.clock()
+        current = intent
+        # One intent is one changeset, so a change set that publishes several
+        # Claims reduces every one of their expectations on every read; folding
+        # them one at a time keeps each transition's operation key its own.
+        for expectation in intent.insertion_expectations:
+            live = next(
+                (
+                    item
+                    for item in current.insertion_expectations
+                    if item.expectation_id == expectation.expectation_id
+                ),
+                None,
+            )
+            if live is None:  # pragma: no cover - expectation set is stable
+                continue
+            current = self._refresh_publication_v2(
+                current,
+                expectation=live,
+                reduced=reduced,
+                actor=actor,
+                evaluation_time=evaluation_time,
+            )
+        return current.model_copy(update={"candidate_status": reduced})
 
     def _refresh_publication_v2(
         self,
@@ -1699,7 +1942,7 @@ class AuthoringIntentCoordinator:
             transform=lambda current: current.model_copy(
                 update={
                     "candidate_status": self._reduce_status(current),
-                    "insertion_expectation": next_expectation,
+                    **_replaced_expectation(current, next_expectation),
                 }
             ),
         )

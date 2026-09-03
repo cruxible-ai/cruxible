@@ -16,6 +16,7 @@ from cruxible_client.contracts.authoring.models import (
     ApprovalPolicyAuthoringPayloadV1,
     AuthoringArtifactReferenceV1,
     AuthoringCandidateReferenceV1,
+    AuthoringChangeSetMemberV1,
     AuthoringClaimStatementV1,
     AuthoringExactContentObjectV1,
     AuthoringExistingClaimDispositionV1,
@@ -24,6 +25,8 @@ from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV1,
     ClaimAuthoringPayloadV3,
     ClaimDependencyDraftsV1,
+    ClaimRetirementMemberV1,
+    ClaimTypeAuthoringPayloadV1,
     ExistingCaptureCitationSourceV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
@@ -36,7 +39,10 @@ from cruxible_client.contracts.authoring.models import (
     authoring_member_identity,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import (
+    ClaimRetireDependentV1,
+    ClaimRetirementReason,
     LiteralClaimObject,
     SubjectClaimObject,
 )
@@ -181,6 +187,19 @@ class ProcedureRuntimePolicyInput(_StrictInputModel):
     procedure_runtime_policy: ProcedureRuntimePolicyV1
 
 
+class ClaimTypeInput(_StrictInputModel):
+    kind: Literal["claim_type"]
+    claim_type: ClaimType
+
+
+class ClaimRetirementInput(_StrictInputModel):
+    kind: Literal["claim_retirement"]
+    claim_id: str
+    reason: ClaimRetirementReason
+    effective_until: datetime | None = None
+    dependents: tuple[ClaimRetireDependentV1, ...] = ()
+
+
 class ProcedureMandateInputV1(_StrictInputModel):
     tag: Literal["playbill-procedure-mandate-input-v1"] = "playbill-procedure-mandate-input-v1"
     kind: Literal["procedure_mandate"]
@@ -195,7 +214,10 @@ class ProcedureMandateInputV1(_StrictInputModel):
 
 
 AuthoringChangeSetMemberInputV1: TypeAlias = Annotated[
-    SubjectInput
+    ClaimInput
+    | ClaimTypeInput
+    | ClaimRetirementInput
+    | SubjectInput
     | QueryDefinitionInput
     | ApprovalPolicyInput
     | ProcedureRuntimePolicyInput
@@ -207,7 +229,7 @@ AuthoringChangeSetMemberInputV1: TypeAlias = Annotated[
 
 class ChangeSetInput(_StrictInputModel):
     kind: Literal["change_set"]
-    members: tuple[AuthoringChangeSetMemberInputV1, ...] = Field(min_length=2)
+    members: tuple[AuthoringChangeSetMemberInputV1, ...] = Field(min_length=1)
 
 
 AuthoringInputV1: TypeAlias = Annotated[
@@ -521,6 +543,42 @@ def _procedure_payload(
     )
 
 
+def _change_set_member(member: AuthoringChangeSetMemberInputV1) -> AuthoringChangeSetMemberV1:
+    if isinstance(member, ClaimInput):
+        return _claim_payload(member)
+    if isinstance(member, ClaimTypeInput):
+        return ClaimTypeAuthoringPayloadV1(claim_type=member.claim_type)
+    if isinstance(member, ClaimRetirementInput):
+        return ClaimRetirementMemberV1(
+            claim_ref=member.claim_id,
+            reason=member.reason,
+            effective_until=member.effective_until,
+            dependents=member.dependents,
+        )
+    if isinstance(member, ProcedureInput):
+        return _procedure_payload(member)
+    if isinstance(member, SubjectInput):
+        return SubjectAuthoringPayloadV1(subject=member.subject)
+    if isinstance(member, QueryDefinitionInput):
+        return QueryDefinitionAuthoringPayloadV1(query_definition=member.query_definition)
+    if isinstance(member, ApprovalPolicyInput):
+        return ApprovalPolicyAuthoringPayloadV1(approval_policy=member.approval_policy)
+    if isinstance(member, ProcedureRuntimePolicyInput):
+        return ProcedureRuntimePolicyAuthoringPayloadV1(
+            procedure_runtime_policy=member.procedure_runtime_policy
+        )
+    return ProcedureMandateAuthoringPayloadV1(
+        name=member.name,
+        procedure_name=member.procedure_name,
+        rung=member.rung,
+        authority_ceiling=member.authority_ceiling,
+        namespace=member.namespace,
+        valid_from=member.valid_from,
+        expires_at=member.expires_at,
+        retire=member.retire,
+    )
+
+
 def lower_authoring_input(value: AuthoringInputV1, *, tree: dict[str, bytes]) -> AuthoringPayloadV1:
     """Resolve one input against exactly the supplied accepted tree."""
 
@@ -550,39 +608,7 @@ def lower_authoring_input(value: AuthoringInputV1, *, tree: dict[str, bytes]) ->
             expires_at=value.expires_at,
             retire=value.retire,
         )
-    members = tuple(
-        _procedure_payload(member)
-        if isinstance(member, ProcedureInput)
-        else (
-            SubjectAuthoringPayloadV1(subject=member.subject)
-            if isinstance(member, SubjectInput)
-            else (
-                QueryDefinitionAuthoringPayloadV1(query_definition=member.query_definition)
-                if isinstance(member, QueryDefinitionInput)
-                else (
-                    ApprovalPolicyAuthoringPayloadV1(approval_policy=member.approval_policy)
-                    if isinstance(member, ApprovalPolicyInput)
-                    else (
-                        ProcedureRuntimePolicyAuthoringPayloadV1(
-                            procedure_runtime_policy=member.procedure_runtime_policy
-                        )
-                        if isinstance(member, ProcedureRuntimePolicyInput)
-                        else ProcedureMandateAuthoringPayloadV1(
-                            name=member.name,
-                            procedure_name=member.procedure_name,
-                            rung=member.rung,
-                            authority_ceiling=member.authority_ceiling,
-                            namespace=member.namespace,
-                            valid_from=member.valid_from,
-                            expires_at=member.expires_at,
-                            retire=member.retire,
-                        )
-                    )
-                )
-            )
-        )
-        for member in value.members
-    )
+    members = tuple(_change_set_member(member) for member in value.members)
     identities = tuple(authoring_member_identity(member) for member in members)
     if len(set(identities)) != len(identities):
         raise AuthoringInputError(
@@ -614,6 +640,8 @@ __all__ = [
     "CarriedContractReferenceInput",
     "ChangeSetInput",
     "ClaimDispositionInput",
+    "ClaimRetirementInput",
+    "ClaimTypeInput",
     "ClaimInput",
     "ExistingCaptureInput",
     "ExactContentObjectInput",

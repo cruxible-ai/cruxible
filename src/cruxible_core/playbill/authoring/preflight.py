@@ -17,10 +17,12 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringDiagnosticV1,
     AuthoringIntentV1,
     AuthoringIntentV2,
+    AuthoringPayloadV1,
     AuthoringReferenceExpectationV1,
     AuthoringReferenceSuccessorV1,
     BlockedCheckV1,
     CandidateStatusV1,
+    ChangeSetAuthoringPayloadV1,
     ClaimAuthoringPayloadV1,
     DiagnosticFrontierLimitsV1,
     DiagnosticFrontierV1,
@@ -506,6 +508,81 @@ def _encoded_changes(
     ]
 
 
+def _authored_claims(
+    payload: AuthoringPayloadV1,
+) -> tuple[tuple[str, ClaimAuthoringPayloadV1], ...]:
+    """Return every Claim this intent authors, with the payload path that names it.
+
+    One intent is one changeset, so the two source-binding checks below run once
+    per authored Claim rather than once per intent -- and a set's diagnostics
+    address the member that owns them, `members[2].insertion_target`, which is
+    also exactly what `reference_expectations` already address.
+    """
+
+    if isinstance(payload, ClaimAuthoringPayloadV1):
+        return (("", payload),)
+    if isinstance(payload, ChangeSetAuthoringPayloadV1):
+        return tuple(
+            (f"members[{index}].", member)
+            for index, member in enumerate(payload.members)
+            if isinstance(member, ClaimAuthoringPayloadV1)
+        )
+    return ()
+
+
+def _claim_surface_diagnostics(
+    payload: ClaimAuthoringPayloadV1,
+    *,
+    prefix: str,
+) -> tuple[AuthoringDiagnosticV1, ...]:
+    """Refusals knowable from one authored Claim's own surface, before any tree."""
+
+    diagnostics: list[AuthoringDiagnosticV1] = []
+    if payload.insertion_target is not None and not isinstance(payload.source, SelfSourceBodyV1):
+        diagnostics.append(
+            _diagnostic(
+                code="playbill.authoring.insertion_target_requires_self_source",
+                stage="source_binding",
+                offending_element=f"{prefix}insertion_target",
+                message="Publication insertion is available only for a Flow-B body.",
+                repairs=(
+                    _repair(
+                        "replace_source",
+                        "Use a retained self-source body for publication insertion.",
+                        {"required_source_tag": "playbill-self-source-body-v1"},
+                    ),
+                    _repair(
+                        "omit_insertion_target",
+                        "Omit insertion_target and keep the existing Flow-A binding.",
+                        None,
+                    ),
+                ),
+            )
+        )
+    if isinstance(payload.source, WorkingSelectionObservationV1):
+        count = payload.source.selector.observed_occurrence_count
+        if count > 1 and payload.source.selector.selected_occurrence is None:
+            diagnostics.append(
+                _diagnostic(
+                    code="playbill.authoring.working_selection_ambiguous",
+                    stage="source_binding",
+                    offending_element=f"{prefix}source.selector.selected_occurrence",
+                    message=(
+                        "The working-source anchor occurred more than once and the "
+                        f"client did not select one of the {count} occurrences."
+                    ),
+                    repairs=(
+                        _repair(
+                            "select_occurrence",
+                            "Select one 1-based occurrence of the working-source anchor.",
+                            {"minimum": 1, "maximum": count},
+                        ),
+                    ),
+                )
+            )
+    return tuple(diagnostics)
+
+
 def compute_preflight(
     instance: PlaybillInstance,
     *,
@@ -516,51 +593,8 @@ def compute_preflight(
 
     diagnostics: list[AuthoringDiagnosticV1] = []
     blocked: list[BlockedCheckV1] = []
-    payload = intent.payload
-    if isinstance(payload, ClaimAuthoringPayloadV1):
-        if payload.insertion_target is not None:
-            if not isinstance(payload.source, SelfSourceBodyV1):
-                diagnostics.append(
-                    _diagnostic(
-                        code="playbill.authoring.insertion_target_requires_self_source",
-                        stage="source_binding",
-                        offending_element="insertion_target",
-                        message="Publication insertion is available only for a Flow-B body.",
-                        repairs=(
-                            _repair(
-                                "replace_source",
-                                "Use a retained self-source body for publication insertion.",
-                                {"required_source_tag": "playbill-self-source-body-v1"},
-                            ),
-                            _repair(
-                                "omit_insertion_target",
-                                "Omit insertion_target and keep the existing Flow-A binding.",
-                                None,
-                            ),
-                        ),
-                    )
-                )
-        if isinstance(payload.source, WorkingSelectionObservationV1):
-            count = payload.source.selector.observed_occurrence_count
-            if count > 1 and payload.source.selector.selected_occurrence is None:
-                diagnostics.append(
-                    _diagnostic(
-                        code="playbill.authoring.working_selection_ambiguous",
-                        stage="source_binding",
-                        offending_element="source.selector.selected_occurrence",
-                        message=(
-                            "The working-source anchor occurred more than once and the "
-                            f"client did not select one of the {count} occurrences."
-                        ),
-                        repairs=(
-                            _repair(
-                                "select_occurrence",
-                                "Select one 1-based occurrence of the working-source anchor.",
-                                {"minimum": 1, "maximum": count},
-                            ),
-                        ),
-                    )
-                )
+    for prefix, claim in _authored_claims(intent.payload):
+        diagnostics.extend(_claim_surface_diagnostics(claim, prefix=prefix))
     current = instance.accepted_coordinate()
     current_public = AcceptedCoordinate.from_internal(current)
     current_tree = instance.tree_at(current.git_oid)

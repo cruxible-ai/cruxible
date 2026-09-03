@@ -239,7 +239,7 @@ def _retired_claim(
     )
 
 
-def _candidate(
+def build_claim_retirement_candidate(
     tree: Mapping[str, bytes],
     *,
     root: ClaimRetireDependentV1,
@@ -303,6 +303,35 @@ def _candidate(
         for identity in sorted(successors, key=lambda item: item.encode("utf-8"))
     )
     return candidate_tree, results
+
+
+def claim_retirement_inventory(
+    instance: PlaybillInstance,
+    *,
+    tree: Mapping[str, bytes],
+    coordinate: AcceptedCoordinate,
+    claim: ClaimArtifactAny,
+) -> tuple[ClaimRetireInventoryItemV1, ...]:
+    """Return the live Claim closure one retirement must carry, or refuse it.
+
+    Shared by the standalone retirement route and by a retirement authored as a
+    change-set member, so both demand exactly the same closure over exactly the
+    tree the retirement is being written onto.
+    """
+
+    closure = reverse_pin_closure(
+        tree,
+        root=claim.identity,
+        include=lambda state: state.lifecycle.state == "live",
+        claim_identity_by_digest=_claim_identity_by_digest(instance, coordinate=coordinate),
+    )
+    unsupported = tuple(item for item in closure if item.state.artifact_kind != "claim")
+    if unsupported:
+        names = tuple(item.state.identity.qualified for item in unsupported)
+        raise ClaimRetireDependentUnsupported(
+            f"{ClaimRetireDependentUnsupported.error_code}: {names!r}"
+        )
+    return _inventory(closure)
 
 
 def _accepted_retirement_operation(
@@ -461,14 +490,12 @@ def service_retire_claim(
             f"{ClaimRetireStale.error_code}: expected coordinate is not the accepted head"
         )
 
-    closure = reverse_pin_closure(
-        tree,
-        root=claim.identity,
-        include=lambda state: state.lifecycle.state == "live",
-        claim_identity_by_digest=_claim_identity_by_digest(instance, coordinate=coordinate),
+    inventory = claim_retirement_inventory(
+        instance,
+        tree=tree,
+        coordinate=coordinate,
+        claim=claim,
     )
-    unsupported = tuple(item for item in closure if item.state.artifact_kind != "claim")
-    inventory = _inventory(closure)
     root_request = ClaimRetireDependentV1(
         artifact_identity=claim.identity,
         predecessor_digest=claim_artifact_digest(claim).tagged,
@@ -481,12 +508,6 @@ def service_retire_claim(
         root=root_request,
         dependents=request.dependents,
     )
-    if unsupported:
-        names = tuple(item.state.identity.qualified for item in unsupported)
-        raise ClaimRetireDependentUnsupported(
-            f"{ClaimRetireDependentUnsupported.error_code}: {names!r}"
-        )
-
     expected = {item.artifact_identity.qualified: item.predecessor_digest for item in inventory}
     supplied = {
         item.artifact_identity.qualified: item.predecessor_digest for item in request.dependents
@@ -509,7 +530,7 @@ def service_retire_claim(
             f"{ClaimRetireClosureMismatch.error_code}: expected={expected!r}; supplied={supplied!r}"
         )
 
-    candidate_tree, candidate_retirements = _candidate(
+    candidate_tree, candidate_retirements = build_claim_retirement_candidate(
         tree,
         root=root_request,
         dependents=request.dependents,
@@ -578,6 +599,7 @@ def service_retire_claim(
 
 __all__ = [
     "CLAIM_RETIRE_OPERATION_DOMAIN",
+    "ClaimRetireInventoryItemV1",
     "ClaimRetireClosureMismatch",
     "ClaimRetireDependentUnsupported",
     "ClaimRetireDependentV1",
@@ -587,5 +609,7 @@ __all__ = [
     "ClaimRetireResponse",
     "ClaimRetireResultV1",
     "ClaimRetireStale",
+    "build_claim_retirement_candidate",
+    "claim_retirement_inventory",
     "service_retire_claim",
 ]

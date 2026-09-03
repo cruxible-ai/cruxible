@@ -32,7 +32,13 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import ClaimType
-from cruxible_client.contracts.claims import LiteralClaimObject, SubjectClaimObject, claim_path
+from cruxible_client.contracts.claims import (
+    ClaimRetireDependentV1,
+    ClaimRetirementReason,
+    LiteralClaimObject,
+    SubjectClaimObject,
+    claim_path,
+)
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBackingV1,
     ProjectionBlockStampV1,
@@ -71,6 +77,7 @@ AUTHORING_INSTANCE_DESCRIPTOR_DIGEST_DOMAIN = "playbill-instance-descriptor-v1"
 AUTHORING_PREFLIGHT_CERTIFICATE_DIGEST_DOMAIN = "playbill-authoring-preflight-certificate-v1"
 AUTHORING_REFERENCE_EXPECTATIONS_DIGEST_DOMAIN = "playbill-authoring-reference-expectations-v1"
 AUTHORING_CHANGE_SET_MEMBERSHIP_DIGEST_DOMAIN = "playbill-authoring-change-set-membership-v1"
+AUTHORING_CLAIM_MEMBER_IDENTITY_DIGEST_DOMAIN = "playbill-authoring-claim-member-identity-v1"
 AUTHORING_PROGRAM_DIGEST_DOMAIN = "playbill-sdk-authoring-program-v1"
 AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-operation-v1"
 # Before this lineage's first public release, a version's digest may be re-pinned
@@ -635,15 +642,27 @@ def insertion_expectation_id(
     instance_id: str,
     intent_id: str,
     intent_revision: int,
+    member_identity: str | None = None,
 ) -> str:
+    """Name one publication expectation inside one intent revision.
+
+    A change set may publish several Claims at once, so the ID takes the member
+    that owns it. A singular Claim intent owns exactly one, and its preimage
+    stays the three-field preimage it has always been so its already-minted
+    expectation IDs still reproduce.
+    """
+
+    preimage: dict[str, object] = {
+        "instance_id": instance_id,
+        "intent_id": intent_id,
+        "intent_revision": intent_revision,
+    }
+    if member_identity is not None:
+        preimage["member_identity"] = member_identity
     return typed_digest(
         Sha256Value,
         INSERTION_EXPECTATION_ID_DOMAIN,
-        {
-            "instance_id": instance_id,
-            "intent_id": intent_id,
-            "intent_revision": intent_revision,
-        },
+        preimage,
     ).tagged
 
 
@@ -858,8 +877,78 @@ class ProcedureAuthoringPayloadV2(_StrictAuthoringModel):
         return cast(dict[str, object], normalized)
 
 
+class ClaimTypeAuthoringPayloadV1(_StrictAuthoringModel):
+    """One whole ClaimType definition authored inside an ordinary change set.
+
+    Successions and the migrations they demand stay on `/claim-types/proposals`:
+    this member defines a ClaimType, it never succeeds one.
+    """
+
+    tag: Literal["playbill-claim-type-authoring-payload-v1"] = (
+        "playbill-claim-type-authoring-payload-v1"
+    )
+    claim_type: ClaimType
+
+    @field_validator("claim_type")
+    @classmethod
+    def _claim_type(cls, value: ClaimType) -> ClaimType:
+        if value.lifecycle.state != "live" or value.lifecycle.predecessor_digest is not None:
+            raise ValueError("a ClaimType change-set member cannot carry a succession")
+        return value
+
+
+class ClaimRetirementMemberV1(_StrictAuthoringModel):
+    """One attributed Claim retirement, closure and all, as a change-set member.
+
+    `mode` is `submit` alone: a change-set member is authored inside an intent
+    whose own preflight already reports the closure this member still owes, so
+    the second, member-local preflight mode of the standalone retirement route
+    would only name the same inventory twice.
+    """
+
+    tag: Literal["playbill-claim-retirement-authoring-payload-v1"] = (
+        "playbill-claim-retirement-authoring-payload-v1"
+    )
+    mode: Literal["submit"] = "submit"
+    claim_ref: str
+    reason: ClaimRetirementReason
+    effective_until: datetime | None = None
+    dependents: tuple[ClaimRetireDependentV1, ...] = ()
+
+    @field_validator("claim_ref")
+    @classmethod
+    def _claim_ref(cls, value: str) -> str:
+        claim_path(value.removeprefix("Claim:"))
+        return value
+
+    @field_validator("effective_until")
+    @classmethod
+    def _time(cls, value: datetime | None) -> datetime | None:
+        return None if value is None else ensure_utc(value)
+
+    @field_serializer("effective_until", when_used="json")
+    def _serialize_time(self, value: datetime | None) -> str | None:
+        return None if value is None else format_datetime(value)
+
+    @model_validator(mode="after")
+    def _ordered_dependents(self) -> "ClaimRetirementMemberV1":
+        identities = tuple(item.artifact_identity.qualified for item in self.dependents)
+        if identities != tuple(sorted(set(identities), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("retirement dependents must be UTF-8 byte-sorted and unique")
+        return self
+
+    @property
+    def claim_id(self) -> str:
+        return self.claim_ref.removeprefix("Claim:")
+
+
 AuthoringChangeSetMemberV1: TypeAlias = Annotated[
-    SubjectAuthoringPayloadV1
+    ClaimAuthoringPayloadV1
+    | ClaimAuthoringPayloadV2
+    | ClaimAuthoringPayloadV3
+    | ClaimTypeAuthoringPayloadV1
+    | ClaimRetirementMemberV1
+    | SubjectAuthoringPayloadV1
     | QueryDefinitionAuthoringPayloadV1
     | ApprovalPolicyAuthoringPayloadV1
     | ProcedureRuntimePolicyAuthoringPayloadV1
@@ -870,7 +959,33 @@ AuthoringChangeSetMemberV1: TypeAlias = Annotated[
 ]
 
 
+def authoring_claim_member_identity(payload: ClaimAuthoringPayloadV1) -> str:
+    """Name one authored Claim member before the daemon has minted its Claim ID.
+
+    A revision names its lineage. A new Claim has no ID until create mints one,
+    so its member identity is its own authored statement: two members that would
+    write the same statement are one member twice, and two members that merely
+    contend for one slot stay distinct so the slot law -- not a membership
+    collision -- is what refuses them.
+    """
+
+    if payload.claim_ref is not None:
+        return f"Claim:{payload.claim_ref}"
+    digest = typed_digest(
+        Sha256Value,
+        AUTHORING_CLAIM_MEMBER_IDENTITY_DIGEST_DOMAIN,
+        payload.statement.model_dump(mode="json"),
+    ).tagged.removeprefix("sha256:")
+    return f"Claim:@{digest}"
+
+
 def authoring_member_identity(payload: AuthoringChangeSetMemberV1) -> str:
+    if isinstance(payload, ClaimAuthoringPayloadV1):
+        return authoring_claim_member_identity(payload)
+    if isinstance(payload, ClaimTypeAuthoringPayloadV1):
+        return f"ClaimType:{payload.claim_type.predicate}"
+    if isinstance(payload, ClaimRetirementMemberV1):
+        return f"ClaimRetirement:{payload.claim_id}"
     if isinstance(payload, SubjectAuthoringPayloadV1):
         return f"Subject:{payload.subject.subject_kind}/{payload.subject.subject_id}"
     if isinstance(payload, QueryDefinitionAuthoringPayloadV1):
@@ -895,7 +1010,11 @@ class ChangeSetAuthoringPayloadV1(_StrictAuthoringModel):
     tag: Literal["playbill-change-set-authoring-payload-v1"] = (
         "playbill-change-set-authoring-payload-v1"
     )
-    members: tuple[AuthoringChangeSetMemberV1, ...] = Field(min_length=2)
+    # One authoring intent is one changeset, so the builder that carries eighty
+    # members must also carry one: a two-member floor made the SDK's uniform
+    # `pb.changes(...)` path refuse exactly the smallest set an author writes
+    # first, and pushed them back onto a second, singular surface to say it.
+    members: tuple[AuthoringChangeSetMemberV1, ...] = Field(min_length=1)
 
     @field_validator("members")
     @classmethod
@@ -1593,6 +1712,20 @@ class PreflightResultV1(_StrictAuthoringModel):
         return self
 
 
+class ChangeSetClaimIdentityV1(_StrictAuthoringModel):
+    """One change-set Claim member's minted Claim ID, frozen at create."""
+
+    tag: Literal["playbill-change-set-claim-identity-v1"] = "playbill-change-set-claim-identity-v1"
+    member_identity: str
+    claim_id: str
+
+    @field_validator("claim_id")
+    @classmethod
+    def _claim_id(cls, value: str) -> str:
+        claim_path(value)
+        return value
+
+
 class AuthoringIntentV1(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-intent-v1"] = "playbill-authoring-intent-v1"
     intent_id: str
@@ -1607,7 +1740,12 @@ class AuthoringIntentV1(_StrictAuthoringModel):
     intent_revision: int = Field(default=0, ge=0)
     last_preflight: PreflightResultV1 | None = None
     candidate_status: CandidateStatusV1
+    # A singular Claim intent carries its one expectation in both fields; a
+    # change set carries one per publishing Claim member in the plural field and
+    # nothing in the singular one, because no single expectation is "the" one.
     insertion_expectation: InsertionExpectationV2 | None = None
+    insertion_expectations: tuple[InsertionExpectationV2, ...] = ()
+    change_set_claim_identities: tuple[ChangeSetClaimIdentityV1, ...] = ()
 
     @field_validator("intent_id")
     @classmethod
@@ -1639,6 +1777,8 @@ class AuthoringIntentV1(_StrictAuthoringModel):
             raise ValueError("AuthoringIntent create fingerprint does not reproduce")
         if isinstance(self.payload, ClaimAuthoringPayloadV1):
             claim_path(self.semantic_identity)
+            if self.change_set_claim_identities:
+                raise ValueError("a singular Claim intent owns no change-set Claim identities")
             if self.insertion_expectation is not None:
                 if self.payload.insertion_target is None:
                     raise ValueError("insertion expectation requires an insertion target")
@@ -1653,6 +1793,11 @@ class AuthoringIntentV1(_StrictAuthoringModel):
                     raise ValueError("insertion expectation ID does not reproduce")
                 if self.insertion_expectation.target != self.payload.insertion_target:
                     raise ValueError("publication expectation changes its frozen target")
+            expected_plural = (
+                () if self.insertion_expectation is None else (self.insertion_expectation,)
+            )
+            if self.insertion_expectations != expected_plural:
+                raise ValueError("a singular Claim intent carries its one expectation in both")
         else:
             if isinstance(self.payload, ChangeSetAuthoringPayloadV1):
                 membership = authoring_change_set_membership(self.payload.members)
@@ -1671,7 +1816,54 @@ class AuthoringIntentV1(_StrictAuthoringModel):
                 raise ValueError("AuthoringIntent identity differs from its payload")
             if self.insertion_expectation is not None:
                 raise ValueError("non-Claim AuthoringIntent cannot own an insertion expectation")
+            if not isinstance(self.payload, ChangeSetAuthoringPayloadV1):
+                if self.insertion_expectations:
+                    raise ValueError("only a Claim member can own a publication expectation")
+                if self.change_set_claim_identities:
+                    raise ValueError("only a change set owns per-member Claim identities")
+            else:
+                self._bind_change_set_members(self.payload)
         return self
+
+    def _bind_change_set_members(self, payload: "ChangeSetAuthoringPayloadV1") -> None:
+        claim_members = {
+            authoring_member_identity(member): member
+            for member in payload.members
+            if isinstance(member, ClaimAuthoringPayloadV1)
+        }
+        minted = self.change_set_claim_identities
+        identities = tuple(item.member_identity for item in minted)
+        if identities != tuple(sorted(claim_members, key=lambda item: item.encode("utf-8"))):
+            raise ValueError("change-set Claim identities must name every Claim member once")
+        by_member = {item.member_identity: item.claim_id for item in minted}
+        for member_identity, member in claim_members.items():
+            claim_id = by_member[member_identity]
+            if member.claim_ref is not None and member.claim_ref != claim_id:
+                raise ValueError("a revising Claim member keeps the lineage it names")
+        expectations = self.insertion_expectations
+        expectation_ids = tuple(item.expectation_id for item in expectations)
+        if expectation_ids != tuple(sorted(set(expectation_ids), key=lambda item: item.encode())):
+            raise ValueError("publication expectations must be ID-sorted and unique")
+        published = {
+            by_member[identity]: (identity, member)
+            for identity, member in claim_members.items()
+            if member.insertion_target is not None
+        }
+        for expectation in expectations:
+            named = published.get(expectation.claim_identity)
+            if named is None:
+                raise ValueError("publication expectation names no publishing Claim member")
+            member_identity, member = named
+            expected_id = insertion_expectation_id(
+                instance_id=self.instance_id,
+                intent_id=self.intent_id,
+                intent_revision=self.intent_revision,
+                member_identity=member_identity,
+            )
+            if expectation.expectation_id != expected_id:
+                raise ValueError("insertion expectation ID does not reproduce")
+            if expectation.target != member.insertion_target:
+                raise ValueError("publication expectation changes its frozen target")
 
 
 class AuthoringIntentV2(AuthoringIntentV1):
@@ -1794,6 +1986,17 @@ class AuthoringIntentSubmitRequestV1(_StrictAuthoringModel):
     )
 
 
+class AuthoringSubmitMemberV1(_StrictAuthoringModel):
+    """What one submitted member became, so a set says it once per member."""
+
+    tag: Literal["playbill-authoring-submit-member-v1"] = "playbill-authoring-submit-member-v1"
+    identity: str
+    artifact_digest: str
+    predecessor_digest: str | None = None
+    identity_stable: bool = False
+    claim_revision: int | None = None
+
+
 class AuthoringSubmitResultV1(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-submit-result-v1"] = "playbill-authoring-submit-result-v1"
     intent: AuthoringIntentV1
@@ -1805,6 +2008,20 @@ class AuthoringSubmitResultV1(_StrictAuthoringModel):
     # `claim_revision` is the revision this candidate becomes once accepted.
     identity_stable: bool = False
     claim_revision: int | None = None
+    # One intent is one changeset, so the same two facts are reported per member.
+    # The singular pair above stays the singular Claim intent's answer.
+    members: tuple[AuthoringSubmitMemberV1, ...] = ()
+
+    @field_validator("members")
+    @classmethod
+    def _members(
+        cls,
+        value: tuple[AuthoringSubmitMemberV1, ...],
+    ) -> tuple[AuthoringSubmitMemberV1, ...]:
+        identities = tuple(item.identity for item in value)
+        if identities != tuple(sorted(set(identities), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("submit result members must be identity-sorted and unique")
+        return value
 
 
 class InsertionPrepareRequestV2(_StrictAuthoringModel):
@@ -2186,6 +2403,7 @@ __all__ = [
     "AuthoringReferenceExpectationV1",
     "AuthoringReferenceKind",
     "AuthoringReferenceSuccessorV1",
+    "AuthoringSubmitMemberV1",
     "AuthoringSubmitResultV1",
     "BlockedCheckV1",
     "CandidateStatusState",
@@ -2194,6 +2412,9 @@ __all__ = [
     "ClaimAuthoringPayloadV2",
     "ClaimAuthoringPayloadV3",
     "ChangeSetAuthoringPayloadV1",
+    "ChangeSetClaimIdentityV1",
+    "ClaimRetirementMemberV1",
+    "ClaimTypeAuthoringPayloadV1",
     "ClaimAuthoringSourceV3",
     "ClaimDependencyDraftsV1",
     "DiagnosticFrontierLimitsV1",
@@ -2241,6 +2462,7 @@ __all__ = [
     "WorkingSelectionObservationV1",
     "authoring_create_fingerprint",
     "authoring_change_set_membership",
+    "authoring_claim_member_identity",
     "authoring_member_identity",
     "authoring_payload_digest",
     "authoring_program_digest",
