@@ -100,6 +100,9 @@ _DAEMON_OPERATION_LABELS = {
 }
 
 
+CREDENTIAL_REPAIR_OPERATION = "credential.mint"
+
+
 def _message_for_error(exc: CoreError) -> str:
     if isinstance(exc, DaemonOperationScopeError):
         operation = _DAEMON_OPERATION_LABELS.get(exc.operation, exc.operation)
@@ -117,17 +120,21 @@ def _repair_for_error(exc: CoreError) -> ServedRepairV1:
     carried = getattr(exc, "repair", None)
     if isinstance(carried, RepairOperationV1):
         return carried
+    # Both credential refusals are repaired by minting the credential the
+    # operation requires, which is one served CLI leaf; the refused operation
+    # and the accepted credential kinds travel as its arguments.
     if isinstance(exc, DaemonOperationScopeError):
         return RepairOperationV1(
-            operation=exc.operation,
+            operation=CREDENTIAL_REPAIR_OPERATION,
             arguments={
+                "refused_operation": exc.operation,
                 "credential_env": "CRUXIBLE_SERVER_BEARER_TOKEN",
                 "accepted_credentials": ["bootstrap secret", "daemon-scope token"],
             },
         )
     if isinstance(exc, AuthenticationError):
         return RepairOperationV1(
-            operation="server.authenticate",
+            operation=CREDENTIAL_REPAIR_OPERATION,
             arguments={
                 "credential_options": [
                     "--server-bearer-token",
@@ -136,8 +143,8 @@ def _repair_for_error(exc: CoreError) -> ServedRepairV1:
                 ]
             },
         )
-    code = getattr(exc, "code", exc.__class__.__name__)
-    return hand_edit_repair(str(code))
+    code = getattr(exc, "error_code", None) or getattr(exc, "code", None)
+    return hand_edit_repair(str(code or exc.__class__.__name__))
 
 
 def _status_for_error(exc: CoreError) -> int:

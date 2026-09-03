@@ -29,6 +29,12 @@ class HandEditRepairV1(BaseModel):
 
 ServedRepairV1: TypeAlias = RepairOperationV1 | HandEditRepairV1
 
+# A refusal whose specific change has not been declared says exactly that and
+# nothing more. Deriving a token from the code (``repair_<code>``) reads like a
+# declared change while carrying no instruction, which is the fabricated repair
+# the hand-edit exemption forbids.
+UNDECLARED_HAND_EDIT_CHANGE = "read_the_refusal_details_and_revise_the_named_artifact"
+
 
 class ServedRepairEnvelopeV1(BaseModel):
     """Validation utility proving the repair union has exactly one branch."""
@@ -44,19 +50,19 @@ class ServedRepairEnvelopeV1(BaseModel):
         return self
 
 
-def hand_edit_repair(code: str) -> HandEditRepairV1:
+def hand_edit_repair(code: str, *, required_change: str | None = None) -> HandEditRepairV1:
     """Return an explicit non-command repair for a refusal needing judgment."""
 
-    normalized = code.replace(".", "_").replace("-", "_")
     return HandEditRepairV1(
         hand_edit=HandEditInstructionV1(
             target=f"refusal/{code}",
-            required_change=f"repair_{normalized}",
+            required_change=required_change or UNDECLARED_HAND_EDIT_CHANGE,
         )
     )
 
 
 __all__ = [
+    "UNDECLARED_HAND_EDIT_CHANGE",
     "HandEditInstructionV1",
     "HandEditRepairV1",
     "RepairOperationV1",

@@ -275,9 +275,12 @@ def test_instance_token_gets_typed_403_for_every_daemon_scope_route(
         "CRUXIBLE_SERVER_BEARER_TOKEN."
     )
     assert payload["message"] != "internal server error"
+    # The repair names the served command that mints the operator credential,
+    # not the refused operation: a repair must be runnable as written.
     assert payload["repair"] == {
-        "operation": operation,
+        "operation": "credential.mint",
         "arguments": {
+            "refused_operation": operation,
             "credential_env": "CRUXIBLE_SERVER_BEARER_TOKEN",
             "accepted_credentials": ["bootstrap secret", "daemon-scope token"],
         },

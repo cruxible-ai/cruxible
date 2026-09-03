@@ -2,13 +2,33 @@
 
 from __future__ import annotations
 
-from cruxible_client.contracts.repairs import HandEditRepairV1, ServedRepairEnvelopeV1
+from cruxible_client.contracts.repairs import (
+    UNDECLARED_HAND_EDIT_CHANGE,
+    HandEditRepairV1,
+    RepairOperationV1,
+    ServedRepairEnvelopeV1,
+)
+from cruxible_core.cli.main import CLI_COMMANDS, LazyCommandSpec
 from cruxible_core.service.playbill_refusal_catalog import (
     ALL_SERVED_REFUSAL_CODES,
     CLOSED_SERVED_REFUSAL_VOCABULARIES,
+    DECLARED_HAND_EDIT_REPAIRS,
+    RUNNABLE_REFUSAL_REPAIRS,
+    UNDECLARED_REFUSAL_CODE_COUNT,
     hand_edit_next_reasons,
     repair_for_refusal,
+    undeclared_refusal_codes,
 )
+
+
+def _cli_leaves(commands: dict[str, LazyCommandSpec], path: tuple[str, ...] = ()) -> set[str]:
+    leaves: set[str] = set()
+    for name, spec in commands.items():
+        if spec.commands:
+            leaves |= _cli_leaves(spec.commands, (*path, name))
+        else:
+            leaves.add(".".join((*path, name)))
+    return leaves
 
 
 def test_every_registered_refusal_resolves_without_prose_parsing() -> None:
@@ -19,8 +39,58 @@ def test_every_registered_refusal_resolves_without_prose_parsing() -> None:
         repair = repair_for_refusal(code)
         assert ServedRepairEnvelopeV1(repair=repair).repair == repair
         if isinstance(repair, HandEditRepairV1):
-            assert repair.hand_edit.target
+            assert repair.hand_edit.target == f"refusal/{code}"
             assert repair.hand_edit.required_change
+
+
+def test_every_runnable_repair_names_a_command_the_cli_actually_serves() -> None:
+    """A repair naming a command that does not exist is worse than none."""
+
+    leaves = _cli_leaves(CLI_COMMANDS)
+    assert "playbill.line.run" in leaves  # the map really is the served inventory
+    for code, repair in RUNNABLE_REFUSAL_REPAIRS.items():
+        assert code in ALL_SERVED_REFUSAL_CODES, code
+        assert isinstance(repair, RepairOperationV1)
+        assert repair.operation in leaves, f"{code} names unserved command {repair.operation}"
+
+
+def test_server_envelope_repairs_name_commands_the_cli_actually_serves() -> None:
+    """The daemon-scope and authentication emitters carry runnable repairs."""
+
+    from cruxible_core.errors import AuthenticationError, DaemonOperationScopeError
+    from cruxible_core.server.errors import _repair_for_error
+
+    leaves = _cli_leaves(CLI_COMMANDS)
+    scope = _repair_for_error(DaemonOperationScopeError("cruxible_server_info", "inst_a"))
+    assert isinstance(scope, RepairOperationV1)
+    assert scope.operation in leaves
+    assert scope.arguments["refused_operation"] == "cruxible_server_info"
+
+    unauthenticated = _repair_for_error(AuthenticationError("no credential"))
+    assert isinstance(unauthenticated, RepairOperationV1)
+    assert unauthenticated.operation in leaves
+
+
+def test_declared_hand_edits_are_membership_not_derivation() -> None:
+    for code, required_change in DECLARED_HAND_EDIT_REPAIRS.items():
+        assert code in ALL_SERVED_REFUSAL_CODES, code
+        assert code not in RUNNABLE_REFUSAL_REPAIRS, code
+        assert required_change != UNDECLARED_HAND_EDIT_CHANGE
+        # The declared change may not be the code restated: `repair_<code>` and
+        # its kin read like an instruction while carrying none.
+        assert required_change != f"repair_{code}"
+        assert required_change != code
+
+
+def test_undeclared_repair_debt_is_pinned_and_can_only_shrink() -> None:
+    """A new closed refusal member cannot join without being classified."""
+
+    undeclared = undeclared_refusal_codes()
+    assert len(undeclared) == UNDECLARED_REFUSAL_CODE_COUNT
+    for code in undeclared:
+        repair = repair_for_refusal(code)
+        assert isinstance(repair, HandEditRepairV1)
+        assert repair.hand_edit.required_change == UNDECLARED_HAND_EDIT_CHANGE
 
 
 def test_hand_edit_next_membership_is_client_owned_and_positive() -> None:
