@@ -40,6 +40,7 @@ from cruxible_core.errors import (
     EntityNotFoundError,
     EntityTypeNotFoundError,
     GroupNotFoundError,
+    HostedProfileUnknownError,
     IngestionError,
     InstallNotFoundError,
     InstallOwnershipCollisionError,
@@ -169,7 +170,9 @@ def _status_for_error(exc: CoreError) -> int:
         return exc.http_status
     if isinstance(exc, AuthenticationError):
         return 401
-    if isinstance(exc, CustomerCodeExecutionUnsupportedError):
+    if isinstance(exc, (CustomerCodeExecutionUnsupportedError, HostedProfileUnknownError)):
+        # A misconfigured profile is still a refusal to execute, not a request
+        # fault and not a crash: the caller must see the same 403 shape.
         return 403
     if isinstance(exc, CitationHandleResolutionError):
         return 409 if exc.failure_kind == "stale" else 400
@@ -293,6 +296,10 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["required_mode"] = exc.required_mode
         if exc.ceiling_mode is not None:
             context["ceiling_mode"] = exc.ceiling_mode
+    if isinstance(exc, HostedProfileUnknownError):
+        context["profile"] = exc.profile
+    if isinstance(exc, CustomerCodeExecutionUnsupportedError) and exc.detail is not None:
+        context["detail"] = exc.detail
     if isinstance(exc, PlaybillObjectFormatConflict):
         if exc.workspace_format is not None:
             context["workspace_format"] = exc.workspace_format

@@ -6,11 +6,16 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.errors import CustomerCodeExecutionUnsupportedError
+from cruxible_core.errors import (
+    CustomerCodeExecutionUnsupportedError,
+    HostedProfileUnknownError,
+)
 from cruxible_core.playbill import provider_local_runtime as runtime_module
 from cruxible_core.playbill.service import provider_seed as seed_module
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.execution_policy import (
+    ISOLATION_BACKEND_NOT_IMPLEMENTED,
+    REGISTERED_ISOLATED_EXECUTION_BACKENDS,
     customer_code_execution_supported,
     enforce_customer_code_execution_supported,
 )
@@ -50,21 +55,72 @@ def test_the_shared_profile_without_a_backend_refuses_customer_code(
     "environment",
     (
         {PROFILE: "shared", BACKEND: "docker"},
-        {},
+        {PROFILE: "shared", BACKEND: "firecracker"},
+        {PROFILE: "shared"},
     ),
-    ids=("docker-backend", "profile-unset"),
+    ids=("docker-backend", "unregistered-backend", "no-backend"),
 )
-def test_execution_proceeds_when_the_profile_permits_it(
+def test_the_shared_profile_refuses_until_an_executor_is_registered(
     monkeypatch: pytest.MonkeyPatch,
     environment: dict[str, str],
 ) -> None:
+    """Naming a backend is a claim; only a REGISTERED executor is a mechanism.
+
+    `docker` used to re-enable spawning the Provider directly on the host,
+    because no container executor exists here (maintainer ruling 2026-09-03).
+    """
+
     monkeypatch.delenv(PROFILE, raising=False)
     monkeypatch.delenv(BACKEND, raising=False)
     for name, value in environment.items():
         monkeypatch.setenv(name, value)
 
+    assert REGISTERED_ISOLATED_EXECUTION_BACKENDS == frozenset()
+    assert customer_code_execution_supported() is False
+    with pytest.raises(CustomerCodeExecutionUnsupportedError) as refused:
+        enforce_customer_code_execution_supported()
+    assert refused.value.detail == ISOLATION_BACKEND_NOT_IMPLEMENTED
+
+
+def test_execution_proceeds_when_no_hosted_profile_is_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(PROFILE, raising=False)
+    monkeypatch.delenv(BACKEND, raising=False)
+
     assert customer_code_execution_supported() is True
     enforce_customer_code_execution_supported()
+
+
+def test_an_unknown_hosted_profile_refuses_typed_instead_of_failing_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A profile this build cannot read is not evidence that it is unrestricted."""
+
+    monkeypatch.setenv(PROFILE, "Shared-Pool")
+    monkeypatch.delenv(BACKEND, raising=False)
+
+    assert customer_code_execution_supported() is False
+    with pytest.raises(HostedProfileUnknownError) as refused:
+        enforce_customer_code_execution_supported()
+    assert refused.value.error_code == "hosted_profile_unknown"
+    assert refused.value.profile == "shared-pool"
+    assert "repair:" in str(refused.value)
+
+
+def test_the_unknown_profile_refusal_maps_to_a_typed_403_and_a_typed_client_error() -> None:
+    from cruxible_client.errors import HostedProfileUnknownError as ClientRefusal
+    from cruxible_client.errors import response_to_error
+    from cruxible_core.server.errors import error_to_response
+
+    status, body = error_to_response(HostedProfileUnknownError("shared-pool"))
+
+    assert status == 403
+    assert body.error_type == "HostedProfileUnknownError"
+    assert body.error_code == "hosted_profile_unknown"
+    reconstructed = response_to_error(status, body)
+    assert isinstance(reconstructed, ClientRefusal)
+    assert reconstructed.profile == "shared-pool"
 
 
 def test_the_provider_child_chokepoint_refuses_before_popen(

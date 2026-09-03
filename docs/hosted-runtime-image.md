@@ -183,13 +183,28 @@ obtain a new one.
 ## Shared Profile Customer Code Policy
 
 Set `CRUXIBLE_HOSTED_SERVER_PROFILE=shared` for runtimes that may host
-untrusted or multi-tenant material. In this profile, provider execution and
-Python provider loading are denied unless
-`CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND` is set to a supported isolated
-backend. The current supported backend name is `docker`.
+untrusted or multi-tenant material. In this profile the daemon executes no
+Provider code at all: `procedure run`, `line run` and `provider seed` refuse
+with the public-safe error code `customer_code_execution_unsupported` and the
+detail `isolation backend not implemented`, and the refusal happens before any
+tenant secret is resolved and before any child process exists.
 
-Unsupported or missing isolated backends fail with the public-safe error code
-`customer_code_execution_unsupported`.
+Execution is permitted only when an isolated executor is REGISTERED in the
+running build, not when one is merely named in the environment. This repository
+registers none, so `CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND` cannot re-enable
+execution today; setting it to `docker` previously unlocked spawning the
+Provider directly on the host, which is the opposite of what the name promised
+(maintainer ruling 2026-09-03). The variable stays as the selector an executor
+will be chosen by once one ships.
+
+A non-empty `CRUXIBLE_HOSTED_SERVER_PROFILE` this build does not declare —
+a misspelling, or a profile from a newer image — refuses typed with
+`hosted_profile_unknown` rather than being read as "not shared". Both refusals
+reach HTTP as `403` and reconstruct as their typed client classes.
+
+Runtimes that must execute Provider code run without
+`CRUXIBLE_HOSTED_SERVER_PROFILE` set: that is the ordinary single-tenant
+profile, and it is unchanged.
 
 ## Private Runtime Network
 

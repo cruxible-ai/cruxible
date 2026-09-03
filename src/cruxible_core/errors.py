@@ -318,8 +318,24 @@ class CustomerCodeExecutionUnsupportedError(ExecutionError):
 
     error_code = "customer_code_execution_unsupported"
 
-    def __init__(self) -> None:
-        super().__init__("Customer code execution is not supported in this hosted runtime profile.")
+    def __init__(self, detail: str | None = None) -> None:
+        self.detail = detail
+        message = "Customer code execution is not supported in this hosted runtime profile."
+        super().__init__(message if detail is None else f"{message} ({detail})")
+
+
+class HostedProfileUnknownError(ExecutionError):
+    """The configured hosted server profile is not one this build understands."""
+
+    error_code = "hosted_profile_unknown"
+
+    def __init__(self, profile: str) -> None:
+        self.profile = profile
+        super().__init__(
+            f"Hosted server profile {profile!r} is unknown to this build, so its execution "
+            "policy cannot be established; repair: unset CRUXIBLE_HOSTED_SERVER_PROFILE, or "
+            "set it to a profile this build declares."
+        )
 
 
 class TransportError(ExecutionError):
