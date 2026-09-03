@@ -247,6 +247,11 @@ from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
     PlaybillWorkspaceAdvertisement,
 )
+from cruxible_core.playbill.candidate_cards import (
+    CARD_RENDERER_DIGEST,
+    candidate_card_renderer_digest_for_compiler,
+    derive_candidate_cards,
+)
 from cruxible_core.playbill.closure import (
     ArtifactDependencyStateV1,
     ClosureEvaluationV2,
@@ -263,6 +268,7 @@ from cruxible_core.playbill.closure import (
 )
 from cruxible_core.playbill.compiler import (
     PC_HR_ARTIFACT_CODEC_COMPILERS,
+    artifact_kinds_for_compiler,
     projection_registry_for_compiler,
 )
 from cruxible_core.playbill.exhaust.promotions import (
@@ -3362,6 +3368,7 @@ def evaluate_proposal_tree(
     replay_claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] | None = None,
     acceptance_laws: AcceptanceLawRegistry = PLAYBILL_ACCEPTANCE_LAWS,
     historical_law_coordinates: Mapping[str, tuple[str, str]] | None = None,
+    candidate_card_renderer_digest: str | None = None,
 ) -> CandidateEvaluation:
     """Rebase, scope, judge every member, and close: the whole evaluation.
 
@@ -3427,6 +3434,19 @@ def evaluate_proposal_tree(
                     ),
                     True,
                 )
+
+    selected_card_renderer = candidate_card_renderer_digest
+    if selected_card_renderer is None:
+        selected_card_renderer = candidate_card_renderer_digest_for_compiler(current.compiler)
+    if selected_card_renderer is not None:
+        if selected_card_renderer != CARD_RENDERER_DIGEST:
+            raise ProposalIntegrityError("candidate card renderer differs from compiler coordinate")
+        candidate_tree = derive_candidate_cards(
+            base_tree=current_tree,
+            candidate_tree=candidate_tree,
+            coordinate=current.git_oid,
+            artifact_kinds=artifact_kinds_for_compiler(current.compiler),
+        )
 
     parent = parent_state if parent_state is not None else build_tree_state(current_tree)
     advanced = advance_tree_members(parent, previous_tree=current_tree, tree=candidate_tree)
@@ -3618,7 +3638,7 @@ class ProposalService:
         )
 
         evaluated_tree_oid: str | None = tree_oid
-        if outcome.candidate is not None and is_rebase:
+        if outcome.candidate is not None and (is_rebase or outcome.tree != validated_tree):
             commit_oid, evaluated_tree_oid = self.transport.create_proposal_commit(
                 outcome.tree,
                 base_oid=current.git_oid,

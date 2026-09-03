@@ -462,6 +462,8 @@ def _verify_successor(
     reproduced = reevaluated.candidate
     if reproduced is None or reevaluated.diagnostics or reevaluated.state is None:
         raise SettlementIntegrityError("generation candidate law/closure evidence diverged")
+    if reevaluated.tree != tree:
+        raise SettlementIntegrityError("generation derivative cards do not reproduce exactly")
     state = reevaluated.state
     # Named before the whole-object comparison so a tampered manifest or scope is
     # reported as what it is. Both values were recomputed from this generation's

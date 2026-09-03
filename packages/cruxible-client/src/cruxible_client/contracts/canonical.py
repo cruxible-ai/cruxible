@@ -427,12 +427,12 @@ def manifest_root(tree: Mapping[str, bytes]) -> SemanticManifestRoot:
 
 
 def semantic_projection(tree: Mapping[str, bytes]) -> dict[str, bytes]:
-    """Return Π(tree), excluding only deterministic daemon change-set records."""
+    """Return Π(tree), excluding deterministic daemon records and derivative cards."""
 
     return {
         path: content
         for path, content in tree.items()
-        if not normalize_ledger_path(path).startswith("changesets/")
+        if not normalize_ledger_path(path).startswith(("changesets/", "cards/"))
     }
 
 

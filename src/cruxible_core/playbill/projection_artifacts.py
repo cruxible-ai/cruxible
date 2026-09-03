@@ -722,6 +722,8 @@ def parse_projection_tree(
     change_sets: list[tuple[str, ChangeSetRecordAnyVersion]] = []
 
     for path in sorted(blobs, key=lambda item: item.encode("utf-8")):
+        if path.startswith("cards/"):
+            continue
         if registered_path_kind(path, artifact_kinds=artifact_kinds) != "changeset":
             continue
         content = blobs[path]
@@ -753,6 +755,8 @@ def parse_projection_tree(
         )
 
     for path in sorted(blobs, key=lambda item: item.encode("utf-8")):
+        if path.startswith("cards/"):
+            continue
         content = blobs[path]
         kind = registered_path_kind(path, artifact_kinds=artifact_kinds)
         payload = _load_object(content, path=path)

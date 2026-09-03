@@ -18,6 +18,7 @@ import pytest
 from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
 from cruxible_client.authoring.insertions import apply_playbill_publication
 from cruxible_core.playbill.authoring.insertions import build_publication_preparation
+from cruxible_core.playbill.candidate_cards import derive_candidate_cards
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PRIMITIVE_DEFINITION = (
@@ -60,6 +61,15 @@ SANCTIONED_WRITERS: dict[str, tuple[Callable[..., object], str, tuple[str, ...]]
         (
             "prepare a full-file publication postimage from an insertion expectation",
             "reproduce and verify the exact framed block bytes from a preparation",
+        ),
+    ),
+}
+CARD_DERIVATIVE_WRITERS: dict[str, tuple[Callable[..., object], tuple[str, ...]]] = {
+    "src/cruxible_core/playbill/candidate_cards.py::derive_candidate_cards": (
+        derive_candidate_cards,
+        (
+            "render changed artifact cards through render_candidate_card",
+            "render removed artifact cards through render_removal_card",
         ),
     ),
 }
@@ -149,6 +159,17 @@ def test_projection_primitive_callers_equal_the_two_writer_inventory() -> None:
         "publication_v2",
     }
     _assert_only_sanctioned_callers(_projection_primitive_callers())
+
+
+def test_candidate_card_derivative_writer_is_explicit_and_verifying() -> None:
+    assert set(CARD_DERIVATIVE_WRITERS) == {
+        "src/cruxible_core/playbill/candidate_cards.py::derive_candidate_cards"
+    }
+    writer, operations = next(iter(CARD_DERIVATIVE_WRITERS.values()))
+    source = inspect.getsource(writer)
+    assert "render_candidate_card(" in source
+    assert "render_removal_card(" in source
+    assert operations
 
 
 def test_projection_primitive_guard_catches_every_noncanonical_spelling(

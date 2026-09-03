@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from cruxible_client.contracts.artifacts import ArtifactKindRegistry
 from cruxible_client.contracts.canonical import canonical_digest, normalize_ledger_path
 from cruxible_client.contracts.errors import ProjectionFormatError, ProposalIntegrityError
+from cruxible_client.contracts.types import CompilerCoordinate
 
 CARD_NAMESPACE = "cards/"
 CARD_RENDERER_IMPLEMENTATION = "python-reference-v1"
@@ -25,6 +26,15 @@ CARD_RENDERER_DIGEST = "sha256:" + canonical_digest(
         "template_digests": list(CARD_TEMPLATE_DIGESTS),
     },
 )
+_CARD_RENDERER_BY_COMPILER: dict[str, str] = {}
+
+
+def candidate_card_renderer_digest_for_compiler(
+    compiler: CompilerCoordinate,
+) -> str | None:
+    """Resolve the renderer committed by an exact installed compiler coordinate."""
+
+    return _CARD_RENDERER_BY_COMPILER.get(compiler.rule_digest)
 
 
 def is_candidate_card_path(path: str) -> bool:
@@ -98,7 +108,14 @@ def derive_candidate_cards(
 ) -> dict[str, bytes]:
     """Return the candidate tree with exact derivative cards for semantic changes."""
 
-    result = dict(candidate_tree)
+    result = {
+        path: content
+        for path, content in candidate_tree.items()
+        if not is_candidate_card_path(path)
+    }
+    result.update(
+        {path: content for path, content in base_tree.items() if is_candidate_card_path(path)}
+    )
     semantic_paths = sorted(
         {
             path
@@ -151,6 +168,7 @@ __all__ = [
     "CARD_RENDERER_IMPLEMENTATION",
     "CARD_TEMPLATE_DIGESTS",
     "candidate_card_path",
+    "candidate_card_renderer_digest_for_compiler",
     "derive_candidate_cards",
     "is_candidate_card_path",
     "render_candidate_card",

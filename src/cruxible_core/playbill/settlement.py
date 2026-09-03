@@ -741,6 +741,8 @@ def prepare_generation(
     )
     if reevaluated.candidate is None or reevaluated.diagnostics or reevaluated.state is None:
         raise SettlementIntegrityError("candidate no longer passes its accepted laws")
+    if reevaluated.tree != candidate_tree:
+        raise SettlementIntegrityError("candidate derivative cards do not reproduce exactly")
     reproduced = reevaluated.candidate
     # The re-evaluation already hashed every member of the candidate tree exactly
     # once, in the structure this candidate's own version signs, so the manifest
