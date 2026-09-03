@@ -175,6 +175,10 @@ class PlaybillSearchOrientationV1(_StrictSearchModel):
     kind_availability: tuple[PlaybillSearchKindAvailabilityV1, ...]
     truncated: bool
     follow_ups: tuple[PlaybillSearchFollowUpV1, ...]
+    # The instance's terminal lifecycle state. Orientation is the first read an
+    # agent makes, so a decommissioned instance must say so there rather than
+    # let the agent discover it by having a write refused.
+    decommissioned: bool = False
 
 
 class PlaybillSearchResultV1(_StrictSearchModel):

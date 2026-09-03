@@ -288,6 +288,16 @@ def handle_playbill_init(
     )
 
 
+def handle_playbill_instance_decommission(
+    instance_id: str, reason: str
+) -> contracts.PlaybillInstanceDecommissionResultV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.decommission_playbill_instance(instance_id, reason=reason),
+        lambda: playbill_api.playbill_instance_decommission(instance_id, reason=reason),
+        operation_name="cruxible_playbill_instance_decommission",
+    )
+
+
 def handle_playbill_store_body(
     instance_id: str, content_base64: str
 ) -> contracts.PlaybillCasObjectResult:

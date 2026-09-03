@@ -35,6 +35,7 @@ configured filesystem boundary.
 |---|---|---|
 | `cruxible_playbill_host_create` | Allocate an empty daemon-owned host | `ADMIN` |
 | `cruxible_playbill_init` | Bootstrap a host with public principal records | `ADMIN` |
+| `cruxible_playbill_instance_decommission` | End one instance's governed writes; reads keep serving and nothing is deleted | `ADMIN` |
 
 ## Documents and proposals
 

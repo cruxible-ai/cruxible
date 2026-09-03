@@ -1025,6 +1025,50 @@ def store_body(path: str, output_json: bool) -> None:
         click.echo(result.digest)
 
 
+@playbill_group.group("instance")
+def instance_group() -> None:
+    """Read and end the lifecycle of one governed instance."""
+
+
+@instance_group.command("decommission")
+@click.option("--reason", required=True, help="Why this instance stops accepting writes.")
+@click.option(
+    "--yes",
+    "confirmed",
+    is_flag=True,
+    default=False,
+    help="Confirm the terminal state; it cannot be undone.",
+)
+@json_option
+@handle_errors
+def decommission_instance(reason: str, confirmed: bool, output_json: bool) -> None:
+    """End this instance's governed writes without deleting anything.
+
+    Reads keep serving at the accepted coordinate and every byte stays on disk.
+    Archiving or erasing the directory afterwards is your own step; no verb here
+    performs it, and the state cannot be reversed.
+    """
+
+    if not confirmed:
+        raise click.UsageError(
+            "decommissioning is terminal and cannot be undone; rerun with --yes to confirm"
+        )
+    result = _server_call(
+        lambda client, instance_id: client.decommission_playbill_instance(
+            instance_id, reason=reason
+        ),
+        command_name="playbill instance decommission",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(f"Instance {result.instance_id} decommissioned at {result.decommissioned_at}.")
+    click.echo(f"Reason: {result.reason}")
+    click.echo(f"By: {result.decommissioned_by}")
+    click.echo(f"Coordinate: {result.coordinate.git_oid}")
+    click.echo("Reads keep serving; nothing was deleted. Archive the directory yourself.")
+
+
 @playbill_group.group("provider")
 def provider_group() -> None:
     """Manage governed Provider artifacts."""

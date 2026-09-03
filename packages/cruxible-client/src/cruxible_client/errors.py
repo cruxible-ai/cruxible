@@ -19,6 +19,7 @@ from cruxible_client._error_base import (
     StaleContinuationError as StaleContinuationError,
 )
 from cruxible_client.contracts.errors import (
+    PlaybillInstanceDecommissioned,
     PlaybillSinceRequestInvalid,
     ProposalActivationRequestInvalid,
     ProposalNotFoundError,
@@ -555,6 +556,12 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
         exc = ConcurrentStateDriftError(
             int(context.get("opening_revision") or 0),
             int(context.get("closing_revision") or 0),
+        )
+    elif body.error_type == "PlaybillInstanceDecommissioned":
+        exc = PlaybillInstanceDecommissioned(
+            instance_id=context.get("instance_id", "unknown"),
+            reason=context.get("reason", "unknown"),
+            decommissioned_at=context.get("decommissioned_at", "unknown"),
         )
     elif body.error_type == "MutationError":
         exc = MutationError(body.message)

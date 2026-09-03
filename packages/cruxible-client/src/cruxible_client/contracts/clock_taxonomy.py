@@ -345,6 +345,10 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("SettledOutcomesQueryReceiptV1", "evaluation_time"): "EVALUATION INSTANT",
     ("SettledOutcomesQueryRequestV1", "evaluation_time"): "EVALUATION INSTANT",
     ("SettledOutcomesQueryResultV1", "evaluation_time"): "EVALUATION INSTANT",
+    # The instant the daemon stamped the terminal lifecycle state; nothing is
+    # evaluated against it, it records when the operator's act landed.
+    ("PlaybillDecommissionV1", "decommissioned_at"): "ASSERTION TIME",
+    ("PlaybillInstanceDecommissionResultV1", "decommissioned_at"): "ASSERTION TIME",
     # The instant the daemon actually read the workspace file it receipted.
     ("SourceReadReceiptV1", "read_at"): "EVALUATION INSTANT",
     ("SourceEffectiveTimeV1", "effective_from"): "VALIDITY WINDOW",

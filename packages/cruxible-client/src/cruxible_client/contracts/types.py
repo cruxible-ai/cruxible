@@ -238,6 +238,28 @@ def initial_authority_matrix() -> AuthorityMatrix:
     )
 
 
+class PlaybillDecommissionV1(StrictModel):
+    """The terminal lifecycle state of one governed instance.
+
+    Decommissioning ENDS an instance's governed writes without deleting a byte:
+    every accepted generation, receipt, and body stays exactly where it is and
+    stays readable. Archiving or erasing the directory afterwards is the
+    operator's own step, deliberately outside this record.
+    """
+
+    tag: Literal["playbill-instance-decommission-v1"] = "playbill-instance-decommission-v1"
+    reason: str
+    decommissioned_at: str
+    decommissioned_by: str
+
+    @field_validator("reason", "decommissioned_by")
+    @classmethod
+    def _nonblank(cls, value: str) -> str:
+        if not value.strip() or value.strip() != value:
+            raise ValueError("decommission fields must be nonblank and already normalized")
+        return value
+
+
 class PlaybillDescriptor(StrictModel):
     """The strict operational descriptor for one opt-in managed instance."""
 
@@ -253,6 +275,12 @@ class PlaybillDescriptor(StrictModel):
     recovery_posture: RecoveryPosture
     storage: StorageLayout
     genesis: GenesisCoordinate
+    # Absent on every live instance, and absent from the canonical bytes when it
+    # is: a descriptor written before this field re-renders byte-identically, so
+    # existing instances keep replaying.
+    decommissioned: PlaybillDecommissionV1 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator("instance_id")
     @classmethod

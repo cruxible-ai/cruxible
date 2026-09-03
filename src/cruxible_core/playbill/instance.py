@@ -25,6 +25,7 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import (
     PlaybillBootstrapError,
     PlaybillFormatError,
+    PlaybillInstanceDecommissioned,
     PlaybillKeyError,
 )
 from cruxible_client.contracts.temporal import format_datetime, utc_now
@@ -32,6 +33,7 @@ from cruxible_client.contracts.types import (
     GenesisCoordinate,
     GitObjectFormat,
     OperatingProfile,
+    PlaybillDecommissionV1,
     PlaybillDescriptor,
     PlaybillInspection,
     PlaybillTrustRoot,
@@ -133,6 +135,24 @@ def _exclusive_write(path: Path, content: bytes, mode: int = 0o600) -> None:
     finally:
         os.close(descriptor)
     os.chmod(path, mode)
+    _fsync_directory(path.parent)
+
+
+def _atomic_replace(path: Path, content: bytes, mode: int = 0o600) -> None:
+    """Replace one existing file's bytes without ever leaving it truncated."""
+
+    temporary = path.with_name(f".{path.name}.replacing")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    try:
+        view = memoryview(content)
+        while view:
+            written = os.write(descriptor, view)
+            view = view[written:]
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.chmod(temporary, mode)
+    os.replace(temporary, path)
     _fsync_directory(path.parent)
 
 
@@ -560,9 +580,52 @@ class PlaybillInstance:
             reservation_root=paths["leases"] / "procedure-material",
         )
 
+    @property
+    def is_decommissioned(self) -> bool:
+        """Return whether this instance has reached its terminal lifecycle state."""
+
+        return self.descriptor.decommissioned is not None
+
+    def require_writable(self) -> None:
+        """Refuse typed when this instance no longer accepts governed writes."""
+
+        terminal = self.descriptor.decommissioned
+        if terminal is None:
+            return
+        raise PlaybillInstanceDecommissioned(
+            instance_id=self.descriptor.instance_id,
+            reason=terminal.reason,
+            decommissioned_at=terminal.decommissioned_at,
+        )
+
+    def decommission(self, *, reason: str, decommissioned_by: str) -> PlaybillDecommissionV1:
+        """Stamp the terminal lifecycle state on the descriptor, deleting nothing.
+
+        The record lands in the descriptor, which every reopen replays and
+        re-renders canonically, so the state survives a daemon restart without a
+        separate operational store that could disagree with it. Repeating the
+        call is refused rather than silently restamping: a second reason would
+        overwrite the first without a record.
+        """
+
+        self.require_writable()
+        record = PlaybillDecommissionV1(
+            reason=reason,
+            decommissioned_at=format_datetime(utc_now()) or "",
+            decommissioned_by=decommissioned_by,
+        )
+        updated = self.descriptor.model_copy(update={"decommissioned": record})
+        _atomic_replace(
+            self.root / DESCRIPTOR_FILE,
+            canonical_bytes(updated.model_dump(mode="json")) + b"\n",
+        )
+        self.descriptor = updated
+        return record
+
     def store_document_body(self, content: bytes) -> CasObjectMetadata:
         """Persist inert bytes without proposing or changing accepted state."""
 
+        self.require_writable()
         return self.body_store().store(content)
 
     def proposal_service(self) -> ProposalService:
@@ -585,6 +648,7 @@ class PlaybillInstance:
             query_facts_provider=lambda coordinate: self._accepted_query_facts(self, coordinate),
             workspace_advertiser=self.advertise_workspace,
             receive_limits=self._receive_limits,
+            require_writable=self.require_writable,
         )
 
     def bind_receive_limits(self, limits: ProposalReceiveLimits) -> None:
@@ -866,6 +930,7 @@ class PlaybillInstance:
     ) -> VerifiedGenerationBundle:
         """Construct one verified generation without exposing the Git ledger to surfaces."""
 
+        self.require_writable()
         return prepare_generation(
             self._ledger,
             base=base,

@@ -258,6 +258,24 @@ cruxible playbill body store PATH
 
 Stores exact bytes in inert CAS and prints their digest.
 
+## playbill instance
+
+~~~text
+cruxible playbill instance decommission --reason TEXT --yes
+~~~
+
+Decommissioning is the terminal lifecycle state of one governed instance. It
+stamps the reason, instant, and actor on the instance descriptor, so a daemon
+restart replays the same state. Every further governed write refuses with the
+typed `playbill.instance.decommissioned` error naming the reason and the repair;
+reads keep serving at the accepted coordinate, `next` reports the terminal state,
+and `search --mode orient` marks the orientation decommissioned.
+
+Nothing is deleted. Every accepted generation, receipt, and body stays exactly
+where it is, and archiving or erasing the directory afterwards is the operator's
+own step — no verb performs it, and the state cannot be reversed, so `--yes` is
+required.
+
 ## playbill provider
 
 ~~~text

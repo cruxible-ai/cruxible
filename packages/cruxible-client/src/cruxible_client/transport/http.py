@@ -301,6 +301,15 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillCasObjectResult)
 
+    def decommission_playbill_instance(
+        self, instance_id: str, *, reason: str
+    ) -> contracts.PlaybillInstanceDecommissionResultV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/instance/decommission",
+            json={"reason": reason},
+        )
+        return self._parse_model(response, contracts.PlaybillInstanceDecommissionResultV1)
+
     def seed_playbill_provider(self, instance_id: str) -> contracts.PlaybillProviderSeedResultV1:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/providers/seed",

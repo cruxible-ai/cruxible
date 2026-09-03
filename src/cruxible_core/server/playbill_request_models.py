@@ -74,6 +74,12 @@ class PlaybillProviderSeedRequest(_StrictPlaybillRequest):
     pass
 
 
+class PlaybillInstanceDecommissionRequest(_StrictPlaybillRequest):
+    """The operator's stated reason for ending this instance's governed writes."""
+
+    reason: str
+
+
 class PlaybillStoreBodyRequest(_StrictPlaybillRequest):
     content_base64: str
 

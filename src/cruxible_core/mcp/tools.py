@@ -92,6 +92,13 @@ def register_tools(
         )
 
     @_tool
+    def cruxible_playbill_instance_decommission(
+        instance_id: str, reason: str
+    ) -> contracts.PlaybillInstanceDecommissionResultV1:
+        """End one instance's governed writes; reads keep serving and nothing is deleted."""
+        return handlers.handle_playbill_instance_decommission(instance_id, reason)
+
+    @_tool
     def cruxible_playbill_store_body(
         instance_id: str, content_base64: str
     ) -> contracts.PlaybillCasObjectResult:

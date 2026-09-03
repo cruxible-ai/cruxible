@@ -47,6 +47,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillInsertionAbandonRequest,
     PlaybillInsertionConfirmRequest,
     PlaybillInsertionPrepareRequest,
+    PlaybillInstanceDecommissionRequest,
     PlaybillNextRequest,
     PlaybillNextRequestV2,
     PlaybillProposalReadmitRequest,
@@ -128,6 +129,20 @@ def playbill_init(
             and resolve_server_settings().server_socket is not None
         ),
         seed=req.seed,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/instance/decommission",
+    response_model=contracts.PlaybillInstanceDecommissionResultV1,
+)
+def instance_decommission(
+    instance_id: str,
+    req: PlaybillInstanceDecommissionRequest,
+) -> contracts.PlaybillInstanceDecommissionResultV1:
+    return playbill_api.playbill_instance_decommission(
+        resolve_server_instance_id(instance_id),
+        reason=req.reason,
     )
 
 

@@ -313,6 +313,7 @@ def _orientation(
             for status in sorted(statuses, key=lambda item: item.encode("utf-8"))
         ),
         conflicted_count=sum(row.status == "conflicted" for row in rows),
+        decommissioned=instance.is_decommissioned,
         available_kinds=tuple(
             item.kind for item in availability if item.availability == "installed"
         ),

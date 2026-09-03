@@ -48,6 +48,9 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "procedure_runtime_policy_absent": "accept_a_procedure_runtime_policy",
     "provider_lane_unavailable": "restore_the_daemon_provider_lane_then_retry",
     "procedure_projection_missing": "add_procedure_projection_catalog_entries",
+    "instance_decommissioned": (
+        "allocate_a_new_instance_with_playbill_host_create_or_archive_this_directory_yourself"
+    ),
     "exhaust_binding_carrier_required": "trigger_through_a_carrier_aware_line_scheduler",
     "environment_divergence": "rematerialize_the_provider_environment_against_its_seal",
     "provider_replay_receipt_required": "record_the_durable_provider_completion_before_replay",

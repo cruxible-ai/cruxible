@@ -140,13 +140,15 @@ PlaybillNextReason: TypeAlias = Literal[
     "projection_marker_invalid",
     "provider_lane_unavailable",
     "procedure_projection_missing",
+    "instance_decommissioned",
 ]
 PlaybillHandEditNextReason: TypeAlias = Literal[
     "procedure_projection_missing",
     "provider_lane_unavailable",
+    "instance_decommissioned",
 ]
 PLAYBILL_HAND_EDIT_NEXT_REASONS: frozenset[PlaybillHandEditNextReason] = frozenset(
-    {"procedure_projection_missing", "provider_lane_unavailable"}
+    {"procedure_projection_missing", "provider_lane_unavailable", "instance_decommissioned"}
 )
 
 ProviderLaneUnavailableCodeV1: TypeAlias = Literal[
@@ -721,6 +723,21 @@ class PlaybillSourceCheckResult(BaseModel):
     compilation_digest: str
     accepted_coordinate: PlaybillAcceptedCoordinate
     alignments: list[dict[str, Any]]
+
+
+class PlaybillInstanceDecommissionResultV1(BaseModel):
+    """Receipt for the terminal lifecycle state of one governed instance."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-instance-decommission-result-v1"] = (
+        "playbill-instance-decommission-result-v1"
+    )
+    instance_id: str
+    reason: str
+    decommissioned_at: str
+    decommissioned_by: str
+    coordinate: PlaybillAcceptedCoordinate
 
 
 class PlaybillSubjectIncomingClaimV1(BaseModel):

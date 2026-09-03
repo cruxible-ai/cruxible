@@ -372,6 +372,18 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 module="playbill",
                 attr="body_group",
             ),
+            "instance": _group(
+                "Read and end the lifecycle of one governed instance.",
+                {
+                    "decommission": _command(
+                        "playbill",
+                        "decommission_instance",
+                        "End this instance's governed writes without deleting anything.",
+                    )
+                },
+                module="playbill",
+                attr="instance_group",
+            ),
             "provider": _group(
                 "Manage governed Provider artifacts.",
                 {

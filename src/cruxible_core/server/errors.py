@@ -11,6 +11,7 @@ from cruxible_client.contracts.errors import (
     DocumentNotFoundError,
     PlaybillBootstrapError,
     PlaybillFormatError,
+    PlaybillInstanceDecommissioned,
     PlaybillSinceRequestInvalid,
     PrincipalIntegrityError,
     ProjectionCoordinateError,
@@ -291,6 +292,10 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["required_mode"] = exc.required_mode
         if exc.ceiling_mode is not None:
             context["ceiling_mode"] = exc.ceiling_mode
+    if isinstance(exc, PlaybillInstanceDecommissioned):
+        context["instance_id"] = exc.instance_id
+        context["reason"] = exc.reason
+        context["decommissioned_at"] = exc.decommissioned_at
     if isinstance(exc, DirectWriteRefusedError):
         context["kind"] = exc.kind
         context["type_name"] = exc.type_name

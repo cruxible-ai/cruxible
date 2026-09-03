@@ -158,6 +158,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_playbill_host_create": PermissionMode.ADMIN,
     "cruxible_playbill_init": PermissionMode.ADMIN,
     "cruxible_playbill_propose_principal_change": PermissionMode.ADMIN,
+    "cruxible_playbill_instance_decommission": PermissionMode.ADMIN,
 }
 
 # HTTP/CLI operations that share the same runtime boundary without being MCP tools.

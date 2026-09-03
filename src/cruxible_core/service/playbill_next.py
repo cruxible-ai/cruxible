@@ -3347,6 +3347,30 @@ def service_playbill_next(
                 *(
                     (
                         _item(
+                            severity="blocking",
+                            reason="instance_decommissioned",
+                            subject_identity=instance.descriptor.instance_id,
+                            detail={
+                                "reason": terminal.reason,
+                                "decommissioned_at": terminal.decommissioned_at,
+                                "decommissioned_by": terminal.decommissioned_by,
+                            },
+                            repair=PlaybillNextRepairV1(
+                                operation="hand_edit",
+                                target="instance.json",
+                                required_change=(
+                                    "allocate_a_new_instance_with_playbill_host_create_or_"
+                                    "archive_this_directory_yourself"
+                                ),
+                            ),
+                        ),
+                    )
+                    if (terminal := instance.descriptor.decommissioned) is not None
+                    else ()
+                ),
+                *(
+                    (
+                        _item(
                             severity="warning",
                             reason="provider_lane_unavailable",
                             subject_identity="provider-runtime",

@@ -116,6 +116,7 @@ def test_undeclared_repair_debt_is_pinned_and_can_only_shrink() -> None:
 
 def test_hand_edit_next_membership_is_client_owned_and_positive() -> None:
     assert hand_edit_next_reasons() == {
+        "instance_decommissioned",
         "procedure_projection_missing",
         "provider_lane_unavailable",
     }

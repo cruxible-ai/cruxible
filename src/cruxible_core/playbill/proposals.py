@@ -3538,6 +3538,7 @@ class ProposalService:
         producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
         query_facts_provider: ClaimQueryFactsProvider | None = None,
         workspace_advertiser: Callable[[], PlaybillWorkspaceAdvertisement] | None = None,
+        require_writable: Callable[[], None] | None = None,
     ) -> None:
         self.transport = transport
         self.accepted = accepted
@@ -3549,6 +3550,10 @@ class ProposalService:
         self.producer_receipt_resolver = producer_receipt_resolver
         self.query_facts_provider = query_facts_provider
         self.workspace_advertiser = workspace_advertiser
+        # Instance-lifecycle gate. Reads bind this service too (preflight reads
+        # its limits and verifiers), so the terminal state is checked where the
+        # write happens, not where the service is constructed.
+        self._require_writable = require_writable or (lambda: None)
 
     def submit(
         self,
@@ -3558,6 +3563,7 @@ class ProposalService:
         candidate_tree: Mapping[str, bytes],
         timestamp: str,
     ) -> ProposalResult:
+        self._require_writable()
         validate_candidate_timestamp(timestamp)
         if "propose" not in actor.capabilities:
             raise ProposalAdmissionError("authenticated actor lacks the propose capability")

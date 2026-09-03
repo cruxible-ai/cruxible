@@ -71,6 +71,7 @@ playbill hook post-tool-use
 playbill host create
 playbill host show
 playbill init
+playbill instance decommission
 playbill list
 playbill line run
 playbill next
@@ -120,6 +121,7 @@ server install-service
 server restart
 server start
 server status
+server stop
 ```
 
 The four top-level groups are therefore `context`, `credential`, `playbill`,
@@ -137,6 +139,7 @@ GET  /version
 POST /api/v1/runtime/instances
 GET  /api/v1/server/info
 POST /api/v1/server/restart
+POST /api/v1/server/stop
 POST /api/v1/{instance_id}/runtime/bootstrap/claim
 GET  /api/v1/{instance_id}/runtime/credentials
 POST /api/v1/{instance_id}/runtime/credentials
@@ -165,6 +168,7 @@ GET  /api/v1/{instance_id}/playbill/documents/{identity}/history
 POST /api/v1/{instance_id}/playbill/explain
 GET  /api/v1/{instance_id}/playbill/principals
 POST /api/v1/{instance_id}/playbill/principals/proposals
+POST /api/v1/{instance_id}/playbill/instance/decommission
 POST /api/v1/{instance_id}/playbill/providers/seed
 GET  /api/v1/{instance_id}/playbill/proposals/{proposal_id}
 GET  /api/v1/{instance_id}/playbill/proposals
@@ -231,6 +235,7 @@ cruxible_version
 cruxible_server_info
 cruxible_playbill_host_create
 cruxible_playbill_init
+cruxible_playbill_instance_decommission
 cruxible_playbill_store_body
 cruxible_playbill_propose_document
 cruxible_playbill_inspect_proposal

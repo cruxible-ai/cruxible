@@ -120,6 +120,26 @@ class PlaybillReseedRequired(PlaybillFormatError):
         )
 
 
+class PlaybillInstanceDecommissioned(PlaybillFormatError):
+    """A decommissioned instance is readable forever but never writable again."""
+
+    error_code = "playbill.instance.decommissioned"
+
+    def __init__(self, *, instance_id: str, reason: str, decommissioned_at: str) -> None:
+        self.instance_id = instance_id
+        self.reason = reason
+        self.decommissioned_at = decommissioned_at
+        self.repair_commands = (
+            "cruxible playbill host create --workspace <root>  # start a fresh instance",
+        )
+        super().__init__(
+            f"{self.error_code}: instance {instance_id!r} was decommissioned at "
+            f"{decommissioned_at} ({reason}); its accepted state stays readable and nothing "
+            "was deleted, but it accepts no further governed writes. Repair: allocate a new "
+            "instance with `cruxible playbill host create`, or archive this directory yourself"
+        )
+
+
 class SemanticDeltaLimitError(PlaybillFormatError):
     """A semantic delta exceeds its deterministic served-response budget."""
 

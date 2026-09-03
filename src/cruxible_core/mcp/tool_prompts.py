@@ -22,6 +22,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_init": (
         "Use when you need to bootstrap Playbill from client-generated public keys."
     ),
+    "cruxible_playbill_instance_decommission": (
+        "Use when an instance must stop accepting governed writes for good; reads keep "
+        "serving, nothing is deleted, and the state cannot be reversed."
+    ),
     "cruxible_playbill_store_body": (
         "Use when you need to store exact Document bytes inertly before proposing them."
     ),

@@ -457,6 +457,32 @@ def playbill_init(
     )
 
 
+def playbill_instance_decommission(
+    instance_id: str,
+    *,
+    reason: str,
+) -> contracts.PlaybillInstanceDecommissionResultV1:
+    """Stamp the terminal lifecycle state on one instance, deleting nothing.
+
+    Reads keep serving at the accepted coordinate forever; every further
+    governed write refuses typed. Archiving or erasing the directory afterwards
+    is the operator's own step and no verb performs it.
+    """
+
+    check_permission("cruxible_playbill_instance_decommission", instance_id=instance_id)
+    instance = get_playbill_manager().get(instance_id)
+    record = instance.decommission(reason=reason, decommissioned_by=_actor_id())
+    return contracts.PlaybillInstanceDecommissionResultV1(
+        instance_id=instance_id,
+        reason=record.reason,
+        decommissioned_at=record.decommissioned_at,
+        decommissioned_by=record.decommissioned_by,
+        coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
+            AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump(mode="json")
+        ),
+    )
+
+
 def playbill_provider_seed(instance_id: str) -> contracts.PlaybillProviderSeedResultV1:
     """Submit the compiler-owned workspace Provider as an ordinary proposal."""
 
