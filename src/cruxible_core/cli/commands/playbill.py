@@ -3169,11 +3169,7 @@ def procedure_group() -> None:
 
 @procedure_group.command("readiness")
 @click.argument("name")
-@click.option(
-    "--evaluation-time",
-    default=None,
-    help="Assert the ISO-8601 instant this run believes it is at (daemon-clock checked).",
-)
+@click.option("--evaluation-time", required=True, help="Explicit ISO-8601 evaluation time.")
 @json_option
 @handle_errors
 def procedure_readiness(name: str, evaluation_time: str, output_json: bool) -> None:

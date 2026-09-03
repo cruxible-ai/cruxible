@@ -14,6 +14,16 @@ from cruxible_client.contracts.clock_taxonomy import (
     declared_clock,
     is_time_bearing_field,
 )
+from cruxible_core.cli.commands.playbill import (
+    procedure_readiness,
+    run_line,
+    run_procedure,
+)
+from cruxible_core.service.playbill_procedure_runs import (
+    LineRunRequestV1,
+    ProcedureReadinessRequestV1,
+    ProcedureRunRequestV2,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 SCAN_ROOTS = (
@@ -91,6 +101,31 @@ def test_in_source_field_descriptions_agree_with_the_declaration() -> None:
             disagreements.append(f"{path}:{class_name}.{field_name} says {declared!r}")
 
     assert not disagreements, disagreements
+
+
+def test_a_required_served_instant_is_never_optional_on_its_cli_leaf() -> None:
+    """A CLI leaf may demand an instant its served model allows; never the reverse.
+
+    An option looser than the request model does not fail locally: click sends
+    the empty string, the transport forwards it, and the caller learns only from
+    a 422 that the instant was mandatory. The reverse asymmetry is safe, so the
+    law is one-directional.
+    """
+
+    looser: list[str] = []
+    for command, model, field_name in (
+        (procedure_readiness, ProcedureReadinessRequestV1, "evaluation_time"),
+        (run_procedure, ProcedureRunRequestV2, "evaluation_time"),
+        (run_line, LineRunRequestV1, "evaluation_time"),
+    ):
+        option = next(item for item in command.params if item.name == field_name)
+        if model.model_fields[field_name].is_required() and not option.required:
+            looser.append(f"{command.name}: --{field_name.replace('_', '-')} vs {model.__name__}")
+
+    assert not looser, (
+        "these CLI options are optional while the served model requires the "
+        f"instant, so the command round-trips to a 422: {looser}"
+    )
 
 
 def test_prepared_at_reads_the_evaluation_instant() -> None:
