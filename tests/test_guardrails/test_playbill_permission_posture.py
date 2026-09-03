@@ -43,7 +43,13 @@ def test_runtime_bootstrap_secret_is_single_use_for_host_create_only() -> None:
     assert "bootstrap_secret_claimed" not in server_operation_branch
 
 
-def test_repeatable_bootstrap_server_operations_are_exactly_info_and_restart() -> None:
+def test_repeatable_bootstrap_server_operations_are_exactly_info_host_show_and_restart() -> None:
+    """Pin the exact daemon-operation route set an unscoped operator may repeat.
+
+    PC-DF4 added the pre-init host-show route to the set without moving the
+    name, leaving a guardrail whose name asserted a narrower set than its body.
+    """
+
     assert set(auth_module._SERVER_OPERATION_ROUTES) == {
         ("GET", "/api/v1/server/info"),
         ("GET", "/api/v1/{instance_id}/playbill/host"),
