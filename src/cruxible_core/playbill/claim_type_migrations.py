@@ -414,10 +414,20 @@ def _successor_claim(
     )
 
 
-def _successor_claim_type(
+def resolve_claim_type_succession(
     tree: Mapping[str, bytes],
     value: ClaimTypeInputV1 | ClaimType,
 ) -> tuple[str, ClaimType, ClaimType]:
+    """Resolve one ClaimType succession against the tree it is written onto.
+
+    Public because two roads author the same succession -- the standalone
+    `/claim-types/proposals` migration and the change-set succession member --
+    and a second implementation of "what succeeds what" is a second law. `tree`
+    is whatever that road writes onto: the accepted tree for the standalone
+    route, the staged tree for a change set, so a set that defines a ClaimType
+    in one member and succeeds it in another resolves against its own sibling.
+    """
+
     successor = (
         value if isinstance(value, ClaimType) else lower_claim_type_input(value, tree=dict(tree))
     )
@@ -456,12 +466,18 @@ def _include_migration_dependent(
     return lifecycle_state == "live" or artifact_kind == "claim"
 
 
-def _closure_inventory(
+def claim_type_migration_inventory(
     tree: Mapping[str, bytes],
     *,
     root: ArtifactIdentity,
 ) -> tuple[ClaimTypeMigrationInventoryItemV1, ...]:
-    """Return the live reverse-pin closure plus its retired Claim members."""
+    """Return the live reverse-pin closure plus its retired Claim members.
+
+    Public for the reason `resolve_claim_type_succession` is: the closure a
+    succession owes is computed over the tree that succession is written onto,
+    which for a change set is the staged tree, so a sibling Claim authored under
+    the predecessor earlier in the same set is a dependent of the succession.
+    """
 
     try:
         closure = reverse_pin_closure(
@@ -509,10 +525,26 @@ def _canonical_successor_bytes(
     disposition: MigrationResultDisposition,
     replacements: Mapping[str, str],
     supplied: dict[str, object] | None,
+    supplied_content: bytes | None = None,
     successor_type: ClaimType,
     claim_retirement_reason: ClaimRetirementReason | None = None,
     claim_effective_until: datetime | None = None,
 ) -> bytes:
+    """Return the exact successor bytes one dependent takes under its disposition.
+
+    `supplied_content` is already-canonical successor bytes another authoring
+    pass produced -- the change set's `re_author` disposition, where the whole
+    successor is a sibling Claim member this same intent lowers. It takes the
+    same identity, predecessor and lifecycle checks as hand-supplied `supplied`
+    payloads; only the rendering step is skipped, because re-rendering bytes
+    that a Claim renderer already produced could only disagree with them.
+    """
+
+    if supplied_content is not None and supplied is not None:
+        raise ClaimTypeMigrationDependentInvalid(
+            f"{ClaimTypeMigrationDependentInvalid.code}: a dependent takes one successor, "
+            "not both authored bytes and a supplied payload"
+        )
     if disposition == "retire" and current.artifact_kind == "document":
         raise ClaimTypeMigrationDependentInvalid(
             f"{ClaimTypeMigrationDependentInvalid.code}: Document has no retired v1 state"
@@ -582,7 +614,9 @@ def _canonical_successor_bytes(
                 f"{ClaimTypeMigrationDependentInvalid.code}: retirement attribution is valid "
                 "only for a live Claim retire disposition"
             )
-    if supplied is None:
+    if supplied_content is not None:
+        payload = None
+    elif supplied is None:
         payload = _replace_exact_digests(json.loads(content), replacements)
         if not isinstance(payload, dict):
             raise ClaimTypeMigrationDependentInvalid(
@@ -632,7 +666,9 @@ def _canonical_successor_bytes(
     else:
         payload = supplied
     try:
-        candidate = pretty_canonical_bytes(payload)
+        candidate = supplied_content if supplied_content is not None else (
+            pretty_canonical_bytes(payload)
+        )
         parsed = parse_dependency_artifact(current.path, candidate)
     except (PlaybillError, TypeError, ValueError) as exc:
         raise ClaimTypeMigrationDependentInvalid(
@@ -782,18 +818,33 @@ def _v3_operation_digest(
     ).tagged
 
 
-def _build_v3_candidate(
+def build_claim_type_migration_candidate(
     *,
     tree: Mapping[str, bytes],
     type_path: str,
     successor: ClaimType,
     inventory: tuple[ClaimTypeMigrationInventoryItemV1, ...],
     dispositions: tuple[ClaimTypeDependentDispositionV3, ...],
+    authored_successors: Mapping[str, bytes] | None = None,
 ) -> tuple[
     dict[str, bytes],
     tuple[ClaimTypeMigrationDispositionV3, ...],
     tuple[ClaimTypeMigrationWarningV1, ...],
 ]:
+    """Build one exact ClaimType succession candidate over its whole closure.
+
+    Public so the standalone migration route and the change-set succession
+    member build the same candidate from the same code: what a succession does
+    to its dependents is one law, and two implementations of it would be two.
+
+    `authored_successors` maps a dependent's qualified identity to successor
+    bytes some other authoring pass already produced -- the change set's
+    `re_author` disposition, where a sibling Claim member of the same intent is
+    the successor. Those bytes take every identity, predecessor and lifecycle
+    check a hand-supplied successor takes; the standalone route passes none.
+    """
+
+    authored = dict(authored_successors or {})
     by_identity = {item.identity.qualified: item for item in inventory}
     supplied = {item.identity.qualified: item for item in dispositions}
     if set(by_identity) != set(supplied):
@@ -802,6 +853,12 @@ def _build_v3_candidate(
         raise ClaimTypeMigrationDependentSetMismatch(
             f"{ClaimTypeMigrationDependentSetMismatch.code}: missing={missing!r}; "
             f"extra_or_stale={extra!r}"
+        )
+    unclaimed = sorted(set(authored) - set(by_identity), key=lambda item: item.encode("utf-8"))
+    if unclaimed:
+        raise ClaimTypeMigrationDependentSetMismatch(
+            f"{ClaimTypeMigrationDependentSetMismatch.code}: authored successors name "
+            f"non-dependents {unclaimed!r}"
         )
 
     candidate_tree = dict(tree)
@@ -839,6 +896,7 @@ def _build_v3_candidate(
                 disposition=disposition,
                 replacements=replacements,
                 supplied=entry.successor,
+                supplied_content=authored.pop(identity, None),
                 successor_type=successor,
                 claim_retirement_reason=entry.claim_retirement_reason,
                 claim_effective_until=entry.claim_effective_until,
@@ -884,13 +942,13 @@ def _service_migrate_claim_type_v1(
     current = instance.accepted_coordinate()
     coordinate = AcceptedCoordinate.from_internal(current)
     tree = instance.tree_at(current.git_oid)
-    type_path, predecessor, successor = _successor_claim_type(tree, request.successor)
+    type_path, predecessor, successor = resolve_claim_type_succession(tree, request.successor)
     delta = semantic_field_delta(
         predecessor.model_dump(mode="json"), successor.model_dump(mode="json")
     )
     lint = lint_claim_type_input(instance, request.successor, coordinate=current)
 
-    inventory = _closure_inventory(tree, root=successor.identity)
+    inventory = claim_type_migration_inventory(tree, root=successor.identity)
     if any(item.artifact_kind != "claim" for item in inventory):
         kinds = tuple(sorted({item.artifact_kind for item in inventory}))
         raise ClaimTypeMigrationDependentSetMismatch(
@@ -971,12 +1029,12 @@ def _service_migrate_claim_type_v2(
     current = instance.accepted_coordinate()
     coordinate = AcceptedCoordinate.from_internal(current)
     tree = instance.tree_at(current.git_oid)
-    type_path, predecessor, successor = _successor_claim_type(tree, request.successor)
+    type_path, predecessor, successor = resolve_claim_type_succession(tree, request.successor)
     delta = semantic_field_delta(
         predecessor.model_dump(mode="json"), successor.model_dump(mode="json")
     )
     lint = lint_claim_type_input(instance, request.successor, coordinate=current)
-    inventory = _closure_inventory(tree, root=successor.identity)
+    inventory = claim_type_migration_inventory(tree, root=successor.identity)
     dispositions = request.dependents
     if request.mode == "preflight" and not dispositions:
         dispositions = tuple(
@@ -1068,19 +1126,19 @@ def _service_migrate_claim_type_v3(
     current = instance.accepted_coordinate()
     coordinate = AcceptedCoordinate.from_internal(current)
     tree = instance.tree_at(current.git_oid)
-    type_path, predecessor, successor = _successor_claim_type(tree, request.successor)
+    type_path, predecessor, successor = resolve_claim_type_succession(tree, request.successor)
     delta = semantic_field_delta(
         predecessor.model_dump(mode="json"), successor.model_dump(mode="json")
     )
     lint = lint_claim_type_input(instance, request.successor, coordinate=current)
-    inventory = _closure_inventory(tree, root=successor.identity)
+    inventory = claim_type_migration_inventory(tree, root=successor.identity)
     dispositions = request.dependents
     if request.mode == "preflight" and not dispositions:
         dispositions = tuple(
             ClaimTypeDependentDispositionV3(identity=item.identity, disposition="successor")
             for item in inventory
         )
-    candidate_tree, normalized, warnings = _build_v3_candidate(
+    candidate_tree, normalized, warnings = build_claim_type_migration_candidate(
         tree=tree,
         type_path=type_path,
         successor=successor,
@@ -1193,5 +1251,8 @@ __all__ = [
     "ClaimTypeMigrationResultV1",
     "ClaimTypeMigrationResultV2",
     "ClaimTypeMigrationResultV3",
+    "build_claim_type_migration_candidate",
+    "claim_type_migration_inventory",
+    "resolve_claim_type_succession",
     "service_migrate_claim_type",
 ]
