@@ -13,9 +13,10 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.authoring.insertions import apply_playbill_publication
-from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatementV1,
+    AuthoringDiagnosticV1,
     AuthoringReferenceExpectationV1,
     ChangeSetAuthoringPayloadV1,
     ClaimAuthoringPayloadV1,
@@ -986,3 +987,151 @@ def test_the_daemon_receive_ceiling_reads_its_file_or_refuses_loudly(tmp_path: P
     config.write_text("{", encoding="utf-8")
     with pytest.raises(PlaybillExecutionError):
         load_proposal_receive_config(tmp_path)
+
+
+def _refused_diagnostics(
+    coordinator: AuthoringIntentCoordinator,
+    intent_id: str,
+    actor: AuthenticatedActor,
+) -> dict[str, AuthoringDiagnosticV1]:
+    """Submit one intent expected to refuse, and return its diagnostics by code."""
+
+    result = coordinator.submit(intent_id, actor=actor)
+    assert result.status.proposal_id is None, result.status.model_dump(mode="json")
+    assert result.members == ()
+    preflight = result.intent.last_preflight
+    assert preflight is not None and preflight.verdict == "refused"
+    return {item.code: item for item in preflight.frontier.diagnostics}
+
+
+def _repair_replacement(diagnostic: AuthoringDiagnosticV1) -> dict[str, object]:
+    replacement = diagnostic.repairs[0].replacement
+    assert isinstance(replacement, dict)
+    return replacement
+
+
+def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
+    tmp_path: Path,
+) -> None:
+    """ "Typed to the offending member" covers the laws that run after lowering.
+
+    Lowering refusals were already re-addressed to `members[n]`, but the laws
+    the compiler runs on the candidate tree -- succession for both artifact
+    kinds, the ClaimType's permitted roles, the ClaimType's literal schema --
+    name only the artifact path they refused. With eighty members that is a
+    path, not an index. Each case below is a compiler-stage refusal, and each
+    asserts the member index alongside the artifact path.
+
+    Cardinality has no compiler-stage refusal to address: the cardinality-one
+    slot law is decided in lowering (`existing_claim_dispositions_incomplete`,
+    pinned above), and evidence admission grades evidence rather than refusing
+    a candidate, so both are already member-addressed or never member-owned.
+    """
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+
+    # Succession, ClaimType: rewriting an accepted ClaimType in place.
+    rewritten = _predicate_type("project.work_item.status").model_copy(
+        update={"literal_schema": {"type": "string"}}
+    )
+    claim_type_member = ClaimTypeAuthoringPayloadV1(claim_type=rewritten)
+    # Succession, Subject: rewriting an accepted Subject in place.
+    subject_member = SubjectAuthoringPayloadV1(
+        subject=_shell("wi-42").model_copy(
+            update={"lifecycle": ArtifactLifecycle(predecessor_digest="sha256:" + "0" * 64)}
+        )
+    )
+    # Permitted roles: a ClaimType this set defines admits normative Claims only.
+    normative_only = _predicate_type("project.work_item.owner").model_copy(
+        update={"permitted_roles": ("normative",)}
+    )
+    role_type_member = ClaimTypeAuthoringPayloadV1(claim_type=normative_only)
+    role_claim_member = _claim(predicate="project.work_item.owner", value="ready")
+    # Literal schema: a value the accepted ClaimType's enum does not admit.
+    schema_claim_member = _claim(value="not-a-status")
+
+    cases: tuple[tuple[str, tuple[object, ...], object, str, str], ...] = (
+        (
+            "claim_type_succession",
+            (claim_type_member, SubjectAuthoringPayloadV1(subject=_shell("wi-2"))),
+            claim_type_member,
+            "playbill.claim_type.stale_predecessor",
+            claim_type_path("project.work_item.status"),
+        ),
+        (
+            "subject_succession",
+            (subject_member, SubjectAuthoringPayloadV1(subject=_shell("wi-2"))),
+            subject_member,
+            "playbill.subject.stale_predecessor",
+            subject_path(SUBJECT_KIND, "wi-42"),
+        ),
+        (
+            "permitted_roles",
+            (role_type_member, role_claim_member),
+            role_claim_member,
+            "playbill.claim.statement_contract_mismatch",
+            "",
+        ),
+        (
+            "literal_schema",
+            (schema_claim_member, SubjectAuthoringPayloadV1(subject=_shell("wi-2"))),
+            schema_claim_member,
+            "playbill.claim.literal_schema_invalid",
+            "",
+        ),
+    )
+
+    for label, members, offender, code, artifact_path in cases:
+        payload = _change_set(*members)
+        index = payload.members.index(offender)  # type: ignore[arg-type]
+        intent = coordinator.create(
+            actor=actor,
+            payload=payload,
+            canonical_timestamp=TIMESTAMP,
+        ).intent
+        path = artifact_path or claim_path(
+            next(
+                item.claim_id
+                for item in intent.change_set_claim_identities
+                if item.member_identity == authoring_member_identity(offender)  # type: ignore[arg-type]
+            )
+        )
+        before = instance.accepted_coordinate()
+        offending = _refused_diagnostics(coordinator, intent.intent_id, actor)
+        assert code in offending, (label, sorted(offending))
+        diagnostic = offending[code]
+        assert diagnostic.stage == "proposal_evaluation", label
+        assert diagnostic.offending_element == f"members[{index}].{path}", label
+        assert _repair_replacement(diagnostic) == {
+            "artifact_path": path,
+            "member": index,
+            "offending_element": f"members[{index}].{path}",
+        }, label
+        assert instance.accepted_coordinate() == before, label
+
+
+def test_a_singular_intent_keeps_its_compiler_refusal_at_the_artifact_path(
+    tmp_path: Path,
+) -> None:
+    """A singular intent owns every path it writes, so nothing is re-addressed."""
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+
+    intent = coordinator.create(
+        actor=actor,
+        payload=_claim(value="not-a-status"),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    offending = _refused_diagnostics(coordinator, intent.intent_id, actor)
+    diagnostic = offending["playbill.claim.literal_schema_invalid"]
+    assert diagnostic.offending_element == claim_path(intent.semantic_identity)
+    assert _repair_replacement(diagnostic) == {
+        "offending_element": claim_path(intent.semantic_identity)
+    }

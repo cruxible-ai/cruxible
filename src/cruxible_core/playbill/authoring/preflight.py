@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -452,8 +453,28 @@ def _diagnostic(
     )
 
 
-def _compiler_diagnostic(item: CompilerDiagnostic) -> AuthoringDiagnosticV1:
-    offending = item.subject.artifact_path if item.subject is not None else "payload"
+def _compiler_diagnostic(
+    item: CompilerDiagnostic,
+    *,
+    member_by_path: Mapping[str, int],
+) -> AuthoringDiagnosticV1:
+    """Address one compiler refusal at the change-set member that authored it.
+
+    The laws that run after lowering -- succession, permitted roles,
+    cardinality, evidence admission -- name the artifact path they refused. A
+    change set admits or refuses whole, typed to the offending member, so a path
+    this intent's own lowering attributes to one member is re-addressed to
+    `members[n].<artifact path>`, with the bare path kept alongside in the
+    repair. A singular intent owns every path it writes and is unchanged.
+    """
+
+    artifact_path = item.subject.artifact_path if item.subject is not None else None
+    member = None if artifact_path is None else member_by_path.get(artifact_path)
+    offending = "payload" if artifact_path is None else artifact_path
+    owner: dict[str, object] = {}
+    if member is not None:
+        offending = f"members[{member}].{artifact_path}"
+        owner = {"artifact_path": artifact_path, "member": member}
     return _diagnostic(
         code=item.code,
         stage="proposal_evaluation",
@@ -463,7 +484,7 @@ def _compiler_diagnostic(item: CompilerDiagnostic) -> AuthoringDiagnosticV1:
             _repair(
                 "edit_authoring",
                 "Edit the named semantic element and preflight this intent again.",
-                {"offending_element": offending},
+                {"offending_element": offending, **owner},
             ),
         ),
     )
@@ -667,7 +688,10 @@ def compute_preflight(
                     query_facts_provider=service.query_facts_provider,
                 )
                 evaluated_tree = evaluation.tree
-                diagnostics.extend(_compiler_diagnostic(item) for item in evaluation.diagnostics)
+                diagnostics.extend(
+                    _compiler_diagnostic(item, member_by_path=lowered.member_by_path)
+                    for item in evaluation.diagnostics
+                )
             resolved_payload = lowered.resolved_authoring
     except AuthoringLoweringError as exc:
         diagnostics.append(

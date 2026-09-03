@@ -6,7 +6,7 @@ import base64
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import NoReturn
 
@@ -170,6 +170,14 @@ class LoweredAuthoring:
     resolved_authoring: dict[str, object]
     changed_members: tuple[tuple[str, bytes], ...]
     idempotent: bool = False
+    member_by_path: Mapping[str, int] = field(default_factory=dict)
+    """Which change-set member authored each path this lowering wrote.
+
+    A change set admits or refuses whole, typed to the offending member, and
+    the compiler laws that run after lowering -- succession, permitted roles,
+    cardinality, evidence admission -- address the artifact path they refused,
+    not the member the author wrote. This is the map back. Empty for a singular
+    intent, which owns every path it writes."""
 
 
 @dataclass(frozen=True)
@@ -1679,6 +1687,7 @@ def _lower_change_set(
 
     staged_tree = dict(base_tree)
     member_paths: set[str] = set()
+    installed_by: dict[str, set[int]] = {}
     resolved: list[dict[str, object]] = []
     candidate_identities = frozenset(
         authoring_member_identity(member)
@@ -1711,6 +1720,8 @@ def _lower_change_set(
                     sibling_member_by_claim_id=sibling_member_by_claim_id,
                 ) from error
             member_paths.update(extra_paths)
+            for extra_path in extra_paths:
+                installed_by.setdefault(extra_path, set()).add(index)
             member_resolved["identity"] = authoring_member_identity(member)
             member_resolved["member"] = index
             member_resolved["path"] = path
@@ -1720,6 +1731,13 @@ def _lower_change_set(
         for path in sorted(member_paths, key=lambda item: item.encode("utf-8"))
         if base_tree.get(path) != staged_tree[path]
     )
+    # A dependency draft or a Claim's own card may be installed by two members at
+    # once (they are equal bytes or lowering would have refused); only a path one
+    # member alone wrote can be addressed back to that member.
+    member_by_path = dict(owner_by_path)
+    for extra_path, owners in installed_by.items():
+        if extra_path not in member_by_path and len(owners) == 1:
+            member_by_path[extra_path] = next(iter(owners))
     return LoweredAuthoring(
         proposed_tree=staged_tree,
         resolved_authoring={
@@ -1730,6 +1748,7 @@ def _lower_change_set(
             ),
         },
         changed_members=changed,
+        member_by_path=member_by_path,
     )
 
 
