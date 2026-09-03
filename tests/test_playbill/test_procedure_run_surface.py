@@ -143,7 +143,8 @@ def test_line_run_request_requires_one_route_and_body_identity() -> None:
     digest = _line_digest("line")
     with pytest.raises(LineRunIdentityMismatch, match="route and request"):
         procedure_run_service.service_run_playbill_line(
-            SimpleNamespace(),  # type: ignore[arg-type]
+            # A live instance: the terminal-state gate precedes every run.
+            SimpleNamespace(require_writable=lambda: None),  # type: ignore[arg-type]
             path_identity_digest=digest,
             request=LineRunRequestV1(
                 line_identity_digest=_line_digest("other"),
