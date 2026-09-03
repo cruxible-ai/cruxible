@@ -222,6 +222,10 @@ def test_symlink_hardlink_directory_socket_and_budget_refuse(
     root.mkdir()
     outside.write_bytes(b"outside")
     (root / "link").symlink_to(outside)
+    outside_directory = tmp_path / "outside"
+    outside_directory.mkdir()
+    (outside_directory / "note").write_bytes(b"outside")
+    (root / "directory-link").symlink_to(outside_directory)
     regular = root / "regular"
     regular.write_bytes(b"regular")
     os.link(regular, root / "hard")
@@ -233,6 +237,7 @@ def test_symlink_hardlink_directory_socket_and_budget_refuse(
     try:
         expected = {
             "link": "symlink",
+            "directory-link/note": "symlink",
             "hard": "hardlink",
             "directory": "non_regular",
             "socket": "non_regular",
@@ -246,6 +251,25 @@ def test_symlink_hardlink_directory_socket_and_budget_refuse(
         assert caught.value.path_class == "size_budget"
     finally:
         sock.close()
+
+
+def test_permission_denial_is_classified_as_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "locked").write_bytes(b"secret")
+    original_open = workspace_file_module.os.open
+
+    def refuse_locked(path, flags, mode=0o777, *, dir_fd=None):  # type: ignore[no-untyped-def]
+        if path == "locked":
+            raise PermissionError(13, "permission denied")
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(workspace_file_module.os, "open", refuse_locked)
+    with pytest.raises(WorkspaceFileReadRefused) as caught:
+        _read(_reader(root), _request(root, "locked"))
+    assert caught.value.path_class == "unreadable"
 
 
 def test_replaced_file_after_open_refuses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

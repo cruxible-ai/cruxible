@@ -12,10 +12,13 @@ from tests.support.provider_seed import (
 from tests.test_playbill._support import generate_client, initialize_local
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistrationV1,
+    ProviderInterfaceRegistrationV1,
     parse_provider_interface,
+    provider_external_interface_definition_digest,
     provider_interface_digest,
     provider_interface_path,
 )
@@ -30,7 +33,10 @@ from cruxible_client.contracts.providers import (
     render_provider,
 )
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
-from cruxible_core.playbill.provider_classifiers import ProviderBucketClassifierRegistry
+from cruxible_core.playbill.provider_classifiers import (
+    ProviderBucketClassifierRegistry,
+    install_compiler_owned_provider_classifier,
+)
 from cruxible_core.playbill.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_FIXTURES,
     WORKSPACE_FILE_IMPLEMENTATION_DIGEST,
@@ -92,6 +98,26 @@ def test_seed_exactly_pins_the_provider_owned_inputs_and_core_double() -> None:
             )
             == fixture.measured_bucket_id
         )
+
+
+def test_compiler_classifier_gate_uses_interface_digest_not_spoofable_name() -> None:
+    registration_data = workspace_file_interface_registration().model_dump(mode="json")
+    interface_bytes_hex = canonical_bytes(
+        {"interface_id": WORKSPACE_FILE_INTERFACE_ID, "version": 999}
+    ).hex()
+    registration_data["interface_bytes_hex"] = interface_bytes_hex
+    registration_data["interface_digest"] = provider_external_interface_definition_digest(
+        interface_bytes_hex,
+        domain="cruxible.interface.stub.v1",
+    )
+    registration = ProviderInterfaceRegistrationV1.model_validate(registration_data)
+    accepted = AcceptedProviderInterfaceRegistrationV1(
+        path=provider_interface_path(WORKSPACE_FILE_INTERFACE_ID),
+        registration=registration,
+        artifact_digest=provider_interface_digest(registration).tagged,
+    )
+
+    assert install_compiler_owned_provider_classifier(accepted) is None
 
 
 def test_seed_is_an_idempotent_ordinary_proposal_and_generation_one(tmp_path: Path) -> None:
