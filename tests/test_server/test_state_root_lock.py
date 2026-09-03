@@ -173,6 +173,7 @@ def test_the_stop_route_schedules_a_graceful_shutdown_and_names_the_daemon_pid(
     from fastapi.testclient import TestClient
 
     from cruxible_core.runtime.permissions import reset_permissions
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
     from cruxible_core.server.app import create_app
     from cruxible_core.server.credentials import reset_runtime_credential_store
     from cruxible_core.server.registry import reset_registry
@@ -182,6 +183,12 @@ def test_the_stop_route_schedules_a_graceful_shutdown_and_names_the_daemon_pid(
     reset_permissions()
     reset_registry()
     reset_runtime_credential_store()
+    # `create_app` binds the process-wide Playbill manager (and its Provider
+    # runtime operator) to this temporary state root. Leaving it bound after the
+    # directory is gone makes a later suite read a lane rooted at a path that no
+    # longer exists, so clear it on both sides exactly as tests/test_server's
+    # own conftest does.
+    get_playbill_manager().clear()
     signalled = threading.Event()
     shutdown_module.set_signal_self(signalled.set)
     monkeypatch.setattr(shutdown_module, "_STOP_DELAY_SECONDS", 0.0)
@@ -190,6 +197,7 @@ def test_the_stop_route_schedules_a_graceful_shutdown_and_names_the_daemon_pid(
             response = client.post("/api/v1/server/stop")
     finally:
         shutdown_module.reset_signal_self()
+        get_playbill_manager().clear()
         reset_runtime_credential_store()
         reset_registry()
         reset_permissions()
