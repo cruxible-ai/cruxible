@@ -350,6 +350,38 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
         implementation.implementation_digest,
         deployment,
     ).binding
+    # Retained from before the Line route existed: the operator's own invoke
+    # path still has to reach the real subprocess, echo its output, verify the
+    # binding it spawned against, and leave no lease behind.
+    occurrence = SimpleNamespace(
+        local_execution=admitted_binding,
+        provider_artifact_digest=accepted_provider.artifact_digest,
+        interface_artifact_digest=interface.artifact_digest,
+        implementation_digest=implementation.implementation_digest,
+        secret_plan=ProviderSecretResolutionPlanV1(),
+    )
+    context = ProviderRuntimeRunContextV1(
+        protocol_version="1.0",
+        run_id="RUN-daemon-operator",
+        interface_id=interface.registration.interface_id,
+        interface_digest=interface.registration.interface_digest,
+        implementation_digest=implementation.implementation_digest,
+        entrypoint=admitted_binding.entrypoint,
+        input={"value": "served"},
+        input_bucket="size=small",
+        budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=65_536),
+    )
+
+    outcome = invoker.invoke_provider(
+        occurrence=occurrence,  # type: ignore[arg-type]
+        context=context,
+        invocation_id=_digest("daemon-invocation"),
+        bound=invoker.bind_provider(occurrence=occurrence),  # type: ignore[arg-type]
+    )
+    assert outcome.envelope.output == {"echo": "served"}
+    assert outcome.verified_binding == admitted_binding
+    assert tuple(operator.process_leases.root.glob("*.json")) == ()
+
     accepted_procedure = _procedure_bound_to_provider(accepted_provider)
     (state_root / "line-service").mkdir()
     prepared, line_fixture = _prepared_v5(

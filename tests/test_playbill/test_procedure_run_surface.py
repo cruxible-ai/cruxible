@@ -9,8 +9,13 @@ from types import SimpleNamespace
 import pytest
 
 import cruxible_core.service.playbill_procedure_runs as procedure_run_service
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.procedure_mandates import (
+    ProcedureMandateV1,
+    procedure_mandate_digest,
+    render_procedure_mandate,
+)
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedureV1,
     ProcedureArtifactV2,
@@ -65,6 +70,7 @@ from cruxible_core.playbill.material_reservations import (
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
+from cruxible_core.playbill.provider_process_leases import ProviderLocalRuntimeRefused
 from cruxible_core.service.playbill_procedure_runs import (
     DirectProcedureReceiptReducer,
     LineRunIdentityMismatch,
@@ -1418,3 +1424,253 @@ def test_graph_v4_bind_routes_only_through_line_closure(tmp_path: Path, monkeypa
             actor=AuthenticatedActor(actor_id="owner"),
             timestamp="2026-08-24T16:00:00.000000Z",
         )
+
+
+def _line_mandate(
+    accepted,  # type: ignore[no-untyped-def]
+    *,
+    rung: int = 3,
+    valid_from: datetime = datetime(2026, 1, 1, tzinfo=UTC),
+    expires_at: datetime = datetime(2027, 1, 1, tzinfo=UTC),
+    state: str = "live",
+) -> ProcedureMandateV1:
+    return ProcedureMandateV1(
+        identity=ArtifactIdentity(kind="ProcedureMandate", name="triage"),
+        procedure=ArtifactPin(
+            role="procedure",
+            target=accepted.procedure.identity,
+            artifact_digest=accepted.artifact_digest,
+        ),
+        rung=rung,
+        authority_ceiling=accepted.procedure.definition.hard_caps,
+        namespace=("claims", "documents"),
+        valid_from=valid_from,
+        expires_at=expires_at,
+        lifecycle=ArtifactLifecycle(state=state),  # type: ignore[arg-type]
+    )
+
+
+def test_a_foreign_mandate_never_grants_the_line_a_rung() -> None:
+    """Only the mandate pinning this exact Procedure artifact may grant."""
+
+    _line_spec, accepted, _interfaces = _line()
+    exact = _line_mandate(accepted)
+    tree = {"procedure-mandates/triage.json": render_procedure_mandate(exact)}
+    assert procedure_run_service._accepted_line_mandates(  # noqa: SLF001
+        tree, accepted, evaluation_time=READ_TIME
+    ) == ((procedure_mandate_digest(exact).tagged, exact),)
+
+    other_procedure = accepted.model_copy(
+        update={"artifact_digest": _line_digest("another-procedure")}
+    )
+    attacks = {
+        "another Procedure artifact": _line_mandate(other_procedure),
+        "retired lifecycle": _line_mandate(accepted, state="retired"),
+        "not yet valid": _line_mandate(
+            accepted,
+            valid_from=datetime(2027, 6, 1, tzinfo=UTC),
+            expires_at=datetime(2028, 1, 1, tzinfo=UTC),
+        ),
+        "already expired": _line_mandate(
+            accepted,
+            valid_from=datetime(2025, 1, 1, tzinfo=UTC),
+            expires_at=datetime(2025, 6, 1, tzinfo=UTC),
+        ),
+    }
+    for label, mandate in attacks.items():
+        foreign = {"procedure-mandates/triage.json": render_procedure_mandate(mandate)}
+        assert (
+            procedure_run_service._accepted_line_mandates(  # noqa: SLF001
+                foreign, accepted, evaluation_time=READ_TIME
+            )
+            == ()
+        ), label
+
+
+def _admitted_line_service(
+    monkeypatch: pytest.MonkeyPatch,
+    accepted,  # type: ignore[no-untyped-def]
+    accepted_line,  # type: ignore[no-untyped-def]
+    *,
+    prior: tuple[object, ...] = (),
+) -> None:
+    """Reach the occurrence law with the closure and mandate already satisfied."""
+
+    mandate = _line_mandate(accepted)
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_line_by_identity_digest",
+        lambda *_args, **_kwargs: accepted_line,
+    )
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_procedure",
+        lambda *_args, **_kwargs: accepted,
+    )
+    monkeypatch.setattr(procedure_run_service, "_assert_line_closure_complete", lambda *_a: None)
+    monkeypatch.setattr(procedure_run_service, "_line_catalogs", lambda *_a: ({}, {}))
+    monkeypatch.setattr(
+        procedure_run_service,
+        "evaluate_line_spec_law",
+        lambda *_args, **_kwargs: SimpleNamespace(verdict="accepted"),
+    )
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_line_mandates",
+        lambda *_a, **_k: ((procedure_mandate_digest(mandate).tagged, mandate),),
+    )
+    monkeypatch.setattr(procedure_run_service, "_line_admissions", lambda *_a, **_k: prior)
+
+
+def test_a_replayed_occurrence_refuses_instead_of_running_twice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    line, accepted, _interfaces = _line()
+    accepted_line = _accepted_line(line)
+    coordinate = instance.accepted_coordinate()
+    occurrence_id, _next_due, _awaited = procedure_run_service._line_occurrence(  # noqa: SLF001
+        {},
+        accepted_line,
+        coordinate=coordinate,
+        evaluation_time=READ_TIME,
+        prior=(),
+    )
+    _admitted_line_service(
+        monkeypatch,
+        accepted,
+        accepted_line,
+        prior=(
+            SimpleNamespace(
+                occurrence_id=occurrence_id,
+                occurrence_evaluation_time=READ_TIME,
+                bound_coordinate=coordinate,
+            ),
+        ),
+    )
+
+    result = procedure_run_service.service_run_playbill_line(
+        instance,
+        path_identity_digest=line_identity_digest(line.identity),
+        request=LineRunRequestV1(
+            line_identity_digest=line_identity_digest(line.identity),
+            evaluation_time=READ_TIME,
+        ),
+        actor_context=_actor(instance),
+        caller_rung=3,
+    )
+
+    assert result.status == "admission_refused"
+    assert isinstance(result.terminal, ProcedureAdmissionRefusalV1)
+    assert result.terminal.code == "occurrence_already_admitted"
+    assert result.terminal.details["occurrence_id"] == occurrence_id  # type: ignore[index]
+
+
+def test_an_asserted_occurrence_the_daemon_did_not_derive_refuses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    line, accepted, _interfaces = _line()
+    accepted_line = _accepted_line(line)
+    _admitted_line_service(monkeypatch, accepted, accepted_line)
+
+    result = procedure_run_service.service_run_playbill_line(
+        instance,
+        path_identity_digest=line_identity_digest(line.identity),
+        request=LineRunRequestV1(
+            line_identity_digest=line_identity_digest(line.identity),
+            occurrence_id=_line_digest("occurrence-the-caller-chose"),
+            evaluation_time=READ_TIME,
+        ),
+        actor_context=_actor(instance),
+        caller_rung=3,
+    )
+
+    assert result.status == "admission_refused"
+    assert isinstance(result.terminal, ProcedureAdmissionRefusalV1)
+    assert result.terminal.code == "occurrence_id_mismatch"
+    derived = result.terminal.details["derived_occurrence_id"]  # type: ignore[index]
+    assert derived != _line_digest("occurrence-the-caller-chose")
+
+
+def test_an_unaccepted_line_identity_refuses_before_any_authority_read(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    digest = _line_digest("never-accepted")
+
+    with pytest.raises(procedure_run_service.LineRunNotAccepted) as caught:
+        procedure_run_service.service_run_playbill_line(
+            instance,
+            path_identity_digest=digest,
+            request=LineRunRequestV1(
+                line_identity_digest=digest,
+                evaluation_time=READ_TIME,
+            ),
+            actor_context=_actor(instance),
+            caller_rung=3,
+        )
+
+    assert caught.value.code == "playbill.line.run.line_not_accepted"
+
+
+def test_a_degraded_provider_lane_refuses_typed_without_granting_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The diagnostic detail travels as data; the code stays the authority."""
+
+    instance, _owner = initialize_local(tmp_path)
+    line, accepted, _interfaces = _line()
+    acquisition_pin = ArtifactPin(
+        role="acquisition-policy",
+        target=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="line-sources"),
+        artifact_digest=_line_digest("acquisition-policy"),
+    )
+    with_policy = line.model_copy(
+        update={
+            "acquisition_policy": acquisition_pin,
+            "pins": tuple(
+                sorted(
+                    (*line.pins, acquisition_pin),
+                    key=lambda pin: (
+                        pin.role.encode(),
+                        pin.target.kind.encode(),
+                        pin.target.name.encode(),
+                    ),
+                )
+            ),
+        }
+    )
+    accepted_line = _accepted_line(with_policy)
+    _admitted_line_service(monkeypatch, accepted, accepted_line)
+
+    def refuse(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise ProviderLocalRuntimeRefused(
+            "provider_unavailable",
+            "the runtime config is not readable",
+            details={"reason": {"code": "provider_process_lease_invalid", "detail": "unreadable"}},
+        )
+
+    monkeypatch.setattr(procedure_run_service, "_line_external_occurrences", refuse)
+
+    result = procedure_run_service.service_run_playbill_line(
+        instance,
+        path_identity_digest=line_identity_digest(with_policy.identity),
+        request=LineRunRequestV1(
+            line_identity_digest=line_identity_digest(with_policy.identity),
+            evaluation_time=READ_TIME,
+        ),
+        actor_context=_actor(instance),
+        caller_rung=3,
+    )
+
+    assert result.status == "node_refused"
+    assert isinstance(result.terminal, ProcedureNodeRefusalV1)
+    assert result.terminal.code == "provider_unavailable"
+    assert result.terminal.details["reason"]["code"] == (  # type: ignore[index]
+        "provider_process_lease_invalid"
+    )
+    assert result.run_id is None

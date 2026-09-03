@@ -285,3 +285,39 @@ def test_instance_token_gets_typed_403_for_every_daemon_scope_route(
             "accepted_credentials": ["bootstrap secret", "daemon-scope token"],
         },
     }
+
+
+def test_line_run_is_an_instance_operation_a_foreign_token_cannot_reach(
+    host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A token scoped to another instance never reaches Line authority."""
+
+    other = get_registry().create_governed_instance_with_id("inst_other")
+    foreign = get_runtime_credential_store().create_credential(
+        instance_id=other.record.instance_id,
+        label="other-instance-admin",
+        created_by="test",
+    )
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    digest = "sha256:" + "b" * 64
+    body = {
+        "tag": "playbill-line-run-request-v1",
+        "line_identity_digest": digest,
+        "occurrence_id": None,
+        "evaluation_time": "2026-08-21T12:00:00Z",
+    }
+
+    with TestClient(create_app(), raise_server_exceptions=False) as client:
+        response = client.post(
+            f"/api/v1/{host_id}/playbill/lines/{digest}/runs",
+            json=body,
+            headers={"Authorization": f"Bearer {foreign.token}"},
+        )
+
+    assert response.status_code == 403, response.text
+    payload = response.json()
+    assert payload["error_type"] == "InstanceScopeError"
+    # Refused on scope alone: the Line was never read, so no Line refusal code
+    # and no accepted-closure detail can leak to a caller from another instance.
+    assert "line_" not in response.text
