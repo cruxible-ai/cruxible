@@ -114,7 +114,12 @@ def _candidate(
         timestamp=TIMESTAMP,
     )
     assert result.candidate is not None
-    return base, tree, result.candidate
+    assert result.evaluation.evaluated_tree_oid is not None
+    # The daemon settles the tree evaluation re-committed, not the tree it was
+    # handed: service_activate_playbill_proposal passes
+    # instance.proposal_tree(evaluation.evaluated_tree_oid). Only that tree carries
+    # the derivative cards settlement re-derives and byte-verifies.
+    return base, instance.proposal_tree(result.evaluation.evaluated_tree_oid), result.candidate
 
 
 class MemoryWitness:
@@ -488,7 +493,9 @@ def test_qualified_git_formats_preserve_candidate_changeset_and_semantic_root(
             prepare_generation(
                 ledger,
                 base=base,
-                candidate_tree=tree,
+                # Settlement re-derives the cards over the evaluated tree, which is
+                # the tree the daemon commits and settles, not the submitted one.
+                candidate_tree=evaluated.tree,
                 candidate=candidate,
                 approval_submissions=submissions,
                 bodies=bodies,

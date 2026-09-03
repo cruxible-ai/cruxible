@@ -77,6 +77,10 @@ def test_v2_changeset_keeps_frozen_candidate_and_approval_preimages(tmp_path: Pa
     )
     assert isinstance(proposal.candidate, CandidateRecordV3)
     candidate = proposal.candidate
+    # The daemon settles the tree evaluation re-committed, which is the only tree
+    # carrying the derivative cards settlement re-derives and byte-verifies.
+    assert proposal.evaluation.evaluated_tree_oid is not None
+    settled_tree = instance.proposal_tree(proposal.evaluation.evaluated_tree_oid)
     approval = _sign(
         client_material(instance.root.parent, instance),
         candidate.candidate_digest,
@@ -86,7 +90,7 @@ def test_v2_changeset_keeps_frozen_candidate_and_approval_preimages(tmp_path: Pa
     bundle = prepare_generation(
         instance._ledger,
         base=base,
-        candidate_tree=tree,
+        candidate_tree=settled_tree,
         candidate=candidate,
         approval_submissions=(approval,),
         bodies=instance.body_store(),
@@ -129,10 +133,12 @@ def test_claim_type_v2_generation_projects_and_replays_after_restart(tmp_path: P
     )
     assert isinstance(evaluated.candidate, CandidateRecordV3)
     candidate = evaluated.candidate
+    assert evaluated.evaluation.evaluated_tree_oid is not None
+    settled_tree = instance.proposal_tree(evaluated.evaluation.evaluated_tree_oid)
     bundle = prepare_generation(
         instance._ledger,
         base=base,
-        candidate_tree=tree,
+        candidate_tree=settled_tree,
         candidate=candidate,
         approval_submissions=(
             _sign(
@@ -213,11 +219,13 @@ def test_profile_law_evidence_reproduces_during_settlement(tmp_path: Path) -> No
     )
     assert isinstance(proposal.candidate, CandidateRecordV3)
     candidate = proposal.candidate
+    assert proposal.evaluation.evaluated_tree_oid is not None
+    settled_tree = instance.proposal_tree(proposal.evaluation.evaluated_tree_oid)
 
     bundle = prepare_generation(
         instance._ledger,
         base=base,
-        candidate_tree=tree,
+        candidate_tree=settled_tree,
         candidate=candidate,
         approval_submissions=(
             _sign(

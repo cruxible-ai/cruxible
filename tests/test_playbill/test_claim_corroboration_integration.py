@@ -207,6 +207,11 @@ def _submit_claim(
         candidate_tree=tree,
         timestamp=timestamp,
     )
+    # The daemon settles the tree evaluation re-committed, so an accepted proposal
+    # hands back that tree: only it carries the derivative cards settlement
+    # re-derives and byte-verifies.
+    if result.candidate is not None and result.evaluation.evaluated_tree_oid is not None:
+        return result, instance.proposal_tree(result.evaluation.evaluated_tree_oid)
     return result, tree
 
 

@@ -200,6 +200,11 @@ def _settle_transition(
     )
     assert result.candidate is not None, result.evaluation.diagnostics
     candidate = result.candidate
+    # The daemon settles the tree evaluation re-committed, which is the only tree
+    # carrying the derivative cards settlement re-derives. The negative case below
+    # keeps its own oracle: it must refuse on the approval law, not the card law.
+    assert result.evaluation.evaluated_tree_oid is not None
+    settled_tree = instance.proposal_tree(result.evaluation.evaluated_tree_oid)
     # The transition the principal law classified travels in its member law
     # evidence, where every other member kind's law result travels, rather than
     # in a field only the singleton candidate shape had room for.
@@ -214,7 +219,7 @@ def _settle_transition(
         prepare_generation(
             instance._ledger,
             base=base,
-            candidate_tree=tree,
+            candidate_tree=settled_tree,
             candidate=candidate,
             approval_submissions=(_sign(approver, candidate.candidate_digest, base.semantic_root),),
             bodies=instance.body_store(),
@@ -234,7 +239,7 @@ def _settle_transition(
     bundle = prepare_generation(
         instance._ledger,
         base=base,
-        candidate_tree=tree,
+        candidate_tree=settled_tree,
         candidate=candidate,
         approval_submissions=approvals,
         bodies=instance.body_store(),
