@@ -15,6 +15,9 @@ from cruxible_client.contracts.authoring.wire_catalog import (
     AUTHORING_WIRE_CATALOG_VERSION,
     discovered_authoring_wire_model_names,
 )
+from cruxible_client.contracts.claim_attestation_wire_catalog import (
+    claim_attestation_wire_contract_catalog_digest,
+)
 from cruxible_client.contracts.primitives import canonical_json
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +25,10 @@ CATALOG_MODULE = (
     REPO_ROOT / "packages/cruxible-client/src/cruxible_client/contracts/authoring/wire_catalog.py"
 )
 CROSS_CHECK_TEST = REPO_ROOT / "tests/test_client/test_claim_attestation_contract_catalog.py"
+CLAIM_ATTESTATION_CATALOG_MODULE = (
+    REPO_ROOT
+    / "packages/cruxible-client/src/cruxible_client/contracts/claim_attestation_wire_catalog.py"
+)
 
 
 def _catalog_digest(model_names: tuple[str, ...]) -> str:
@@ -82,7 +89,21 @@ def main() -> None:
     if replacement_count != 1:
         raise SystemExit(f"could not update authoring digest in {CROSS_CHECK_TEST}")
     CROSS_CHECK_TEST.write_text(cross_check, encoding="utf-8")
+    claim_attestation_digest = claim_attestation_wire_contract_catalog_digest()
+    claim_catalog = CLAIM_ATTESTATION_CATALOG_MODULE.read_text(encoding="utf-8")
+    claim_catalog, replacement_count = re.subn(
+        r'(?<=CLAIM_ATTESTATION_WIRE_CONTRACT_CATALOG_DIGEST = \(\n    ")sha256:[0-9a-f]{64}',
+        claim_attestation_digest,
+        claim_catalog,
+        count=1,
+    )
+    if replacement_count != 1:
+        raise SystemExit(
+            f"could not update Claim-attestation digest in {CLAIM_ATTESTATION_CATALOG_MODULE}"
+        )
+    CLAIM_ATTESTATION_CATALOG_MODULE.write_text(claim_catalog, encoding="utf-8")
     print(f"Wrote {CATALOG_MODULE.relative_to(REPO_ROOT)}")
+    print(f"Wrote {CLAIM_ATTESTATION_CATALOG_MODULE.relative_to(REPO_ROOT)}")
     print(f"Updated {CROSS_CHECK_TEST.relative_to(REPO_ROOT)}")
 
 

@@ -186,16 +186,18 @@ def test_importing_playbill_http_surface_does_not_initialize_legacy_core() -> No
 
 
 def test_http_and_mcp_playbill_calls_delegate_to_the_dedicated_facade() -> None:
+    from scripts.update_playbill_served_surface import verify_served_surface_snapshot
+
     expected = json.loads((GOLDENS / "served-surface-dp0b-v1.json").read_text(encoding="utf-8"))
+    verify_served_surface_snapshot(expected)
+    surface = expected["surface"]
     facade = _facade_operations()
     http = _playbill_facade_calls(HTTP_ROUTES)
     mcp = _playbill_facade_calls(MCP_HANDLERS)
 
-    assert list(facade) == expected["facade_operations"]
+    assert list(facade) == surface["facade_verbs"]
     assert http == facade
-    assert len(http) == expected["http_delegate_count"]
     assert set(mcp) <= set(facade)
-    assert len(mcp) == expected["mcp_delegate_count"]
     assert "from cruxible_core.runtime import api\n" not in HTTP_ROUTES.read_text(encoding="utf-8")
 
 
@@ -329,89 +331,10 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
 
     assert set(CLI_COMMANDS) == {"context", "credential", "playbill", "server"}
     registered_tools = set(register_tools(FastMCP("dp0b-registration-inventory")))
+    frozen = json.loads((GOLDENS / "served-surface-dp0b-v1.json").read_text(encoding="utf-8"))
+    frozen_tools = {row["name"] for row in frozen["surface"]["mcp_tools"]}
     assert registered_tools == set(TOOL_PERMISSIONS)
-    assert set(TOOL_PERMISSIONS) == {
-        "cruxible_version",
-        "cruxible_server_info",
-        "cruxible_playbill_host_create",
-        "cruxible_playbill_init",
-        "cruxible_playbill_store_body",
-        "cruxible_playbill_propose_document",
-        "cruxible_playbill_inspect_proposal",
-        "cruxible_playbill_inspect_refusal",
-        "cruxible_playbill_review",
-        "cruxible_playbill_prepare_approval",
-        "cruxible_playbill_submit_approval",
-        "cruxible_playbill_activate",
-        "cruxible_playbill_authoring_abandon_insertion",
-        "cruxible_playbill_authoring_bind",
-        "cruxible_playbill_authoring_compile",
-        "cruxible_playbill_authoring_confirm_insertion",
-        "cruxible_playbill_authoring_prepare_publication",
-        "cruxible_playbill_authoring_create",
-        "cruxible_playbill_authoring_example",
-        "cruxible_playbill_authoring_get",
-        "cruxible_playbill_authoring_list_pending",
-        "cruxible_playbill_authoring_preflight",
-        "cruxible_playbill_authoring_resume",
-        "cruxible_playbill_authoring_status",
-        "cruxible_playbill_authoring_submit",
-        "cruxible_playbill_list_documents",
-        "cruxible_playbill_get_document",
-        "cruxible_playbill_dereference",
-        "cruxible_playbill_history",
-        "cruxible_playbill_explain",
-        "cruxible_playbill_source_context",
-        "cruxible_playbill_check_source_bundle",
-        "cruxible_playbill_propose_source_bundle",
-        "cruxible_playbill_list_principals",
-        "cruxible_playbill_propose_principal_change",
-        "cruxible_playbill_propose_subject",
-        "cruxible_playbill_list_subjects",
-        "cruxible_playbill_get_subject",
-        "cruxible_playbill_subject_history",
-        "cruxible_playbill_propose_claim_type",
-        "cruxible_playbill_list_claim_types",
-        "cruxible_playbill_get_claim_type",
-        "cruxible_playbill_claim_retire",
-        "cruxible_playbill_claim_attest",
-        "cruxible_playbill_claim_attest_new_capture",
-        "cruxible_playbill_list_claims",
-        "cruxible_playbill_get_claim",
-        "cruxible_playbill_claim_history",
-        "cruxible_playbill_explain_claim",
-        "cruxible_playbill_propose_query_definition",
-        "cruxible_playbill_list_query_definitions",
-        "cruxible_playbill_policies_in_force",
-        "cruxible_playbill_get_query_definition",
-        "cruxible_playbill_run_query",
-        "cruxible_playbill_procedure_readiness",
-        "cruxible_playbill_procedure_bind",
-        "cruxible_playbill_procedure_run",
-        "cruxible_playbill_procedure_run_status",
-        "cruxible_playbill_discover",
-        "cruxible_playbill_expand",
-        "cruxible_playbill_export_floor",
-        "cruxible_playbill_resolve_coverage",
-        "cruxible_playbill_workspace_coverage_resolve",
-        "cruxible_playbill_workspace_coverage_status",
-        "cruxible_playbill_workspace_floor_export",
-        "cruxible_playbill_workspace_floor_status",
-        "cruxible_playbill_workspace_source_check",
-        "cruxible_playbill_workspace_source_compile",
-        "cruxible_playbill_proposal_list",
-        "cruxible_playbill_proposal_readmit",
-        "cruxible_playbill_claim_type_migrate",
-        "cruxible_playbill_seed_plan",
-        "cruxible_playbill_search",
-        "cruxible_playbill_since",
-        "cruxible_playbill_audit",
-        "cruxible_playbill_curation_list",
-        "cruxible_playbill_curation_overrule",
-        "cruxible_playbill_curation_accept_fixed",
-        "cruxible_playbill_curation_suppress",
-        "cruxible_playbill_whoami",
-    }
+    assert set(TOOL_PERMISSIONS) == frozen_tools
     public_client_methods = {
         name
         for name, value in vars(CruxibleClient).items()
@@ -488,6 +411,9 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "bind_playbill_procedure",
         "run_playbill_procedure",
         "get_playbill_procedure_run",
+        "run_playbill_line",
+        "predict_playbill",
+        "settle_playbill_prediction",
         "discover_playbill",
         "expand_playbill",
         "export_playbill_floor",
