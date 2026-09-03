@@ -46,6 +46,7 @@ from cruxible_core.playbill.compiler import (
     P2_B1_COMPILER,
     P2_B2_COMPILER,
     P2_B4_COMPILER,
+    P2_B4_UNIT2_COMPILER,
     P2_C_COMPILER,
     PC_DF2_COMPILER,
     PC_E1_COMPILER,
@@ -378,6 +379,19 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
         "sha256:22e75aebcb286ed356cf34390230ef8b5adaaa326f4107b67d0b992009153331"
     )
     assert P2_B4_COMPILER.rule_digest == p2_b4_expected
+    p2_b4_unit2_expected = "sha256:" + canonical_digest(
+        "playbill-compiler-v1",
+        {
+            "implementation": "python-reference",
+            "projection_content": "claims-procedures-runtime-v1",
+            "schema_version": 1,
+            "semantic_revision": 18,
+        },
+    )
+    assert p2_b4_unit2_expected == (
+        "sha256:05fd436c117d820ca870ce0cd276c1e7b9e97075d68435aa2f548256199bc458"
+    )
+    assert P2_B4_UNIT2_COMPILER.rule_digest == p2_b4_unit2_expected
 
 
 def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
@@ -414,5 +428,6 @@ def test_installed_compiler_revision_labels_are_exact_and_complete() -> None:
         "pc-df2",
         "p2-b2",
         "p2-b4",
+        "p2-b4-u2",
     )
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "p2-b4"
+    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "p2-b4-u2"

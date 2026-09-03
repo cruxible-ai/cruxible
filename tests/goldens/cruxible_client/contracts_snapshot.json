@@ -111,6 +111,11 @@
         "provider_runtime_recovery_failed"
       ]
     },
+    "ProviderSeedRepairV1": {
+      "values": [
+        "configure_seed_materializations_then_playbill_provider_seed"
+      ]
+    },
     "RuntimeCredentialPermissionMode": {
       "values": [
         "read_only",
@@ -14981,6 +14986,25 @@
             "type": "string"
           }
         },
+        "provider_seed": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "provider_seed",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillProviderSeedResultV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "recovery_posture": {
           "has_default": false,
           "has_default_factory": false,
@@ -15093,6 +15117,102 @@
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
           },
+          "PlaybillProviderSeedResultV1": {
+            "additionalProperties": false,
+            "properties": {
+              "accepted_coordinate": {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "approval_required": {
+                "title": "Approval Required",
+                "type": "boolean"
+              },
+              "candidate_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Candidate Digest"
+              },
+              "changed_paths": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Changed Paths",
+                "type": "array"
+              },
+              "materialization_source": {
+                "enum": [
+                  "local",
+                  "registry"
+                ],
+                "title": "Materialization Source",
+                "type": "string"
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "provider_id": {
+                "title": "Provider Id",
+                "type": "string"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "const": "configure_seed_materializations_then_playbill_provider_seed",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Repair"
+              },
+              "status": {
+                "enum": [
+                  "already_current",
+                  "pending",
+                  "proposed",
+                  "activated",
+                  "lost_cas",
+                  "unseeded"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-provider-seed-result-v1",
+                "default": "playbill-provider-seed-result-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider_id",
+              "materialization_source",
+              "status",
+              "changed_paths",
+              "approval_required",
+              "accepted_coordinate"
+            ],
+            "title": "PlaybillProviderSeedResultV1",
+            "type": "object"
+          },
           "PlaybillWorkspaceAdvertisement": {
             "additionalProperties": false,
             "properties": {
@@ -15194,6 +15314,17 @@
           "instance_id": {
             "title": "Instance Id",
             "type": "string"
+          },
+          "provider_seed": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillProviderSeedResultV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "recovery_posture": {
             "title": "Recovery Posture",
@@ -15723,8 +15854,29 @@
                 "type": "string"
               },
               "artifact_kind": {
-                "const": "Provider",
+                "const": "ProviderInterface",
                 "title": "Artifact Kind",
+                "type": "string"
+              },
+              "classifier_digest": {
+                "title": "Classifier Digest",
+                "type": "string"
+              },
+              "classifier_status": {
+                "enum": [
+                  "installed",
+                  "not_installed"
+                ],
+                "title": "Classifier Status",
+                "type": "string"
+              },
+              "effect_class": {
+                "enum": [
+                  "none",
+                  "external_read",
+                  "external_mutation"
+                ],
+                "title": "Effect Class",
                 "type": "string"
               },
               "identity": {
@@ -15732,10 +15884,7 @@
                 "type": "string"
               },
               "interface_basis": {
-                "enum": [
-                  "explicit_interface_pin",
-                  "artifact_digest_fallback"
-                ],
+                "const": "accepted_registration",
                 "title": "Interface Basis",
                 "type": "string"
               },
@@ -15744,13 +15893,17 @@
                 "type": "string"
               },
               "pin_role": {
-                "const": "provider",
+                "const": "provider-interface",
                 "title": "Pin Role",
                 "type": "string"
               },
               "tag": {
                 "const": "playbill-provider-interface-entry-v1",
                 "title": "Tag",
+                "type": "string"
+              },
+              "vocabulary_digest": {
+                "title": "Vocabulary Digest",
                 "type": "string"
               }
             },
@@ -15761,6 +15914,10 @@
               "artifact_kind",
               "pin_role",
               "interface_digest",
+              "vocabulary_digest",
+              "classifier_digest",
+              "effect_class",
+              "classifier_status",
               "interface_basis"
             ],
             "title": "PlaybillProviderInterfaceEntry",
@@ -22633,8 +22790,47 @@
           "json_name": "artifact_kind",
           "required": true,
           "schema": {
-            "const": "Provider",
+            "const": "ProviderInterface",
             "title": "Artifact Kind",
+            "type": "string"
+          }
+        },
+        "classifier_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "classifier_digest",
+          "required": true,
+          "schema": {
+            "title": "Classifier Digest",
+            "type": "string"
+          }
+        },
+        "classifier_status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "classifier_status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "installed",
+              "not_installed"
+            ],
+            "title": "Classifier Status",
+            "type": "string"
+          }
+        },
+        "effect_class": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "effect_class",
+          "required": true,
+          "schema": {
+            "enum": [
+              "none",
+              "external_read",
+              "external_mutation"
+            ],
+            "title": "Effect Class",
             "type": "string"
           }
         },
@@ -22654,10 +22850,7 @@
           "json_name": "interface_basis",
           "required": true,
           "schema": {
-            "enum": [
-              "explicit_interface_pin",
-              "artifact_digest_fallback"
-            ],
+            "const": "accepted_registration",
             "title": "Interface Basis",
             "type": "string"
           }
@@ -22678,7 +22871,7 @@
           "json_name": "pin_role",
           "required": true,
           "schema": {
-            "const": "provider",
+            "const": "provider-interface",
             "title": "Pin Role",
             "type": "string"
           }
@@ -22693,6 +22886,16 @@
             "title": "Tag",
             "type": "string"
           }
+        },
+        "vocabulary_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "vocabulary_digest",
+          "required": true,
+          "schema": {
+            "title": "Vocabulary Digest",
+            "type": "string"
+          }
         }
       },
       "json_schema": {
@@ -22703,8 +22906,29 @@
             "type": "string"
           },
           "artifact_kind": {
-            "const": "Provider",
+            "const": "ProviderInterface",
             "title": "Artifact Kind",
+            "type": "string"
+          },
+          "classifier_digest": {
+            "title": "Classifier Digest",
+            "type": "string"
+          },
+          "classifier_status": {
+            "enum": [
+              "installed",
+              "not_installed"
+            ],
+            "title": "Classifier Status",
+            "type": "string"
+          },
+          "effect_class": {
+            "enum": [
+              "none",
+              "external_read",
+              "external_mutation"
+            ],
+            "title": "Effect Class",
             "type": "string"
           },
           "identity": {
@@ -22712,10 +22936,7 @@
             "type": "string"
           },
           "interface_basis": {
-            "enum": [
-              "explicit_interface_pin",
-              "artifact_digest_fallback"
-            ],
+            "const": "accepted_registration",
             "title": "Interface Basis",
             "type": "string"
           },
@@ -22724,13 +22945,17 @@
             "type": "string"
           },
           "pin_role": {
-            "const": "provider",
+            "const": "provider-interface",
             "title": "Pin Role",
             "type": "string"
           },
           "tag": {
             "const": "playbill-provider-interface-entry-v1",
             "title": "Tag",
+            "type": "string"
+          },
+          "vocabulary_digest": {
+            "title": "Vocabulary Digest",
             "type": "string"
           }
         },
@@ -22741,6 +22966,10 @@
           "artifact_kind",
           "pin_role",
           "interface_digest",
+          "vocabulary_digest",
+          "classifier_digest",
+          "effect_class",
+          "classifier_status",
           "interface_basis"
         ],
         "title": "PlaybillProviderInterfaceEntry",
@@ -22749,11 +22978,313 @@
       "required_fields": [
         "artifact_digest",
         "artifact_kind",
+        "classifier_digest",
+        "classifier_status",
+        "effect_class",
         "identity",
         "interface_basis",
         "interface_digest",
         "pin_role",
-        "tag"
+        "tag",
+        "vocabulary_digest"
+      ]
+    },
+    "PlaybillProviderSeedResultV1": {
+      "fields": {
+        "accepted_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "accepted_coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "approval_required": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "approval_required",
+          "required": true,
+          "schema": {
+            "title": "Approval Required",
+            "type": "boolean"
+          }
+        },
+        "candidate_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "candidate_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Candidate Digest"
+          }
+        },
+        "changed_paths": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "changed_paths",
+          "required": true,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Changed Paths",
+            "type": "array"
+          }
+        },
+        "materialization_source": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "materialization_source",
+          "required": true,
+          "schema": {
+            "enum": [
+              "local",
+              "registry"
+            ],
+            "title": "Materialization Source",
+            "type": "string"
+          }
+        },
+        "proposal_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          }
+        },
+        "provider_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "provider_id",
+          "required": true,
+          "schema": {
+            "title": "Provider Id",
+            "type": "string"
+          }
+        },
+        "repair": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "repair",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "const": "configure_seed_materializations_then_playbill_provider_seed",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Repair"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "already_current",
+              "pending",
+              "proposed",
+              "activated",
+              "lost_cas",
+              "unseeded"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-provider-seed-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-provider-seed-result-v1",
+            "default": "playbill-provider-seed-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "accepted_coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "approval_required": {
+            "title": "Approval Required",
+            "type": "boolean"
+          },
+          "candidate_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Candidate Digest"
+          },
+          "changed_paths": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Changed Paths",
+            "type": "array"
+          },
+          "materialization_source": {
+            "enum": [
+              "local",
+              "registry"
+            ],
+            "title": "Materialization Source",
+            "type": "string"
+          },
+          "proposal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          },
+          "provider_id": {
+            "title": "Provider Id",
+            "type": "string"
+          },
+          "repair": {
+            "anyOf": [
+              {
+                "const": "configure_seed_materializations_then_playbill_provider_seed",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Repair"
+          },
+          "status": {
+            "enum": [
+              "already_current",
+              "pending",
+              "proposed",
+              "activated",
+              "lost_cas",
+              "unseeded"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-provider-seed-result-v1",
+            "default": "playbill-provider-seed-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_id",
+          "materialization_source",
+          "status",
+          "changed_paths",
+          "approval_required",
+          "accepted_coordinate"
+        ],
+        "title": "PlaybillProviderSeedResultV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "accepted_coordinate",
+        "approval_required",
+        "changed_paths",
+        "materialization_source",
+        "provider_id",
+        "status"
       ]
     },
     "PlaybillPublicationPrepareWarning": {

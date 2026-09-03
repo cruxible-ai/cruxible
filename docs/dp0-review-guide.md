@@ -96,6 +96,7 @@ playbill procedure bind
 playbill procedure readiness
 playbill procedure run
 playbill procedure status
+playbill provider seed
 playbill query get
 playbill query list
 playbill query propose
@@ -161,6 +162,7 @@ GET  /api/v1/{instance_id}/playbill/documents/{identity}/history
 POST /api/v1/{instance_id}/playbill/explain
 GET  /api/v1/{instance_id}/playbill/principals
 POST /api/v1/{instance_id}/playbill/principals/proposals
+POST /api/v1/{instance_id}/playbill/providers/seed
 GET  /api/v1/{instance_id}/playbill/proposals/{proposal_id}
 GET  /api/v1/{instance_id}/playbill/proposals
 GET  /api/v1/{instance_id}/playbill/proposal-selector

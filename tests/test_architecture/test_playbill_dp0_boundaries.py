@@ -497,6 +497,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "resolve_playbill_proposal_selector",
         "playbill_whoami",
         "readmit_playbill_proposal",
+        "seed_playbill_provider",
         "migrate_playbill_claim_type",
         "next_playbill",
         "audit_playbill",

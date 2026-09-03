@@ -1577,10 +1577,14 @@ class PlaybillProviderInterfaceEntry(BaseModel):
     tag: Literal["playbill-provider-interface-entry-v1"]
     identity: str
     artifact_digest: str
-    artifact_kind: Literal["Provider"]
-    pin_role: Literal["provider"]
+    artifact_kind: Literal["ProviderInterface"]
+    pin_role: Literal["provider-interface"]
     interface_digest: str
-    interface_basis: Literal["explicit_interface_pin", "artifact_digest_fallback"]
+    vocabulary_digest: str
+    classifier_digest: str
+    effect_class: Literal["none", "external_read", "external_mutation"]
+    classifier_status: Literal["installed", "not_installed"]
+    interface_basis: Literal["accepted_registration"]
 
 
 class PlaybillInterfaceInventory(BaseModel):

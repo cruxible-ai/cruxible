@@ -183,6 +183,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillProposalReadmitResult",
         "PlaybillProposalSelectorResultV1",
         "PlaybillProviderInterfaceEntry",
+        "PlaybillProviderSeedResultV1",
         "PlaybillSearchResult",
         "PlaybillSinceCursor",
         "PlaybillSinceRequest",
@@ -213,6 +214,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillPolicyKind",
         "RuntimeCredentialPermissionMode",
         "ProviderLaneUnavailableCodeV1",
+        "ProviderSeedRepairV1",
     }
 
 

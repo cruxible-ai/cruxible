@@ -92,6 +92,10 @@ P2_B4_COMPILER = _coordinate(
     projection_content="claims-procedures-runtime-v1",
     semantic_revision=17,
 )
+P2_B4_UNIT2_COMPILER = _coordinate(
+    projection_content="claims-procedures-runtime-v1",
+    semantic_revision=18,
+)
 SUPPORTED_COMPILERS = (
     PB_B_COMPILER,
     PB_C_COMPILER,
@@ -109,6 +113,7 @@ SUPPORTED_COMPILERS = (
     PC_DF2_COMPILER,
     P2_B2_COMPILER,
     P2_B4_COMPILER,
+    P2_B4_UNIT2_COMPILER,
 )
 # Immutable human-facing revision labels.  The digest remains the authority;
 # these labels are display metadata and must never be inferred from the moving
@@ -130,6 +135,7 @@ COMPILER_REVISION_LABELS = {
     PC_DF2_COMPILER: "pc-df2",
     P2_B2_COMPILER: "p2-b2",
     P2_B4_COMPILER: "p2-b4",
+    P2_B4_UNIT2_COMPILER: "p2-b4-u2",
 }
 PC_HR_ARTIFACT_CODEC_COMPILERS = frozenset(
     {
@@ -139,18 +145,25 @@ PC_HR_ARTIFACT_CODEC_COMPILERS = frozenset(
         PC_DF2_COMPILER,
         P2_B2_COMPILER,
         P2_B4_COMPILER,
+        P2_B4_UNIT2_COMPILER,
     }
 )
 
 
 def current_compiler_coordinate() -> CompilerCoordinate:
-    return P2_B4_COMPILER
+    return P2_B4_UNIT2_COMPILER
 
 
 def artifact_kinds_for_compiler(compiler: CompilerCoordinate) -> ArtifactKindRegistry:
     """Return the frozen ledger path grammar selected by one compiler."""
 
-    if compiler in {P2_C_COMPILER, PC_DF2_COMPILER, P2_B2_COMPILER, P2_B4_COMPILER}:
+    if compiler in {
+        P2_C_COMPILER,
+        PC_DF2_COMPILER,
+        P2_B2_COMPILER,
+        P2_B4_COMPILER,
+        P2_B4_UNIT2_COMPILER,
+    }:
         return P2_C_ARTIFACT_KINDS
     if compiler == P2_B1_COMPILER:
         return P2_B1_ARTIFACT_KINDS
@@ -198,7 +211,13 @@ def projection_registry_for_compiler(
         return playbill_replay_extension_registry()
     if compiler == P2_B1_COMPILER:
         return playbill_provider_runtime_extension_registry()
-    if compiler in {P2_C_COMPILER, PC_DF2_COMPILER, P2_B2_COMPILER, P2_B4_COMPILER}:
+    if compiler in {
+        P2_C_COMPILER,
+        PC_DF2_COMPILER,
+        P2_B2_COMPILER,
+        P2_B4_COMPILER,
+        P2_B4_UNIT2_COMPILER,
+    }:
         return playbill_p2c_extension_registry()
     raise PlaybillFormatError("compiler coordinate has no installed deterministic registry")
 
@@ -217,6 +236,7 @@ __all__ = [
     "P2_B1_COMPILER",
     "P2_B2_COMPILER",
     "P2_B4_COMPILER",
+    "P2_B4_UNIT2_COMPILER",
     "P2_C_COMPILER",
     "PC_DF2_COMPILER",
     "PC_HR_COMPILER",

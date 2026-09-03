@@ -39,6 +39,9 @@
   counterpart of the adapter stub's pinned `pure` vocabulary. The governed seed
   intentionally records only its verified `local_env` launch floor even though
   the external package manifest also advertises an unseeded container backend.
+  Both new wires mint semantic revision 18, whose immutable label `p2-b4-u2` is
+  what `server status` and `playbill host show` now report as the current
+  compiler revision; revision 17 stays installed and still replays.
 
 - **Client custody follows one Git-worktree boundary.** Initialization,
   approval, principal changes, and Claim attestations now anchor custody checks

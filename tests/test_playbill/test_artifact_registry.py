@@ -23,6 +23,7 @@ from cruxible_core.playbill.compiler import (
     P2_B0_COMPILER,
     P2_B2_COMPILER,
     P2_B4_COMPILER,
+    P2_B4_UNIT2_COMPILER,
     PC_DF2_COMPILER,
     PC_HR_ARTIFACT_CODEC_COMPILERS,
     SUPPORTED_COMPILERS,
@@ -116,7 +117,12 @@ def test_pc_hr_codec_succeeds_without_changing_the_p2_b0_verifier() -> None:
 def test_current_codec_lineage_is_closed_over_installed_compilers() -> None:
     assert PC_HR_ARTIFACT_CODEC_COMPILERS <= set(SUPPORTED_COMPILERS)
     assert current_compiler_coordinate() in PC_HR_ARTIFACT_CODEC_COMPILERS
-    assert {PC_DF2_COMPILER, P2_B2_COMPILER, P2_B4_COMPILER} <= (PC_HR_ARTIFACT_CODEC_COMPILERS)
+    assert {
+        PC_DF2_COMPILER,
+        P2_B2_COMPILER,
+        P2_B4_COMPILER,
+        P2_B4_UNIT2_COMPILER,
+    } <= PC_HR_ARTIFACT_CODEC_COMPILERS
     assert P2_B0_COMPILER not in PC_HR_ARTIFACT_CODEC_COMPILERS
 
 
@@ -302,8 +308,10 @@ def test_p2_b2_reserves_every_current_artifact_tag() -> None:
         "playbill-settled-outcomes-query-request-v1",
         "playbill-settled-outcomes-query-result-v1",
         "playbill-source-acquisition-policy-v1",
+        "playbill-source-read-receipt-v1",
         "playbill-standing-mandate-v1",
         "playbill-verified-provider-binding-v1",
+        "playbill-workspace-file-source-request-v1",
     )
     assert PLAYBILL_FORMAT_RESERVATIONS.reserved_tags() == ("playbill-run-material-reservation-v2",)
     for implemented_tag in (

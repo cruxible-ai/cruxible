@@ -166,7 +166,7 @@ def test_host_show_and_server_status_inspect_uninitialized_hosts_without_writing
     assert status.status_code == 200, status.text
     assert status.json()["instance_count"] == 1
     assert [row["instance_id"] for row in status.json()["hosts"]] == ["inst_show_empty"]
-    assert status.json()["compiler_revision"] == "p2-b4"
+    assert status.json()["compiler_revision"] == "p2-b4-u2"
     assert not Path(record.location).exists()
 
 
