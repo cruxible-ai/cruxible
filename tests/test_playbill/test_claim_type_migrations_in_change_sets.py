@@ -16,6 +16,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatementV1,
     ChangeSetAuthoringPayloadV1,
     ClaimAuthoringPayloadV1,
+    ClaimRetirementMemberV1,
     ClaimTypeSuccessionDependentV1,
     ClaimTypeSuccessionMemberV1,
     SelfSourceBodyV1,
@@ -620,6 +621,54 @@ def test_a_re_author_sibling_under_another_type_refuses_with_both_indices(
     assert replacement["reason"] == "predicate_mismatch"
     assert replacement["member"] == positions[authoring_member_identity(succession)]
     assert replacement["sibling_member"] == positions[authoring_member_identity(other)]
+
+
+def test_a_dependent_this_set_also_retires_refuses_naming_both_members(
+    tmp_path: Path,
+) -> None:
+    """One artifact, one disposition: the succession already settles its closure."""
+
+    instance, _owner, coordinator, claims = _affects_package_world(
+        tmp_path,
+        values=(("wi-42", "ready"), ("wi-2", "ready")),
+    )
+    actor = AuthenticatedActor(actor_id="owner")
+    succession = ClaimTypeSuccessionMemberV1(
+        successor=_enum_successor(instance, enum=["ready"]),
+        dependents=tuple(
+            sorted(
+                (
+                    _dependent(claims["wi-42"], disposition="successor"),
+                    _dependent(claims["wi-2"], disposition="successor"),
+                ),
+                key=lambda item: item.identity.qualified.encode("utf-8"),
+            )
+        ),
+    )
+    retirement = ClaimRetirementMemberV1(claim_ref=claims["wi-2"], reason="was-wrong")
+    payload = _change_set(succession, retirement)
+    positions = {
+        authoring_member_identity(member): index for index, member in enumerate(payload.members)
+    }
+    intent = coordinator.create(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    with pytest.raises(AuthoringLoweringError) as raised:
+        lower_authoring(instance, intent=intent, actor_id="owner")
+    error = raised.value
+    assert error.code == "playbill.authoring.change_set_member_path_collision"
+    succession_index = positions[authoring_member_identity(succession)]
+    assert error.offending_element == f"members[{succession_index}].dependents"
+    replacement = error.repairs[0].replacement
+    assert isinstance(replacement, dict)
+    assert replacement["members"] == sorted(
+        (succession_index, positions[authoring_member_identity(retirement)])
+    )
+    assert replacement["path"] == claim_path(claims["wi-2"])
+    assert error.repairs[0].kind == "drop_or_merge_member"
 
 
 def test_a_re_author_sibling_that_moves_the_subject_refuses(tmp_path: Path) -> None:

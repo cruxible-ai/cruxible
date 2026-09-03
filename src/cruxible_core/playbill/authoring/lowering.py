@@ -1790,6 +1790,14 @@ def _lower_change_set(
                         index=index,
                         sibling_member_by_claim_id=sibling_member_by_claim_id,
                     ) from error
+                if isinstance(member, ClaimTypeSuccessionMemberV1):
+                    _refuse_contended_succession_paths(
+                        index=index,
+                        changed_paths=extra_paths,
+                        owner_by_path=owner_by_path,
+                        re_authored=frozenset(re_author_siblings.get(index, {}).values()),
+                        members=payload.members,
+                    )
                 sibling_resolved.update(staged_siblings)
                 member_paths.update(extra_paths)
                 for extra_path in extra_paths:
@@ -2042,6 +2050,48 @@ def _resolve_re_author_siblings(
             bound[dependent.identity.qualified] = sibling_index
         resolved[index] = bound
     return resolved
+
+
+def _refuse_contended_succession_paths(
+    *,
+    index: int,
+    changed_paths: set[str],
+    owner_by_path: Mapping[str, int],
+    re_authored: frozenset[int],
+    members: tuple[AuthoringChangeSetMemberV1, ...],
+) -> None:
+    """Refuse a set that settles one artifact twice: in a succession and as a member.
+
+    A succession rewrites every dependent of the ClaimType it succeeds. Another
+    member that authors one of those same paths -- a `ClaimRetirementMemberV1`
+    withdrawing a carried Claim, say -- chains off a version this generation
+    never accepts, and the compiler answers with a raw `stale_predecessor`
+    diagnostic rather than a refusal an author can act on. Both members are
+    named here instead, before the tree is compiled.
+
+    Two overlaps are legitimate and exempt: the re-authoring siblings this
+    succession lowered itself, and the definition-stage members it re-pins --
+    re-pinning what the same set just defined is what the staged tree is for.
+    """
+
+    for path in sorted(changed_paths, key=lambda item: item.encode("utf-8")):
+        other = owner_by_path.get(path)
+        if other is None or other == index or other in re_authored:
+            continue
+        if _member_stage(members[other]) == "definition":
+            continue
+        _refuse(
+            "playbill.authoring.change_set_member_path_collision",
+            f"members[{index}].dependents",
+            f"Members {index} and {other} both change {path!r}: this succession already "
+            "dispositions it.",
+            repair_kind="drop_or_merge_member",
+            repair_description=(
+                "Drop the sibling member and say what it says through this dependent's "
+                "disposition instead."
+            ),
+            replacement={"members": sorted((index, other)), "path": path},
+        )
 
 
 def _stage_claim_type_succession(
