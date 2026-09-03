@@ -364,11 +364,13 @@ cruxible playbill authoring abandon-insertion INTENT_ID [--expectation-id ID]
 
 One authoring intent is one changeset. The tagless `change_set` input carries
 any mix of members -- `claim`, `claim_type`, `claim_retirement`, `subject`,
-`query_definition`, `approval_policy`, `procedure_runtime_policy`, `procedure`,
-`procedure_mandate` -- and the whole intent lowers once, proposes once and
-admits or refuses together, typed to the member index that offends. A Claim
-member may define the Subject and ClaimType it needs in the same set, and may
-retire a Claim the set does not otherwise touch.
+`query_definition`, `procedure`, `procedure_mandate` -- and the whole intent
+lowers once, proposes once and admits or refuses together, typed to the member
+index that offends. `approval_policy` and `procedure_runtime_policy` are the
+two exceptions: the member union parses either, but a change set carrying one
+refuses whatever else it holds, so author each as its own singleton input. A
+Claim member may define the Subject and ClaimType it needs in the same set, and
+may retire a Claim the set does not otherwise touch.
 Succeeding an accepted ClaimType stays on the claim-type proposal route, where
 the migration a succession demands is decided. Two sibling Claims contending for
 one cardinality-one slot are un-authorable in a single set by construction, not

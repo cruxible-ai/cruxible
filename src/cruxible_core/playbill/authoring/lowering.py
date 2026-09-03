@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import NoReturn
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_PATH,
@@ -1632,6 +1632,39 @@ def _rescope_member_error(
     )
 
 
+@dataclass(frozen=True)
+class ChangeSetSingletonOnlyMember:
+    """One member kind a change set refuses, whatever else the set carries.
+
+    The member union parses these kinds, so nothing before lowering rejects
+    them, and every surface that advertises the member kind family reads this
+    table rather than repeating the list. A kind added here therefore leaves
+    the CLI help and the references in the same change that starts refusing it.
+    """
+
+    payload: type[BaseModel]
+    kind: str
+    artifact: str
+
+    @property
+    def code(self) -> str:
+        return f"playbill.authoring.{self.kind}_singleton_required"
+
+
+CHANGE_SET_SINGLETON_ONLY_MEMBERS: tuple[ChangeSetSingletonOnlyMember, ...] = (
+    ChangeSetSingletonOnlyMember(
+        payload=ApprovalPolicyAuthoringPayloadV1,
+        kind="approval_policy",
+        artifact="ApprovalPolicy",
+    ),
+    ChangeSetSingletonOnlyMember(
+        payload=ProcedureRuntimePolicyAuthoringPayloadV1,
+        kind="procedure_runtime_policy",
+        artifact="ProcedureRuntimePolicy",
+    ),
+)
+
+
 def _lower_change_set(
     instance: PlaybillInstance,
     *,
@@ -1642,28 +1675,17 @@ def _lower_change_set(
 ) -> LoweredAuthoring:
     payload = intent.payload
     assert isinstance(payload, ChangeSetAuthoringPayloadV1)
-    if any(isinstance(member, ApprovalPolicyAuthoringPayloadV1) for member in payload.members):
-        _refuse(
-            "playbill.authoring.approval_policy_singleton_required",
-            "members",
-            "ApprovalPolicy authoring must be submitted as a singleton payload.",
-            repair_kind="split_change_set",
-            repair_description=(
-                "Author and accept the ApprovalPolicy separately from the change set."
-            ),
-        )
-    if any(
-        isinstance(member, ProcedureRuntimePolicyAuthoringPayloadV1) for member in payload.members
-    ):
-        _refuse(
-            "playbill.authoring.procedure_runtime_policy_singleton_required",
-            "members",
-            "ProcedureRuntimePolicy authoring must be submitted as a singleton payload.",
-            repair_kind="split_change_set",
-            repair_description=(
-                "Author and accept the ProcedureRuntimePolicy separately from the change set."
-            ),
-        )
+    for singleton in CHANGE_SET_SINGLETON_ONLY_MEMBERS:
+        if any(isinstance(member, singleton.payload) for member in payload.members):
+            _refuse(
+                singleton.code,
+                "members",
+                f"{singleton.artifact} authoring must be submitted as a singleton payload.",
+                repair_kind="split_change_set",
+                repair_description=(
+                    f"Author and accept the {singleton.artifact} separately from the change set."
+                ),
+            )
     claim_identities = {
         item.member_identity: item.claim_id for item in intent.change_set_claim_identities
     }

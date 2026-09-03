@@ -2364,9 +2364,11 @@ def create_authoring_intent(
 
     \b
     Change-set member kind family: claim | claim_type | claim_retirement |
-    subject | query_definition | approval_policy | procedure_runtime_policy |
-    procedure_mandate | procedure. claim_type and claim_retirement are member
-    kinds only -- neither is a top-level input.
+    subject | query_definition | procedure_mandate | procedure. claim_type and
+    claim_retirement are member kinds only -- neither is a top-level input.
+    approval_policy and procedure_runtime_policy are the reverse: the member
+    union parses either, but a change set refuses either, so author each as its
+    own singleton input.
 
     \b
     One intent is one changeset: a change_set input carries any mix of those

@@ -26,6 +26,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.cli.main import cli
+from cruxible_core.playbill.authoring.lowering import CHANGE_SET_SINGLETON_ONLY_MEMBERS
 from cruxible_core.playbill.claim_type_inputs import (
     ClaimTypeInputV1,
     claim_type_input_template,
@@ -819,28 +820,33 @@ def _kind_family(output: str, label: str) -> tuple[str, ...]:
 
 
 def test_cli_create_help_names_only_kinds_the_discriminators_admit() -> None:
-    """Every kind the `create` docstring advertises must actually parse.
+    """Every kind the `create` docstring advertises must be authorable there.
 
     The docstring is the only place an agent learns which `kind` a payload file
     may carry, so a kind listed there that `AuthoringInputV1` refuses costs a
-    whole create round trip. Both families are read back off the rendered help
-    and checked against the discriminated unions themselves.
+    whole create round trip -- and so does a member kind that parses but that
+    `_lower_change_set` refuses in every set. Both families are read back off
+    the rendered help and checked against the discriminated unions and against
+    the lowering's own singleton-only table, never against a literal list.
     """
 
     top_level = TypeAdapter(AuthoringInputV1)
     member = TypeAdapter(AuthoringChangeSetMemberInputV1)
     help_output = CliRunner().invoke(cli, ["playbill", "authoring", "create", "--help"]).output
+    member_kinds = _input_kinds(AuthoringChangeSetMemberInputV1)
+    singleton_only = {item.kind for item in CHANGE_SET_SINGLETON_ONLY_MEMBERS}
+    assert singleton_only and singleton_only < member_kinds
 
     advertised_top_level = _kind_family(help_output, "Input kind family")
     assert advertised_top_level == tuple(sorted(_input_kinds(AuthoringInputV1)))
     advertised_members = _kind_family(help_output, "Change-set member kind family")
-    assert advertised_members == tuple(sorted(_input_kinds(AuthoringChangeSetMemberInputV1)))
+    assert advertised_members == tuple(sorted(member_kinds - singleton_only))
 
     for kind in _input_kinds(AuthoringInputV1):
         with pytest.raises(ValidationError) as refusal:
             top_level.validate_python({"kind": kind})
         assert {error["type"] for error in refusal.value.errors()} == {"missing"}, kind
-    for kind in _input_kinds(AuthoringChangeSetMemberInputV1):
+    for kind in member_kinds:
         with pytest.raises(ValidationError) as refusal:
             member.validate_python({"kind": kind})
         assert "union_tag_invalid" not in {error["type"] for error in refusal.value.errors()}, kind
@@ -853,6 +859,14 @@ def test_cli_create_help_names_only_kinds_the_discriminators_admit() -> None:
         with pytest.raises(ValidationError) as refusal:
             top_level.validate_python({"kind": kind})
         assert {error["type"] for error in refusal.value.errors()} == {"union_tag_invalid"}
+
+    # A kind lowering refuses in every change set is the mirror image: the
+    # member union parses it, so only this table says it is unauthorable as a
+    # member, and the help must place it at top level and nowhere else.
+    for kind in sorted(singleton_only):
+        assert kind not in advertised_members
+        assert kind in advertised_top_level
+    assert "a change set refuses either" in " ".join(help_output.split())
 
 
 def test_subject_propose_is_a_typed_deprecation_shim(tmp_path: Path) -> None:
