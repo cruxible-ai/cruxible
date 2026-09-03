@@ -27,6 +27,7 @@ from tests.test_playbill.test_authoring_preflight import (
     _seed_claim_surface,
     _self_source_payload,
 )
+from tests.test_playbill.test_claims import _claim_type
 
 
 def test_flow_b_lowers_to_retained_copy_self_source_without_writer_digests(
@@ -117,7 +118,17 @@ def test_flow_a_binds_only_the_selection_and_can_pass_existing_claim_laws(
 
 def test_exact_content_body_digest_and_span_are_daemon_derived(tmp_path: Path) -> None:
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    # The object-kind law admits an object only on the ClaimType kind that declares
+    # it, and exact_content is its own first-class ClaimType.object_kind. The shared
+    # fixture type declares a literal, so this flow seeds the exact_content type it
+    # actually authors against.
+    _seed_claim_surface(
+        instance,
+        owner,
+        claim_type_override=_claim_type().model_copy(
+            update={"object_kind": "exact_content", "literal_schema": None}
+        ),
+    )
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     body = b"A concise governed status explanation."
