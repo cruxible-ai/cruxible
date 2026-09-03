@@ -180,7 +180,7 @@ class PlaybillHostInspectionV1(BaseModel):
 
     tag: Literal["playbill-host-inspection-v1"] = "playbill-host-inspection-v1"
     instance_id: str
-    managed_root: str
+    managed_root: str | None
     workspace_root: str | None
     compiler_coordinate: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
     compiler_revision: str | None = None
@@ -254,7 +254,7 @@ class ServerInfoResult(BaseModel):
     auth_enabled: bool
     auth_required: bool
     provider_lane: ProviderLaneStatusV1
-    compiler_coordinate: str | None = None
+    compiler_coordinate: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
     compiler_revision: str | None = None
     hosts: tuple[PlaybillHostInspectionV1, ...] = ()
 

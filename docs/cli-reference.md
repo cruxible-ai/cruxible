@@ -88,7 +88,9 @@ durable runtime credential first.
 
 `server status` lists the daemon's exact current compiler coordinate and each
 governed host as `uninitialized`, `writable`, or `reseed_required`, retaining a
-typed reason for malformed or retired state. `server status` and `server info`
+typed reason for malformed or retired state. Its `Instances` count is the number
+of governed daemon hosts shown, excluding unrelated local registry entries.
+`server status` and `server info`
 also render `Provider lane:` and, when degraded,
 `Provider lane reason:`. Provider-lane degradation never prevents the daemon's
 non-Provider surfaces from starting, so these lines are the operator's recovery
@@ -155,9 +157,10 @@ inside a TCP worktree remains refused; explicit `--workspace DIR` instead writes
 a client-local `server_url` binding without claiming daemon registration. Use a
 local socket when the daemon must advertise ledger refs into that worktree.
 
-`host show` is a zero-authority inspection of workspace registration, managed
-root, exact compiler coordinate/revision, and write compatibility; the CLI adds
-the selected transport. `workspace attach` is client-local and requires a Unix
+`host show` is a zero-authority inspection of workspace registration, exact
+compiler coordinate/revision, and write compatibility; the CLI adds the selected
+transport. The daemon-local managed root is visible only to an unscoped operator,
+not an instance-scoped credential. `workspace attach` is client-local and requires a Unix
 socket: it writes `.playbill/coverage.json` for an existing host only after the
 daemon proves that it registered the exact current Git worktree. A missing or
 different registration is a typed refusal and no config is written.

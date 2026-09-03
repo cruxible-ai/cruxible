@@ -12,8 +12,6 @@ from typing import TypedDict
 
 from cruxible_client import contracts
 from cruxible_client.contracts.errors import (
-    PlaybillBootstrapError,
-    PlaybillFormatError,
     PlaybillReseedRequired,
 )
 from cruxible_core import __version__
@@ -24,7 +22,11 @@ from cruxible_core.playbill.compiler import (
     current_compiler_coordinate,
 )
 from cruxible_core.playbill.workspace_advertisement import workspace_git_object_format
-from cruxible_core.runtime.permissions import check_permission, require_unscoped_operator
+from cruxible_core.runtime.permissions import (
+    check_permission,
+    current_request_instance_scope,
+    require_unscoped_operator,
+)
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.config import (
     get_server_state_root,
@@ -107,14 +109,14 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
                 "The host state cannot be opened without reseeding.",
             ),
         )
-    except (PlaybillBootstrapError, PlaybillFormatError, OSError, ValueError) as exc:
+    except Exception as exc:
         return contracts.PlaybillHostInspectionV1(
             **common,
             compatibility="reseed_required",
             writable=False,
             reason=_reseed_reason(
                 "host_state_malformed",
-                f"The persisted host state is malformed: {exc}",
+                f"The persisted host state is malformed ({type(exc).__name__}): {exc}",
             ),
         )
     writable = compiler in PC_HR_ARTIFACT_CODEC_COMPILERS
@@ -143,6 +145,8 @@ def show_playbill_host(instance_id: str) -> contracts.PlaybillHostInspectionV1:
     result = _inspect_registered_host(instance_id)
     if result.compatibility == "uninitialized":
         require_unscoped_operator("cruxible_playbill_host_show")
+    if current_request_instance_scope() is not None:
+        result = result.model_copy(update={"managed_root": None})
     return result
 
 

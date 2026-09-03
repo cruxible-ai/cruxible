@@ -159,6 +159,41 @@ def test_status_keeps_malformed_host_as_typed_reseed_row(
     assert row["reason"]["repair_commands"] == ["cruxible playbill host create"]
 
 
+def test_status_keeps_other_hosts_when_one_inspection_raises_unexpectedly(
+    host_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for instance_id in ("inst_healthy_row", "inst_unexpected_row"):
+        created = host_client.post(
+            "/api/v1/runtime/instances",
+            json={"instance_id": instance_id},
+        )
+        assert created.status_code == 200, created.text
+    broken = get_registry().get("inst_unexpected_row")
+    assert broken is not None
+    Path(broken.location).mkdir(parents=True)
+    trust = get_registry().state_root / "trust" / "inst_unexpected_row.json"
+    trust.parent.mkdir(parents=True)
+    trust.write_text("present", encoding="utf-8")
+    manager = get_playbill_manager()
+    original_get = manager.get
+
+    def get_with_one_failure(instance_id: str):
+        if instance_id == "inst_unexpected_row":
+            raise RuntimeError("unexpected inspection failure")
+        return original_get(instance_id)
+
+    monkeypatch.setattr(manager, "get", get_with_one_failure)
+
+    status = host_client.get("/api/v1/server/info")
+
+    assert status.status_code == 200, status.text
+    rows = {row["instance_id"]: row for row in status.json()["hosts"]}
+    assert rows["inst_healthy_row"]["compatibility"] == "uninitialized"
+    assert rows["inst_unexpected_row"]["reason"]["code"] == "host_state_malformed"
+    assert "RuntimeError" in rows["inst_unexpected_row"]["reason"]["detail"]
+
+
 def test_git_advertising_write_routes_run_outside_the_event_loop() -> None:
     assert not iscoroutinefunction(append_claim_attestation)
     assert not iscoroutinefunction(run_procedure)
@@ -869,3 +904,68 @@ def test_authenticated_bootstrap_binds_owner_to_credential_identity(
     assert initialized.status_code == 200, initialized.text
     assert managed_root.is_dir()
     assert not (managed_root / ".cruxible" / "state.db").exists()
+
+
+def test_host_show_enforces_initialization_scope_and_path_privacy(
+    tmp_path: Path,
+    authenticated_host_client: tuple[TestClient, str],
+) -> None:
+    client, bootstrap_secret = authenticated_host_client
+    bootstrap_headers = {"Authorization": f"Bearer {bootstrap_secret}"}
+    for instance_id in ("inst_scoped_show", "inst_other_show"):
+        created = client.post(
+            "/api/v1/runtime/instances",
+            json={"instance_id": instance_id},
+            headers=bootstrap_headers,
+        )
+        assert created.status_code == 200, created.text
+
+    operator_view = client.get(
+        "/api/v1/inst_scoped_show/playbill/host",
+        headers=bootstrap_headers,
+    )
+    assert operator_view.status_code == 200, operator_view.text
+    assert operator_view.json()["managed_root"] is not None
+
+    claimed = client.post(
+        "/api/v1/inst_scoped_show/runtime/bootstrap/claim",
+        json={"bootstrap_secret": bootstrap_secret},
+        headers=bootstrap_headers,
+    )
+    assert claimed.status_code == 200, claimed.text
+    scoped_headers = {"Authorization": f"Bearer {claimed.json()['token']}"}
+
+    preinit = client.get(
+        "/api/v1/inst_scoped_show/playbill/host",
+        headers=scoped_headers,
+    )
+    assert preinit.status_code == 403, preinit.text
+
+    record = get_registry().get("inst_scoped_show")
+    assert record is not None
+    owner = generate_client_principal_key(
+        tmp_path / "scoped-show-owner",
+        principal_id="bootstrap-admin",
+        kind="ordinary",
+        forbidden_roots=(Path(record.location),),
+    )
+    initialized = client.post(
+        "/api/v1/inst_scoped_show/playbill/init",
+        json={"principals": [owner.principal.model_dump(mode="json")]},
+        headers=scoped_headers,
+    )
+    assert initialized.status_code == 200, initialized.text
+
+    own = client.get(
+        "/api/v1/inst_scoped_show/playbill/host",
+        headers=scoped_headers,
+    )
+    assert own.status_code == 200, own.text
+    assert own.json()["managed_root"] is None
+    assert own.json()["compatibility"] == "writable"
+
+    cross_instance = client.get(
+        "/api/v1/inst_other_show/playbill/host",
+        headers=scoped_headers,
+    )
+    assert cross_instance.status_code == 403, cross_instance.text

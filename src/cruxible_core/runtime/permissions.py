@@ -433,6 +433,12 @@ def request_instance_scope(instance_id: str | None) -> Iterator[None]:
         _request_instance_scope.reset(token)
 
 
+def current_request_instance_scope() -> str | None:
+    """Return the active credential's instance boundary, if it has one."""
+
+    return _request_instance_scope.get()
+
+
 # ---------------------------------------------------------------------------
 # Permission check
 # ---------------------------------------------------------------------------

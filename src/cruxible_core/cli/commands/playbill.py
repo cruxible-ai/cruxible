@@ -780,7 +780,7 @@ def show_host(instance_id: str, output_json: bool) -> None:
         return
     click.echo(f"Playbill host: {result.instance_id}")
     click.echo(f"Transport: {transport}")
-    click.echo(f"Managed root: {result.managed_root}")
+    click.echo(f"Managed root: {result.managed_root or '-'}")
     click.echo(f"Workspace root: {result.workspace_root or '-'}")
     click.echo(f"Compiler coordinate: {result.compiler_coordinate or '-'}")
     click.echo(f"Compiler revision: {result.compiler_revision or '-'}")

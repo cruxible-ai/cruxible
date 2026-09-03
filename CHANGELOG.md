@@ -12,6 +12,8 @@
   atomic local setup. Inherited-Git advisories are retained in affected JSON
   receipts, subject-valued Claim authoring preserves typed Subject objects, and
   projection repair detects body-only accepted revisions.
+  Server instance counts now mean governed daemon hosts, and instance-scoped
+  host inspection no longer discloses the daemon-local managed-root path.
 
 - **Client custody follows one Git-worktree boundary.** Initialization,
   approval, principal changes, and Claim attestations now anchor custody checks
