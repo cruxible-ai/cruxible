@@ -15,11 +15,14 @@ import pytest
 from cruxible_client.authoring.insertions import apply_playbill_publication
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.authoring.models import (
+    AUTHORING_CHANGE_SET_MEMBERSHIP_DIGEST_DOMAIN,
     AuthoringClaimStatementV1,
     AuthoringDiagnosticV1,
     AuthoringReferenceExpectationV1,
     ChangeSetAuthoringPayloadV1,
     ClaimAuthoringPayloadV1,
+    ClaimAuthoringPayloadV2,
+    ClaimDependencyDraftsV1,
     ClaimRetirementMemberV1,
     ClaimTypeAuthoringPayloadV1,
     InsertionAnchorWindowV1,
@@ -29,8 +32,11 @@ from cruxible_client.contracts.authoring.models import (
     SelfSourceBodyV1,
     SubjectAuthoringPayloadV1,
     WorkingDigestCoordinateV1,
+    authoring_change_set_membership,
     authoring_member_identity,
+    authoring_payload_digest,
 )
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path
 from cruxible_client.contracts.claims import (
     ClaimRetireDependentV1,
@@ -1135,3 +1141,192 @@ def test_a_singular_intent_keeps_its_compiler_refusal_at_the_artifact_path(
     assert _repair_replacement(diagnostic) == {
         "offending_element": claim_path(intent.semantic_identity)
     }
+
+
+def _claim_with_subject_draft(subject_id: str, shell: SubjectShell) -> ClaimAuthoringPayloadV2:
+    """One Claim carrying its own Subject as a dependency draft."""
+
+    authored = _claim(subject_id=subject_id)
+    return ClaimAuthoringPayloadV2(
+        statement=authored.statement,
+        rationale=authored.rationale,
+        source=authored.source,
+        dependency_drafts=ClaimDependencyDraftsV1(subject=shell),
+    )
+
+
+def test_a_dependency_draft_that_carries_a_succession_still_refuses_typed(
+    tmp_path: Path,
+) -> None:
+    """The successor laws for the withdrawn `dependency_not_one_claim` refusal.
+
+    Before this batch a dependency draft that named a predecessor, or that was
+    born retired, was refused at authoring as
+    `playbill.authoring.dependency_not_one_claim` on the grounds that a
+    succession meant a second change. A change set IS one change, so the staged
+    tree decides instead and the draft is installed. What refuses it now is the
+    ordinary compiler law on the artifact it wrote, and this pins both codes
+    for a succession carried inside a set:
+
+    - a draft naming a predecessor for a Subject that has none accepted refuses
+      `playbill.subject.unexpected_predecessor`, addressed to the member that
+      installed the draft;
+    - a born-retired draft refuses `playbill.change_set.unresolved_pin`, which
+      the compiler raises against the whole candidate rather than one artifact,
+      so it stays addressed at `payload`.
+
+    Neither draft reaches the accepted tree, and neither leaves a proposal.
+    """
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    before = instance.accepted_coordinate()
+
+    succeeding = _claim_with_subject_draft(
+        "wi-succession",
+        _shell("wi-succession").model_copy(
+            update={"lifecycle": ArtifactLifecycle(predecessor_digest="sha256:" + "0" * 64)}
+        ),
+    )
+    payload = _change_set(succeeding, SubjectAuthoringPayloadV1(subject=_shell("wi-2")))
+    index = payload.members.index(succeeding)
+    intent = coordinator.create(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    offending = _refused_diagnostics(coordinator, intent.intent_id, actor)
+    draft_path = subject_path(SUBJECT_KIND, "wi-succession")
+    diagnostic = offending["playbill.subject.unexpected_predecessor"]
+    assert diagnostic.stage == "proposal_evaluation"
+    assert diagnostic.offending_element == f"members[{index}].{draft_path}"
+    assert _repair_replacement(diagnostic) == {
+        "artifact_path": draft_path,
+        "member": index,
+        "offending_element": f"members[{index}].{draft_path}",
+    }
+
+    retired = _claim_with_subject_draft(
+        "wi-born-retired",
+        _shell("wi-born-retired").model_copy(
+            update={"lifecycle": ArtifactLifecycle(state="retired")}
+        ),
+    )
+    born_retired = coordinator.create(
+        actor=actor,
+        payload=_change_set(retired, SubjectAuthoringPayloadV1(subject=_shell("wi-3"))),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    pinned = _refused_diagnostics(coordinator, born_retired.intent_id, actor)
+    unresolved = pinned["playbill.change_set.unresolved_pin"]
+    assert unresolved.stage == "proposal_evaluation"
+    assert unresolved.offending_element == "payload"
+    assert _repair_replacement(unresolved) == {"offending_element": "payload"}
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    assert draft_path not in tree
+    assert subject_path(SUBJECT_KIND, "wi-born-retired") not in tree
+    assert instance.accepted_coordinate() == before
+
+
+def test_a_one_member_change_set_lands_and_keeps_its_change_set_identity(
+    tmp_path: Path,
+) -> None:
+    """`min_length` 1 is a landing set, not just a payload the validator admits.
+
+    The withdrawn `at least 2 items` pin said a one-member set was not a set at
+    all; the ruling is that a set of one is the ordinary case the SDK builder
+    emits when a program adds a single member. This drives one end to end and
+    compares it against the equivalent singular Claim intent: the set identity
+    is a ChangeSet over its member, the singular identity is the Claim itself,
+    and the two payloads differ only in being a set.
+    """
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    generations_before = len(instance.accepted_history())
+
+    member = _claim(subject_id="wi-42", value="ready")
+    payload = _change_set(member)
+    assert len(payload.members) == 1
+    created = coordinator.create(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    assert created.semantic_identity.startswith("ChangeSet:")
+    assert len(created.change_set_claim_identities) == 1
+    minted = created.change_set_claim_identities[0].claim_id
+
+    result = coordinator.submit(created.intent_id, actor=actor)
+    assert result.status.proposal_id is not None
+    assert [item.identity for item in result.members] == [authoring_member_identity(member)]
+    assert result.status.candidate_digest is not None
+    approval = _sign(
+        owner,
+        result.status.candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=result.status.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter="owner",
+    )
+    activated = service_activate_playbill_proposal(
+        instance,
+        proposal_id=result.status.proposal_id,
+        activated_by="owner",
+    )
+    assert activated.status == "accepted"
+    assert len(instance.accepted_history()) == generations_before + 1
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    assert claim_path(minted) in tree
+
+    # The same member as a singular intent: same authored Claim, different
+    # identity kind, and a payload digest that differs only by the wrapper.
+    singular = (
+        AuthoringIntentCoordinator(
+            instance=instance,
+            store=AuthoringIntentStore(
+                instance.root / instance.descriptor.storage.exhaust,
+                token_factory=lambda: "b" * 32,
+            ),
+            claim_id_factory=lambda: "CLM-" + "c" * 32,
+            clock=lambda: datetime(2026, 8, 22, 12, tzinfo=UTC),
+        )
+        .create(
+            actor=actor,
+            payload=member,
+            canonical_timestamp=TIMESTAMP,
+        )
+        .intent
+    )
+    assert singular.semantic_identity == "CLM-" + "c" * 32
+    assert singular.change_set_claim_identities == ()
+    # Where they differ: set identity is a ChangeSet over the member's (kind,
+    # identity), Claim identity is the minted Claim ID, and the payload digest
+    # carries the set wrapper.
+    assert created.semantic_identity == "ChangeSet:" + typed_digest(
+        Sha256Value,
+        AUTHORING_CHANGE_SET_MEMBERSHIP_DIGEST_DOMAIN,
+        {
+            "members": [
+                {"kind": kind, "identity": identity}
+                for kind, identity in authoring_change_set_membership(payload.members)
+            ]
+        },
+    ).tagged.removeprefix("sha256:")
+    assert singular.payload_digest != created.payload_digest
+    assert singular.create_fingerprint != created.create_fingerprint
+    # Where they must not differ: the authored member is the same bytes either way.
+    assert singular.payload.model_dump(mode="json") == created.payload.members[0].model_dump(  # type: ignore[union-attr]
+        mode="json"
+    )
+    assert authoring_payload_digest(singular.payload) == authoring_payload_digest(
+        created.payload.members[0]  # type: ignore[union-attr]
+    )
