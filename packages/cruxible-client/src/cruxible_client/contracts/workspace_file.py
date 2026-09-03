@@ -80,7 +80,17 @@ class SourceReadReceiptV1(_StrictWorkspaceFileModel):
     occurrence_path: str
     logical_source: str
     workspace_binding_digest: str
-    relative_path: str
+    relative_path: str = Field(
+        description="The REAL on-disk component names the daemon read, kernel-confirmed."
+    )
+    requested_path: str | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description=(
+            "The spelling the derived Source request asked for, when the daemon recorded one. "
+            "Absent on receipts written before the real-name law; never a lookup key."
+        ),
+    )
     bytes_digest: str
     byte_length: int = Field(ge=0)
     policy_coordinate: AcceptedCoordinate
@@ -111,6 +121,13 @@ class SourceReadReceiptV1(_StrictWorkspaceFileModel):
     @field_validator("relative_path")
     @classmethod
     def _relative_path(cls, value: str) -> str:
+        return WorkspaceFileSourceRequestV1._relative_path(value)
+
+    @field_validator("requested_path")
+    @classmethod
+    def _requested_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         return WorkspaceFileSourceRequestV1._relative_path(value)
 
 

@@ -310,6 +310,23 @@ class WorkspaceFileReader:
                 )
             self._check_managed_root(resolved)
             self._deny_path(tuple(resolved.parts))
+            # The receipt attests what was READ, so it carries the real on-disk
+            # component names the kernel just confirmed, not the spelling the
+            # request asked for: on a case-folding volume a request for
+            # DOCS/NOTE.TXT reads docs/note.txt, and a receipt echoing the
+            # request would attest a name no directory holds.
+            try:
+                real_relative_path = "/".join(resolved.relative_to(root_real).parts)
+            except ValueError as exc:
+                raise WorkspaceFileReadRefused(
+                    "changed_during_read", "workspace source path cannot be confirmed"
+                ) from exc
+            try:
+                WorkspaceFileSourceRequestV1._relative_path(real_relative_path)
+            except ValueError as exc:
+                raise WorkspaceFileReadRefused(
+                    "path_grammar", "real workspace path is not normalized relative POSIX"
+                ) from exc
         except WorkspaceFileReadRefused:
             raise
         except FileNotFoundError as exc:
@@ -352,7 +369,8 @@ class WorkspaceFileReader:
             occurrence_path=occurrence_path,
             logical_source=request.logical_source,
             workspace_binding_digest=request.workspace_binding_digest,
-            relative_path=request.relative_path,
+            relative_path=real_relative_path,
+            requested_path=request.relative_path,
             bytes_digest=bytes_digest,
             byte_length=len(content),
             policy_coordinate=policy_coordinate,

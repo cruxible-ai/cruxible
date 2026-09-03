@@ -295,7 +295,12 @@ class JournalProducerReceiptResolver:
                             receipt.derived_request_digest != resolved_derived.request_digest
                             or receipt.logical_source != request.logical_source
                             or receipt.workspace_binding_digest != request.workspace_binding_digest
-                            or receipt.relative_path != request.relative_path
+                            # The receipt's relative_path carries the REAL on-disk
+                            # names; requested_path is what the derived request
+                            # asked for. Receipts written before the real-name law
+                            # carry only the requested spelling in relative_path.
+                            or (receipt.requested_path or receipt.relative_path)
+                            != request.relative_path
                         ):
                             raise ValueError(
                                 "Source-read receipt differs from its derived Source request"

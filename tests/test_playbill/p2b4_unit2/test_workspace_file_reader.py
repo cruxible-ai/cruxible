@@ -10,7 +10,10 @@ from tests.support.case_folding import volume_folds_case
 
 import cruxible_core.playbill.workspace_file as workspace_file_module
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.workspace_file import WorkspaceFileSourceRequestV1
+from cruxible_client.contracts.workspace_file import (
+    SourceReadReceiptV1,
+    WorkspaceFileSourceRequestV1,
+)
 from cruxible_core.playbill.workspace_file import (
     WorkspaceFileReader,
     WorkspaceFileReadRefused,
@@ -85,6 +88,7 @@ def test_regular_file_read_carries_only_bounded_bytes_and_receipt(tmp_path: Path
     }
     serialized = result.receipt.model_dump(mode="json")
     assert serialized["relative_path"] == "docs/note.txt"
+    assert serialized["requested_path"] == "docs/note.txt"
     assert serialized["resolved_max_bytes"] == 1024
     assert str(root.resolve()) not in repr(serialized)
     assert set(result.provider_input) == {
@@ -95,6 +99,47 @@ def test_regular_file_read_carries_only_bounded_bytes_and_receipt(tmp_path: Path
         "byte_length",
         "bytes_digest",
     }
+
+
+def test_the_receipt_records_the_real_on_disk_names_not_the_requested_spelling(
+    tmp_path: Path,
+) -> None:
+    """A receipt attests what was READ; on a folding volume that is not what was asked.
+
+    The deny decision already runs on real names; before this the receipt did
+    not, so a governed receipt could name a path no directory holds.
+    """
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "docs").mkdir()
+    (root / "docs" / "note.txt").write_bytes(b"hello\n")
+    if not volume_folds_case(root):
+        pytest.skip("this volume does not fold case, so no spelling can differ")
+
+    receipt = _read(_reader(root), _request(root, "DOCS/NOTE.TXT")).receipt
+
+    assert receipt.relative_path == "docs/note.txt"
+    assert receipt.requested_path == "DOCS/NOTE.TXT"
+    assert receipt.byte_length == 6
+
+
+def test_a_receipt_without_a_requested_path_keeps_its_exact_serialized_bytes(
+    tmp_path: Path,
+) -> None:
+    """Receipts written before the real-name law must re-digest unchanged."""
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "docs").mkdir()
+    (root / "docs" / "note.txt").write_bytes(b"hello\n")
+    payload = _read(_reader(root), _request(root, "docs/note.txt")).receipt.model_dump(mode="json")
+    payload.pop("requested_path")
+
+    legacy = SourceReadReceiptV1.model_validate(payload)
+
+    assert legacy.requested_path is None
+    assert legacy.model_dump(mode="json") == payload
 
 
 @pytest.mark.parametrize(
