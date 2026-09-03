@@ -123,8 +123,14 @@ def test_r6_regression_shape() -> None:
     assert "prepare_direct_procedure_run" not in text
 
 
-def test_the_control_socket_budget_leaves_79_bytes_for_a_state_root() -> None:
-    """P2-B5 retracts the refusal oracle in favor of a state-root-keyed fallback."""
+def test_the_control_socket_budget_selects_the_private_namespace_once() -> None:
+    """Succeeds the retracted 79-byte state-root budget oracle (U8, 2026-09-02).
+
+    The retracted law budgeted the state root against a fixed 79 bytes and
+    refused above it. U8 replaced that with a per-user private namespace keyed
+    by the state root and selected once at construction, so the name here says
+    what the store now does instead of naming a budget the batch retracted.
+    """
 
     store_source = inspect.getsource(lease_module.ProviderProcessLeaseStore.paths)
     selector = inspect.getsource(lease_module.ProviderProcessLeaseStore._select_control_root)

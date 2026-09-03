@@ -1035,14 +1035,21 @@ def test_control_namespaces_are_state_local_and_finalize_without_orphans(
     ("system", "variable"),
     (("Linux", "XDG_RUNTIME_DIR"), ("Darwin", "TMPDIR")),
 )
-def test_overlong_control_socket_path_refuses_with_the_operator_repair(
+def test_overlong_control_socket_path_falls_back_to_the_private_runtime_namespace(
     request: pytest.FixtureRequest,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     system: str,
     variable: str,
 ) -> None:
-    """Retracted P2-B2 oracle: an overlong state root now safely falls back."""
+    """Succeeds the retracted P2-B2 refusal oracle (U8, manager 2026-09-02).
+
+    The retracted law said an overlong control path refuses and names the
+    shorter-root repair. U8 replaced it: the store falls back to a verified
+    per-user private runtime namespace and refuses typed only when neither
+    namespace fits. This oracle asserts the replacement law, and its name says
+    so rather than keeping the retracted one.
+    """
 
     runtime_root = Path(tempfile.mkdtemp(prefix=".u8-runtime-", dir=Path.cwd()))
     request.addfinalizer(lambda: shutil.rmtree(runtime_root, ignore_errors=True))
@@ -1066,6 +1073,13 @@ def test_overlong_control_socket_path_refuses_with_the_operator_repair(
     second = leases.paths(_digest("another-control-path"))
     assert first[1].parent == second[1].parent == leases.control_root
     assert len(os.fsencode(first[1])) <= 103
+    # The measurement above runs against a fixture runtime root under the
+    # working directory, whose absolute path is environment-dependent, so it is
+    # taken with a fixed-width stand-in. This one is unpatched and real: the
+    # namespace the fallback constructs fits the AF_UNIX budget under the
+    # canonical per-user runtime directory the law names.
+    canonical = Path("/run/user/1000") / first[1].relative_to(runtime_root)
+    assert len(real_fsencode(canonical)) <= 103
 
 
 def test_overlong_control_fallback_refuses_symlinked_namespace_component(

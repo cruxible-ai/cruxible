@@ -493,6 +493,18 @@ class ProviderProcessLeaseStore:
                 "process-lease directory must be owned by the daemon uid",
             )
         flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        if stat.S_IMODE(metadata.st_mode) != 0o700 and (
+            metadata.st_mode & stat.S_ISVTX or metadata.st_mode & stat.S_IWOTH
+        ):
+            # A sticky or world-writable directory is a SHARED one whose
+            # lifecycle the daemon does not own -- `/tmp` is the case that
+            # matters, reachable as TMPDIR for a daemon running as root.
+            # Repairing it to 0700 would take a directory away from every other
+            # user on the host, so a shared directory is refused, never chmodded.
+            raise ProviderLocalRuntimeRefused(
+                "provider_process_lease_invalid",
+                "process-lease directory is shared and is never repaired into a private one",
+            )
         try:
             descriptor = os.open(path, flags)
         except OSError as exc:
