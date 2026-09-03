@@ -138,7 +138,11 @@ It reports approval conditions but never obtains or impersonates an approval.
 offending member index. `approval_policy` and `procedure_runtime_policy` parse
 as members but a change set refuses them; send each as its own singleton input.
 There is no second batch tool.
-`cruxible_playbill_authoring_example` serves `change-set` as a starting point.
+A `claim_type_succession` member succeeds an accepted ClaimType and dispositions
+its whole reverse-pin closure in the same generation, so vocabulary evolution
+needs no second tool and no second generation either.
+`cruxible_playbill_authoring_example` serves `change-set` and
+`claim-type-succession` as starting points.
 The publication tools take an `expectation_id` because a set that publishes
 several Claims owns one expectation per publishing member; an intent that owns
 exactly one may omit it.

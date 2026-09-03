@@ -374,6 +374,15 @@ the approval frontier, or its certificate. `migrate` atomically succeeds the
 ClaimType and disposes every dependent the request names; it never authors
 retirement decisions from diagnostics.
 
+`migrate` is the operator form of a ClaimType succession: one vocabulary change,
+built from a request file, with nothing else in the generation. The agent form is
+the `claim_type_succession` change-set member under `playbill authoring`, which
+lands the succession in the same generation as the Claims that speak the new
+vocabulary and adds one disposition the operator form has no use for --
+`re_author`, whose successor is a sibling Claim member of the same set. Both
+roads build their candidate with the same function, so neither can drift from
+the other's law.
+
 ## playbill claim
 
 ~~~text
@@ -456,7 +465,9 @@ rescission) or `re_author` (a sibling Claim member of the same set, naming that
 Claim again under the successor, named by `successor_claim_id` or
 `successor_member`). A successor that changes `object_kind` refuses `successor`
 for any live Claim dependent. `cruxible playbill claim-type migrate` is the
-operator form of the same law and builds its candidate with the same code. There is no semantic member ceiling; how many
+operator form of the same law and builds its candidate with the same code.
+
+There is no semantic member ceiling; how many
 changed members one daemon will receive in a single submission is the operator's
 `max_changed_members` bound in `daemon/proposal-receive.json`.
 
