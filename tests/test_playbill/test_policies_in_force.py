@@ -115,6 +115,32 @@ def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> 
     ]
 
 
+def test_policy_inventory_skips_the_cards_an_accepted_change_leaves(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The whole-tree policy scan must survive derivative card sidecars."""
+
+    instance, owner = initialize_local(tmp_path)
+    claim_type = _claim_type(0)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name)] = (
+        render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
+    )
+    tree[_claim_type_path(claim_type)] = render_claim_type(claim_type)
+    _accept_tree(
+        instance,
+        owner,
+        tree,
+        timestamp="2026-08-30T20:00:00.000000Z",
+        proposal_name="seed-card-bearing-change",
+    )
+    accepted = instance.tree_at(instance.accepted_coordinate().git_oid)
+    assert [path for path in accepted if path.startswith("cards/")]
+
+    result = list_playbill_policies_in_force(instance)
+
+    assert result.policies
+    assert not any(row.path.startswith("cards/") for row in result.policies)
+
+
 @pytest.fixture(scope="module")
 def complete_policy_inventory(
     tmp_path_factory: pytest.TempPathFactory,

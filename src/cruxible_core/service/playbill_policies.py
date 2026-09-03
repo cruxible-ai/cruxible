@@ -15,6 +15,7 @@ from cruxible_client.contracts.approval_policy import (
     approval_policy_digest,
     parse_approval_policy,
 )
+from cruxible_client.contracts.canonical import is_candidate_card_path
 from cruxible_client.contracts.captures import capture_contract_digest, parse_capture_contract
 from cruxible_client.contracts.claim_types import claim_type_digest, parse_claim_type
 from cruxible_client.contracts.documents import document_digest, parse_document
@@ -114,6 +115,11 @@ def list_playbill_policies_in_force(
     artifact_codec = artifact_codec_for_compiler(coordinate.compiler)
     rows: list[contracts.PlaybillPolicyInForce] = []
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
+        if is_candidate_card_path(path):
+            # Cards are derivative Markdown sidecars with no registered artifact
+            # format, so a whole-tree scan must skip them exactly as the
+            # projection tree and artifact projections already do.
+            continue
         kind = registered_path_kind(path, artifact_kinds=artifact_kinds)
         content = tree[path]
         if kind == "approval-policy":
