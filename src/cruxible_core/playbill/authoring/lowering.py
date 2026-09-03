@@ -1732,6 +1732,7 @@ def _lower_change_set(
         owner_by_path[path] = index
     re_author_siblings = _resolve_re_author_siblings(
         payload.members,
+        base_tree=base_tree,
         claim_identities=claim_identities,
         sibling_member_by_claim_id=sibling_member_by_claim_id,
     )
@@ -1910,6 +1911,7 @@ def _stage_change_set_member(
 def _resolve_re_author_siblings(
     members: tuple[AuthoringChangeSetMemberV1, ...],
     *,
+    base_tree: Mapping[str, bytes],
     claim_identities: Mapping[str, str],
     sibling_member_by_claim_id: Mapping[str, int],
 ) -> dict[int, dict[str, int]]:
@@ -1919,10 +1921,11 @@ def _resolve_re_author_siblings(
     Claims disagree about who re-authors what refuses before it writes a byte,
     naming both the succession member and the member it pointed at.
 
-    A re-authored Claim keeps the identity it re-authors: the successor of a
-    dependent is that dependent, said again under the new vocabulary, with its
-    slot and its exact predecessor digest. A sibling that revises some other
-    Claim would be a different decision wearing this one's disposition.
+    A re-authored Claim keeps the slot it re-authors: the successor of a
+    dependent is that dependent, said again under the new vocabulary, about the
+    same Subject, under the same predicate, with its exact predecessor digest.
+    A sibling that revises some other Claim, or moves the one it revises to
+    another Subject, would be a different decision wearing this disposition.
     """
 
     resolved: dict[int, dict[str, int]] = {}
@@ -1996,6 +1999,28 @@ def _resolve_re_author_siblings(
                         "successor_claim_id": required,
                     },
                 )
+            accepted_content = base_tree.get(claim_path(required))
+            if accepted_content is not None:
+                accepted = parse_claim(accepted_content, path=claim_path(required))
+                if sibling.statement.subject != accepted.statement.subject:
+                    _refuse(
+                        "playbill.authoring.claim_type_succession_re_author_invalid",
+                        f"members[{sibling_index}].statement.subject",
+                        "A re-authored dependent keeps the Subject it was accepted about: "
+                        "moving it would state a different Claim under this one's identity.",
+                        repair_kind="replace_subject",
+                        repair_description=(
+                            "State this revision about the Subject the Claim it re-authors "
+                            "is about, or drop the re_author disposition."
+                        ),
+                        replacement={
+                            "expected_subject": accepted.statement.subject.model_dump(mode="json"),
+                            "member": index,
+                            "reason": "subject_mismatch",
+                            "sibling_member": sibling_index,
+                            "subject": sibling.statement.subject.model_dump(mode="json"),
+                        },
+                    )
             claimed_by = owner.get(sibling_index)
             if claimed_by is not None:
                 _refuse(

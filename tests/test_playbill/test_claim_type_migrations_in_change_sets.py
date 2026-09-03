@@ -622,6 +622,57 @@ def test_a_re_author_sibling_under_another_type_refuses_with_both_indices(
     assert replacement["sibling_member"] == positions[authoring_member_identity(other)]
 
 
+def test_a_re_author_sibling_that_moves_the_subject_refuses(tmp_path: Path) -> None:
+    """A re-authoring says the same thing again, not something else."""
+
+    instance, _owner, coordinator, claims = _affects_package_world(
+        tmp_path,
+        values=(("wi-42", "ready"), ("wi-2", "ready")),
+    )
+    actor = AuthenticatedActor(actor_id="owner")
+    moved = _claim(
+        subject_id="wi-3",
+        value=LiteralClaimObject(value="ready"),
+        claim_ref=claims["wi-42"],
+        rationale="A revision that quietly changes which work item this is about.",
+    )
+    succession = ClaimTypeSuccessionMemberV1(
+        successor=_enum_successor(instance, enum=["ready"]),
+        dependents=tuple(
+            sorted(
+                (
+                    _re_author(claims["wi-42"]),
+                    _dependent(claims["wi-2"], disposition="successor"),
+                ),
+                key=lambda item: item.identity.qualified.encode("utf-8"),
+            )
+        ),
+    )
+    payload = _change_set(succession, moved)
+    positions = {
+        authoring_member_identity(member): index for index, member in enumerate(payload.members)
+    }
+    intent = coordinator.create(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    with pytest.raises(AuthoringLoweringError) as raised:
+        lower_authoring(instance, intent=intent, actor_id="owner")
+    error = raised.value
+    assert error.code == "playbill.authoring.claim_type_succession_re_author_invalid"
+    sibling = positions[authoring_member_identity(moved)]
+    assert error.offending_element == f"members[{sibling}].statement.subject"
+    replacement = error.repairs[0].replacement
+    assert isinstance(replacement, dict)
+    assert replacement["reason"] == "subject_mismatch"
+    assert replacement["member"] == positions[authoring_member_identity(succession)]
+    assert replacement["sibling_member"] == sibling
+    assert replacement["expected_subject"] != replacement["subject"]
+    assert error.repairs[0].kind == "replace_subject"
+
+
 def test_a_machine_applying_the_re_author_repair_lands_the_set(tmp_path: Path) -> None:
     """A repair is only a repair if writing it back produces a payload that lowers."""
 

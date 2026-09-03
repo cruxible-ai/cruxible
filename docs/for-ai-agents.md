@@ -78,10 +78,12 @@ by the SDK helpers `carry`, `rescind`, `retire` and `re_author`:
 | `retire(claim, reason=..., effective_until=...)` | `retire` | An attributed retirement, landing with the succession. |
 | `re_author(claim)` | `re_author` | Said again by a sibling Claim member of the same set, lowered under the successor. |
 
-A re-authored dependent keeps its own identity and its exact predecessor
-digest: the sibling member is that Claim revised (`revises=` the same Claim ID),
-stated under the new vocabulary, which is why `explain` on the re-authored Claim
-still names what it succeeds. The sibling is named once, by
+A re-authored dependent keeps its own identity, its slot -- the Subject it is
+about and the predicate it speaks -- and its exact predecessor digest: the
+sibling member is that Claim revised (`revises=` the same Claim ID), stated
+under the new vocabulary, which is why `explain` on the re-authored Claim still
+names what it succeeds. A sibling that moves the Subject refuses; a re-authoring
+says the same thing again, it does not say it about something else. The sibling is named once, by
 `successor_claim_id` -- the Claim ID it revises, which is the dependent's own,
 and what `re_author(claim)` writes. A sibling that does not exist, lowers under
 another ClaimType, or revises another Claim refuses
