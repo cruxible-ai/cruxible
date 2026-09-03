@@ -1696,11 +1696,18 @@ def prepare_direct_procedure_run(
             continue
         query = _exact_pin(node.query, label=f"state_tap {node.node_id!r}")
         parameters = normalize_canonical(node.parameters)
-        read = state_reader.read_accepted_state(
-            query=query,
-            parameters=parameters,
-            coordinate=accepted_coordinate,
-        )
+        try:
+            read = state_reader.read_accepted_state(
+                query=query,
+                parameters=parameters,
+                coordinate=accepted_coordinate,
+            )
+        except Exception as exc:
+            raise ProcedureBoundaryRefused(
+                "state_tap_refused",
+                "The accepted-state reader refused the pinned query.",
+                details={"node_id": node.node_id, "query_digest": query.artifact_digest},
+            ) from exc
         value = normalize_canonical(read.value)
         retained = bodies.store(canonical_bytes(value))
         run_input = AcceptedStateRunInputV2(
@@ -1824,6 +1831,15 @@ class _RunRefusal(Exception):
             details={} if details is None else details,
             budget=budget,
         )
+
+
+class ProcedureBoundaryRefused(PlaybillExecutionError):
+    """A typed pre-execution or integrity refusal at a real public boundary."""
+
+    def __init__(self, code: str, message: str, *, details: object | None = None) -> None:
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.details = normalize_canonical({} if details is None else details)
 
 
 class _ProviderNodeRefusal(_RunRefusal):
@@ -2080,11 +2096,17 @@ class ProcedureExecutor:
     ) -> ProcedureRunResultV1:
         admission = prepared.admission
         self._verify_correspondence(admission, accepted)
-        existing_records = self.journal.all_records(
-            admission.journal_stream,
-            admission.journal_partition_id,
-        )
-        self.run_index.rebuild(existing_records, bodies=self.bodies)
+        try:
+            existing_records = self.journal.all_records(
+                admission.journal_stream,
+                admission.journal_partition_id,
+            )
+            self.run_index.rebuild(existing_records, bodies=self.bodies)
+        except (PlaybillJournalError, ValueError) as exc:
+            raise ProcedureBoundaryRefused(
+                "journal_integrity_error",
+                "Procedure journal history failed integrity verification.",
+            ) from exc
         indexed = self.run_index.get(admission.run_id)
         if indexed is not None:
             if indexed.admission_binding_digest != admission.admission_binding_digest:
@@ -2212,6 +2234,30 @@ class ProcedureExecutor:
                 started_ns=started_ns,
             )
             status = "succeeded"
+        except ProcedureBoundaryRefused as exc:
+            if exc.code in {
+                "not_current",
+                "pin_binding_mismatch",
+                "input_material_mismatch",
+                "state_tap_refused",
+                "provider_replay_receipt_required",
+            }:
+                status = "refused"
+                refusal = ProcedureRunRefusalV1(
+                    code=exc.code,
+                    message=str(exc),
+                    details=exc.details,
+                )
+            elif exc.code in {"journal_append_failed", "journal_conflict"}:
+                status = "failed"
+                failure_code = exc.code
+                failure_details = exc.details
+                failure_message = "Procedure journal operation failed."
+            else:
+                status = "failed"
+                failure_code = exc.code
+                failure_details = exc.details
+                failure_message = "Procedure integrity verification failed."
         except _RunRefusal as exc:
             status = "refused"
             refusal = exc.refusal
@@ -2508,15 +2554,22 @@ class ProcedureExecutor:
             or procedure.activation_policy != admission.activation_policy
             or procedure.definition.hard_caps != admission.hard_caps
         ):
-            raise PlaybillExecutionError("Procedure admission and accepted artifact differ")
+            raise ProcedureBoundaryRefused(
+                "pin_binding_mismatch",
+                "Procedure admission and accepted artifact differ.",
+            )
         if admission.invocation_origin == "actor":
             if procedure.pins != admission.full_pins:
-                raise PlaybillExecutionError("Procedure admission and accepted artifact differ")
+                raise ProcedureBoundaryRefused(
+                    "pin_binding_mismatch",
+                    "Procedure admission pins differ from the accepted artifact.",
+                )
         elif not set(procedure.pins).issubset(set(admission.full_pins)) or not set(
             self.slot_pins.values()
         ).issubset(set(admission.full_pins)):
-            raise PlaybillExecutionError(
-                "Line run pins must close the accepted Procedure pins exactly"
+            raise ProcedureBoundaryRefused(
+                "pin_binding_mismatch",
+                "Line run pins must close the accepted Procedure pins exactly.",
             )
         if admission.invocation_origin == "actor":
             if procedure.definition.budget != admission.budget:
@@ -2534,7 +2587,10 @@ class ProcedureExecutor:
             ):
                 raise PlaybillExecutionError("Line run budget exceeds the Procedure hard caps")
         if _node_pin_sets(accepted, self.slot_pins) != admission.node_pin_sets:
-            raise PlaybillExecutionError("Procedure node pins changed after admission")
+            raise ProcedureBoundaryRefused(
+                "pin_binding_mismatch",
+                "Procedure node pins changed after admission.",
+            )
         self._verify_effective_rung(admission)
         self._verify_input_planes(admission, accepted)
         expected_state_inputs = {
@@ -2547,7 +2603,10 @@ class ProcedureExecutor:
         }
         actual_state_inputs = {item.input_name: item for item in admission.accepted_state_inputs}
         if set(actual_state_inputs) != set(expected_state_inputs):
-            raise PlaybillExecutionError("Procedure admission state_tap input set differs")
+            raise ProcedureBoundaryRefused(
+                "input_material_mismatch",
+                "Procedure admission state_tap input set differs.",
+            )
         for name, (query, parameters_digest) in expected_state_inputs.items():
             actual = actual_state_inputs[name]
             if (
@@ -2555,8 +2614,9 @@ class ProcedureExecutor:
                 or actual.parameters_digest != parameters_digest
                 or actual.read_coordinate != admission.accepted_coordinate
             ):
-                raise PlaybillExecutionError(
-                    f"Procedure admission state_tap input {name!r} differs"
+                raise ProcedureBoundaryRefused(
+                    "input_material_mismatch",
+                    f"Procedure admission state_tap input {name!r} differs.",
                 )
 
     def _verify_effective_rung(self, admission: ProcedureRunAdmissionV1) -> None:
@@ -2600,13 +2660,17 @@ class ProcedureExecutor:
         for run_input in admission.run_inputs:
             node = nodes.get(run_input.input_name)
             if node is None:
-                raise PlaybillExecutionError(
-                    f"admitted input {run_input.input_name!r} names no Procedure input node"
+                raise ProcedureBoundaryRefused(
+                    "input_material_mismatch",
+                    f"Admitted input {run_input.input_name!r} names no Procedure input node.",
                 )
             try:
                 validate_node_input_plane(node, run_input)
             except ValueError as exc:
-                raise PlaybillExecutionError(f"input_plane_relabelled: {exc}") from exc
+                raise ProcedureBoundaryRefused(
+                    "input_material_mismatch",
+                    f"Admitted input plane was relabelled: {exc}",
+                ) from exc
         expected_exhaust = {
             node.as_
             for node in accepted.procedure.definition.nodes
@@ -2615,7 +2679,10 @@ class ProcedureExecutor:
         if {item.input_name for item in admission.exhaust_inputs} != expected_exhaust and (
             admission.invocation_origin == "line"
         ):
-            raise PlaybillExecutionError("Line admission exhaust_tap input set differs")
+            raise ProcedureBoundaryRefused(
+                "input_material_mismatch",
+                "Line admission exhaust_tap input set differs.",
+            )
         for exhaust in admission.exhaust_inputs:
             node = nodes[exhaust.input_name]
             if not isinstance(node, ExhaustTapNodeV3):  # pragma: no cover - plane law covers it
@@ -2628,8 +2695,9 @@ class ProcedureExecutor:
                 exhaust.reducer_or_query_digest != reducer.artifact_digest
                 or exhaust.journal_identity != node.journal_identity
             ):
-                raise PlaybillExecutionError(
-                    f"Procedure admission exhaust input {exhaust.input_name!r} differs"
+                raise ProcedureBoundaryRefused(
+                    "input_material_mismatch",
+                    f"Procedure admission exhaust input {exhaust.input_name!r} differs.",
                 )
 
     def _require_current(self, admission: ProcedureRunAdmissionV1) -> None:
@@ -2640,7 +2708,10 @@ class ProcedureExecutor:
             coordinate=admission.accepted_coordinate,
         )
         if current != admission.procedure_artifact_digest:
-            raise PlaybillExecutionError("Procedure is not current at the admitted coordinate")
+            raise ProcedureBoundaryRefused(
+                "not_current",
+                "Procedure is not current at the admitted coordinate.",
+            )
 
     def _checkpoint_current(self, admission: ProcedureRunAdmissionV1, *, effect: bool) -> None:
         if admission.activation_policy == "abort" or (
@@ -2698,7 +2769,14 @@ class ProcedureExecutor:
         nodes = {node.node_id: node for node in definition.nodes}
         current = definition.nodes[0].node_id
         while True:
-            node = nodes[current]
+            try:
+                node = nodes[current]
+            except KeyError as exc:
+                raise ProcedureBoundaryRefused(
+                    "compiler_invariant_broken",
+                    "Compiled control flow names no Procedure node.",
+                    details={"node_id": current},
+                ) from exc
             self._checkpoint_current(admission, effect=False)
             self._check_budget(
                 admission,
@@ -3562,7 +3640,25 @@ class ProcedureExecutor:
             children=children,
             values=values,
         )
-        receipt = self.egress_sink.deliver_terminal_egress(request=request)
+        try:
+            receipt = self.egress_sink.deliver_terminal_egress(request=request)
+        except TerminalEgressError as exc:
+            from cruxible_core.playbill.procedures.terminal_services import (
+                ProcedureSettlementRefused,
+            )
+
+            if isinstance(exc, ProcedureSettlementRefused):
+                raise _RunRefusal(
+                    exc.code,
+                    str(exc),
+                    node_id=node.node_id,
+                    details={
+                        "settlement_refusal": True,
+                        "retryable": exc.retryable,
+                        "detail": exc.details,
+                    },
+                ) from exc
+            raise
         try:
             verify_terminal_egress_receipt(request, receipt)
         except TerminalEgressError as exc:
@@ -4579,8 +4675,19 @@ class ProcedureExecutor:
                     expected_head=head,
                     fencing_token=self.fencing_token,
                 )
-            except PlaybillJournalError:
-                raise
+            except PlaybillJournalError as exc:
+                detail = str(exc).lower()
+                code = (
+                    "journal_conflict"
+                    if any(word in detail for word in ("stale", "fork", "fenc", "active"))
+                    else "journal_integrity_error"
+                    if any(word in detail for word in ("malformed", "corrupt", "chain", "identity"))
+                    else "journal_append_failed"
+                )
+                raise ProcedureBoundaryRefused(
+                    code,
+                    "Procedure journal append refused.",
+                ) from exc
             if (
                 stored.record.payload_digest != reservation.body_digest
                 or stored.record.event_kind != reservation.intended_event_kind
@@ -4619,6 +4726,21 @@ class ProcedureExecutor:
         ]
         if not run_records or run_records[-1].record.event_kind != "attempt_finalized":
             raise PlaybillExecutionError("completed run index is not supported by journal exhaust")
+        provider_starts = sum(
+            item.record.event_kind == "provider_invocation_started" for item in run_records
+        )
+        provider_completions = sum(
+            item.record.event_kind == "provider_invocation_completed" for item in run_records
+        )
+        if provider_starts != provider_completions:
+            raise ProcedureBoundaryRefused(
+                "provider_replay_receipt_required",
+                "Replay requires one completed Provider receipt for every durable start.",
+                details={
+                    "provider_starts": provider_starts,
+                    "provider_completions": provider_completions,
+                },
+            )
         access = BodyAccessContext(principal_id="procedure-run-replay", can_read_body=True)
         payload = parse_journal_payload(
             self.bodies.read(run_records[-1].record.payload_digest, access=access)
@@ -5574,6 +5696,7 @@ __all__ = [
     "ProcedureAdmissionBoundPayloadV4",
     "ProcedureAdmissionBoundPayloadV5",
     "ProcedureActivationAuthorityProtocol",
+    "ProcedureBoundaryRefused",
     "ProcedureClockProtocol",
     "ProcedureExecutor",
     "ProcedureNodePinSetV1",

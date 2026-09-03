@@ -165,6 +165,16 @@ ProcedureInternalFailureCodeV1: TypeAlias = Literal[
     "provider_process_lease_echo_mismatch",
     "provider_process_group_survived_recovery",
 ]
+ProcedureSettlementRefusalCodeV1: TypeAlias = Literal[
+    "settlement_proposal_id_mismatch",
+    "settlement_candidate_mismatch",
+    "settlement_base_semantic_root_mismatch",
+    "settlement_activation_coordinate_changed",
+    "settlement_actor_principal_invalid",
+    "settlement_candidate_scope_mismatch",
+    "settlement_receipt_mismatch",
+    "settlement_lost_cas",
+]
 
 
 class _StrictResultModel(BaseModel):
@@ -303,6 +313,27 @@ class ProcedureInternalFailureV1(_StrictResultModel):
     _repair = model_validator(mode="before")(_with_default_repair)
 
 
+class ProcedureSettlementRefusalV1(_StrictResultModel):
+    tag: Literal["playbill-procedure-settlement-refusal-v1"] = (
+        "playbill-procedure-settlement-refusal-v1"
+    )
+    classification: Literal["settlement_refusal"] = "settlement_refusal"
+    code: ProcedureSettlementRefusalCodeV1
+    message: str
+    node_id: str
+    journal_coordinate: ProcedureJournalCoordinateV1 | None = None
+    details: object = Field(default_factory=dict)
+    retryable: bool = False
+    repair: ServedRepairV1
+
+    _repair = model_validator(mode="before")(_with_default_repair)
+
+    @field_validator("details", mode="before")
+    @classmethod
+    def _details(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+
 class ProcedureRunAttributionV1(_StrictResultModel):
     tag: Literal["playbill-procedure-run-attribution-v1"] = "playbill-procedure-run-attribution-v1"
     actor_type: str
@@ -407,6 +438,7 @@ ProcedureTerminalV1: TypeAlias = Annotated[
     | ProcedureNodeRefusalV1
     | ProcedureOperationalFailureV1
     | ProcedureInternalFailureV1
+    | ProcedureSettlementRefusalV1
     | ProcedureBudgetExhaustedV1
     | ProcedureHaltTerminalV1,
     Field(discriminator="tag"),
@@ -1040,6 +1072,8 @@ __all__ = [
     "ProcedureHaltTerminalV1",
     "ProcedureInternalFailureCodeV1",
     "ProcedureInternalFailureV1",
+    "ProcedureSettlementRefusalCodeV1",
+    "ProcedureSettlementRefusalV1",
     "ProcedureJournalCoordinateV1",
     "ProcedureNodeRefusalCodeV1",
     "ProcedureNodeRefusalV1",

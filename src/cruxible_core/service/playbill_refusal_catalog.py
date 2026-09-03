@@ -18,6 +18,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureInternalFailureCodeV1,
     ProcedureNodeRefusalCodeV1,
     ProcedureOperationalFailureCodeV1,
+    ProcedureSettlementRefusalCodeV1,
 )
 from cruxible_client.contracts.repairs import ServedRepairV1, hand_edit_repair
 from cruxible_client.contracts.workspace_advertisement import WorkspaceAdvertisementFailureCode
@@ -32,6 +33,7 @@ CLOSED_SERVED_REFUSAL_VOCABULARIES: dict[str, frozenset[str]] = {
     "procedure_node_refusal": frozenset(get_args(ProcedureNodeRefusalCodeV1)),
     "procedure_operational_failure": frozenset(get_args(ProcedureOperationalFailureCodeV1)),
     "procedure_internal_failure": frozenset(get_args(ProcedureInternalFailureCodeV1)),
+    "procedure_settlement_refusal": frozenset(get_args(ProcedureSettlementRefusalCodeV1)),
 }
 
 ALL_SERVED_REFUSAL_CODES = frozenset().union(*CLOSED_SERVED_REFUSAL_VOCABULARIES.values())

@@ -14,6 +14,8 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureNodeRefusalCodeV1,
     ProcedureNodeRefusalV1,
     ProcedureOperationalFailureV1,
+    ProcedureSettlementRefusalCodeV1,
+    ProcedureSettlementRefusalV1,
     ProcedureTerminalV1,
 )
 
@@ -54,11 +56,34 @@ def test_terminal_union_round_trips_all_four_classes() -> None:
             correlation_id="RUN-abc",
             journal_coordinate=_coordinate(),
         ),
+        ProcedureSettlementRefusalV1(
+            code="settlement_lost_cas",
+            message="Accepted state advanced.",
+            node_id="settle",
+            journal_coordinate=_coordinate(),
+            retryable=True,
+        ),
     )
     adapter = TypeAdapter(ProcedureTerminalV1)
 
     for terminal in terminals:
         assert adapter.validate_python(terminal.model_dump(mode="json")) == terminal
+
+
+def test_settlement_refusal_vocabulary_is_closed_and_prefixed() -> None:
+    codes = set(get_args(ProcedureSettlementRefusalCodeV1))
+
+    assert codes == {
+        "settlement_proposal_id_mismatch",
+        "settlement_candidate_mismatch",
+        "settlement_base_semantic_root_mismatch",
+        "settlement_activation_coordinate_changed",
+        "settlement_actor_principal_invalid",
+        "settlement_candidate_scope_mismatch",
+        "settlement_receipt_mismatch",
+        "settlement_lost_cas",
+    }
+    assert all(code.startswith("settlement_") for code in codes)
 
 
 def test_terminal_contracts_are_closed_and_details_are_canonical() -> None:

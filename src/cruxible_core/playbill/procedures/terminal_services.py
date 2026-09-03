@@ -16,8 +16,10 @@ from cruxible_client.contracts.canonical import CandidateDigest, ProposalDigest,
 from cruxible_client.contracts.errors import PlaybillFormatError, PrincipalIntegrityError
 from cruxible_client.contracts.principals import principal_registry_from_tree
 from cruxible_client.contracts.procedure_mandates import ProcedureMandateV1
+from cruxible_client.contracts.procedures.results import ProcedureSettlementRefusalCodeV1
 from cruxible_core.playbill.procedures.egress import (
     TerminalEgressChildReceiptV1,
+    TerminalEgressError,
     TerminalEgressReceiptV2,
     TerminalEgressRequestV2,
     require_procedure_mandate,
@@ -39,10 +41,30 @@ class EffectfulTerminalError(PlaybillFormatError):
     """An effectful terminal cannot traverse the governed service door."""
 
 
-class SettlementLostCas(EffectfulTerminalError):
+class ProcedureSettlementRefused(EffectfulTerminalError, TerminalEgressError):
+    """Typed settlement-door refusal preserved by Procedure run projection."""
+
+    def __init__(
+        self,
+        code: ProcedureSettlementRefusalCodeV1,
+        message: str,
+        *,
+        details: object | None = None,
+        retryable: bool = False,
+    ) -> None:
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.details = {} if details is None else details
+        self.retryable = retryable
+
+
+class SettlementLostCas(ProcedureSettlementRefused):
     """Activation lost its exact-head race and must be prepared again."""
 
-    code = "settlement_lost_cas"
+    code: Literal["settlement_lost_cas"] = "settlement_lost_cas"
+
+    def __init__(self, message: str, *, details: object | None = None) -> None:
+        super().__init__(self.code, message, details=details, retryable=True)
 
 
 class _StrictTerminalServiceModel(BaseModel):
@@ -148,8 +170,9 @@ class PlaybillSettlementDoor:
         evidence = self.instance.proposal_evidence()
         proposal_id = evidence.resolve_proposal_id(target.proposal_id)
         if proposal_id != target.proposal_id:
-            raise EffectfulTerminalError(
-                "settlement_proposal_id_mismatch: target must name the full proposal id"
+            raise ProcedureSettlementRefused(
+                "settlement_proposal_id_mismatch",
+                "Target must name the full proposal id.",
             )
         admission = evidence.read_admission(proposal_id)
         evaluation = evidence.read_evaluation(proposal_id)
@@ -159,13 +182,15 @@ class PlaybillSettlementDoor:
             or evaluation.candidate_digest != target.candidate_digest
             or evaluation.evaluated_tree_oid is None
         ):
-            raise EffectfulTerminalError(
-                "settlement_candidate_mismatch: proposal evidence names another candidate"
+            raise ProcedureSettlementRefused(
+                "settlement_candidate_mismatch",
+                "Proposal evidence names another candidate.",
             )
         candidate = evidence.read_candidate(target.candidate_digest)
         if candidate.candidate_digest != target.candidate_digest:
-            raise EffectfulTerminalError(
-                "settlement_candidate_mismatch: candidate bytes do not reproduce"
+            raise ProcedureSettlementRefused(
+                "settlement_candidate_mismatch",
+                "Candidate bytes do not reproduce.",
             )
         base = self.instance.coordinate_for_oid(evaluation.evaluated_base_oid)
         if (
@@ -173,8 +198,9 @@ class PlaybillSettlementDoor:
             or base.semantic_root != target.base_semantic_root
             or candidate.candidate.parent_semantic_root != target.base_semantic_root
         ):
-            raise EffectfulTerminalError(
-                "settlement_base_semantic_root_mismatch: candidate is not based at admission"
+            raise ProcedureSettlementRefused(
+                "settlement_base_semantic_root_mismatch",
+                "Candidate is not based at admission.",
             )
         base_tree = self.instance.tree_at(evaluation.evaluated_base_oid)
         candidate_tree = self.instance.proposal_tree(evaluation.evaluated_tree_oid)
@@ -194,8 +220,9 @@ class PlaybillSettlementDoor:
         self.inspect_exact_candidate(target=target)
         current = self.instance.accepted_coordinate()
         if AcceptedCoordinate.from_internal(current) != self.admitted_coordinate:
-            raise EffectfulTerminalError(
-                "settlement_activation_coordinate_changed: accepted state advanced"
+            raise ProcedureSettlementRefused(
+                "settlement_activation_coordinate_changed",
+                "Accepted state advanced before activation.",
             )
         principals = principal_registry_from_tree(
             self.instance.tree_at(self.admitted_coordinate.git_oid),
@@ -204,8 +231,9 @@ class PlaybillSettlementDoor:
         try:
             principals.require_active(actor_id)
         except PrincipalIntegrityError as exc:
-            raise EffectfulTerminalError(
-                "settlement_actor_principal_invalid: actor is not active at admission"
+            raise ProcedureSettlementRefused(
+                "settlement_actor_principal_invalid",
+                "Actor is not active at admission.",
             ) from exc
         activated = service_activate_playbill_proposal(
             self.instance,
@@ -333,8 +361,9 @@ class SettlementTerminalAdapter:
             )
         target = SettlementTargetV1.model_validate(request.items[0].value)
         if target.base_semantic_root != request.accepted_coordinate.semantic_root:
-            raise EffectfulTerminalError(
-                "settlement_base_semantic_root_mismatch: target names another accepted base"
+            raise ProcedureSettlementRefused(
+                "settlement_base_semantic_root_mismatch",
+                "Target names another accepted base.",
             )
         inspection = self.door.inspect_exact_candidate(target=target)
         if (
@@ -343,9 +372,9 @@ class SettlementTerminalAdapter:
             or inspection.base_semantic_root != target.base_semantic_root
             or inspection.target_paths != request.target_paths
         ):
-            raise EffectfulTerminalError(
-                "settlement_candidate_scope_mismatch: target paths are not the exact "
-                "candidate delta"
+            raise ProcedureSettlementRefused(
+                "settlement_candidate_scope_mismatch",
+                "Target paths are not the exact candidate delta.",
             )
         require_procedure_mandate(
             request,
@@ -360,8 +389,9 @@ class SettlementTerminalAdapter:
             result.proposal_id != target.proposal_id
             or result.candidate_digest != target.candidate_digest
         ):
-            raise EffectfulTerminalError(
-                "settlement receipt does not reproduce the exact approved candidate"
+            raise ProcedureSettlementRefused(
+                "settlement_receipt_mismatch",
+                "Settlement receipt does not reproduce the exact approved candidate.",
             )
         if result.status == "lost_cas":
             assert result.observed_head is not None
@@ -392,6 +422,7 @@ __all__ = [
     "EffectfulTerminalError",
     "ProposalTerminalAdapter",
     "PlaybillSettlementDoor",
+    "ProcedureSettlementRefused",
     "SettlementCandidateInspection",
     "SettlementDoorProtocol",
     "SettlementDoorResultV1",

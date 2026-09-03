@@ -72,6 +72,7 @@ from cruxible_client.contracts.procedures.models import (
 from cruxible_client.contracts.procedures.results import (
     ProcedureAcquisitionPlanV2,
     ProcedureAdmissionMaterialManifestV1,
+    ProcedureAdmissionRefusalCodeV1,
     ProcedureAdmissionRefusalV1,
     ProcedureBudgetBoundaryObservationV1,
     ProcedureBudgetExceededDetailV1,
@@ -101,6 +102,8 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunReceiptV5,
     ProcedureRunReceiptV6,
     ProcedureSelectionDecisionV1,
+    ProcedureSettlementRefusalCodeV1,
+    ProcedureSettlementRefusalV1,
     ProcedureSourceCaptureAssociationV1,
     ProcedureTerminalV1,
     ProviderBucketClassificationPlanV1,
@@ -135,6 +138,7 @@ from cruxible_client.contracts.providers import (
     parse_provider,
     provider_digest,
 )
+from cruxible_client.contracts.repairs import hand_edit_repair
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
@@ -1629,13 +1633,38 @@ def _state_from_records(
                 )
                 refusal_code = str(refusal.get("code", "guard_refused"))
                 raw_detail_code = refusal.get("detail_code")
-                if refusal_code == "budget_max_items_exceeded":
+                if refusal_code in get_args(ProcedureAdmissionRefusalCodeV1):
+                    terminal = ProcedureAdmissionRefusalV1.model_validate(
+                        {
+                            "code": refusal_code,
+                            "message": str(refusal.get("message", "Procedure admission refused.")),
+                            "details": refusal.get("details", {}),
+                        }
+                    )
+                elif refusal_code == "budget_max_items_exceeded":
                     terminal = ProcedureBudgetExhaustedV1(
                         node_id=str(refusal.get("node_id") or last_node_id),
                         journal_coordinate=_journal_coordinate(final_record),
                         details=ProcedureBudgetExceededDetailV1.model_validate(
                             refusal.get("details", {})
                         ),
+                    )
+                elif refusal_code in get_args(ProcedureSettlementRefusalCodeV1):
+                    terminal = ProcedureSettlementRefusalV1.model_validate(
+                        {
+                            "code": refusal_code,
+                            "message": str(refusal.get("message", "Procedure settlement refused.")),
+                            "node_id": str(refusal.get("node_id") or last_node_id),
+                            "journal_coordinate": _journal_coordinate(final_record),
+                            "details": refusal.get("details", {}),
+                            "retryable": bool(
+                                cast(dict[str, object], refusal.get("details", {})).get(
+                                    "retryable", False
+                                )
+                                if isinstance(refusal.get("details"), dict)
+                                else False
+                            ),
+                        }
                     )
                 else:
                     terminal = ProcedureNodeRefusalV1.model_validate(
@@ -1716,6 +1745,7 @@ def _state_from_records(
                         message="Procedure execution failed unexpectedly; inspect daemon logs.",
                         correlation_id=run_id,
                         journal_coordinate=_journal_coordinate(final_record),
+                        repair=hand_edit_repair("unexpected_exception"),
                     )
         except (ValidationError, TypeError, ValueError):
             status = "internal_failed"
@@ -1726,6 +1756,7 @@ def _state_from_records(
                 message="Procedure run record is invalid; inspect daemon logs.",
                 correlation_id=run_id,
                 journal_coordinate=_journal_coordinate(final_record),
+                repair=hand_edit_repair("run_record_invalid"),
             )
     attribution = ProcedureRunAttributionV1(
         actor_type=admission.actor_context.actor_type,
@@ -1985,6 +2016,7 @@ def service_run_playbill_procedure(
                 code="binding_required",
                 message="Procedure accepted bindings are incomplete.",
                 details={"required_slots": list(readiness.required_slots)},
+                repair=hand_edit_repair("binding_required"),
             ),
         )
     if readiness.state == "unsupported":
@@ -2027,6 +2059,7 @@ def service_run_playbill_procedure(
                     ],
                     "legacy_external_occurrences": list(legacy_external),
                 },
+                repair=hand_edit_repair(refusal_code),
             ),
         )
     current_digest = _CurrentProcedureAuthority(instance).current_procedure_digest(
@@ -2362,6 +2395,7 @@ def service_run_playbill_line(
                 node_id="line-admission",
                 details={"reason": {"code": exc.code, "detail": str(exc)}, **exc.details},
                 retryable=True,
+                repair=hand_edit_repair("provider_unavailable"),
             ),
         )
     selection = ProcedureSelectionDecisionV1(
@@ -2863,6 +2897,7 @@ def service_prepare_playbill_line_admission(
                 "exhaust_input_count": len(admission.exhaust_inputs),
                 "carrier_present": admission.exhaust_access_binding_digest is not None,
             },
+            repair=hand_edit_repair("exhaust_binding_carrier_required"),
         )
     tree = instance.tree_at(admission.bound_coordinate.git_oid)
     try:
@@ -2872,6 +2907,7 @@ def service_prepare_playbill_line_admission(
             code="procedure_runtime_policy_absent",
             message=str(exc),
             details={"policy_path": PROCEDURE_RUNTIME_POLICY_PATH},
+            repair=hand_edit_repair("procedure_runtime_policy_absent"),
         )
     try:
         bound = bind_line_admission_runtime_policy(admission, policy)
@@ -2884,6 +2920,7 @@ def service_prepare_playbill_line_admission(
                 "accepted_line_identity": accepted_line.line.identity.qualified,
                 "accepted_line_spec_digest": accepted_line.artifact_digest,
             },
+            repair=hand_edit_repair("artifact_binding_mismatch"),
         )
     return bound
 

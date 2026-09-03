@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import cruxible_core.service.playbill_procedure_runs as procedure_run_service
 from cruxible_client.contracts.procedures.models import (
     InboxEgressNodeV3,
     ProcedureDefinitionV3,
     StateTapNodeV3,
 )
+from cruxible_client.contracts.procedures.results import ProcedureSettlementRefusalV1
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.exhaust import parse_journal_payload
 from cruxible_core.playbill.procedures.egress import (
@@ -21,6 +25,7 @@ from cruxible_core.playbill.procedures.execution import (
     ProcedureRunAdmissionV2,
     procedure_admission_digest,
 )
+from cruxible_core.playbill.procedures.terminal_services import ProcedureSettlementRefused
 from tests.test_playbill.test_procedure_execution import (
     NOW,
     _accepted,
@@ -104,6 +109,15 @@ class _InboxSink:
                 )
                 for item in request.items
             ),
+        )
+
+
+class _SettlementRefusingSink:
+    def deliver_terminal_egress(self, *, request: TerminalEgressRequestV1) -> None:
+        raise ProcedureSettlementRefused(
+            "settlement_candidate_scope_mismatch",
+            "Target paths differ from the admitted candidate.",
+            details={"target_paths": ["claims/expected.json"]},
         )
 
 
@@ -197,3 +211,67 @@ def test_terminal_sink_delivery_is_receipted_after_item_dependencies(tmp_path) -
     assert isinstance(payload, dict)
     assert payload["verdict"] == "delivered"
     assert payload["receipt"]["disposition"] == "posted"
+
+
+def test_settlement_refusal_projects_as_its_dedicated_public_terminal(
+    tmp_path,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    root = tmp_path / "settlement-refusal"
+    root.mkdir()
+    fixture = _fixture(root)
+    accepted = _terminal_procedure()
+    prepared = _line_bound(
+        _prepare(
+            accepted,
+            fixture,
+            _StateReader({"items": [{"id": "one"}]}),
+            run_id="line-settlement-refusal",
+        )
+    )
+    admission = prepared.admission
+    rung = compute_effective_rung(
+        procedure_terminal_capability=1,
+        requested_terminal_rung=1,
+        selector_privacies={},
+        taint_labels=(),
+        mandate_grants={},
+        calibration_caps=(),
+        evaluation_time=NOW,
+        procedure_definition_digest=admission.definition_digest,
+        line_spec_digest=admission.line_spec_digest or "",
+        sensitivity_policy_digest=admission.sensitivity_policy_digest or "",
+        mandate_coordinate_digest=admission.mandate_coordinate_digest or "",
+        calibration_coordinate_digest=admission.calibration_coordinate_digest or "",
+    )
+
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        effective_rung=rung,
+        egress_sink=_SettlementRefusingSink(),  # type: ignore[arg-type]
+    ).execute(prepared, accepted)
+
+    assert result.status == "refused"
+    assert result.refusal is not None
+    assert result.refusal.code == "settlement_candidate_scope_mismatch"
+    records = fixture.journal.all_records(fixture.stream, "runs")
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_records_for_run",
+        lambda _instance, _run_id: records,
+    )
+    state = procedure_run_service._state_from_records(  # noqa: SLF001
+        SimpleNamespace(body_store=lambda: fixture.bodies),  # type: ignore[arg-type]
+        run_id=prepared.admission.run_id,
+        receipt=result.receipt,
+    )
+    assert isinstance(state.terminal, ProcedureSettlementRefusalV1)
+    assert state.terminal.code == "settlement_candidate_scope_mismatch"
+    assert state.terminal.repair.hand_edit.required_change == (
+        "repair_settlement_candidate_scope_mismatch"
+    )

@@ -3329,7 +3329,9 @@ def test_epoch_check_refuses_superseded_effect_before_intent(tmp_path) -> None:
         contract_validator=_Contracts(),
         provider_executor=provider,
     ).execute(_prepare(accepted, fixture, _StateReader()), accepted)
-    assert result.status == "failed"
+    assert result.status == "refused"
+    assert result.refusal is not None
+    assert result.refusal.code == "not_current"
     assert provider.calls == 0
     assert "effect_intent" not in {
         item.record.event_kind for item in fixture.journal.all_records(fixture.stream, "runs")
