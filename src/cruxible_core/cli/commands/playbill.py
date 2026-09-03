@@ -451,6 +451,15 @@ def _with_git_workspace_note(result: Any) -> Any:
     return result.model_copy(update={"git_workspace_note": note})
 
 
+def _json_receipt(result: Any) -> dict[str, Any]:
+    """Elide only an absent client advisory while preserving nested null fields."""
+
+    payload = result.model_dump(mode="json")
+    if payload.get("git_workspace_note") is None:
+        payload.pop("git_workspace_note", None)
+    return cast(dict[str, Any], payload)
+
+
 def _forbidden_roots_for(workspace_root: Path | None) -> tuple[Path, ...]:
     return () if workspace_root is None else (workspace_root,)
 
@@ -730,7 +739,7 @@ def attach_workspace(
     )
     result = _with_git_workspace_note(result)
     if output_json:
-        _emit_json(result.model_dump(mode="json", exclude_none=True))
+        _emit_json(_json_receipt(result))
         return
     click.echo(f"Attached workspace {workspace} to Playbill host {selected}")
     click.echo(f"Config: {config_path}")
@@ -839,7 +848,7 @@ def create_host(
         )
     _activate_server_instance(result.instance_id)
     if output_json:
-        _emit_json(result.model_dump(mode="json", exclude_none=True))
+        _emit_json(_json_receipt(result))
         return
     click.echo(f"Playbill host: {result.instance_id} ({result.status})")
 
@@ -951,7 +960,7 @@ def init_playbill(
         marker.unlink()
     _activate_server_instance(result.instance_id)
     if output_json:
-        _emit_json(result.model_dump(mode="json", exclude_none=True))
+        _emit_json(_json_receipt(result))
         return
     click.echo(f"Playbill initialized at {result.coordinate.git_oid}")
     click.echo(f"Approval policy: {result.approval_policy_mode}")
@@ -1378,7 +1387,7 @@ def approve_proposal(
     )
     result = _with_git_workspace_note(result)
     if output_json:
-        _emit_json(result.model_dump(mode="json", exclude_none=True))
+        _emit_json(_json_receipt(result))
     else:
         click.echo(f"Approved {result.candidate_digest} as {result.signer_id}")
 
@@ -3831,7 +3840,10 @@ def export_floor(
         **_workspace_config_transport(),
     )
     if output_json:
-        _emit_json(written.model_dump(mode="json", exclude_none=True))
+        payload = dict(result.manifest)
+        if written.git_workspace_note is not None:
+            payload["git_workspace_note"] = written.git_workspace_note.model_dump(mode="json")
+        _emit_json(payload)
         return
     click.echo(f"Wrote {len(result.files)} floor file(s) to {written.destination}")
     click.echo(f"Floor digest: {result.manifest['floor_digest']}")

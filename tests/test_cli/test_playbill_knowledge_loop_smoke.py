@@ -332,6 +332,11 @@ def test_cli_init_adopts_only_its_transport_bound_response_loss_orphan(
 
     retry = CliRunner().invoke(cli, args)
     assert retry.exit_code == 0, retry.output
+    payload = json.loads(retry.stdout)
+    assert payload["workspace_advertisement"]["status"] == "not_attached"
+    assert payload["workspace_advertisement"]["workspace_path"] is None
+    assert payload["workspace_advertisement"]["failure_code"] is None
+    assert "git_workspace_note" not in payload
     assert private_key.read_bytes() == original_private
     assert not marker.exists()
     assert calls == 2
@@ -724,10 +729,7 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     floor = tmp_path / ".playbill/floor"
     exported = cruxible.json("playbill", "floor", "export")
     manifest = json.loads((floor / "manifest.json").read_text(encoding="utf-8"))
-    assert exported["tag"] == "playbill-workspace-floor-write-result-v1"
-    assert exported["floor_digest"] == manifest["floor_digest"]
-    assert exported["coordinate"] == manifest["coordinate"]
-    assert exported["file_count"] == len(manifest["files"]) + 1
+    assert manifest == exported
     assert manifest["coordinate"] == coordinate
     assert manifest["floor_digest"].startswith("sha256:")
 
