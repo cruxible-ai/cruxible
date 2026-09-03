@@ -130,11 +130,18 @@ def derive_candidate_cards(
             continue
         card_path = candidate_card_path(path)
         content = candidate_tree.get(path)
-        result[card_path] = (
-            render_removal_card(coordinate=coordinate)
-            if content is None
-            else render_candidate_card(path, content, artifact_kinds=artifact_kinds)
-        )
+        if content is None:
+            result[card_path] = render_removal_card(coordinate=coordinate)
+            continue
+        try:
+            result[card_path] = render_candidate_card(path, content, artifact_kinds=artifact_kinds)
+        except ProposalIntegrityError:
+            # Derivation runs before member evaluation, so a member whose bytes the
+            # evaluator is about to refuse typed must not abort it first: the caller
+            # is owed the format diagnostic and its inventory row, not an untyped
+            # integrity error. Settlement and recovery only ever re-derive trees the
+            # evaluator already accepted, where every member parses.
+            continue
     return result
 
 

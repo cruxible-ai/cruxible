@@ -100,6 +100,30 @@ def test_card_rederivation_replaces_missing_stale_and_extra_derivatives() -> Non
         )
 
 
+def test_derivation_skips_a_member_the_evaluator_will_refuse_typed() -> None:
+    """Cards are derived before member evaluation, so they must not pre-empt it.
+
+    A member whose bytes are not canonical artifact JSON is owed the evaluator's
+    typed format diagnostic and its inventory row; aborting derivation first turns
+    that into an untyped integrity error the caller cannot repair.
+    """
+
+    good = "procedures/good.json"
+    bad = "procedures/bad.json"
+    candidate = {good: _artifact("good"), bad: b"not canonical artifact bytes\n"}
+
+    rendered = derive_candidate_cards(
+        base_tree={},
+        candidate_tree=candidate,
+        coordinate="c" * 40,
+        artifact_kinds=P2_C_ARTIFACT_KINDS,
+    )
+
+    assert candidate_card_path(bad) not in rendered
+    assert b"# procedure: good" in rendered[candidate_card_path(good)]
+    assert rendered[bad] == candidate[bad]
+
+
 def test_proposal_admission_allows_card_rederivation_but_rejects_caller_card_bytes() -> None:
     artifact_path = "procedures/demo.json"
     card_path = candidate_card_path(artifact_path)
