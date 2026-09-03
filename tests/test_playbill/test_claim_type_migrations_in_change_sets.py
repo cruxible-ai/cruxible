@@ -8,8 +8,10 @@ import re
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import get_args
 
 import pytest
+from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.authoring.models import (
@@ -18,6 +20,7 @@ from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV1,
     ClaimRetirementMemberV1,
     ClaimTypeSuccessionDependentV1,
+    ClaimTypeSuccessionDisposition,
     ClaimTypeSuccessionMemberV1,
     SelfSourceBodyV1,
     authoring_member_identity,
@@ -46,6 +49,7 @@ from cruxible_core.playbill.claim_type_migrations import (
     ClaimTypeDependentDispositionV3,
     ClaimTypeMigrationRequestV3,
     ClaimTypeMigrationResultV3,
+    MigrationInputDisposition,
     service_migrate_claim_type,
 )
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
@@ -623,6 +627,50 @@ def test_a_re_author_sibling_under_another_type_refuses_with_both_indices(
     assert replacement["reason"] == "predicate_mismatch"
     assert replacement["member"] == positions[authoring_member_identity(succession)]
     assert replacement["sibling_member"] == positions[authoring_member_identity(other)]
+
+
+def test_the_member_disposition_cannot_drift_from_the_migration_disposition() -> None:
+    """Two distributions, one vocabulary: the member mirrors V3 field for field."""
+
+    core = ClaimTypeDependentDispositionV3.model_fields
+    member = ClaimTypeSuccessionDependentV1.model_fields
+    # `successor` is the standalone route's hand-supplied artifact body;
+    # `successor_claim_id` is the change set's sibling member. Everything the
+    # two roads share is spelled identically.
+    assert set(member) - set(core) == {"successor_claim_id"}
+    assert set(core) - set(member) == {"successor"}
+    for name in ("identity", "claim_retirement_reason", "claim_effective_until"):
+        assert member[name].annotation == core[name].annotation, name
+
+    assert set(get_args(ClaimTypeSuccessionDisposition)) == set(
+        get_args(MigrationInputDisposition)
+    ) | {"re_author"}
+
+    identity = ArtifactIdentity(kind="Claim", name="CLM-" + "3" * 32)
+    naive = datetime(2026, 9, 5, 12)  # noqa: DTZ001 - the point of the test
+    for model in (ClaimTypeDependentDispositionV3, ClaimTypeSuccessionDependentV1):
+        with pytest.raises(ValidationError, match="timezone-aware"):
+            model(
+                identity=identity,
+                disposition="retire",
+                claim_retirement_reason="was-wrong",
+                claim_effective_until=naive,
+            )
+    aware = datetime(2026, 9, 5, 12, tzinfo=UTC)
+    assert (
+        ClaimTypeSuccessionDependentV1(
+            identity=identity,
+            disposition="retire",
+            claim_retirement_reason="was-wrong",
+            claim_effective_until=aware,
+        ).claim_effective_until
+        == ClaimTypeDependentDispositionV3(
+            identity=identity,
+            disposition="retire",
+            claim_retirement_reason="was-wrong",
+            claim_effective_until=aware,
+        ).claim_effective_until
+    )
 
 
 def test_a_successor_admitting_no_accepted_contract_lints_on_both_roads(

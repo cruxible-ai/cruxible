@@ -959,7 +959,15 @@ class ClaimTypeSuccessionDependentV1(_StrictAuthoringModel):
     @field_validator("claim_effective_until")
     @classmethod
     def _time(cls, value: datetime | None) -> datetime | None:
-        return None if value is None else ensure_utc(value)
+        # Refused, not reinterpreted: this instant is handed straight to
+        # `ClaimTypeDependentDispositionV3`, which refuses a naive value, and a
+        # member that silently called it UTC would retire a Claim at an instant
+        # the author never wrote. The sibling retirement member's `ensure_utc`
+        # is the older idiom; this field mirrors the migration vocabulary it
+        # lowers into.
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("claim_effective_until must be timezone-aware")
+        return value
 
     @field_serializer("claim_effective_until", when_used="json")
     def _serialize_time(self, value: datetime | None) -> str | None:
