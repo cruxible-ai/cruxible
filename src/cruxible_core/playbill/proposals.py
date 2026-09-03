@@ -413,7 +413,7 @@ def validate_proposal_tree(
         content = tree[path]
         if not isinstance(content, bytes):
             raise ProposalAdmissionError("proposal tree values must be exact bytes")
-        if not _authorable(path) and base.get(path) != content:
+        if not _authorable(path) and not is_candidate_card_path(path) and base.get(path) != content:
             raise ProposalAdmissionError(
                 f"proposal changed a daemon-controlled or unregistered path: {path}"
             )

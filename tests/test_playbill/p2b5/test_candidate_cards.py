@@ -9,7 +9,7 @@ from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_wire_succession import TIMESTAMP, _document_tree
 
 from cruxible_client.contracts.canonical import canonical_bytes, manifest_root, semantic_projection
-from cruxible_client.contracts.errors import ProposalAdmissionError, ProposalIntegrityError
+from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_core.playbill.candidate_cards import (
     CARD_RENDERER_DIGEST,
     candidate_card_path,
@@ -124,7 +124,19 @@ def test_derivation_skips_a_member_the_evaluator_will_refuse_typed() -> None:
     assert rendered[bad] == candidate[bad]
 
 
-def test_proposal_admission_allows_card_rederivation_but_rejects_caller_card_bytes() -> None:
+def test_proposal_admission_admits_card_paths_and_re_derives_their_bytes() -> None:
+    """Admission accepts a tree that already carries cards; derivation owns the bytes.
+
+    HOLD-class: the round-0 oracle "rejects caller card bytes" is SUPERSEDED. Its
+    changed-path refusal made fetch -> edit -> resubmit impossible, because the
+    evaluated candidate tree, the accepted projection and `playbill review` all
+    hand the caller a tree with cards in it, and every one of those cards is a
+    changed daemon-controlled path. The changed-path guard now carries the same
+    card exemption its removed-path twin already had. Caller card bytes keep zero
+    authority for the reason the retraction relies on: derive_candidate_cards
+    strips every card path and re-derives it, which is what this oracle asserts.
+    """
+
     artifact_path = "procedures/demo.json"
     card_path = candidate_card_path(artifact_path)
     base = {
@@ -132,25 +144,57 @@ def test_proposal_admission_allows_card_rederivation_but_rejects_caller_card_byt
         card_path: b"# procedure: demo\n",
     }
     changed = {artifact_path: _artifact("demo-v2")}
+    resubmitted = {**changed, card_path: b"caller-authored\n"}
+    invented = {**changed, "cards/procedures/extra.md": b"caller-authored\n"}
 
-    assert (
-        validate_proposal_tree(
-            changed,
-            limits=ProposalReceiveLimits(),
-            base_tree=base,
-        )
-        == changed
-    )
-    for caller_tree in (
-        {**changed, card_path: b"caller-authored\n"},
-        {**changed, "cards/procedures/extra.md": b"caller-authored\n"},
-    ):
-        with pytest.raises(ProposalAdmissionError, match="daemon-controlled"):
+    for caller_tree in (changed, resubmitted, invented):
+        assert (
             validate_proposal_tree(
                 caller_tree,
                 limits=ProposalReceiveLimits(),
                 base_tree=base,
             )
+            == caller_tree
+        )
+        derived = derive_candidate_cards(
+            base_tree=base,
+            candidate_tree=caller_tree,
+            coordinate="d" * 40,
+            artifact_kinds=P2_C_ARTIFACT_KINDS,
+        )
+        assert b"# procedure: demo-v2" in derived[card_path]
+        assert b"caller-authored" not in derived[card_path]
+        assert "cards/procedures/extra.md" not in derived
+
+
+def test_an_evaluated_card_bearing_tree_can_be_edited_and_resubmitted(tmp_path: Path) -> None:
+    """The fetch -> edit -> resubmit loop must survive its own derivative cards."""
+
+    instance, _owner = initialize_local(tmp_path)
+    base, proposed = _document_tree(instance)
+    evaluation = evaluate_proposal_tree(
+        base_tree=base,
+        current_tree=base,
+        proposed_tree=proposed,
+        current=instance.accepted_coordinate(),
+        bodies=instance.body_store(),
+        timestamp=TIMESTAMP,
+        rebased=False,
+        actor_id="owner",
+        candidate_card_renderer_digest=CARD_RENDERER_DIGEST,
+    )
+    assert evaluation.candidate is not None
+    fetched = dict(evaluation.tree)
+    assert [path for path in fetched if path.startswith("cards/")]
+
+    assert (
+        validate_proposal_tree(
+            fetched,
+            limits=ProposalReceiveLimits(),
+            base_tree=base,
+        )
+        == fetched
+    )
 
 
 def test_exact_renderer_digest_controls_candidate_evaluation(tmp_path: Path) -> None:
