@@ -336,7 +336,10 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
         LocalProviderExecutionDriver().bind(
             accepted, accepted_interface(), implementation.implementation_digest, deployment
         )
-    assert escaping_manifest.value.code == "environment_divergence"
+    # A seal declaring a path outside the environment is not a divergence
+    # between the seal and the running code: it is an unusable cached seal, so
+    # it refuses at the cache boundary before any comparison happens.
+    assert escaping_manifest.value.code == "cache_integrity"
     environment_manifest.write_bytes(seal_bytes)
 
     verified_environment = tmp_path / "verified-environment"
@@ -358,6 +361,30 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
             accepted, accepted_interface(), implementation.implementation_digest, deployment
         )
     assert missing_runtime.value.code == "provider_runtime_not_in_materialization"
+
+    # The cached seal itself is the cache boundary: absent, unreadable and
+    # non-canonical bytes are cache facts, not a divergence between the seal and
+    # the code that would run.
+    environment_manifest.write_bytes(b"{not json")
+    with pytest.raises(ProviderLocalRuntimeRefused) as malformed_seal:
+        LocalProviderExecutionDriver().bind(
+            accepted, accepted_interface(), implementation.implementation_digest, deployment
+        )
+    assert malformed_seal.value.code == "cache_integrity"
+
+    environment_manifest.write_bytes(b'{"b": 1, "a": 2}')
+    with pytest.raises(ProviderLocalRuntimeRefused) as noncanonical_seal:
+        LocalProviderExecutionDriver().bind(
+            accepted, accepted_interface(), implementation.implementation_digest, deployment
+        )
+    assert noncanonical_seal.value.code == "cache_integrity"
+
+    environment_manifest.unlink()
+    with pytest.raises(ProviderLocalRuntimeRefused) as absent_seal:
+        LocalProviderExecutionDriver().bind(
+            accepted, accepted_interface(), implementation.implementation_digest, deployment
+        )
+    assert absent_seal.value.code == "cache_integrity"
 
 
 def test_local_driver_runs_in_isolated_directory_with_fd_secret_and_attribution_egress(

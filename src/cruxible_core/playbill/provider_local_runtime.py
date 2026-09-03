@@ -680,22 +680,33 @@ class LocalProviderExecutionDriver:
 
     @staticmethod
     def _read_environment_manifest(path: Path) -> tuple[ProviderMaterializationSealV2, bytes]:
+        """Read the cached seal before anything is compared against running code.
+
+        This is the materialization CACHE boundary, and its failures are cache
+        facts: the seal file the daemon wrote into the environment directory is
+        absent, unreadable, non-canonical, or not a seal at all. Nothing has yet
+        been compared with anything, so there is no divergence to name -- there
+        is one artifact and it is unusable. `environment_divergence` is reserved
+        for the manifest-verification branches below, where a seal really does
+        disagree with the code that would run.
+        """
+
         try:
             raw = path.read_bytes()
             parsed = json.loads(raw)
         except (OSError, ValueError, UnicodeDecodeError) as exc:
             raise ProviderLocalRuntimeRefused(
-                "environment_divergence", "environment seal is absent or malformed"
+                "cache_integrity", "environment seal is absent or malformed"
             ) from exc
         if not isinstance(parsed, dict) or canonical_bytes(parsed) != raw:
             raise ProviderLocalRuntimeRefused(
-                "environment_divergence", "environment seal is not canonical JSON"
+                "cache_integrity", "environment seal is not canonical JSON"
             )
         try:
             return ProviderMaterializationSealV2.model_validate(parsed), raw
         except ValueError as exc:
             raise ProviderLocalRuntimeRefused(
-                "environment_divergence", "environment seal v2 is invalid"
+                "cache_integrity", "environment seal v2 is invalid"
             ) from exc
 
     @staticmethod
