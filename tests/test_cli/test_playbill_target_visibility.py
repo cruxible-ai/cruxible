@@ -32,6 +32,7 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("playbill", "workspace", "attach"): "manual",
     ("playbill", "init"): "active",
     ("playbill", "body", "store"): "active",
+    ("playbill", "provider", "seed"): "active",
     ("playbill", "document", "propose"): "active",
     ("playbill", "claim-type", "propose"): "active",
     ("playbill", "claim-type", "migrate"): "active",

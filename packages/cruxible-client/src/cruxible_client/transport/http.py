@@ -295,6 +295,13 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillCasObjectResult)
 
+    def seed_playbill_provider(self, instance_id: str) -> contracts.PlaybillProviderSeedResultV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/providers/seed",
+            json={},
+        )
+        return self._parse_model(response, contracts.PlaybillProviderSeedResultV1)
+
     def propose_playbill_document(
         self,
         instance_id: str,

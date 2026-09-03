@@ -40,6 +40,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "workspace", "attach"): "manual",
     ("playbill", "init"): "active",
     ("playbill", "body", "store"): "active",
+    ("playbill", "provider", "seed"): "active",
     ("playbill", "document", "propose"): "active",
     ("playbill", "claim-type", "propose"): "active",
     ("playbill", "claim-type", "migrate"): "active",
@@ -366,6 +367,18 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 },
                 module="playbill",
                 attr="body_group",
+            ),
+            "provider": _group(
+                "Manage governed Provider artifacts.",
+                {
+                    "seed": _command(
+                        "playbill",
+                        "seed_provider",
+                        "Propose the compiler-owned workspace.file Provider bundle.",
+                    )
+                },
+                module="playbill",
+                attr="provider_group",
             ),
             "block": _group(
                 "Maintain client-owned declared projection blocks.",

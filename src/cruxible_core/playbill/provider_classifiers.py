@@ -15,6 +15,11 @@ from cruxible_client.contracts.provider_interfaces import (
     ProviderInterfaceRegistrationV1,
     provider_bucket_fixture_digest,
 )
+from cruxible_core.playbill.seed_artifacts.workspace_file import (
+    WORKSPACE_FILE_FIXTURES,
+    WORKSPACE_FILE_INTERFACE_ID,
+    WorkspaceFileBucketClassifier,
+)
 
 
 class ProviderBucketClassifierProtocol(Protocol):
@@ -51,7 +56,8 @@ _CORE_DEMO_SIZE_FIXTURE_V1 = ProviderBucketConformanceFixtureV1(
 # content can cite it but cannot add a fixture. Executable classifiers are installed
 # by the daemon operator and are never shipped as product-domain demo machinery.
 CORE_PROVIDER_BUCKET_CONFORMANCE_FIXTURES_V1: Mapping[str, ProviderBucketConformanceFixtureV1] = {
-    _CORE_DEMO_SIZE_FIXTURE_V1.fixture_id: _CORE_DEMO_SIZE_FIXTURE_V1
+    fixture.fixture_id: fixture
+    for fixture in (_CORE_DEMO_SIZE_FIXTURE_V1, *WORKSPACE_FILE_FIXTURES)
 }
 
 
@@ -166,6 +172,19 @@ class ProviderBucketClassifierRegistry:
 PROVIDER_BUCKET_CLASSIFIER_REGISTRY = ProviderBucketClassifierRegistry()
 
 
+def install_compiler_owned_provider_classifier(
+    accepted: AcceptedProviderInterfaceRegistrationV1,
+) -> ProviderBucketClassifierInstallationV1 | None:
+    """Install the compiler-owned double for an interface that has one."""
+
+    if accepted.registration.interface_id != WORKSPACE_FILE_INTERFACE_ID:
+        return None
+    return PROVIDER_BUCKET_CLASSIFIER_REGISTRY.install(
+        accepted,
+        WorkspaceFileBucketClassifier(),
+    )
+
+
 __all__ = [
     "CORE_PROVIDER_BUCKET_CONFORMANCE_FIXTURES_V1",
     "ProviderBucketClassifierProtocol",
@@ -173,4 +192,5 @@ __all__ = [
     "PROVIDER_BUCKET_CLASSIFIER_REGISTRY",
     "ProviderClassifierInstallationRefused",
     "core_provider_bucket_conformance_fixtures",
+    "install_compiler_owned_provider_classifier",
 ]

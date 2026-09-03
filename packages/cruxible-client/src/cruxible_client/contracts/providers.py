@@ -126,8 +126,8 @@ class ProviderV1(_StrictProviderModel):
     @classmethod
     def _keys(cls, value: tuple[ProviderSigningKeyV1, ...]) -> tuple[ProviderSigningKeyV1, ...]:
         ids = tuple(item.key_id for item in value)
-        if not value or ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("Provider signing keys must be nonempty, sorted, and unique")
+        if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("Provider signing keys must be sorted and unique")
         public_keys = tuple(item.public_key for item in value)
         if len(public_keys) != len(set(public_keys)):
             raise ValueError("Provider public keys must be unique")
@@ -156,6 +156,8 @@ class ProviderV1(_StrictProviderModel):
     def _identity(self) -> "ProviderV1":
         if self.identity.kind != "Provider" or not _PROVIDER_NAME_RE.fullmatch(self.identity.name):
             raise ValueError("Provider identity must be path-addressable")
+        if self.artifact_format == "playbill-provider-v1" and not self.signing_keys:
+            raise ValueError("Provider v1 signing keys must be nonempty")
         return self
 
     def require_key(self, key_id: str, *, at: datetime) -> ProviderSigningKeyV1:
@@ -288,6 +290,10 @@ def provider_manifest_digest(manifest: ProviderRuntimeManifestV1) -> str:
 
 
 class ProviderDistributionPinV1(_StrictProviderModel):
+    materialization_source: Literal["registry"] = Field(
+        default="registry",
+        exclude_if=lambda value: value == "registry",
+    )
     name: str
     version: str
     filename: str
@@ -308,6 +314,23 @@ class ProviderDistributionPinV1(_StrictProviderModel):
         ):
             raise ValueError("Provider distribution filename must be a plain filename")
         return value
+
+
+class ProviderLocalDistributionPinV1(_StrictProviderModel):
+    """Exact wheel identity whose materialization comes from operator custody."""
+
+    materialization_source: Literal["local"] = "local"
+    name: str
+    version: str
+    filename: str
+    sha256: str
+
+    _distribution_digest = field_validator("sha256")(_sha256)
+
+    @field_validator("filename")
+    @classmethod
+    def _filename(cls, value: str) -> str:
+        return ProviderDistributionPinV1._filename(value)
 
 
 class ProviderImageProvenanceV1(_StrictProviderModel):
@@ -359,7 +382,7 @@ class ProviderRuntimeArtifactPayloadV1(_StrictProviderModel):
     status: Literal["proposed", "accepted"] = "proposed"
     manifest: ProviderRuntimeManifestV1
     manifest_digest: str
-    distribution: ProviderDistributionPinV1
+    distribution: ProviderDistributionPinV1 | ProviderLocalDistributionPinV1
     local_env: ProviderLocalEnvBackendPinV1 | None = None
     container: ProviderContainerBackendPinV1 | None = None
 
@@ -825,6 +848,7 @@ __all__ = [
     "ProviderImageProvenanceV1",
     "ProviderImplementationManifestV1",
     "ProviderImplementationRecordV1",
+    "ProviderLocalDistributionPinV1",
     "ProviderLocalEnvBackendPinV1",
     "ProviderLocalMaterializationReferenceV1",
     "ProviderMaterializationReferenceV1",

@@ -8,7 +8,7 @@ import re
 from collections.abc import Mapping
 from typing import Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import (
@@ -222,6 +222,19 @@ def provider_interface_definition_digest(content_hex: str) -> str:
     ).tagged
 
 
+def provider_external_interface_definition_digest(content_hex: str, *, domain: str) -> str:
+    """Reproduce the Provider runtime's reviewed external stub digest domain."""
+
+    content = _content_bytes(content_hex, label="Provider interface bytes")
+    if domain != "cruxible.interface.stub.v1":
+        raise ValueError("unsupported external Provider interface digest domain")
+    digest = hashlib.sha256()
+    digest.update(domain.encode("utf-8"))
+    digest.update(b"\x00")
+    digest.update(content)
+    return f"sha256:{digest.hexdigest()}"
+
+
 def provider_bucket_vocabulary_digest(content_hex: str) -> str:
     _content_bytes(content_hex, label="Provider bucket vocabulary bytes")
     return typed_digest(
@@ -272,6 +285,12 @@ class ProviderInterfaceRegistrationV1(_StrictInterfaceModel):
     identity: ArtifactIdentity
     interface_id: str
     interface_bytes_hex: str
+    interface_digest_domain: Literal[
+        "playbill-provider-interface-definition-v1", "cruxible.interface.stub.v1"
+    ] = Field(
+        default="playbill-provider-interface-definition-v1",
+        exclude_if=lambda value: value == "playbill-provider-interface-definition-v1",
+    )
     interface_digest: str
     vocabulary_bytes_hex: str
     vocabulary_digest: str
@@ -352,7 +371,14 @@ class ProviderInterfaceRegistrationV1(_StrictInterfaceModel):
     def _correspondence(self) -> "ProviderInterfaceRegistrationV1":
         if self.identity.kind != "ProviderInterface" or self.identity.name != self.interface_id:
             raise ValueError("Provider interface identity must match its interface_id")
-        if self.interface_digest != provider_interface_definition_digest(self.interface_bytes_hex):
+        expected_interface_digest = (
+            provider_interface_definition_digest(self.interface_bytes_hex)
+            if self.interface_digest_domain == "playbill-provider-interface-definition-v1"
+            else provider_external_interface_definition_digest(
+                self.interface_bytes_hex, domain=self.interface_digest_domain
+            )
+        )
+        if self.interface_digest != expected_interface_digest:
             raise ValueError("Provider interface digest does not reproduce exact bytes")
         if self.vocabulary_digest != provider_bucket_vocabulary_digest(self.vocabulary_bytes_hex):
             raise ValueError("Provider vocabulary digest does not reproduce exact bytes")
@@ -577,6 +603,7 @@ __all__ = [
     "provider_bucket_fixture_set_digest",
     "provider_bucket_vocabulary_digest",
     "provider_interface_definition_digest",
+    "provider_external_interface_definition_digest",
     "provider_interface_digest",
     "provider_interface_path",
     "render_provider_interface",

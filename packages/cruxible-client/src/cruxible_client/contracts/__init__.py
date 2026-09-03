@@ -281,6 +281,20 @@ class PlaybillAcceptedCoordinate(BaseModel):
     compiler_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
+class PlaybillProviderSeedResultV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-provider-seed-result-v1"] = "playbill-provider-seed-result-v1"
+    provider_id: str
+    materialization_source: Literal["local", "registry"]
+    status: Literal["already_current", "proposed", "activated", "lost_cas"]
+    changed_paths: tuple[str, ...]
+    proposal_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    candidate_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    approval_required: bool
+    accepted_coordinate: PlaybillAcceptedCoordinate
+
+
 class PlaybillInitResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -292,6 +306,10 @@ class PlaybillInitResult(BaseModel):
     approval_policy_mode: ApprovalPolicyMode
     workspace_advertisement: PlaybillWorkspaceAdvertisement
     git_workspace_note: GitWorkspaceNoteV1 | None = None
+    provider_seed: PlaybillProviderSeedResultV1 | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class PlaybillCasObjectResult(BaseModel):

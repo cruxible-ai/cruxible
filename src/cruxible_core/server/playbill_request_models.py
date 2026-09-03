@@ -69,6 +69,10 @@ class PlaybillInitRequest(_StrictPlaybillRequest):
     workspace_root: str | None = None
 
 
+class PlaybillProviderSeedRequest(_StrictPlaybillRequest):
+    pass
+
+
 class PlaybillStoreBodyRequest(_StrictPlaybillRequest):
     content_base64: str
 

@@ -118,6 +118,8 @@ has tag `cruxible-provider-runtime-operational-config-v1` and these entries:
 | `descendant_tracker_poll_interval_seconds` | `0.1` | Cross-session descendant observation interval while a child is alive; each poll reads the host process table, so shorter intervals trade CPU and process-spawn cost for a smaller best-effort observation window. Transient failures appear as bounded observation diagnostics in Provider-lane detail. |
 | `process_group_termination_timeout_seconds` | `5.0` | Child group termination and verification deadline. |
 | `deployments` | `[]` | Digest-keyed local Provider deployment records. |
+| `seed_materializations` | `()` | Provider-sorted local checkout, commit, environment key, and measured materialization records used to verify a configured seed source; checkout paths remain operational and never enter governed bytes. |
+| `workspace_allowed_roots` | `()` | Canonical absolute roots that widen `workspace.file` beyond an attached workspace; these are daemon-local authority and never come from an environment variable. |
 
 Unknown entries, non-positive timing values, malformed JSON, unsafe deployment
 paths, and an unreadable file degrade only the Provider lane with a typed cause.
@@ -214,6 +216,18 @@ cruxible playbill body store PATH
 ~~~
 
 Stores exact bytes in inert CAS and prints their digest.
+
+## playbill provider
+
+~~~text
+cruxible playbill provider seed
+~~~
+
+Submits the compiler-owned `workspace.file` interface and Provider as an
+ordinary governed proposal. Self-approval instances activate it immediately;
+independent-approval instances return the proposal ID for the usual review,
+approval, and activation ceremony. This write is available through CLI, SDK,
+and HTTP; the Provider write family does not yet have MCP parity.
 
 ## playbill document
 

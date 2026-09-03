@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -23,6 +24,9 @@ from cruxible_client.contracts.providers import (
     provider_digest,
 )
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.provider_classifiers import (
+    install_compiler_owned_provider_classifier,
+)
 from cruxible_core.playbill.provider_local_runtime import (
     EnvironmentProviderSecretResolver,
     FileProviderSecretStore,
@@ -107,6 +111,41 @@ class ProviderDeploymentConfigV1(_StrictOperationalModel):
         return value
 
 
+class ProviderSeedMaterializationConfigV1(_StrictOperationalModel):
+    """Daemon-only location and measured identity for one local seed source."""
+
+    tag: Literal["cruxible-provider-seed-materialization-config-v1"] = (
+        "cruxible-provider-seed-materialization-config-v1"
+    )
+    provider_id: str
+    checkout_path: str
+    provider_commit: str
+    environment_pin_key: str
+    materialization_digest: str
+
+    @field_validator("checkout_path")
+    @classmethod
+    def _checkout_path(cls, value: str) -> str:
+        path = Path(value)
+        if not path.is_absolute() or value != str(path) or ".." in path.parts:
+            raise ValueError("Provider seed checkout must be a canonical absolute path")
+        return value
+
+    @field_validator("provider_commit")
+    @classmethod
+    def _provider_commit(cls, value: str) -> str:
+        if re.fullmatch(r"[0-9a-f]{40}", value) is None:
+            raise ValueError("Provider seed checkout commit must be a full Git SHA")
+        return value
+
+    @field_validator("materialization_digest")
+    @classmethod
+    def _materialization_digest(cls, value: str) -> str:
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", value) is None:
+            raise ValueError("Provider seed materialization digest must be canonical")
+        return value
+
+
 class ProviderRuntimeOperationalConfigV1(_StrictOperationalModel):
     tag: Literal["cruxible-provider-runtime-operational-config-v1"] = (
         "cruxible-provider-runtime-operational-config-v1"
@@ -152,6 +191,7 @@ class ProviderRuntimeOperationalConfigV1(_StrictOperationalModel):
         gt=0,
     )
     deployments: tuple[ProviderDeploymentConfigV1, ...] = ()
+    seed_materializations: tuple[ProviderSeedMaterializationConfigV1, ...] = ()
     workspace_allowed_roots: tuple[str, ...] = ()
 
     @field_validator("workspace_allowed_roots")
@@ -174,6 +214,17 @@ class ProviderRuntimeOperationalConfigV1(_StrictOperationalModel):
         digests = tuple(item.deployment_digest for item in value)
         if value != expected or len(digests) != len(set(digests)):
             raise ValueError("Provider deployments must be digest-sorted and unique")
+        return value
+
+    @field_validator("seed_materializations")
+    @classmethod
+    def _seed_materializations(
+        cls, value: tuple[ProviderSeedMaterializationConfigV1, ...]
+    ) -> tuple[ProviderSeedMaterializationConfigV1, ...]:
+        expected = tuple(sorted(value, key=lambda item: item.provider_id.encode("utf-8")))
+        provider_ids = tuple(item.provider_id for item in value)
+        if value != expected or len(provider_ids) != len(set(provider_ids)):
+            raise ValueError("Provider seed materializations must be provider-sorted and unique")
         return value
 
 
@@ -633,11 +684,13 @@ class ProviderRuntimeOperator:
                 if registration.lifecycle.state != "live":
                     continue
                 digest = provider_interface_digest(registration).tagged
-                interfaces[digest] = AcceptedProviderInterfaceRegistrationV1(
+                accepted_interface = AcceptedProviderInterfaceRegistrationV1(
                     path=path,
                     registration=registration,
                     artifact_digest=digest,
                 )
+                install_compiler_owned_provider_classifier(accepted_interface)
+                interfaces[digest] = accepted_interface
         invoker = ProviderLocalRuntimeInvoker(
             deployments_by_digest=self.deployments,
             accepted_providers_by_digest=providers,
@@ -749,6 +802,7 @@ class _UnavailableProviderRuntimeInvoker:
 __all__ = [
     "PROVIDER_RUNTIME_CONFIG_PATH",
     "ProviderDeploymentConfigV1",
+    "ProviderSeedMaterializationConfigV1",
     "ProviderRuntimeOperationalConfigV1",
     "ProviderRuntimeOperator",
     "ProviderRecoveryFoldDisposition",

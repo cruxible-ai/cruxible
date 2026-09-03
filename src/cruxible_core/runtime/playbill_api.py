@@ -109,6 +109,7 @@ from cruxible_core.playbill.service.documents import (
     service_submit_playbill_approval,
 )
 from cruxible_core.playbill.service.explain import service_explain_playbill_subject
+from cruxible_core.playbill.service.provider_seed import service_seed_workspace_file_provider
 from cruxible_core.playbill.service.query_definitions import (
     service_get_playbill_query_definition,
     service_list_playbill_query_definitions,
@@ -374,6 +375,24 @@ def playbill_init(
                 expected_workspace_root=workspace_root,
             )
         raise
+    operator = get_playbill_manager().provider_runtime_operator()
+    configured_seed = next(
+        (
+            item
+            for item in operator.config.seed_materializations
+            if item.provider_id == "cruxible-provider-workspace"
+        ),
+        None,
+    )
+    provider_seed = _proposal_validation_boundary(
+        "provider seed",
+        lambda: service_seed_workspace_file_provider(
+            instance,
+            actor_id=actor_id,
+            timestamp=canonical_candidate_timestamp(utc_now()),
+            configured_materialization=configured_seed,
+        ),
+    )
     return contracts.PlaybillInitResult(
         instance_id=instance_id,
         coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
@@ -383,6 +402,32 @@ def playbill_init(
         recovery_posture=instance.descriptor.recovery_posture,
         approval_policy_mode=instance.inspect().approval_policy_mode,
         workspace_advertisement=instance.advertise_workspace(),
+        provider_seed=provider_seed,
+    )
+
+
+def playbill_provider_seed(instance_id: str) -> contracts.PlaybillProviderSeedResultV1:
+    """Submit the compiler-owned workspace Provider as an ordinary proposal."""
+
+    check_permission("cruxible_playbill_provider_seed", instance_id=instance_id)
+    manager = get_playbill_manager()
+    operator = manager.provider_runtime_operator()
+    configured_seed = next(
+        (
+            item
+            for item in operator.config.seed_materializations
+            if item.provider_id == "cruxible-provider-workspace"
+        ),
+        None,
+    )
+    return _proposal_validation_boundary(
+        "provider seed",
+        lambda: service_seed_workspace_file_provider(
+            manager.get(instance_id),
+            actor_id=_actor_id(),
+            timestamp=canonical_candidate_timestamp(utc_now()),
+            configured_materialization=configured_seed,
+        ),
     )
 
 

@@ -166,6 +166,7 @@ RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_playbill_read": PermissionMode.READ_ONLY,
     "cruxible_playbill_next": PermissionMode.READ_ONLY,
     "cruxible_playbill_propose": PermissionMode.GOVERNED_WRITE,
+    "cruxible_playbill_provider_seed": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_body_read": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_principal_change": PermissionMode.ADMIN,
     "cruxible_runtime_credentials": PermissionMode.ADMIN,

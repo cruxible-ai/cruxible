@@ -12,6 +12,7 @@ from cruxible_core.playbill.provider_classifiers import (
     ProviderClassifierInstallationRefused,
     core_provider_bucket_conformance_fixtures,
 )
+from cruxible_core.playbill.seed_artifacts.workspace_file import WORKSPACE_FILE_FIXTURES
 from tests.test_playbill._p2b1_support import (
     accepted_interface,
     interface_fixture,
@@ -118,7 +119,10 @@ def test_production_catalog_carries_fixtures_but_no_demo_executable() -> None:
     accepted = accepted_interface()
     registry = ProviderBucketClassifierRegistry()
 
-    assert set(core_provider_bucket_conformance_fixtures()) == {"demo.small"}
+    assert set(core_provider_bucket_conformance_fixtures()) == {
+        "demo.small",
+        *(fixture.fixture_id for fixture in WORKSPACE_FILE_FIXTURES),
+    }
     with pytest.raises(ProviderClassifierInstallationRefused) as absent:
         registry.require_accepted(accepted)
     assert absent.value.code == "classifier_not_installed"

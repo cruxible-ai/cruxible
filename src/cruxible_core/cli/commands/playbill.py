@@ -999,6 +999,30 @@ def store_body(path: str, output_json: bool) -> None:
         click.echo(result.digest)
 
 
+@playbill_group.group("provider")
+def provider_group() -> None:
+    """Manage governed Provider artifacts."""
+
+
+@provider_group.command("seed")
+@json_option
+@handle_errors
+def seed_provider(output_json: bool) -> None:
+    """Propose the compiler-owned workspace.file Provider bundle."""
+
+    result = _server_call(
+        lambda client, instance_id: client.seed_playbill_provider(instance_id),
+        command_name="playbill provider seed",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(f"Provider seed: {result.status}")
+    click.echo(f"Coordinate: {result.accepted_coordinate.git_oid}")
+    if result.proposal_id is not None:
+        click.echo(f"Proposal: {result.proposal_id}")
+
+
 @playbill_group.group("document")
 def document_group() -> None:
     """Propose and read governed Documents."""

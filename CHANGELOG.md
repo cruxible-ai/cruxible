@@ -15,6 +15,16 @@
   Server instance counts now mean governed daemon hosts, and instance-scoped
   host inspection no longer discloses the daemon-local managed-root path.
 
+- **Workspace files enter through bounded reads and governed Provider seeds
+  (P2-B4).** The daemon resolves `workspace.file` only inside attached or
+  operationally allowed roots, denies Git/Playbill/custody paths, and commits
+  the exact read receipt alongside Provider invocation evidence. The real
+  adapter remains in `cruxible-providers`; core ships its exact interface,
+  local wheel/materialization pins, conformance double, and an ordinary
+  proposal seed used by initialization and by CLI/SDK/HTTP. The Provider write
+  family has no MCP parity yet, so `provider seed` is deliberately absent from
+  MCP.
+
 - **Client custody follows one Git-worktree boundary.** Initialization,
   approval, principal changes, and Claim attestations now anchor custody checks
   to the worktree containing the process CWD; outside a worktree, no workspace

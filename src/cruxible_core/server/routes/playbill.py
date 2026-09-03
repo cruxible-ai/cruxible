@@ -56,6 +56,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillProposePrincipalRequest,
     PlaybillProposeQueryDefinitionRequest,
     PlaybillProposeSubjectRequest,
+    PlaybillProviderSeedRequest,
     PlaybillResolveCoverageRequest,
     PlaybillReviewRequest,
     PlaybillRunQueryRequest,
@@ -126,6 +127,17 @@ def playbill_init(
             and resolve_server_settings().server_socket is not None
         ),
     )
+
+
+@router.post(
+    "/{instance_id}/playbill/providers/seed",
+    response_model=contracts.PlaybillProviderSeedResultV1,
+)
+def provider_seed(
+    instance_id: str,
+    _req: PlaybillProviderSeedRequest,
+) -> contracts.PlaybillProviderSeedResultV1:
+    return playbill_api.playbill_provider_seed(resolve_server_instance_id(instance_id))
 
 
 @router.post(
