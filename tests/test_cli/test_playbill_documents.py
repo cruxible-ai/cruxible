@@ -65,11 +65,13 @@ def test_cli_init_remembers_the_initialized_instance(monkeypatch, tmp_path) -> N
             principals: list[dict[str, object]],
             operating_profile: str,
             require_independent_approval: bool,
+            seed: bool = True,
         ) -> contracts.PlaybillInitResult:
             assert instance_id == "inst_cli_init"
             assert principals[0]["principal_id"] == "operator"
             assert operating_profile == "local"
             assert require_independent_approval is False
+            assert seed is True
             return contracts.PlaybillInitResult(
                 instance_id=instance_id,
                 coordinate=COORDINATE,
@@ -125,6 +127,7 @@ def test_cli_init_writes_an_explicit_remote_workspace_config(monkeypatch, tmp_pa
             operating_profile: str,
             require_independent_approval: bool,
             workspace_root: str | None = None,
+            seed: bool = True,
         ) -> contracts.PlaybillInitResult:
             assert workspace_root is None
             return contracts.PlaybillInitResult(

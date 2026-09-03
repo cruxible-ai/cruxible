@@ -285,6 +285,7 @@ def test_cli_init_adopts_only_its_transport_bound_response_loss_orphan(
             principals: list[dict[str, object]],
             operating_profile: str,
             require_independent_approval: bool,
+            seed: bool = True,
         ) -> contracts.PlaybillInitResult:
             nonlocal calls
             calls += 1

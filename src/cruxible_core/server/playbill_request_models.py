@@ -67,6 +67,7 @@ class PlaybillInitRequest(_StrictPlaybillRequest):
     operating_profile: OperatingProfile = "local"
     require_independent_approval: bool = False
     workspace_root: str | None = None
+    seed: bool = True
 
 
 class PlaybillProviderSeedRequest(_StrictPlaybillRequest):

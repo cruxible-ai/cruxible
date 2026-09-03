@@ -17,12 +17,19 @@ from cruxible_client.contracts.documents import (
     DocumentLifecycle,
     DocumentShell,
 )
-from cruxible_client.contracts.errors import PlaybillBootstrapError, PlaybillReseedRequired
+from cruxible_client.contracts.errors import (
+    PlaybillBootstrapError,
+    PlaybillReseedRequired,
+    ProposalIntegrityError,
+)
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.workspace_file import WorkspaceFileSourceRequestV1
 from cruxible_core.errors import ConfigError
-from cruxible_core.playbill.keys import generate_client_principal_key
+from cruxible_core.playbill.keys import (
+    GeneratedKeyMaterial,
+    generate_client_principal_key,
+)
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
@@ -52,7 +59,6 @@ def host_client(
 ) -> TestClient:
     state = tmp_path / "server-state"
     monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state))
-    write_workspace_seed_config(state)
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     monkeypatch.delenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", raising=False)
@@ -64,6 +70,20 @@ def host_client(
 
 
 @pytest.fixture
+def seeded_host_client(host_client: TestClient, tmp_path: Path) -> TestClient:
+    """Host client whose daemon config pins the real adapter checkout.
+
+    Tests that are about seeding keep the real local materialization. Without the
+    sibling ``cruxible-providers`` checkout they skip naming the follow-on card
+    rather than pretending the seed law was exercised.
+    """
+
+    write_workspace_seed_config(tmp_path / "server-state")
+    get_playbill_manager().clear()
+    return host_client
+
+
+@pytest.fixture
 def authenticated_host_client(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -71,7 +91,6 @@ def authenticated_host_client(
     bootstrap_secret = "one-time-bootstrap-secret"
     state = tmp_path / "authenticated-server-state"
     monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state))
-    write_workspace_seed_config(state)
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
     monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", bootstrap_secret)
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
@@ -378,7 +397,7 @@ def test_managed_root_and_trust_root_must_be_archived_together(
     )
     initialized = host_client.post(
         "/api/v1/inst_archive_pair/playbill/init",
-        json={"principals": [owner.principal.model_dump(mode="json")]},
+        json={"principals": [owner.principal.model_dump(mode="json")], "seed": False},
     )
     assert initialized.status_code == 200
     managed_root.rename(tmp_path / "archived-instance")
@@ -433,7 +452,7 @@ def test_playbill_bootstrap_is_the_first_semantic_write(
     )
     initialized = host_client.post(
         f"/api/v1/{instance_id}/playbill/init",
-        json={"principals": [owner.principal.model_dump(mode="json")]},
+        json={"principals": [owner.principal.model_dump(mode="json")], "seed": False},
     )
     assert initialized.status_code == 200, initialized.text
     assert initialized.json()["instance_id"] == instance_id
@@ -446,10 +465,10 @@ def test_playbill_bootstrap_is_the_first_semantic_write(
 
 
 def test_playbill_init_retry_is_idempotent_only_for_the_exact_bootstrap_request(
-    host_client: TestClient,
+    seeded_host_client: TestClient,
     tmp_path: Path,
 ) -> None:
-    del host_client
+    del seeded_host_client
     host_api.create_playbill_host(instance_id="inst_exact_init_retry")
     record = get_registry().get("inst_exact_init_retry")
     assert record is not None
@@ -480,6 +499,125 @@ def test_playbill_init_retry_is_idempotent_only_for_the_exact_bootstrap_request(
             "inst_exact_init_retry",
             principals=(different_owner.principal,),
         )
+
+
+def _init_owner(tmp_path: Path, instance_id: str, custody: str) -> GeneratedKeyMaterial:
+    host_api.create_playbill_host(instance_id=instance_id)
+    record = get_registry().get(instance_id)
+    assert record is not None
+    return generate_client_principal_key(
+        tmp_path / custody,
+        principal_id="operator",
+        kind="ordinary",
+        forbidden_roots=(Path(record.location),),
+    )
+
+
+def test_unconfigured_seed_refuses_init_unless_the_opt_out_is_explicit(
+    host_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    """Without --no-seed the F3 refusal stands; the opt-out is never implied."""
+
+    del host_client
+    owner = _init_owner(tmp_path, "inst_seed_refusal", "seed-refusal-owner")
+    with pytest.raises(ProposalIntegrityError, match="seed_materializations"):
+        playbill_api.playbill_init(
+            "inst_seed_refusal",
+            principals=(owner.principal,),
+        )
+
+    opted_out = playbill_api.playbill_init(
+        "inst_seed_refusal",
+        principals=(owner.principal,),
+        seed=False,
+    )
+    assert opted_out.provider_seed is not None
+    assert opted_out.provider_seed.status == "unseeded"
+
+
+def test_opting_out_of_the_seed_names_its_repair_and_writes_no_candidate(
+    host_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    del host_client
+    owner = _init_owner(tmp_path, "inst_unseeded", "unseeded-owner")
+    first = playbill_api.playbill_init(
+        "inst_unseeded",
+        principals=(owner.principal,),
+        seed=False,
+    )
+
+    seed_row = first.provider_seed
+    assert seed_row is not None
+    assert seed_row.status == "unseeded"
+    assert seed_row.repair == "configure_seed_materializations_then_playbill_provider_seed"
+    assert seed_row.changed_paths == ()
+    assert seed_row.proposal_id is None
+    assert seed_row.candidate_digest is None
+    assert seed_row.approval_required is False
+    assert seed_row.accepted_coordinate == first.coordinate
+
+    instance = get_playbill_manager().get("inst_unseeded")
+    assert instance.proposal_evidence().list_admissions() == ()
+    assert instance.accepted_history()[-1].sequence == 0
+    assert "providers/cruxible-provider-workspace.json" not in instance.tree_at(
+        instance.accepted_coordinate().git_oid
+    )
+
+    retry = playbill_api.playbill_init(
+        "inst_unseeded",
+        principals=(owner.principal,),
+        seed=False,
+    )
+    assert retry == first
+    assert instance.proposal_evidence().list_admissions() == ()
+
+
+def test_independent_approval_init_honours_the_seed_opt_out(
+    host_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    governed_id = host_client.post(
+        "/api/v1/runtime/instances", json={"instance_id": "inst_unseeded_independent"}
+    ).json()["instance_id"]
+    record = get_registry().get(governed_id)
+    assert record is not None
+    managed_root = Path(record.location)
+    owner = generate_client_principal_key(
+        tmp_path / "unseeded-independent-owner",
+        principal_id="operator",
+        kind="ordinary",
+        forbidden_roots=(managed_root,),
+    )
+    reviewer = generate_client_principal_key(
+        tmp_path / "unseeded-independent-reviewer",
+        principal_id="reviewer",
+        kind="ordinary",
+        forbidden_roots=(managed_root,),
+    )
+    payload = {
+        "principals": [
+            owner.principal.model_dump(mode="json"),
+            reviewer.principal.model_dump(mode="json"),
+        ],
+        "require_independent_approval": True,
+        "seed": False,
+    }
+
+    accepted = host_client.post(f"/api/v1/{governed_id}/playbill/init", json=payload)
+    assert accepted.status_code == 200, accepted.text
+    seed_row = accepted.json()["provider_seed"]
+    assert seed_row["status"] == "unseeded"
+    assert seed_row["repair"] == "configure_seed_materializations_then_playbill_provider_seed"
+    assert "proposal_id" not in seed_row and "candidate_digest" not in seed_row
+
+    retry = host_client.post(f"/api/v1/{governed_id}/playbill/init", json=payload)
+    assert retry.status_code == 200, retry.text
+    assert retry.json() == accepted.json()
+    instance = get_playbill_manager().get(governed_id)
+    assert instance.proposal_evidence().list_admissions() == ()
+    assert instance.inspect().approval_policy_mode == "independent_approval_required"
 
 
 def _read_workspace_path(reader: WorkspaceFileReader, root: Path, relative_path: str) -> None:
@@ -526,7 +664,7 @@ def test_every_daemon_state_root_path_is_refused_even_inside_an_allowed_root(
         kind="ordinary",
         forbidden_roots=(Path(record.location),),
     )
-    playbill_api.playbill_init("inst_state_root_denied", principals=(owner.principal,))
+    playbill_api.playbill_init("inst_state_root_denied", principals=(owner.principal,), seed=False)
 
     manager = get_playbill_manager()
     state_root = get_registry().state_root
@@ -619,6 +757,7 @@ def test_workspace_attachment_after_init_names_archive_and_rebuild_repair(
     playbill_api.playbill_init(
         "inst_unattached_initialized",
         principals=(owner.principal,),
+        seed=False,
     )
     workspace = tmp_path / "late-workspace"
     subprocess.run(["git", "init", "-b", "main", str(workspace)], check=True, capture_output=True)
@@ -671,6 +810,7 @@ def test_attached_bootstrap_inherits_sha1_and_advertises_genesis(
         "inst_attached",
         principals=(owner.principal,),
         workspace_attachment_authorized=True,
+        seed=False,
     )
 
     assert get_playbill_manager().get("inst_attached").descriptor.git_object_format == "sha1"
@@ -793,6 +933,7 @@ def test_propose_document_never_executes_workspace_instead_of_ssh_command(
         "inst_rce_regression",
         principals=(owner.principal,),
         workspace_attachment_authorized=True,
+        seed=False,
     )
     assert initialized.workspace_advertisement.status == "updated"
 
@@ -885,6 +1026,7 @@ def test_failed_init_rolls_back_a_new_workspace_attachment(
             principals=(owner.principal,),
             workspace_root=str(workspace),
             workspace_attachment_authorized=True,
+            seed=False,
         )
 
     rolled_back = get_registry().get("inst_rollback")
@@ -929,6 +1071,7 @@ def test_init_survives_an_advertiser_that_raises(
         "inst_raising_advertiser",
         principals=(owner.principal,),
         workspace_attachment_authorized=True,
+        seed=False,
     )
 
     assert initialized.workspace_advertisement.status == "failed"
@@ -937,9 +1080,10 @@ def test_init_survives_an_advertiser_that_raises(
 
 
 def test_independent_approval_init_requires_and_accepts_a_second_ordinary_principal(
-    host_client: TestClient,
+    seeded_host_client: TestClient,
     tmp_path: Path,
 ) -> None:
+    host_client = seeded_host_client
     solo_id = host_client.post(
         "/api/v1/runtime/instances", json={"instance_id": "inst_solo_refusal"}
     ).json()["instance_id"]
@@ -1049,7 +1193,8 @@ def test_authenticated_bootstrap_binds_owner_to_credential_identity(
             "principals": [
                 owner.principal.model_dump(mode="json"),
                 reviewer.principal.model_dump(mode="json"),
-            ]
+            ],
+            "seed": False,
         },
         headers=admin_headers,
     )

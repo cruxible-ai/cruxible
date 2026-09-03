@@ -881,6 +881,15 @@ def create_host(
     help="Explicit Git workspace to configure; remote paths stay client-local.",
 )
 @click.option("--replace", is_flag=True, help="Replace a differing workspace config.")
+@click.option(
+    "--no-seed",
+    "no_seed",
+    is_flag=True,
+    help=(
+        "Create the instance without the compiler-owned workspace.file Provider seed; "
+        "the result names the repair."
+    ),
+)
 @json_option
 @handle_errors
 def init_playbill(
@@ -893,6 +902,7 @@ def init_playbill(
     profile: str,
     workspace_path: str | None,
     replace: bool,
+    no_seed: bool,
     output_json: bool,
 ) -> None:
     """Create client custody and bootstrap the governed approval policy."""
@@ -944,6 +954,7 @@ def init_playbill(
             principals=[item.principal.model_dump(mode="json") for item in materials],
             operating_profile=cast(Any, profile),
             require_independent_approval=require_independent_approval,
+            seed=not no_seed,
             **(
                 {"workspace_root": str(git_workspace)}
                 if git_workspace is not None and _root_ctx_obj().get("server_socket")
@@ -968,6 +979,11 @@ def init_playbill(
         return
     click.echo(f"Playbill initialized at {result.coordinate.git_oid}")
     click.echo(f"Approval policy: {result.approval_policy_mode}")
+    if result.provider_seed is not None and result.provider_seed.status == "unseeded":
+        click.echo(
+            "Provider seed: unseeded; configure daemon seed_materializations, "
+            "then run 'cruxible playbill provider seed'"
+        )
     click.echo(f"Workspace refs: {result.workspace_advertisement.status}")
     if result.workspace_advertisement.failure_code is not None:
         click.echo(f"Workspace ref failure: {result.workspace_advertisement.failure_code}")

@@ -181,6 +181,7 @@ cruxible playbill init --key-dir DIR
   [--recovery-principal-id ID]
   [--profile local|cloud]
   [--workspace DIR] [--replace]
+  [--no-seed]
 ~~~
 
 Generates a client-held ordinary key outside the workspace and bootstraps the
@@ -211,6 +212,18 @@ Explicit `--workspace DIR` over TCP writes only the client-local URL binding.
 An instance initialized without daemon registration cannot acquire one later;
 archive and rebuild an attached host through the local socket when ledger-ref
 advertisement is required.
+
+Initialization seeds the compiler-owned `workspace.file` Provider by default and
+refuses when its `seed_materializations` entry is absent, so a host is never
+seeded from an unchecked checkout. `--no-seed` is the explicit opt-out, never a
+silent default: the instance is created, the seed step is skipped, and the
+result carries a typed `provider_seed` row with status `unseeded` whose `repair`
+names the one way to finish — configure `seed_materializations`, then run
+`cruxible playbill provider seed`. Self-approval and independent-approval
+instances honour the flag identically, and an exact init retry carrying it stays
+idempotent. The equivalent request field is `seed` on the HTTP/SDK init body;
+MCP `cruxible_playbill_init` has no such field and always seeds, in line with the
+Provider write family's declared MCP parity gap.
 
 ## playbill body
 

@@ -26,7 +26,13 @@
   exact interface, local wheel/materialization pins, conformance double, and an
   ordinary proposal seed used by initialization and by CLI/SDK/HTTP. The
   Provider write family has no MCP parity yet, so `provider seed` is
-  deliberately absent from MCP. This prerelease batch also corrects
+  deliberately absent from MCP. Because that seed is a local materialization,
+  initialization refuses rather than trusting an unchecked checkout; `playbill
+  init --no-seed` (request field `seed`) is the explicit opt-out that creates the
+  instance, skips the seed step, and returns a typed `unseeded` Provider-seed row
+  whose `repair` names configuring `seed_materializations` and running `playbill
+  provider seed`. MCP `cruxible_playbill_init` carries no such field and always
+  seeds. This prerelease batch also corrects
   `PlaybillProviderInterfaceEntry` v1 in place to match the already-served
   ProviderInterface discovery row; the generated client snapshot pins that
   reshape. Core's governed `none` effect class is the no-external-mutation

@@ -88,6 +88,10 @@ from cruxible_core.playbill.search import (
     SearchMode,
     SearchStatus,
 )
+from cruxible_core.playbill.seed_artifacts.workspace_file import (
+    WORKSPACE_FILE_PROVIDER_ID,
+    WORKSPACE_FILE_SEED_MANIFEST,
+)
 from cruxible_core.playbill.service.claim_types import (
     service_get_playbill_claim_type,
     service_list_playbill_claim_types,
@@ -325,6 +329,7 @@ def playbill_init(
     require_independent_approval: bool = False,
     workspace_root: str | None = None,
     workspace_attachment_authorized: bool = False,
+    seed: bool = True,
 ) -> contracts.PlaybillInitResult:
     check_permission("cruxible_playbill_init", instance_id=instance_id)
     actor_id = _actor_id()
@@ -376,40 +381,57 @@ def playbill_init(
                 expected_workspace_root=workspace_root,
             )
         raise
-    operator = get_playbill_manager().provider_runtime_operator()
-    configured_seed = next(
-        (
-            item
-            for item in operator.config.seed_materializations
-            if item.provider_id == "cruxible-provider-workspace"
-        ),
-        None,
-    )
-    provider_seed = _proposal_validation_boundary(
-        "provider seed",
-        lambda: service_seed_workspace_file_provider(
-            instance,
-            actor_id=actor_id,
-            timestamp=canonical_candidate_timestamp(utc_now()),
-            configured_materialization=configured_seed,
-        ),
-    )
-    if provider_seed.status == "activated":
-        # Init itself remains exactly retry-idempotent. The dedicated seed verb
-        # exposes proposal/activation details; init reports the settled state
-        # reached by that operation on both the first call and exact retries.
+    if seed:
+        operator = get_playbill_manager().provider_runtime_operator()
+        configured_seed = next(
+            (
+                item
+                for item in operator.config.seed_materializations
+                if item.provider_id == WORKSPACE_FILE_PROVIDER_ID
+            ),
+            None,
+        )
+        provider_seed = _proposal_validation_boundary(
+            "provider seed",
+            lambda: service_seed_workspace_file_provider(
+                instance,
+                actor_id=actor_id,
+                timestamp=canonical_candidate_timestamp(utc_now()),
+                configured_materialization=configured_seed,
+            ),
+        )
+        if provider_seed.status == "activated":
+            # Init itself remains exactly retry-idempotent. The dedicated seed verb
+            # exposes proposal/activation details; init reports the settled state
+            # reached by that operation on both the first call and exact retries.
+            provider_seed = contracts.PlaybillProviderSeedResultV1(
+                provider_id=provider_seed.provider_id,
+                materialization_source=provider_seed.materialization_source,
+                status="already_current",
+                changed_paths=(),
+                approval_required=False,
+                accepted_coordinate=provider_seed.accepted_coordinate,
+            )
+        elif provider_seed.status == "proposed":
+            # Independent-approval init exposes one stable pending candidate on
+            # both its first response and exact retries.
+            provider_seed = provider_seed.model_copy(update={"status": "pending"})
+    else:
+        # Opting out is explicit and never silent: the instance exists, the seed
+        # step did not run, and the row names the one repair that completes it.
         provider_seed = contracts.PlaybillProviderSeedResultV1(
-            provider_id=provider_seed.provider_id,
-            materialization_source=provider_seed.materialization_source,
-            status="already_current",
+            provider_id=WORKSPACE_FILE_PROVIDER_ID,
+            materialization_source=WORKSPACE_FILE_SEED_MANIFEST.materialization_source,
+            status="unseeded",
             changed_paths=(),
             approval_required=False,
-            accepted_coordinate=provider_seed.accepted_coordinate,
+            repair="configure_seed_materializations_then_playbill_provider_seed",
+            accepted_coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
+                AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump(
+                    mode="json"
+                )
+            ),
         )
-    elif provider_seed.status == "proposed":
-        # Independent-approval init exposes one stable pending candidate on
-        # both its first response and exact retries.
-        provider_seed = provider_seed.model_copy(update={"status": "pending"})
     return contracts.PlaybillInitResult(
         instance_id=instance_id,
         coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
@@ -433,7 +455,7 @@ def playbill_provider_seed(instance_id: str) -> contracts.PlaybillProviderSeedRe
         (
             item
             for item in operator.config.seed_materializations
-            if item.provider_id == "cruxible-provider-workspace"
+            if item.provider_id == WORKSPACE_FILE_PROVIDER_ID
         ),
         None,
     )

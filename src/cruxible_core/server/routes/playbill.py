@@ -126,6 +126,7 @@ def playbill_init(
             request.scope.get("client") is None
             and resolve_server_settings().server_socket is not None
         ),
+        seed=req.seed,
     )
 
 

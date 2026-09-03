@@ -30,7 +30,6 @@ from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.registry import get_registry, reset_registry
-from tests.support.provider_seed import write_workspace_seed_config
 from tests.test_client.test_playbill_authoring import OBSERVATION
 from tests.test_playbill._claim_type_support import claim_type_input_example
 
@@ -809,7 +808,6 @@ def test_cli_create_flow_a_stub_reports_bind_refusal_from_served_route(
 ) -> None:
     state = tmp_path / "server-state"
     monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state))
-    write_workspace_seed_config(state)
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     reset_permissions()
     reset_registry()
@@ -840,7 +838,8 @@ def test_cli_create_flow_a_stub_reports_bind_refusal_from_served_route(
                     "principals": [
                         owner.principal.model_dump(mode="json"),
                         reviewer.principal.model_dump(mode="json"),
-                    ]
+                    ],
+                    "seed": False,
                 },
             )
             assert initialized.status_code == 200, initialized.text

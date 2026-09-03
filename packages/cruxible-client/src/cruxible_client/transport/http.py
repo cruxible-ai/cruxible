@@ -270,11 +270,13 @@ class CruxibleClient:
         operating_profile: Literal["local", "cloud"] = "local",
         require_independent_approval: bool = False,
         workspace_root: str | None = None,
+        seed: bool = True,
     ) -> contracts.PlaybillInitResult:
         payload: dict[str, Any] = {
             "principals": [dict(item) for item in principals],
             "operating_profile": operating_profile,
             "require_independent_approval": require_independent_approval,
+            "seed": seed,
         }
         if workspace_root is not None:
             payload["workspace_root"] = workspace_root

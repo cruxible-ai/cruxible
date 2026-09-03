@@ -281,18 +281,47 @@ class PlaybillAcceptedCoordinate(BaseModel):
     compiler_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
+#: The one repair an ``unseeded`` Provider seed row names: configure the daemon-local
+#: ``seed_materializations`` entry, then run the ordinary ``playbill provider seed`` verb.
+ProviderSeedRepairV1 = Literal["configure_seed_materializations_then_playbill_provider_seed"]
+
+
 class PlaybillProviderSeedResultV1(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-provider-seed-result-v1"] = "playbill-provider-seed-result-v1"
     provider_id: str
     materialization_source: Literal["local", "registry"]
-    status: Literal["already_current", "pending", "proposed", "activated", "lost_cas"]
+    status: Literal[
+        "already_current",
+        "pending",
+        "proposed",
+        "activated",
+        "lost_cas",
+        "unseeded",
+    ]
     changed_paths: tuple[str, ...]
     proposal_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     candidate_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
     approval_required: bool
+    repair: ProviderSeedRepairV1 | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     accepted_coordinate: PlaybillAcceptedCoordinate
+
+    @model_validator(mode="after")
+    def _only_an_unseeded_row_names_a_repair(self) -> PlaybillProviderSeedResultV1:
+        if (self.status == "unseeded") != (self.repair is not None):
+            raise ValueError("exactly an unseeded Provider seed row carries its repair")
+        if self.status == "unseeded" and (
+            self.changed_paths
+            or self.proposal_id is not None
+            or self.candidate_digest is not None
+            or self.approval_required
+        ):
+            raise ValueError("an unseeded Provider seed row carries no proposal and no change")
+        return self
 
 
 class PlaybillInitResult(BaseModel):

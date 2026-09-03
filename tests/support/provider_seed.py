@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from cruxible_core.playbill.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_PROVIDER_ID,
     WORKSPACE_FILE_SEED_MANIFEST,
@@ -17,8 +19,15 @@ from cruxible_core.runtime.provider_runtime import (
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
+#: Named in every skip so a green run on a host without the adapter checkout still
+#: points at the work that removes the gap rather than reading as coverage.
+MISSING_CHECKOUT_SKIP_REASON = (
+    "the cruxible-providers checkout is absent, so the real local materialization cannot be "
+    "reproduced; follow-on card: CI job with a deploy-key checkout of cruxible-providers"
+)
 
-def workspace_provider_checkout() -> Path:
+
+def find_workspace_provider_checkout() -> Path | None:
     """Locate the separately governed adapter checkout without a developer path literal."""
 
     candidates = (
@@ -28,7 +37,16 @@ def workspace_provider_checkout() -> Path:
     for candidate in candidates:
         if (candidate / "scripts" / "seed_pins.py").is_file():
             return candidate.resolve(strict=True)
-    raise AssertionError("the cruxible-providers checkout is required for workspace seed tests")
+    return None
+
+
+def workspace_provider_checkout() -> Path:
+    """Return the real adapter checkout, or skip naming the follow-on card."""
+
+    located = find_workspace_provider_checkout()
+    if located is None:
+        pytest.skip(MISSING_CHECKOUT_SKIP_REASON)
+    return located
 
 
 def workspace_seed_materialization(
@@ -59,6 +77,8 @@ def write_workspace_seed_config(state_root: Path, checkout: Path | None = None) 
 
 
 __all__ = [
+    "MISSING_CHECKOUT_SKIP_REASON",
+    "find_workspace_provider_checkout",
     "workspace_provider_checkout",
     "workspace_seed_materialization",
     "write_workspace_seed_config",
