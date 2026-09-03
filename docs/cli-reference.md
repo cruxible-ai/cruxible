@@ -409,7 +409,7 @@ between ambiguous histories.
 
 ~~~text
 cruxible playbill authoring create PAYLOAD
-cruxible playbill authoring create --example claim-flow-a|claim-self-source|claim-subject-relation|procedure|change-set
+cruxible playbill authoring create --example claim-flow-a|claim-self-source|claim-subject-relation|procedure|change-set|claim-type-succession
 cruxible playbill authoring get INTENT_ID
 cruxible playbill authoring resume INTENT_ID
 cruxible playbill authoring list
@@ -436,14 +436,27 @@ index that offends. `approval_policy` and `procedure_runtime_policy` are the
 two exceptions: the member union parses either, but a change set carrying one
 refuses whatever else it holds, so author each as its own singleton input. A
 Claim member may define the Subject and ClaimType it needs in the same set, and
-may retire a Claim the set does not otherwise touch.
-Succeeding an accepted ClaimType stays on the claim-type proposal route, where
-the migration a succession demands is decided. Two sibling Claims contending for
+may retire a Claim the set does not otherwise touch. Two sibling Claims contending for
 one cardinality-one slot are un-authorable in a single set by construction, not
 merely unrepaired: dispositioning one needs the other's Claim ID, which the
 daemon mints only at create from the already-frozen payload, so that refusal's
 repair is to merge the two decisions or split the set. `--example change-set`
-prints a mixed set to start from. There is no semantic member ceiling; how many
+prints a mixed set to start from, and `--example claim-type-succession` prints a
+vocabulary evolution.
+
+A `claim_type_succession` member succeeds an accepted ClaimType and settles its
+whole reverse-pin closure in the same generation. Members lower in dependency
+order -- definitions, then successions, then Claims, then retirements -- so a
+Claim member after a succession is lowered under the successor vocabulary. The
+`successor` is a whole ClaimType naming its predecessor by identity and pinning
+that predecessor's exact digest; `dependents` is the exact closure computed over
+the staged tree. Each dependent takes `successor` (carry it, re-pinned),
+`retire` (a tombstone, with `claim_retirement_reason` `was-rescinded` for a
+rescission) or `re_author` (a sibling Claim member of the same set, naming that
+Claim again under the successor, named by `successor_claim_id` or
+`successor_member`). A successor that changes `object_kind` refuses `successor`
+for any live Claim dependent. `cruxible playbill claim-type migrate` is the
+operator form of the same law and builds its candidate with the same code. There is no semantic member ceiling; how many
 changed members one daemon will receive in a single submission is the operator's
 `max_changed_members` bound in `daemon/proposal-receive.json`.
 

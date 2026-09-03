@@ -46,11 +46,57 @@ the set may read a Subject or ClaimType the same set defines. Two sibling Claims
 contending for one cardinality-one slot cannot be authored in a single set at
 all: dispositioning one needs the other's Claim ID, which the daemon mints only
 at create from the already-frozen payload, so that refusal asks you to merge the
-two decisions or split the set rather than to add a disposition. Succeeding an
-accepted ClaimType stays on the claim-type proposal route, where the migration
-a succession demands is decided. There is no member ceiling in the model; how
-many changed members one daemon receives in a single submission is that
-operator's admission bound.
+two decisions or split the set rather than to add a disposition. There is no
+member ceiling in the model; how many changed members one daemon receives in a
+single submission is that operator's admission bound.
+
+### Evolving vocabulary in one generation
+
+Needing a new distinction is an epistemic move, and "I need this distinction,
+and here is everything it changes" is one decision, so it is one generation.
+`ChangeSetDraft.succeed_claim_type(successor, dependents=[...])` succeeds an
+accepted ClaimType inside the same set as the Claims that speak the new
+vocabulary. The successor is a whole ClaimType that names the predecessor by
+identity and pins its exact current digest; a ClaimType with no predecessor is
+a definition, and `.claim_type(...)` carries that instead.
+
+`dependents` must be the exact reverse-pin closure of the predecessor, computed
+over the STAGED tree -- so a Claim an earlier member of this same set wrote
+under the predecessor is a dependent too. An inexact closure refuses
+`playbill.authoring.claim_type_succession_closure_incomplete`, whose repair
+lists every required dependent at its exact digest. Four dispositions, spelled
+by the SDK helpers `carry`, `rescind`, `retire` and `re_author`:
+
+| Helper | Wire disposition | What the dependent becomes |
+|---|---|---|
+| `carry(claim)` | `successor` | Re-pinned to the successor, otherwise unchanged. |
+| `rescind(claim)` | `retire` + reason `was-rescinded` | A tombstone that keeps the exact statement it was accepted with, under the vocabulary it was accepted under. |
+| `retire(claim, reason=..., effective_until=...)` | `retire` | An attributed retirement, landing with the succession. |
+| `re_author(claim)` | `re_author` | Said again by a sibling Claim member of the same set, lowered under the successor. |
+
+A re-authored dependent keeps its own identity, its slot and its exact
+predecessor digest: the sibling member is that Claim revised (`revises=` the
+same Claim ID), stated under the new vocabulary, which is why `explain` on the
+re-authored Claim still names what it succeeds. The sibling is named by
+`successor_claim_id` (what `re_author(claim)` writes) or by `successor_member`,
+its index in the compiled member list. A sibling that does not exist, is not a
+Claim member, lowers under another ClaimType, or revises another Claim refuses
+`playbill.authoring.claim_type_succession_re_author_invalid`, naming both member
+indices.
+
+A successor that changes `object_kind` refuses `carry` for any live Claim
+dependent: its object no longer says what the ClaimType now means, so each such
+dependent must be rescinded, retired or re-authored. Tombstones are exempt --
+a retired Claim keeps the shape it was accepted with.
+
+Evidence admission policies ride the successor: a dependent carried to a
+successor with a stricter policy is re-graded under that policy, not refused, so
+the succession lands and the re-grading is visible in the dependent's admission
+accounts afterwards.
+
+`cruxible playbill claim-type migrate` remains the operator form of the same
+law -- one succession, no siblings to re-author. Both roads build the candidate
+with the same function, so they cannot drift.
 
 An intent that publishes more than one Claim owns one publication expectation
 per publishing member: read them from `Intent.publications` and apply each in
