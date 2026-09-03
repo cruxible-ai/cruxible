@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client import contracts
 from cruxible_core.errors import (
     CustomerCodeExecutionUnsupportedError,
     HostedProfileUnknownError,
 )
-from cruxible_client import contracts
 from cruxible_core.playbill import provider_local_runtime as runtime_module
 from cruxible_core.playbill.service import provider_seed as seed_module
 from cruxible_core.runtime import execution_policy as policy_module

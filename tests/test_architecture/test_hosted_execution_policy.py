@@ -284,7 +284,10 @@ def _run_child(argv):
     ),
     ("os-fork", f"\ndef _run_child(argv):\n    {ENFORCER}()\n    return os.fork()\n"),
     ("os-system", f"\ndef _run_child(argv):\n    {ENFORCER}()\n    return os.system(argv)\n"),
-    ("os-execv", f"\ndef _run_child(argv):\n    {ENFORCER}()\n    return os.execv(argv[0], argv)\n"),
+    (
+        "os-execv",
+        f"\ndef _run_child(argv):\n    {ENFORCER}()\n    return os.execv(argv[0], argv)\n",
+    ),
 )
 
 

@@ -32,6 +32,7 @@ class ServerStopNotConfirmed(ConfigError):
 
     error_code = "cruxible.server.stop_not_confirmed"
 
+
 # Grace period before the signal lands, leaving uvicorn time to flush the stop
 # acknowledgement response and close the connection.
 _STOP_DELAY_SECONDS = 0.25
