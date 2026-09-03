@@ -20,7 +20,8 @@
         "subject",
         "approval-policy",
         "procedure-runtime-policy",
-        "procedure-mandate"
+        "procedure-mandate",
+        "change-set"
       ]
     },
     "PlaybillHandEditNextReason": {
@@ -3176,7 +3177,8 @@
               "subject",
               "approval-policy",
               "procedure-runtime-policy",
-              "procedure-mandate"
+              "procedure-mandate",
+              "change-set"
             ],
             "title": "Name",
             "type": "string"
@@ -3434,6 +3436,9 @@
                   "discriminator": {
                     "mapping": {
                       "approval_policy": "#/$defs/ApprovalPolicyInput",
+                      "claim": "#/$defs/ClaimInput",
+                      "claim_retirement": "#/$defs/ClaimRetirementInput",
+                      "claim_type": "#/$defs/ClaimTypeInput",
                       "procedure": "#/$defs/ProcedureInput",
                       "procedure_mandate": "#/$defs/ProcedureMandateInputV1",
                       "procedure_runtime_policy": "#/$defs/ProcedureRuntimePolicyInput",
@@ -3443,6 +3448,15 @@
                     "propertyName": "kind"
                   },
                   "oneOf": [
+                    {
+                      "$ref": "#/$defs/ClaimInput"
+                    },
+                    {
+                      "$ref": "#/$defs/ClaimTypeInput"
+                    },
+                    {
+                      "$ref": "#/$defs/ClaimRetirementInput"
+                    },
                     {
                       "$ref": "#/$defs/SubjectInput"
                     },
@@ -3463,7 +3477,7 @@
                     }
                   ]
                 },
-                "minItems": 2,
+                "minItems": 1,
                 "title": "Members",
                 "type": "array"
               }
@@ -3473,6 +3487,106 @@
               "members"
             ],
             "title": "ChangeSetInput",
+            "type": "object"
+          },
+          "ClaimAdmissionPolicyV1": {
+            "additionalProperties": false,
+            "properties": {
+              "corroboration_requirements": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/CorroborationRequirementV1"
+                },
+                "title": "Corroboration Requirements",
+                "type": "array"
+              },
+              "freeze_requirements": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/FreezeRequirementV1"
+                },
+                "title": "Freeze Requirements",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-claim-admission-policy-v1",
+                "default": "playbill-claim-admission-policy-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "ClaimAdmissionPolicyV1",
+            "type": "object"
+          },
+          "ClaimAttestationConsequencePolicyV1": {
+            "additionalProperties": false,
+            "properties": {
+              "rules": {
+                "items": {
+                  "$ref": "#/$defs/ClaimAttestationConsequenceRuleV1"
+                },
+                "minItems": 1,
+                "title": "Rules",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-claim-attestation-consequence-policy-v1",
+                "default": "playbill-claim-attestation-consequence-policy-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "rules"
+            ],
+            "title": "ClaimAttestationConsequencePolicyV1",
+            "type": "object"
+          },
+          "ClaimAttestationConsequenceRuleV1": {
+            "additionalProperties": false,
+            "properties": {
+              "consequence": {
+                "const": "next_claim_attestation_threshold",
+                "default": "next_claim_attestation_threshold",
+                "title": "Consequence",
+                "type": "string"
+              },
+              "minimum_independent_control_components": {
+                "minimum": 0,
+                "title": "Minimum Independent Control Components",
+                "type": "integer"
+              },
+              "require_current": {
+                "const": true,
+                "default": true,
+                "title": "Require Current",
+                "type": "boolean"
+              },
+              "rule_id": {
+                "title": "Rule Id",
+                "type": "string"
+              },
+              "stance": {
+                "enum": [
+                  "unsure",
+                  "contradict"
+                ],
+                "title": "Stance",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-claim-attestation-consequence-rule-v1",
+                "default": "playbill-claim-attestation-consequence-rule-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "rule_id",
+              "stance",
+              "minimum_independent_control_components"
+            ],
+            "title": "ClaimAttestationConsequenceRuleV1",
             "type": "object"
           },
           "ClaimDispositionInput": {
@@ -3498,6 +3612,155 @@
               "disposition"
             ],
             "title": "ClaimDispositionInput",
+            "type": "object"
+          },
+          "ClaimEvidenceAdmissionPolicyV1": {
+            "additionalProperties": false,
+            "properties": {
+              "rules": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ClaimEvidenceAdmissionRuleV1"
+                },
+                "title": "Rules",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-claim-evidence-admission-policy-v1",
+                "default": "playbill-claim-evidence-admission-policy-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "ClaimEvidenceAdmissionPolicyV1",
+            "type": "object"
+          },
+          "ClaimEvidenceAdmissionRuleV1": {
+            "additionalProperties": false,
+            "properties": {
+              "admission": {
+                "enum": [
+                  "origin_only",
+                  "direct",
+                  "derivational"
+                ],
+                "title": "Admission",
+                "type": "string"
+              },
+              "allowed_reducer_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Allowed Reducer Digests",
+                "type": "array"
+              },
+              "attestation_requirement": {
+                "default": "none",
+                "enum": [
+                  "none",
+                  "verified_provider",
+                  "verified_principal",
+                  "any_verified"
+                ],
+                "title": "Attestation Requirement",
+                "type": "string"
+              },
+              "capture_contract_digests": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Contract Digests",
+                "type": "array"
+              },
+              "claim_roles": {
+                "items": {
+                  "enum": [
+                    "normative",
+                    "observation",
+                    "environment_binding",
+                    "derivation"
+                  ],
+                  "type": "string"
+                },
+                "title": "Claim Roles",
+                "type": "array"
+              },
+              "evidence_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Evidence Kinds",
+                "type": "array"
+              },
+              "rule_id": {
+                "title": "Rule Id",
+                "type": "string"
+              },
+              "subject_binding": {
+                "enum": [
+                  "exact_claim_subject",
+                  "contract_source_mapping"
+                ],
+                "title": "Subject Binding",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-claim-evidence-admission-rule-v1",
+                "default": "playbill-claim-evidence-admission-rule-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "rule_id",
+              "claim_roles",
+              "capture_contract_digests",
+              "evidence_kinds",
+              "admission",
+              "subject_binding"
+            ],
+            "title": "ClaimEvidenceAdmissionRuleV1",
+            "type": "object"
+          },
+          "ClaimEvidenceFreshnessV1": {
+            "additionalProperties": false,
+            "properties": {
+              "stale_after": {
+                "$ref": "#/$defs/ClaimFreshnessDurationV1"
+              },
+              "tag": {
+                "const": "playbill-claim-evidence-freshness-v1",
+                "default": "playbill-claim-evidence-freshness-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "stale_after"
+            ],
+            "title": "ClaimEvidenceFreshnessV1",
+            "type": "object"
+          },
+          "ClaimFreshnessDurationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "microseconds": {
+                "minimum": 0,
+                "title": "Microseconds",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-duration-v1",
+                "default": "playbill-duration-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "microseconds"
+            ],
+            "title": "ClaimFreshnessDurationV1",
             "type": "object"
           },
           "ClaimInput": {
@@ -3661,6 +3924,380 @@
             "title": "ClaimInput",
             "type": "object"
           },
+          "ClaimResolutionPolicyV1": {
+            "additionalProperties": false,
+            "properties": {
+              "cardinality": {
+                "enum": [
+                  "one",
+                  "many"
+                ],
+                "title": "Cardinality",
+                "type": "string"
+              },
+              "conflict_result": {
+                "default": "unresolved",
+                "enum": [
+                  "unresolved",
+                  "refuse"
+                ],
+                "title": "Conflict Result",
+                "type": "string"
+              },
+              "eligible_verdicts": {
+                "items": {
+                  "enum": [
+                    "supported",
+                    "contradicted",
+                    "unresolved",
+                    "uncovered",
+                    "stale"
+                  ],
+                  "type": "string"
+                },
+                "title": "Eligible Verdicts",
+                "type": "array"
+              },
+              "require_current": {
+                "default": true,
+                "title": "Require Current",
+                "type": "boolean"
+              },
+              "required_basis_kinds": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Required Basis Kinds",
+                "type": "array"
+              },
+              "selector": {
+                "enum": [
+                  "all",
+                  "only_contender"
+                ],
+                "title": "Selector",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-claim-resolution-policy-v1",
+                "default": "playbill-claim-resolution-policy-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "cardinality",
+              "eligible_verdicts",
+              "selector"
+            ],
+            "title": "ClaimResolutionPolicyV1",
+            "type": "object"
+          },
+          "ClaimRetireDependentV1": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "effective_until": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Effective Until"
+              },
+              "predecessor_digest": {
+                "title": "Predecessor Digest",
+                "type": "string"
+              },
+              "reason": {
+                "enum": [
+                  "was-rescinded",
+                  "was-wrong"
+                ],
+                "title": "Reason",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-claim-retire-dependent-v1",
+                "default": "playbill-claim-retire-dependent-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifact_identity",
+              "predecessor_digest",
+              "reason"
+            ],
+            "title": "ClaimRetireDependentV1",
+            "type": "object"
+          },
+          "ClaimRetirementInput": {
+            "additionalProperties": false,
+            "properties": {
+              "claim_id": {
+                "title": "Claim Id",
+                "type": "string"
+              },
+              "dependents": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ClaimRetireDependentV1"
+                },
+                "title": "Dependents",
+                "type": "array"
+              },
+              "effective_until": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Effective Until"
+              },
+              "kind": {
+                "const": "claim_retirement",
+                "title": "Kind",
+                "type": "string"
+              },
+              "reason": {
+                "enum": [
+                  "was-rescinded",
+                  "was-wrong"
+                ],
+                "title": "Reason",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "claim_id",
+              "reason"
+            ],
+            "title": "ClaimRetirementInput",
+            "type": "object"
+          },
+          "ClaimType": {
+            "additionalProperties": false,
+            "properties": {
+              "admission_policy": {
+                "$ref": "#/$defs/ClaimAdmissionPolicyV1"
+              },
+              "allowed_object_subject_kinds": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Allowed Object Subject Kinds",
+                "type": "array"
+              },
+              "allowed_subject_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Allowed Subject Kinds",
+                "type": "array"
+              },
+              "artifact_format": {
+                "default": "playbill-claim-type-v1",
+                "enum": [
+                  "playbill-claim-type-v1",
+                  "playbill-claim-type-v3",
+                  "playbill-claim-type-v4"
+                ],
+                "title": "Artifact Format",
+                "type": "string"
+              },
+              "attestation_consequence_policy": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ClaimAttestationConsequencePolicyV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "cardinality": {
+                "enum": [
+                  "one",
+                  "many"
+                ],
+                "title": "Cardinality",
+                "type": "string"
+              },
+              "evidence_admission_policy": {
+                "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV1"
+              },
+              "evidence_freshness": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ClaimEvidenceFreshnessV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "lifecycle": {
+                "$ref": "#/$defs/ArtifactLifecycle",
+                "default": {
+                  "predecessor_digest": null,
+                  "state": "live"
+                }
+              },
+              "literal_schema": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Literal Schema"
+              },
+              "object_kind": {
+                "enum": [
+                  "literal",
+                  "subject",
+                  "exact_content"
+                ],
+                "title": "Object Kind",
+                "type": "string"
+              },
+              "permitted_roles": {
+                "items": {
+                  "enum": [
+                    "normative",
+                    "observation",
+                    "environment_binding",
+                    "derivation"
+                  ],
+                  "type": "string"
+                },
+                "title": "Permitted Roles",
+                "type": "array"
+              },
+              "pins": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ArtifactPin"
+                },
+                "title": "Pins",
+                "type": "array"
+              },
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              },
+              "referent_sensitivity": {
+                "default": "identity",
+                "enum": [
+                  "identity",
+                  "shell"
+                ],
+                "title": "Referent Sensitivity",
+                "type": "string"
+              },
+              "resolution_policy": {
+                "$ref": "#/$defs/ClaimResolutionPolicyV1"
+              },
+              "slot_policy": {
+                "default": null,
+                "title": "Slot Policy",
+                "type": "null"
+              },
+              "subject_scope": {
+                "default": null,
+                "title": "Subject Scope",
+                "type": "null"
+              }
+            },
+            "required": [
+              "identity",
+              "predicate",
+              "allowed_subject_kinds",
+              "object_kind",
+              "cardinality",
+              "permitted_roles",
+              "evidence_admission_policy",
+              "admission_policy",
+              "resolution_policy"
+            ],
+            "title": "ClaimType",
+            "type": "object"
+          },
+          "ClaimTypeInput": {
+            "additionalProperties": false,
+            "properties": {
+              "claim_type": {
+                "$ref": "#/$defs/ClaimType"
+              },
+              "kind": {
+                "const": "claim_type",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "claim_type"
+            ],
+            "title": "ClaimTypeInput",
+            "type": "object"
+          },
+          "CorroborationRequirementV1": {
+            "additionalProperties": false,
+            "properties": {
+              "min_count": {
+                "minimum": 1,
+                "title": "Min Count",
+                "type": "integer"
+              },
+              "query_definition_digest": {
+                "title": "Query Definition Digest",
+                "type": "string"
+              },
+              "requirement_id": {
+                "title": "Requirement Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-corroboration-requirement-v1",
+                "default": "playbill-corroboration-requirement-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "requirement_id",
+              "query_definition_digest",
+              "min_count"
+            ],
+            "title": "CorroborationRequirementV1",
+            "type": "object"
+          },
           "ExactContentObjectInput": {
             "additionalProperties": false,
             "properties": {
@@ -3699,6 +4336,53 @@
               "capture_digest"
             ],
             "title": "ExistingCaptureInput",
+            "type": "object"
+          },
+          "FreezeRequirementV1": {
+            "additionalProperties": false,
+            "properties": {
+              "except_transition_requirements": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Except Transition Requirements",
+                "type": "array"
+              },
+              "frozen_predicates": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Frozen Predicates",
+                "type": "array"
+              },
+              "requirement_id": {
+                "title": "Requirement Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-freeze-requirement-v1",
+                "default": "playbill-freeze-requirement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "while_predicate": {
+                "title": "While Predicate",
+                "type": "string"
+              },
+              "while_values": {
+                "items": {},
+                "title": "While Values",
+                "type": "array"
+              }
+            },
+            "required": [
+              "requirement_id",
+              "while_predicate",
+              "while_values",
+              "frozen_predicates"
+            ],
+            "title": "FreezeRequirementV1",
             "type": "object"
           },
           "LiteralObjectInput": {
@@ -5517,7 +6201,8 @@
               "subject",
               "approval-policy",
               "procedure-runtime-policy",
-              "procedure-mandate"
+              "procedure-mandate",
+              "change-set"
             ],
             "title": "Name",
             "type": "string"
@@ -5887,6 +6572,23 @@
             "type": "object"
           }
         },
+        "members": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "members",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Members",
+            "type": "array"
+          }
+        },
         "status": {
           "has_default": false,
           "has_default_factory": false,
@@ -6146,6 +6848,15 @@
             "additionalProperties": true,
             "title": "Intent",
             "type": "object"
+          },
+          "members": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Members",
+            "type": "array"
           },
           "status": {
             "$ref": "#/$defs/PlaybillCandidateStatus"
