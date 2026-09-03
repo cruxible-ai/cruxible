@@ -173,6 +173,9 @@ _SUBJECT_RE = re.compile(
     r"^(?P<kind>[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*)/"
     r"(?P<identifier>[a-z][a-z0-9_.-]{0,255})$"
 )
+# Object kinds this client understands from an accepted ClaimType envelope.
+# Anything outside the set is skew, not caller error; see _claim_type_object_kind.
+_CLAIM_TYPE_OBJECT_KINDS = frozenset({"literal", "subject", "exact_content"})
 _CLAIM_ADAPTER: TypeAdapter[ClaimArtifactAny] = TypeAdapter(ClaimArtifactAny)
 _PREDICTION_RULE_ADAPTER: TypeAdapter[PredictionRuleV1] = TypeAdapter(PredictionRuleV1)
 _RETIRE_CLOSURE_MISMATCH_CODE = "playbill.claim.retire_closure_mismatch"
@@ -1912,11 +1915,14 @@ class Playbill:
             at=_api_coordinate(coordinate),
         )
         object_kind = view.envelope.get("object_kind")
-        if object_kind not in {"literal", "subject"}:
-            raise ValueError(
-                f"accepted ClaimType {predicate_name!r} has unsupported object_kind {object_kind!r}"
-            )
-        return cast(Literal["literal", "subject"], object_kind)
+        if object_kind not in _CLAIM_TYPE_OBJECT_KINDS:
+            # An envelope kind this client does not know is daemon/client skew,
+            # not a caller mistake. Falling back to the literal shape keeps the
+            # daemon's preflight the single authority: it answers with the typed
+            # `playbill.claim.object_kind_mismatch` refusal and its repair,
+            # instead of the SDK raising an untyped, repair-less ValueError.
+            return "literal"
+        return cast(Literal["literal", "subject", "exact_content"], object_kind)
 
     def retire_claim(
         self,

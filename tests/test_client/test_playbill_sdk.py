@@ -979,6 +979,78 @@ def test_address_shaped_strings_follow_the_accepted_claim_type_object_kind(
     )
 
 
+# Every keyword `Playbill.claim` requires but the object-kind oracles do not vary.
+_OBJECT_KIND_CLAIM_DEFAULTS: dict[str, Any] = {
+    "subject": "sec.vuln/cve-2026-0001",
+    "role": ClaimRole.OBSERVATION,
+    "supported_by": None,
+    "copied_from": None,
+    "qualifier": None,
+    "effective_period": None,
+    "revises": None,
+    "dispositions": {},
+    "publish_to": None,
+    "subject_definition": None,
+    "claim_type_definition": None,
+}
+
+
+def test_address_shaped_string_on_an_exact_content_type_defers_to_the_daemon(
+    tmp_path: Path,
+) -> None:
+    """An exact_content predicate must not raise a bare, repair-less ValueError.
+
+    The SDK cannot author an ExactContentClaimObject, so it builds the literal
+    shape and lets the daemon answer with the typed
+    `playbill.claim.object_kind_mismatch` refusal
+    (tests/test_playbill/test_authoring_preflight.py::
+    test_claim_object_kind_mismatch_is_a_typed_preflight_refusal).
+    """
+
+    _workspace(tmp_path)
+    client = _Client()
+    client.claim_type_object_kinds.update({"docs.exact": "exact_content"})
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_test",
+        workspace=tmp_path,
+    )
+
+    draft = pb.claim(
+        predicate="docs.exact",
+        value="docs/readme",
+        rationale="An exact-content predicate keeps the daemon as the authority.",
+        self_source="exact content object kind",
+        **_OBJECT_KIND_CLAIM_DEFAULTS,  # type: ignore[arg-type]
+    )
+
+    assert draft.payload.statement.object == LiteralClaimObject(value="docs/readme")
+    assert draft.reference_expectations == ()
+
+
+def test_an_unknown_claim_type_object_kind_falls_back_to_the_literal_shape(
+    tmp_path: Path,
+) -> None:
+    _workspace(tmp_path)
+    client = _Client()
+    client.claim_type_object_kinds.update({"docs.future": "kind_from_a_newer_daemon"})
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_test",
+        workspace=tmp_path,
+    )
+
+    draft = pb.claim(
+        predicate="docs.future",
+        value="docs/readme",
+        rationale="Client/daemon skew stays a typed daemon refusal.",
+        self_source="unknown object kind",
+        **_OBJECT_KIND_CLAIM_DEFAULTS,  # type: ignore[arg-type]
+    )
+
+    assert draft.payload.statement.object == LiteralClaimObject(value="docs/readme")
+
+
 def test_claim_type_builder_selects_v4_for_attestation_consequences(tmp_path: Path) -> None:
     _workspace(tmp_path)
     pb = Playbill._from_client(  # type: ignore[arg-type]
