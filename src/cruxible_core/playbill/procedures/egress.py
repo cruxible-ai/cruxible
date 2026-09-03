@@ -288,20 +288,37 @@ def _mandate_term(
     mandate_grants: Mapping[str, MandateGrantV1],
     mandate_coordinate_digest: str,
     procedure_mandate_rung: int | None,
+    caller_tier_rung: int | None = None,
 ) -> EffectiveRungTermReadingV1:
     # StandingMandate is a Provider/CaptureContract/ClaimType grant and cannot
     # be reinterpreted as Procedure authority. P2-C binds the exact
     # ProcedureMandate in the dark v2 request; the executable fold follows B2.
     del mandate_grants
-    rung = MANDATE_FREE_RUNG_CEILING if procedure_mandate_rung is None else procedure_mandate_rung
+    if procedure_mandate_rung is None:
+        return EffectiveRungTermReadingV1(
+            term="mandate_grant",
+            rung=MANDATE_FREE_RUNG_CEILING,
+            reason="No exact Procedure mandate is bound; rung 2 and rung 3 are unavailable.",
+            basis_digest=mandate_coordinate_digest,
+        )
+    # A principal holds a rung either directly, by its authority tier, or
+    # through the Line's mandate. The receipt is a digested governance reading,
+    # so it names whichever source actually reached the rung rather than
+    # attributing a tier-held rung to a mandate that grants less.
+    if caller_tier_rung is not None and caller_tier_rung > procedure_mandate_rung:
+        return EffectiveRungTermReadingV1(
+            term="mandate_grant",
+            rung=caller_tier_rung,
+            reason=(
+                f"The calling principal's authority tier holds rung {caller_tier_rung}; "
+                f"the exact accepted Procedure mandate grants rung {procedure_mandate_rung}."
+            ),
+            basis_digest=mandate_coordinate_digest,
+        )
     return EffectiveRungTermReadingV1(
         term="mandate_grant",
-        rung=rung,
-        reason=(
-            "No exact Procedure mandate is bound; rung 2 and rung 3 are unavailable."
-            if procedure_mandate_rung is None
-            else f"The exact accepted Procedure mandate grants rung {procedure_mandate_rung}."
-        ),
+        rung=procedure_mandate_rung,
+        reason=f"The exact accepted Procedure mandate grants rung {procedure_mandate_rung}.",
         basis_digest=mandate_coordinate_digest,
     )
 
@@ -359,6 +376,7 @@ def compute_effective_rung(
     mandate_coordinate_digest: str,
     calibration_coordinate_digest: str,
     procedure_mandate_rung: int | None = None,
+    caller_tier_rung: int | None = None,
 ) -> EffectiveRungV1:
     """Fold the five §8.5.1 terms; each may narrow the result and none may widen it.
 
@@ -393,6 +411,7 @@ def compute_effective_rung(
             mandate_grants=mandate_grants,
             mandate_coordinate_digest=mandate_coordinate_digest,
             procedure_mandate_rung=procedure_mandate_rung,
+            caller_tier_rung=caller_tier_rung,
         ),
         _calibration_term(
             calibration_caps=calibration_caps,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import cruxible_core.service.playbill_procedure_runs as procedure_run_service
@@ -277,3 +278,41 @@ def test_settlement_refusal_projects_as_its_dedicated_public_terminal(
     assert state.terminal.repair.hand_edit.required_change == (
         "resubmit_the_candidate_whose_scope_matches_its_admission"
     )
+
+
+def test_the_mandate_term_names_whichever_source_reached_the_rung() -> None:
+    """A tier-held rung is never attributed to a mandate that grants less."""
+
+    common = {
+        "procedure_terminal_capability": 3,
+        "requested_terminal_rung": 3,
+        "selector_privacies": {},
+        "taint_labels": (),
+        "mandate_grants": {},
+        "calibration_caps": (),
+        "evaluation_time": datetime(2026, 9, 3, tzinfo=UTC),
+        "procedure_definition_digest": _digest("definition"),
+        "line_spec_digest": _digest("line"),
+        "sensitivity_policy_digest": _digest("sensitivity"),
+        "mandate_coordinate_digest": _digest("mandate-coordinate"),
+        "calibration_coordinate_digest": _digest("calibration"),
+    }
+
+    tier_wins = compute_effective_rung(
+        **common,  # type: ignore[arg-type]
+        procedure_mandate_rung=2,
+        caller_tier_rung=3,
+    )
+    term = next(item for item in tier_wins.terms if item.term == "mandate_grant")
+    assert term.rung == 3
+    assert "authority tier holds rung 3" in term.reason
+    assert "mandate grants rung 2" in term.reason
+
+    mandate_wins = compute_effective_rung(
+        **common,  # type: ignore[arg-type]
+        procedure_mandate_rung=3,
+        caller_tier_rung=0,
+    )
+    term = next(item for item in mandate_wins.terms if item.term == "mandate_grant")
+    assert term.rung == 3
+    assert term.reason == "The exact accepted Procedure mandate grants rung 3."

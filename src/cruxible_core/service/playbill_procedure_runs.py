@@ -2548,6 +2548,10 @@ def service_run_playbill_line(
         "acquisition_plan_digest": plan_digest,
         "exhaust_access_binding_digest": None,
     }
+    # `ProcedureRunAdmissionV5` refuses a model whose binding digest does not
+    # reproduce, so the admission handed to the runtime-policy binder has to
+    # carry a real one. The binder recomputes it because binding the governed
+    # output-bytes cap changes the preimage, not because this one is spare.
     provisional = ProcedureRunAdmissionV5.model_construct(**cast(dict[str, Any], fields))
     provisional = provisional.model_copy(
         update={"semantic_replay_key_digest": procedure_semantic_replay_key_digest(provisional)}
@@ -2592,7 +2596,7 @@ def service_run_playbill_line(
         acquisition_plan=plan,
         acquisition_plan_digest=plan_digest,
     )
-    mandate_rung = max(caller_rung, *(mandate.rung for _digest, mandate in mandates))
+    mandate_rung = max(mandate.rung for _digest, mandate in mandates)
     effective_rung = compute_effective_rung(
         procedure_terminal_capability=accepted.procedure.definition.terminal_capability,
         requested_terminal_rung=accepted_line.line.requested_terminal_rung,
@@ -2607,6 +2611,7 @@ def service_run_playbill_line(
         mandate_coordinate_digest=mandate_coordinate_digest,
         calibration_coordinate_digest=calibration_coordinate_digest,
         procedure_mandate_rung=mandate_rung,
+        caller_tier_rung=caller_rung,
     )
     journal, root = _journal_for_write(instance)
     _activate_writer(

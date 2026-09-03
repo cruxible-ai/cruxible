@@ -68,6 +68,16 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     ),
     "settlement_proposal_id_mismatch": "settle_the_proposal_the_candidate_was_admitted_under",
     "settlement_receipt_mismatch": "reproduce_the_terminal_receipt_before_settling",
+    "block_frame_invalid": "restore_the_block_marker_frame_the_stamp_declares",
+    "block_multi_backing": "stamp_the_block_with_exactly_one_backing",
+    "block_query_backing": "back_the_block_with_a_claim_or_artifact_instead_of_a_query",
+    "block_not_publication_origin": "sync_the_block_from_the_source_that_published_it",
+    "block_publication_registry_unavailable": "restore_the_publication_registry_then_sync",
+    "block_successor_body_ambiguous": "repin_the_block_to_one_exact_successor_body",
+    "block_successor_body_missing": "publish_the_successor_body_before_repinning",
+    "block_marker_malformed": "repair_the_block_marker_to_the_declared_grammar",
+    "source_path_invalid": "name_a_workspace_source_path_the_catalog_resolves",
+    "workspace_source_catalog_invalid": "repair_the_workspace_source_catalog",
 }
 
 
