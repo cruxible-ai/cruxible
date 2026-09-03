@@ -2358,9 +2358,15 @@ def create_authoring_intent(
     """Create a durable authoring intent or print a schema-derived example.
 
     \b
-    Input kind family: claim | claim_type | claim_retirement | procedure |
+    Input kind family: claim | procedure | subject | query_definition |
+    approval_policy | procedure_runtime_policy | procedure_mandate |
+    change_set (tagless).
+
+    \b
+    Change-set member kind family: claim | claim_type | claim_retirement |
     subject | query_definition | approval_policy | procedure_runtime_policy |
-    procedure_mandate | change_set (tagless).
+    procedure_mandate | procedure. claim_type and claim_retirement are member
+    kinds only -- neither is a top-level input.
 
     \b
     One intent is one changeset: a change_set input carries any mix of those

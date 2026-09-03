@@ -5,15 +5,21 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from typing import Literal, get_args
 
 import pytest
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
+from pydantic import TypeAdapter, ValidationError
 
 from cruxible_client import CruxibleClient, contracts
 from cruxible_client.authoring.blocks import render_projection_opening
 from cruxible_client.authoring.examples import claim_flow_a_example, claim_self_source_example
 from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.authoring.inputs import (
+    AuthoringChangeSetMemberInputV1,
+    AuthoringInputV1,
+)
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
     ProjectionClaimBackingV1,
@@ -40,6 +46,7 @@ COORDINATE = contracts.PlaybillAcceptedCoordinate(
     compiler_digest="sha256:" + "4" * 64,
 )
 INTENT_ID = "AIT-" + "5" * 32
+EXPECTATION_ID = "sha256:" + "6" * 64
 
 
 def test_cli_line_run_forwards_only_the_occurrence_assertion(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -610,7 +617,7 @@ def test_cli_insertion_confirm_and_abandon_use_the_opaque_intent(
 ) -> None:  # type: ignore[no-untyped-def]
     observation = tmp_path / "observation.json"
     observation.write_text(json.dumps(OBSERVATION))
-    calls: list[tuple[str, object]] = []
+    calls: list[tuple[str, object, str | None]] = []
 
     class StubClient:
         def prepare_playbill_authoring_publication(
@@ -619,8 +626,9 @@ def test_cli_insertion_confirm_and_abandon_use_the_opaque_intent(
             intent_id: str,
             *,
             observation: dict[str, object],
+            expectation_id: str | None = None,
         ) -> contracts.PlaybillInsertionPrepareResult:
-            calls.append((intent_id, observation))
+            calls.append((intent_id, observation, expectation_id))
             return contracts.PlaybillInsertionPrepareResult(
                 tag="playbill-insertion-prepare-result-v2",
                 outcome="prepared",
@@ -643,8 +651,9 @@ def test_cli_insertion_confirm_and_abandon_use_the_opaque_intent(
             intent_id: str,
             *,
             observation: dict[str, object],
+            expectation_id: str | None = None,
         ) -> contracts.PlaybillInsertionConfirmResultV2:
-            calls.append((intent_id, observation))
+            calls.append((intent_id, observation, expectation_id))
             return contracts.PlaybillInsertionConfirmResultV2(
                 tag="playbill-insertion-confirm-result-v2",
                 outcome="bound",
@@ -656,8 +665,10 @@ def test_cli_insertion_confirm_and_abandon_use_the_opaque_intent(
             self,
             instance_id: str,
             intent_id: str,
+            *,
+            expectation_id: str | None = None,
         ) -> contracts.PlaybillInsertionAbandonResult:
-            calls.append((intent_id, "abandon"))
+            calls.append((intent_id, "abandon", expectation_id))
             return contracts.PlaybillInsertionAbandonResult(
                 intent={"intent_id": intent_id},
                 expectation={"state": "abandoned"},
@@ -682,13 +693,49 @@ def test_cli_insertion_confirm_and_abandon_use_the_opaque_intent(
         [*common, "prepare-publication", INTENT_ID, str(observation), "--json"],
     )
     abandoned = runner.invoke(cli, [*common, "abandon-insertion", INTENT_ID, "--json"])
+    # A change set publishes one expectation per publishing member, so the three
+    # commands must carry the caller's chosen expectation through untouched.
+    named = [
+        runner.invoke(
+            cli,
+            [
+                *common,
+                "confirm-insertion",
+                INTENT_ID,
+                str(observation),
+                "--expectation-id",
+                EXPECTATION_ID,
+                "--json",
+            ],
+        ),
+        runner.invoke(
+            cli,
+            [
+                *common,
+                "prepare-publication",
+                INTENT_ID,
+                str(observation),
+                "--expectation-id",
+                EXPECTATION_ID,
+                "--json",
+            ],
+        ),
+        runner.invoke(
+            cli,
+            [*common, "abandon-insertion", INTENT_ID, "--expectation-id", EXPECTATION_ID, "--json"],
+        ),
+    ]
 
     assert confirmed.exit_code == prepared.exit_code == abandoned.exit_code == 0
+    assert [result.exit_code for result in named] == [0, 0, 0]
     assert json.loads(prepared.stdout)["warnings"][0]["citation_ids"] == ["sha256:" + "8" * 64]
     assert calls == [
-        (INTENT_ID, OBSERVATION),
-        (INTENT_ID, OBSERVATION),
-        (INTENT_ID, "abandon"),
+        (INTENT_ID, OBSERVATION, None),
+        (INTENT_ID, OBSERVATION, None),
+        (INTENT_ID, "abandon", None),
+        (INTENT_ID, OBSERVATION, EXPECTATION_ID),
+        (INTENT_ID, OBSERVATION, EXPECTATION_ID),
+        (INTENT_ID, "abandon", EXPECTATION_ID),
     ]
 
 
@@ -697,6 +744,9 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
     help_result = runner.invoke(cli, ["playbill", "authoring", "create", "--help"])
     assert help_result.exit_code == 0
     assert "Input kind family: claim | procedure | subject | query_definition" in help_result.output
+    assert "Change-set member kind family: claim | claim_type | claim_retirement" in (
+        help_result.output
+    )
     assert "procedure_runtime_policy" in help_result.output
     assert "procedure_mandate" in help_result.output
 
@@ -710,12 +760,14 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
         "procedure-runtime-policy",
         "procedure-mandate",
         "query-claims-by-type",
+        "change-set",
     ):
         result = runner.invoke(cli, ["playbill", "authoring", "create", "--example", name])
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)
         assert payload["kind"] in {
             "claim",
+            "change_set",
             "procedure",
             "subject",
             "approval_policy",
@@ -737,6 +789,70 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
                 "playbill-transform-aggregate-items-spec-v1",
             ]
         assert result.stderr == ""
+
+
+def _input_kinds(union: object) -> set[str]:
+    """Every `kind` one discriminated authoring-input union actually admits."""
+
+    members = get_args(get_args(union)[0])
+    kinds: set[str] = set()
+    for model in members:
+        annotation = model.model_fields["kind"].annotation
+        assert get_args(annotation) and annotation is not Literal
+        kinds.add(str(get_args(annotation)[0]))
+    return kinds
+
+
+def _kind_family(output: str, label: str) -> tuple[str, ...]:
+    """Read one `--help` kind family back off the rendered help text."""
+
+    _before, _marker, rest = output.partition(f"{label}: ")
+    assert _marker, f"{label} missing from help output"
+    listed, _stop, _after = rest.partition(".")
+    return tuple(
+        sorted(
+            # `change_set (tagless)` names the one kind whose members carry no tag.
+            item.strip().removesuffix(" (tagless)")
+            for item in listed.replace("\n", " ").split("|")
+        )
+    )
+
+
+def test_cli_create_help_names_only_kinds_the_discriminators_admit() -> None:
+    """Every kind the `create` docstring advertises must actually parse.
+
+    The docstring is the only place an agent learns which `kind` a payload file
+    may carry, so a kind listed there that `AuthoringInputV1` refuses costs a
+    whole create round trip. Both families are read back off the rendered help
+    and checked against the discriminated unions themselves.
+    """
+
+    top_level = TypeAdapter(AuthoringInputV1)
+    member = TypeAdapter(AuthoringChangeSetMemberInputV1)
+    help_output = CliRunner().invoke(cli, ["playbill", "authoring", "create", "--help"]).output
+
+    advertised_top_level = _kind_family(help_output, "Input kind family")
+    assert advertised_top_level == tuple(sorted(_input_kinds(AuthoringInputV1)))
+    advertised_members = _kind_family(help_output, "Change-set member kind family")
+    assert advertised_members == tuple(sorted(_input_kinds(AuthoringChangeSetMemberInputV1)))
+
+    for kind in _input_kinds(AuthoringInputV1):
+        with pytest.raises(ValidationError) as refusal:
+            top_level.validate_python({"kind": kind})
+        assert {error["type"] for error in refusal.value.errors()} == {"missing"}, kind
+    for kind in _input_kinds(AuthoringChangeSetMemberInputV1):
+        with pytest.raises(ValidationError) as refusal:
+            member.validate_python({"kind": kind})
+        assert "union_tag_invalid" not in {error["type"] for error in refusal.value.errors()}, kind
+
+    # The two member-only kinds are exactly what the docstring used to promise
+    # at top level, and the discriminator refuses both there.
+    for kind in ("claim_type", "claim_retirement"):
+        assert kind in advertised_members
+        assert kind not in advertised_top_level
+        with pytest.raises(ValidationError) as refusal:
+            top_level.validate_python({"kind": kind})
+        assert {error["type"] for error in refusal.value.errors()} == {"union_tag_invalid"}
 
 
 def test_subject_propose_is_a_typed_deprecation_shim(tmp_path: Path) -> None:
