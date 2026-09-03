@@ -50,6 +50,10 @@ two decisions or split the set rather than to add a disposition. There is no
 member ceiling in the model; how many changed members one daemon receives in a
 single submission is that operator's admission bound.
 
+An intent that publishes more than one Claim owns one publication expectation
+per publishing member: read them from `Intent.publications` and apply each in
+turn, each preparing against the source as it stands after the last.
+
 ### Evolving vocabulary in one generation
 
 Needing a new distinction is an epistemic move, and "I need this distinction,
@@ -98,9 +102,36 @@ accounts afterwards.
 law -- one succession, no siblings to re-author. Both roads build the candidate
 with the same function, so they cannot drift.
 
-An intent that publishes more than one Claim owns one publication expectation
-per publishing member: read them from `Intent.publications` and apply each in
-turn, each preparing against the source as it stands after the last.
+The 2026-09-02 `sec.vuln.affects_package` migration -- a literal-valued
+ClaimType becoming subject-valued, which took three generations days apart --
+is one set:
+
+~~~python
+edges = pb.changes(rationale="Name the package instead of spelling it.")
+for work_item, claim in affected:                      # each existing Claim
+    edges.claim(
+        subject=work_item,
+        predicate="sec.vuln.affects_package",
+        value=package_ref,                             # a SubjectRef now
+        role="observation",
+        rationale="The advisory names this package.",
+        revises=claim,                                 # keeps the identity
+        self_source=advisory_line,
+        supported_by=None, copied_from=None, qualifier=None,
+        effective_period=None, dispositions={}, publish_to=None,
+        subject_definition=None, claim_type_definition=None,
+    )
+edges.succeed_claim_type(
+    subject_valued_affects_package,                    # pins the current digest
+    dependents=[re_author(claim) for _, claim in affected]
+             + [rescind(claim) for claim in never_true],
+)
+intent = edges.prepare()
+~~~
+
+One generation: the tombstones, the re-authored edges and any Claim the set
+states fresh under the successor all land together, and `next` reports nothing
+outstanding about the vocabulary afterwards.
 
 Subject-valued Claims are typed relationships, not string literals. Pass an accepted
 `SubjectRef` (or canonical `<subject-kind>/<subject-id>` address) as
