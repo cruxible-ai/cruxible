@@ -426,13 +426,29 @@ def manifest_root(tree: Mapping[str, bytes]) -> SemanticManifestRoot:
     return manifest_root_from_members(manifest_for_tree(tree))
 
 
+CARD_NAMESPACE = "cards/"
+"""The one spelling of the derivative-card sidecar namespace.
+
+It lives here because the semantic projection has to exclude it and cannot
+import the core renderer that owns the rest of the card law.
+"""
+
+
+def is_candidate_card_path(path: str) -> bool:
+    """Return whether a ledger path belongs to the derivative card namespace."""
+
+    return normalize_ledger_path(path).startswith(CARD_NAMESPACE)
+
+
 def semantic_projection(tree: Mapping[str, bytes]) -> dict[str, bytes]:
     """Return Π(tree), excluding deterministic daemon records and derivative cards."""
 
     return {
         path: content
         for path, content in tree.items()
-        if not normalize_ledger_path(path).startswith(("changesets/", "cards/"))
+        if not (
+            normalize_ledger_path(path).startswith("changesets/") or is_candidate_card_path(path)
+        )
     }
 
 
@@ -488,11 +504,13 @@ def semantic_diff(
 
 
 __all__ = [
+    "CARD_NAMESPACE",
     "ArtifactCodec",
     "ArtifactDigest",
     "CURRENT_ARTIFACT_CODEC",
     "P2_B0_ARTIFACT_CODEC",
     "artifact_bytes_for_codec",
+    "is_candidate_card_path",
     "artifact_bytes_for_path",
     "artifact_path_for_codec",
     "artifact_path_matches",

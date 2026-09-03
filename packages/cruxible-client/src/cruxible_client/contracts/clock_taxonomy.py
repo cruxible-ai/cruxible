@@ -44,11 +44,15 @@ TIME_FIELD_SUFFIXES = (
     "_until",
     "generation",
     "sequence",
+    "timestamp",
 )
 _TIME_ANNOTATION_TOKENS = ("datetime", "timedelta", "CanonicalDuration")
-# `generation` and `sequence` name a whole field or its last segment. Matching a
-# bare suffix also caught `consequence`, a Literal that carries no time at all.
-_WORD_SUFFIXES = ("generation", "sequence")
+# `generation`, `sequence` and `timestamp` name a whole field or its last
+# segment. Matching a bare suffix also caught `consequence`, a Literal that
+# carries no time at all. `timestamp` is the codebase's dominant canonical-time
+# spelling and is usually annotated `str`, so the annotation tokens never find
+# it: it is discovered by name or not at all.
+_WORD_SUFFIXES = ("generation", "sequence", "timestamp")
 
 
 def is_time_bearing_field(name: str, annotation: str) -> bool:
@@ -70,6 +74,13 @@ def is_time_bearing_field(name: str, annotation: str) -> bool:
 # `observed_at` the instant the daemon evaluated the source, while an attestation
 # is `observed_at` the time its attestor asserts.
 CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
+    # Canonical candidate timestamps are the author's assertion of when the
+    # candidate was made; nothing checks them against a daemon clock.
+    ("AuthoringIntentV1", "canonical_timestamp"): "ASSERTION TIME",
+    ("PreflightCertificateV1", "canonical_timestamp"): "ASSERTION TIME",
+    ("SemanticCandidate", "timestamp"): "ASSERTION TIME",
+    ("SemanticCandidateV2", "timestamp"): "ASSERTION TIME",
+    ("_MemberContext", "timestamp"): "ASSERTION TIME",
     ("AcceptedAuthorityBasisV1", "valid_from"): "VALIDITY WINDOW",
     ("AcceptedAuthorityBasisV1", "valid_until"): "VALIDITY WINDOW",
     ("AuditClaimFactorsV1", "first_accepted_generation"): "SETTLEMENT ORDER",

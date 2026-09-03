@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from pydantic import BaseModel, ConfigDict, Field
 
 from cruxible_client.contracts.artifacts import ArtifactKindRegistry
-from cruxible_client.contracts.canonical import normalize_ledger_path, normalize_manifest_paths
+from cruxible_client.contracts.canonical import (
+    is_candidate_card_path,
+    normalize_ledger_path,
+    normalize_manifest_paths,
+)
 from cruxible_client.contracts.errors import ProjectionFormatError
 from cruxible_core.playbill.projection_artifacts import registered_path_kind
 from cruxible_core.playbill.protocols import LedgerRepositoryProtocol
@@ -75,7 +79,7 @@ def read_registered_tree(
         try:
             if normalize_ledger_path(path) != path:
                 raise ProjectionFormatError(f"ledger path is not canonical: {path}")
-            if not path.startswith("cards/"):
+            if not is_candidate_card_path(path):
                 registered_path_kind(path, artifact_kinds=artifact_kinds)
         except Exception as exc:
             if isinstance(exc, ProjectionFormatError):

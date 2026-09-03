@@ -14,7 +14,6 @@ from cruxible_core.playbill.candidate_cards import (
     CARD_RENDERER_DIGEST,
     candidate_card_path,
     derive_candidate_cards,
-    verify_candidate_cards,
 )
 from cruxible_core.playbill.projection_artifacts import P2_C_ARTIFACT_KINDS
 from cruxible_core.playbill.proposals import (
@@ -48,23 +47,36 @@ def test_cards_cover_changes_removals_and_renames_without_semantic_authority() -
     )
 
     assert rendered[candidate_card_path(old)] == b"removed at " + b"a" * 40 + b"\n"
-    assert b"# procedure: Procedure:new" in rendered[candidate_card_path(new)]
-    assert b"Procedure:kept-v2" in rendered[candidate_card_path(kept)]
+    assert b"# procedure: new" in rendered[candidate_card_path(new)]
+    assert b"# procedure: kept" in rendered[candidate_card_path(kept)]
     assert manifest_root(semantic_projection(rendered)) == manifest_root(candidate)
-    verify_candidate_cards(
-        base_tree=base,
-        candidate_tree=rendered,
-        coordinate="a" * 40,
-        artifact_kinds=P2_C_ARTIFACT_KINDS,
+    # Re-derivation is idempotent, which is the property settlement and recovery
+    # rely on when they compare the whole re-evaluated tree.
+    assert (
+        derive_candidate_cards(
+            base_tree=base,
+            candidate_tree=rendered,
+            coordinate="a" * 40,
+            artifact_kinds=P2_C_ARTIFACT_KINDS,
+        )
+        == rendered
     )
 
 
-def test_card_verifier_rejects_missing_stale_and_extra_derivatives() -> None:
+def test_card_rederivation_replaces_missing_stale_and_extra_derivatives() -> None:
+    """Settlement and recovery compare the re-derived tree, so this is the check.
+
+    HOLD-class: `verify_candidate_cards` had no production caller -- both sites
+    compare the entire re-evaluated tree, which subsumes it -- so it was removed
+    and this oracle now exercises the derivation those sites really run.
+    """
+
     path = "procedures/demo.json"
     base: dict[str, bytes] = {}
+    candidate = {path: _artifact("demo")}
     rendered = derive_candidate_cards(
         base_tree=base,
-        candidate_tree={path: _artifact("demo")},
+        candidate_tree=candidate,
         coordinate="b" * 40,
         artifact_kinds=P2_C_ARTIFACT_KINDS,
     )
@@ -76,13 +88,16 @@ def test_card_verifier_rejects_missing_stale_and_extra_derivatives() -> None:
     )
 
     for variant in variants:
-        with pytest.raises(ProposalIntegrityError, match="do not reproduce"):
-            verify_candidate_cards(
+        assert variant != rendered
+        assert (
+            derive_candidate_cards(
                 base_tree=base,
                 candidate_tree=variant,
                 coordinate="b" * 40,
                 artifact_kinds=P2_C_ARTIFACT_KINDS,
             )
+            == rendered
+        )
 
 
 def test_proposal_admission_allows_card_rederivation_but_rejects_caller_card_bytes() -> None:

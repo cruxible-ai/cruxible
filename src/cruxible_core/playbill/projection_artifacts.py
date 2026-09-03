@@ -29,6 +29,7 @@ from cruxible_client.contracts.canonical import (
     artifact_bytes_for_path,
     canonical_bytes,
     file_digest,
+    is_candidate_card_path,
     normalize_canonical,
     pretty_canonical_bytes,
 )
@@ -724,7 +725,7 @@ def parse_projection_tree(
     change_sets: list[tuple[str, ChangeSetRecordAnyVersion]] = []
 
     for path in sorted(blobs, key=lambda item: item.encode("utf-8")):
-        if path.startswith("cards/"):
+        if is_candidate_card_path(path):
             continue
         if registered_path_kind(path, artifact_kinds=artifact_kinds) != "changeset":
             continue
@@ -757,7 +758,7 @@ def parse_projection_tree(
         )
 
     for path in sorted(blobs, key=lambda item: item.encode("utf-8")):
-        if path.startswith("cards/"):
+        if is_candidate_card_path(path):
             continue
         content = blobs[path]
         kind = registered_path_kind(path, artifact_kinds=artifact_kinds)

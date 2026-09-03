@@ -198,6 +198,9 @@ def test_http_and_mcp_playbill_calls_delegate_to_the_dedicated_facade() -> None:
     assert list(facade) == surface["facade_verbs"]
     assert http == facade
     assert set(mcp) <= set(facade)
+    # Breadth, not just count: a handler that starts calling one more facade
+    # operation moves the ratified pin instead of passing unnoticed.
+    assert list(mcp) == surface["mcp_facade_operations"]
     assert "from cruxible_core.runtime import api\n" not in HTTP_ROUTES.read_text(encoding="utf-8")
 
 

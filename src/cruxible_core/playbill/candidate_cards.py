@@ -6,11 +6,15 @@ import json
 from collections.abc import Mapping
 
 from cruxible_client.contracts.artifacts import ArtifactKindRegistry
-from cruxible_client.contracts.canonical import canonical_digest, normalize_ledger_path
+from cruxible_client.contracts.canonical import (
+    CARD_NAMESPACE,
+    canonical_digest,
+    is_candidate_card_path,
+    normalize_ledger_path,
+)
 from cruxible_client.contracts.errors import ProjectionFormatError, ProposalIntegrityError
 
-CARD_NAMESPACE = "cards/"
-CARD_RENDERER_IMPLEMENTATION = "python-reference-v1"
+CARD_RENDERER_IMPLEMENTATION = "python-reference-v2"
 _HEADER_TEMPLATE = "# {kind}: {identity}\n\n- Artifact: `{path}`\n\n"
 _BODY_TEMPLATE = "```json\n{body}\n```\n"
 _REMOVAL_TEMPLATE = "removed at {coordinate}\n"
@@ -27,12 +31,6 @@ CARD_RENDERER_DIGEST = "sha256:" + canonical_digest(
 )
 
 
-def is_candidate_card_path(path: str) -> bool:
-    """Return whether a normalized ledger path belongs to the derivative card namespace."""
-
-    return normalize_ledger_path(path).startswith(CARD_NAMESPACE)
-
-
 def candidate_card_path(artifact_path: str) -> str:
     """Map one canonical JSON artifact path to its fixed Markdown sidecar."""
 
@@ -43,14 +41,21 @@ def candidate_card_path(artifact_path: str) -> str:
 
 
 def _identity(payload: Mapping[str, object], *, path: str) -> str:
+    """Return the artifact's name for the card heading.
+
+    The heading template already prefixes the registered kind, so returning the
+    kind-qualified identity here rendered it twice ("# procedure: Procedure:x").
+    Human readability is the whole point of a card, so the heading carries the
+    kind once and the name once.
+    """
+
     raw = payload.get("identity")
     if isinstance(raw, str):
         return raw
     if isinstance(raw, Mapping):
-        kind = raw.get("kind")
         name = raw.get("name")
-        if isinstance(kind, str) and isinstance(name, str):
-            return f"{kind}:{name}"
+        if isinstance(name, str):
+            return name
     for key in ("principal_id", "artifact_id", "name", "predicate", "tag"):
         value = payload.get(key)
         if isinstance(value, str):
@@ -133,25 +138,6 @@ def derive_candidate_cards(
     return result
 
 
-def verify_candidate_cards(
-    *,
-    base_tree: Mapping[str, bytes],
-    candidate_tree: Mapping[str, bytes],
-    coordinate: str,
-    artifact_kinds: ArtifactKindRegistry,
-) -> None:
-    """Re-derive and byte-verify every card in a candidate tree."""
-
-    expected = derive_candidate_cards(
-        base_tree=base_tree,
-        candidate_tree=candidate_tree,
-        coordinate=coordinate,
-        artifact_kinds=artifact_kinds,
-    )
-    if expected != dict(candidate_tree):
-        raise ProposalIntegrityError("candidate derivative cards do not reproduce exactly")
-
-
 __all__ = [
     "CARD_NAMESPACE",
     "CARD_RENDERER_DIGEST",
@@ -162,5 +148,4 @@ __all__ = [
     "is_candidate_card_path",
     "render_candidate_card",
     "render_removal_card",
-    "verify_candidate_cards",
 ]

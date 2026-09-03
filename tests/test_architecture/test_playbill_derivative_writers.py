@@ -25,6 +25,15 @@ PRIMITIVE_DEFINITION = (
     REPO_ROOT / "packages/cruxible-client/src/cruxible_client/contracts/declared_blocks.py"
 )
 PRIMITIVES = {"frame_projection_block", "render_projection_opening"}
+# The card renderers live beside the writer that calls them, so the scan skips
+# nothing: every caller in the tree is enumerated and must be sanctioned.
+CARD_PRIMITIVE_DEFINITION = REPO_ROOT / "src/cruxible_core/playbill/never-a-real-module.py"
+# One persistent tree writer, plus the read-only block-sync renderer that shows a
+# card without ever writing one into a candidate tree.
+SANCTIONED_CARD_CALLERS = {
+    "src/cruxible_core/playbill/candidate_cards.py::derive_candidate_cards",
+    "src/cruxible_core/service/playbill_projection_sync.py::_read_artifact_backing",
+}
 SANCTIONED_CALLERS = {
     "projection_repin": {
         "packages/cruxible-client/src/cruxible_client/authoring/blocks.py::repin_projection_block",
@@ -81,6 +90,21 @@ def _projection_primitive_callers(
     source_roots: tuple[Path, ...] | None = None,
     primitive_definition: Path = PRIMITIVE_DEFINITION,
 ) -> set[str]:
+    return _primitive_callers(
+        primitives=PRIMITIVES,
+        repo_root=repo_root,
+        source_roots=source_roots,
+        primitive_definition=primitive_definition,
+    )
+
+
+def _primitive_callers(
+    *,
+    primitives: set[str],
+    repo_root: Path = REPO_ROOT,
+    source_roots: tuple[Path, ...] | None = None,
+    primitive_definition: Path = PRIMITIVE_DEFINITION,
+) -> set[str]:
     callers: set[str] = set()
     roots = source_roots or (repo_root / "src", repo_root / "packages")
     for source_root in roots:
@@ -95,7 +119,7 @@ def _projection_primitive_callers(
                 for node in ast.walk(tree)
                 if isinstance(node, ast.ImportFrom)
                 for alias in node.names
-                if alias.name in PRIMITIVES
+                if alias.name in primitives
             }
 
             class Visitor(ast.NodeVisitor):
@@ -118,8 +142,8 @@ def _projection_primitive_callers(
                 def visit_Call(self, node: ast.Call) -> None:
                     is_primitive = (
                         isinstance(node.func, ast.Name)
-                        and (node.func.id in PRIMITIVES or node.func.id in direct_aliases)
-                    ) or (isinstance(node.func, ast.Attribute) and node.func.attr in PRIMITIVES)
+                        and (node.func.id in primitives or node.func.id in direct_aliases)
+                    ) or (isinstance(node.func, ast.Attribute) and node.func.attr in primitives)
                     if is_primitive:
                         scope = scopes[-1] if scopes else "<module>"
                         callers.add(f"{relative}::{scope}")
@@ -127,6 +151,23 @@ def _projection_primitive_callers(
 
             Visitor().visit(tree)
     return callers
+
+
+CARD_PRIMITIVES = {"render_candidate_card", "render_removal_card"}
+
+
+def _card_primitive_callers(
+    *,
+    repo_root: Path = REPO_ROOT,
+    primitive_definition: Path = CARD_PRIMITIVE_DEFINITION,
+) -> set[str]:
+    """Scan the tree for every caller of a card-rendering primitive."""
+
+    return _primitive_callers(
+        primitives=CARD_PRIMITIVES,
+        repo_root=repo_root,
+        primitive_definition=primitive_definition,
+    )
 
 
 def _assert_only_sanctioned_callers(callers: set[str]) -> None:
@@ -161,10 +202,18 @@ def test_projection_primitive_callers_equal_the_two_writer_inventory() -> None:
     _assert_only_sanctioned_callers(_projection_primitive_callers())
 
 
-def test_candidate_card_derivative_writer_is_explicit_and_verifying() -> None:
+def test_candidate_card_derivative_writer_is_the_only_one_in_the_tree() -> None:
+    """Scan for card-rendering callers instead of restating the inventory.
+
+    The previous shape asserted a dict literal equalled its own single key and
+    grepped the writer for the two calls it obviously makes, so a second card
+    writer added anywhere in the tree would not have been caught.
+    """
+
     assert set(CARD_DERIVATIVE_WRITERS) == {
         "src/cruxible_core/playbill/candidate_cards.py::derive_candidate_cards"
     }
+    assert _card_primitive_callers() == SANCTIONED_CARD_CALLERS
     writer, operations = next(iter(CARD_DERIVATIVE_WRITERS.values()))
     source = inspect.getsource(writer)
     assert "render_candidate_card(" in source

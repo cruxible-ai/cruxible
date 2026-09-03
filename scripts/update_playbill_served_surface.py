@@ -15,6 +15,7 @@ from typing import get_args, get_origin
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FACADE = REPO_ROOT / "src/cruxible_core/runtime/playbill_api.py"
+MCP_HANDLERS = REPO_ROOT / "src/cruxible_core/mcp/handlers.py"
 SNAPSHOT = REPO_ROOT / "tests/goldens/playbill/served-surface-dp0b-v1.json"
 FORMAT = "playbill-served-surface-v1"
 # Attribution is by role: a public artifact never carries a person's name.
@@ -44,6 +45,28 @@ def _facade_operations(path: Path = FACADE) -> list[str]:
         for node in tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
         and node.name.startswith("playbill_")
+    )
+
+
+def _mcp_facade_operations(path: Path = MCP_HANDLERS) -> list[str]:
+    """Pin the exact facade breadth the MCP lane reaches.
+
+    Tool count alone does not bound the MCP surface: an existing handler that
+    starts calling one more facade operation widens what MCP can reach without
+    adding a tool. Pinning the operations it calls makes that a pin movement.
+    """
+
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    return sorted(
+        {
+            node.func.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "playbill_api"
+            and node.func.attr.startswith("playbill_")
+        }
     )
 
 
@@ -213,6 +236,7 @@ def generate_served_surface() -> dict[str, object]:
         "facade_verbs": _facade_operations(),
         "http_routes": _http_surface(),
         "mcp_tools": _mcp_surface(),
+        "mcp_facade_operations": _mcp_facade_operations(),
         "cli_leaves": _cli_surface(),
     }
 

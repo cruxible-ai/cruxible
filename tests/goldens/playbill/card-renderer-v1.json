@@ -10,8 +10,8 @@
   "artifact_path": "procedures/demo.json",
   "card_path": "cards/procedures/demo.md",
   "removal": "removed at aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
-  "rendered": "# procedure: Procedure:demo\n\n- Artifact: `procedures/demo.json`\n\n```json\n{\n  \"identity\": {\n    \"kind\": \"Procedure\",\n    \"name\": \"demo\"\n  },\n  \"purpose\": \"exercise deterministic card rendering\",\n  \"tag\": \"playbill-procedure-card-fixture-v1\"\n}\n```\n",
-  "renderer_digest": "sha256:ba0892e2801ed624dbfcc634a8fec3333b8c440d1b76ca427b18d8e56571b599",
+  "rendered": "# procedure: demo\n\n- Artifact: `procedures/demo.json`\n\n```json\n{\n  \"identity\": {\n    \"kind\": \"Procedure\",\n    \"name\": \"demo\"\n  },\n  \"purpose\": \"exercise deterministic card rendering\",\n  \"tag\": \"playbill-procedure-card-fixture-v1\"\n}\n```\n",
+  "renderer_digest": "sha256:dea719d0288c3c537f2c547528dc2c221e7d2544dcb25e4ab70f34324f583701",
   "template_digests": [
     "sha256:fed6bed3731051a0eeb0430e216cb02883103047212af86b8cd9d93f76e72569",
     "sha256:93c97dc59dfb144112ded8cd9dd31d5948b83a84267854f5773431dd07eee0a7",
