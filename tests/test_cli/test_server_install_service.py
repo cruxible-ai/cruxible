@@ -338,7 +338,7 @@ def test_install_service_refuses_an_explicit_auth_latch_disagreement(
 @pytest.mark.parametrize(
     ("option", "hostile"),
     (
-        ("--socket", "/tmp/a\nExecStartPre=/bin/echo pwned/daemon.sock"),
+        ("--socket", "{root}/a\nExecStartPre=/bin/echo pwned/daemon.sock"),
         ("--host", "=unit-directive"),
     ),
 )
@@ -356,6 +356,7 @@ def test_install_service_renders_a_hostile_value_refusal_the_operator_can_read(
     """
 
     config = _config(tmp_path, "linux")
+    hostile = hostile.format(root=tmp_path)
     monkeypatch.setattr(
         "cruxible_core.cli.commands.server.current_service_platform", lambda: "linux"
     )
