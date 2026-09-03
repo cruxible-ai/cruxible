@@ -623,6 +623,65 @@ def test_a_re_author_sibling_under_another_type_refuses_with_both_indices(
     assert replacement["sibling_member"] == positions[authoring_member_identity(other)]
 
 
+def test_the_deprecated_invalidation_word_refuses_typed(tmp_path: Path) -> None:
+    """The standalone route's fourth word parses here and names the road that takes it."""
+
+    instance, _owner, coordinator, claims = _affects_package_world(
+        tmp_path,
+        values=(("wi-42", "ready"),),
+    )
+    actor = AuthenticatedActor(actor_id="owner")
+    payload = _change_set(
+        ClaimTypeSuccessionMemberV1(
+            successor=_enum_successor(instance, enum=["ready"]),
+            dependents=(
+                _dependent(
+                    claims["wi-42"],
+                    disposition="invalidation",
+                    reason="was-rescinded",
+                ),
+            ),
+        )
+    )
+    intent = coordinator.create(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    with pytest.raises(AuthoringLoweringError) as raised:
+        lower_authoring(instance, intent=intent, actor_id="owner")
+    error = raised.value
+    assert error.code == "playbill.authoring.claim_type_succession_disposition_deprecated"
+    assert error.offending_element == "members[0].dependents[0].disposition"
+    repair = error.repairs[0]
+    assert repair.kind == "replace_disposition"
+    assert "playbill claim-type migrate" in repair.description
+    replacement = repair.replacement
+    assert isinstance(replacement, dict)
+    assert replacement["operator_route"] == "playbill claim-type migrate"
+    assert replacement["permitted_dispositions"] == ["re_author", "retire", "successor"]
+    # The standalone route still takes the word, with its deprecation warning.
+    standalone = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequestV3(
+            mode="preflight",
+            successor=_enum_successor(instance, enum=["ready"]),
+            dependents=(
+                ClaimTypeDependentDispositionV3(
+                    identity=ArtifactIdentity(kind="Claim", name=claims["wi-42"]),
+                    disposition="invalidation",
+                    claim_retirement_reason="was-rescinded",
+                ),
+            ),
+        ),
+        actor=actor,
+    )
+    assert {warning.code for warning in standalone.warnings} == {
+        "playbill.claim_type.invalidation_deprecated"
+    }
+
+
 def test_a_dependent_this_set_also_retires_refuses_naming_both_members(
     tmp_path: Path,
 ) -> None:

@@ -78,6 +78,13 @@ by the SDK helpers `carry`, `rescind`, `retire` and `re_author`:
 | `retire(claim, reason=..., effective_until=...)` | `retire` | An attributed retirement, landing with the succession. |
 | `re_author(claim)` | `re_author` | Said again by a sibling Claim member of the same set, lowered under the successor. |
 
+The standalone route knows a fourth word, `invalidation`, deprecated there and
+answered with a warning. A change set parses it and always refuses typed --
+`playbill.authoring.claim_type_succession_disposition_deprecated`, whose repair
+names both roads -- because lowering has no warning channel, so admitting the
+word would coerce it silently. Say `retire` with a reason, or take the
+succession to `cruxible playbill claim-type migrate`.
+
 A re-authored dependent keeps its own identity, its slot -- the Subject it is
 about and the predicate it speaks -- and its exact predecessor digest: the
 sibling member is that Claim revised (`revises=` the same Claim ID), stated

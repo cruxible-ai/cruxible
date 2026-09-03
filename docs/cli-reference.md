@@ -462,7 +462,10 @@ that predecessor's exact digest; `dependents` is the exact closure computed over
 the staged tree. Each dependent takes `successor` (carry it, re-pinned),
 `retire` (a tombstone, with `claim_retirement_reason` `was-rescinded` for a
 rescission) or `re_author` (a sibling Claim member of the same set, naming that
-Claim again under the successor, named by `successor_claim_id`). A successor that changes `object_kind` refuses `successor`
+Claim again under the successor, named by `successor_claim_id`). The standalone
+route's fourth, deprecated word `invalidation` parses here and refuses typed,
+naming `cruxible playbill claim-type migrate` as the road that still tolerates
+it. A successor that changes `object_kind` refuses `successor`
 for any live Claim dependent. `cruxible playbill claim-type migrate` is the
 operator form of the same law and builds its candidate with the same code.
 

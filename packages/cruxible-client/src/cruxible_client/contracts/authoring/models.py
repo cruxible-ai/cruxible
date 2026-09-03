@@ -902,7 +902,12 @@ class ClaimTypeAuthoringPayloadV1(_StrictAuthoringModel):
         return value
 
 
-ClaimTypeSuccessionDisposition: TypeAlias = Literal["successor", "retire", "re_author"]
+ClaimTypeSuccessionDisposition: TypeAlias = Literal[
+    "successor",
+    "retire",
+    "invalidation",
+    "re_author",
+]
 
 
 class ClaimTypeSuccessionDependentV1(_StrictAuthoringModel):
@@ -925,9 +930,14 @@ class ClaimTypeSuccessionDependentV1(_StrictAuthoringModel):
     rather than a new one. There is no second spelling by member index: an index
     could only ever name the member this Claim ID already names.
 
-    The deprecated `invalidation` spelling the standalone route still tolerates
-    is not admitted here: it is `retire` under another name, and a surface born
-    after the deprecation should not learn the deprecated word.
+    `invalidation` parses and always refuses. It is the standalone route's
+    deprecated spelling of `retire`, answered there with a
+    `playbill.claim_type.invalidation_deprecated` warning; change-set lowering
+    has no warning channel, so admitting it would coerce a deprecated word
+    silently. The word is carried here only so an author who knows the
+    standalone vocabulary gets a typed refusal naming the operator route
+    instead of an untyped parse failure. It emits no deprecation notice: this
+    surface never accepted it, so there is nothing to schedule for removal.
     """
 
     tag: Literal["playbill-claim-type-succession-dependent-v1"] = (
@@ -965,7 +975,7 @@ class ClaimTypeSuccessionDependentV1(_StrictAuthoringModel):
                 )
         elif self.successor_claim_id is not None:
             raise ValueError("only a re_author dependent names a sibling member")
-        if self.disposition != "retire" and (
+        if self.disposition not in ("retire", "invalidation") and (
             self.claim_retirement_reason is not None or self.claim_effective_until is not None
         ):
             raise ValueError("retirement attribution belongs to a retire disposition")
