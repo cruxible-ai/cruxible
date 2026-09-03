@@ -112,16 +112,24 @@ def test_r6_regression_shape() -> None:
     assert "provider_runtime_invoker=invoker," in text
     # Real subprocess (the fake interpreter is an executable python shim).
     assert "_fake_interpreter" in text
-    # Only the classifier registry is patched; direct preparation is not.
+    # The classifier and served-route observation seams are patched; direct
+    # preparation and the daemon-owned subprocess invoker remain real.
     patches = set(re.findall(r'monkeypatch\.setattr\(\s*([\w_.]+),\s*\n?\s*"([\w_]+)"', text))
-    assert patches == {("execution_module", "PROVIDER_BUCKET_CLASSIFIER_REGISTRY")}, patches
+    assert patches == {
+        ("execution_module", "PROVIDER_BUCKET_CLASSIFIER_REGISTRY"),
+        ("playbill_api", "service_run_playbill_line"),
+        ("procedure_run_service", "_records_for_run"),
+    }, patches
     assert "prepare_direct_procedure_run" not in text
 
 
 def test_the_control_socket_budget_leaves_79_bytes_for_a_state_root() -> None:
-    """Operability: `<state_root>/c/<16 hex>.sock` costs 24 bytes, and the ceiling is
-    103, so any state root longer than 79 bytes silently degrades the Provider lane."""
+    """P2-B5 retracts the refusal oracle in favor of a state-root-keyed fallback."""
 
     store_source = inspect.getsource(lease_module.ProviderProcessLeaseStore.paths)
+    selector = inspect.getsource(lease_module.ProviderProcessLeaseStore._select_control_root)
     assert "> 103" in store_source
     assert len("/c/" + "0" * 16 + ".sock") == 24
+    assert "state_root_key" in selector
+    assert '"XDG_RUNTIME_DIR"' in selector
+    assert '"TMPDIR"' in selector

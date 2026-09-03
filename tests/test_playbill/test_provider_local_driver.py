@@ -9,6 +9,7 @@ import hashlib
 import inspect
 import json
 import os
+import shutil
 import signal
 import socket
 import stat
@@ -971,28 +972,87 @@ def test_control_namespace_is_private_and_stale_socket_is_retryable(tmp_path: Pa
 
 
 def test_control_namespaces_are_state_local_and_finalize_without_orphans(
+    request: pytest.FixtureRequest,
     tmp_path: Path,
 ) -> None:
+    short_root = Path(tempfile.mkdtemp(prefix=".control-local-", dir=Path.cwd()))
+    request.addfinalizer(lambda: shutil.rmtree(short_root, ignore_errors=True))
     roots = tuple(tmp_path / f"leases-{index}" for index in range(5))
     stores = [
-        ProviderProcessLeaseStore(root, control_root=tmp_path / f"c-{index}")
+        ProviderProcessLeaseStore(root, control_root=short_root / f"c-{index}")
         for index, root in enumerate(roots)
     ]
     controls = tuple(store.control_root for store in stores)
-    assert all(path.is_relative_to(tmp_path) for path in controls)
+    assert all(path.is_relative_to(short_root) for path in controls)
     assert all(path.is_dir() for path in controls)
     del stores
     gc.collect()
     assert all(not path.exists() for path in controls)
 
 
-def test_overlong_control_socket_path_refuses_with_the_operator_repair(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("system", "variable"),
+    (("Linux", "XDG_RUNTIME_DIR"), ("Darwin", "TMPDIR")),
+)
+def test_overlong_control_socket_path_refuses_with_the_operator_repair(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    system: str,
+    variable: str,
+) -> None:
+    """Retracted P2-B2 oracle: an overlong state root now safely falls back."""
+
+    runtime_root = Path(tempfile.mkdtemp(prefix=".u8-runtime-", dir=Path.cwd()))
+    request.addfinalizer(lambda: shutil.rmtree(runtime_root, ignore_errors=True))
+    runtime_root.chmod(0o755)
+    monkeypatch.setattr(process_lease_module.platform, "system", lambda: system)
+    monkeypatch.setenv(variable, str(runtime_root))
     root = tmp_path / ("long-state-root-" + "x" * 110)
+    real_fsencode = os.fsencode
+    monkeypatch.setattr(
+        process_lease_module.os,
+        "fsencode",
+        lambda value: (
+            b"f" * 80 if str(value).startswith(str(runtime_root)) else real_fsencode(value)
+        ),
+    )
     leases = ProviderProcessLeaseStore(root, control_root=root / "c")
+    expected_key = hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:12]
+    assert leases.control_root == runtime_root / "cruxible" / expected_key / "c"
+    assert stat.S_IMODE(runtime_root.stat().st_mode) == 0o700
+    first = leases.paths(_digest("long-control-path"))
+    second = leases.paths(_digest("another-control-path"))
+    assert first[1].parent == second[1].parent == leases.control_root
+    assert len(os.fsencode(first[1])) <= 103
+
+
+def test_overlong_control_fallback_refuses_symlinked_namespace_component(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = Path(tempfile.mkdtemp(prefix=".u8-runtime-", dir=Path.cwd()))
+    request.addfinalizer(lambda: shutil.rmtree(runtime_root, ignore_errors=True))
+    target = runtime_root / "target"
+    target.mkdir()
+    (runtime_root / "cruxible").symlink_to(target, target_is_directory=True)
+    monkeypatch.setattr(process_lease_module.platform, "system", lambda: "Linux")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_root))
+    root = tmp_path / ("long-state-root-" + "x" * 110)
+    real_fsencode = os.fsencode
+    monkeypatch.setattr(
+        process_lease_module.os,
+        "fsencode",
+        lambda value: (
+            b"f" * 80 if str(value).startswith(str(runtime_root)) else real_fsencode(value)
+        ),
+    )
+
     with pytest.raises(ProviderLocalRuntimeRefused) as caught:
-        leases.paths(_digest("long-control-path"))
+        ProviderProcessLeaseStore(root, control_root=root / "c")
+
     assert caught.value.code == "provider_process_lease_invalid"
-    assert "shorter CRUXIBLE_STATE_ROOT" in str(caught.value)
 
 
 @pytest.mark.parametrize("planted_kind", ["file", "symlink"])

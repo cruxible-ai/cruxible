@@ -443,11 +443,9 @@ class ProviderProcessLeaseStore:
         self.diagnostics: tuple[tuple[ProviderProcessFenceCodeV1, str], ...] = ()
         self._pending_releases: dict[str, ProviderProcessLeaseV1] = {}
         self._ensure_private_directory(root)
-        # Control sockets are operational state and must share the daemon's
-        # protected state-root boundary.  The short component also preserves
-        # headroom under the platform AF_UNIX path limit.
-        self.control_root = control_root
-        self._ensure_private_directory(self.control_root)
+        # Select once: every prepare/publish/echo/termination/recovery path reads
+        # this same namespace, so a later environment change cannot split it.
+        self.control_root = self._select_control_root(control_root)
         self._control_finalizer = weakref.finalize(
             self,
             self._remove_empty_control_root,
@@ -476,18 +474,23 @@ class ProviderProcessLeaseStore:
     @staticmethod
     def _ensure_private_directory(path: Path) -> None:
         try:
-            mode = path.lstat().st_mode
+            metadata = path.lstat()
         except FileNotFoundError:
             path.mkdir(parents=True, mode=0o700)
-            mode = path.lstat().st_mode
+            metadata = path.lstat()
         except OSError as exc:
             raise ProviderLocalRuntimeRefused(
                 "provider_process_lease_invalid", "process-lease directory is unavailable"
             ) from exc
-        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
             raise ProviderLocalRuntimeRefused(
                 "provider_process_lease_invalid",
                 "process-lease directory must be a real directory, not a link",
+            )
+        if metadata.st_uid != os.getuid():
+            raise ProviderLocalRuntimeRefused(
+                "provider_process_lease_invalid",
+                "process-lease directory must be owned by the daemon uid",
             )
         flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
         try:
@@ -497,21 +500,72 @@ class ProviderProcessLeaseStore:
                 "provider_process_lease_invalid", "process-lease directory cannot be secured"
             ) from exc
         try:
-            os.fchmod(descriptor, 0o700)
+            if stat.S_IMODE(metadata.st_mode) != 0o700:
+                os.fchmod(descriptor, 0o700)
         finally:
             os.close(descriptor)
+
+    def _select_control_root(self, requested: Path) -> Path:
+        sample = requested / ("0" * 16 + ".sock")
+        if len(os.fsencode(sample)) <= 103:
+            self._ensure_private_directory(requested)
+            return requested
+
+        system = platform.system()
+        variable = (
+            "XDG_RUNTIME_DIR" if system == "Linux" else "TMPDIR" if system == "Darwin" else ""
+        )
+        runtime_value = os.environ.get(variable) if variable else None
+        if not runtime_value:
+            raise ProviderLocalRuntimeRefused(
+                "provider_process_lease_invalid",
+                "Provider control path is too long and no private per-user runtime "
+                "directory is configured",
+                details={"required_environment": variable or "XDG_RUNTIME_DIR/TMPDIR"},
+            )
+        runtime_root = Path(runtime_value)
+        if not runtime_root.exists():
+            raise ProviderLocalRuntimeRefused(
+                "provider_process_lease_invalid",
+                "configured per-user runtime directory does not exist",
+                details={"runtime_environment": variable},
+            )
+        self._ensure_private_directory(runtime_root)
+        state_root = requested.parent.resolve(strict=False)
+        state_root_key = hashlib.sha256(str(state_root).encode("utf-8")).hexdigest()[:12]
+        current = runtime_root
+        for component in ("cruxible", state_root_key, "c"):
+            current = current / component
+            try:
+                current.mkdir(mode=0o700)
+            except FileExistsError:
+                pass
+            except OSError as exc:
+                raise ProviderLocalRuntimeRefused(
+                    "provider_process_lease_invalid",
+                    "private Provider runtime namespace cannot be created",
+                ) from exc
+            self._ensure_private_directory(current)
+        fallback_sample = current / ("0" * 16 + ".sock")
+        if len(os.fsencode(fallback_sample)) > 103:
+            raise ProviderLocalRuntimeRefused(
+                "provider_process_lease_invalid",
+                "private Provider runtime namespace still exceeds the AF_UNIX path limit",
+                details={"runtime_environment": variable},
+            )
+        return current
 
     def paths(self, invocation_id: str) -> tuple[Path, Path]:
         stem = hashlib.sha256(
             (str(self.root.resolve()) + "\x00" + invocation_id).encode("utf-8")
         ).hexdigest()[:32]
         control_path = self.control_root / f"{stem[:16]}.sock"
-        # Darwin permits 103 pathname bytes (excluding the trailing NUL). Use
-        # that conservative ceiling on every platform so deployments replay.
+        # Construction already selected and verified the one namespace used by
+        # every operation. This remains a defensive invariant assertion.
         if len(os.fsencode(control_path)) > 103:
             raise ProviderLocalRuntimeRefused(
                 "provider_process_lease_invalid",
-                "Provider control socket path is too long; use a shorter CRUXIBLE_STATE_ROOT",
+                "Provider control socket path exceeds the verified namespace budget",
             )
         return self.root / f"{stem}.json", control_path
 

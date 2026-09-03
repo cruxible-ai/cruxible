@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -470,12 +471,28 @@ def test_malformed_runtime_config_degrades_only_the_provider_lane(tmp_path: Path
 
 
 def test_overlong_state_root_degrades_provider_at_operator_construction(
+    request: pytest.FixtureRequest,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    operator = ProviderRuntimeOperator(tmp_path / ("overlong-" + "x" * 110))
-    assert operator.process_leases is None
-    assert operator.unavailable_reason is not None
-    assert "shorter CRUXIBLE_STATE_ROOT" in operator.unavailable_reason
+    """Retracted P2-B2 oracle: a verified fallback keeps the Provider lane live."""
+
+    runtime_root = Path(tempfile.mkdtemp(prefix=".u8-operator-", dir=Path.cwd()))
+    request.addfinalizer(lambda: shutil.rmtree(runtime_root, ignore_errors=True))
+    monkeypatch.setenv("TMPDIR", str(runtime_root))
+    state_root = tmp_path / ("overlong-" + "x" * 110)
+    real_fsencode = os.fsencode
+    monkeypatch.setattr(
+        os,
+        "fsencode",
+        lambda value: (
+            b"f" * 80 if str(value).startswith(str(runtime_root)) else real_fsencode(value)
+        ),
+    )
+    operator = ProviderRuntimeOperator(state_root)
+    assert operator.process_leases is not None
+    assert operator.process_leases.control_root.is_relative_to(runtime_root)
+    assert operator.unavailable_reason is None
 
 
 def test_classifier_installation_failure_degrades_only_provider_lane(
