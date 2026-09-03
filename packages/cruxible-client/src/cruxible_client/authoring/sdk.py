@@ -100,6 +100,8 @@ from cruxible_client.contracts.authoring.models import (
     ClaimDependencyDraftsV1,
     ClaimRetirementMemberV1,
     ClaimTypeAuthoringPayloadV1,
+    ClaimTypeSuccessionDependentV1,
+    ClaimTypeSuccessionMemberV1,
     ExistingCaptureCitationSourceV1,
     ProcedureAuthoringPayloadV2,
     PublicationSourceObservationV2,
@@ -516,6 +518,86 @@ class ProcedureDraft(_IntentDraft):
     pass
 
 
+def carry(claim: str | ClaimRef) -> ClaimTypeSuccessionDependentV1:
+    """Carry one dependent to the successor by re-pinning it, unchanged.
+
+    Available when the dependent still says something true under the successor.
+    A successor that changes `object_kind` refuses this for a live Claim: its
+    object no longer says what the ClaimType now means.
+    """
+
+    return ClaimTypeSuccessionDependentV1(
+        identity=_claim_identity(claim),
+        disposition="successor",
+    )
+
+
+def rescind(claim: str | ClaimRef) -> ClaimTypeSuccessionDependentV1:
+    """Tombstone one dependent because it should never have been stated.
+
+    The tombstone keeps the exact statement it was accepted with, under the
+    vocabulary it was accepted under -- that is what makes the record readable
+    after the vocabulary moves, rather than silently rewritten.
+    """
+
+    return ClaimTypeSuccessionDependentV1(
+        identity=_claim_identity(claim),
+        disposition="retire",
+        claim_retirement_reason="was-rescinded",
+    )
+
+
+def retire(
+    claim: str | ClaimRef,
+    *,
+    reason: ClaimRetirementReason,
+    effective_until: datetime | None = None,
+) -> ClaimTypeSuccessionDependentV1:
+    """Retire one dependent with an attributed reason as the succession lands."""
+
+    return ClaimTypeSuccessionDependentV1(
+        identity=_claim_identity(claim),
+        disposition="retire",
+        claim_retirement_reason=reason,
+        claim_effective_until=effective_until,
+    )
+
+
+def re_author(
+    claim: str | ClaimRef,
+    *,
+    with_: str | ClaimRef | int | None = None,
+) -> ClaimTypeSuccessionDependentV1:
+    """Say this dependent again, under the successor, as a sibling Claim member.
+
+    The sibling revises this same Claim -- a re-authoring keeps the identity,
+    the slot and the exact predecessor digest of what it re-states -- so `with_`
+    is only ever an explicit spelling of what `claim` already says. Pass an
+    `int` to name the sibling by its index in the compiled member list instead;
+    the SDK sorts members by identity, so prefer the Claim ID.
+    """
+
+    if isinstance(with_, int):
+        return ClaimTypeSuccessionDependentV1(
+            identity=_claim_identity(claim),
+            disposition="re_author",
+            successor_member=with_,
+        )
+    return ClaimTypeSuccessionDependentV1(
+        identity=_claim_identity(claim),
+        disposition="re_author",
+        successor_claim_id=_claim_id(claim if with_ is None else with_),
+    )
+
+
+def _claim_id(claim: str | ClaimRef) -> str:
+    return _address(claim, RefKind.CLAIM).removeprefix("Claim:")
+
+
+def _claim_identity(claim: str | ClaimRef) -> ArtifactIdentity:
+    return ArtifactIdentity(kind="Claim", name=_claim_id(claim))
+
+
 @dataclass(frozen=True)
 class _ChangeSetMember:
     payload: AuthoringChangeSetMemberV1
@@ -653,6 +735,51 @@ class ChangeSetDraft:
                 expectations=(),
                 source_map=DiagnosticSourceMap(()),
                 decisions={"kind": "retire", "claim": address, "reason": reason},
+            )
+        )
+        return self
+
+    def succeed_claim_type(
+        self,
+        successor: ClaimTypeDraft | ClaimType,
+        *,
+        dependents: Sequence[ClaimTypeSuccessionDependentV1] = (),
+    ) -> ChangeSetDraft:
+        """Succeed one accepted ClaimType, and settle its closure, in this set.
+
+        Vocabulary evolution is one epistemic move -- "I need this distinction,
+        and here is everything it changes" -- so it lands in the same signed
+        generation as the Claims that speak the new vocabulary. Write the
+        dependents with `carry`, `rescind`, `retire` and `re_author`; the
+        closure must be exact, and preflight names every member of it that is
+        still missing.
+        """
+
+        value = successor.definition if isinstance(successor, ClaimTypeDraft) else successor
+        self._members.append(
+            _ChangeSetMember(
+                payload=ClaimTypeSuccessionMemberV1(
+                    successor=value,
+                    dependents=tuple(
+                        sorted(
+                            dependents,
+                            key=lambda item: item.identity.qualified.encode("utf-8"),
+                        )
+                    ),
+                ),
+                expectations=(),
+                source_map=DiagnosticSourceMap(()),
+                decisions={
+                    "kind": "claim_type_succession",
+                    "predicate": value.predicate,
+                    "dependents": [
+                        {"claim": item.identity.qualified, "disposition": item.disposition}
+                        for item in sorted(
+                            dependents,
+                            key=lambda item: item.identity.qualified.encode("utf-8"),
+                        )
+                    ],
+                },
             )
         )
         return self
@@ -2739,4 +2866,8 @@ __all__ = [
     "SDK_CONTRACT_SNAPSHOT_DIGEST",
     "SearchPage",
     "SubjectDraft",
+    "carry",
+    "re_author",
+    "rescind",
+    "retire",
 ]
