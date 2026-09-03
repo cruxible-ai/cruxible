@@ -31,6 +31,7 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("playbill", "host", "create"): "create",
     ("playbill", "workspace", "attach"): "manual",
     ("playbill", "init"): "active",
+    ("playbill", "instance", "decommission"): "active",
     ("playbill", "body", "store"): "active",
     ("playbill", "provider", "seed"): "active",
     ("playbill", "document", "propose"): "active",
@@ -634,3 +635,54 @@ def test_workspace_attach_refuses_a_different_registration_without_writing(
     assert "playbill.workspace.registration_disagrees" in result.output
     assert "cruxible playbill host create --instance-id inst_other" in result.output
     assert not (workspace / ".playbill" / "coverage.json").exists()
+
+
+def test_instance_decommission_names_the_instance_it_is_about_to_end(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one irreversible verb must name its target before it runs."""
+
+    calls: list[tuple[str, str]] = []
+
+    class StubClient:
+        def decommission_playbill_instance(
+            self, instance_id: str, *, reason: str
+        ) -> contracts.PlaybillInstanceDecommissionResultV1:
+            calls.append((instance_id, reason))
+            return contracts.PlaybillInstanceDecommissionResultV1(
+                instance_id=instance_id,
+                reason=reason,
+                decommissioned_at="2026-09-03T12:00:00.000000Z",
+                decommissioned_by="owner",
+                coordinate=contracts.PlaybillAcceptedCoordinate(
+                    git_oid="0" * 40,
+                    semantic_root="sha256:" + "2" * 64,
+                    generation_root="sha256:" + "3" * 64,
+                    compiler_digest="sha256:" + "4" * 64,
+                ),
+            )
+
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client",
+        lambda: StubClient(),
+    )
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://terminal.example.test",
+            "--instance-id",
+            "inst_terminal",
+            "playbill",
+            "instance",
+            "decommission",
+            "--reason",
+            "superseded",
+            "--yes",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [("inst_terminal", "superseded")]
+    assert result.stderr == ("target: inst_terminal @ https://terminal.example.test (explicit)\n")

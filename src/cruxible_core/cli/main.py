@@ -39,6 +39,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "host", "create"): "create",
     ("playbill", "workspace", "attach"): "manual",
     ("playbill", "init"): "active",
+    ("playbill", "instance", "decommission"): "active",
     ("playbill", "body", "store"): "active",
     ("playbill", "provider", "seed"): "active",
     ("playbill", "document", "propose"): "active",
