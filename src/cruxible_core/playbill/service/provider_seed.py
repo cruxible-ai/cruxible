@@ -14,7 +14,7 @@ from typing import Any, Literal, cast
 
 from cruxible_client import contracts
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
-from cruxible_client.contracts.canonical import canonical_digest
+from cruxible_client.contracts.canonical import canonical_digest, is_candidate_card_path
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.provider_interfaces import (
     parse_provider_interface,
@@ -281,9 +281,17 @@ def _pending_seed(
         ):
             continue
         candidate = evidence.read_candidate(evaluation.candidate_digest)
+        # The evaluated tree carries the derivative cards evaluation derives;
+        # they are not authored members, so comparing them would make every
+        # pending seed look different from the one this call would submit.
+        evaluated = {
+            path: content
+            for path, content in instance.proposal_tree(evaluation.evaluated_tree_oid).items()
+            if not is_candidate_card_path(path)
+        }
         if (
             candidate.candidate.parent_semantic_root != coordinate.semantic_root
-            or instance.proposal_tree(evaluation.evaluated_tree_oid) != candidate_tree
+            or evaluated != candidate_tree
         ):
             continue
         return contracts.PlaybillProviderSeedResultV1(
