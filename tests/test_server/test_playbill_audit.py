@@ -41,6 +41,7 @@ def test_http_audit_is_read_tier_and_returns_completed_coverage(
     assert payload["tag"] == "playbill-audit-result-v1"
     assert payload["rows"] == []
     assert payload["coverage"]["access_permitted"]
+    # This host takes init's explicit seed opt-out, so genesis is the only generation.
     assert payload["audited_through_generation"] == 0
     assert payload["operational_input_head_digest"].startswith("sha256:")
 

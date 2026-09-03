@@ -8,9 +8,9 @@ from cruxible_core.runtime.playbill_manager import get_playbill_manager
 
 
 def test_http_seed_route_is_idempotent_after_init_generation_one(
-    playbill_http: tuple[TestClient, str, Path],
+    seeded_playbill_http: tuple[TestClient, str, Path],
 ) -> None:
-    http, instance_id, _private_key = playbill_http
+    http, instance_id, _private_key = seeded_playbill_http
     instance = get_playbill_manager().get(instance_id)
     assert instance.accepted_history()[-1].sequence == 1
 

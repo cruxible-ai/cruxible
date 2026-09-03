@@ -273,9 +273,9 @@ def test_http_discover_refuses_an_empty_request_typed_not_as_a_server_error(
 
 
 def test_http_discover_still_answers_an_empty_interfaces_request(
-    playbill_http: tuple[TestClient, str, Path],
+    seeded_playbill_http: tuple[TestClient, str, Path],
 ) -> None:
-    client, instance_id, _private_key = playbill_http
+    client, instance_id, _private_key = seeded_playbill_http
 
     response = client.post(
         f"/api/v1/{instance_id}/playbill/discover",

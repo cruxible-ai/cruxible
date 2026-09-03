@@ -198,6 +198,10 @@ def bootstrap(*, key_dir: Path, server_url: str) -> str:
         CREATOR_ID,
         "--reviewer-key-dir",
         str(key_dir),
+        # The benchmark world governs Documents and Claims, never a Provider run,
+        # so it takes init's explicit seed opt-out instead of requiring the
+        # operator to configure a local adapter materialization.
+        "--no-seed",
     )
     return str(host["instance_id"])
 
