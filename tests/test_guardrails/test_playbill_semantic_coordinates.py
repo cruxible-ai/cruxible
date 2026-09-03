@@ -412,6 +412,9 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
         },
     )
+    assert p2_b5_expected == (
+        "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+    )
     assert P2_B5_COMPILER.rule_digest == p2_b5_expected
     assert current_compiler_coordinate() == P2_B5_COMPILER
     assert P2_B4_COMPILER in SUPPORTED_COMPILERS
