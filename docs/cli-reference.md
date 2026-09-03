@@ -433,6 +433,28 @@ execution. `bind` proposes a same-identity Procedure successor with exact accept
 pins; it never mutates the accepted Procedure in place. Runs append replay-verifiable
 journal records and `status` reconstructs the one-read run state from those records.
 
+## playbill line
+
+~~~text
+cruxible playbill line run LINE_IDENTITY_DIGEST --evaluation-time TS
+  [--occurrence-id ID] [--json]
+~~~
+
+Triggers one daemon-derived due occurrence. The accepted Line's governed
+mandate authorizes execution; without one the operation returns a typed
+no-mandate refusal.
+
+## playbill predictions
+
+~~~text
+cruxible playbill predict REQUEST_FILE [--json]
+cruxible playbill settle PREDICTION_ID REQUEST_FILE [--json]
+~~~
+
+`predict` proposes the predicted Claim and retains its settlement declaration.
+`settle` requires later accepted observation evidence or the prediction's
+governed terminal, then records the declared score and resolution as Claims.
+
 ## playbill block
 
 ~~~text

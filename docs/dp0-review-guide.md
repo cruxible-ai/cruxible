@@ -72,7 +72,9 @@ playbill host create
 playbill host show
 playbill init
 playbill list
+playbill line run
 playbill next
+playbill predict
 playbill curation list
 playbill curation overrule
 playbill curation accept-fixed
@@ -102,6 +104,7 @@ playbill query list
 playbill query propose
 playbill query run
 playbill search
+playbill settle
 playbill since
 playbill sources check
 playbill sources compile
@@ -188,6 +191,8 @@ GET  /api/v1/{instance_id}/playbill/claims/{identity}
 GET  /api/v1/{instance_id}/playbill/claims/{identity}/history
 POST /api/v1/{instance_id}/playbill/claims/{identity}/explanation
 POST /api/v1/{instance_id}/playbill/claims/{claim_id}/retire
+POST /api/v1/{instance_id}/playbill/predictions
+POST /api/v1/{instance_id}/playbill/predictions/{prediction_id}/settlements
 GET  /api/v1/{instance_id}/playbill/policies
 POST /api/v1/{instance_id}/playbill/queries/proposals
 GET  /api/v1/{instance_id}/playbill/queries
@@ -202,6 +207,7 @@ POST /api/v1/{instance_id}/playbill/curation/suppress
 GET  /api/v1/{instance_id}/playbill/procedures/{name}/readiness
 POST /api/v1/{instance_id}/playbill/procedures/{name}/bind
 POST /api/v1/{instance_id}/playbill/procedures/{name}/runs
+POST /api/v1/{instance_id}/playbill/lines/{line_identity_digest}/runs
 GET  /api/v1/{instance_id}/playbill/procedure-runs/{run_id}
 POST /api/v1/{instance_id}/playbill/projections/sync-backing
 POST /api/v1/{instance_id}/playbill/claim-attestations
@@ -279,6 +285,9 @@ cruxible_playbill_procedure_readiness
 cruxible_playbill_procedure_bind
 cruxible_playbill_procedure_run
 cruxible_playbill_procedure_run_status
+cruxible_playbill_line_run
+cruxible_playbill_predict
+cruxible_playbill_settle
 cruxible_playbill_discover
 cruxible_playbill_expand
 cruxible_playbill_export_floor
@@ -846,6 +855,7 @@ tests/goldens/kev/overlay_review_state.json
 tests/goldens/kev/reference_build_state.json
 tests/goldens/kev/relationship_state_visibility.json
 tests/goldens/playbill/attestation-v1.json
+tests/goldens/playbill/card-renderer-v1.json
 tests/goldens/playbill/candidate-v1.json
 tests/goldens/playbill/candidate-v2.json
 tests/goldens/playbill/changeset-v3.json
