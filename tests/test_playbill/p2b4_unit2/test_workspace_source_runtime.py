@@ -3,11 +3,16 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 
+import pytest
 from tests.test_playbill.p2b4_unit1.test_source_v4_runtime import _source_fixture
 from tests.test_playbill.test_procedure_execution import _Authority, _Contracts
 
-from cruxible_client.contracts.canonical import CanonicalValue
-from cruxible_client.contracts.captures import capture_contract_digest, verify_capture
+from cruxible_client.contracts.canonical import CanonicalValue, canonical_bytes
+from cruxible_client.contracts.captures import (
+    CaptureFormatError,
+    capture_contract_digest,
+    verify_capture,
+)
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedureV1,
     procedure_artifact_digest,
@@ -295,6 +300,41 @@ def test_workspace_source_reads_before_spawn_and_commits_both_receipts(tmp_path:
         verified.production_evidence.source_read_receipt_digest
         == payloads[kinds.index("source_read")]["receipt_digest"]
     )
+
+    source_read_payload_digest = records[kinds.index("source_read")].record.payload_digest
+
+    class _ForgedReadBodies:
+        def read(self, digest: str, *, access: BodyAccessContext) -> bytes:
+            content = fixture.bodies.read(digest, access=access)
+            if digest != source_read_payload_digest:
+                return content
+            payload = parse_journal_payload(content)
+            forged = SourceReadReceiptV1.model_validate(payload["receipt"]).model_copy(
+                update={"relative_path": "docs/other.txt"}
+            )
+            from cruxible_client.contracts.workspace_file import source_read_receipt_digest
+
+            return canonical_bytes(
+                {
+                    "receipt": forged.model_dump(mode="json"),
+                    "receipt_digest": source_read_receipt_digest(forged),
+                }
+            )
+
+    with pytest.raises(CaptureFormatError, match="journal is invalid"):
+        verify_capture(
+            produced["capture_digest"],
+            store=fixture.bodies,
+            contract=contract,
+            producer_artifact_digests={
+                source_node.provider.target.qualified: completed["provider_artifact_digest"]
+            },
+            producer_receipt_resolver=journal_producer_receipt_resolver(
+                journal=fixture.journal,
+                instance_id=prepared.admission.instance_id,
+                bodies=_ForgedReadBodies(),  # type: ignore[arg-type]
+            ),
+        )
 
 
 def test_forbidden_workspace_path_refuses_before_provider_bind_or_spawn(tmp_path: Path) -> None:

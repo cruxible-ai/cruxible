@@ -2117,6 +2117,8 @@ def build_provider_external_capture_v2(
         or source_read_receipt.occurrence_path != receipt.occurrence_path
         or source_read_receipt.logical_source != result.source_identity
         or source_read_receipt.provider_input_digest != receipt.input_digest
+        or source_read_receipt.policy_coordinate.generation_root != bound_generation
+        or source_read_receipt.resolved_max_bytes != contract.selection_budget.max_bytes
     ):
         raise CaptureFormatError("workspace.file source-read receipt does not correspond")
     content = base64.b64decode(result.content_base64, validate=True)
@@ -2574,6 +2576,7 @@ def verify_capture(
                 or source_read.provider_input_digest != receipt.input_digest
                 or source_read.policy_coordinate.generation_root
                 != envelope.run_coordinate.bound_generation
+                or source_read.resolved_max_bytes != contract.selection_budget.max_bytes
             ):
                 raise CaptureFormatError("provider Capture source-read receipt does not correspond")
         elif (

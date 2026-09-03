@@ -162,6 +162,38 @@ def test_workspace_capture_forbids_missing_or_mixed_read_receipt(tmp_path) -> No
     assert provider_output["source"]["bytes_digest"] == source_read.bytes_digest  # type: ignore[index]
 
 
+@pytest.mark.parametrize(
+    "changed",
+    (
+        {"resolved_max_bytes": 4095},
+        {
+            "policy_coordinate": AcceptedCoordinate(
+                git_oid="a" * 64,
+                semantic_root="sha256:" + "b" * 64,
+                generation_root="sha256:" + "9" * 64,
+                compiler_digest="sha256:" + "c" * 64,
+            )
+        },
+    ),
+)
+def test_workspace_capture_binds_admitted_policy_coordinate_and_cap(
+    tmp_path, changed: dict[str, object]
+) -> None:  # type: ignore[no-untyped-def]
+    fixture, source_read, _output = _workspace_fixture(tmp_path)
+
+    with pytest.raises(CaptureFormatError, match="does not correspond"):
+        build_provider_external_capture_v2(
+            store=fixture.store,
+            contract=fixture.contract,
+            result=fixture.result,
+            receipt=fixture.receipt,
+            occurrence=fixture.occurrence,
+            producer=fixture.producer,
+            bound_generation=fixture.bound_generation,
+            source_read_receipt=source_read.model_copy(update=changed),
+        )
+
+
 def test_non_workspace_capture_forbids_source_read_receipt(tmp_path) -> None:  # type: ignore[no-untyped-def]
     fixture, source_read, _output = _workspace_fixture(tmp_path)
     ordinary = provider_capture_fixture(tmp_path / "ordinary")

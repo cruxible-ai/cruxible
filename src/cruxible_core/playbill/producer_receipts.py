@@ -18,9 +18,13 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import PlaybillError
-from cruxible_client.contracts.provider_execution import ProviderInvocationCompletedV1
+from cruxible_client.contracts.provider_execution import (
+    ProcedureDerivedSourceRequestV1,
+    ProviderInvocationCompletedV1,
+)
 from cruxible_client.contracts.workspace_file import (
     SourceReadReceiptV1,
+    WorkspaceFileSourceRequestV1,
     source_read_receipt_digest,
 )
 from cruxible_core.playbill.cas import ContentAddressedBodyStore
@@ -193,6 +197,7 @@ class JournalProducerReceiptResolver:
             raise CaptureFormatError("Capture producer receipt journal is unavailable") from exc
         for partition_id in partition_ids:
             admissions: dict[str, ProcedureAdmissionBoundPayloadV5] = {}
+            derived_requests: dict[tuple[str, str], ProcedureDerivedSourceRequestV1 | None] = {}
             source_reads: dict[tuple[str, str], SourceReadReceiptV1 | None] = {}
             try:
                 records = self._journal.all_records(stream, partition_id)
@@ -241,6 +246,26 @@ class JournalProducerReceiptResolver:
                         continue
                     admissions[admission.admission_binding_digest] = bound_payload
                     continue
+                if record.event_kind == "source_request_derived":
+                    try:
+                        derived = ProcedureDerivedSourceRequestV1.model_validate(payload)
+                        if (
+                            record.run_id != derived.run_id
+                            or record.admission_binding_digest != derived.admission_binding_digest
+                        ):
+                            raise ValueError(
+                                "Derived Source request journal coordinates do not correspond"
+                            )
+                        key = (derived.admission_binding_digest, derived.occurrence_path)
+                        derived_requests[key] = None if key in derived_requests else derived
+                    except (KeyError, TypeError, ValidationError, ValueError) as exc:
+                        self._malformed(
+                            record_digest=stored.record_digest,
+                            event_kind=record.event_kind,
+                            candidate_digest=None,
+                            exc=exc,
+                        )
+                    continue
                 if record.event_kind == "source_read":
                     try:
                         if not isinstance(payload, dict):
@@ -255,6 +280,23 @@ class JournalProducerReceiptResolver:
                         ):
                             raise ValueError("Source-read journal coordinates do not correspond")
                         key = (receipt.admission_binding_digest, receipt.occurrence_path)
+                        resolved_derived = derived_requests.get(key)
+                        if resolved_derived is None:
+                            raise ValueError(
+                                "Source-read receipt has no exact derived Source request"
+                            )
+                        request = WorkspaceFileSourceRequestV1.model_validate(
+                            resolved_derived.request
+                        )
+                        if (
+                            receipt.derived_request_digest != resolved_derived.request_digest
+                            or receipt.logical_source != request.logical_source
+                            or receipt.workspace_binding_digest != request.workspace_binding_digest
+                            or receipt.relative_path != request.relative_path
+                        ):
+                            raise ValueError(
+                                "Source-read receipt differs from its derived Source request"
+                            )
                         source_reads[key] = None if key in source_reads else receipt
                     except (KeyError, TypeError, ValidationError, ValueError) as exc:
                         self._malformed(
