@@ -36,6 +36,22 @@ contracts, and recall-only tags are the intended “double-click” points.
 
 ## Write lifecycle
 
+One authoring intent is one changeset. `pb.claim(...)` authors exactly one
+Claim; `pb.changes(rationale=...)` opens a changeset that `.claim(...)`,
+`.claim_type(...)`, `.subject(...)` and `.retire(...)` write into, and
+`.prepare()` compiles the whole set as one intent. The set lowers once,
+proposes once and generates once, and it admits or refuses whole -- one
+malformed member refuses the intent, typed to that member's index. A Claim in
+the set may read a Subject or ClaimType the same set defines. Succeeding an
+accepted ClaimType stays on the claim-type proposal route, where the migration
+a succession demands is decided. There is no member ceiling in the model; how
+many changed members one daemon receives in a single submission is that
+operator's admission bound.
+
+An intent that publishes more than one Claim owns one publication expectation
+per publishing member: read them from `Intent.publications` and apply each in
+turn, each preparing against the source as it stands after the last.
+
 Subject-valued Claims are typed relationships, not string literals. Pass an accepted
 `SubjectRef` (or canonical `<subject-kind>/<subject-id>` address) as
 `Playbill.claim(value=...)`; preflight refuses a missing endpoint with the
