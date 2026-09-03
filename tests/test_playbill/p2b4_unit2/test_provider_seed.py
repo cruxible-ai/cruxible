@@ -51,6 +51,7 @@ from cruxible_core.playbill.seed_artifacts.workspace_file import (
 )
 from cruxible_core.playbill.service.documents import service_activate_playbill_proposal
 from cruxible_core.playbill.service.provider_seed import service_seed_workspace_file_provider
+from cruxible_core.runtime.provider_runtime import ProviderSeedMaterializationConfigV1
 
 STAMP_1 = "2026-09-02T12:00:00.000000Z"
 STAMP_2 = "2026-09-02T12:00:01.000000Z"
@@ -228,6 +229,40 @@ def test_local_seed_requires_materialization_config(tmp_path: Path) -> None:
             timestamp=STAMP_1,
         )
     assert instance.accepted_history()[-1].sequence == 0
+
+
+def test_configured_path_that_is_not_a_checkout_refuses_naming_the_reason(tmp_path: Path) -> None:
+    """The one seed-custody law that needs no sibling adapter checkout, so CI runs it."""
+
+    checkout = (tmp_path / "providers-checkout").resolve()
+    checkout.mkdir()
+    assert not (checkout / ".git").exists()
+    pin_key, materialization_digest = WORKSPACE_FILE_SEED_MANIFEST.materialization_digests[0]
+    configured = ProviderSeedMaterializationConfigV1(
+        provider_id=WORKSPACE_FILE_PROVIDER_ID,
+        checkout_path=str(checkout),
+        provider_commit=WORKSPACE_FILE_SEED_MANIFEST.provider_commit,
+        environment_pin_key=pin_key,
+        materialization_digest=materialization_digest,
+    )
+    instance, _owner = initialize_local(tmp_path)
+
+    with pytest.raises(
+        ProposalIntegrityError,
+        match="cannot reproduce its local materialization",
+    ):
+        service_seed_workspace_file_provider(
+            instance,
+            actor_id="owner",
+            timestamp=STAMP_1,
+            configured_materialization=configured,
+        )
+
+    assert instance.accepted_history()[-1].sequence == 0
+    assert instance.proposal_evidence().list_admissions() == ()
+    assert provider_path(WORKSPACE_FILE_PROVIDER_ID) not in instance.tree_at(
+        instance.accepted_coordinate().git_oid
+    )
 
 
 def test_real_local_checkout_reproduces_pins_and_dirty_copy_refuses(tmp_path: Path) -> None:
