@@ -26,7 +26,19 @@ CARD_RENDERER_DIGEST = "sha256:" + canonical_digest(
         "template_digests": list(CARD_TEMPLATE_DIGESTS),
     },
 )
-_CARD_RENDERER_BY_COMPILER: dict[str, str] = {}
+_P2_B5_COMPILER_DIGEST = "sha256:" + canonical_digest(
+    "playbill-compiler-v1",
+    {
+        "implementation": "python-reference",
+        "schema_version": 1,
+        "projection_content": "claims-procedures-runtime-v1",
+        "semantic_revision": 18,
+        "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
+    },
+)
+_CARD_RENDERER_BY_COMPILER: dict[str, str] = {
+    _P2_B5_COMPILER_DIGEST: CARD_RENDERER_DIGEST,
+}
 
 
 def candidate_card_renderer_digest_for_compiler(

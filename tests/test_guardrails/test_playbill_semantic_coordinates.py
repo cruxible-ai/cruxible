@@ -41,16 +41,20 @@ from cruxible_client.contracts.laws import (
     SUBJECT_ACCEPTANCE_LAW,
     InstalledAcceptanceLaw,
 )
+from cruxible_core.playbill.candidate_cards import CARD_RENDERER_DIGEST
 from cruxible_core.playbill.compiler import (
     P2_B0_COMPILER,
     P2_B1_COMPILER,
     P2_B2_COMPILER,
     P2_B4_COMPILER,
     P2_B4_UNIT2_COMPILER,
+    P2_B5_COMPILER,
     P2_C_COMPILER,
     PC_DF2_COMPILER,
     PC_E1_COMPILER,
     PC_HR_COMPILER,
+    SUPPORTED_COMPILERS,
+    current_compiler_coordinate,
 )
 
 LAW_COORDINATES: tuple[
@@ -392,6 +396,20 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
         "sha256:05fd436c117d820ca870ce0cd276c1e7b9e97075d68435aa2f548256199bc458"
     )
     assert P2_B4_UNIT2_COMPILER.rule_digest == p2_b4_unit2_expected
+    p2_b5_expected = "sha256:" + canonical_digest(
+        "playbill-compiler-v1",
+        {
+            "implementation": "python-reference",
+            "projection_content": "claims-procedures-runtime-v1",
+            "schema_version": 1,
+            "semantic_revision": 19,
+            "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
+        },
+    )
+    assert P2_B5_COMPILER.rule_digest == p2_b5_expected
+    assert current_compiler_coordinate() == P2_B5_COMPILER
+    assert P2_B4_COMPILER in SUPPORTED_COMPILERS
+    assert P2_B4_UNIT2_COMPILER in SUPPORTED_COMPILERS
 
 
 def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:

@@ -24,6 +24,7 @@ from cruxible_core.playbill.compiler import (
     P2_B2_COMPILER,
     P2_B4_COMPILER,
     P2_B4_UNIT2_COMPILER,
+    P2_B5_COMPILER,
     PC_DF2_COMPILER,
     PC_HR_ARTIFACT_CODEC_COMPILERS,
     SUPPORTED_COMPILERS,
@@ -122,6 +123,7 @@ def test_current_codec_lineage_is_closed_over_installed_compilers() -> None:
         P2_B2_COMPILER,
         P2_B4_COMPILER,
         P2_B4_UNIT2_COMPILER,
+        P2_B5_COMPILER,
     } <= PC_HR_ARTIFACT_CODEC_COMPILERS
     assert P2_B0_COMPILER not in PC_HR_ARTIFACT_CODEC_COMPILERS
 
@@ -254,6 +256,7 @@ def test_p2_b2_reserves_every_current_artifact_tag() -> None:
         "playbill-procedure-calibration-reading-artifact-v1",
         "playbill-procedure-calibration-reading-identity-v1",
         "playbill-procedure-calibration-reading-v1",
+        "playbill-procedure-calibration-reading-v2",
         "playbill-procedure-calibration-relation-cohort-witness-v1",
         "playbill-procedure-calibration-score-v1",
         "playbill-procedure-derived-source-request-v1",

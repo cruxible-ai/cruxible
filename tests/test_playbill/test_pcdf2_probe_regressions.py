@@ -31,6 +31,7 @@ from cruxible_core.playbill.compiler import (
     P2_B2_COMPILER,
     P2_B4_COMPILER,
     P2_B4_UNIT2_COMPILER,
+    P2_B5_COMPILER,
     P2_C_COMPILER,
     PC_DF2_COMPILER,
     PC_HR_ARTIFACT_CODEC_COMPILERS,
@@ -70,7 +71,7 @@ def _genesis_replay_at_retained_compiler(
         from cruxible_core.playbill import compiler
         from cruxible_core.playbill.instance import PlaybillInstance
 
-        assert compiler.current_compiler_coordinate() == compiler.P2_B4_UNIT2_COMPILER
+        assert compiler.current_compiler_coordinate() == compiler.P2_B5_COMPILER
         reopened = PlaybillInstance.open(
             Path(sys.argv[1]),
             trust_root=PlaybillTrustRoot.model_validate(json.loads(sys.argv[2])),
@@ -103,9 +104,11 @@ def _genesis_replay_at_retained_compiler(
 
 
 def test_rev15_and_rev12_remain_exact_codec_lineage_members() -> None:
-    assert current_compiler_coordinate() == P2_B4_UNIT2_COMPILER
+    assert current_compiler_coordinate() == P2_B5_COMPILER
     assert P2_B4_UNIT2_COMPILER in SUPPORTED_COMPILERS
     assert P2_B4_UNIT2_COMPILER in PC_HR_ARTIFACT_CODEC_COMPILERS
+    assert P2_B5_COMPILER in SUPPORTED_COMPILERS
+    assert P2_B5_COMPILER in PC_HR_ARTIFACT_CODEC_COMPILERS
     assert P2_B4_COMPILER in SUPPORTED_COMPILERS
     assert P2_B4_COMPILER in PC_HR_ARTIFACT_CODEC_COMPILERS
     assert P2_B2_COMPILER in SUPPORTED_COMPILERS

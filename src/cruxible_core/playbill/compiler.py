@@ -26,6 +26,7 @@ from cruxible_client.contracts.projection_extensions import (
     playbill_subject_extension_registry,
 )
 from cruxible_client.contracts.types import CompilerCoordinate
+from cruxible_core.playbill.candidate_cards import CARD_RENDERER_DIGEST
 from cruxible_core.playbill.projection_artifacts import (
     P2_B0_ARTIFACT_KINDS,
     P2_B1_ARTIFACT_KINDS,
@@ -38,6 +39,7 @@ def _coordinate(
     *,
     projection_content: str | None = None,
     semantic_revision: int | None = None,
+    candidate_card_renderer_digest: str | None = None,
 ) -> CompilerCoordinate:
     payload: dict[str, object] = {
         "implementation": "python-reference",
@@ -47,6 +49,8 @@ def _coordinate(
         payload["projection_content"] = projection_content
     if semantic_revision is not None:
         payload["semantic_revision"] = semantic_revision
+    if candidate_card_renderer_digest is not None:
+        payload["candidate_card_renderer_digest"] = candidate_card_renderer_digest
     return CompilerCoordinate(
         rule_digest=f"sha256:{canonical_digest('playbill-compiler-v1', payload)}"
     )
@@ -96,6 +100,11 @@ P2_B4_UNIT2_COMPILER = _coordinate(
     projection_content="claims-procedures-runtime-v1",
     semantic_revision=18,
 )
+P2_B5_COMPILER = _coordinate(
+    projection_content="claims-procedures-runtime-v1",
+    semantic_revision=19,
+    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,
+)
 SUPPORTED_COMPILERS = (
     PB_B_COMPILER,
     PB_C_COMPILER,
@@ -114,6 +123,7 @@ SUPPORTED_COMPILERS = (
     P2_B2_COMPILER,
     P2_B4_COMPILER,
     P2_B4_UNIT2_COMPILER,
+    P2_B5_COMPILER,
 )
 # Immutable human-facing revision labels.  The digest remains the authority;
 # these labels are display metadata and must never be inferred from the moving
@@ -136,6 +146,7 @@ COMPILER_REVISION_LABELS = {
     P2_B2_COMPILER: "p2-b2",
     P2_B4_COMPILER: "p2-b4",
     P2_B4_UNIT2_COMPILER: "p2-b4-u2",
+    P2_B5_COMPILER: "p2-b5",
 }
 PC_HR_ARTIFACT_CODEC_COMPILERS = frozenset(
     {
@@ -146,12 +157,13 @@ PC_HR_ARTIFACT_CODEC_COMPILERS = frozenset(
         P2_B2_COMPILER,
         P2_B4_COMPILER,
         P2_B4_UNIT2_COMPILER,
+        P2_B5_COMPILER,
     }
 )
 
 
 def current_compiler_coordinate() -> CompilerCoordinate:
-    return P2_B4_UNIT2_COMPILER
+    return P2_B5_COMPILER
 
 
 def artifact_kinds_for_compiler(compiler: CompilerCoordinate) -> ArtifactKindRegistry:
@@ -163,6 +175,7 @@ def artifact_kinds_for_compiler(compiler: CompilerCoordinate) -> ArtifactKindReg
         P2_B2_COMPILER,
         P2_B4_COMPILER,
         P2_B4_UNIT2_COMPILER,
+        P2_B5_COMPILER,
     }:
         return P2_C_ARTIFACT_KINDS
     if compiler == P2_B1_COMPILER:
@@ -217,6 +230,7 @@ def projection_registry_for_compiler(
         P2_B2_COMPILER,
         P2_B4_COMPILER,
         P2_B4_UNIT2_COMPILER,
+        P2_B5_COMPILER,
     }:
         return playbill_p2c_extension_registry()
     raise PlaybillFormatError("compiler coordinate has no installed deterministic registry")
@@ -237,6 +251,7 @@ __all__ = [
     "P2_B2_COMPILER",
     "P2_B4_COMPILER",
     "P2_B4_UNIT2_COMPILER",
+    "P2_B5_COMPILER",
     "P2_C_COMPILER",
     "PC_DF2_COMPILER",
     "PC_HR_COMPILER",
