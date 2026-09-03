@@ -16,6 +16,7 @@ RUNTIME = ROOT / "src/cruxible_core/playbill/provider_local_runtime.py"
 SEED = ROOT / "src/cruxible_core/playbill/service/provider_seed.py"
 LEASES = ROOT / "src/cruxible_core/playbill/provider_process_leases.py"
 ENFORCER = "enforce_customer_code_execution_supported"
+_SPAWN_NAMES = frozenset({"Popen", "run", "call", "check_call", "check_output"})
 
 # Lease probes spawn fixed, core-owned argv (`sysctl -n kern.boottime`,
 # `ps -o lstart=`, `ps -Ao ...`) that read the host process table and execute
@@ -40,13 +41,17 @@ def _spawning_functions(path: Path) -> dict[str, ast.FunctionDef | ast.AsyncFunc
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         for inner in ast.walk(node):
-            if (
-                isinstance(inner, ast.Call)
-                and isinstance(inner.func, ast.Attribute)
-                and inner.func.attr in {"Popen", "run"}
+            if not isinstance(inner, ast.Call):
+                continue
+            qualified = (
+                isinstance(inner.func, ast.Attribute)
+                and inner.func.attr in _SPAWN_NAMES
                 and isinstance(inner.func.value, ast.Name)
                 and inner.func.value.id == "subprocess"
-            ):
+            )
+            # `from subprocess import Popen` would otherwise be a silent hole.
+            bare = isinstance(inner.func, ast.Name) and inner.func.id in _SPAWN_NAMES
+            if qualified or bare:
                 found[node.name] = node
                 break
     return found
