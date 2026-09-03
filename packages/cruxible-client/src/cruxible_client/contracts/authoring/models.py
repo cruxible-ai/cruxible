@@ -34,8 +34,8 @@ from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import LiteralClaimObject, SubjectClaimObject, claim_path
 from cruxible_client.contracts.declared_blocks import (
+    ProjectionBackingV1,
     ProjectionBlockStampV1,
-    ProjectionClaimBackingV1,
     ProjectionMarkerSummaryV1,
 )
 from cruxible_client.contracts.procedure_runtime_policy import (
@@ -1970,7 +1970,7 @@ class PlaybillBlockSyncReadResultV1(_StrictAuthoringModel):
     artifact_digest: str | None = None
     coordinate: AcceptedCoordinate | None = None
     generation: int | None = Field(default=None, ge=0)
-    backing: ProjectionClaimBackingV1 | None = None
+    backing: ProjectionBackingV1 | None = None
     body_content_base64: str | None = None
     body_digest: str | None = None
     successor_candidates: tuple[PlaybillBlockSyncSuccessorCandidateV1, ...] = ()

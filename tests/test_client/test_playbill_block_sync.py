@@ -16,6 +16,7 @@ from cruxible_client.contracts.authoring.models import (
     PlaybillBlockSyncSuccessorCandidateV1,
 )
 from cruxible_client.contracts.declared_blocks import (
+    ProjectionArtifactBackingV1,
     ProjectionBlockStampV1,
     ProjectionClaimBackingV1,
     frame_projection_block,
@@ -60,7 +61,28 @@ def _stamp(*, body: bytes = OLD_BODY) -> ProjectionBlockStampV1:
     )
 
 
-def _workspace(root: Path, *, instance_id: str = INSTANCE_ID) -> Path:
+def _artifact_stamp(*, body: bytes = OLD_BODY) -> ProjectionBlockStampV1:
+    return ProjectionBlockStampV1(
+        source_id="corpus.runbook",
+        block_id="vocabulary",
+        declared_generation=1,
+        declared_coordinate=OLD_COORDINATE,
+        backing=(
+            ProjectionArtifactBackingV1(
+                identity=ArtifactIdentity(kind="ClaimType", name="sec.vuln.severity"),
+                artifact_digest="sha256:" + "7" * 64,
+            ),
+        ),
+        body_digest=_digest(body),
+    )
+
+
+def _workspace(
+    root: Path,
+    *,
+    instance_id: str = INSTANCE_ID,
+    stamp: ProjectionBlockStampV1 | None = None,
+) -> Path:
     playbill = root / ".playbill"
     playbill.mkdir()
     (playbill / "coverage.json").write_text(
@@ -91,7 +113,9 @@ entries:
     source = root / "corpus" / "runbook.md"
     source.parent.mkdir()
     source.write_bytes(
-        b"PREFIX\n" + frame_projection_block(stamp=_stamp(), body=OLD_BODY) + b"SUFFIX\n"
+        b"PREFIX\n"
+        + frame_projection_block(stamp=_stamp() if stamp is None else stamp, body=OLD_BODY)
+        + b"SUFFIX\n"
     )
     return source
 
@@ -150,6 +174,28 @@ class _SyncClient:
         )
 
 
+class _ArtifactSyncClient:
+    def read_playbill_block_sync_backing(
+        self,
+        instance_id: str,
+        *,
+        request: PlaybillBlockSyncReadRequestV1,
+    ) -> PlaybillBlockSyncReadResultV1:
+        assert instance_id == INSTANCE_ID
+        backing = request.stamp.backing[0]
+        assert isinstance(backing, ProjectionArtifactBackingV1)
+        return PlaybillBlockSyncReadResultV1(
+            status="successor",
+            original_artifact_digest=backing.artifact_digest,
+            artifact_digest="sha256:" + "9" * 64,
+            coordinate=NEW_COORDINATE,
+            generation=2,
+            backing=backing.model_copy(update={"artifact_digest": "sha256:" + "9" * 64}),
+            body_content_base64="c3RhdHVzOiBjdXJyZW50Cg==",
+            body_digest=_digest(NEW_BODY),
+        )
+
+
 def test_sync_is_atomic_per_file_idempotent_and_preserves_outside_bytes_and_mode(
     tmp_path: Path,
 ) -> None:
@@ -184,6 +230,24 @@ def test_sync_is_atomic_per_file_idempotent_and_preserves_outside_bytes_and_mode
     )
     assert [item.outcome for item in second.items] == ["unchanged"]
     assert source.read_bytes() == content
+
+
+def test_sync_rewrites_claim_type_block_from_governed_card_body(tmp_path: Path) -> None:
+    source = _workspace(tmp_path, stamp=_artifact_stamp())
+
+    result = sync_projection_blocks(
+        _ArtifactSyncClient(),  # type: ignore[arg-type]
+        INSTANCE_ID,
+        workspace=tmp_path,
+        paths=("corpus/runbook.md",),
+    )
+
+    assert [item.outcome for item in result.items] == ["synced"]
+    (block,) = parse_projection_blocks(source.read_bytes(), source_id="corpus.runbook")
+    assert source.read_bytes()[block.body_start : block.body_end] == NEW_BODY
+    assert block.stamp is not None
+    assert isinstance(block.stamp.backing[0], ProjectionArtifactBackingV1)
+    assert block.stamp.backing[0].artifact_digest == "sha256:" + "9" * 64
 
 
 def test_check_reports_change_without_writing(tmp_path: Path) -> None:

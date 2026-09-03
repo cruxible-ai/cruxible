@@ -9,14 +9,19 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.claim_types import claim_type_digest
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
+from cruxible_client.contracts.claim_types import (
+    claim_type_digest,
+    claim_type_path,
+    render_claim_type,
+)
 from cruxible_client.contracts.claims import claim_artifact_digest
 from cruxible_client.contracts.declared_blocks import (
     PlaybillPresentationPolicyV2,
     PlaybillProjectionAdvisoryPolicyV1,
     PlaybillProjectionCoverageBindingV1,
     PlaybillProjectionCoverageObservationV1,
+    ProjectionArtifactBackingV1,
     ProjectionBackingV1,
     ProjectionBlockStampV1,
     ProjectionClaimBackingV1,
@@ -73,6 +78,7 @@ from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_claims import _claim_type
 from tests.test_playbill.test_graph_v4_provider_closure import _accepted_procedure
 from tests.test_playbill.test_query_execution_service import _instance_with_query
+from tests.test_playbill.test_resolution_contracts import _accept_tree
 from tests.test_playbill.test_reverse_drift_next import _published_world, _retire
 
 NOW = datetime(2026, 8, 16, 21, tzinfo=UTC)
@@ -492,6 +498,68 @@ def test_dirty_and_stale_rows_have_exact_frozen_repairs_and_deterministic_ids(
         assert item.subject_identity == "corpus.runbook#status"
         assert item.repair.operation == "playbill.block.repin"
         assert item.repair.arguments == {"source_id": "corpus.runbook", "block_id": "status"}
+
+
+def test_ontology_claim_type_marker_goes_stale_after_claim_type_migration(
+    tmp_path: Path,
+) -> None:
+    instance, owner = _instance_with_query(tmp_path)
+    predicate = "sec.vuln.severity"
+    ontology_type = _claim_type().model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ClaimType", name=predicate),
+            "predicate": predicate,
+            "allowed_subject_kinds": ("sec.vulnerability",),
+            "literal_schema": {"enum": ["low", "medium", "high"], "type": "string"},
+        }
+    )
+    path = claim_type_path(predicate)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[path] = render_claim_type(ontology_type)
+    _accept_tree(
+        instance,
+        owner,
+        tree,
+        timestamp=TIMESTAMP,
+        proposal_name="seed-vulnerability-severity-vocabulary",
+    )
+    original_digest = claim_type_digest(ontology_type).tagged
+    request = _request(
+        instance,
+        backing=(
+            ProjectionArtifactBackingV1(
+                identity=ontology_type.identity,
+                artifact_digest=original_digest,
+            ),
+        ),
+    )
+
+    successor = ontology_type.model_copy(
+        update={
+            "literal_schema": {
+                "enum": ["critical", "high", "low", "medium"],
+                "type": "string",
+            },
+            "lifecycle": ArtifactLifecycle(predecessor_digest=original_digest),
+        }
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[path] = render_claim_type(successor)
+    _accept_tree(
+        instance,
+        owner,
+        tree,
+        timestamp=TIMESTAMP,
+        proposal_name="migrate-vulnerability-severity-vocabulary",
+    )
+    migrated_request = request.model_copy(
+        update={"at": AcceptedCoordinate.from_internal(instance.accepted_coordinate())}
+    )
+
+    (row,) = _projection_rows(instance, migrated_request)
+    assert row.reason == "projection_backing_stale"
+    assert row.related_identities == ("ClaimType:sec.vuln.severity",)
+    assert row.repair.operation == "playbill.block.repin"
 
 
 def test_presentation_offsets_do_not_enter_projection_queue_identity(

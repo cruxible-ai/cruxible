@@ -65,6 +65,7 @@ from cruxible_client.contracts.declared_blocks import (
     PlaybillPresentationPolicyNoteV1,
     PlaybillPresentationPolicyV1,
     PlaybillProjectionCoverageObservationV1,
+    ProjectionArtifactBackingV1,
     ProjectionClaimBackingV1,
     ProjectionMarkerSummaryV1,
     ProjectionQueryBackingV1,
@@ -77,6 +78,7 @@ from cruxible_client.contracts.procedures.artifacts import parse_procedure
 from cruxible_client.contracts.query.definitions import QueryEvaluationPolicyV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
+from cruxible_client.contracts.subjects import parse_subject, subject_digest, subject_path
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.citation_relations import (
@@ -3065,6 +3067,33 @@ def _projection_items(
                         backing.semantic_result_digest
                     ):
                         stale.append(backing.identity.qualified)
+                elif isinstance(backing, ProjectionArtifactBackingV1):
+                    try:
+                        if backing.identity.kind == "ClaimType":
+                            path = claim_type_path(backing.identity.name)
+                            raw = tree[path]
+                            claim_type = parse_claim_type(raw, path=path)
+                            identity = claim_type.identity
+                            digest = claim_type_digest(claim_type).tagged
+                        else:
+                            subject_kind, separator, subject_id = backing.identity.name.partition(
+                                "/"
+                            )
+                            if not separator:
+                                raise ValueError("Subject identity has no kind separator")
+                            path = subject_path(subject_kind, subject_id)
+                            raw = tree[path]
+                            subject = parse_subject(raw, path=path)
+                            identity = subject.identity
+                            digest = subject_digest(subject).tagged
+                    except (KeyError, PlaybillError, ValueError):
+                        visible = False
+                        break
+                    if identity != backing.identity:
+                        visible = False
+                        break
+                    if digest != backing.artifact_digest:
+                        stale.append(backing.identity.qualified)
 
             if not visible:
                 continue
@@ -3072,7 +3101,10 @@ def _projection_items(
             syncable = (
                 (registration in registrations if registrations is not None else False)
                 and len(marker.stamp.backing) == 1
-                and isinstance(marker.stamp.backing[0], ProjectionClaimBackingV1)
+                and isinstance(
+                    marker.stamp.backing[0],
+                    (ProjectionClaimBackingV1, ProjectionArtifactBackingV1),
+                )
             )
             if syncable:
                 claim_backing = marker.stamp.backing[0]

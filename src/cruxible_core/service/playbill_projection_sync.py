@@ -19,6 +19,11 @@ from cruxible_client.contracts.captures import (
     parse_capture_envelope,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
+from cruxible_client.contracts.claim_types import (
+    claim_type_digest,
+    claim_type_path,
+    parse_claim_type,
+)
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     ClaimArtifactV2,
@@ -28,11 +33,18 @@ from cruxible_client.contracts.claims import (
     parse_claim,
 )
 from cruxible_client.contracts.declared_blocks import (
+    ProjectionArtifactBackingV1,
     ProjectionClaimBackingV1,
 )
 from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.source_references import CasSourceReferenceV1
+from cruxible_client.contracts.subjects import parse_subject, subject_digest, subject_path
+from cruxible_core.playbill.candidate_cards import (
+    candidate_card_renderer_digest_for_compiler,
+    render_candidate_card,
+)
+from cruxible_core.playbill.compiler import artifact_kinds_for_compiler
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.service.playbill_publications import bound_publication_registrations
 
@@ -199,6 +211,106 @@ def _retained_successor_body(
     return body, "sha256:" + hashlib.sha256(body).hexdigest()
 
 
+def _artifact_path(identity: ArtifactIdentity) -> str:
+    if identity.kind == "ClaimType":
+        return claim_type_path(identity.name)
+    subject_kind, separator, subject_id = identity.name.partition("/")
+    if identity.kind != "Subject" or not separator:
+        raise ValueError("unsupported projection artifact backing identity")
+    return subject_path(subject_kind, subject_id)
+
+
+def _artifact_digest(*, identity: ArtifactIdentity, path: str, raw: bytes) -> str:
+    if identity.kind == "ClaimType":
+        claim_type = parse_claim_type(raw, path=path)
+        if claim_type.identity != identity:
+            raise ValueError("ClaimType backing identity does not reproduce")
+        return claim_type_digest(claim_type).tagged
+    subject = parse_subject(raw, path=path)
+    if subject.identity != identity:
+        raise ValueError("Subject backing identity does not reproduce")
+    return subject_digest(subject).tagged
+
+
+def _read_artifact_backing(
+    instance: PlaybillInstance,
+    *,
+    stamp_coordinate: AcceptedCoordinate,
+    backing: ProjectionArtifactBackingV1,
+) -> PlaybillBlockSyncReadResultV1:
+    """Render the latest governed vocabulary/entity card with the pinned compiler."""
+
+    path = _artifact_path(backing.identity)
+    original_raw = instance.tree_at(stamp_coordinate.git_oid).get(path)
+    if original_raw is None:
+        return _refusal(
+            status="unsyncable",
+            reason="block_backing_missing",
+            detail="the declared artifact backing is absent at the marker coordinate",
+        )
+    try:
+        original_digest = _artifact_digest(identity=backing.identity, path=path, raw=original_raw)
+    except (PlaybillError, ValueError):
+        return _refusal(
+            status="unsyncable",
+            reason="block_backing_changed",
+            detail="the artifact backing does not reproduce at its declared coordinate",
+        )
+    if original_digest != backing.artifact_digest:
+        return _refusal(
+            status="unsyncable",
+            reason="block_backing_changed",
+            detail="the artifact backing digest does not reproduce at its declared coordinate",
+            original_artifact_digest=original_digest,
+        )
+
+    current = instance.accepted_coordinate()
+    current_raw = instance.tree_at(current.git_oid).get(path)
+    if current_raw is None:
+        return _refusal(
+            status="unsyncable",
+            reason="block_backing_missing",
+            detail="the governed artifact backing is absent at the current coordinate",
+            original_artifact_digest=original_digest,
+        )
+    try:
+        current_digest = _artifact_digest(identity=backing.identity, path=path, raw=current_raw)
+    except (PlaybillError, ValueError):
+        return _refusal(
+            status="unsyncable",
+            reason="block_backing_changed",
+            detail="the governed artifact backing does not reproduce at the current coordinate",
+            original_artifact_digest=original_digest,
+        )
+    if candidate_card_renderer_digest_for_compiler(current.compiler) is None:
+        return _refusal(
+            status="unsyncable",
+            reason="block_backing_changed",
+            detail="the accepted compiler has no pinned candidate-card renderer",
+            original_artifact_digest=original_digest,
+        )
+    body = render_candidate_card(
+        path,
+        current_raw,
+        artifact_kinds=artifact_kinds_for_compiler(current.compiler),
+    )
+    body_digest = "sha256:" + hashlib.sha256(body).hexdigest()
+    generation = instance.accepted_history()[-1]
+    return PlaybillBlockSyncReadResultV1(
+        status="current" if current_digest == original_digest else "successor",
+        original_artifact_digest=original_digest,
+        artifact_digest=current_digest,
+        coordinate=AcceptedCoordinate.from_internal(current),
+        generation=generation.sequence,
+        backing=ProjectionArtifactBackingV1(
+            identity=backing.identity,
+            artifact_digest=current_digest,
+        ),
+        body_content_base64=base64.b64encode(body).decode("ascii"),
+        body_digest=body_digest,
+    )
+
+
 def service_read_playbill_block_sync_backing(
     instance: PlaybillInstance,
     *,
@@ -207,13 +319,12 @@ def service_read_playbill_block_sync_backing(
     """Resolve one marker to its unique current accepted Claim body without writing."""
 
     stamp = request.stamp
-    if len(stamp.backing) != 1 or not isinstance(stamp.backing[0], ProjectionClaimBackingV1):
+    if len(stamp.backing) != 1:
         return _refusal(
             status="unsyncable",
             reason="block_backing_changed",
-            detail="sync requires exactly one Claim backing",
+            detail="sync requires exactly one supported backing",
         )
-    backing = stamp.backing[0]
     try:
         declared = AcceptedCoordinate.from_internal(
             instance.coordinate_for_oid(stamp.declared_coordinate.git_oid)
@@ -229,6 +340,19 @@ def service_read_playbill_block_sync_backing(
             status="refused",
             reason="block_workspace_instance_mismatch",
             detail="the marker coordinate differs from the attached instance coordinate",
+        )
+    backing = stamp.backing[0]
+    if isinstance(backing, ProjectionArtifactBackingV1):
+        return _read_artifact_backing(
+            instance,
+            stamp_coordinate=declared,
+            backing=backing,
+        )
+    if not isinstance(backing, ProjectionClaimBackingV1):
+        return _refusal(
+            status="unsyncable",
+            reason="block_backing_changed",
+            detail="sync requires a Claim, ClaimType, or Subject backing",
         )
     path = claim_path(backing.identity.name)
     raw = instance.tree_at(declared.git_oid).get(path)

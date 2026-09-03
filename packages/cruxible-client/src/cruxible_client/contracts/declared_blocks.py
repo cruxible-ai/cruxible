@@ -212,6 +212,28 @@ class ProjectionClaimBackingV1(_StrictDeclaredBlockModel):
         return self
 
 
+class ProjectionArtifactBackingV1(_StrictDeclaredBlockModel):
+    """A governed vocabulary or entity artifact pinned by exact digest."""
+
+    tag: Literal["playbill-projection-artifact-backing-v1"] = (
+        "playbill-projection-artifact-backing-v1"
+    )
+    identity: ArtifactIdentity
+    artifact_digest: str
+
+    @field_validator("artifact_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _identity(self) -> ProjectionArtifactBackingV1:
+        if self.identity.kind not in {"ClaimType", "Subject"}:
+            raise ValueError("a projection artifact backing must identify a ClaimType or Subject")
+        return self
+
+
 class ProjectionResolvedParameterBindingV1(_StrictDeclaredBlockModel):
     """The exact existing query-parameter-binding wire spelling, shared by both sides."""
 
@@ -274,7 +296,7 @@ class ProjectionQueryBackingV1(_StrictDeclaredBlockModel):
 
 
 ProjectionBackingV1: TypeAlias = Annotated[
-    ProjectionClaimBackingV1 | ProjectionQueryBackingV1,
+    ProjectionArtifactBackingV1 | ProjectionClaimBackingV1 | ProjectionQueryBackingV1,
     Field(discriminator="tag"),
 ]
 
@@ -638,6 +660,7 @@ __all__ = [
     "PlaybillReviewWorkspaceObservationV1",
     "ParsedProjectionBlock",
     "ProjectionBackingV1",
+    "ProjectionArtifactBackingV1",
     "ProjectionBlockStampV1",
     "ProjectionBootstrapUnstampedError",
     "ProjectionClaimBackingV1",

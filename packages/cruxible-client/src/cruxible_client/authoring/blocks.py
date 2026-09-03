@@ -28,6 +28,7 @@ from cruxible_client.contracts.declared_blocks import (
     MAX_PROJECTION_SCAN_BYTES,
     MAX_PROJECTION_SOURCE_BYTES,
     ParsedProjectionBlock,
+    ProjectionArtifactBackingV1,
     ProjectionBackingV1,
     ProjectionBlockStampV1,
     ProjectionClaimBackingV1,
@@ -605,7 +606,9 @@ def sync_projection_blocks(
                     )
                 )
                 continue
-            if not isinstance(stamp.backing[0], ProjectionClaimBackingV1):
+            if not isinstance(
+                stamp.backing[0], (ProjectionClaimBackingV1, ProjectionArtifactBackingV1)
+            ):
                 items.append(
                     PlaybillBlockSyncItemV1(
                         path=relative,
