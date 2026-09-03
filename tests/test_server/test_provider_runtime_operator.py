@@ -78,6 +78,7 @@ from tests.test_playbill._p2b1_support import (
     install_demo_classifier,
     provider_v2,
 )
+from tests.test_playbill._provider_seal_support import write_test_provider_seal_v2
 from tests.test_playbill.test_procedure_execution import (
     _accepted_line_for_admission,
 )
@@ -252,17 +253,12 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
     interpreter = _fake_interpreter(materialization / "python")
     materialization_digest = _digest("operator-materialization")
     seal = materialization / "environment.json"
-    seal.write_bytes(
-        canonical_bytes(
-            {
-                "installed_distributions": {
-                    "cruxible-provider-runtime": "1.0.0",
-                    "demo-provider": "1.0.0",
-                },
-                "lock_sha256": _sha256_file(lock),
-                "materialization_digest": materialization_digest,
-            }
-        )
+    write_test_provider_seal_v2(
+        environment_root=materialization,
+        seal_path=seal,
+        interpreter_path=interpreter,
+        lock_digest=_sha256_file(lock),
+        materialization_digest=materialization_digest,
     )
     base = provider_v2()
     assert base.runtime_artifact.local_env is not None

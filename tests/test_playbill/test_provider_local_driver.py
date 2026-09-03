@@ -64,6 +64,7 @@ from cruxible_core.playbill.provider_runtime_contract import (
     ProviderRuntimeRunContextV1,
 )
 from tests.test_playbill._p2b1_support import accepted_interface, provider_v2
+from tests.test_playbill._provider_seal_support import write_test_provider_seal_v2
 
 
 def _digest(label: str) -> str:
@@ -228,19 +229,14 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
     lock.write_bytes(b"exact-lock")
     materialization_digest = _digest("materialization")
     environment_manifest = tmp_path / "environment.json"
-    environment_manifest.write_bytes(
-        canonical_bytes(
-            {
-                "installed_distributions": {
-                    "cruxible-provider-runtime": "1.0.0",
-                    "demo-provider": "1.0.0",
-                },
-                "lock_sha256": _sha256_file(lock),
-                "materialization_digest": materialization_digest,
-            }
-        )
-    )
     interpreter = _fake_interpreter(tmp_path / "fake-python")
+    covered = write_test_provider_seal_v2(
+        environment_root=tmp_path,
+        seal_path=environment_manifest,
+        interpreter_path=interpreter,
+        lock_digest=_sha256_file(lock),
+        materialization_digest=materialization_digest,
+    )
     base = provider_v2()
     assert base.runtime_artifact.local_env is not None
     payload = base.runtime_artifact.model_copy(
@@ -287,6 +283,61 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
     assert bound.binding.materialization_digest == materialization_digest
     assert bound.binding.environment_manifest_digest == _sha256_file(environment_manifest)
 
+    runtime_file = next(
+        path for path in covered if "cruxible_provider_runtime/__init__" in str(path)
+    )
+    original_runtime = runtime_file.read_bytes()
+    runtime_file.write_bytes(b"tampered")
+    with pytest.raises(ProviderLocalRuntimeRefused) as tampered_runtime:
+        LocalProviderExecutionDriver().bind(
+            accepted, accepted_interface(), implementation.implementation_digest, deployment
+        )
+    assert tampered_runtime.value.code == "environment_divergence"
+    runtime_file.write_bytes(original_runtime)
+
+    hardlink = tmp_path / "runtime-hardlink"
+    os.link(runtime_file, hardlink)
+    with pytest.raises(ProviderLocalRuntimeRefused) as multiply_linked:
+        LocalProviderExecutionDriver().bind(
+            accepted, accepted_interface(), implementation.implementation_digest, deployment
+        )
+    assert multiply_linked.value.code == "environment_divergence"
+    hardlink.unlink()
+
+    runtime_backup = tmp_path.parent / f"{tmp_path.name}-runtime-backup"
+    runtime_backup.write_bytes(original_runtime)
+    runtime_file.unlink()
+    runtime_file.symlink_to(runtime_backup)
+    with pytest.raises(ProviderLocalRuntimeRefused) as symlinked:
+        LocalProviderExecutionDriver().bind(
+            accepted, accepted_interface(), implementation.implementation_digest, deployment
+        )
+    assert symlinked.value.code == "environment_divergence"
+    runtime_file.unlink()
+    runtime_file.write_bytes(original_runtime)
+    runtime_backup.unlink()
+
+    seal_bytes = environment_manifest.read_bytes()
+    manifest_payload = json.loads(seal_bytes)
+    manifest_payload["files"] = manifest_payload["files"][:-1]
+    environment_manifest.write_bytes(canonical_bytes(manifest_payload))
+    with pytest.raises(ProviderLocalRuntimeRefused) as incomplete_manifest:
+        LocalProviderExecutionDriver().bind(
+            accepted, accepted_interface(), implementation.implementation_digest, deployment
+        )
+    assert incomplete_manifest.value.code == "environment_divergence"
+    environment_manifest.write_bytes(seal_bytes)
+
+    manifest_payload = json.loads(seal_bytes)
+    manifest_payload["files"][0]["path"] = "../escaped"
+    environment_manifest.write_bytes(canonical_bytes(manifest_payload))
+    with pytest.raises(ProviderLocalRuntimeRefused) as escaping_manifest:
+        LocalProviderExecutionDriver().bind(
+            accepted, accepted_interface(), implementation.implementation_digest, deployment
+        )
+    assert escaping_manifest.value.code == "environment_divergence"
+    environment_manifest.write_bytes(seal_bytes)
+
     verified_environment = tmp_path / "verified-environment"
     verified_environment.mkdir()
     with pytest.raises(ProviderLocalRuntimeRefused) as escaped_environment:
@@ -298,15 +349,9 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
         )
     assert escaped_environment.value.code == "environment_divergence"
 
-    environment_manifest.write_bytes(
-        canonical_bytes(
-            {
-                "installed_distributions": {"demo-provider": "1.0.0"},
-                "lock_sha256": _sha256_file(lock),
-                "materialization_digest": materialization_digest,
-            }
-        )
-    )
+    manifest_payload = json.loads(environment_manifest.read_bytes())
+    manifest_payload["installed_distributions"] = {"demo-provider": "1.0.0"}
+    environment_manifest.write_bytes(canonical_bytes(manifest_payload))
     with pytest.raises(ProviderLocalRuntimeRefused) as missing_runtime:
         LocalProviderExecutionDriver().bind(
             accepted, accepted_interface(), implementation.implementation_digest, deployment

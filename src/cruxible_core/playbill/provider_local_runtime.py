@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import csv
 import hashlib
 import json
 import os
 import selectors
 import signal
+import stat
 import subprocess
 import tempfile
 import threading
@@ -19,7 +21,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
-from cruxible_client.contracts.canonical import canonical_bytes
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+
+from cruxible_client.contracts.canonical import (
+    Sha256Value,
+    canonical_bytes,
+    normalize_ledger_path,
+)
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
 from cruxible_client.contracts.procedures.models import ProcedureBudgetV3, ProcedureHardCapsV3
 from cruxible_client.contracts.provider_execution import (
@@ -66,6 +74,57 @@ _READ_CHUNK = 65_536
 
 def _sha256(content: bytes) -> str:
     return "sha256:" + hashlib.sha256(content).hexdigest()
+
+
+class ProviderMaterializationSealFileV2(BaseModel):
+    """One normalized environment-relative byte commitment read from a v2 seal."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    path: str
+    sha256: str
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        try:
+            normalized = normalize_ledger_path(value)
+        except Exception as exc:
+            raise ValueError("seal file path must be normalized and environment-relative") from exc
+        if normalized != value:
+            raise ValueError("seal file path must already be normalized")
+        return value
+
+    @field_validator("sha256")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+
+class ProviderMaterializationSealV2(BaseModel):
+    """Provider-repository-produced file manifest consumed by the core binder."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["cruxible.provider.seal.v2"]
+    materialization_digest: str
+    lock_sha256: str
+    installed_distributions: dict[str, str]
+    files: tuple[ProviderMaterializationSealFileV2, ...]
+
+    @field_validator("materialization_digest", "lock_sha256")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _files(self) -> "ProviderMaterializationSealV2":
+        ordered = tuple(sorted(self.files, key=lambda item: item.path.encode("utf-8")))
+        if self.files != ordered or len({item.path for item in self.files}) != len(self.files):
+            raise ValueError("seal files must be byte-sorted and unique")
+        return self
 
 
 @dataclass(frozen=True)
@@ -267,9 +326,10 @@ class ProviderLocalRuntimeInvoker:
         invocation_id: str,
         bound: BoundLocalProviderV1,
     ) -> ProviderDriverOutcomeV1:
-        # Rebind immediately before every spawn.  The earlier bound value is
-        # journal-before-progress evidence; this second read closes mutation
-        # between the durable start and process creation.
+        # Rebind immediately before every spawn. The earlier bound value is
+        # journal-before-progress evidence. The remaining verify-to-exec window
+        # after this second read is intentionally RAT-2 attribution, not a
+        # filesystem sandbox guarantee; any later observed drift is a refusal.
         fresh = self.bind_provider(occurrence=occurrence)
         if fresh != bound:
             raise ProviderLocalRuntimeRefused(
@@ -415,19 +475,16 @@ class LocalProviderExecutionDriver:
         environment_manifest, environment_manifest_bytes = self._read_environment_manifest(
             deployment.environment_manifest_path
         )
-        if environment_manifest.get("materialization_digest") != local_ref.materialization_digest:
+        if environment_manifest.materialization_digest != local_ref.materialization_digest:
             raise ProviderLocalRuntimeRefused(
                 "environment_divergence", "environment seal names another materialization"
             )
-        if (
-            environment_manifest.get("lock_sha256")
-            != provider.runtime_artifact.local_env.lock_sha256
-        ):
+        if environment_manifest.lock_sha256 != provider.runtime_artifact.local_env.lock_sha256:
             raise ProviderLocalRuntimeRefused(
                 "environment_divergence", "environment seal names another lock"
             )
-        installed = environment_manifest.get("installed_distributions")
-        if not isinstance(installed, dict) or "cruxible-provider-runtime" not in installed:
+        installed = environment_manifest.installed_distributions
+        if "cruxible-provider-runtime" not in installed:
             raise ProviderLocalRuntimeRefused(
                 "provider_runtime_not_in_materialization",
                 "verified environment does not contain cruxible-provider-runtime",
@@ -458,6 +515,13 @@ class LocalProviderExecutionDriver:
                 "environment_divergence",
                 "interpreter and environment seal must remain inside the verified environment",
             )
+        self._verify_environment_files(
+            environment_manifest,
+            environment_root=environment_root,
+            interpreter_path=interpreter_path,
+            entrypoint=manifest.entrypoint,
+            runtime_version=deployment.provider_runtime_version,
+        )
         provider_artifact_digest = accepted_provider.artifact_digest
         interface_pin = next(
             (
@@ -615,19 +679,138 @@ class LocalProviderExecutionDriver:
             raise ProviderLocalRuntimeRefused(code, f"{path.name!r} digest does not reproduce")
 
     @staticmethod
-    def _read_environment_manifest(path: Path) -> tuple[dict[str, object], bytes]:
+    def _read_environment_manifest(path: Path) -> tuple[ProviderMaterializationSealV2, bytes]:
         try:
             raw = path.read_bytes()
             parsed = json.loads(raw)
         except (OSError, ValueError, UnicodeDecodeError) as exc:
             raise ProviderLocalRuntimeRefused(
-                "cache_integrity", "environment seal is absent or malformed"
+                "environment_divergence", "environment seal is absent or malformed"
             ) from exc
         if not isinstance(parsed, dict) or canonical_bytes(parsed) != raw:
             raise ProviderLocalRuntimeRefused(
-                "cache_integrity", "environment seal is not canonical JSON"
+                "environment_divergence", "environment seal is not canonical JSON"
             )
-        return parsed, raw
+        try:
+            return ProviderMaterializationSealV2.model_validate(parsed), raw
+        except ValueError as exc:
+            raise ProviderLocalRuntimeRefused(
+                "environment_divergence", "environment seal v2 is invalid"
+            ) from exc
+
+    @staticmethod
+    def _verify_environment_files(
+        seal: ProviderMaterializationSealV2,
+        *,
+        environment_root: Path,
+        interpreter_path: Path,
+        entrypoint: str,
+        runtime_version: str,
+    ) -> None:
+        """Verify the seal's exact runtime, interpreter, and entrypoint byte closure."""
+
+        record_candidates = tuple(
+            path
+            for path in environment_root.rglob("RECORD")
+            if path.parent.name.startswith(
+                ("cruxible_provider_runtime-", "cruxible-provider-runtime-")
+            )
+        )
+        if len(record_candidates) != 1:
+            raise ProviderLocalRuntimeRefused(
+                "environment_divergence",
+                "environment must contain exactly one cruxible-provider-runtime RECORD",
+            )
+        record_path = record_candidates[0]
+        if runtime_version not in record_path.parent.name:
+            raise ProviderLocalRuntimeRefused(
+                "environment_divergence",
+                "runtime RECORD version differs from the declared installation",
+            )
+        site_root = record_path.parent.parent
+        try:
+            rows = tuple(csv.reader(record_path.read_text(encoding="utf-8").splitlines()))
+        except (OSError, UnicodeDecodeError, csv.Error) as exc:
+            raise ProviderLocalRuntimeRefused(
+                "environment_divergence", "runtime RECORD is unreadable"
+            ) from exc
+        required: set[str] = {
+            record_path.relative_to(environment_root).as_posix(),
+            interpreter_path.relative_to(environment_root).as_posix(),
+        }
+        for row in rows:
+            if not row or not row[0]:
+                raise ProviderLocalRuntimeRefused(
+                    "environment_divergence", "runtime RECORD contains an empty path"
+                )
+            target = site_root / row[0]
+            try:
+                required.add(target.relative_to(environment_root).as_posix())
+            except ValueError as exc:
+                raise ProviderLocalRuntimeRefused(
+                    "environment_divergence", "runtime RECORD path escapes the environment"
+                ) from exc
+
+        module_name = entrypoint.partition(":")[0]
+        module_parts = module_name.split(".")
+        module_relative = Path(*module_parts)
+        module_candidates = tuple(environment_root.rglob(f"{module_relative.as_posix()}.py"))
+        package_candidates = tuple(environment_root.rglob(module_relative.as_posix()))
+        candidates = tuple(
+            path for path in (*module_candidates, *package_candidates) if path.exists()
+        )
+        if len(candidates) != 1:
+            raise ProviderLocalRuntimeRefused(
+                "environment_divergence", "entrypoint module tree is missing or ambiguous"
+            )
+        module_path = candidates[0]
+        if module_path.is_dir():
+            entrypoint_files = tuple(path for path in module_path.rglob("*") if path.is_file())
+        else:
+            entrypoint_files = (module_path,)
+        cursor = module_path.parent
+        while cursor != environment_root and cursor.is_relative_to(environment_root):
+            init = cursor / "__init__.py"
+            if init.exists():
+                entrypoint_files = (*entrypoint_files, init)
+            cursor = cursor.parent
+        required.update(path.relative_to(environment_root).as_posix() for path in entrypoint_files)
+
+        declared = {item.path: item.sha256 for item in seal.files}
+        if set(declared) != required:
+            raise ProviderLocalRuntimeRefused(
+                "environment_divergence",
+                "environment seal file manifest does not cover the exact running-code closure",
+            )
+        for relative_path, expected_digest in declared.items():
+            current = environment_root
+            for component in Path(relative_path).parts:
+                current = current / component
+                try:
+                    metadata = os.lstat(current)
+                except OSError as exc:
+                    raise ProviderLocalRuntimeRefused(
+                        "environment_divergence", "sealed environment file is absent"
+                    ) from exc
+                if stat.S_ISLNK(metadata.st_mode):
+                    raise ProviderLocalRuntimeRefused(
+                        "environment_divergence", "sealed environment path contains a symlink"
+                    )
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise ProviderLocalRuntimeRefused(
+                    "environment_divergence",
+                    "sealed environment member must be a singly-linked regular file",
+                )
+            try:
+                observed = _sha256(current.read_bytes())
+            except OSError as exc:
+                raise ProviderLocalRuntimeRefused(
+                    "environment_divergence", "sealed environment file is unreadable"
+                ) from exc
+            if observed != expected_digest:
+                raise ProviderLocalRuntimeRefused(
+                    "environment_divergence", "sealed environment file digest does not reproduce"
+                )
 
 
 @dataclass(frozen=True)
@@ -1208,6 +1391,8 @@ __all__ = [
     "ProviderDriverOutcomeV1",
     "ProviderLocalRuntimeRefused",
     "ProviderLocalRuntimeInvoker",
+    "ProviderMaterializationSealFileV2",
+    "ProviderMaterializationSealV2",
     "ProviderSecretResolverRegistry",
     "provider_environment_secret_key",
     "translate_provider_budget",
