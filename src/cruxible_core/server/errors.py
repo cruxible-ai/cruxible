@@ -74,6 +74,7 @@ from cruxible_core.playbill.review_operational import (
 from cruxible_core.service.playbill_audit import PlaybillAuditError
 from cruxible_core.service.playbill_curation import PlaybillCurationError
 from cruxible_core.service.playbill_next import PlaybillNextError
+from cruxible_core.service.playbill_procedure_runs import ProcedureSurfaceError
 from cruxible_core.service.playbill_refusal_catalog import (
     ALL_SERVED_REFUSAL_CODES,
     repair_for_refusal,
@@ -158,6 +159,11 @@ def _repair_for_error(exc: CoreError) -> ServedRepairV1:
 
 
 def _status_for_error(exc: CoreError) -> int:
+    if isinstance(exc, ProcedureSurfaceError):
+        # A served Procedure/Line surface refusal is a request fault the caller
+        # can repair, never a daemon fault: the class declares its own 4xx so
+        # the code and the repair the envelope carries are actionable.
+        return exc.http_status
     if isinstance(exc, AuthenticationError):
         return 401
     if isinstance(exc, CustomerCodeExecutionUnsupportedError):
