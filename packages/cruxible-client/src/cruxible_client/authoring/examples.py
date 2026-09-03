@@ -13,6 +13,7 @@ from cruxible_client.authoring.inputs import (
     ClaimInput,
     ClaimRetirementInput,
     ClaimTypeInput,
+    ClaimTypeSuccessionInput,
     ExistingCaptureInput,
     LiteralObjectInput,
     ProcedureInput,
@@ -26,6 +27,8 @@ from cruxible_client.authoring.inputs import (
 )
 from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactLifecycle as _ArtifactLifecycle
+from cruxible_client.contracts.authoring.models import ClaimTypeSuccessionDependentV1
 from cruxible_client.contracts.captures import CanonicalDurationV1
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.documents import DocumentLifecycle, DocumentShell
@@ -66,6 +69,7 @@ AuthoringExampleName = Literal[
     "procedure-runtime-policy",
     "procedure-mandate",
     "change-set",
+    "claim-type-succession",
 ]
 
 
@@ -139,6 +143,69 @@ def change_set_example() -> ChangeSetInput:
                 kind="claim_retirement",
                 claim_id="CLM-" + "0" * 32,
                 reason="was-rescinded",
+            ),
+        ),
+    )
+
+
+def claim_type_succession_example() -> ChangeSetInput:
+    """Return one changeset that evolves a committed vocabulary in one generation.
+
+    The succession names the ClaimType it replaces and pins its exact current
+    digest; every member of that ClaimType's reverse-pin closure is
+    dispositioned in the same set -- one carried to the successor, one
+    tombstoned, one re-authored as the sibling Claim member that says it again
+    under the new vocabulary.
+    """
+
+    return ChangeSetInput(
+        kind="change_set",
+        members=(
+            ClaimTypeSuccessionInput(
+                kind="claim_type_succession",
+                successor=ClaimType(
+                    identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.owner"),
+                    predicate="project.work_item.owner",
+                    allowed_subject_kinds=("project.work_item",),
+                    object_kind="literal",
+                    literal_schema={"type": "string", "enum": ["replace-me"]},
+                    cardinality="one",
+                    permitted_roles=("normative", "observation"),
+                    evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
+                    admission_policy=ClaimAdmissionPolicyV1(),
+                    resolution_policy=ClaimResolutionPolicyV1(
+                        cardinality="one",
+                        eligible_verdicts=("supported",),
+                        selector="only_contender",
+                    ),
+                    lifecycle=_ArtifactLifecycle(predecessor_digest="sha256:" + "0" * 64),
+                ),
+                dependents=(
+                    ClaimTypeSuccessionDependentV1(
+                        identity=ArtifactIdentity(kind="Claim", name="CLM-" + "0" * 32),
+                        disposition="successor",
+                    ),
+                    ClaimTypeSuccessionDependentV1(
+                        identity=ArtifactIdentity(kind="Claim", name="CLM-" + "1" * 32),
+                        disposition="re_author",
+                        successor_claim_id="CLM-" + "1" * 32,
+                    ),
+                    ClaimTypeSuccessionDependentV1(
+                        identity=ArtifactIdentity(kind="Claim", name="CLM-" + "2" * 32),
+                        disposition="retire",
+                        claim_retirement_reason="was-rescinded",
+                    ),
+                ),
+            ),
+            ClaimInput(
+                kind="claim",
+                subject="project.work_item/replace-me",
+                predicate="project.work_item.owner",
+                object=LiteralObjectInput(kind="literal", value="replace-me"),
+                role="observation",
+                rationale="Replace with why this owner is right under the new vocabulary.",
+                source=SelfSourceInput(kind="self_source", body="owner: replace-me\n"),
+                claim_id="CLM-" + "1" * 32,
             ),
         ),
     )
@@ -501,6 +568,7 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
     "procedure-runtime-policy": procedure_runtime_policy_example,
     "procedure-mandate": procedure_mandate_example,
     "change-set": change_set_example,
+    "claim-type-succession": claim_type_succession_example,
 }
 
 _DOOR_EXAMPLES = {
@@ -523,6 +591,7 @@ AUTHORING_EXAMPLE_NAMES: Final[tuple[AuthoringExampleName, ...]] = (
     "procedure-runtime-policy",
     "procedure-mandate",
     "change-set",
+    "claim-type-succession",
 )
 
 
@@ -578,6 +647,7 @@ __all__ = [
     "AuthoringExampleName",
     "authoring_example",
     "change_set_example",
+    "claim_type_succession_example",
     "claim_existing_capture_example",
     "claim_flow_a_example",
     "claim_self_source_example",
