@@ -8,6 +8,9 @@
   "/api/v1/server/restart": {
     "POST": "ServerRestartResult"
   },
+  "/api/v1/server/stop": {
+    "POST": "ServerStopResult"
+  },
   "/api/v1/{instance_id}/playbill/audit": {
     "POST": "PlaybillAuditResult"
   },
@@ -128,6 +131,9 @@
   },
   "/api/v1/{instance_id}/playbill/init": {
     "POST": "PlaybillInitResult"
+  },
+  "/api/v1/{instance_id}/playbill/instance/decommission": {
+    "POST": "PlaybillInstanceDecommissionResultV1"
   },
   "/api/v1/{instance_id}/playbill/lines/{line_identity_digest}/runs": {
     "POST": "PlaybillProcedureRunState"

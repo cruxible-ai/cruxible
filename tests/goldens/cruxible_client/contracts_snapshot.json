@@ -27,7 +27,8 @@
     "PlaybillHandEditNextReason": {
       "values": [
         "procedure_projection_missing",
-        "provider_lane_unavailable"
+        "provider_lane_unavailable",
+        "instance_decommissioned"
       ]
     },
     "PlaybillHostCompatibilityReasonCodeV1": {
@@ -82,7 +83,8 @@
         "unregistered_projection_block",
         "projection_marker_invalid",
         "provider_lane_unavailable",
-        "procedure_projection_missing"
+        "procedure_projection_missing",
+        "instance_decommissioned"
       ]
     },
     "PlaybillPolicyKind": {
@@ -192,6 +194,106 @@
         "code",
         "cwd_workspace_root",
         "inherited_workspace_root"
+      ]
+    },
+    "IsolatedExecutorRegistrationV1": {
+      "fields": {
+        "backend_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "backend_id",
+          "required": true,
+          "schema": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$",
+            "title": "Backend Id",
+            "type": "string"
+          }
+        },
+        "capabilities": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "capabilities",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          }
+        },
+        "implementation_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "implementation_digest",
+          "required": true,
+          "schema": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Implementation Digest",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "isolated-executor-registration-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "isolated-executor-registration-v1",
+            "default": "isolated-executor-registration-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "What a runtime must publish to be a REGISTERED isolated executor.\n\nA shared hosted profile executes Provider code only through an executor\nthat is registered in the running build. Core registers none, so the record\nexists here as the seam an out-of-tree executor registers through, and so\nthe thing being claimed is a pinned artifact rather than an environment\nstring: the backend id selects it, the implementation digest says exactly\nwhich bytes are isolating, and the capabilities say what that isolation\ncovers.",
+        "properties": {
+          "backend_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$",
+            "title": "Backend Id",
+            "type": "string"
+          },
+          "capabilities": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "implementation_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Implementation Digest",
+            "type": "string"
+          },
+          "tag": {
+            "const": "isolated-executor-registration-v1",
+            "default": "isolated-executor-registration-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "backend_id",
+          "implementation_digest"
+        ],
+        "title": "IsolatedExecutorRegistrationV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "backend_id",
+        "implementation_digest"
       ]
     },
     "PlaybillAcceptedCoordinate": {
@@ -16466,6 +16568,161 @@
         "tag"
       ]
     },
+    "PlaybillInstanceDecommissionResultV1": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "decommissioned_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "decommissioned_at",
+          "required": true,
+          "schema": {
+            "title": "Decommissioned At",
+            "type": "string"
+          }
+        },
+        "decommissioned_by": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "decommissioned_by",
+          "required": true,
+          "schema": {
+            "title": "Decommissioned By",
+            "type": "string"
+          }
+        },
+        "instance_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance_id",
+          "required": true,
+          "schema": {
+            "title": "Instance Id",
+            "type": "string"
+          }
+        },
+        "reason": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": true,
+          "schema": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-instance-decommission-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-instance-decommission-result-v1",
+            "default": "playbill-instance-decommission-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Receipt for the terminal lifecycle state of one governed instance.",
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "decommissioned_at": {
+            "title": "Decommissioned At",
+            "type": "string"
+          },
+          "decommissioned_by": {
+            "title": "Decommissioned By",
+            "type": "string"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-instance-decommission-result-v1",
+            "default": "playbill-instance-decommission-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instance_id",
+          "reason",
+          "decommissioned_at",
+          "decommissioned_by",
+          "coordinate"
+        ],
+        "title": "PlaybillInstanceDecommissionResultV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "decommissioned_at",
+        "decommissioned_by",
+        "instance_id",
+        "reason"
+      ]
+    },
     "PlaybillInterfaceInventory": {
       "fields": {
         "coordinate": {
@@ -27120,6 +27377,176 @@
         "identity"
       ]
     },
+    "PlaybillSubjectIncomingClaimV1": {
+      "fields": {
+        "claim_identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "claim_identity",
+          "required": true,
+          "schema": {
+            "title": "Claim Identity",
+            "type": "string"
+          }
+        },
+        "subject_identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject_identity",
+          "required": true,
+          "schema": {
+            "title": "Subject Identity",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-subject-incoming-claim-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-subject-incoming-claim-v1",
+            "default": "playbill-subject-incoming-claim-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "One live Claim whose subject-valued object is the profiled Subject.",
+        "properties": {
+          "claim_identity": {
+            "title": "Claim Identity",
+            "type": "string"
+          },
+          "subject_identity": {
+            "title": "Subject Identity",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-subject-incoming-claim-v1",
+            "default": "playbill-subject-incoming-claim-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim_identity",
+          "subject_identity"
+        ],
+        "title": "PlaybillSubjectIncomingClaimV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "claim_identity",
+        "subject_identity"
+      ]
+    },
+    "PlaybillSubjectIncomingGroupV1": {
+      "fields": {
+        "claims": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "claims",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillSubjectIncomingClaimV1"
+            },
+            "title": "Claims",
+            "type": "array"
+          }
+        },
+        "predicate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "predicate",
+          "required": true,
+          "schema": {
+            "title": "Predicate",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-subject-incoming-group-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-subject-incoming-group-v1",
+            "default": "playbill-subject-incoming-group-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillSubjectIncomingClaimV1": {
+            "additionalProperties": false,
+            "description": "One live Claim whose subject-valued object is the profiled Subject.",
+            "properties": {
+              "claim_identity": {
+                "title": "Claim Identity",
+                "type": "string"
+              },
+              "subject_identity": {
+                "title": "Subject Identity",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-subject-incoming-claim-v1",
+                "default": "playbill-subject-incoming-claim-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim_identity",
+              "subject_identity"
+            ],
+            "title": "PlaybillSubjectIncomingClaimV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Every incoming edge that arrives on one governed predicate.",
+        "properties": {
+          "claims": {
+            "items": {
+              "$ref": "#/$defs/PlaybillSubjectIncomingClaimV1"
+            },
+            "title": "Claims",
+            "type": "array"
+          },
+          "predicate": {
+            "title": "Predicate",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-subject-incoming-group-v1",
+            "default": "playbill-subject-incoming-group-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "predicate",
+          "claims"
+        ],
+        "title": "PlaybillSubjectIncomingGroupV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "claims",
+        "predicate"
+      ]
+    },
     "PlaybillSubjectList": {
       "fields": {
         "coordinate": {
@@ -27200,6 +27627,61 @@
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
           },
+          "PlaybillSubjectIncomingClaimV1": {
+            "additionalProperties": false,
+            "description": "One live Claim whose subject-valued object is the profiled Subject.",
+            "properties": {
+              "claim_identity": {
+                "title": "Claim Identity",
+                "type": "string"
+              },
+              "subject_identity": {
+                "title": "Subject Identity",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-subject-incoming-claim-v1",
+                "default": "playbill-subject-incoming-claim-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim_identity",
+              "subject_identity"
+            ],
+            "title": "PlaybillSubjectIncomingClaimV1",
+            "type": "object"
+          },
+          "PlaybillSubjectIncomingGroupV1": {
+            "additionalProperties": false,
+            "description": "Every incoming edge that arrives on one governed predicate.",
+            "properties": {
+              "claims": {
+                "items": {
+                  "$ref": "#/$defs/PlaybillSubjectIncomingClaimV1"
+                },
+                "title": "Claims",
+                "type": "array"
+              },
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-subject-incoming-group-v1",
+                "default": "playbill-subject-incoming-group-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "predicate",
+              "claims"
+            ],
+            "title": "PlaybillSubjectIncomingGroupV1",
+            "type": "object"
+          },
           "PlaybillSubjectView": {
             "additionalProperties": false,
             "properties": {
@@ -27223,6 +27705,14 @@
                   "type": "object"
                 },
                 "title": "Facts",
+                "type": "array"
+              },
+              "incoming": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/PlaybillSubjectIncomingGroupV1"
+                },
+                "title": "Incoming",
                 "type": "array"
               },
               "tag": {
@@ -27322,6 +27812,22 @@
             "type": "array"
           }
         },
+        "incoming": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "incoming",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/PlaybillSubjectIncomingGroupV1"
+            },
+            "title": "Incoming",
+            "type": "array"
+          }
+        },
         "tag": {
           "default": "playbill-subject-read-v1",
           "default_json_serializable": true,
@@ -27377,6 +27883,61 @@
             ],
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
+          },
+          "PlaybillSubjectIncomingClaimV1": {
+            "additionalProperties": false,
+            "description": "One live Claim whose subject-valued object is the profiled Subject.",
+            "properties": {
+              "claim_identity": {
+                "title": "Claim Identity",
+                "type": "string"
+              },
+              "subject_identity": {
+                "title": "Subject Identity",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-subject-incoming-claim-v1",
+                "default": "playbill-subject-incoming-claim-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim_identity",
+              "subject_identity"
+            ],
+            "title": "PlaybillSubjectIncomingClaimV1",
+            "type": "object"
+          },
+          "PlaybillSubjectIncomingGroupV1": {
+            "additionalProperties": false,
+            "description": "Every incoming edge that arrives on one governed predicate.",
+            "properties": {
+              "claims": {
+                "items": {
+                  "$ref": "#/$defs/PlaybillSubjectIncomingClaimV1"
+                },
+                "title": "Claims",
+                "type": "array"
+              },
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-subject-incoming-group-v1",
+                "default": "playbill-subject-incoming-group-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "predicate",
+              "claims"
+            ],
+            "title": "PlaybillSubjectIncomingGroupV1",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -27401,6 +27962,14 @@
               "type": "object"
             },
             "title": "Facts",
+            "type": "array"
+          },
+          "incoming": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/PlaybillSubjectIncomingGroupV1"
+            },
+            "title": "Incoming",
             "type": "array"
           },
           "tag": {
@@ -29938,6 +30507,85 @@
         "type": "object"
       },
       "required_fields": [
+        "scheduled",
+        "state_root",
+        "version"
+      ]
+    },
+    "ServerStopResult": {
+      "fields": {
+        "pid": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "pid",
+          "required": true,
+          "schema": {
+            "title": "Pid",
+            "type": "integer"
+          }
+        },
+        "scheduled": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "scheduled",
+          "required": true,
+          "schema": {
+            "title": "Scheduled",
+            "type": "boolean"
+          }
+        },
+        "state_root": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "state_root",
+          "required": true,
+          "schema": {
+            "title": "State Root",
+            "type": "string"
+          }
+        },
+        "version": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "version",
+          "required": true,
+          "schema": {
+            "title": "Version",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "Acknowledgement that this daemon will exit and release its state root.",
+        "properties": {
+          "pid": {
+            "title": "Pid",
+            "type": "integer"
+          },
+          "scheduled": {
+            "title": "Scheduled",
+            "type": "boolean"
+          },
+          "state_root": {
+            "title": "State Root",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scheduled",
+          "version",
+          "state_root",
+          "pid"
+        ],
+        "title": "ServerStopResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "pid",
         "scheduled",
         "state_root",
         "version"
