@@ -28,7 +28,10 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_client.contracts.errors import PlaybillJournalError
+from cruxible_client.contracts.errors import (
+    PlaybillJournalError,
+    PlaybillJournalIntegrityError,
+)
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.projection import AcceptedCoordinate
@@ -327,14 +330,16 @@ def verify_journal_head_manifest(
     """Verify one journal-writer assertion without granting witness semantics."""
 
     if not re.fullmatch(r"[0-9a-f]{64}", expected_public_key):
-        raise PlaybillJournalError("journal-head public key must be 32 bytes of lowercase hex")
+        raise PlaybillJournalIntegrityError(
+            "journal-head public key must be 32 bytes of lowercase hex"
+        )
     try:
         Ed25519PublicKey.from_public_bytes(bytes.fromhex(expected_public_key)).verify(
             bytes.fromhex(manifest.signature),
             journal_head_statement_bytes(manifest.statement),
         )
     except (InvalidSignature, ValueError) as exc:
-        raise PlaybillJournalError("journal-head signature verification failed") from exc
+        raise PlaybillJournalIntegrityError("journal-head signature verification failed") from exc
 
 
 class ProcedureJournalRecordDraftV1(_StrictJournalModel):
@@ -577,7 +582,7 @@ def verify_journal_range(
 
     expected_count = journal_range.last_sequence - journal_range.first_sequence + 1
     if len(records) != expected_count:
-        raise PlaybillJournalError("journal range record count is incomplete")
+        raise PlaybillJournalIntegrityError("journal range record count is incomplete")
     previous = journal_range.expected_previous_digest
     for offset, stored in enumerate(records):
         record = stored.record
@@ -587,12 +592,14 @@ def verify_journal_range(
             or record.partition_id != journal_range.partition_id
             or record.sequence != sequence
         ):
-            raise PlaybillJournalError("journal range contains a substituted record coordinate")
+            raise PlaybillJournalIntegrityError(
+                "journal range contains a substituted record coordinate"
+            )
         if record.previous_record_digest != previous:
-            raise PlaybillJournalError("journal range chain continuity failed")
+            raise PlaybillJournalIntegrityError("journal range chain continuity failed")
         previous = stored.record_digest
     if previous != journal_range.expected_head_digest:
-        raise PlaybillJournalError("journal range does not reach its expected head digest")
+        raise PlaybillJournalIntegrityError("journal range does not reach its expected head digest")
     return JournalPartitionHeadV1(
         stream=journal_range.stream,
         partition_id=journal_range.partition_id,
@@ -624,11 +631,11 @@ def parse_journal_payload(content: bytes) -> CanonicalValue:
     try:
         raw = json.loads(content)
     except (UnicodeDecodeError, ValueError) as exc:
-        raise PlaybillJournalError("journal payload is malformed") from exc
+        raise PlaybillJournalIntegrityError("journal payload is malformed") from exc
     if not isinstance(raw, dict) or raw.get("tag") != "playbill-procedure-journal-payload-v1":
-        raise PlaybillJournalError("journal payload has an unknown domain tag")
+        raise PlaybillJournalIntegrityError("journal payload has an unknown domain tag")
     if set(raw) != {"tag", "payload"} or canonical_bytes(raw) != content:
-        raise PlaybillJournalError("journal payload is not in exact canonical form")
+        raise PlaybillJournalIntegrityError("journal payload is not in exact canonical form")
     return normalize_canonical(raw["payload"])
 
 

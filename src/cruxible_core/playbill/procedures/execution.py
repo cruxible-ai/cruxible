@@ -41,7 +41,9 @@ from cruxible_client.contracts.cas_contracts import CasObjectMetadata
 from cruxible_client.contracts.errors import (
     PlaybillCasError,
     PlaybillExecutionError,
+    PlaybillJournalConflictError,
     PlaybillJournalError,
+    PlaybillJournalIntegrityError,
 )
 from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_PATH,
@@ -1090,6 +1092,18 @@ class ProcedureActivationAuthorityProtocol(Protocol):
         *,
         coordinate: AcceptedCoordinate,
     ) -> str | None: ...
+
+
+def _journal_refusal_code(
+    exc: PlaybillJournalError,
+) -> Literal["journal_conflict", "journal_integrity_error", "journal_append_failed"]:
+    """Map one journal failure onto its served code by its exception class."""
+
+    if isinstance(exc, PlaybillJournalConflictError):
+        return "journal_conflict"
+    if isinstance(exc, PlaybillJournalIntegrityError):
+        return "journal_integrity_error"
+    return "journal_append_failed"
 
 
 class ProcedureClockProtocol(Protocol):
@@ -4676,16 +4690,12 @@ class ProcedureExecutor:
                     fencing_token=self.fencing_token,
                 )
             except PlaybillJournalError as exc:
-                detail = str(exc).lower()
-                code = (
-                    "journal_conflict"
-                    if any(word in detail for word in ("stale", "fork", "fenc", "active"))
-                    else "journal_integrity_error"
-                    if any(word in detail for word in ("malformed", "corrupt", "chain", "identity"))
-                    else "journal_append_failed"
-                )
+                # Classification is by exception class, never by grepping English
+                # out of the message: the backend's prose is a diagnostic, and a
+                # served refusal code derived from it misreads any wording the
+                # keyword list does not happen to contain.
                 raise ProcedureBoundaryRefused(
-                    code,
+                    _journal_refusal_code(exc),
                     "Procedure journal append refused.",
                 ) from exc
             if (

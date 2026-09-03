@@ -12,7 +12,11 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.errors import PlaybillJournalError
+from cruxible_client.contracts.errors import (
+    PlaybillJournalConflictError,
+    PlaybillJournalError,
+    PlaybillJournalIntegrityError,
+)
 from cruxible_core.playbill.exhaust.records import (
     JournalHeadVectorV1,
     JournalPartitionHeadV1,
@@ -205,13 +209,13 @@ class LocalJournalBackend:
         )
         if not identity_path.exists():
             if not create:
-                raise PlaybillJournalError("journal partition identity is missing")
+                raise PlaybillJournalIntegrityError("journal partition identity is missing")
             _atomic_write(identity_path, expected)
             return
         if identity_path.is_symlink() or not identity_path.is_file():
-            raise PlaybillJournalError("journal partition identity is not a regular file")
+            raise PlaybillJournalIntegrityError("journal partition identity is not a regular file")
         if identity_path.read_bytes() != expected:
-            raise PlaybillJournalError("journal partition identity substitution detected")
+            raise PlaybillJournalIntegrityError("journal partition identity substitution detected")
 
     @staticmethod
     def _read_records_from_directory(
@@ -240,7 +244,7 @@ class LocalJournalBackend:
                     break
                 length = int.from_bytes(header, "big")
                 if length <= 0 or length > _MAX_RECORD_BYTES:
-                    raise PlaybillJournalError("journal frame length is invalid")
+                    raise PlaybillJournalIntegrityError("journal frame length is invalid")
                 body = os.pread(descriptor, length, offset + _FRAME_HEADER_BYTES)
                 if len(body) < length:
                     break
@@ -248,9 +252,11 @@ class LocalJournalBackend:
                     raw = json.loads(body)
                     stored = StoredProcedureJournalRecordV1.model_validate(raw)
                 except (UnicodeDecodeError, ValueError) as exc:
-                    raise PlaybillJournalError("journal record frame is malformed") from exc
+                    raise PlaybillJournalIntegrityError(
+                        "journal record frame is malformed"
+                    ) from exc
                 if canonical_bytes(stored.model_dump(mode="json")) != body:
-                    raise PlaybillJournalError("journal record frame is not canonical")
+                    raise PlaybillJournalIntegrityError("journal record frame is not canonical")
                 record = stored.record
                 if (
                     record.stream != stream
@@ -258,14 +264,16 @@ class LocalJournalBackend:
                     or record.sequence != len(records) + 1
                     or record.previous_record_digest != previous
                 ):
-                    raise PlaybillJournalError("journal record chain or coordinate is corrupt")
+                    raise PlaybillJournalIntegrityError(
+                        "journal record chain or coordinate is corrupt"
+                    )
                 records.append(stored)
                 previous = stored.record_digest
                 offset += _FRAME_HEADER_BYTES + length
                 valid_end = offset
             if valid_end != size:
                 if not recover_tail:
-                    raise PlaybillJournalError("journal has an incomplete crash tail")
+                    raise PlaybillJournalIntegrityError("journal has an incomplete crash tail")
                 os.ftruncate(descriptor, valid_end)
                 os.fsync(descriptor)
         finally:
@@ -334,9 +342,9 @@ class LocalJournalBackend:
         try:
             state = JournalWriterStateV1.model_validate(json.loads(path.read_bytes()))
         except (UnicodeDecodeError, ValueError) as exc:
-            raise PlaybillJournalError("journal writer state is malformed") from exc
+            raise PlaybillJournalIntegrityError("journal writer state is malformed") from exc
         if canonical_bytes(state.model_dump(mode="json")) != path.read_bytes():
-            raise PlaybillJournalError("journal writer state is not canonical")
+            raise PlaybillJournalIntegrityError("journal writer state is not canonical")
         return state
 
     def writer_state(
@@ -358,13 +366,17 @@ class LocalJournalBackend:
     ) -> JournalWriterStateV1:
         current_head = self.read_head(stream, partition_id)
         if expected_head != current_head:
-            raise PlaybillJournalError("writer activation expected head is stale or substituted")
+            raise PlaybillJournalConflictError(
+                "writer activation expected head is stale or substituted"
+            )
         directory = self._partition_directory(stream, partition_id, create=True)
         previous = self._writer_state(stream, partition_id)
         if previous is not None and previous.active:
             if previous.fencing_token == fencing_token:
                 return previous
-            raise PlaybillJournalError("journal partition already has an active fenced writer")
+            raise PlaybillJournalConflictError(
+                "journal partition already has an active fenced writer"
+            )
         state = JournalWriterStateV1(
             generation=1 if previous is None else previous.generation + 1,
             fencing_token=fencing_token,
@@ -383,7 +395,7 @@ class LocalJournalBackend:
         directory = self._partition_directory(stream, partition_id, create=False)
         state = self._writer_state(stream, partition_id)
         if state is None or state.fencing_token != expected_fencing_token:
-            raise PlaybillJournalError("journal writer fencing token does not match")
+            raise PlaybillJournalConflictError("journal writer fencing token does not match")
         if not state.active:
             return state
         fenced = JournalWriterStateV1(
@@ -402,7 +414,7 @@ class LocalJournalBackend:
         fencing_token: str,
     ) -> StoredProcedureJournalRecordV1:
         if expected_head.stream != draft.stream or expected_head.partition_id != draft.partition_id:
-            raise PlaybillJournalError("append expected head names another partition")
+            raise PlaybillJournalConflictError("append expected head names another partition")
         directory = self._partition_directory(
             draft.stream,
             draft.partition_id,
@@ -412,7 +424,7 @@ class LocalJournalBackend:
         current = self.read_head(draft.stream, draft.partition_id)
         writer = self._writer_state(draft.stream, draft.partition_id)
         if writer is None or not writer.active or writer.fencing_token != fencing_token:
-            raise PlaybillJournalError("append requires the current active fencing token")
+            raise PlaybillJournalConflictError("append requires the current active fencing token")
 
         # A retried append against its old expected head reproduces the prior result.
         if (
@@ -423,7 +435,7 @@ class LocalJournalBackend:
         ):
             return records[-1]
         if current != expected_head:
-            raise PlaybillJournalError("append expected head is stale or forked")
+            raise PlaybillJournalConflictError("append expected head is stale or forked")
 
         record = ProcedureJournalRecordV1.bind(
             draft,
@@ -508,7 +520,9 @@ class LocalJournalBackend:
             or first.sequence != expected_head.sequence + 1
             or first.previous_record_digest != expected_head.record_digest
         ):
-            raise PlaybillJournalError("journal import does not extend the exact local head")
+            raise PlaybillJournalConflictError(
+                "journal import does not extend the exact local head"
+            )
         journal_range = JournalRangeV1(
             stream=first.stream,
             partition_id=first.partition_id,
@@ -520,7 +534,7 @@ class LocalJournalBackend:
         imported_head = verify_journal_range(journal_range, records)
         current = self.read_head(first.stream, first.partition_id)
         if current != expected_head:
-            raise PlaybillJournalError("journal import local head changed or names a fork")
+            raise PlaybillJournalConflictError("journal import local head changed or names a fork")
         directory = self._partition_directory(first.stream, first.partition_id, create=True)
         path = directory / "records.log"
         descriptor = os.open(
@@ -580,17 +594,21 @@ class LocalJournalBackend:
                 raise PlaybillJournalError("journal partition directory is not trustworthy")
             identity_path = directory / "identity.json"
             if identity_path.is_symlink() or not identity_path.is_file():
-                raise PlaybillJournalError("journal partition identity is not trustworthy")
+                raise PlaybillJournalIntegrityError("journal partition identity is not trustworthy")
             try:
                 payload = json.loads(identity_path.read_bytes())
                 partition_id = payload["partition_id"]
             except (OSError, ValueError, KeyError, TypeError) as exc:
-                raise PlaybillJournalError("journal partition identity is invalid") from exc
+                raise PlaybillJournalIntegrityError(
+                    "journal partition identity is invalid"
+                ) from exc
             if not isinstance(partition_id, str):
-                raise PlaybillJournalError("journal partition identity is invalid")
+                raise PlaybillJournalIntegrityError("journal partition identity is invalid")
             expected = self._partition_directory(stream, partition_id, create=False)
             if expected != directory:
-                raise PlaybillJournalError("journal partition directory identity mismatches")
+                raise PlaybillJournalIntegrityError(
+                    "journal partition directory identity mismatches"
+                )
             found.append(partition_id)
         return tuple(sorted(found, key=lambda value: value.encode("utf-8")))
 

@@ -24,7 +24,11 @@ from tests.test_playbill.test_provider_invocation_journal import (
 )
 
 import cruxible_core.playbill.procedures.execution as execution_module
-from cruxible_client.contracts.errors import PlaybillJournalError
+from cruxible_client.contracts.errors import (
+    PlaybillJournalConflictError,
+    PlaybillJournalError,
+    PlaybillJournalIntegrityError,
+)
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.exhaust import parse_journal_payload
 from cruxible_core.playbill.procedures.execution import (
@@ -126,25 +130,31 @@ def test_not_current_is_a_public_refusal_instead_of_generic_failure(tmp_path) ->
 
 
 @pytest.mark.parametrize(
-    ("message", "expected"),
+    ("raised", "expected"),
     (
-        ("append made no progress", "journal_append_failed"),
-        ("append expected head is stale or forked", "journal_conflict"),
-        ("journal chain is corrupt", "journal_integrity_error"),
+        (PlaybillJournalError, "journal_append_failed"),
+        (PlaybillJournalConflictError, "journal_conflict"),
+        (PlaybillJournalIntegrityError, "journal_integrity_error"),
     ),
 )
 def test_public_executor_classifies_journal_boundary_failures(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
-    message: str,
+    raised: type[PlaybillJournalError],
     expected: str,
 ) -> None:  # type: ignore[no-untyped-def]
+    """Classification reads the exception class, never the message prose.
+
+    Every message here is deliberately the same, so a classifier that greps
+    English cannot tell the three apart.
+    """
+
     fixture = _fixture(tmp_path)
     accepted = _state_procedure()
     prepared = _prepare(accepted, fixture, _StateReader())
 
     def refuse_append(*_args, **_kwargs):  # type: ignore[no-untyped-def]
-        raise PlaybillJournalError(message)
+        raise raised("the journal refused this append")
 
     monkeypatch.setattr(fixture.journal, "append", refuse_append)
     with pytest.raises(ProcedureBoundaryRefused) as caught:

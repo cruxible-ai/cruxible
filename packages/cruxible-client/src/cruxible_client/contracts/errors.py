@@ -156,6 +156,24 @@ class PlaybillJournalError(PlaybillError):
     """An operational journal record, head, range, or writer fence is invalid."""
 
 
+class PlaybillJournalConflictError(PlaybillJournalError):
+    """Another writer holds the partition, or the expected head has moved.
+
+    A conflict is a concurrency fact: the same append succeeds once the caller
+    reads the current head and re-fences. Carrying it as its own class is what
+    lets a served refusal classify by type instead of by grepping English out of
+    a message.
+    """
+
+
+class PlaybillJournalIntegrityError(PlaybillJournalError):
+    """Stored journal bytes, their chain, or a partition identity is corrupt.
+
+    An integrity failure is never retryable and never a concurrency fact; it
+    names damaged or substituted storage.
+    """
+
+
 class PlaybillExecutionError(PlaybillError):
     """A Procedure run cannot be admitted, executed, or finalized safely."""
 
@@ -308,7 +326,9 @@ __all__ = [
     "PlaybillGitError",
     "PlaybillExecutionError",
     "PlaybillInstanceIncompatiblePrereleaseContent",
+    "PlaybillJournalConflictError",
     "PlaybillJournalError",
+    "PlaybillJournalIntegrityError",
     "PlaybillKeyError",
     "PlaybillReseedRequired",
     "PlaybillSinceRequestInvalid",
