@@ -2,6 +2,85 @@
 
 ## Unreleased
 
+- **BEHAVIOUR CHANGE: a fresh Playbill ledger is SHA-1, not SHA-256.** An
+  instance initialized with no attached workspace now writes a SHA-1 Git
+  ledger, because common Git viewers do not recognize a SHA-256 repository and
+  a ledger nobody can open is not evidence anyone can read (maintainer ruling
+  2026-09-03). An attached workspace's own format still wins. `playbill init
+  --object-format` (request field `git_object_format` on HTTP, the SDK and MCP)
+  chooses explicitly; an explicit value that contradicts the attached workspace
+  refuses with the typed `playbill.init.object_format_conflict` before any state
+  is written. Instances already initialized keep their pinned format forever and
+  reopen unchanged.
+
+- **Operations verbs for ending a daemon and an instance.** `cruxible server
+  stop` asks a running daemon to shut down gracefully over the configured
+  transport and reports what it OBSERVED: the daemon must stop answering, and
+  when its state root is a directory on the machine running the command its
+  lock must be free. It exits non-zero with the typed
+  `cruxible.server.stop_not_confirmed` when the root was not released, and says
+  plainly that release is not observable when the daemon is bound to TCP on
+  another host. `server start` now takes an exclusive `flock` on
+  `<state-root>/daemon/lock` before it opens any store, so a second daemon over
+  one state root refuses with the typed `cruxible.server.state_root_locked`
+  naming the holder's pid and transport; the kernel frees the lock however the
+  holder died, so a stale file never blocks the next start.
+  `cruxible playbill instance decommission` (HTTP `POST
+  /api/v1/{instance_id}/playbill/instance/decommission`, MCP
+  `cruxible_playbill_instance_decommission`, ADMIN) ends one instance's governed
+  writes without deleting a byte: every governed write door refuses typed
+  `playbill.instance.decommissioned`, reads keep serving at the accepted
+  coordinate, `orient` and `next` report the terminal state, and archiving the
+  directory stays the operator's own step.
+
+- **Subject profiles list incoming relationships.** `subject get` (CLI, SDK,
+  MCP) now returns the live Claims whose subject-valued object is the profiled
+  Subject, grouped by predicate and carrying claim ids, so an `affects_package`
+  edge from a vulnerability is visible from the package.
+
+- **The Subject address is the canonical CLI argument.** `subject get
+  KIND/NAME` and `subject history KIND/NAME` are the supported forms, and
+  `explain <subject address>` resolves a Subject instead of answering a Document
+  404. The two-argument `KIND ID` spelling still works and emits a structured
+  deprecation warning; both surfaces are registered for removal in 0.6.0 (see
+  `DEPRECATIONS.md`).
+
+- **MCP `cruxible_playbill_init` carries the `seed` decision.** It gains
+  `seed: bool = True` with the same typed `unseeded` row and repair as the CLI,
+  SDK and HTTP surfaces, retiring the earlier "MCP always seeds" declaration.
+
+- **Source-read receipts record the real on-disk names.**
+  `SourceReadReceiptV1.relative_path` is now the component spelling the kernel
+  confirmed rather than the spelling that was requested, and the new
+  `requested_path` carries the request alongside it. Receipts written before
+  this law still verify.
+
+- **SECURITY: the shared hosted profile executes no customer code.**
+  `runtime/execution_policy.py`'s gate is now enforced before every Provider
+  child process, before Provider seed materialization, and at the served
+  `procedure run` / `line run` / `provider seed` boundaries -- and before any
+  tenant secret is resolved, so no secret material is materialized for a run
+  that will be refused. Execution under `CRUXIBLE_HOSTED_SERVER_PROFILE=shared`
+  is permitted only when an isolated executor is REGISTERED in the running
+  build -- registration goes through a typed seam
+  (`register_isolated_executor()` / `registered_isolated_executors()` taking the
+  new additive `IsolatedExecutorRegistrationV1` contract), and core registers
+  none, so the profile refuses with `customer_code_execution_unsupported` and
+  the detail `isolation backend not implemented`. Naming
+  `CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND=docker` no longer re-enables
+  spawning the Provider directly on the host, and an
+  unrecognised non-empty profile value refuses typed with
+  `hosted_profile_unknown` instead of being read as "not shared" (maintainer
+  ruling 2026-09-03).
+
+- **SECURITY: the terminal instance state closes the whole write plane.**
+  Every governed write on a decommissioned instance -- approvals,
+  curation rulings, Claim attestations, predictions and settlements, Procedure
+  binds and Procedure/Line runs -- refuses typed, not only proposal submission.
+  The decommission reason is bounded prose with no control characters, and the
+  daemon state-root lock file is narrowed to `0600` even when an earlier daemon
+  left it wider.
+
 - **Playbill v1 is wire-frozen (P2-B5).** Governed Lines can trigger due
   occurrences over HTTP, the CLI, the SDK, and MCP under their accepted
   mandates; candidate review trees carry deterministic derivative cards;
