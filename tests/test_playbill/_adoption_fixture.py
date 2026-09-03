@@ -472,6 +472,10 @@ class _Builder:
         )
         if evaluation.candidate is None or evaluation.diagnostics:
             raise AssertionError(f"fixture candidate refused: {evaluation.diagnostics}")
+        # The daemon re-commits the evaluated tree (proposals.ProposalService.propose)
+        # and settles that OID, so the fixture must settle the same bytes: the
+        # evaluated tree carries the derivative cards the settlement re-derives.
+        candidate_tree = dict(evaluation.tree)
         bundle = prepare_generation(
             self.instance._ledger,
             base=self.base,
