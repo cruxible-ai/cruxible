@@ -23,6 +23,7 @@ from cruxible_client.contracts.provider_execution import (
     ProviderInvocationCompletedV1,
 )
 from cruxible_client.contracts.workspace_file import (
+    WORKSPACE_FILE_INTERFACE_DIGEST,
     SourceReadReceiptV1,
     WorkspaceFileSourceRequestV1,
     source_read_receipt_digest,
@@ -196,7 +197,7 @@ class JournalProducerReceiptResolver:
         except (OSError, PlaybillError, ValueError) as exc:
             raise CaptureFormatError("Capture producer receipt journal is unavailable") from exc
         for partition_id in partition_ids:
-            admissions: dict[str, ProcedureAdmissionBoundPayloadV5] = {}
+            admissions: dict[tuple[str, str], ProcedureAdmissionBoundPayloadV5] = {}
             derived_requests: dict[tuple[str, str], ProcedureDerivedSourceRequestV1 | None] = {}
             source_reads: dict[tuple[str, str], SourceReadReceiptV1 | None] = {}
             try:
@@ -244,7 +245,9 @@ class JournalProducerReceiptResolver:
                             exc=exc,
                         )
                         continue
-                    admissions[admission.admission_binding_digest] = bound_payload
+                    admissions[(admission.run_id, admission.admission_binding_digest)] = (
+                        bound_payload
+                    )
                     continue
                 if record.event_kind == "source_request_derived":
                     try:
@@ -256,7 +259,7 @@ class JournalProducerReceiptResolver:
                             raise ValueError(
                                 "Derived Source request journal coordinates do not correspond"
                             )
-                        key = (derived.admission_binding_digest, derived.occurrence_path)
+                        key = (derived.run_id, derived.occurrence_path)
                         derived_requests[key] = None if key in derived_requests else derived
                     except (KeyError, TypeError, ValidationError, ValueError) as exc:
                         self._malformed(
@@ -279,7 +282,7 @@ class JournalProducerReceiptResolver:
                             or record.admission_binding_digest != receipt.admission_binding_digest
                         ):
                             raise ValueError("Source-read journal coordinates do not correspond")
-                        key = (receipt.admission_binding_digest, receipt.occurrence_path)
+                        key = (receipt.run_id, receipt.occurrence_path)
                         resolved_derived = derived_requests.get(key)
                         if resolved_derived is None:
                             raise ValueError(
@@ -314,7 +317,9 @@ class JournalProducerReceiptResolver:
                         provider_receipt = completed.receipt
                         binding_digest = record.admission_binding_digest
                         admitted = (
-                            None if binding_digest is None else admissions.get(binding_digest)
+                            None
+                            if binding_digest is None or record.run_id is None
+                            else admissions.get((record.run_id, binding_digest))
                         )
                         if admitted is None or binding_digest is None:
                             raise ValueError("Provider completion has no exact admission")
@@ -337,11 +342,11 @@ class JournalProducerReceiptResolver:
                                 "Provider completion differs from its exact admitted occurrence"
                             )
                         source_read = source_reads.get(
-                            (binding_digest, provider_receipt.occurrence_path)
+                            (provider_receipt.run_id, provider_receipt.occurrence_path)
                         )
-                        if (provider_receipt.interface_id == "workspace.file") != (
-                            source_read is not None
-                        ):
+                        if (
+                            provider_receipt.interface_digest == WORKSPACE_FILE_INTERFACE_DIGEST
+                        ) != (source_read is not None):
                             raise ValueError(
                                 "Provider completion source-read receipt does not correspond"
                             )
@@ -381,7 +386,9 @@ class JournalProducerReceiptResolver:
                             raise ValueError("Capture terminal omits producer receipt digest")
                         binding_digest = record.admission_binding_digest
                         admitted = (
-                            None if binding_digest is None else admissions.get(binding_digest)
+                            None
+                            if binding_digest is None or record.run_id is None
+                            else admissions.get((record.run_id, binding_digest))
                         )
                         if admitted is None or binding_digest is None:
                             raise ValueError("Capture terminal has no exact admission")

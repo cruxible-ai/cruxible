@@ -31,7 +31,10 @@ from cruxible_client.contracts.procedures.line_specs import (
 from cruxible_client.contracts.procedures.models import ProviderNodeV4
 from cruxible_client.contracts.procedures.results import procedure_acquisition_plan_digest
 from cruxible_client.contracts.provider_execution import ProviderSecretResolutionPlanV1
-from cruxible_client.contracts.provider_interfaces import render_provider_interface
+from cruxible_client.contracts.provider_interfaces import (
+    provider_interface_path,
+    render_provider_interface,
+)
 from cruxible_client.contracts.providers import (
     AcceptedProviderV1,
     ProviderV2,
@@ -59,6 +62,10 @@ from cruxible_core.playbill.provider_process_leases import (
 from cruxible_core.playbill.provider_runtime_contract import (
     ProviderRuntimeBudgetsV1,
     ProviderRuntimeRunContextV1,
+)
+from cruxible_core.playbill.seed_artifacts.workspace_file import (
+    WORKSPACE_FILE_INTERFACE_ID,
+    workspace_file_interface_registration,
 )
 from cruxible_core.runtime.playbill_manager import PlaybillInstanceManager
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
@@ -469,6 +476,38 @@ def test_overlong_state_root_degrades_provider_at_operator_construction(
     assert operator.process_leases is None
     assert operator.unavailable_reason is not None
     assert "shorter CRUXIBLE_STATE_ROOT" in operator.unavailable_reason
+
+
+def test_classifier_installation_failure_degrades_only_provider_lane(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    repository_root = Path(__file__).resolve().parents[2]
+    state_root = Path(tempfile.mkdtemp(dir=repository_root, prefix=".b2-classifier-"))
+    request.addfinalizer(lambda: shutil.rmtree(state_root, ignore_errors=True))
+    operator = ProviderRuntimeOperator(state_root)
+    registration = workspace_file_interface_registration()
+    tree = {
+        provider_interface_path(WORKSPACE_FILE_INTERFACE_ID): render_provider_interface(
+            registration
+        )
+    }
+    monkeypatch.setattr(
+        "cruxible_core.runtime.provider_runtime.install_compiler_owned_provider_classifier",
+        lambda _accepted: (_ for _ in ()).throw(RuntimeError("broken classifier")),
+    )
+
+    invoker = operator.invoker_for(
+        SimpleNamespace(tree_at=lambda _oid: tree),  # type: ignore[arg-type]
+        accepted_oid="a" * 40,
+    )
+
+    state, code, detail = operator.lane_status()
+    assert (state, code) == ("unavailable", "provider_runtime_recovery_failed")
+    assert detail is not None and "broken classifier" in detail
+    with pytest.raises(ProviderLocalRuntimeRefused) as caught:
+        invoker.bind_provider(occurrence=object())
+    assert caught.value.details == {"reason": {"code": code, "detail": detail}}
 
 
 def test_unmatched_recovered_start_degrades_provider_and_continues_instances(

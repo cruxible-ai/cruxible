@@ -226,7 +226,7 @@ class PlaybillInstanceManager:
     def workspace_file_reader(self, instance_id: str) -> WorkspaceFileReader:
         """Bind workspace reads to registry attachment plus daemon operational config."""
 
-        managed_root, _trust_path, attached_roots = self._paths(instance_id)
+        managed_root, trust_path, attached_roots = self._paths(instance_id)
         instance = self.get(instance_id)
         operator = self.provider_runtime_operator()
         return WorkspaceFileReader(
@@ -236,7 +236,9 @@ class PlaybillInstanceManager:
             operational_allowed_roots=tuple(
                 Path(item) for item in operator.config.workspace_allowed_roots
             ),
-            managed_roots=(managed_root,),
+            # The state root contains every daemon config, trust, custody, and
+            # instance substrate. Explicit roots cover restored layouts too.
+            managed_roots=(get_server_state_root(), managed_root, trust_path.parent),
         )
 
     def cached_provider_runtime_operator(self) -> ProviderRuntimeOperator:

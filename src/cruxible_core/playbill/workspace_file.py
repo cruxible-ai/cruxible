@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import base64
 import errno
+import fcntl
 import hashlib
 import os
 import stat
-from collections.abc import Callable, Sequence
+import sys
+import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +41,7 @@ WorkspaceFilePathClass = Literal[
     "symlink",
     "hardlink",
     "non_regular",
+    "unreadable",
     "changed_during_read",
     "missing",
     "size_budget",
@@ -84,13 +88,11 @@ class WorkspaceFileReader:
         attached_roots: Sequence[Path],
         operational_allowed_roots: Sequence[Path] = (),
         managed_roots: Sequence[Path] = (),
-        after_open_hook: Callable[[Path], None] | None = None,
     ) -> None:
         self.instance_id = instance_id
         self.operating_profile = operating_profile
         self._roots = self._canonical_roots((*attached_roots, *operational_allowed_roots))
         self._managed_roots = self._canonical_roots(managed_roots, require_directory=False)
-        self._after_open_hook = after_open_hook
 
     @staticmethod
     def _canonical_roots(
@@ -125,13 +127,14 @@ class WorkspaceFileReader:
 
     @staticmethod
     def _deny_path(parts: tuple[str, ...]) -> None:
-        if any(part == ".git" for part in parts):
+        folded = tuple(unicodedata.normalize("NFC", part).casefold() for part in parts)
+        if any(part == ".git" for part in folded):
             raise WorkspaceFileReadRefused("git_metadata", "Git metadata is never readable")
-        if any(part == ".playbill" for part in parts):
+        if any(part == ".playbill" for part in folded):
             raise WorkspaceFileReadRefused(
                 "playbill_control", "Playbill control paths are never readable"
             )
-        leaf = parts[-1]
+        leaf = folded[-1]
         if (
             leaf.endswith(".ed25519")
             or leaf.endswith(".ed25519.pub")
@@ -151,6 +154,57 @@ class WorkspaceFileReader:
             raise WorkspaceFileReadRefused(
                 "managed_root", "Playbill managed roots are never readable"
             )
+
+    @staticmethod
+    def _actual_component(parent_fd: int, requested: str) -> str:
+        """Resolve one component using the directory's real spelling."""
+
+        try:
+            entries = os.listdir(parent_fd)
+        except PermissionError as exc:
+            raise WorkspaceFileReadRefused(
+                "unreadable", "workspace source directory cannot be listed"
+            ) from exc
+        if requested in entries:
+            return requested
+        try:
+            os.stat(requested, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError as exc:
+            raise WorkspaceFileReadRefused(
+                "missing", "workspace source is unavailable"
+            ) from exc
+        requested_key = unicodedata.normalize("NFC", requested).casefold()
+        matches = tuple(
+            entry
+            for entry in entries
+            if unicodedata.normalize("NFC", entry).casefold() == requested_key
+        )
+        if len(matches) != 1:
+            raise WorkspaceFileReadRefused("missing", "workspace source is unavailable")
+        return matches[0]
+
+    @staticmethod
+    def _fd_path(descriptor: int) -> Path:
+        """Return the kernel's path for an open descriptor, or fail closed."""
+
+        try:
+            if sys.platform == "darwin":
+                raw = fcntl.fcntl(descriptor, 50, b"\0" * 1024)
+                assert isinstance(raw, bytes)
+                value = raw.split(b"\0", 1)[0].decode("utf-8")
+            elif sys.platform.startswith("linux"):
+                value = os.readlink(f"/proc/self/fd/{descriptor}")
+            else:
+                raise OSError(errno.ENOTSUP, "descriptor paths are unsupported")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise WorkspaceFileReadRefused(
+                "changed_during_read", "workspace source path cannot be confirmed"
+            ) from exc
+        if not value or value.endswith(" (deleted)"):
+            raise WorkspaceFileReadRefused(
+                "changed_during_read", "workspace source changed while it was read"
+            )
+        return Path(value)
 
     def read(
         self,
@@ -177,20 +231,36 @@ class WorkspaceFileReader:
         root = self._root_for(request.workspace_binding_digest)
         parts = tuple(request.relative_path.split("/"))
         self._deny_path(parts)
-        candidate = root.joinpath(*parts)
-        self._check_managed_root(candidate)
-
         descriptors: list[int] = []
+        actual_parts: list[str] = []
         flags_directory = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
         flags_file = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
         try:
             descriptors.append(os.open(root, flags_directory))
+            root_real = self._fd_path(descriptors[0])
+            self._check_managed_root(root_real)
             for component in parts[:-1]:
-                descriptors.append(os.open(component, flags_directory, dir_fd=descriptors[-1]))
-            descriptors.append(os.open(parts[-1], flags_file, dir_fd=descriptors[-1]))
+                actual = self._actual_component(descriptors[-1], component)
+                before = os.stat(actual, dir_fd=descriptors[-1], follow_symlinks=False)
+                if stat.S_ISLNK(before.st_mode):
+                    raise WorkspaceFileReadRefused(
+                        "symlink", "workspace source may not traverse a symbolic link"
+                    )
+                if not stat.S_ISDIR(before.st_mode):
+                    raise WorkspaceFileReadRefused(
+                        "non_regular", "workspace source parent must be a directory"
+                    )
+                descriptors.append(os.open(actual, flags_directory, dir_fd=descriptors[-1]))
+                actual_parts.append(actual)
+            actual_leaf = self._actual_component(descriptors[-1], parts[-1])
+            before = os.stat(actual_leaf, dir_fd=descriptors[-1], follow_symlinks=False)
+            if stat.S_ISLNK(before.st_mode):
+                raise WorkspaceFileReadRefused(
+                    "symlink", "workspace source may not be a symbolic link"
+                )
+            descriptors.append(os.open(actual_leaf, flags_file, dir_fd=descriptors[-1]))
+            actual_parts.append(actual_leaf)
             opened = os.fstat(descriptors[-1])
-            if self._after_open_hook is not None:
-                self._after_open_hook(candidate)
             if not stat.S_ISREG(opened.st_mode):
                 raise WorkspaceFileReadRefused(
                     "non_regular", "workspace source must be a regular file"
@@ -199,6 +269,13 @@ class WorkspaceFileReader:
                 raise WorkspaceFileReadRefused(
                     "hardlink", "workspace source must have exactly one hard link"
                 )
+            opened_path = self._fd_path(descriptors[-1])
+            self._deny_path(tuple(actual_parts))
+            if not self._within(opened_path, root_real):
+                raise WorkspaceFileReadRefused(
+                    "changed_during_read", "workspace source escaped its authorized root"
+                )
+            self._check_managed_root(opened_path)
             data = bytearray()
             while len(data) <= resolved_max_bytes:
                 chunk = os.read(descriptors[-1], min(64 * 1024, resolved_max_bytes + 1 - len(data)))
@@ -209,25 +286,32 @@ class WorkspaceFileReader:
                 raise WorkspaceFileReadRefused(
                     "size_budget", "workspace source exceeds the admitted byte budget"
                 )
-            after = os.stat(candidate, follow_symlinks=False)
-            resolved = candidate.resolve(strict=True)
+            after = os.stat(actual_leaf, dir_fd=descriptors[-2], follow_symlinks=False)
+            resolved = self._fd_path(descriptors[-1])
             if (
                 after.st_dev != opened.st_dev
                 or after.st_ino != opened.st_ino
-                or not self._within(resolved, root)
+                or not self._within(resolved, root_real)
             ):
                 raise WorkspaceFileReadRefused(
                     "changed_during_read", "workspace source changed while it was read"
                 )
             self._check_managed_root(resolved)
+            self._deny_path(tuple(actual_parts))
         except WorkspaceFileReadRefused:
             raise
         except FileNotFoundError as exc:
             raise WorkspaceFileReadRefused("missing", "workspace source is unavailable") from exc
+        except PermissionError as exc:
+            raise WorkspaceFileReadRefused("unreadable", "workspace source is unreadable") from exc
         except OSError as exc:
-            path_class: WorkspaceFilePathClass = (
-                "symlink" if exc.errno == errno.ELOOP else "non_regular"
-            )
+            path_class: WorkspaceFilePathClass
+            if exc.errno == errno.ELOOP:
+                path_class = "symlink"
+            elif exc.errno in {errno.EACCES, errno.EPERM}:
+                path_class = "unreadable"
+            else:
+                path_class = "non_regular"
             raise WorkspaceFileReadRefused(path_class, "workspace source cannot be opened") from exc
         finally:
             for descriptor in reversed(descriptors):

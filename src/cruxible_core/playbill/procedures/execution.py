@@ -123,6 +123,7 @@ from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
 from cruxible_client.contracts.workspace_file import (
+    WORKSPACE_FILE_INTERFACE_DIGEST,
     SourceReadReceiptV1,
     WorkspaceFileSourceRequestV1,
     source_read_receipt_digest,
@@ -3135,7 +3136,7 @@ class ProcedureExecutor:
         source_read_receipt: SourceReadReceiptV1 | None = None
         provider_payload = resolved_request
         workspace_request: WorkspaceFileSourceRequestV1 | None = None
-        if occurrence.interface_id == "workspace.file":
+        if occurrence.interface_digest == WORKSPACE_FILE_INTERFACE_DIGEST:
             if self.workspace_file_reader is None:
                 raise _RunRefusal(
                     "workspace_file_read_refused",

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import cruxible_core.playbill.workspace_file as workspace_file_module
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.workspace_file import WorkspaceFileSourceRequestV1
 from cruxible_core.playbill.workspace_file import (
@@ -95,7 +96,20 @@ def test_regular_file_read_carries_only_bounded_bytes_and_receipt(tmp_path: Path
     }
 
 
-@pytest.mark.parametrize("path", ("/etc/passwd", "../secret", "a/../secret", "a//b"))
+@pytest.mark.parametrize(
+    "path",
+    (
+        "/etc/passwd",
+        "../secret",
+        "a/../secret",
+        "a//b",
+        " leading",
+        "trailing ",
+        "line\nbreak",
+        "delete\x7fkey",
+        "\ufeffbom",
+    ),
+)
 def test_path_grammar_refuses_absolute_and_escape(path: str, tmp_path: Path) -> None:
     root = tmp_path / "workspace"
     root.mkdir()
@@ -107,8 +121,11 @@ def test_path_grammar_refuses_absolute_and_escape(path: str, tmp_path: Path) -> 
     ("path", "path_class"),
     (
         (".git/config", "git_metadata"),
+        (".GIT/config", "git_metadata"),
         (".playbill/coverage.json", "playbill_control"),
+        (".PLAYBILL/coverage.json", "playbill_control"),
         ("owner.ed25519", "client_custody"),
+        ("OWNER.ED25519", "client_custody"),
         ("owner.ed25519.pub", "client_custody"),
         (".playbill-init-resume-owner.json", "client_custody"),
     ),
@@ -161,6 +178,28 @@ def test_operational_config_widens_roots_but_managed_root_is_excluded(tmp_path: 
     with pytest.raises(WorkspaceFileReadRefused) as caught:
         _read(reader, _request(allowed, "managed/secret.txt"))
     assert caught.value.path_class == "managed_root"
+    with pytest.raises(WorkspaceFileReadRefused) as caught:
+        _read(reader, _request(allowed, "MANAGED/secret.txt"))
+    assert caught.value.path_class == "managed_root"
+
+
+def test_managed_state_root_wins_over_operational_allowlist(tmp_path: Path) -> None:
+    attached = tmp_path / "attached"
+    state_root = tmp_path / "daemon-state"
+    attached.mkdir()
+    state_root.mkdir()
+    (state_root / "daemon-secret").write_bytes(b"secret")
+    reader = WorkspaceFileReader(
+        instance_id="workspace-reader-test",
+        operating_profile="local",
+        attached_roots=(attached,),
+        operational_allowed_roots=(state_root,),
+        managed_roots=(state_root,),
+    )
+
+    with pytest.raises(WorkspaceFileReadRefused) as caught:
+        _read(reader, _request(state_root, "daemon-secret"))
+    assert caught.value.path_class == "managed_root"
 
 
 def test_symlink_hardlink_directory_socket_and_budget_refuse(
@@ -197,28 +236,49 @@ def test_symlink_hardlink_directory_socket_and_budget_refuse(
         sock.close()
 
 
-def test_replaced_file_after_open_refuses(tmp_path: Path) -> None:
+def test_replaced_file_after_open_refuses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path / "workspace"
     root.mkdir()
     target = root / "note"
     target.write_bytes(b"first")
 
-    def replace(path: Path) -> None:
-        replacement = root / "replacement"
-        replacement.write_bytes(b"second")
-        replacement.replace(path)
+    original_read = workspace_file_module.os.read
+    mutated = False
 
+    def replace(descriptor: int, count: int) -> bytes:
+        nonlocal mutated
+        if not mutated:
+            mutated = True
+            replacement = root / "replacement"
+            replacement.write_bytes(b"second")
+            replacement.replace(target)
+        return original_read(descriptor, count)
+
+    monkeypatch.setattr(workspace_file_module.os, "read", replace)
     with pytest.raises(WorkspaceFileReadRefused) as caught:
-        _read(_reader(root, after_open_hook=replace), _request(root, "note"))
+        _read(_reader(root), _request(root, "note"))
     assert caught.value.path_class == "changed_during_read"
 
 
-def test_disappearing_file_after_open_refuses(tmp_path: Path) -> None:
+def test_disappearing_file_after_open_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root = tmp_path / "workspace"
     root.mkdir()
     target = root / "note"
     target.write_bytes(b"first")
 
+    original_read = workspace_file_module.os.read
+    mutated = False
+
+    def unlink(descriptor: int, count: int) -> bytes:
+        nonlocal mutated
+        if not mutated:
+            mutated = True
+            target.unlink()
+        return original_read(descriptor, count)
+
+    monkeypatch.setattr(workspace_file_module.os, "read", unlink)
     with pytest.raises(WorkspaceFileReadRefused) as caught:
-        _read(_reader(root, after_open_hook=Path.unlink), _request(root, "note"))
+        _read(_reader(root), _request(root, "note"))
     assert caught.value.path_class == "missing"

@@ -17,7 +17,7 @@ from cruxible_client.contracts.provider_interfaces import (
 )
 from cruxible_core.playbill.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_FIXTURES,
-    WORKSPACE_FILE_INTERFACE_ID,
+    WORKSPACE_FILE_INTERFACE_DIGEST,
     WorkspaceFileBucketClassifier,
 )
 
@@ -177,7 +177,7 @@ def install_compiler_owned_provider_classifier(
 ) -> ProviderBucketClassifierInstallationV1 | None:
     """Install the compiler-owned double for an interface that has one."""
 
-    if accepted.registration.interface_id != WORKSPACE_FILE_INTERFACE_ID:
+    if accepted.registration.interface_digest != WORKSPACE_FILE_INTERFACE_DIGEST:
         return None
     return PROVIDER_BUCKET_CLASSIFIER_REGISTRY.install(
         accepted,

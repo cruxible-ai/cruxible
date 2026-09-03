@@ -22,17 +22,25 @@ from cruxible_client.contracts.provider_execution import (
     ProviderSecretResolutionPlanV1,
     provider_invocation_output_digest,
 )
-from cruxible_client.contracts.workspace_file import SourceReadReceiptV1
+from cruxible_client.contracts.workspace_file import (
+    WORKSPACE_FILE_INTERFACE_DIGEST,
+    SourceReadReceiptV1,
+)
 
 
 def _workspace_fixture(tmp_path):  # type: ignore[no-untyped-def]
     fixture = provider_capture_fixture(tmp_path)
     local = fixture.occurrence.local_execution.model_copy(
-        update={"interface_id": "workspace.file", "declared_endpoints": ()}
+        update={
+            "interface_id": "workspace.file",
+            "interface_digest": WORKSPACE_FILE_INTERFACE_DIGEST,
+            "declared_endpoints": (),
+        }
     )
     occurrence = fixture.occurrence.model_copy(
         update={
             "interface_id": "workspace.file",
+            "interface_digest": WORKSPACE_FILE_INTERFACE_DIGEST,
             "local_execution": local,
             "secret_plan": ProviderSecretResolutionPlanV1(
                 references=(), binding_identity_digests=()
@@ -84,6 +92,7 @@ def _workspace_fixture(tmp_path):  # type: ignore[no-untyped-def]
     receipt = fixture.receipt.model_copy(
         update={
             "interface_id": "workspace.file",
+            "interface_digest": WORKSPACE_FILE_INTERFACE_DIGEST,
             "output": ProviderInvocationOutputDigestV1(
                 output_digest=provider_invocation_output_digest(provider_output)
             ).model_dump(mode="json"),

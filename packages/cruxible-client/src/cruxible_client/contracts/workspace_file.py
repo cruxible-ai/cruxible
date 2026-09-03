@@ -12,6 +12,9 @@ from cruxible_client.contracts.canonical import Sha256Value, normalize_canonical
 from cruxible_client.contracts.projection import AcceptedCoordinate
 
 _RELATIVE_COMPONENT_RE = re.compile(r"^[^/\\\x00]+$")
+WORKSPACE_FILE_INTERFACE_DIGEST = (
+    "sha256:372bc808d6bd77627bdda7bc67586300e2eb812bf0a4fb3769283a26cc021f88"
+)
 
 
 class _StrictWorkspaceFileModel(BaseModel):
@@ -58,6 +61,11 @@ class WorkspaceFileSourceRequestV1(_StrictWorkspaceFileModel):
             or value.endswith("/")
             or any(part in {"", ".", ".."} for part in parts)
             or not all(_RELATIVE_COMPONENT_RE.fullmatch(part) for part in parts)
+            or any(part != part.strip() for part in parts)
+            or any(
+                ord(character) < 32 or ord(character) == 127 or character == "\ufeff"
+                for character in value
+            )
         ):
             raise ValueError("workspace file path must be normalized relative POSIX")
         return value
@@ -116,6 +124,7 @@ def source_read_receipt_digest(receipt: SourceReadReceiptV1) -> str:
 
 __all__ = [
     "SourceReadReceiptV1",
+    "WORKSPACE_FILE_INTERFACE_DIGEST",
     "WorkspaceFileSourceRequestV1",
     "source_read_receipt_digest",
 ]

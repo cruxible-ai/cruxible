@@ -689,7 +689,16 @@ class ProviderRuntimeOperator:
                     registration=registration,
                     artifact_digest=digest,
                 )
-                install_compiler_owned_provider_classifier(accepted_interface)
+                try:
+                    install_compiler_owned_provider_classifier(accepted_interface)
+                except Exception as exc:
+                    detail = f"Provider classifier installation failed: {type(exc).__name__}: {exc}"
+                    self.mark_unavailable("provider_runtime_recovery_failed", detail)
+                    _state, code, lane_detail = self.lane_status()
+                    return _UnavailableProviderRuntimeInvoker(
+                        code=code or "provider_runtime_recovery_failed",
+                        detail=lane_detail or detail,
+                    )
                 interfaces[digest] = accepted_interface
         invoker = ProviderLocalRuntimeInvoker(
             deployments_by_digest=self.deployments,

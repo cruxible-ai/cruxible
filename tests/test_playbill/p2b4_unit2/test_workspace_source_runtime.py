@@ -29,6 +29,7 @@ from cruxible_client.contracts.provider_execution import (
     ProviderSecretResolutionPlanV1,
 )
 from cruxible_client.contracts.workspace_file import (
+    WORKSPACE_FILE_INTERFACE_DIGEST,
     SourceReadReceiptV1,
     WorkspaceFileSourceRequestV1,
 )
@@ -142,7 +143,12 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
     )
     old_node = accepted.procedure.definition.nodes[0]
     assert isinstance(old_node, SourceNodeV4)
-    source_node = old_node.model_copy(update={"request": request.model_dump(mode="json")})
+    source_node = old_node.model_copy(
+        update={
+            "request": request.model_dump(mode="json"),
+            "interface_digest": WORKSPACE_FILE_INTERFACE_DIGEST,
+        }
+    )
     definition = accepted.procedure.definition.model_copy(update={"nodes": (source_node,)})
     procedure = accepted.procedure.model_copy(
         update={
@@ -158,12 +164,17 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
 
     old_occurrence = prepared.acquisition_plan.external_occurrences[0]
     local = old_occurrence.local_execution.model_copy(
-        update={"interface_id": "workspace.file", "declared_endpoints": ()}
+        update={
+            "interface_id": "workspace.file",
+            "interface_digest": WORKSPACE_FILE_INTERFACE_DIGEST,
+            "declared_endpoints": (),
+        }
     )
     occurrence = ProviderExternalOccurrencePlanV1.model_validate(
         {
             **old_occurrence.model_dump(mode="python"),
             "interface_id": "workspace.file",
+            "interface_digest": WORKSPACE_FILE_INTERFACE_DIGEST,
             "accepted_bucket_selectors": ("content_kind=text;byte_size=tiny",),
             "effect_class": "none",
             "local_execution": local,
@@ -337,12 +348,107 @@ def test_workspace_source_reads_before_spawn_and_commits_both_receipts(tmp_path:
         )
 
 
-def test_forbidden_workspace_path_refuses_before_provider_bind_or_spawn(tmp_path: Path) -> None:
+def test_receipt_resolution_is_scoped_by_run_id_not_semantic_key(tmp_path: Path) -> None:
     accepted, prepared, fixture, policy, contract, root, reader = _workspace_source_fixture(
-        tmp_path, ".git/config"
+        tmp_path, "docs/note.txt"
     )
-    (root / ".git").mkdir()
-    (root / ".git" / "config").write_bytes(b"secret")
+    (root / "docs").mkdir()
+    (root / "docs" / "note.txt").write_bytes(b"hello\n")
+
+    def execute(item: PreparedProcedureRunV5) -> None:
+        result = ProcedureExecutor(
+            journal=fixture.journal,
+            bodies=fixture.bodies,
+            run_index=fixture.run_index,
+            fencing_token="writer",
+            activation_authority=_Authority(accepted.artifact_digest),
+            contract_validator=_Contracts(),
+            provider_runtime_invoker=_WorkspaceInvoker(),
+            provider_classifier_registry=_WorkspaceRegistry(),  # type: ignore[arg-type]
+            capture_contracts={capture_contract_digest(contract).tagged: contract},
+            acquisition_policy=policy,
+            workspace_file_reader=reader,
+        ).execute(item, accepted)
+        assert result.status == "succeeded"
+
+    execute(prepared)
+    first = prepared.admission
+    second_run_id = procedure_line_run_id(
+        occurrence_id=first.occurrence_id or "",
+        attempt=2,
+        admission_binding_digest=first.admission_binding_digest,
+        occurrence_evaluation_time=first.occurrence_evaluation_time,
+    )
+    second_admission = ProcedureRunAdmissionV5.model_validate(
+        {
+            **first.model_dump(mode="python"),
+            "attempt": 2,
+            "run_id": second_run_id,
+        }
+    )
+    assert second_admission.semantic_replay_key_digest == first.semantic_replay_key_digest
+    assert second_admission.admission_binding_digest == first.admission_binding_digest
+    execute(prepared.model_copy(update={"admission": second_admission}))
+
+    access = BodyAccessContext(principal_id="unit-test", can_read_body=True)
+    produced: dict[str, dict[str, object]] = {}
+    for stored in fixture.journal.all_records(first.journal_stream, first.journal_partition_id):
+        if stored.record.event_kind == "produced_capture":
+            payload = parse_journal_payload(
+                fixture.bodies.read(stored.record.payload_digest, access=access)
+            )
+            assert isinstance(payload, dict)
+            assert stored.record.run_id is not None
+            produced[stored.record.run_id] = payload
+    assert set(produced) == {first.run_id, second_run_id}
+    source_node = accepted.procedure.definition.nodes[0]
+    assert isinstance(source_node, SourceNodeV4)
+    resolver = journal_producer_receipt_resolver(
+        journal=fixture.journal,
+        instance_id=first.instance_id,
+        bodies=fixture.bodies,
+    )
+    for payload in produced.values():
+        verify_capture(
+            str(payload["capture_digest"]),
+            store=fixture.bodies,
+            contract=contract,
+            producer_artifact_digests={
+                source_node.provider.target.qualified: source_node.provider.artifact_digest
+            },
+            producer_receipt_resolver=resolver,
+        )
+
+
+@pytest.mark.parametrize(
+    ("actual_path", "requested_path", "path_class", "managed"),
+    (
+        (".git/config", ".GIT/config", "git_metadata", False),
+        (".playbill/coverage.json", ".PLAYBILL/coverage.json", "playbill_control", False),
+        ("owner.ed25519", "OWNER.ED25519", "client_custody", False),
+        ("managed/secret.txt", "MANAGED/secret.txt", "managed_root", True),
+    ),
+)
+def test_forbidden_workspace_path_refuses_before_provider_bind_or_spawn(
+    tmp_path: Path,
+    actual_path: str,
+    requested_path: str,
+    path_class: str,
+    managed: bool,
+) -> None:
+    accepted, prepared, fixture, policy, contract, root, reader = _workspace_source_fixture(
+        tmp_path, requested_path
+    )
+    target = root / actual_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"secret")
+    if managed:
+        reader = WorkspaceFileReader(
+            instance_id=prepared.admission.instance_id,
+            operating_profile="local",
+            attached_roots=(root,),
+            managed_roots=(root / "managed",),
+        )
     invoker = _WorkspaceInvoker()
     result = ProcedureExecutor(
         journal=fixture.journal,
@@ -360,5 +466,42 @@ def test_forbidden_workspace_path_refuses_before_provider_bind_or_spawn(tmp_path
     assert result.status == "refused"
     assert result.refusal is not None
     assert result.refusal.code == "workspace_file_read_refused"
-    assert result.refusal.detail_code == "git_metadata"
+    assert result.refusal.detail_code == path_class
+    assert (invoker.bind_calls, invoker.spawn_calls) == (0, 0)
+    assert all(
+        item.record.event_kind != "produced_capture"
+        for item in fixture.journal.all_records(
+            prepared.admission.journal_stream,
+            prepared.admission.journal_partition_id,
+        )
+    )
+
+
+def test_unavailable_workspace_reader_is_a_typed_source_refusal(tmp_path: Path) -> None:
+    accepted, prepared, fixture, policy, contract, root, _reader = _workspace_source_fixture(
+        tmp_path, "docs/note.txt"
+    )
+    (root / "docs").mkdir()
+    (root / "docs" / "note.txt").write_bytes(b"hello\n")
+    invoker = _WorkspaceInvoker()
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=invoker,
+        provider_classifier_registry=_WorkspaceRegistry(),  # type: ignore[arg-type]
+        capture_contracts={capture_contract_digest(contract).tagged: contract},
+        acquisition_policy=policy,
+        workspace_file_reader=None,
+    ).execute(prepared, accepted)
+
+    assert result.status == "refused"
+    assert result.refusal is not None
+    assert (result.refusal.code, result.refusal.detail_code) == (
+        "workspace_file_read_refused",
+        "binding",
+    )
     assert (invoker.bind_calls, invoker.spawn_calls) == (0, 0)
