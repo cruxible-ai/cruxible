@@ -158,16 +158,37 @@ def _rebase_operation_key(
     ).tagged
 
 
+def _publication_payload(
+    intent: AuthoringIntentV1,
+    claim_identity: str,
+) -> ClaimAuthoringPayloadV1:
+    """Return the authored Claim whose body one expectation publishes."""
+
+    payload = intent.payload
+    if isinstance(payload, ClaimAuthoringPayloadV1):
+        return payload
+    if isinstance(payload, ChangeSetAuthoringPayloadV1):
+        claim_ids = {
+            item.member_identity: item.claim_id for item in intent.change_set_claim_identities
+        }
+        for member in payload.members:
+            if not isinstance(member, ClaimAuthoringPayloadV1):
+                continue
+            if claim_ids.get(authoring_member_identity(member)) == claim_identity:
+                return member
+    raise InsertionProtocolError("publication intent lost its Flow-B self-source")
+
+
 def _rendered_publication_block(
     intent: AuthoringIntentV1,
     preparation: PublicationPreparationV2 | None,
+    *,
+    claim_identity: str,
 ) -> str | None:
     if preparation is None:
         return None
-    payload = intent.payload
-    if not isinstance(payload, ClaimAuthoringPayloadV1) or not isinstance(
-        payload.source, SelfSourceBodyV1
-    ):
+    payload = _publication_payload(intent, claim_identity)
+    if not isinstance(payload.source, SelfSourceBodyV1):
         raise InsertionProtocolError("publication intent lost its Flow-B self-source")
     framed = build_publication_preparation(preparation, body=payload.source.content)
     return base64.b64encode(framed).decode("ascii")
@@ -1049,6 +1070,7 @@ class AuthoringIntentCoordinator:
                 inserted_block_base64=_rendered_publication_block(
                     current,
                     expectation.preparation,
+                    claim_identity=expectation.claim_identity,
                 ),
             )
         if expectation.state in {"expired", "claim_currency_changed", "abandoned"}:
@@ -1099,6 +1121,7 @@ class AuthoringIntentCoordinator:
                 inserted_block_base64=_rendered_publication_block(
                     replayed,
                     replayed_expectation.preparation,
+                    claim_identity=expectation.claim_identity,
                 ),
             )
         evaluation_time = self.clock()
@@ -1133,6 +1156,7 @@ class AuthoringIntentCoordinator:
                 inserted_block_base64=_rendered_publication_block(
                     bound,
                     bound_expectation.preparation,
+                    claim_identity=expectation.claim_identity,
                 ),
             )
 
@@ -1159,6 +1183,7 @@ class AuthoringIntentCoordinator:
                 inserted_block_base64=_rendered_publication_block(
                     terminal,
                     terminal_expectation.preparation,
+                    claim_identity=expectation.claim_identity,
                 ),
             )
         current_claim = self._current_claim_by_identity(expectation.claim_identity)
@@ -1207,6 +1232,7 @@ class AuthoringIntentCoordinator:
             inserted_block_base64=_rendered_publication_block(
                 prepared,
                 prepared_expectation.preparation,
+                claim_identity=expectation.claim_identity,
             ),
             warnings=warnings,
         )
@@ -1631,27 +1657,6 @@ class AuthoringIntentCoordinator:
         content = self.instance.tree_at(self.instance.accepted_coordinate().git_oid).get(path)
         return None if content is None else parse_claim(content, path=path)
 
-    def _publication_payload(
-        self,
-        intent: AuthoringIntentV1,
-        expectation: InsertionExpectationV2,
-    ) -> ClaimAuthoringPayloadV1:
-        """Return the authored Claim whose body this expectation publishes."""
-
-        payload = intent.payload
-        if isinstance(payload, ClaimAuthoringPayloadV1):
-            return payload
-        if isinstance(payload, ChangeSetAuthoringPayloadV1):
-            claim_ids = {
-                item.member_identity: item.claim_id for item in intent.change_set_claim_identities
-            }
-            for member in payload.members:
-                if not isinstance(member, ClaimAuthoringPayloadV1):
-                    continue
-                if claim_ids.get(authoring_member_identity(member)) == expectation.claim_identity:
-                    return member
-        raise InsertionProtocolError("publication intent lost its Flow-B self-source")
-
     def _publication_body(
         self,
         intent: AuthoringIntentV1,
@@ -1659,7 +1664,7 @@ class AuthoringIntentCoordinator:
         *,
         expectation: InsertionExpectationV2,
     ) -> bytes:
-        payload = self._publication_payload(intent, expectation)
+        payload = _publication_payload(intent, expectation.claim_identity)
         if not isinstance(payload.source, SelfSourceBodyV1):
             raise InsertionProtocolError("publication intent lost its Flow-B self-source")
         if not isinstance(claim, ClaimArtifactV2):

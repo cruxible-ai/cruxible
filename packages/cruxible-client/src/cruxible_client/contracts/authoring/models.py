@@ -971,10 +971,12 @@ def authoring_claim_member_identity(payload: ClaimAuthoringPayloadV1) -> str:
 
     if payload.claim_ref is not None:
         return f"Claim:{payload.claim_ref}"
+    statement = payload.statement.model_dump(mode="json")
+    statement.pop("tag")
     digest = typed_digest(
         Sha256Value,
         AUTHORING_CLAIM_MEMBER_IDENTITY_DIGEST_DOMAIN,
-        payload.statement.model_dump(mode="json"),
+        statement,
     ).tagged.removeprefix("sha256:")
     return f"Claim:@{digest}"
 

@@ -40,6 +40,9 @@ def bound_publication_registrations(
         }
     except (OSError, PlaybillError):
         return None
+    # Every expectation the intent owns, not just the singular mirror: one intent
+    # is one changeset, so a set that published three Claims registers three
+    # blocks, and the two it did not fold read back as orphan markers.
     registrations = [
         BoundPublicationRegistration(
             intent_id=intent.intent_id,
@@ -48,9 +51,8 @@ def bound_publication_registrations(
             preparation=expectation.preparation,
         )
         for intent in latest.values()
-        if (expectation := intent.insertion_expectation) is not None
-        and expectation.state == "bound"
-        and expectation.preparation is not None
+        for expectation in intent.insertion_expectations
+        if expectation.state == "bound" and expectation.preparation is not None
     ]
     return tuple(
         sorted(
