@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -182,16 +183,23 @@ def test_proposal_selector_resolves_full_prefix_and_current_target_ref(
     assert ambiguous_prefix.value.candidates == tuple(item.proposal_id for item in forced)
     assert ambiguous_prefix.value.repair_commands == ("cruxible playbill proposal list",)
 
-    original_target = instance.proposal_ref_target
-    instance.proposal_ref_target = lambda _selector: None  # type: ignore[method-assign]
-    try:
-        with pytest.raises(ProposalSelectorAmbiguousError) as historical:
-            service_resolve_playbill_proposal_selector(
-                instance,
-                selector=admission.target_ref,
-            )
-    finally:
-        instance.proposal_ref_target = original_target  # type: ignore[method-assign]
+    subprocess.run(
+        [
+            "git",
+            f"--git-dir={instance._ledger.path}",
+            "update-ref",
+            "-d",
+            admission.target_ref,
+        ],
+        check=True,
+        capture_output=True,
+    )
+    assert instance.proposal_ref_target(admission.target_ref) is None
+    with pytest.raises(ProposalSelectorAmbiguousError) as historical:
+        service_resolve_playbill_proposal_selector(
+            instance,
+            selector=admission.target_ref,
+        )
     assert historical.value.candidates == (admission.proposal_id,)
     assert "no longer names a current admission" in str(historical.value)
     assert "cruxible playbill proposal list" in str(historical.value)

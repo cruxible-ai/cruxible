@@ -42,12 +42,19 @@ def test_state_root_can_only_be_removed_by_the_named_root_fixture() -> None:
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
                 continue
-            if node.func.attr != "delenv" or not node.args:
+            if not node.args:
                 continue
             first = node.args[0]
+            removes_state_root = node.func.attr == "delenv" or (
+                node.func.attr == "pop"
+                and isinstance(node.func.value, ast.Attribute)
+                and isinstance(node.func.value.value, ast.Name)
+                and node.func.value.value.id == "os"
+                and node.func.value.attr == "environ"
+            )
             if (
-                isinstance(first, ast.Constant)
-                and first.value == "CRUXIBLE_STATE_ROOT"
+                removes_state_root
+                and (isinstance(first, ast.Constant) and first.value == "CRUXIBLE_STATE_ROOT")
                 and relative != "tests/conftest.py"
             ):
                 violations.append(f"{relative}:{node.lineno}")
