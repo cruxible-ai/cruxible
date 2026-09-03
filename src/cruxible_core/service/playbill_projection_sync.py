@@ -41,10 +41,12 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.source_references import CasSourceReferenceV1
 from cruxible_client.contracts.subjects import parse_subject, subject_digest, subject_path
 from cruxible_core.playbill.candidate_cards import (
-    candidate_card_renderer_digest_for_compiler,
     render_candidate_card,
 )
-from cruxible_core.playbill.compiler import artifact_kinds_for_compiler
+from cruxible_core.playbill.compiler import (
+    artifact_kinds_for_compiler,
+    candidate_card_renderer_digest_for_compiler,
+)
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.service.playbill_publications import bound_publication_registrations
 

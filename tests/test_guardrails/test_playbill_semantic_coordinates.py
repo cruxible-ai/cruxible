@@ -8,7 +8,12 @@ the authoring catalog/snapshot re-pins required by that change.
 
 from __future__ import annotations
 
+import ast
+import importlib.util
+from pathlib import Path
+
 import cruxible_client.contracts.captures as capture_contracts
+import cruxible_core.playbill.compiler as compiler_module
 from cruxible_client.contracts.canonical import AcceptanceLawDigest, canonical_digest, typed_digest
 from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_ACCEPTANCE_LAW,
@@ -54,6 +59,7 @@ from cruxible_core.playbill.compiler import (
     PC_E1_COMPILER,
     PC_HR_COMPILER,
     SUPPORTED_COMPILERS,
+    candidate_card_renderer_digest_for_compiler,
     current_compiler_coordinate,
 )
 
@@ -410,6 +416,66 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
     assert current_compiler_coordinate() == P2_B5_COMPILER
     assert P2_B4_COMPILER in SUPPORTED_COMPILERS
     assert P2_B4_UNIT2_COMPILER in SUPPORTED_COMPILERS
+    # The renderer resolves from the current coordinate itself, so cards derive
+    # under whatever revision the current compiler carries.
+    assert candidate_card_renderer_digest_for_compiler(current_compiler_coordinate()) == (
+        CARD_RENDERER_DIGEST
+    )
+
+
+def test_succeeding_the_semantic_revision_keeps_candidate_cards_deriving(
+    tmp_path: Path,
+) -> None:
+    """Bump the revision the way the next batch will and prove cards survive.
+
+    A second copy of the coordinate preimage, keyed by its own revision literal,
+    returns None the moment the revision moves: cards then stop being derived,
+    verified, and re-derived while every card test stays green, because they all
+    build their coordinate the same wrong way.
+    """
+
+    source = Path(compiler_module.__file__).read_text(encoding="utf-8")
+    current_revision = 19
+    anchor = "\n    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,\n"
+    bumped = source.replace(
+        f"    semantic_revision={current_revision},{anchor}",
+        f"    semantic_revision={current_revision + 1},{anchor}",
+    )
+    assert bumped != source, "the current revision literal moved; update this guard"
+    module_path = tmp_path / "bumped_compiler.py"
+    module_path.write_text(bumped, encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("bumped_playbill_compiler", module_path)
+    assert spec is not None and spec.loader is not None
+    bumped_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bumped_module)
+
+    assert bumped_module.current_compiler_coordinate() != current_compiler_coordinate()
+    assert (
+        bumped_module.candidate_card_renderer_digest_for_compiler(
+            bumped_module.current_compiler_coordinate()
+        )
+        == CARD_RENDERER_DIGEST
+    )
+
+
+def test_no_revision_literal_lives_outside_the_compiler_and_this_guard() -> None:
+    """One preimage, one place: a second copy is how the card path went dark."""
+
+    source_root = Path(compiler_module.__file__).resolve().parents[3]
+    offenders: list[str] = []
+    for path in sorted((source_root / "cruxible_core").rglob("*.py")):
+        if path.name == "compiler.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.keyword) and node.arg == "semantic_revision":
+                offenders.append(f"{path.name}:{node.value.lineno}")
+            if (
+                isinstance(node, ast.Constant)
+                and node.value == "semantic_revision"
+                and path.name != "compiler.py"
+            ):
+                offenders.append(f"{path.name}:{node.lineno}")
+    assert offenders == []
 
 
 def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:

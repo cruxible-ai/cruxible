@@ -249,7 +249,6 @@ from cruxible_client.contracts.workspace_advertisement import (
 )
 from cruxible_core.playbill.candidate_cards import (
     CARD_RENDERER_DIGEST,
-    candidate_card_renderer_digest_for_compiler,
     derive_candidate_cards,
     is_candidate_card_path,
 )
@@ -270,6 +269,7 @@ from cruxible_core.playbill.closure import (
 from cruxible_core.playbill.compiler import (
     PC_HR_ARTIFACT_CODEC_COMPILERS,
     artifact_kinds_for_compiler,
+    candidate_card_renderer_digest_for_compiler,
     projection_registry_for_compiler,
 )
 from cruxible_core.playbill.exhaust.promotions import (

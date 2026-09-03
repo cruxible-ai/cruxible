@@ -105,6 +105,24 @@ P2_B5_COMPILER = _coordinate(
     semantic_revision=19,
     candidate_card_renderer_digest=CARD_RENDERER_DIGEST,
 )
+# The renderer a coordinate commits to is resolved from the coordinate itself,
+# never from a second copy of its preimage. A duplicated preimage with its own
+# revision literal silently returns None the moment the revision is succeeded,
+# and cards then stop being derived, verified, or re-derived with every test
+# still green.
+_CARD_RENDERER_BY_COMPILER: dict[str, str] = {
+    P2_B5_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
+}
+
+
+def candidate_card_renderer_digest_for_compiler(
+    compiler: CompilerCoordinate,
+) -> str | None:
+    """Resolve the renderer committed by an exact installed compiler coordinate."""
+
+    return _CARD_RENDERER_BY_COMPILER.get(compiler.rule_digest)
+
+
 SUPPORTED_COMPILERS = (
     PB_B_COMPILER,
     PB_C_COMPILER,

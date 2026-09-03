@@ -8,7 +8,6 @@ from collections.abc import Mapping
 from cruxible_client.contracts.artifacts import ArtifactKindRegistry
 from cruxible_client.contracts.canonical import canonical_digest, normalize_ledger_path
 from cruxible_client.contracts.errors import ProjectionFormatError, ProposalIntegrityError
-from cruxible_client.contracts.types import CompilerCoordinate
 
 CARD_NAMESPACE = "cards/"
 CARD_RENDERER_IMPLEMENTATION = "python-reference-v1"
@@ -26,27 +25,6 @@ CARD_RENDERER_DIGEST = "sha256:" + canonical_digest(
         "template_digests": list(CARD_TEMPLATE_DIGESTS),
     },
 )
-_P2_B5_COMPILER_DIGEST = "sha256:" + canonical_digest(
-    "playbill-compiler-v1",
-    {
-        "implementation": "python-reference",
-        "schema_version": 1,
-        "projection_content": "claims-procedures-runtime-v1",
-        "semantic_revision": 18,
-        "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-    },
-)
-_CARD_RENDERER_BY_COMPILER: dict[str, str] = {
-    _P2_B5_COMPILER_DIGEST: CARD_RENDERER_DIGEST,
-}
-
-
-def candidate_card_renderer_digest_for_compiler(
-    compiler: CompilerCoordinate,
-) -> str | None:
-    """Resolve the renderer committed by an exact installed compiler coordinate."""
-
-    return _CARD_RENDERER_BY_COMPILER.get(compiler.rule_digest)
 
 
 def is_candidate_card_path(path: str) -> bool:
@@ -180,7 +158,6 @@ __all__ = [
     "CARD_RENDERER_IMPLEMENTATION",
     "CARD_TEMPLATE_DIGESTS",
     "candidate_card_path",
-    "candidate_card_renderer_digest_for_compiler",
     "derive_candidate_cards",
     "is_candidate_card_path",
     "render_candidate_card",
