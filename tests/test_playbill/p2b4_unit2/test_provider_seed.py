@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import subprocess
 from pathlib import Path
 
 import pytest
+from tests.support.provider_seed import (
+    workspace_provider_checkout,
+    workspace_seed_materialization,
+)
 from tests.test_playbill._support import generate_client, initialize_local
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
@@ -40,7 +45,6 @@ from cruxible_core.playbill.seed_artifacts.workspace_file import (
 )
 from cruxible_core.playbill.service.documents import service_activate_playbill_proposal
 from cruxible_core.playbill.service.provider_seed import service_seed_workspace_file_provider
-from cruxible_core.runtime.provider_runtime import ProviderSeedMaterializationConfigV1
 
 STAMP_1 = "2026-09-02T12:00:00.000000Z"
 STAMP_2 = "2026-09-02T12:00:01.000000Z"
@@ -48,7 +52,9 @@ STAMP_3 = "2026-09-02T12:00:02.000000Z"
 
 
 def test_seed_exactly_pins_the_provider_owned_inputs_and_core_double() -> None:
-    fixture_bytes = Path("tests/fixtures/provider_runtime_contract_v1.json").read_bytes()
+    fixture_bytes = (
+        Path(__file__).resolve().parents[3] / "tests/fixtures/provider_runtime_contract_v1.json"
+    ).read_bytes()
     assert f"sha256:{hashlib.sha256(fixture_bytes).hexdigest()}" == (
         WORKSPACE_FILE_PROTOCOL_FIXTURE_DIGEST
     )
@@ -90,12 +96,14 @@ def test_seed_exactly_pins_the_provider_owned_inputs_and_core_double() -> None:
 
 def test_seed_is_an_idempotent_ordinary_proposal_and_generation_one(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
+    configured = workspace_seed_materialization()
     assert instance.accepted_history()[-1].sequence == 0
 
     seeded = service_seed_workspace_file_provider(
         instance,
         actor_id="owner",
         timestamp=STAMP_1,
+        configured_materialization=configured,
     )
 
     assert seeded.status == "activated"
@@ -124,6 +132,7 @@ def test_seed_is_an_idempotent_ordinary_proposal_and_generation_one(tmp_path: Pa
         instance,
         actor_id="owner",
         timestamp=STAMP_2,
+        configured_materialization=configured,
     )
     assert repeated.status == "already_current"
     assert repeated.proposal_id is None
@@ -159,6 +168,7 @@ def test_independent_policy_retains_the_seed_candidate(tmp_path: Path) -> None:
         instance,
         actor_id="owner",
         timestamp=STAMP_1,
+        configured_materialization=workspace_seed_materialization(),
     )
 
     assert seeded.status == "proposed"
@@ -168,39 +178,83 @@ def test_independent_policy_retains_the_seed_candidate(tmp_path: Path) -> None:
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     assert provider_path(WORKSPACE_FILE_PROVIDER_ID) not in tree
 
-
-def test_local_checkout_is_operational_and_must_reproduce_seed_pins(tmp_path: Path) -> None:
-    checkout = (tmp_path / "providers-checkout").resolve()
-    checkout.mkdir()
-    configured = ProviderSeedMaterializationConfigV1(
-        provider_id=WORKSPACE_FILE_PROVIDER_ID,
-        checkout_path=str(checkout),
-        provider_commit=WORKSPACE_FILE_SEED_MANIFEST.provider_commit,
-        environment_pin_key=WORKSPACE_FILE_SEED_MANIFEST.materialization_digests[0][0],
-        materialization_digest=WORKSPACE_FILE_SEED_MANIFEST.materialization_digests[0][1],
+    repeated = service_seed_workspace_file_provider(
+        instance,
+        actor_id="owner",
+        timestamp=STAMP_2,
+        configured_materialization=workspace_seed_materialization(),
     )
-    instance, _owner = initialize_local(tmp_path)
+    assert repeated.status == "pending"
+    assert repeated.proposal_id == seeded.proposal_id
+    assert repeated.candidate_digest == seeded.candidate_digest
+    assert len(instance.proposal_evidence().list_admissions()) == 1
 
+
+def test_local_seed_requires_materialization_config(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
     with pytest.raises(
         ProposalIntegrityError,
-        match="cannot reproduce its local materialization",
+        match="seed_materializations",
     ):
         service_seed_workspace_file_provider(
             instance,
             actor_id="owner",
             timestamp=STAMP_1,
-            configured_materialization=configured,
         )
-
     assert instance.accepted_history()[-1].sequence == 0
+
+
+def test_real_local_checkout_reproduces_pins_and_dirty_copy_refuses(tmp_path: Path) -> None:
+    accepted_root = tmp_path / "accepted"
+    accepted_root.mkdir()
+    instance, _owner = initialize_local(accepted_root)
+    accepted = service_seed_workspace_file_provider(
+        instance,
+        actor_id="owner",
+        timestamp=STAMP_1,
+        configured_materialization=workspace_seed_materialization(),
+    )
+    assert accepted.status == "activated"
+
+    dirty_checkout = (tmp_path / "dirty-providers").resolve()
+    subprocess.run(
+        (
+            "git",
+            "clone",
+            "--quiet",
+            "--local",
+            "--no-hardlinks",
+            str(workspace_provider_checkout()),
+            str(dirty_checkout),
+        ),
+        check=True,
+        timeout=30,
+    )
+    source = next(
+        (dirty_checkout / "packages" / "cruxible-provider-workspace" / "src").rglob("*.py")
+    )
+    source.write_bytes(source.read_bytes() + b"\n# dirty checkout regression\n")
+    refused_root = tmp_path / "refused"
+    refused_root.mkdir()
+    refused, _owner = initialize_local(refused_root)
+    with pytest.raises(ProposalIntegrityError, match="must be clean"):
+        service_seed_workspace_file_provider(
+            refused,
+            actor_id="owner",
+            timestamp=STAMP_1,
+            configured_materialization=workspace_seed_materialization(dirty_checkout),
+        )
+    assert refused.accepted_history()[-1].sequence == 0
 
 
 def test_repin_is_a_provider_successor_not_a_compiler_bypass(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
+    configured = workspace_seed_materialization()
     first = service_seed_workspace_file_provider(
         instance,
         actor_id="owner",
         timestamp=STAMP_1,
+        configured_materialization=configured,
     )
     assert first.status == "activated"
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
@@ -244,6 +298,7 @@ def test_repin_is_a_provider_successor_not_a_compiler_bypass(tmp_path: Path) -> 
         instance,
         actor_id="owner",
         timestamp=STAMP_3,
+        configured_materialization=configured,
     )
     assert restored.status == "activated"
     assert restored.changed_paths == (artifact_path,)
@@ -254,3 +309,90 @@ def test_repin_is_a_provider_successor_not_a_compiler_bypass(tmp_path: Path) -> 
     assert restored_provider.implementations[0].implementation_digest == (
         WORKSPACE_FILE_IMPLEMENTATION_DIGEST
     )
+
+
+def test_retired_builtin_requires_explicit_restore_or_successor(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    configured = workspace_seed_materialization()
+    first = service_seed_workspace_file_provider(
+        instance,
+        actor_id="owner",
+        timestamp=STAMP_1,
+        configured_materialization=configured,
+    )
+    assert first.status == "activated"
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    artifact_path = provider_path(WORKSPACE_FILE_PROVIDER_ID)
+    current = parse_provider(tree[artifact_path], path=artifact_path)
+    retired = current.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired",
+                predecessor_digest=provider_digest(current).tagged,
+            )
+        }
+    )
+    retired_tree = dict(tree)
+    retired_tree[artifact_path] = render_provider(retired)
+    base = instance.accepted_coordinate()
+    proposal = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/provider-retire-probe",
+            proposed_base_oid=base.git_oid,
+        ),
+        candidate_tree=retired_tree,
+        timestamp=STAMP_2,
+    )
+    assert proposal.evaluation.verdict == "candidate"
+    assert (
+        service_activate_playbill_proposal(
+            instance,
+            proposal_id=proposal.admission.proposal_id,
+            activated_by="owner",
+        ).status
+        == "accepted"
+    )
+
+    with pytest.raises(ProposalIntegrityError, match="explicit successor or restore"):
+        service_seed_workspace_file_provider(
+            instance,
+            actor_id="owner",
+            timestamp=STAMP_3,
+            configured_materialization=configured,
+        )
+
+
+def test_keyless_provider_v2_is_local_only_and_local_discriminator_is_explicit() -> None:
+    registration = workspace_file_interface_registration()
+    provider = workspace_file_provider(
+        interface_artifact_digest=provider_interface_digest(registration).tagged
+    )
+    payload_data = provider.runtime_artifact.model_dump(mode="json")
+    local_distribution = payload_data["distribution"]
+    assert isinstance(local_distribution, dict)
+    payload_data["distribution"] = {
+        **local_distribution,
+        "materialization_source": "registry",
+        "index_url": "https://packages.invalid/simple",
+        "url": "https://packages.invalid/workspace.whl",
+    }
+    registry_payload = ProviderRuntimeArtifactPayloadV1.model_validate(payload_data)
+    provider_data = provider.model_dump(mode="json")
+    provider_data["runtime_artifact"] = registry_payload.model_dump(mode="json")
+    provider_data["implementations"] = [
+        item.model_dump(mode="json")
+        for item in provider_expected_implementation_records(registry_payload)
+    ]
+    with pytest.raises(ValueError, match="keyless Provider v2"):
+        ProviderV2.model_validate(provider_data)
+
+    missing_discriminator = dict(local_distribution)
+    missing_discriminator.pop("materialization_source")
+    with pytest.raises(ValueError):
+        ProviderRuntimeArtifactPayloadV1.model_validate(
+            {
+                **provider.runtime_artifact.model_dump(mode="json"),
+                "distribution": missing_discriminator,
+            }
+        )

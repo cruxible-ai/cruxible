@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import shutil
 import subprocess
+import sys
+import tempfile
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from cruxible_client import contracts
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
+from cruxible_client.contracts.canonical import canonical_digest
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.provider_interfaces import (
     parse_provider_interface,
@@ -26,6 +32,7 @@ from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.seed_artifacts.workspace_file import (
+    WORKSPACE_FILE_ENTRYPOINT,
     WORKSPACE_FILE_INTERFACE_ID,
     WORKSPACE_FILE_PROVIDER_ID,
     WORKSPACE_FILE_SEED_MANIFEST,
@@ -56,6 +63,10 @@ def _seed_candidate_tree(
             current_interface_bytes,
             path=interface_path,
         )
+        if current_interface.lifecycle.state != "live":
+            raise ProposalIntegrityError(
+                "workspace.file seed is retired; propose an explicit successor or restore it"
+            )
         if _without_lifecycle(current_interface) == _without_lifecycle(desired_interface):
             desired_interface = current_interface
         else:
@@ -76,6 +87,10 @@ def _seed_candidate_tree(
     current_provider_bytes = tree.get(provider_artifact_path)
     if current_provider_bytes is not None:
         current_provider = parse_provider(current_provider_bytes, path=provider_artifact_path)
+        if current_provider.lifecycle.state != "live":
+            raise ProposalIntegrityError(
+                "workspace.file Provider is retired; propose an explicit successor or restore it"
+            )
         if _without_lifecycle(current_provider) == _without_lifecycle(desired_provider):
             desired_provider = cast(Any, current_provider)
         else:
@@ -99,13 +114,88 @@ def _public_coordinate(instance: PlaybillInstance) -> contracts.PlaybillAccepted
     )
 
 
+def _git(checkout: Path, *arguments: str) -> str:
+    try:
+        completed = subprocess.run(
+            ("git", "-C", str(checkout), *arguments),
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ProposalIntegrityError(
+            "workspace.file seed checkout cannot reproduce its local materialization"
+        ) from exc
+    return completed.stdout.strip()
+
+
+@lru_cache(maxsize=8)
+def _derive_local_seed_pins(checkout_text: str, provider_commit: str) -> dict[str, Any]:
+    """Build the pinned wheel and run the provider repository's authoritative derivation."""
+
+    checkout = Path(checkout_text)
+    uv = shutil.which("uv")
+    if uv is None:
+        raise ProposalIntegrityError("workspace.file local materialization requires uv")
+    package = checkout / "packages" / "cruxible-provider-workspace"
+    script = checkout / "scripts" / "seed_pins.py"
+    try:
+        with tempfile.TemporaryDirectory(prefix="cruxible-workspace-seed-") as temporary:
+            output = Path(temporary)
+            subprocess.run(
+                (uv, "build", "--wheel", "--offline", "--out-dir", str(output), str(package)),
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            wheels = tuple(output.glob("*.whl"))
+            if len(wheels) != 1:
+                raise ProposalIntegrityError(
+                    "workspace.file checkout did not build exactly one wheel"
+                )
+            completed = subprocess.run(
+                (
+                    sys.executable,
+                    str(script),
+                    "--repo",
+                    str(checkout),
+                    "--package",
+                    "cruxible-provider-workspace",
+                    "--wheel",
+                    str(wheels[0]),
+                    "--json",
+                ),
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            pins = json.loads(completed.stdout)
+    except ProposalIntegrityError:
+        raise
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        raise ProposalIntegrityError(
+            "workspace.file seed checkout cannot reproduce its local materialization"
+        ) from exc
+    if not isinstance(pins, dict):
+        raise ProposalIntegrityError("workspace.file seed derivation returned malformed pins")
+    # The cache key documents the exact immutable checkout identity used to derive these pins.
+    if provider_commit != WORKSPACE_FILE_SEED_MANIFEST.provider_commit:
+        raise ProposalIntegrityError("workspace.file seed checkout commit is not pinned")
+    return cast(dict[str, Any], pins)
+
+
 def _validate_local_materialization(
     configured: ProviderSeedMaterializationConfigV1 | None,
 ) -> None:
     """Check configured custody without allowing its host path into authority bytes."""
 
     if configured is None:
-        return
+        raise ProposalIntegrityError(
+            "workspace.file local seed requires provider runtime config seed_materializations"
+        )
     if configured.provider_id != WORKSPACE_FILE_PROVIDER_ID:
         raise ProposalIntegrityError("workspace.file seed materialization names another Provider")
     expected_materializations = dict(WORKSPACE_FILE_SEED_MANIFEST.materialization_digests)
@@ -117,30 +207,99 @@ def _validate_local_materialization(
         raise ProposalIntegrityError(
             "workspace.file local materialization differs from the compiler-owned seed pins"
         )
-    checkout = Path(configured.checkout_path).resolve(strict=True)
-    if str(checkout) != configured.checkout_path or not checkout.is_dir():
-        raise ProposalIntegrityError("workspace.file seed checkout is not one canonical directory")
-    lock_path = checkout / "packages" / "cruxible-provider-workspace" / "uv.lock"
     try:
-        lock_digest = f"sha256:{hashlib.sha256(lock_path.read_bytes()).hexdigest()}"
-        completed = subprocess.run(
-            ("git", "-C", str(checkout), "rev-parse", "HEAD"),
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
+        checkout = Path(configured.checkout_path).resolve(strict=True)
+    except OSError as exc:
         raise ProposalIntegrityError(
             "workspace.file seed checkout cannot reproduce its local materialization"
         ) from exc
+    if str(checkout) != configured.checkout_path or not checkout.is_dir():
+        raise ProposalIntegrityError("workspace.file seed checkout is not one canonical directory")
+    if _git(checkout, "rev-parse", "HEAD") != WORKSPACE_FILE_SEED_MANIFEST.provider_commit:
+        raise ProposalIntegrityError(
+            "workspace.file seed checkout commit or lock differs from the pinned adapter"
+        )
+    if _git(checkout, "status", "--porcelain", "--untracked-files=all"):
+        raise ProposalIntegrityError("workspace.file seed checkout must be clean")
+    lock_path = checkout / "packages" / "cruxible-provider-workspace" / "uv.lock"
+    try:
+        lock_digest = f"sha256:{hashlib.sha256(lock_path.read_bytes()).hexdigest()}"
+        pins = _derive_local_seed_pins(str(checkout), configured.provider_commit)
+    except OSError as exc:
+        raise ProposalIntegrityError(
+            "workspace.file seed checkout cannot reproduce its local materialization"
+        ) from exc
+    implementations = pins.get("implementations")
+    implementation = (
+        implementations[0] if isinstance(implementations, list) and implementations else {}
+    )
+    distribution = pins.get("distribution")
+    derived_materializations = pins.get("materialization_digests")
     if (
         lock_digest != WORKSPACE_FILE_SEED_MANIFEST.lock_digest
-        or completed.stdout.strip() != WORKSPACE_FILE_SEED_MANIFEST.provider_commit
+        or pins.get("lock_sha256") != WORKSPACE_FILE_SEED_MANIFEST.lock_digest
+        or not isinstance(distribution, dict)
+        or distribution.get("sha256") != WORKSPACE_FILE_SEED_MANIFEST.wheel_digest
+        or not isinstance(implementation, dict)
+        or implementation.get("interface_id") != WORKSPACE_FILE_INTERFACE_ID
+        or implementation.get("interface_digest")
+        != workspace_file_interface_registration().interface_digest
+        or implementation.get("entrypoint") != WORKSPACE_FILE_ENTRYPOINT
+        or implementation.get("implementation_digest")
+        != WORKSPACE_FILE_SEED_MANIFEST.implementation_digest
+        or derived_materializations != dict(WORKSPACE_FILE_SEED_MANIFEST.materialization_digests)
     ):
         raise ProposalIntegrityError(
             "workspace.file seed checkout commit or lock differs from the pinned adapter"
         )
+    if _git(checkout, "rev-parse", "HEAD") != configured.provider_commit or _git(
+        checkout, "status", "--porcelain", "--untracked-files=all"
+    ):
+        raise ProposalIntegrityError("workspace.file seed checkout changed during validation")
+
+
+def _pending_seed(
+    instance: PlaybillInstance,
+    *,
+    actor_id: str,
+    candidate_tree: dict[str, bytes],
+    changed_paths: tuple[str, ...],
+) -> contracts.PlaybillProviderSeedResultV1 | None:
+    coordinate = instance.accepted_coordinate()
+    accepted_candidates = {
+        generation.record.candidate_digest
+        for generation in instance.accepted_history()
+        if generation.record is not None
+    }
+    evidence = instance.proposal_evidence()
+    for admission in evidence.list_admissions():
+        if admission.actor_id != actor_id:
+            continue
+        evaluation = evidence.read_evaluation(admission.proposal_id)
+        if (
+            evaluation.verdict != "candidate"
+            or evaluation.candidate_digest is None
+            or evaluation.evaluated_tree_oid is None
+            or evaluation.candidate_digest in accepted_candidates
+        ):
+            continue
+        candidate = evidence.read_candidate(evaluation.candidate_digest)
+        if (
+            candidate.candidate.parent_semantic_root != coordinate.semantic_root
+            or instance.proposal_tree(evaluation.evaluated_tree_oid) != candidate_tree
+        ):
+            continue
+        return contracts.PlaybillProviderSeedResultV1(
+            provider_id=WORKSPACE_FILE_PROVIDER_ID,
+            materialization_source=WORKSPACE_FILE_SEED_MANIFEST.materialization_source,
+            status="pending",
+            changed_paths=changed_paths,
+            proposal_id=admission.proposal_id,
+            candidate_digest=evaluation.candidate_digest,
+            approval_required=bool(candidate.approval_requirements),
+            accepted_coordinate=_public_coordinate(instance),
+        )
+    return None
 
 
 def service_seed_workspace_file_provider(
@@ -164,11 +323,33 @@ def service_seed_workspace_file_provider(
             accepted_coordinate=_public_coordinate(instance),
         )
 
+    pending = _pending_seed(
+        instance,
+        actor_id=actor_id,
+        candidate_tree=candidate_tree,
+        changed_paths=changed_paths,
+    )
+    if pending is not None:
+        return pending
+
     base = instance.accepted_coordinate()
+    proposal_suffix = canonical_digest(
+        "playbill-workspace-file-seed-target-v1",
+        {
+            "base_semantic_root": base.semantic_root,
+            "members": {
+                path: f"sha256:{hashlib.sha256(candidate_tree[path]).hexdigest()}"
+                for path in changed_paths
+            },
+        },
+    )
     result = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id=actor_id),
         request=ProposalAdmissionRequest(
-            target_ref=f"refs/proposals/{actor_id}/provider-seed-workspace-file",
+            target_ref=(
+                f"refs/proposals/{actor_id}/provider-seed-workspace-file-"
+                f"{proposal_suffix.removeprefix('sha256:')}"
+            ),
             proposed_base_oid=base.git_oid,
         ),
         candidate_tree=candidate_tree,

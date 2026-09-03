@@ -14,6 +14,7 @@ from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
+from tests.support.provider_seed import write_workspace_seed_config
 
 
 @pytest.fixture
@@ -23,6 +24,7 @@ def playbill_http(
 ) -> Iterator[tuple[TestClient, str, Path]]:
     state = tmp_path / "server-state"
     monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state))
+    write_workspace_seed_config(state)
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     reset_permissions()

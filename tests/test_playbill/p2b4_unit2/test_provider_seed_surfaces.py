@@ -9,7 +9,6 @@ from mcp.server.fastmcp import FastMCP
 from cruxible_client import CruxibleClient, contracts
 from cruxible_core.cli.main import cli
 from cruxible_core.mcp.tools import register_tools
-from cruxible_core.runtime.permissions import RUNTIME_OPERATION_PERMISSIONS
 
 COORDINATE = {
     "tag": "playbill-accepted-coordinate-v1",
@@ -88,5 +87,4 @@ def test_cli_seed_names_its_write_target_and_uses_sdk(
 def test_provider_seed_mcp_parity_gap_is_explicit() -> None:
     registered = set(register_tools(FastMCP("provider-seed-gap")))
 
-    assert "cruxible_playbill_provider_seed" in RUNTIME_OPERATION_PERMISSIONS
-    assert "cruxible_playbill_provider_seed" not in registered
+    assert {name for name in registered if "provider" in name and "seed" in name} == set()

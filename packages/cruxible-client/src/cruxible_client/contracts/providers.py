@@ -388,6 +388,15 @@ class ProviderRuntimeArtifactPayloadV1(_StrictProviderModel):
 
     _manifest_digest = field_validator("manifest_digest")(_sha256)
 
+    @field_validator("distribution", mode="before")
+    @classmethod
+    def _explicit_local_distribution(cls, value: object) -> object:
+        if isinstance(value, Mapping) and "materialization_source" not in value:
+            # Missing discriminators are legacy registry payloads. Local source
+            # custody is never selected merely because a registry URL is absent.
+            return {**value, "materialization_source": "registry"}
+        return value
+
 
 def provider_runtime_artifact_digest(payload: ProviderRuntimeArtifactPayloadV1) -> str:
     document = payload.model_dump(mode="json")
@@ -613,6 +622,10 @@ class ProviderV2(ProviderV1):
     @model_validator(mode="after")
     def _runtime_correspondence(self) -> "ProviderV2":
         payload = self.runtime_artifact
+        if not self.signing_keys and not isinstance(
+            payload.distribution, ProviderLocalDistributionPinV1
+        ):
+            raise ValueError("keyless Provider v2 is restricted to local materialization")
         if (
             payload.provider_id != self.identity.name
             or payload.manifest.provider_id != self.identity.name

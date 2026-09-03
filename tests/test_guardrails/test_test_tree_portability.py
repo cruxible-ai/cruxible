@@ -18,6 +18,7 @@ def test_committed_tests_do_not_depend_on_developer_paths_or_mutate_sys_path() -
     developer_prefixes = ("/" + "Users/", "/" + "home/")
     system_temporary_prefix = "/" + "tmp"
     path_mutation = "sys.path." + "insert"
+    cwd_relative_test_paths = ('Path("' + "tests/", "Path('" + "tests/")
     violations: list[str] = []
     for path in sorted((REPOSITORY_ROOT / "tests").rglob("*.py")):
         relative = path.relative_to(REPOSITORY_ROOT).as_posix()
@@ -29,6 +30,7 @@ def test_committed_tests_do_not_depend_on_developer_paths_or_mutate_sys_path() -
             any(prefix in text for prefix in developer_prefixes)
             or system_temporary_prefix in text
             or path_mutation in text
+            or any(marker in text for marker in cwd_relative_test_paths)
         ):
             violations.append(relative)
     assert violations == []

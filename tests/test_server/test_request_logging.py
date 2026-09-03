@@ -36,6 +36,7 @@ from cruxible_core.server.request_logging import (
     configure_request_logging,
     log_runtime_request,
 )
+from tests.support.provider_seed import write_workspace_seed_config
 
 
 @pytest.fixture
@@ -63,7 +64,9 @@ def request_log_buffer() -> io.StringIO:
 
 @pytest.fixture
 def app_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
+    state = tmp_path / "server-state"
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state))
+    write_workspace_seed_config(state)
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     monkeypatch.delenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", raising=False)
@@ -375,6 +378,7 @@ def test_configure_request_logging_writes_to_default_durable_log(
 ) -> None:
     state_dir = tmp_path / "server-state"
     monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state_dir))
+    write_workspace_seed_config(state_dir)
     monkeypatch.delenv("CRUXIBLE_SERVER_LOG_PATH", raising=False)
 
     log_path = configure_request_logging()

@@ -33,14 +33,12 @@ from cruxible_client.contracts.providers import (
     provider_expected_implementation_records,
     provider_manifest_digest,
 )
+from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_INTERFACE_DIGEST
 
 WORKSPACE_FILE_INTERFACE_ID = "workspace.file"
 WORKSPACE_FILE_PROVIDER_ID = "cruxible-provider-workspace"
 WORKSPACE_FILE_INTERFACE_DOMAIN: Literal["cruxible.interface.stub.v1"] = (
     "cruxible.interface.stub.v1"
-)
-WORKSPACE_FILE_INTERFACE_DIGEST = (
-    "sha256:372bc808d6bd77627bdda7bc67586300e2eb812bf0a4fb3769283a26cc021f88"
 )
 WORKSPACE_FILE_WHEEL_DIGEST = (
     "sha256:e710b00549a8ef8b1b0f6774dd3d801bd6612b3374c304ec87a5ef42bebd1aae"

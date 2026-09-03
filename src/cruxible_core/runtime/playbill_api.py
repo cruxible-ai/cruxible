@@ -129,6 +129,7 @@ from cruxible_core.playbill.service.subjects import (
     service_playbill_subject_history,
 )
 from cruxible_core.playbill.workspace_advertisement import workspace_git_object_format
+from cruxible_core.playbill.workspace_file import WorkspaceFileReadRefused
 from cruxible_core.runtime.permissions import check_permission, get_current_mode
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.actor_identity import local_operator_actor_context
@@ -393,6 +394,22 @@ def playbill_init(
             configured_materialization=configured_seed,
         ),
     )
+    if provider_seed.status == "activated":
+        # Init itself remains exactly retry-idempotent. The dedicated seed verb
+        # exposes proposal/activation details; init reports the settled state
+        # reached by that operation on both the first call and exact retries.
+        provider_seed = contracts.PlaybillProviderSeedResultV1(
+            provider_id=provider_seed.provider_id,
+            materialization_source=provider_seed.materialization_source,
+            status="already_current",
+            changed_paths=(),
+            approval_required=False,
+            accepted_coordinate=provider_seed.accepted_coordinate,
+        )
+    elif provider_seed.status == "proposed":
+        # Independent-approval init exposes one stable pending candidate on
+        # both its first response and exact retries.
+        provider_seed = provider_seed.model_copy(update={"status": "pending"})
     return contracts.PlaybillInitResult(
         instance_id=instance_id,
         coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
@@ -1410,13 +1427,19 @@ def playbill_procedure_run(
     if actor is None:
         raise AuthenticationError("Procedure run requires an authenticated actor identity")
     manager = get_playbill_manager()
+    try:
+        workspace_file_reader = manager.workspace_file_reader(instance_id)
+    except WorkspaceFileReadRefused:
+        # Reader construction is operational. Non-workspace runs remain usable;
+        # the executor gives workspace occurrences their typed binding refusal.
+        workspace_file_reader = None
     result = service_run_playbill_procedure(
         manager.get(instance_id),
         name=name,
         request=request,
         actor_context=actor,
         provider_runtime_operator=manager.provider_runtime_operator(),
-        workspace_file_reader=manager.workspace_file_reader(instance_id),
+        workspace_file_reader=workspace_file_reader,
     )
     instance = manager.get(instance_id)
     record_consumption(

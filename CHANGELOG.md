@@ -23,7 +23,13 @@
   local wheel/materialization pins, conformance double, and an ordinary
   proposal seed used by initialization and by CLI/SDK/HTTP. The Provider write
   family has no MCP parity yet, so `provider seed` is deliberately absent from
-  MCP.
+  MCP. This prerelease batch also corrects `PlaybillProviderInterfaceEntry` v1
+  in place to match the already-served ProviderInterface discovery row; the
+  generated client snapshot pins that reshape. Core's governed `none` effect
+  class is the no-external-mutation counterpart of the adapter stub's pinned
+  `pure` vocabulary. The governed seed intentionally records only its verified
+  `local_env` launch floor even though the external package manifest also
+  advertises an unseeded container backend.
 
 - **Client custody follows one Git-worktree boundary.** Initialization,
   approval, principal changes, and Claim attestations now anchor custody checks

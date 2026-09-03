@@ -287,7 +287,7 @@ class PlaybillProviderSeedResultV1(BaseModel):
     tag: Literal["playbill-provider-seed-result-v1"] = "playbill-provider-seed-result-v1"
     provider_id: str
     materialization_source: Literal["local", "registry"]
-    status: Literal["already_current", "proposed", "activated", "lost_cas"]
+    status: Literal["already_current", "pending", "proposed", "activated", "lost_cas"]
     changed_paths: tuple[str, ...]
     proposal_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     candidate_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)

@@ -7,6 +7,7 @@ import subprocess
 from collections.abc import Iterator
 from inspect import iscoroutinefunction
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -23,6 +24,7 @@ from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
+from cruxible_core.playbill.workspace_file import WorkspaceFileReadRefused
 from cruxible_core.runtime import host_api, playbill_api
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
@@ -30,6 +32,8 @@ from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry, reset_registry
 from cruxible_core.server.routes.playbill import append_claim_attestation, run_procedure
+from cruxible_core.service.playbill_procedure_runs import ProcedureRunRequestV2
+from tests.support.provider_seed import write_workspace_seed_config
 from tests.test_playbill.test_activation import _sign
 
 
@@ -38,7 +42,9 @@ def host_client(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> TestClient:
-    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
+    state = tmp_path / "server-state"
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state))
+    write_workspace_seed_config(state)
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     monkeypatch.delenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", raising=False)
@@ -55,7 +61,9 @@ def authenticated_host_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[tuple[TestClient, str]]:
     bootstrap_secret = "one-time-bootstrap-secret"
-    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "authenticated-server-state"))
+    state = tmp_path / "authenticated-server-state"
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state))
+    write_workspace_seed_config(state)
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
     monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", bootstrap_secret)
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
@@ -385,7 +393,9 @@ def test_registry_state_root_is_frozen_for_instance_and_trust_paths(
     del host_client
     registry = get_registry()
     original_root = registry.state_root
-    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "other-state"))
+    other_state = tmp_path / "other-state"
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(other_state))
+    write_workspace_seed_config(other_state)
 
     record = registry.create_governed_instance_with_id("inst_frozen_state").record
 
@@ -461,6 +471,40 @@ def test_playbill_init_retry_is_idempotent_only_for_the_exact_bootstrap_request(
         playbill_api.playbill_init(
             "inst_exact_init_retry",
             principals=(different_owner.principal,),
+        )
+
+
+def test_unavailable_workspace_configuration_reaches_run_service_as_typed_absence(
+    host_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del host_client
+
+    class ServiceReached(Exception):
+        pass
+
+    def unavailable_reader(_instance_id: str) -> None:
+        raise WorkspaceFileReadRefused("binding", "configured root is unavailable")
+
+    manager = SimpleNamespace(
+        get=lambda _instance_id: object(),
+        provider_runtime_operator=lambda: object(),
+        workspace_file_reader=unavailable_reader,
+    )
+    monkeypatch.setattr(playbill_api, "get_playbill_manager", lambda: manager)
+    monkeypatch.setattr(playbill_api, "check_permission", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(playbill_api, "_actor_context", lambda: object())
+
+    def service(*_args: object, **kwargs: object) -> None:
+        assert kwargs["workspace_file_reader"] is None
+        raise ServiceReached
+
+    monkeypatch.setattr(playbill_api, "service_run_playbill_procedure", service)
+    with pytest.raises(ServiceReached):
+        playbill_api.playbill_procedure_run(
+            "inst_unavailable_workspace",
+            "non-workspace-procedure",
+            request=ProcedureRunRequestV2(input={}),
         )
 
 
@@ -847,8 +891,22 @@ def test_independent_approval_init_requires_and_accepts_a_second_ordinary_princi
         },
     )
     assert accepted.status_code == 200, accepted.text
+    retry = host_client.post(
+        f"/api/v1/{governed_id}/playbill/init",
+        json={
+            "principals": [
+                owner.principal.model_dump(mode="json"),
+                reviewer.principal.model_dump(mode="json"),
+            ],
+            "require_independent_approval": True,
+        },
+    )
+    assert retry.status_code == 200, retry.text
+    assert retry.json() == accepted.json()
+    assert accepted.json()["provider_seed"]["status"] == "pending"
     assert accepted.json()["approval_policy_mode"] == "independent_approval_required"
     instance = get_playbill_manager().get(governed_id)
+    assert len(instance.proposal_evidence().list_admissions()) == 1
     assert instance.inspect().approval_policy_mode == "independent_approval_required"
     assert instance._verified_genesis.approval_policy.mode == "independent_approval_required"
 

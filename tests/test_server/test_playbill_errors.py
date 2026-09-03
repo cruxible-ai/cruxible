@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from cruxible_client import contracts
 from cruxible_client import errors as client_errors
 from cruxible_client.contracts.errors import (
     ProposalEvaluationIntegrityError,
@@ -282,7 +283,12 @@ def test_http_discover_still_answers_an_empty_interfaces_request(
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["tag"] == "playbill-interface-inventory-v1"
+    payload = response.json()
+    parsed = contracts.PlaybillInterfaceInventory.model_validate(payload)
+    assert payload["tag"] == "playbill-interface-inventory-v1"
+    assert payload["provider_status"] == "installed"
+    assert payload["interfaces"][0]["identity"] == "ProviderInterface:workspace.file"
+    assert parsed.interfaces[0].interface_basis == "accepted_registration"
 
 
 def test_http_activate_refuses_a_missing_proposal_id_typed(
