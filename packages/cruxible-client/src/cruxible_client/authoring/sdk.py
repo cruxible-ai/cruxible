@@ -585,6 +585,24 @@ class ChangeSetDraft:
         )
         return self
 
+    def subject(self, definition: SubjectDraft | SubjectShell) -> ChangeSetDraft:
+        """Define one Subject inside this changeset.
+
+        A Claim member may still carry its Subject as a dependency draft; this
+        is for the Subjects a set defines that no single Claim owns.
+        """
+
+        shell = definition.shell if isinstance(definition, SubjectDraft) else definition
+        self._members.append(
+            _ChangeSetMember(
+                payload=SubjectAuthoringPayloadV1(subject=shell),
+                expectations=(),
+                source_map=DiagnosticSourceMap(()),
+                decisions={"kind": "subject", "subject": shell.identity.name},
+            )
+        )
+        return self
+
     def claim_type(self, definition: ClaimTypeDraft | ClaimType) -> ChangeSetDraft:
         """Define one whole ClaimType inside this changeset.
 
@@ -632,6 +650,11 @@ class ChangeSetDraft:
     def prepare(self) -> Intent:
         """Compile and preflight the whole changeset as one intent."""
 
+        return self._compiled().prepare()
+
+    def _compiled(self) -> _IntentDraft:
+        """Fold every member into exactly one intent draft."""
+
         if not self._members:
             raise ValueError("a changeset needs at least one member")
         payload = ChangeSetAuthoringPayloadV1(
@@ -666,14 +689,13 @@ class ChangeSetDraft:
                 for entry in member.source_map.entries
             )
             decisions.append(dict(member.decisions))
-        draft = _IntentDraft(
+        return _IntentDraft(
             self._playbill,
             payload,
             _sorted_expectations(expectations),
             _program_stamp("changes", {"members": decisions, "rationale": self.rationale}),
             DiagnosticSourceMap(tuple(entries)),
         )
-        return draft.prepare()
 
 
 @dataclass(frozen=True)

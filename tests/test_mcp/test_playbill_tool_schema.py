@@ -99,8 +99,21 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
 
     assert set(compile_schema["properties"]) == {"instance_id", "payload", "intent_id"}
     assert set(submit_schema["properties"]) == {"instance_id", "intent_id"}
-    assert set(confirm_schema["properties"]) == {"instance_id", "intent_id", "observation"}
-    assert set(prepare_schema["properties"]) == {"instance_id", "intent_id", "observation"}
+    # An intent that publishes several Claims owns one expectation per publishing
+    # member, so the call names the one it is about; a singular Claim intent may
+    # omit it. That is the only plumbing these tools expose.
+    assert set(confirm_schema["properties"]) == {
+        "instance_id",
+        "intent_id",
+        "observation",
+        "expectation_id",
+    }
+    assert set(prepare_schema["properties"]) == {
+        "instance_id",
+        "intent_id",
+        "observation",
+        "expectation_id",
+    }
     forbidden = {"base", "claim_id", "candidate_digest", "predecessor_digest"}
     assert forbidden.isdisjoint(compile_schema["properties"])
     assert forbidden.isdisjoint(submit_schema["properties"])
@@ -122,6 +135,7 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
         "approval-policy",
         "procedure-runtime-policy",
         "procedure-mandate",
+        "change-set",
     ]
     bind_schema = schemas["cruxible_playbill_authoring_bind"].inputSchema
     assert set(bind_schema["properties"]) == {

@@ -2322,6 +2322,13 @@ def authoring_group() -> None:
     """Author, preflight, submit, and resume ergonomic governed writes."""
 
 
+_EXPECTATION_ID_HELP = (
+    "Which publication expectation this call is about. An intent that publishes "
+    "several Claims owns one per publishing member; a singular Claim intent owns "
+    "exactly one and may omit it."
+)
+
+
 @authoring_group.command("create")
 @click.argument(
     "payload",
@@ -2351,10 +2358,18 @@ def create_authoring_intent(
     """Create a durable authoring intent or print a schema-derived example.
 
     \b
-    Input kind family: claim | procedure | subject | query_definition |
-    approval_policy | procedure_runtime_policy | procedure_mandate | change_set (tagless).
+    Input kind family: claim | claim_type | claim_retirement | procedure |
+    subject | query_definition | approval_policy | procedure_runtime_policy |
+    procedure_mandate | change_set (tagless).
 
-    Use --example for a model-generated starting point.
+    \b
+    One intent is one changeset: a change_set input carries any mix of those
+    member kinds, lowers once, and admits or refuses whole, typed to the member
+    index that offends. Succeeding an accepted ClaimType stays on the claim-type
+    proposal route.
+
+    Use --example for a model-generated starting point; --example change-set
+    prints a mixed set.
     """
 
     if (payload is None) == (example_name is None):
@@ -2694,11 +2709,13 @@ def authoring_intent_status(intent_id: str, output_json: bool) -> None:
 @authoring_group.command("confirm-insertion")
 @click.argument("intent_id")
 @click.argument("observation", type=click.Path(exists=True, dir_okay=False))
+@click.option("--expectation-id", default=None, help=_EXPECTATION_ID_HELP)
 @json_option
 @handle_errors
 def confirm_authoring_insertion(
     intent_id: str,
     observation: str,
+    expectation_id: str | None,
     output_json: bool,
 ) -> None:
     result = _server_call(
@@ -2706,6 +2723,7 @@ def confirm_authoring_insertion(
             instance_id,
             intent_id,
             observation=_read_mapping(observation),
+            expectation_id=expectation_id,
         ),
         command_name="playbill authoring confirm-insertion",
     )
@@ -2715,11 +2733,13 @@ def confirm_authoring_insertion(
 @authoring_group.command("prepare-publication")
 @click.argument("intent_id")
 @click.argument("observation", type=click.Path(exists=True, dir_okay=False))
+@click.option("--expectation-id", default=None, help=_EXPECTATION_ID_HELP)
 @json_option
 @handle_errors
 def prepare_authoring_publication(
     intent_id: str,
     observation: str,
+    expectation_id: str | None,
     output_json: bool,
 ) -> None:
     result = _server_call(
@@ -2727,6 +2747,7 @@ def prepare_authoring_publication(
             instance_id,
             intent_id,
             observation=_read_mapping(observation),
+            expectation_id=expectation_id,
         ),
         command_name="playbill authoring prepare-publication",
     )
@@ -2735,13 +2756,19 @@ def prepare_authoring_publication(
 
 @authoring_group.command("abandon-insertion")
 @click.argument("intent_id")
+@click.option("--expectation-id", default=None, help=_EXPECTATION_ID_HELP)
 @json_option
 @handle_errors
-def abandon_authoring_insertion(intent_id: str, output_json: bool) -> None:
+def abandon_authoring_insertion(
+    intent_id: str,
+    expectation_id: str | None,
+    output_json: bool,
+) -> None:
     result = _server_call(
         lambda client, instance_id: client.abandon_playbill_authoring_insertion(
             instance_id,
             intent_id,
+            expectation_id=expectation_id,
         ),
         command_name="playbill authoring abandon-insertion",
     )

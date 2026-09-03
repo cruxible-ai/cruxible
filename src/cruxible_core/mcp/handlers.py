@@ -918,6 +918,7 @@ def handle_playbill_authoring_confirm_insertion(
     instance_id: str,
     intent_id: str,
     observation: dict[str, Any],
+    expectation_id: str | None = None,
 ) -> contracts.PlaybillInsertionConfirmResultV2:
     request = InsertionConfirmationObservationV2.model_validate(observation)
     return _dispatch_remote_or_local(
@@ -925,11 +926,13 @@ def handle_playbill_authoring_confirm_insertion(
             instance_id,
             intent_id,
             observation=request.model_dump(mode="json"),
+            expectation_id=expectation_id,
         ),
         lambda: playbill_api.playbill_authoring_confirm_insertion(
             instance_id,
             intent_id,
             observation=request,
+            expectation_id=expectation_id,
         ),
         operation_name="cruxible_playbill_authoring_confirm_insertion",
     )
@@ -939,6 +942,7 @@ def handle_playbill_authoring_prepare_publication(
     instance_id: str,
     intent_id: str,
     observation: dict[str, Any],
+    expectation_id: str | None = None,
 ) -> contracts.PlaybillInsertionPrepareResult:
     request = PublicationSourceObservationV2.model_validate(observation)
     return _dispatch_remote_or_local(
@@ -946,11 +950,13 @@ def handle_playbill_authoring_prepare_publication(
             instance_id,
             intent_id,
             observation=request.model_dump(mode="json"),
+            expectation_id=expectation_id,
         ),
         lambda: playbill_api.playbill_authoring_prepare_publication(
             instance_id,
             intent_id,
             observation=request,
+            expectation_id=expectation_id,
         ),
         operation_name="cruxible_playbill_authoring_prepare_publication",
     )
@@ -959,10 +965,19 @@ def handle_playbill_authoring_prepare_publication(
 def handle_playbill_authoring_abandon_insertion(
     instance_id: str,
     intent_id: str,
+    expectation_id: str | None = None,
 ) -> contracts.PlaybillInsertionAbandonResult:
     return _dispatch_remote_or_local(
-        lambda client: client.abandon_playbill_authoring_insertion(instance_id, intent_id),
-        lambda: playbill_api.playbill_authoring_abandon_insertion(instance_id, intent_id),
+        lambda client: client.abandon_playbill_authoring_insertion(
+            instance_id,
+            intent_id,
+            expectation_id=expectation_id,
+        ),
+        lambda: playbill_api.playbill_authoring_abandon_insertion(
+            instance_id,
+            intent_id,
+            expectation_id=expectation_id,
+        ),
         operation_name="cruxible_playbill_authoring_abandon_insertion",
     )
 

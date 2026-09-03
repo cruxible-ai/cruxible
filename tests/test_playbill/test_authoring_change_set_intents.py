@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import itertools
+import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,6 +39,7 @@ from cruxible_client.contracts.claims import (
     parse_claim,
 )
 from cruxible_client.contracts.declared_blocks import parse_projection_blocks
+from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import ProposalReceiveLimits
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -59,6 +61,7 @@ from cruxible_core.service.playbill_next import (
     PlaybillNextWorkspaceObservationV1,
     service_playbill_next,
 )
+from cruxible_core.service.playbill_proposal_receive import load_proposal_receive_config
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_authoring_preflight import (
@@ -959,3 +962,27 @@ def test_a_refused_set_rebases_and_its_generation_replays_byte_identically(
     replayed = reopened.accepted_coordinate()
     assert replayed == accepted
     assert reopened.tree_at(replayed.git_oid) == before
+
+
+def test_the_daemon_receive_ceiling_reads_its_file_or_refuses_loudly(tmp_path: Path) -> None:
+    """The admission knob is operator-owned daemon state, never a caller's input."""
+
+    assert load_proposal_receive_config(tmp_path).limits() == ProposalReceiveLimits()
+
+    daemon = tmp_path / "daemon"
+    daemon.mkdir()
+    config = daemon / "proposal-receive.json"
+    config.write_text(
+        json.dumps(
+            {
+                "tag": "cruxible-proposal-receive-operational-config-v1",
+                "max_changed_members": 12,
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert load_proposal_receive_config(tmp_path).limits().max_changed_members == 12
+
+    config.write_text("{", encoding="utf-8")
+    with pytest.raises(PlaybillExecutionError):
+        load_proposal_receive_config(tmp_path)

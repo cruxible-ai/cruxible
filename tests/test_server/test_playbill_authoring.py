@@ -201,7 +201,13 @@ def test_http_prepare_route_maps_insertion_protocol_refusal_to_typed_400(
 ) -> None:  # type: ignore[no-untyped-def]
     client, instance_id, _private_key = playbill_http
 
-    def prepare_refusal(selected: str, intent_id: str, *, observation: object):
+    def prepare_refusal(
+        selected: str,
+        intent_id: str,
+        *,
+        observation: object,
+        expectation_id: str | None = None,
+    ):
         assert (selected, intent_id) == (instance_id, INTENT_ID)
         raise PublicationClaimNotAccepted(
             "playbill.authoring.publication_claim_not_accepted: Claim is not accepted"
@@ -695,7 +701,13 @@ def test_http_insertion_confirm_and_abandon_are_typed(
     client, instance_id, _private_key = playbill_http
     seen: list[str] = []
 
-    def confirm_stub(selected: str, intent_id: str, *, observation: object):
+    def confirm_stub(
+        selected: str,
+        intent_id: str,
+        *,
+        observation: object,
+        expectation_id: str | None = None,
+    ):
         assert selected == instance_id
         assert intent_id == INTENT_ID
         seen.append("confirm")
@@ -706,7 +718,7 @@ def test_http_insertion_confirm_and_abandon_are_typed(
             expectation={"state": "bound"},
         )
 
-    def abandon_stub(selected: str, intent_id: str):
+    def abandon_stub(selected: str, intent_id: str, *, expectation_id: str | None = None):
         assert (selected, intent_id) == (instance_id, INTENT_ID)
         seen.append("abandon")
         return contracts.PlaybillInsertionAbandonResult(
@@ -714,7 +726,13 @@ def test_http_insertion_confirm_and_abandon_are_typed(
             expectation={"state": "abandoned"},
         )
 
-    def prepare_stub(selected: str, intent_id: str, *, observation: object):
+    def prepare_stub(
+        selected: str,
+        intent_id: str,
+        *,
+        observation: object,
+        expectation_id: str | None = None,
+    ):
         assert selected == instance_id
         assert intent_id == INTENT_ID
         seen.append("prepare")

@@ -93,8 +93,15 @@ def test_publication_prepare_handler_preserves_advisory_warnings(monkeypatch) ->
         citation_ids=["sha256:" + "8" * 64],
     )
 
-    def stub(_instance_id: str, _intent_id: str, *, observation: object):
+    def stub(
+        _instance_id: str,
+        _intent_id: str,
+        *,
+        observation: object,
+        expectation_id: str | None = None,
+    ):
         assert observation is not None
+        assert expectation_id is None
         return contracts.PlaybillInsertionPrepareResult(
             tag="playbill-insertion-prepare-result-v2",
             outcome="prepared",

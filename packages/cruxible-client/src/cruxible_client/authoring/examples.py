@@ -9,7 +9,10 @@ from cruxible_client.authoring.inputs import (
     ApprovalPolicyInput,
     AuthoringInputV1,
     CarriedContractInput,
+    ChangeSetInput,
     ClaimInput,
+    ClaimRetirementInput,
+    ClaimTypeInput,
     ExistingCaptureInput,
     LiteralObjectInput,
     ProcedureInput,
@@ -24,7 +27,13 @@ from cruxible_client.authoring.inputs import (
 from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.documents import DocumentLifecycle, DocumentShell
+from cruxible_client.contracts.policies import (
+    ClaimAdmissionPolicyV1,
+    ClaimEvidenceAdmissionPolicyV1,
+    ClaimResolutionPolicyV1,
+)
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.models import ProcedureHardCapsV3
@@ -56,6 +65,7 @@ AuthoringExampleName = Literal[
     "approval-policy",
     "procedure-runtime-policy",
     "procedure-mandate",
+    "change-set",
 ]
 
 
@@ -81,6 +91,56 @@ def procedure_runtime_policy_example() -> ProcedureRuntimePolicyInput:
     return ProcedureRuntimePolicyInput(
         kind="procedure_runtime_policy",
         procedure_runtime_policy=ProcedureRuntimePolicyV1(provider_output_bytes_cap=2_097_152),
+    )
+
+
+def change_set_example() -> ChangeSetInput:
+    """Return one changeset carrying a mix of members that admit or refuse together.
+
+    One authoring surface is one changeset: a Subject, the ClaimType that
+    admits the statement, two Claims that read both, and one retirement all
+    lower once and generate once.
+    """
+
+    return ChangeSetInput(
+        kind="change_set",
+        members=(
+            subject_example(),
+            ClaimTypeInput(
+                kind="claim_type",
+                claim_type=ClaimType(
+                    identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.owner"),
+                    predicate="project.work_item.owner",
+                    allowed_subject_kinds=("project.work_item",),
+                    object_kind="literal",
+                    literal_schema={"type": "string"},
+                    cardinality="one",
+                    permitted_roles=("normative", "observation"),
+                    evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
+                    admission_policy=ClaimAdmissionPolicyV1(),
+                    resolution_policy=ClaimResolutionPolicyV1(
+                        cardinality="one",
+                        eligible_verdicts=("supported",),
+                        selector="only_contender",
+                    ),
+                ),
+            ),
+            claim_self_source_example(),
+            ClaimInput(
+                kind="claim",
+                subject="project.work_item/replace-me",
+                predicate="project.work_item.owner",
+                object=LiteralObjectInput(kind="literal", value="replace-me"),
+                role="observation",
+                rationale="Replace with why this work item has this owner.",
+                source=SelfSourceInput(kind="self_source", body="owner: replace-me\n"),
+            ),
+            ClaimRetirementInput(
+                kind="claim_retirement",
+                claim_id="CLM-" + "0" * 32,
+                reason="was-rescinded",
+            ),
+        ),
     )
 
 
@@ -440,6 +500,7 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
     "approval-policy": approval_policy_example,
     "procedure-runtime-policy": procedure_runtime_policy_example,
     "procedure-mandate": procedure_mandate_example,
+    "change-set": change_set_example,
 }
 
 _DOOR_EXAMPLES = {
@@ -461,6 +522,7 @@ AUTHORING_EXAMPLE_NAMES: Final[tuple[AuthoringExampleName, ...]] = (
     "approval-policy",
     "procedure-runtime-policy",
     "procedure-mandate",
+    "change-set",
 )
 
 
@@ -515,6 +577,7 @@ __all__ = [
     "AUTHORING_EXAMPLE_NAMES",
     "AuthoringExampleName",
     "authoring_example",
+    "change_set_example",
     "claim_existing_capture_example",
     "claim_flow_a_example",
     "claim_self_source_example",

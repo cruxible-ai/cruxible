@@ -14,6 +14,7 @@ from pathlib import Path
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection_tree import TreeReadLimits
 from cruxible_core.playbill.proposals import ProposalReceiveLimits
+from cruxible_core.service.playbill_proposal_receive import ProposalReceiveOperationalConfigV1
 
 from ._adoption_fixture import MINIATURE, TIER_1, build_fixture
 
@@ -93,6 +94,11 @@ def test_pre_pcg_bounded_limits_admit_the_gated_scale() -> None:
     assert receive.max_files >= TIER_1.expected_members
     assert receive.max_changed_members >= TIER_1.claims_per_generation
     assert receive.max_path_depth >= 3
+    # The changed-member bound is an operator admission knob whose default is
+    # exactly this ratified one; the daemon file moves the ceiling, not the
+    # pin, so this still pins what an unconfigured daemon admits.
+    assert ProposalReceiveOperationalConfigV1().max_changed_members == receive.max_changed_members
+    assert ProposalReceiveOperationalConfigV1().limits() == receive
 
 
 def test_an_interrupted_build_resumes_where_it_stopped(tmp_path: Path) -> None:

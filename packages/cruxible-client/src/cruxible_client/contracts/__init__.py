@@ -98,6 +98,7 @@ PlaybillAuthoringExampleName = Literal[
     "approval-policy",
     "procedure-runtime-policy",
     "procedure-mandate",
+    "change-set",
 ]
 PlaybillPolicyKind: TypeAlias = Literal[
     "approval_policy",
@@ -1070,6 +1071,9 @@ class PlaybillAuthoringSubmitResult(BaseModel):
     # True when this submit amends an existing Claim identity in place.
     identity_stable: bool = False
     claim_revision: int | None = None
+    # One row per submitted member, so a changeset answers the same two
+    # questions once per member instead of once for the whole submission.
+    members: tuple[dict[str, Any], ...] = ()
 
 
 class PlaybillInsertionPrepareResult(BaseModel):

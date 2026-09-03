@@ -139,6 +139,16 @@ exact stale JSON record under `<state-root>/daemon/provider-process-leases/`.
 Removing a record while its process may still be live abandons the recovery
 identity and is unsafe; prefer repairing the typed cause and allowing re-arm.
 
+`<state-root>/daemon/proposal-receive.json` is a second daemon-local operational
+file, tag `cruxible-proposal-receive-operational-config-v1`, with one entry:
+
+| Entry | Default | Purpose |
+|---|---:|---|
+| `max_changed_members` | `5000` | How many changed members one submission may carry. An ADMISSION ceiling on receive, never a product ceiling on authoring: one intent is one changeset and may carry any mix of members. Derivative cards are not counted. |
+
+An absent file is the default. A file that exists and cannot be read as this
+shape refuses loudly rather than silently restoring the default bound.
+
 ## playbill host
 
 ~~~text
@@ -333,7 +343,7 @@ between ambiguous histories.
 
 ~~~text
 cruxible playbill authoring create PAYLOAD
-cruxible playbill authoring create --example claim-flow-a|claim-self-source|claim-subject-relation|procedure
+cruxible playbill authoring create --example claim-flow-a|claim-self-source|claim-subject-relation|procedure|change-set
 cruxible playbill authoring get INTENT_ID
 cruxible playbill authoring resume INTENT_ID
 cruxible playbill authoring list
@@ -349,6 +359,23 @@ cruxible playbill authoring prepare-publication INTENT_ID OBSERVATION
 cruxible playbill authoring confirm-insertion INTENT_ID OBSERVATION
 cruxible playbill authoring abandon-insertion INTENT_ID
 ~~~
+
+One authoring intent is one changeset. The tagless `change_set` input carries
+any mix of members -- `claim`, `claim_type`, `claim_retirement`, `subject`,
+`query_definition`, `procedure`, `procedure_mandate` -- and the whole intent
+lowers once, proposes once and admits or refuses together, typed to the member
+index that offends. A Claim member may define the Subject and ClaimType it
+needs in the same set, and may retire a Claim the set does not otherwise touch.
+Succeeding an accepted ClaimType stays on the claim-type proposal route, where
+the migration a succession demands is decided. `--example change-set` prints a
+mixed set to start from. There is no semantic member ceiling; how many changed
+members one daemon will receive in a single submission is the operator's
+`max_changed_members` bound in `daemon/proposal-receive.json`.
+
+An intent that publishes more than one Claim owns one publication expectation
+per publishing member, so `prepare-publication`, `confirm-insertion` and
+`abandon-insertion` take an `expectation_id` naming the one they are about. A
+singular Claim intent owns exactly one and may omit it.
 
 The authoring coordinator owns stable identities, timestamps, bases, and proposal
 references. `compile` creates or updates an intent and performs a binding preflight;
