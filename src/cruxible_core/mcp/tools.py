@@ -74,13 +74,21 @@ def register_tools(
         principals: list[dict[str, Any]],
         operating_profile: Literal["local", "cloud"] = "local",
         require_independent_approval: bool = False,
+        seed: bool = True,
     ) -> contracts.PlaybillInitResult:
-        """Bootstrap Playbill from client-generated public principals."""
+        """Bootstrap Playbill from client-generated public principals.
+
+        `seed=False` is the explicit opt-out, matching CLI `--no-seed` and the
+        HTTP/SDK `seed` field: the instance is created, the seed step is skipped,
+        and the result carries a typed `provider_seed` row with status
+        `unseeded` naming the one repair that finishes it.
+        """
         return handlers.handle_playbill_init(
             instance_id,
             principals,
             operating_profile,
             require_independent_approval,
+            seed=seed,
         )
 
     @_tool

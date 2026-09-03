@@ -231,9 +231,10 @@ result carries a typed `provider_seed` row with status `unseeded` whose `repair`
 names the one way to finish — configure `seed_materializations`, then run
 `cruxible playbill provider seed`. Self-approval and independent-approval
 instances honour the flag identically, and an exact init retry carrying it stays
-idempotent. The equivalent request field is `seed` on the HTTP/SDK init body;
-MCP `cruxible_playbill_init` has no such field and always seeds, in line with the
-Provider write family's declared MCP parity gap.
+idempotent. The equivalent request field is `seed` on the HTTP/SDK init body and
+on MCP `cruxible_playbill_init`; all four surfaces carry the same default and the
+same typed `unseeded` row, so an MCP-first client can initialize a daemon whose
+`seed_materializations` are not configured yet.
 
 ## playbill body
 

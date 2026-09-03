@@ -89,6 +89,42 @@ def test_cli_seed_names_its_write_target_and_uses_sdk(
     assert '"status": "already_current"' in result.stdout
 
 
+def test_mcp_init_carries_the_seed_decision_and_reports_the_unseeded_repair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MCP-first clients must be able to init a daemon with no seed materializations."""
+
+    from cruxible_core.mcp import handlers
+
+    seeds: list[bool] = []
+
+    class StubClient:
+        def init_playbill(
+            self,
+            instance_id: str,
+            *,
+            principals: list[dict[str, object]],
+            operating_profile: str,
+            require_independent_approval: bool,
+            seed: bool = True,
+        ) -> contracts.PlaybillInitResult:
+            seeds.append(seed)
+            return contracts.PlaybillInitResult.model_validate(UNSEEDED_INIT)
+
+    monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
+
+    unseeded = handlers.handle_playbill_init("inst_no_seed", [], "local", False, seed=False)
+    default = handlers.handle_playbill_init("inst_no_seed", [], "local", False)
+
+    assert seeds == [False, True]
+    assert unseeded.provider_seed is not None
+    assert unseeded.provider_seed.status == "unseeded"
+    assert unseeded.provider_seed.repair == (
+        "configure_seed_materializations_then_playbill_provider_seed"
+    )
+    assert default.provider_seed is not None
+
+
 def test_provider_seed_mcp_parity_gap_is_explicit() -> None:
     """Follow-on card: Provider write family has no MCP parity (declare before exposing)."""
 
