@@ -3073,7 +3073,7 @@ def _projection_items(
                             path = claim_type_path(backing.identity.name)
                             raw = tree[path]
                             claim_type = parse_claim_type(raw, path=path)
-                            identity = claim_type.identity
+                            artifact_identity = claim_type.identity
                             digest = claim_type_digest(claim_type).tagged
                         else:
                             subject_kind, separator, subject_id = backing.identity.name.partition(
@@ -3084,12 +3084,12 @@ def _projection_items(
                             path = subject_path(subject_kind, subject_id)
                             raw = tree[path]
                             subject = parse_subject(raw, path=path)
-                            identity = subject.identity
+                            artifact_identity = subject.identity
                             digest = subject_digest(subject).tagged
                     except (KeyError, PlaybillError, ValueError):
                         visible = False
                         break
-                    if identity != backing.identity:
+                    if artifact_identity != backing.identity:
                         visible = False
                         break
                     if digest != backing.artifact_digest:

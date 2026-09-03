@@ -25,7 +25,7 @@ from cruxible_client.contracts.declared_blocks import (
     parse_projection_blocks,
 )
 from cruxible_client.contracts.errors import ProposalIntegrityError
-from cruxible_client.contracts.repairs import RepairOperationV1
+from cruxible_client.contracts.repairs import RepairOperationV1, served_repair_for_refusal
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1, CoverageCardBudgetV1
@@ -434,7 +434,9 @@ def test_two_writer_successor_sync_converges_without_mutating_accepted_state(
 
     assert [item.outcome for item in result.items] == ["skipped", "synced"]
     assert result.items[0].reason == "block_unstamped"
-    assert result.items[0].repair_commands == ()
+    # The prose repair list this batch retired becomes the declared hand edit the
+    # typed reason resolves to; a first stamp is authored, not run.
+    assert result.items[0].repair == served_repair_for_refusal("block_unstamped")
     assert "explicit --claim or --query" in result.items[0].detail["message"]
     assert result.has_refusals is False
     content = source.read_bytes()

@@ -518,5 +518,6 @@ def test_installed_compiler_revision_labels_are_exact_and_complete() -> None:
         "p2-b2",
         "p2-b4",
         "p2-b4-u2",
+        "p2-b5",
     )
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "p2-b4-u2"
+    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "p2-b5"

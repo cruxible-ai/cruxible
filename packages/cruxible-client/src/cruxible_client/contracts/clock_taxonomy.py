@@ -343,6 +343,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("SettledOutcomesQueryReceiptV1", "evaluation_time"): "EVALUATION INSTANT",
     ("SettledOutcomesQueryRequestV1", "evaluation_time"): "EVALUATION INSTANT",
     ("SettledOutcomesQueryResultV1", "evaluation_time"): "EVALUATION INSTANT",
+    # The instant the daemon actually read the workspace file it receipted.
+    ("SourceReadReceiptV1", "read_at"): "EVALUATION INSTANT",
     ("SourceEffectiveTimeV1", "effective_from"): "VALIDITY WINDOW",
     ("SourceEffectiveTimeV1", "effective_until"): "VALIDITY WINDOW",
     ("SourceSelectionReceiptV1", "evaluation_time"): "EVALUATION INSTANT",

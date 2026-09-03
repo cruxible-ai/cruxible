@@ -76,6 +76,9 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "block_successor_body_ambiguous": "repin_the_block_to_one_exact_successor_body",
     "block_successor_body_missing": "publish_the_successor_body_before_repinning",
     "block_marker_malformed": "repair_the_block_marker_to_the_declared_grammar",
+    # A first stamp names the backing the author chose, so no served command can
+    # supply it: sync skips the block until the marker carries one.
+    "block_unstamped": "stamp_the_block_with_an_explicit_claim_or_query_backing",
     "source_path_invalid": "name_a_workspace_source_path_the_catalog_resolves",
     "workspace_source_catalog_invalid": "repair_the_workspace_source_catalog",
 }

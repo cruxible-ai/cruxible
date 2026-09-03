@@ -572,7 +572,6 @@ def sync_projection_blocks(
                         block_id=block.block_id,
                         outcome="skipped",
                         reason="block_unstamped",
-                        repair_commands=(),
                         detail={
                             "message": (
                                 "unstamped draft blocks are not synchronized; the first "

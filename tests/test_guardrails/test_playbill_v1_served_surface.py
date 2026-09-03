@@ -10,7 +10,8 @@ from pathlib import Path
 import pytest
 from scripts import update_playbill_served_surface as served_surface
 
-SNAPSHOT = Path("tests/goldens/playbill/served-surface-dp0b-v1.json")
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+SNAPSHOT = REPOSITORY_ROOT / "tests/goldens/playbill/served-surface-dp0b-v1.json"
 
 
 @pytest.fixture(scope="module")
