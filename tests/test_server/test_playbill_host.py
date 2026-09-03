@@ -487,6 +487,8 @@ def test_playbill_init_retry_is_idempotent_only_for_the_exact_bootstrap_request(
         principals=(owner.principal,),
     )
     assert retry == first
+    assert first.provider_seed is not None
+    assert first.provider_seed.status == "already_current"
 
     different_owner = generate_client_principal_key(
         tmp_path / "different-init-owner",
@@ -1248,7 +1250,8 @@ def test_host_show_enforces_initialization_scope_and_path_privacy(
     )
     initialized = client.post(
         "/api/v1/inst_scoped_show/playbill/init",
-        json={"principals": [owner.principal.model_dump(mode="json")]},
+        # Scope and path privacy, not seeding: this host takes init's explicit opt-out.
+        json={"principals": [owner.principal.model_dump(mode="json")], "seed": False},
         headers=scoped_headers,
     )
     assert initialized.status_code == 200, initialized.text

@@ -95,7 +95,7 @@ def test_every_command_registered_on_a_group_is_in_the_lazy_cli_map() -> None:
     group_claims, _ = _walk_lazy_map(CLI_COMMANDS)
     defined = _defined_click_objects()
     groups = [(obj, origin) for obj, origin in defined.values() if isinstance(obj, click.Group)]
-    assert len(groups) == 25, f"expected 25 Playbill/host groups, found {len(groups)}"
+    assert len(groups) == 26, f"expected 26 Playbill/host groups, found {len(groups)}"
 
     problems: list[str] = []
     for group, origin in groups:
