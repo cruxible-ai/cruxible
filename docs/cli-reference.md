@@ -278,6 +278,12 @@ cruxible playbill subject history KIND ID
 A Subject is an identity-only referent. KIND and ID are the two halves of its
 `Subject:<kind>/<id>` identity.
 
+`subject get` renders the Subject's own facts and an `incoming` section: every
+live Claim whose subject-valued object is this Subject, grouped by predicate and
+naming the asserting Subject and the Claim id. A relation is stored once, on the
+asserting Subject, so without this section nothing answers "what touches this
+package" from the object side.
+
 ## playbill claim-type
 
 ~~~text

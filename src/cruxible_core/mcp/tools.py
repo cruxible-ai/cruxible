@@ -297,7 +297,7 @@ def register_tools(
     def cruxible_playbill_get_subject(
         instance_id: str, subject_kind: str, subject_id: str
     ) -> contracts.PlaybillSubjectView:
-        """Read one accepted Subject envelope and facts."""
+        """Read one accepted Subject envelope, facts, and incoming relations."""
         return handlers.handle_playbill_get_subject(instance_id, subject_kind, subject_id)
 
     @_tool

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -15,6 +16,7 @@ from cruxible_client.contracts.subjects import (
 )
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
+from cruxible_core.playbill.projection_claims import ClaimProjectionView
 from cruxible_core.playbill.projection_subjects import SubjectProjectionView
 from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,
@@ -25,12 +27,33 @@ class _StrictSubjectServiceModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class PlaybillSubjectIncomingClaimV1(_StrictSubjectServiceModel):
+    """One live Claim whose subject-valued object is the profiled Subject."""
+
+    tag: Literal["playbill-subject-incoming-claim-v1"] = "playbill-subject-incoming-claim-v1"
+    claim_identity: str
+    subject_identity: str
+
+
+class PlaybillSubjectIncomingGroupV1(_StrictSubjectServiceModel):
+    """Every incoming edge that arrives on one governed predicate."""
+
+    tag: Literal["playbill-subject-incoming-group-v1"] = "playbill-subject-incoming-group-v1"
+    predicate: str
+    claims: tuple[PlaybillSubjectIncomingClaimV1, ...]
+
+
 class PlaybillSubjectView(_StrictSubjectServiceModel):
     tag: Literal["playbill-subject-read-v1"] = "playbill-subject-read-v1"
     coordinate_kind: Literal["canonical"] = "canonical"
     coordinate: PlaybillAcceptedCoordinate
     envelope: dict[str, object]
     facts: tuple[dict[str, object], ...]
+    # Edges where this Subject is the OBJECT. A profile that lists only its own
+    # facts cannot answer "what touches this package": the relation is stored
+    # once, on the asserting Subject, and is invisible from the object side.
+    # Empty on the list surface, which never resolves incoming edges.
+    incoming: tuple[PlaybillSubjectIncomingGroupV1, ...] = ()
 
 
 class PlaybillSubjectList(_StrictSubjectServiceModel):
@@ -56,7 +79,11 @@ class PlaybillSubjectHistory(_StrictSubjectServiceModel):
     entries: tuple[PlaybillSubjectHistoryEntry, ...]
 
 
-def _public_subject(view: SubjectProjectionView) -> PlaybillSubjectView:
+def _public_subject(
+    view: SubjectProjectionView,
+    *,
+    incoming: tuple[PlaybillSubjectIncomingGroupV1, ...] = (),
+) -> PlaybillSubjectView:
     if view.coordinate_kind != "canonical" or not isinstance(
         view.coordinate,
         AcceptedProjectionCoordinate,
@@ -66,6 +93,84 @@ def _public_subject(view: SubjectProjectionView) -> PlaybillSubjectView:
         coordinate=PlaybillAcceptedCoordinate.from_internal(view.coordinate),
         envelope=view.envelope.model_dump(mode="json"),
         facts=tuple(fact.model_dump(mode="json") for fact in view.facts),
+        incoming=incoming,
+    )
+
+
+def _claim_statement(view: ClaimProjectionView) -> Mapping[str, object] | None:
+    statement = next(
+        (fact.value for fact in view.facts if fact.schema_id == "playbill.claim.statement"),
+        None,
+    )
+    return statement if isinstance(statement, Mapping) else None
+
+
+def _claim_is_live(view: ClaimProjectionView) -> bool:
+    lifecycle = next(
+        (fact.value for fact in view.facts if fact.schema_id == "playbill.claim.lifecycle"),
+        None,
+    )
+    if not isinstance(lifecycle, Mapping):
+        return False
+    state = lifecycle.get("lifecycle")
+    return isinstance(state, Mapping) and state.get("state") == "live"
+
+
+def _incoming_groups(
+    claims: Iterable[ClaimProjectionView],
+    *,
+    subject_path_value: str,
+) -> tuple[PlaybillSubjectIncomingGroupV1, ...]:
+    """Group live edges whose subject-valued object is this Subject, by predicate.
+
+    Live only, and read at exactly the coordinate the profile was resolved at:
+    an incoming row is accepted structure, never a verdict-relative claim about
+    whether the relation currently holds.
+    """
+
+    grouped: dict[str, list[PlaybillSubjectIncomingClaimV1]] = {}
+    for view in claims:
+        if not _claim_is_live(view):
+            continue
+        statement = _claim_statement(view)
+        if statement is None:
+            continue
+        obj = statement.get("object")
+        subject = statement.get("subject")
+        predicate = statement.get("predicate")
+        if not (
+            isinstance(obj, Mapping)
+            and isinstance(subject, Mapping)
+            and isinstance(predicate, str)
+            and obj.get("kind") == "subject"
+        ):
+            continue
+        address = obj.get("address")
+        if not isinstance(address, Mapping) or address.get("artifact_path") != subject_path_value:
+            continue
+        asserting = subject.get("artifact_path")
+        if not isinstance(asserting, str):
+            continue
+        grouped.setdefault(predicate, []).append(
+            PlaybillSubjectIncomingClaimV1(
+                claim_identity=view.envelope.identity,
+                subject_identity=asserting,
+            )
+        )
+    return tuple(
+        PlaybillSubjectIncomingGroupV1(
+            predicate=predicate,
+            claims=tuple(
+                sorted(
+                    grouped[predicate],
+                    key=lambda item: (
+                        item.subject_identity.encode("utf-8"),
+                        item.claim_identity.encode("utf-8"),
+                    ),
+                )
+            ),
+        )
+        for predicate in sorted(grouped, key=lambda value: value.encode("utf-8"))
     )
 
 
@@ -97,9 +202,13 @@ def service_get_playbill_subject(
         raise SubjectNotFoundError(identity)
     with instance.bind_accepted_projection(coordinate) as projection:
         subject = projection.subject(identity)
-    if subject is None:
-        raise SubjectNotFoundError(identity)
-    return _public_subject(subject)
+        if subject is None:
+            raise SubjectNotFoundError(identity)
+        incoming = _incoming_groups(
+            projection.list_claims(),
+            subject_path_value=subject.envelope.path,
+        )
+    return _public_subject(subject, incoming=incoming)
 
 
 def service_list_playbill_subjects(
@@ -170,6 +279,8 @@ def service_playbill_subject_history(
 __all__ = [
     "PlaybillSubjectHistory",
     "PlaybillSubjectHistoryEntry",
+    "PlaybillSubjectIncomingClaimV1",
+    "PlaybillSubjectIncomingGroupV1",
     "PlaybillSubjectList",
     "PlaybillSubjectView",
     "service_get_playbill_subject",

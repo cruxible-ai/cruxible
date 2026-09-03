@@ -714,6 +714,26 @@ class PlaybillSourceCheckResult(BaseModel):
     alignments: list[dict[str, Any]]
 
 
+class PlaybillSubjectIncomingClaimV1(BaseModel):
+    """One live Claim whose subject-valued object is the profiled Subject."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-subject-incoming-claim-v1"] = "playbill-subject-incoming-claim-v1"
+    claim_identity: str
+    subject_identity: str
+
+
+class PlaybillSubjectIncomingGroupV1(BaseModel):
+    """Every incoming edge that arrives on one governed predicate."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-subject-incoming-group-v1"] = "playbill-subject-incoming-group-v1"
+    predicate: str
+    claims: list[PlaybillSubjectIncomingClaimV1]
+
+
 class PlaybillSubjectView(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -722,6 +742,7 @@ class PlaybillSubjectView(BaseModel):
     coordinate: PlaybillAcceptedCoordinate
     envelope: dict[str, Any]
     facts: list[dict[str, Any]]
+    incoming: list[PlaybillSubjectIncomingGroupV1] = []
 
 
 class PlaybillSubjectList(BaseModel):

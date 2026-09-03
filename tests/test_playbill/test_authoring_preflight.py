@@ -49,6 +49,10 @@ from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
+from cruxible_core.playbill.service.subjects import (
+    service_get_playbill_subject,
+    service_list_playbill_subjects,
+)
 from cruxible_core.playbill.settlement import ChangeActorBinding
 from cruxible_core.service.playbill_floor import service_export_playbill_floor
 from tests.test_playbill._support import client_material, initialize_local
@@ -334,10 +338,15 @@ def test_claim_object_kind_mismatch_is_a_typed_preflight_refusal(tmp_path: Path)
     assert diagnostic.repairs[0].replacement == {"required_object_kind": "literal"}
 
 
-def test_subject_input_accepts_cve_package_relation_and_populates_floor_profiles(
-    tmp_path: Path,
+AFFECTS_PACKAGE = "sec.vuln.affects_package"
+
+
+def accept_cve_affects_package_relation(
+    instance: PlaybillInstance,
+    owner: object,
 ) -> None:
-    instance, owner = initialize_local(tmp_path)
+    """Accept one live `sec.vuln.affects_package` edge from a CVE to a package."""
+
     vulnerability = _subject().model_copy(
         update={
             "identity": ArtifactIdentity(kind="Subject", name="sec.vulnerability/cve-2026-0001"),
@@ -352,7 +361,7 @@ def test_subject_input_accepts_cve_package_relation_and_populates_floor_profiles
             "subject_id": "demo",
         }
     )
-    predicate = "sec.vuln.affects_package"
+    predicate = AFFECTS_PACKAGE
     relationship_type = _claim_type().model_copy(
         update={
             "identity": ArtifactIdentity(kind="ClaimType", name=predicate),
@@ -411,6 +420,14 @@ def test_subject_input_accepts_cve_package_relation_and_populates_floor_profiles
         == "accepted"
     )
 
+
+def test_subject_input_accepts_cve_package_relation_and_populates_floor_profiles(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    accept_cve_affects_package_relation(instance, owner)
+    predicate = AFFECTS_PACKAGE
+
     floor = service_export_playbill_floor(instance)
     outbound = json.loads(floor["subjects/sec.vulnerability/cve-2026-0001.profile.json"])[
         "relations"
@@ -430,6 +447,33 @@ def test_subject_input_accepts_cve_package_relation_and_populates_floor_profiles
     ]
     assert inbound[0]["inbound"] is True
     assert inbound[0]["predicate"] == predicate
+
+
+def test_the_object_subjects_profile_lists_the_incoming_relation(tmp_path: Path) -> None:
+    """A relation is stored once, on the asserting Subject; the object must still see it.
+
+    Without this, `subject get sec.package/demo` shows the package's own facts
+    only and nothing answers "what touches this package".
+    """
+
+    instance, owner = initialize_local(tmp_path)
+    accept_cve_affects_package_relation(instance, owner)
+
+    package = service_get_playbill_subject(instance, identity="Subject:sec.package/demo")
+    vulnerability = service_get_playbill_subject(
+        instance, identity="Subject:sec.vulnerability/cve-2026-0001"
+    )
+    listed = service_list_playbill_subjects(instance)
+
+    assert [group.predicate for group in package.incoming] == [AFFECTS_PACKAGE]
+    edge = package.incoming[0].claims[0]
+    assert edge.subject_identity == "subjects/sec.vulnerability/cve-2026-0001.json"
+    assert edge.claim_identity.startswith("Claim:")
+    assert len(package.incoming[0].claims) == 1
+    # The asserting end still carries no incoming edge, and the list surface
+    # never resolves them.
+    assert vulnerability.incoming == ()
+    assert {subject.incoming for subject in listed.subjects} == {()}
 
 
 def test_preflight_returns_independent_refusals_in_one_frontier(tmp_path: Path) -> None:
