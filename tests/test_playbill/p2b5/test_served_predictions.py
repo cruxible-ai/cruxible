@@ -209,7 +209,8 @@ def test_observation_settlement_replays_into_the_existing_calibration_fold(
 ) -> None:
     instance, owner, capture_digest = _world(tmp_path)
     predicted = _predict(instance, capture_digest)
-    assert predicted.intent.intent.candidate_status.state == "ready_to_activate"
+    assert predicted.intent["tag"] == "playbill-authoring-intent-view-v1"
+    assert predicted.intent["intent"]["candidate_status"]["state"] == "ready_to_activate"
     _accept_prediction(instance, owner, predicted)
     observation_id = _accept_observation(instance, owner, capture_digest)
 

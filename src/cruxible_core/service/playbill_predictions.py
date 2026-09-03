@@ -293,7 +293,7 @@ def service_predict_playbill(
     _store_declaration(instance, declaration)
     return PlaybillPredictResultV1(
         declaration=declaration,
-        intent=AuthoringIntentViewV1(intent=submitted.intent),
+        intent=AuthoringIntentViewV1(intent=submitted.intent).model_dump(mode="json"),
     )
 
 

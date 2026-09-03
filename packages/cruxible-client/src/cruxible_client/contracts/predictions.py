@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Annotated, Literal, TypeAlias, cast
+from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import (
     BaseModel,
@@ -17,7 +17,6 @@ from pydantic import (
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
-    AuthoringIntentViewV1,
     ClaimAuthoringPayloadV1,
     ClaimAuthoringPayloadV2,
     ClaimAuthoringPayloadV3,
@@ -243,7 +242,12 @@ def build_prediction_declaration(**values: object) -> PlaybillPredictionDeclarat
 class PlaybillPredictResultV1(_StrictPredictionModel):
     tag: Literal["playbill-predict-result-v1"] = "playbill-predict-result-v1"
     declaration: PlaybillPredictionDeclarationV1
-    intent: AuthoringIntentViewV1
+    # Carried as the served intent-view object rather than the authoring union.
+    # Every other served authoring response does the same
+    # (`PlaybillAuthoringIntentView.intent`): typing an input union into a
+    # response position splits every frozen v1 component the union reaches into
+    # `<name>-Input`/`<name>-Output` across the whole OpenAPI document.
+    intent: dict[str, Any]
 
 
 class ObservationSettlementEvidenceV1(_StrictPredictionModel):

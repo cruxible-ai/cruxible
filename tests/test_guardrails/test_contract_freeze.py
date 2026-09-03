@@ -22,6 +22,18 @@ ERROR_ENVELOPE_FIELDS = {
     "errors",
     "context",
     "mutation_receipt_id",
+    # P2-B5 U4: the structured repair carrier replaces prose repair strings.
+    "repair",
+}
+# FastAPI renames a model to `<name>-Input`/`<name>-Output` when one model is
+# reachable in both request and response position with a mode-dependent schema.
+# Typing an authoring input union into a served response therefore renames every
+# frozen component that union reaches, across the whole document. This pin names
+# the only pair v1 accepts, so that regression fails here instead of silently
+# moving the frozen schema names.
+SPLIT_COMPONENT_NAMES = {
+    "PredictionObservationSelectorV1-Input",
+    "PredictionObservationSelectorV1-Output",
 }
 STANDARD_ERROR_STATUSES = {"400", "401", "403", "404", "409", "422", "500"}
 HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
@@ -84,6 +96,19 @@ def test_playbill_openapi_exposes_typed_coordinate_and_host_results() -> None:
         "generation_root",
         "compiler_digest",
     }
+
+
+def test_no_response_model_splits_a_frozen_component_name() -> None:
+    spec = generate_openapi_spec()
+    names = set(spec["components"]["schemas"])
+    split = {name for name in names if name.endswith(("-Input", "-Output"))}
+
+    assert split == SPLIT_COMPONENT_NAMES, (
+        "a served response model dragged frozen request components into "
+        "serialization mode; carry the served view object instead of the "
+        f"authoring union. Unexpected: {sorted(split - SPLIT_COMPONENT_NAMES)}"
+    )
+    assert "ClaimType" in names
 
 
 def test_openapi_routes_declare_standard_error_envelope() -> None:
