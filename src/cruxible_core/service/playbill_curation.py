@@ -800,6 +800,7 @@ def service_overrule_playbill_curation(
     request: PlaybillCurationOverruleRequestV1,
     actor_context: GovernedActorContext,
 ) -> PlaybillCurationActionResultV1:
+    instance.require_writable()
     item = _open_item(instance, request.item_id, allow_quarantined=True)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     generation = _generation(instance, coordinate)
@@ -830,6 +831,7 @@ def service_suppress_playbill_curation(
     request: PlaybillCurationSuppressRequestV1,
     actor_context: GovernedActorContext,
 ) -> PlaybillCurationActionResultV1:
+    instance.require_writable()
     item = _open_item(instance, request.item_id, allow_quarantined=True)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     generation = _generation(instance, coordinate)
@@ -961,6 +963,7 @@ def service_accept_fixed_playbill_curation(
     request: PlaybillCurationAcceptFixedRequestV1,
     actor_context: GovernedActorContext,
 ) -> PlaybillCurationActionResultV1:
+    instance.require_writable()
     item = _open_item(instance, request.item_id)
     resolved_generation, record, parent_tree, candidate_tree = _accepted_change(
         instance,

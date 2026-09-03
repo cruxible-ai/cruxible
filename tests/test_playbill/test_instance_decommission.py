@@ -158,3 +158,158 @@ def test_a_live_descriptor_carries_no_decommission_key_at_all(tmp_path: Path) ->
 
     assert "decommissioned" not in payload
     assert instance.descriptor.decommissioned is None
+
+
+def _write_doors() -> tuple[tuple[str, object], ...]:
+    """Every governed-write door, called with unusable placeholder arguments.
+
+    The gate is the first statement of each door, so a typed refusal here is
+    proof that nothing downstream ran: any door that reached its own body would
+    fail on the placeholders instead.
+    """
+
+    from cruxible_core.playbill.service.documents import service_submit_playbill_approval
+    from cruxible_core.service.playbill_claim_attestations import (
+        service_append_claim_attestation,
+    )
+    from cruxible_core.service.playbill_curation import (
+        service_accept_fixed_playbill_curation,
+        service_overrule_playbill_curation,
+        service_suppress_playbill_curation,
+    )
+    from cruxible_core.service.playbill_predictions import (
+        service_predict_playbill,
+        service_settle_playbill_prediction,
+    )
+    from cruxible_core.service.playbill_procedure_runs import (
+        service_bind_playbill_procedure,
+        service_run_playbill_line,
+        service_run_playbill_procedure,
+    )
+
+    none = None  # placeholders the gate must refuse before dereferencing
+
+    return (
+        (
+            "approval",
+            lambda instance: service_submit_playbill_approval(
+                instance,
+                proposal_id="proposal-1",
+                attestation=none,  # type: ignore[arg-type]
+                authenticated_submitter="owner",
+            ),
+        ),
+        (
+            "curation_overrule",
+            lambda instance: service_overrule_playbill_curation(
+                instance,
+                request=none,  # type: ignore[arg-type]
+                actor_context=none,  # type: ignore[arg-type]
+            ),
+        ),
+        (
+            "curation_suppress",
+            lambda instance: service_suppress_playbill_curation(
+                instance,
+                request=none,  # type: ignore[arg-type]
+                actor_context=none,  # type: ignore[arg-type]
+            ),
+        ),
+        (
+            "curation_accept_fixed",
+            lambda instance: service_accept_fixed_playbill_curation(
+                instance,
+                request=none,  # type: ignore[arg-type]
+                actor_context=none,  # type: ignore[arg-type]
+            ),
+        ),
+        (
+            "claim_attestation",
+            lambda instance: service_append_claim_attestation(
+                instance,
+                request=none,  # type: ignore[arg-type]
+                actor_id="owner",
+            ),
+        ),
+        (
+            "prediction",
+            lambda instance: service_predict_playbill(
+                instance,
+                request=none,  # type: ignore[arg-type]
+                actor=none,  # type: ignore[arg-type]
+                evaluation_time=EVALUATION_TIME,
+            ),
+        ),
+        (
+            "settlement",
+            lambda instance: service_settle_playbill_prediction(
+                instance,
+                prediction_id="prediction-1",
+                request=none,  # type: ignore[arg-type]
+                actor_context=none,  # type: ignore[arg-type]
+                recorded_at=EVALUATION_TIME,
+            ),
+        ),
+        (
+            "procedure_bind",
+            lambda instance: service_bind_playbill_procedure(
+                instance,
+                name="demo.procedure",
+                request=none,  # type: ignore[arg-type]
+                actor=none,  # type: ignore[arg-type]
+                timestamp=TIMESTAMP,
+            ),
+        ),
+        (
+            "procedure_run",
+            lambda instance: service_run_playbill_procedure(
+                instance,
+                name="demo.procedure",
+                request=none,  # type: ignore[arg-type]
+                actor_context=none,  # type: ignore[arg-type]
+            ),
+        ),
+        (
+            "line_run",
+            lambda instance: service_run_playbill_line(
+                instance,
+                path_identity_digest="sha256:" + "a" * 64,
+                request=none,  # type: ignore[arg-type]
+                actor_context=none,  # type: ignore[arg-type]
+                caller_rung=1,
+            ),
+        ),
+    )
+
+
+@pytest.mark.parametrize("door", _write_doors(), ids=lambda item: item[0])
+def test_every_governed_write_door_refuses_a_decommissioned_instance(
+    tmp_path: Path,
+    door: tuple[str, object],
+) -> None:
+    """The terminal state is not four call sites; it is every write door."""
+
+    instance, _owner = initialize_local(tmp_path)
+    instance.decommission(reason="write plane closed", decommissioned_by="owner")
+
+    _name, call = door
+    with pytest.raises(PlaybillInstanceDecommissioned) as refused:
+        call(instance)  # type: ignore[operator]
+    assert refused.value.error_code == "playbill.instance.decommissioned"
+
+
+def test_a_second_open_handle_cannot_restamp_the_terminal_state(tmp_path: Path) -> None:
+    """Two handles over one directory: the persisted record is the authority."""
+
+    instance, _owner = initialize_local(tmp_path)
+    second = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+
+    instance.decommission(reason="first", decommissioned_by="owner")
+    assert second.descriptor.decommissioned is None  # the stale handle still believes it is live
+
+    with pytest.raises(PlaybillInstanceDecommissioned) as refused:
+        second.decommission(reason="second", decommissioned_by="owner")
+    assert refused.value.reason == "first"
+
+    payload = json.loads((instance.root / DESCRIPTOR_FILE).read_bytes())
+    assert payload["decommissioned"]["reason"] == "first"

@@ -310,6 +310,7 @@ def service_submit_playbill_approval(
 ) -> PlaybillApprovalReceipt:
     """Verify and persist only a public attestation under historical key state."""
 
+    instance.require_writable()
     proposal, candidate = _candidate_for_proposal(instance, proposal_id)
     if attestation.payload_digest != candidate.candidate_digest:
         raise ProposalIntegrityError("attestation payload differs from proposal candidate")

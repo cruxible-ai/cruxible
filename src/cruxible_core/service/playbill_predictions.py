@@ -242,6 +242,7 @@ def service_predict_playbill(
 ) -> PlaybillPredictResultV1:
     """Create and submit the predicted Claim under ordinary Claim authority."""
 
+    instance.require_writable()
     declared_at = ensure_utc(evaluation_time)
     if request.deadline <= declared_at:
         raise _refuse(
@@ -584,6 +585,7 @@ def service_settle_playbill_prediction(
 ) -> PlaybillSettleResultV1:
     """Settle one accepted predicted Claim from a later accepted outcome."""
 
+    instance.require_writable()
     declaration = _load_declaration(instance, prediction_id)
     try:
         prediction_claim, prediction_coordinate, prediction_sequence = _accepted_claim_revision(

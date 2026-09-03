@@ -603,6 +603,21 @@ class PlaybillInstance:
             decommissioned_at=terminal.decommissioned_at,
         )
 
+    def _persisted_decommission(self) -> PlaybillDecommissionV1 | None:
+        """Read the terminal record from disk rather than from this handle."""
+
+        try:
+            payload = json.loads((self.root / DESCRIPTOR_FILE).read_bytes())
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise PlaybillFormatError("Playbill descriptor is missing or malformed") from exc
+        record = payload.get("decommissioned") if isinstance(payload, dict) else None
+        if record is None:
+            return None
+        try:
+            return PlaybillDecommissionV1.model_validate(record)
+        except ValidationError as exc:
+            raise PlaybillFormatError("Playbill descriptor failed strict validation") from exc
+
     def decommission(self, *, reason: str, decommissioned_by: str) -> PlaybillDecommissionV1:
         """Stamp the terminal lifecycle state on the descriptor, deleting nothing.
 
@@ -614,6 +629,13 @@ class PlaybillInstance:
         """
 
         self.require_writable()
+        # Two handles can be open over one directory. This handle's in-memory
+        # descriptor is not authority for a terminal state another handle may
+        # already have stamped, so the persisted record decides.
+        persisted = self._persisted_decommission()
+        if persisted is not None:
+            self.descriptor = self.descriptor.model_copy(update={"decommissioned": persisted})
+            self.require_writable()
         record = PlaybillDecommissionV1(
             reason=reason,
             decommissioned_at=format_datetime(utc_now()) or "",

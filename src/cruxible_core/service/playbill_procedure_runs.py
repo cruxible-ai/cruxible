@@ -1152,6 +1152,7 @@ def service_bind_playbill_procedure(
     actor: AuthenticatedActor,
     timestamp: str,
 ) -> ProcedureBindResultV2:
+    instance.require_writable()
     coordinate = instance.accepted_coordinate()
     accepted = _accepted_procedure(instance, name=name, coordinate=coordinate)
     if accepted.procedure.definition.graph_format == 4:
@@ -2035,6 +2036,7 @@ def service_run_playbill_procedure(
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None = None,
     workspace_file_reader: WorkspaceFileReader | None = None,
 ) -> ProcedureRunStateV2:
+    instance.require_writable()
     coordinate = _resolve_coordinate(instance, request.at)
     evaluation_time = request.evaluation_time or instance.accepted_evaluation_time(
         coordinate.git_oid
@@ -2256,6 +2258,7 @@ def service_run_playbill_line(
     skew -- so a mandate validity window cannot be entered by claiming a time.
     """
 
+    instance.require_writable()
     if request.line_identity_digest != path_identity_digest:
         raise LineRunIdentityMismatch(
             f"{LineRunIdentityMismatch.code}: route and request Line identities differ"

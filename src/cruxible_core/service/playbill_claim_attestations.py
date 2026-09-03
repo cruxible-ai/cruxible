@@ -399,6 +399,7 @@ def service_append_claim_attestation(
 ) -> ClaimAttestationAppendResultV1:
     """Verify one signed V2 observation and publish exactly one evidence event."""
 
+    instance.require_writable()
     statement = request.attestation.statement
     if actor_id != statement.attesting_principal_id:
         _refuse("actor_signer_mismatch", "authenticated actor must equal attesting principal")
