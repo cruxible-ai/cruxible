@@ -125,6 +125,22 @@ class AuthenticatedActor(_StrictProposalModel):
 CHANGE_SET_RECORD_BYTES_PER_MEMBER = 11 * 1024
 
 
+#: The bounds RECEIVE itself enforces, and therefore the only ones any stored
+#: identity is computed over. FROZEN: this set names the shape a proposal id,
+#: a preflight certificate and an admission record were written under before
+#: the advertised record ceiling existed, and a build that widened it would
+#: make every one of those written by an older build unreadable.
+PROPOSAL_RECEIVE_BOUND_KEYS = frozenset(
+    {
+        "max_files",
+        "max_changed_members",
+        "max_file_bytes",
+        "max_total_bytes",
+        "max_path_depth",
+    }
+)
+
+
 class ProposalReceiveLimits(_StrictProposalModel):
     """Every bound proposal receive enforces before a single member is parsed.
 
@@ -167,6 +183,24 @@ class ProposalReceiveLimits(_StrictProposalModel):
         ge=1,
         le=2**20,
     )
+
+    def receive_bound_payload(self) -> dict[str, object]:
+        """Render only the bounds RECEIVE enforces, for a stored identity.
+
+        Every durable identity computed over these limits -- a proposal id, a
+        preflight certificate digest, an admission record's canonical bytes --
+        is computed over THIS, never over the whole model. The advertised
+        ceilings are a preflight bound and a published number; adding one, or
+        moving one after a measurement, must not restate the identity of every
+        proposal admitted and every certificate minted before it, which is
+        exactly what a whole-model preimage would do.
+        """
+
+        return {
+            key: value
+            for key, value in self.model_dump(mode="json").items()
+            if key in PROPOSAL_RECEIVE_BOUND_KEYS
+        }
 
     @property
     def max_change_set_members(self) -> int:
@@ -425,6 +459,7 @@ __all__ = [
     "ProposalAdmissionRequest",
     "ProposalEvaluationRecord",
     "CHANGE_SET_RECORD_BYTES_PER_MEMBER",
+    "PROPOSAL_RECEIVE_BOUND_KEYS",
     "ProposalReceiveLimits",
     "ProposalWithdrawalRecordV1",
     "ProposalResult",

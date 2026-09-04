@@ -1808,6 +1808,27 @@ class PreflightCertificateV1(_StrictAuthoringModel):
             raise ValueError("preflight proposal-ref OID is malformed")
         return value
 
+    @field_serializer("receive_limits", when_used="always")
+    def _serialize_receive_limits(self, value: ProposalReceiveLimits) -> dict[str, object]:
+        """Render the RECEIVE bounds alone, in every mode.
+
+        A certificate re-derives its own digest on every read, and it nests
+        inside a stored authoring intent whose event digest covers it in turn.
+        Both preimages are the model's own dump, so a certificate that carried
+        the whole limits model would stop reproducing -- and every intent
+        holding one would stop being readable -- the moment a limit key with a
+        default was added to `ProposalReceiveLimits`. That is what advertising
+        the change-set record ceiling did.
+
+        What a certificate is a statement about is what receive would enforce on
+        this submission, and that is exactly this subset; the advertised
+        ceilings are a published number of the build reading it, recovered from
+        the model's own defaults. Same reasoning as `_PROPOSAL_ID_LIMIT_KEYS`
+        for the proposal id, applied to the other stored identity.
+        """
+
+        return value.receive_bound_payload()
+
     @model_validator(mode="after")
     def _reproduces(self) -> "PreflightCertificateV1":
         if self.certificate_digest != preflight_certificate_digest(self):

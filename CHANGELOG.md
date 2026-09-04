@@ -55,7 +55,12 @@
   (`playbill.authoring.change_set_record_too_large`), naming the projected
   record size, the ceiling and the entry count that fits: before lowering when
   the entries a set already declares exceed the bound, and on the exact lowered
-  count -- still before the compile -- when they do not.
+  count -- still before the compile -- when they do not. Every durable identity
+  computed over the receive limits -- a proposal id, a preflight certificate
+  digest, an admission record's canonical bytes -- takes the RECEIVE bounds
+  alone, so advertising a new ceiling does not restate the identity of anything
+  written before it, and an instance upgraded across this release keeps reading
+  the authoring intents and admissions it already holds.
   Compiling was also the step that could take the daemon out under memory
   pressure: an allocation failure during lowering is now logged and refused as
   `playbill.authoring.compile_budget_exceeded` instead of propagating untyped,

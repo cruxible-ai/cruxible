@@ -196,6 +196,7 @@ from cruxible_client.contracts.procedures.line_specs import (
     parse_line_spec,
 )
 from cruxible_client.contracts.proposal_models import (
+    PROPOSAL_RECEIVE_BOUND_KEYS,
     AuthenticatedActor,
     ProposalAdmissionRecord,
     ProposalAdmissionRequest,
@@ -3495,16 +3496,11 @@ def evaluate_proposal_tree(
 
 
 #: The receive bounds that name an admission. Frozen: adding an advertised
-#: ceiling to `ProposalReceiveLimits` must not move a single proposal id.
-_PROPOSAL_ID_LIMIT_KEYS = frozenset(
-    {
-        "max_files",
-        "max_changed_members",
-        "max_file_bytes",
-        "max_total_bytes",
-        "max_path_depth",
-    }
-)
+#: ceiling to `ProposalReceiveLimits` must not move a single proposal id. ONE
+#: set, shared with the preflight certificate's preimage and the admission
+#: record's own persisted bytes, so the three stored identities cannot disagree
+#: about which bounds they were written under.
+_PROPOSAL_ID_LIMIT_KEYS = PROPOSAL_RECEIVE_BOUND_KEYS
 
 
 def _proposal_id_payload(

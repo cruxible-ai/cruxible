@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
@@ -67,6 +68,30 @@ def _exclusive_canonical_write(path: Path, payload: bytes) -> None:
     _fsync_directory(path.parent)
 
 
+def _admission_bytes(record: ProposalAdmissionRecord) -> bytes:
+    """Render one admission's canonical persisted bytes.
+
+    The record's `limits` is written as the RECEIVE bounds alone, never as the
+    whole `ProposalReceiveLimits` model. Two things depend on it:
+
+    * an admission is immutable, and an idempotent re-submission rewrites the
+      same path with the same bytes -- so a build that added an advertised
+      ceiling would render different bytes for the same admission and trip the
+      occupancy refusal on a proposal it was supposed to answer with a no-op;
+    * a stored admission's canonicality is verified on every read against a
+      re-render, so a record written before that ceiling existed would stop
+      being readable at all.
+
+    What an admission records is what receive enforced on it. An advertisement
+    that preflight consults before lowering is not that, and is recovered from
+    the model's own defaults on read.
+    """
+
+    payload = record.model_dump(mode="json")
+    payload["limits"] = record.limits.receive_bound_payload()
+    return canonical_bytes(payload) + b"\n"
+
+
 class ProposalEvidenceStore:
     """Immutable out-of-band proposal/candidate evidence; never accepted authority."""
 
@@ -91,7 +116,7 @@ class ProposalEvidenceStore:
 
     def write_admission(self, record: ProposalAdmissionRecord) -> Path:
         path = self.proposals / f"{record.proposal_id.removeprefix('sha256:')}.json"
-        _exclusive_canonical_write(path, canonical_bytes(record.model_dump(mode="json")) + b"\n")
+        _exclusive_canonical_write(path, _admission_bytes(record))
         return path
 
     def write_evaluation(self, record: ProposalEvaluationRecord) -> Path:
@@ -201,13 +226,23 @@ class ProposalEvidenceStore:
         proposal_id = self.resolve_proposal_id(proposal_id)
         ProposalDigest.from_tagged(proposal_id)
         path = self.proposals / f"{proposal_id.removeprefix('sha256:')}.json"
-        return self._read_model(path, ProposalAdmissionRecord, label="proposal admission")
+        return self._read_model(
+            path,
+            ProposalAdmissionRecord,
+            label="proposal admission",
+            render=_admission_bytes,
+        )
 
     def list_admissions(self) -> tuple[ProposalAdmissionRecord, ...]:
         """List canonical admissions in stable evidence-filename order."""
 
         return tuple(
-            self._read_model(path, ProposalAdmissionRecord, label="proposal admission")
+            self._read_model(
+                path,
+                ProposalAdmissionRecord,
+                label="proposal admission",
+                render=_admission_bytes,
+            )
             for path in sorted(self.proposals.glob("*.json"), key=lambda item: item.name)
         )
 
@@ -309,7 +344,16 @@ class ProposalEvidenceStore:
         model: type[_EvidenceModelT],
         *,
         label: str,
+        render: Callable[[Any], bytes] | None = None,
     ) -> _EvidenceModelT:
+        """Read one stored record and prove its bytes are the canonical ones.
+
+        `render` is the writer this record was persisted through, for the one
+        model whose persisted shape is narrower than its own dump. Verifying
+        against the plain dump there would refuse every admission the store
+        holds the moment a field with a default is added to its limits.
+        """
+
         if path.is_symlink() or not path.is_file():
             raise ProposalIntegrityError(f"{label} evidence is missing or not a regular file")
         try:
@@ -317,7 +361,12 @@ class ProposalEvidenceStore:
             value = model.model_validate_json(raw)
         except (OSError, ValidationError, ValueError) as exc:
             raise ProposalIntegrityError(f"{label} evidence is malformed") from exc
-        if canonical_bytes(value.model_dump(mode="json")) + b"\n" != raw:
+        expected = (
+            canonical_bytes(value.model_dump(mode="json")) + b"\n"
+            if render is None
+            else render(value)
+        )
+        if expected != raw:
             raise ProposalIntegrityError(f"{label} evidence is not canonical")
         return value
 

@@ -9,6 +9,10 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from cruxible_client.contracts.authoring.models import (
+    PreflightCertificateV1,
+    preflight_certificate_digest,
+)
 from cruxible_client.contracts.candidates import (
     CandidateRecord,
     SemanticCandidate,
@@ -26,7 +30,12 @@ from cruxible_client.contracts.errors import (
     ProposalEvaluationIntegrityError,
     ProposalIntegrityError,
 )
+from cruxible_client.contracts.proposal_models import (
+    PROPOSAL_RECEIVE_BOUND_KEYS,
+    ProposalReceiveLimits,
+)
 from cruxible_client.contracts.workspace_advertisement import PlaybillWorkspaceAdvertisement
+from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.proposal_evidence import ProposalEvidenceStore
@@ -680,3 +689,110 @@ def test_candidate_record_refuses_law_mapping_or_member_substitution() -> None:
         )
     with pytest.raises(ValidationError, match="members must enumerate"):
         CandidateRecord.model_validate({**values, "members": ()})
+
+
+PRE_HOTFIX_RECORDS = (
+    Path(__file__).resolve().parents[1] / "fixtures" / "pre_hotfix_stored_records_0960559c.json"
+)
+
+
+def _pre_hotfix_records() -> dict[str, object]:
+    """Records a build BEFORE the advertised record ceiling existed wrote.
+
+    Captured by running the pre-hotfix build in a detached worktree at the base
+    this batch branched from: a real preflight certificate, the authoring-intent
+    events that carry it, and the admission record one submission wrote. Their
+    `limits` therefore hold exactly the five receive bounds that build had.
+    """
+
+    payload = json.loads(PRE_HOTFIX_RECORDS.read_text(encoding="utf-8"))
+    assert isinstance(payload, dict)
+    return payload
+
+
+def test_a_preflight_certificate_from_before_the_record_ceiling_still_validates() -> None:
+    """Advertising a new limit must not invalidate every certificate ever minted.
+
+    `PreflightCertificateV1` embeds the whole `ProposalReceiveLimits` and
+    re-derives its own digest on EVERY read, so a preimage over the whole model
+    would make a certificate written by a build with five limit keys fail to
+    reproduce the moment a sixth was added -- and the certificate nests inside a
+    stored authoring intent, so `intent resume`, `intent list` and `submit`
+    would all raise on it after the upgrade. The preimage takes the receive
+    bounds alone, which is what the certificate is a statement about.
+    """
+
+    records = _pre_hotfix_records()
+    stored = records["preflight_certificate"]
+    assert isinstance(stored, dict)
+    assert set(stored["receive_limits"]) == set(PROPOSAL_RECEIVE_BOUND_KEYS)
+
+    certificate = PreflightCertificateV1.model_validate(stored)
+
+    assert certificate.certificate_digest == stored["certificate_digest"]
+    assert certificate.certificate_digest == preflight_certificate_digest(certificate)
+    # The advertised ceilings read back at this build's defaults, which is what
+    # they are: a published number, never something the certificate bound.
+    assert (
+        certificate.receive_limits.change_set_record_bytes_per_member
+        == ProposalReceiveLimits().change_set_record_bytes_per_member
+    )
+
+
+def test_an_authoring_intent_written_before_the_record_ceiling_still_reads(
+    tmp_path: Path,
+) -> None:
+    """The carrier that made the certificate a durability problem, end to end."""
+
+    records = _pre_hotfix_records()
+    intent_id = records["intent_id"]
+    events = records["authoring_intent_events"]
+    assert isinstance(intent_id, str)
+    assert isinstance(events, dict)
+    exhaust = tmp_path / "exhaust"
+    directory = exhaust / "authoring-intents" / intent_id / "events"
+    directory.mkdir(parents=True)
+    for name, content in events.items():
+        (directory / name).write_text(str(content), encoding="utf-8")
+
+    store = AuthoringIntentStore(exhaust)
+    intent = store.get(intent_id, actor_id="owner")
+
+    assert intent.intent_id == intent_id
+    assert intent.last_preflight is not None
+    assert intent.last_preflight.certificate.certificate_digest.startswith("sha256:")
+
+
+def test_an_admission_written_before_the_record_ceiling_reads_and_rewrites(
+    tmp_path: Path,
+) -> None:
+    """An idempotent re-submission must still be a no-op across the upgrade.
+
+    An admission is immutable: the exclusive write answers a repeat with a
+    no-op when the bytes are identical and a refusal when they are not, and the
+    read proves the stored bytes are the canonical ones. Both compare against a
+    re-render, so adding a limit key with a default would have made every
+    pre-upgrade admission unreadable and every idempotent re-submission of one
+    trip the occupancy refusal. What an admission records is what receive
+    enforced, so that is what its bytes hold.
+    """
+
+    records = _pre_hotfix_records()
+    proposal_id = records["proposal_id"]
+    raw = records["proposal_admission"]
+    assert isinstance(proposal_id, str)
+    assert isinstance(raw, str)
+    assert set(json.loads(raw)["limits"]) == set(PROPOSAL_RECEIVE_BOUND_KEYS)
+    root = tmp_path / "exhaust"
+    root.mkdir()
+    store = ProposalEvidenceStore(root)
+    (store.proposals / f"{proposal_id.removeprefix('sha256:')}.json").write_text(
+        raw, encoding="utf-8"
+    )
+
+    admission = store.read_admission(proposal_id)
+
+    assert admission.proposal_id == proposal_id
+    # The repeat an idempotent re-submission makes: same record, same bytes.
+    store.write_admission(admission)
+    assert store.read_admission(proposal_id) == admission
