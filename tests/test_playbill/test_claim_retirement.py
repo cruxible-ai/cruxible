@@ -296,20 +296,50 @@ def test_root_only_retirement_is_idempotent_and_post_activation_terminal(
         request=submit_request,
         actor=actor,
     )
+    assert isinstance(first, ClaimRetireResultV1)
+    assert first.proposal is not None
+    target_ref = first.proposal.proposal.admission.target_ref
+    first_tip = instance.proposal_ref_target(target_ref)
     second = service_retire_claim(
         instance,
         claim_id=claim_id,
         request=submit_request,
         actor=actor,
     )
-    assert isinstance(first, ClaimRetireResultV1)
     assert isinstance(second, ClaimRetireResultV1)
     assert first.operation_digest == preflight.operation_digest == second.operation_digest
-    assert first.proposal is not None and second.proposal is not None
+    assert second.proposal is not None
+
+    # An identical resubmission is idempotent in its OPERATION and in its candidate
+    # BYTES, not in its admission event: `admitted_at` and `candidate_commit_oid`
+    # are part of the proposal-id preimage, and ops hotfix 1's card-80 lineage law
+    # makes a resubmission extend the ref's lineage instead of recreating the first
+    # commit from the accepted base, so each submission carries its own proposal id
+    # over one identical tree.
     assert (
-        first.proposal.proposal.admission.proposal_id
-        == second.proposal.proposal.admission.proposal_id
+        second.proposal.proposal.admission.candidate_tree_oid
+        == first.proposal.proposal.admission.candidate_tree_oid
     )
+    assert (
+        second.proposal.proposal.evaluation.evaluated_tree_oid
+        == first.proposal.proposal.evaluation.evaluated_tree_oid
+    )
+
+    # The resubmission EXTENDS the ref linearly over the first submission's tip and
+    # orphans nothing: `parent_of` refuses merge commits, so walking the ref back to
+    # that tip is itself the linearity proof.
+    ledger = instance._ledger
+    second_tip = instance.proposal_ref_target(target_ref)
+    assert second_tip == second.proposal.proposal.admission.candidate_commit_oid
+    lineage: list[str] = []
+    walker: str | None = second_tip
+    while walker is not None and walker != first_tip:
+        lineage.append(walker)
+        walker = ledger.parent_of(walker)
+    assert walker == first_tip
+    assert first_tip == first.proposal.proposal.admission.candidate_commit_oid
+    assert len(lineage) == len(set(lineage))
+    assert ledger.unreachable_commits() == ()
 
     tree_oid = first.proposal.proposal.evaluation.evaluated_tree_oid
     assert tree_oid is not None
