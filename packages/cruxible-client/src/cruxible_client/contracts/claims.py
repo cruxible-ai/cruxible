@@ -36,6 +36,7 @@ from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     COORDINATOR_SELF_SOURCE_CONTRACT_ID,
     DIRECT_SELF_ASSERTED_CONTRACT_ID,
+    FOREIGN_SOURCE_COORDINATE_TYPE,
     AcceptedCaptureContract,
     CaptureContractV1,
     CaptureEnvelopeAny,
@@ -49,6 +50,7 @@ from cruxible_client.contracts.captures import (
     classify_capture_reuse,
     verify_capture,
 )
+from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_attestations import (
     VerifiedClaimAttestationV1,
     read_claim_attestation,
@@ -68,6 +70,10 @@ from cruxible_client.contracts.claim_verdicts import (
     claim_adjudication_rule_digest,
     evaluate_claim_verdict,
 )
+from cruxible_client.contracts.declared_blocks import (
+    ProjectionWindow,
+    projection_window_intersecting,
+)
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.governance import PermissionTier
@@ -82,6 +88,7 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.providers import ProviderV1, provider_digest
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
 from cruxible_client.contracts.source_references import (
+    CasSourceReferenceV1,
     EvidenceCommitmentV1,
     ExternalSourceReferenceV1,
 )
@@ -1071,6 +1078,101 @@ def _required_pin(
     )
 
 
+@dataclass(frozen=True)
+class CitedSourceWindow:
+    """The whole source a capture was taken from, and the window inside it the Claim cites."""
+
+    source_id: str | None
+    content: bytes
+    start_byte: int
+    end_byte: int
+    # Whether ``content`` is the whole source the capture names, or only the
+    # bytes the capture committed to because the whole source did not resolve.
+    whole_source: bool = True
+
+
+_WINDOW_ACCESS = BodyAccessContext(principal_id="playbill-compiler", can_read_body=True)
+
+
+def resolve_cited_source_window(
+    envelope: CaptureEnvelopeAny,
+    *,
+    store: CaptureObjectStoreProtocol,
+) -> CitedSourceWindow | None:
+    """Resolve the bytes a citation's span is measured against, when they resolve.
+
+    A foreign-source capture commits to the SELECTED bytes and names the whole
+    source only by digest, so the whole source is read back from the store
+    when it is there -- a page that declares a block is handed over at
+    lowering and kept -- and the selection alone stands in for it otherwise.
+    A coordinator body is its own source. Anything else materialized in the
+    store is measured against its own commitment. ``None`` means nothing
+    resolves, and the caller decides whether that is allowed to pass.
+    """
+
+    source = envelope.source
+    commitment = envelope.commitment
+    if isinstance(source, ExternalSourceReferenceV1) and (
+        source.coordinate_type == FOREIGN_SOURCE_COORDINATE_TYPE
+    ):
+        coordinate = source.coordinate if isinstance(source.coordinate, Mapping) else {}
+        selector = source.selector if isinstance(source.selector, Mapping) else {}
+        window = selector.get("working_selection", selector)
+        page_digest = coordinate.get("source_content_digest")
+        start = window.get("start_byte") if isinstance(window, Mapping) else None
+        end = window.get("end_byte") if isinstance(window, Mapping) else None
+        if (
+            isinstance(page_digest, str)
+            and isinstance(start, int)
+            and isinstance(end, int)
+            and not isinstance(start, bool)
+            and not isinstance(end, bool)
+            and store.verify(page_digest)
+        ):
+            page = store.read(page_digest, access=_WINDOW_ACCESS)
+            if len(page) == coordinate.get("source_byte_length") and 0 <= start <= end <= len(page):
+                return CitedSourceWindow(source.source_identity, page, start, end)
+        if commitment.materialization == "cas" and store.verify(commitment.digest):
+            selected = store.read(commitment.digest, access=_WINDOW_ACCESS)
+            return CitedSourceWindow(
+                source.source_identity, selected, 0, len(selected), whole_source=False
+            )
+        return None
+    if isinstance(source, CasSourceReferenceV1) and store.verify(source.content_digest):
+        substrate = store.read(source.content_digest, access=_WINDOW_ACCESS)
+        if source.content_digest == commitment.digest or not store.verify(commitment.digest):
+            return CitedSourceWindow(None, substrate, 0, len(substrate))
+        selected = store.read(commitment.digest, access=_WINDOW_ACCESS)
+        first = substrate.find(selected)
+        if selected and first >= 0 and substrate.find(selected, first + 1) < 0:
+            return CitedSourceWindow(None, substrate, first, first + len(selected))
+        return CitedSourceWindow(None, selected, 0, len(selected))
+    if commitment.materialization == "cas" and store.verify(commitment.digest):
+        content = store.read(commitment.digest, access=_WINDOW_ACCESS)
+        return CitedSourceWindow(None, content, 0, len(content))
+    return None
+
+
+def projection_window_cited(
+    envelope: CaptureEnvelopeAny,
+    *,
+    store: CaptureObjectStoreProtocol,
+) -> tuple[CitedSourceWindow, ProjectionWindow] | None:
+    """The stamped block window a capture's span touches, if its source resolves and it does."""
+
+    resolved = resolve_cited_source_window(envelope, store=store)
+    if resolved is None:
+        return None
+    window = projection_window_intersecting(
+        resolved.content,
+        start_byte=resolved.start_byte,
+        end_byte=resolved.end_byte,
+    )
+    if window is None:
+        return None
+    return resolved, window
+
+
 def _capture_is_explicitly_eligible(
     claim: ClaimArtifactAny,
     *,
@@ -1943,6 +2045,21 @@ def evaluate_claim_law(
             return _diagnostic(
                 origin_refusal[0],
                 origin_refusal[1],
+                path=path,
+            )
+        # Evidence never comes from a projection window, whatever the role or
+        # origin of the citation. The cited capture's own bytes are the
+        # manifest of its windows; the client guard is only the fast path.
+        cited = projection_window_cited(envelope, store=capture_store)
+        if cited is not None:
+            resolved, window = cited
+            return _diagnostic(
+                "playbill.projection.evidence_from_projection",
+                "A citation reaches into a projection block: bytes "
+                f"[{resolved.start_byte}, {resolved.end_byte}) of source "
+                f"{resolved.source_id or envelope.commitment.digest!r} intersect stamped "
+                f"block {window.block_id!r}. A projection block is never evidence; cite "
+                "the Claims it reflects, or prose outside the block.",
                 path=path,
             )
         verified_commitments[envelope.commitment.digest] = envelope.commitment

@@ -1305,7 +1305,7 @@ def test_cli_bind_occurrence_selects_one_ambiguous_anchor(
 
 
 @pytest.mark.parametrize("citation_role", ["evidence", "copy"])
-def test_cli_bind_declared_block_is_role_aware(
+def test_cli_bind_declared_block_refuses_every_role(
     monkeypatch,
     tmp_path: Path,
     citation_role: str,
@@ -1371,10 +1371,8 @@ def test_cli_bind_declared_block_is_role_aware(
         ],
     )
 
-    if citation_role == "evidence":
-        assert result.exit_code == 1
-        assert "playbill.projection.independent_evidence_forbidden" in result.output
-        assert calls == []
-    else:
-        assert result.exit_code == 0, result.output
-        assert calls[0]["citation_role"] == "copy"
+    # Every role refuses inside a stamped block: a copy of projection bytes
+    # attests them into concrete exactly as evidence would.
+    assert result.exit_code == 1
+    assert "playbill.projection.evidence_from_projection" in result.output
+    assert calls == []

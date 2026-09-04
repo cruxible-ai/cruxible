@@ -523,6 +523,78 @@ def declares_projection_block(content: bytes) -> bool:
     return False
 
 
+@dataclass(frozen=True)
+class ProjectionWindow:
+    """One stamped block's byte window inside a source: opening marker to closing marker."""
+
+    block_id: str
+    start_byte: int
+    end_byte: int
+
+    def intersects(self, *, start_byte: int, end_byte: int) -> bool:
+        return start_byte < self.end_byte and end_byte > self.start_byte
+
+
+def stamped_projection_windows(content: bytes) -> tuple[ProjectionWindow, ...]:
+    """Every STAMPED block window in these bytes, whatever else the bytes are.
+
+    This is the evidence-side reading of the marker grammar: the capture is the
+    manifest, and the question a citation gate asks is only "does this span lie
+    inside a projection block?". It differs from the page parser on purpose:
+
+    * it never raises. A capture is evidence, not a page; a malformed marker in
+      it is the page's defect, refused when the page is parsed, and not a reason
+      to make the bytes uncitable;
+    * it applies no size ceiling. The projection ceilings bound what a PAGE may
+      hold, and a capture over that size may still back a claim. A source with
+      no marker bytes at all costs one substring search;
+    * only a STAMPED opening starts a window. A stamp is written by a repin or a
+      sync and by nothing else, so it is what makes a passage a projection; an
+      unstamped bootstrap pair is a draft whose prose is still the author's;
+    * a stamped opening that is never closed fails closed: everything after it
+      is inside a projection block as far as anyone can tell.
+
+    The column-zero and LF-only laws are the parser's, applied identically here,
+    so a quoted marker inside a fence or an indented one is inert on both sides.
+    """
+
+    if b"playbill:block:" not in content:
+        return ()
+    active: tuple[str, int] | None = None
+    windows: list[ProjectionWindow] = []
+    for line, line_start, offset in _marker_candidate_lines(content):
+        if line != line.lstrip(b" ") or line.endswith(b"\r\n"):
+            continue
+        stamped = _STAMPED_OPEN.fullmatch(line)
+        if stamped is not None:
+            if active is not None:
+                windows.append(ProjectionWindow(active[0], active[1], line_start))
+            active = (stamped.group(1).decode("ascii"), line_start)
+            continue
+        closing = _CLOSE.fullmatch(line)
+        if closing is not None and active is not None:
+            if closing.group(1).decode("ascii") == active[0]:
+                windows.append(ProjectionWindow(active[0], active[1], offset))
+                active = None
+    if active is not None:
+        windows.append(ProjectionWindow(active[0], active[1], len(content)))
+    return tuple(windows)
+
+
+def projection_window_intersecting(
+    content: bytes,
+    *,
+    start_byte: int,
+    end_byte: int,
+) -> ProjectionWindow | None:
+    """The first stamped window a byte span touches, or ``None`` when it touches none."""
+
+    for window in stamped_projection_windows(content):
+        if window.intersects(start_byte=start_byte, end_byte=end_byte):
+            return window
+    return None
+
+
 def _parse_projection_blocks(
     content: bytes,
     *,
@@ -733,13 +805,16 @@ __all__ = [
     "ProjectionMarkerError",
     "ProjectionQueryBackingV1",
     "ProjectionResolvedParameterBindingV1",
+    "ProjectionWindow",
     "assert_projection_block_frame",
     "declares_projection_block",
     "frame_projection_block",
     "parse_projection_blocks",
     "projection_parameter_digest",
     "projection_query_semantic_result_digest",
+    "projection_window_intersecting",
     "render_projection_closing",
     "render_projection_opening",
+    "stamped_projection_windows",
     "upgrade_playbill_presentation_policy",
 ]

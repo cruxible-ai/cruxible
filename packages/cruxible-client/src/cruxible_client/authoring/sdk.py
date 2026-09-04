@@ -1954,6 +1954,14 @@ class Playbill:
                 self._assert_coordinate(copied_from.coordinate)
                 source = ExistingCaptureCitationSourceV1(capture_digest=copied_from.capture_digest)
             else:
+                # A copy of projection bytes attests them into concrete exactly
+                # as evidence would; the role changes nothing about the law.
+                assert_independent_projection_evidence(
+                    source_id=copied_from.source_id,
+                    content=copied_from.content,
+                    start_byte=copied_from.start_byte,
+                    end_byte=copied_from.end_byte,
+                )
                 source = copied_from.observation()
             citation_role = "copy"
         else:

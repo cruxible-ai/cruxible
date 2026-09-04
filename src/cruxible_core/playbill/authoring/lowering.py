@@ -49,6 +49,7 @@ from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     AcceptedCaptureContract,
     CaptureBuildResult,
+    CaptureEnvelopeAny,
     DirectCaptureBuildResult,
     build_coordinator_self_source_capture,
     build_working_selection_capture,
@@ -89,8 +90,11 @@ from cruxible_client.contracts.claims import (
     evaluate_capture_evidence_admissions,
     merge_claim_citations,
     parse_claim,
+    projection_window_cited,
     render_claim,
+    resolve_cited_source_window,
 )
+from cruxible_client.contracts.declared_blocks import projection_window_intersecting
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandateV1,
@@ -127,13 +131,17 @@ from cruxible_client.contracts.query.definitions import (
     render_query_definition,
 )
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
-from cruxible_client.contracts.source_references import LedgerSourceReferenceV1
+from cruxible_client.contracts.source_references import (
+    ExternalSourceReferenceV1,
+    LedgerSourceReferenceV1,
+)
 from cruxible_client.contracts.subjects import (
     parse_subject,
     render_subject,
     subject_digest,
     subject_path,
 )
+from cruxible_core.playbill.authoring.registrations import bound_publication_registrations
 from cruxible_core.playbill.citation_relations import (
     RELATION_CONTRACT_SCHEMA,
     capture_contract_relation_subject,
@@ -529,6 +537,109 @@ def _install_claim_dependencies(
     return candidate_tree, changed_paths
 
 
+def _refuse_citation_into_projection_window(
+    instance: PlaybillInstance,
+    *,
+    payload: ClaimAuthoringPayloadV1,
+    envelope: CaptureEnvelopeAny,
+) -> None:
+    """Refuse a citation whose span lies inside a stamped projection block.
+
+    The daemon, not the client, says so: a citation of any role and any
+    origin whose span intersects a projection block window in the cited
+    source refuses here, before the wire ever mints a Claim. The cited
+    capture's own bytes are the manifest of its windows -- and a working
+    selection commits to its selected bytes alone, so a page that declares a
+    block is handed over with the observation and kept in the store, where the
+    citation gate reads it back at every later evaluation.
+
+    When the bytes cannot be resolved and the instance registers projection
+    blocks in that source, the span cannot be proved outside them, and an
+    unprovable citation into a governed page refuses rather than passes.
+    """
+
+    store = instance.body_store()
+    source_id: str | None = None
+    if isinstance(payload.source, WorkingSelectionObservationV1):
+        source_id = payload.source.source_id
+        page = payload.source.source_content
+        if page is not None:
+            store.store(page)
+            window = projection_window_intersecting(
+                page,
+                start_byte=payload.source.selector.start_byte,
+                end_byte=payload.source.selector.end_byte,
+            )
+            if window is not None:
+                _refuse_evidence_from_projection(
+                    source_id=source_id,
+                    block_id=window.block_id,
+                    start_byte=payload.source.selector.start_byte,
+                    end_byte=payload.source.selector.end_byte,
+                )
+            return
+    cited = projection_window_cited(envelope, store=store)
+    if cited is not None:
+        resolved, window = cited
+        _refuse_evidence_from_projection(
+            source_id=resolved.source_id or source_id,
+            block_id=window.block_id,
+            start_byte=resolved.start_byte,
+            end_byte=resolved.end_byte,
+        )
+    resolved_source = resolve_cited_source_window(envelope, store=store)
+    if resolved_source is None or not resolved_source.whole_source:
+        registered = bound_publication_registrations(instance)
+        cited_source = (
+            envelope.source.source_identity
+            if isinstance(envelope.source, ExternalSourceReferenceV1)
+            else source_id
+        )
+        if cited_source is None:
+            return
+        if registered is None:
+            _refuse(
+                "playbill.projection.window_unverifiable",
+                "source",
+                f"Source {cited_source!r} may carry projection blocks and the registration "
+                "fold cannot be read, so this span cannot be proved outside them.",
+                repair_kind="restore_registry",
+                repair_description="Restore the instance exhaust so registrations can be read.",
+            )
+        if any(item.preparation.source_id == cited_source for item in registered):
+            _refuse(
+                "playbill.projection.window_unverifiable",
+                "source",
+                f"Source {cited_source!r} registers projection blocks and its whole bytes "
+                "were not presented, so this span cannot be proved outside them.",
+                repair_kind="present_source_content",
+                repair_description=(
+                    "Cite through the SDK or `authoring bind`, which hand over the page "
+                    "(`source_content_base64`) when it declares a block."
+                ),
+            )
+
+
+def _refuse_evidence_from_projection(
+    *,
+    source_id: str | None,
+    block_id: str,
+    start_byte: int,
+    end_byte: int,
+) -> NoReturn:
+    _refuse(
+        "playbill.projection.evidence_from_projection",
+        "source",
+        f"Bytes [{start_byte}, {end_byte}) of source {source_id!r} lie inside projection "
+        f"block {block_id!r}. A projection block is never evidence, whatever the citation "
+        "role: cite the Claims it reflects, or prose outside the block.",
+        repair_kind="cite_outside_the_block",
+        repair_description=(
+            "Cite the accepted Claims the block reflects, or select prose outside it."
+        ),
+    )
+
+
 def _lower_claim(
     instance: PlaybillInstance,
     *,
@@ -860,6 +971,12 @@ def _lower_claim(
         envelope
         if isinstance(payload.source, ExistingCaptureCitationSourceV1)
         else built_capture.envelope
+    )
+
+    _refuse_citation_into_projection_window(
+        instance,
+        payload=payload,
+        envelope=capture_envelope,
     )
 
     identity = ArtifactIdentity(kind="Claim", name=claim_id)

@@ -437,6 +437,13 @@ class WorkingSelectionObservationV1(_StrictAuthoringModel):
     selected_content_base64: str
     selected_bytes_digest: str
     selector: WorkingAnchorWindowV1
+    # The whole observed source, present when it declares a projection block.
+    # A citation into such a page has to be proved outside every block window
+    # by the daemon, which holds only the selected bytes; the page is the
+    # manifest of its own windows, so the client hands it over. Optional and
+    # additive: a page with no stamped block sends nothing, and an intent
+    # stored before the field existed reads back unchanged.
+    source_content_base64: str | None = None
 
     @field_validator("source_id")
     @classmethod
@@ -450,6 +457,21 @@ class WorkingSelectionObservationV1(_StrictAuthoringModel):
     def _selected_content(cls, value: str) -> str:
         _canonical_base64(value, label="working selected content")
         return value
+
+    @field_validator("source_content_base64")
+    @classmethod
+    def _source_content(cls, value: str | None) -> str | None:
+        if value is not None:
+            _canonical_base64(value, label="working source content")
+        return value
+
+    @property
+    def source_content(self) -> bytes | None:
+        """The whole observed source when the observation carries it."""
+
+        if self.source_content_base64 is None:
+            return None
+        return _canonical_base64(self.source_content_base64, label="working source content")
 
     @field_validator("selected_bytes_digest")
     @classmethod
@@ -466,6 +488,17 @@ class WorkingSelectionObservationV1(_StrictAuthoringModel):
         digest = "sha256:" + hashlib.sha256(selected).hexdigest()
         if digest != self.selected_bytes_digest:
             raise ValueError("working selected-bytes digest does not reproduce")
+        whole = self.source_content
+        if whole is not None:
+            if len(whole) != self.coordinate.source_byte_length:
+                raise ValueError("working source content length differs from its coordinate")
+            if isinstance(self.coordinate, WorkingDigestCoordinateV1) and (
+                "sha256:" + hashlib.sha256(whole).hexdigest()
+                != self.coordinate.source_content_digest
+            ):
+                raise ValueError("working source content digest differs from its coordinate")
+            if whole[self.selector.start_byte : self.selector.end_byte] != selected:
+                raise ValueError("working selected bytes are not at their window in the source")
         return self
 
     @property

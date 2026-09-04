@@ -41,6 +41,7 @@ from cruxible_client.contracts.declared_blocks import (
     parse_projection_blocks,
     projection_parameter_digest,
     projection_query_semantic_result_digest,
+    projection_window_intersecting,
     render_projection_opening,
 )
 from cruxible_client.contracts.errors import PlaybillError
@@ -51,7 +52,15 @@ from cruxible_client.transport.http import CruxibleClient
 
 
 class ProjectionIndependentEvidenceForbidden(PlaybillError):
-    code = "playbill.projection.independent_evidence_forbidden"
+    """A citation's span lies inside a projection block: the client fast path.
+
+    Evidence never comes from a projection window, whatever the citation's role
+    or origin. The daemon refuses the same span with the same code at lowering
+    and at the citation gate; this raises before the wire so an author learns
+    it without a round trip.
+    """
+
+    code = "playbill.projection.evidence_from_projection"
 
     def __init__(
         self,
@@ -67,8 +76,8 @@ class ProjectionIndependentEvidenceForbidden(PlaybillError):
         self.end_byte = end_byte
         super().__init__(
             f"{self.code}: source {source_id!r} block {block_id!r} intersects "
-            f"selected bytes [{start_byte}, {end_byte}); cite the underlying claim, "
-            "or author an explicit copy citation"
+            f"selected bytes [{start_byte}, {end_byte}); a projection block is never "
+            "evidence, so cite the Claims it reflects, or cite prose outside the block"
         )
 
 
@@ -93,16 +102,22 @@ def assert_independent_projection_evidence(
     start_byte: int,
     end_byte: int,
 ) -> None:
-    for block in parse_projection_blocks(content, source_id=source_id, allow_bootstrap=True):
-        if block.stamp is None:
-            continue
-        if start_byte < block.closing_end and end_byte > block.opening_start:
-            raise ProjectionIndependentEvidenceForbidden(
-                source_id=source_id,
-                block_id=block.block_id,
-                start_byte=start_byte,
-                end_byte=end_byte,
-            )
+    """Refuse a span that touches any stamped block window in ``content``.
+
+    Reads the windows with the evidence-side scanner rather than the page
+    parser: a cited source is evidence, not a projection page, so it is neither
+    held to the page ceilings nor refused for a marker defect of its own. A
+    capture with no marker bytes costs one substring search.
+    """
+
+    window = projection_window_intersecting(content, start_byte=start_byte, end_byte=end_byte)
+    if window is not None:
+        raise ProjectionIndependentEvidenceForbidden(
+            source_id=source_id,
+            block_id=window.block_id,
+            start_byte=start_byte,
+            end_byte=end_byte,
+        )
 
 
 def _claim_backing(

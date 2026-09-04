@@ -20,6 +20,7 @@ from cruxible_client.authoring.blocks import (
 from cruxible_client.authoring.examples import claim_self_source_example
 from cruxible_client.authoring.inputs import ClaimInput
 from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.authoring.models import WorkingSelectionObservationV1
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.declared_blocks import (
     MAX_PROJECTION_BLOCKS_PER_SOURCE,
@@ -30,6 +31,8 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionResolvedParameterBindingV1,
     projection_parameter_digest,
     projection_query_semantic_result_digest,
+    projection_window_intersecting,
+    stamped_projection_windows,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 
@@ -173,10 +176,10 @@ def test_evidence_intersection_is_typed_but_ordinary_prose_is_allowed() -> None:
             start_byte=start,
             end_byte=start + 4,
         )
-    assert refusal.value.code == "playbill.projection.independent_evidence_forbidden"
+    assert refusal.value.code == "playbill.projection.evidence_from_projection"
     assert refusal.value.source_id == "corpus.runbook"
     assert refusal.value.block_id == "summary"
-    assert "explicit copy citation" in str(refusal.value)
+    assert "never evidence" in str(refusal.value)
     assert_independent_projection_evidence(
         source_id="corpus.runbook",
         content=content,
@@ -205,7 +208,7 @@ def test_unstamped_block_preserves_independent_evidence_and_stamped_block_refusa
     with pytest.raises(ProjectionIndependentEvidenceForbidden) as refusal:
         bind_working_selection_input(evidence, content=content, anchor="Visible prose")
     assert refusal.value.block_id == "summary"
-    assert refusal.value.code == "playbill.projection.independent_evidence_forbidden"
+    assert refusal.value.code == "playbill.projection.evidence_from_projection"
 
 
 def test_query_backing_commits_existing_resolved_parameter_digest_and_semantics_only() -> None:
@@ -247,27 +250,77 @@ def test_query_backing_commits_existing_resolved_parameter_digest_and_semantics_
 
 
 @pytest.mark.parametrize("window_lines", [None, 1])
-def test_flow_a_bind_refuses_independent_evidence_but_permits_the_same_explicit_copy(
+@pytest.mark.parametrize("role", ["evidence", "copy"])
+def test_flow_a_bind_refuses_every_role_inside_a_stamped_block(
     window_lines: int | None,
+    role: str,
 ) -> None:
-    content = b"before\n" + _block() + b"after\n"
+    """A copy of projection bytes attests them into concrete exactly as evidence would.
+
+    The role used to decide whether the guard ran at all, so `copy` walked
+    straight past it; the daemon now refuses every role at lowering and at the
+    citation gate, and this client guard is its fast path.
+    """
+
+    content = b"before\nmore prose\n" + _block() + b"after\n"
     template = claim_self_source_example().model_dump(mode="json")
     template["source"] = {"kind": "working_selection", "source_id": "corpus.runbook"}
-    evidence = ClaimInput.model_validate({**template, "citation_role": "evidence"})
-    copy = ClaimInput.model_validate({**template, "citation_role": "copy"})
+    claim_input = ClaimInput.model_validate({**template, "citation_role": role})
 
     with pytest.raises(ProjectionIndependentEvidenceForbidden):
         bind_working_selection_input(
-            evidence,
+            claim_input,
             content=content,
             anchor="Visible prose",
             window_lines=window_lines,
         )
 
     allowed = bind_working_selection_input(
-        copy,
+        claim_input,
         content=content,
-        anchor="Visible prose",
+        anchor="before",
         window_lines=window_lines,
     )
-    assert allowed.citation_role == "copy"
+    assert allowed.citation_role == role
+    # The page declares a block, so the observation carries the whole page for
+    # the daemon to read the windows from.
+    assert isinstance(allowed.source, WorkingSelectionObservationV1)
+    assert allowed.source.source_content == content
+
+
+def test_a_page_with_no_stamped_block_sends_only_its_selection() -> None:
+    content = b"before\nplain prose\nafter\n"
+    template = claim_self_source_example().model_dump(mode="json")
+    template["source"] = {"kind": "working_selection", "source_id": "corpus.runbook"}
+    claim_input = ClaimInput.model_validate({**template, "citation_role": "evidence"})
+
+    bound = bind_working_selection_input(claim_input, content=content, anchor="plain prose")
+
+    assert isinstance(bound.source, WorkingSelectionObservationV1)
+    assert bound.source.source_content_base64 is None
+
+
+def test_an_oversized_capture_with_no_marker_is_citable(tmp_path: object) -> None:
+    """Card 100: a capture is evidence, not a page, so the page ceiling does not apply."""
+
+    content = b"x" * (MAX_PROJECTION_SOURCE_BYTES + 1)
+    assert_independent_projection_evidence(
+        source_id="corpus.big",
+        content=content,
+        start_byte=10,
+        end_byte=20,
+    )
+    assert stamped_projection_windows(content) == ()
+
+
+def test_a_stamped_window_is_read_without_the_page_parser() -> None:
+    """The evidence-side scanner neither raises on a page defect nor bounds the size."""
+
+    broken = b"<!-- playbill:block:one:AAAA -->\nbody\n<!-- /playbill:block:two -->\ntail\n"
+    (window,) = stamped_projection_windows(broken)
+    assert (window.block_id, window.start_byte, window.end_byte) == ("one", 0, len(broken))
+    with pytest.raises(ProjectionMarkerError):
+        parse_projection_blocks(broken, source_id="corpus.runbook", allow_bootstrap=True)
+    quoted = b"```\n" + _block() + b"```\nprose\n"
+    assert stamped_projection_windows(quoted) == ()
+    assert projection_window_intersecting(quoted, start_byte=0, end_byte=len(quoted)) is None

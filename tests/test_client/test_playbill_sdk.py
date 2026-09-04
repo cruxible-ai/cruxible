@@ -37,6 +37,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringExactContentObjectV1,
     ClaimAuthoringPayloadV2,
     ClaimAuthoringPayloadV3,
+    WorkingSelectionObservationV1,
 )
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicyV1,
@@ -379,10 +380,18 @@ def test_sdk_curation_lifecycle_methods_are_thin_typed_delegates(tmp_path: Path)
 
 
 @pytest.mark.parametrize("window", [False, True])
-def test_sdk_declared_block_forbids_evidence_but_allows_explicit_copy(
+def test_sdk_declared_block_refuses_every_citation_role_inside_it(
     tmp_path: Path,
     window: bool,
 ) -> None:
+    """A copy of projection bytes attests them into concrete as evidence would.
+
+    `copied_from` used to walk past the guard by its role alone. The daemon now
+    refuses every role at lowering and at the citation gate; the SDK guard is
+    the fast path, and a selection of prose OUTSIDE the block hands the daemon
+    the page so it can prove the span independent itself.
+    """
+
     _workspace(tmp_path)
     source = tmp_path / "corpus" / "runbook.md"
     body = b"Patch KEV systems within 48 hours.\n"
@@ -399,9 +408,14 @@ def test_sdk_declared_block_forbids_evidence_but_allows_explicit_copy(
         ),
         body_digest="sha256:" + hashlib.sha256(body).hexdigest(),
     )
-    source.write_bytes(
-        render_projection_opening(stamp) + body + b"<!-- /playbill:block:policy -->\n"
+    page = (
+        b"Preamble the author wrote.\n"
+        b"A second preamble line.\n"
+        + render_projection_opening(stamp)
+        + body
+        + b"<!-- /playbill:block:policy -->\n"
     )
+    source.write_bytes(page)
     pb = Playbill._from_client(  # type: ignore[arg-type]
         _Client(),
         instance_id="inst_test",
@@ -413,6 +427,11 @@ def test_sdk_declared_block_forbids_evidence_but_allows_explicit_copy(
         selector.anchor_window(text="within 48 hours", surrounding_lines=1)
         if window
         else selector.anchor("within 48 hours")
+    )
+    outside = (
+        selector.anchor_window(text="Preamble the author wrote", surrounding_lines=1)
+        if window
+        else selector.anchor("Preamble the author wrote")
     )
     common: dict[str, Any] = {
         "subject": "secops.policy/patch-sla",
@@ -430,13 +449,16 @@ def test_sdk_declared_block_forbids_evidence_but_allows_explicit_copy(
         "claim_type_definition": None,
     }
 
-    with pytest.raises(ProjectionIndependentEvidenceForbidden):
+    with pytest.raises(ProjectionIndependentEvidenceForbidden) as evidence_refusal:
         pb.claim(supported_by=selection, copied_from=None, **common)
+    assert evidence_refusal.value.code == "playbill.projection.evidence_from_projection"
+    with pytest.raises(ProjectionIndependentEvidenceForbidden):
+        pb.claim(supported_by=None, copied_from=selection, **common)
 
-    copy = pb.claim(supported_by=None, copied_from=selection, **common)
+    copy = pb.claim(supported_by=None, copied_from=outside, **common)
     assert copy.payload.citation_role == "copy"
-    # Raw-wire callers remain the explicitly accepted, documented residual.
-    assert selection.observation().selected_content
+    assert isinstance(copy.payload.source, WorkingSelectionObservationV1)
+    assert copy.payload.source.source_content == page
 
 
 def test_sdk_retirement_owns_claim_ref_and_coordinate_plumbing(tmp_path: Path) -> None:

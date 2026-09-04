@@ -18,6 +18,7 @@ from cruxible_client.contracts.authoring.models import (
     WorkingDigestCoordinateV1,
     WorkingSelectionObservationV1,
 )
+from cruxible_client.contracts.declared_blocks import stamped_projection_windows
 from cruxible_client.contracts.source_catalog import (
     ProcedureProjectionCatalogEntry,
     SourceCatalog,
@@ -95,6 +96,21 @@ def _line_window(
     return window_start, window_end
 
 
+def source_content_for_observation(content: bytes) -> str | None:
+    """The whole source, base64, when it declares a projection block; else nothing.
+
+    A citation into a page that carries stamped blocks has to be proved outside
+    every window by the daemon, not just by this client, and the daemon holds
+    only the selected bytes. Sending the page lets it read the windows itself:
+    the capture is the manifest. A page with no stamped block sends nothing, so
+    the common citation costs what it always did.
+    """
+
+    if not stamped_projection_windows(content):
+        return None
+    return base64.b64encode(content).decode("ascii")
+
+
 @dataclass(frozen=True)
 class EvidenceSelection:
     path: Path
@@ -112,6 +128,7 @@ class EvidenceSelection:
                 source_content_digest=_digest(self.content),
                 source_byte_length=len(self.content),
             ),
+            source_content_base64=source_content_for_observation(self.content),
             selected_content_base64=base64.b64encode(selected).decode("ascii"),
             selected_bytes_digest=_digest(selected),
             selector=WorkingAnchorWindowV1(
