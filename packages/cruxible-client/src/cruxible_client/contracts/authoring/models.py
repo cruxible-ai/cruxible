@@ -85,7 +85,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:98e4c9330ade83614260d4350e679f3efc5c35b520c7477b2412f461c3d9142a"
+    "sha256:5dda66b2d163f1b2f3067b6a8e49c27c140bfd7b62fb3a27942ce3c2007db07c"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -2486,10 +2486,13 @@ class PlaybillBlockSyncReadResultV1(_StrictAuthoringModel):
         return base64.b64decode(self.body_content_base64, validate=True)
 
 
-# `synced` and `would_sync` are the outcomes of a write this verb no longer
-# performs: nothing renders a block body, so nothing rewrites one. They stay in
-# the vocabulary because narrowing a result enum is a wire removal, and a caller
-# holding an older result must still parse. `block sync` produces neither.
+# `synced` and `would_sync` name the one thing this verb still writes towards
+# agreement. Nothing renders a block body, so no body is ever rewritten; what
+# `--accept-local` does instead is re-stamp the block on the prose already in the
+# page, and `synced` says the two now agree because this call made them agree
+# (`would_sync` is the same, previewed under `--check`). The members were kept
+# through the convergence removal because narrowing a result enum is a wire
+# removal; they carry the surviving write.
 PlaybillBlockSyncOutcome: TypeAlias = Literal[
     "unchanged",
     "stale",
