@@ -103,13 +103,22 @@ def _public_models() -> dict[str, Any]:
     dropped every one imported into it -- including the twenty-seven exported
     deliberately with the `X as X` idiom, which is the ONLY thing that defines
     this package's export surface, since there is no `__all__`. So the snapshot
-    said nothing about `SourceReadReceiptV1.requested_path`,
-    `PlaybillDescriptor.decommissioned` or `PlaybillSearchOrientationV1.
-    decommissioned`: fields real clients see, moving no pin.
+    said nothing about `SourceReadReceiptV1.requested_path`: a field real
+    clients see, moving no pin. That one is now covered.
 
-    The namespace is now the law. A model reachable only by importing a
+    Two neighbours named alongside it in the card are NOT, and neither becomes
+    covered by this filter. `PlaybillDescriptor.decommissioned` lives in
+    `contracts/types.py`, which the namespace does not re-export, so the model
+    is reachable by importing the submodule but is not published and moves no
+    pin here. `PlaybillSearchOrientationV1` is not a client contract at all --
+    it is `cruxible_core.playbill.search`, server-side, and this snapshot has
+    never had an opinion about it.
+
+    The namespace is the law, and it is the WHOLE law: what it publishes is
+    covered, what it does not is not. A model reachable only by importing a
     submodule is reachable but not published, and stays where the authoring and
-    claim-attestation wire catalogs pin it.
+    claim-attestation wire catalogs pin it -- or, as with the two above, is
+    pinned nowhere in this snapshot by design.
     """
 
     models: dict[str, Any] = {}

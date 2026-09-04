@@ -5,10 +5,14 @@ request and response digest is taken over the RESOLVED JSON schema, so a field
 added, renamed, retyped or removed inside a request body moves the pin. Before
 that the digest was taken over FastAPI's `{"$ref": ...}`, which hashed a
 component name: adding `git_object_format` to the init request moved nothing,
-and 78 routes shared 49 request digests because the digest space was model
-names rather than schemas. A model that refers to itself is inlined until it
-repeats and then left as a stable marker, so a recursive body still digests
-deterministically.
+because the digest space was model names rather than schemas. Two routes
+carrying the same model also shared one digest -- at the pin before this one,
+78 routes had 77 response bodies between them and only 64 distinct response
+digests. (Requests collided less: 48 of those 78 routes carried a request
+body and each already digested distinctly, so the request-side defect was
+blindness to field changes rather than collision.) A model that refers to
+itself is inlined until it repeats and then left as a stable marker, so a
+recursive body still digests deterministically.
 
 Reviewers should expect request-body deltas to appear here now. A patch that
 touches a served request model moves this snapshot even when no route, verb or
@@ -59,8 +63,12 @@ def _resolve_schema(
     FastAPI puts `{"$ref": "#/components/schemas/Foo"}` where a request or
     response body goes, and digesting that hashed a component NAME. Renaming,
     adding, retyping or removing any field inside a request model moved no pin
-    at all: 78 pinned routes shared 49 distinct request digests, because the
-    digest space was model names. The MCP lane was pinned properly the whole
+    at all, because the digest space was model names: every request body under
+    one model name digested identically no matter what the model said. Routes
+    sharing a model also shared a digest -- 77 response bodies across the 78
+    routes pinned before this change carried 64 distinct response digests,
+    while the 48 request bodies among them happened to name 48 distinct models
+    and so collided nowhere. The MCP lane was pinned properly the whole
     time -- its tool schemas are inlined already -- so the same artifact was
     honest about one transport and silent about the other.
 
