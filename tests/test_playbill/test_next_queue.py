@@ -281,10 +281,22 @@ def test_unresolved_citation_predecessor_degrades_to_a_row_with_a_typed_note(
     original_tree_at = instance.tree_at
     synthetic_oids = {item.oid for item in synthetic}
     monkeypatch.setattr(instance, "accepted_history", lambda: (*synthetic, current))
+    original_blob_at = instance.blob_at
     monkeypatch.setattr(
         instance,
         "tree_at",
         lambda oid: {} if oid in synthetic_oids else original_tree_at(oid),
+    )
+    original_blobs_at = instance.blobs_at
+    monkeypatch.setattr(
+        instance,
+        "blob_at",
+        lambda oid, path: None if oid in synthetic_oids else original_blob_at(oid, path),
+    )
+    monkeypatch.setattr(
+        instance,
+        "blobs_at",
+        lambda oid, paths: {} if oid in synthetic_oids else original_blobs_at(oid, paths),
     )
     monkeypatch.setattr(
         "cruxible_core.service.playbill_next._claim_law_evidence",

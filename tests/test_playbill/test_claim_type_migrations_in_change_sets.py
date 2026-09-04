@@ -392,11 +392,10 @@ def test_the_affects_package_migration_lands_as_one_generation(tmp_path: Path) -
         ),
     )
     # Nothing the succession left behind: no stale pin, no undispositioned
-    # dependent, no unregistered block -- only the ordinary evidence coverage
-    # this seeded world already owed before the vocabulary moved.
-    assert {item.reason for item in outstanding.items} == {"claim_uncovered"}, (
-        outstanding.model_dump(mode="json")
-    )
+    # dependent, no unregistered block. Nor any coverage debt: this world's
+    # ClaimType names the coordinator self-source contract in its
+    # evidence-admission policy, so its authored bodies are admitted by rule.
+    assert {item.reason for item in outstanding.items} == set(), outstanding.model_dump(mode="json")
 
 
 def test_a_carry_of_an_out_of_enum_value_refuses(tmp_path: Path) -> None:

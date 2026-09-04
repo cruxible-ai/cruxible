@@ -136,6 +136,24 @@ class _TransportGuard:
         self._client.close()
 
 
+@contextmanager
+def connect_orientation_budget(client: object) -> Iterator[None]:
+    """Give one connect-time orientation its own, larger read budget.
+
+    Written as a function rather than a client method because the daemon
+    surface catalog is frozen: adding a public method to ``CruxibleClient``
+    would widen a pinned surface. A client that exposes no guarded transport
+    (a test double, say) simply runs the block under whatever budget it has.
+    """
+
+    guard = getattr(client, "_client", None)
+    if not isinstance(guard, _TransportGuard):
+        yield
+        return
+    with guard.budget(connect_orientation_timeout()):
+        yield
+
+
 class CruxibleClient:
     """Synchronous client for daemon host, credential, and Playbill operations."""
 
@@ -166,13 +184,6 @@ class CruxibleClient:
                 timeout=_default_timeout(),
             )
         self._client = _TransportGuard(raw_client, target)
-
-    @contextmanager
-    def connect_orientation_budget(self) -> Iterator[None]:
-        """Give one connect-time orientation its own, larger read budget."""
-
-        with self._client.budget(connect_orientation_timeout()):
-            yield
 
     def close(self) -> None:
         self._client.close()

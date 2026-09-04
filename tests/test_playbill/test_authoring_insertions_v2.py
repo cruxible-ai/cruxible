@@ -15,6 +15,7 @@ from cruxible_client.authoring.insertions import (
     apply_playbill_publication,
 )
 from cruxible_client.authoring.workspace import _projection_marker_observation
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
     AuthoringExistingClaimDispositionV1,
     InsertionAnchorWindowV1,
@@ -41,12 +42,15 @@ from cruxible_client.contracts.declared_blocks import (
     parse_projection_blocks,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subjects import SubjectShell, subject_path
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.authoring.insertions import (
     PublicationAnchorAmbiguous,
     PublicationAnchorStale,
     PublicationBodyNotMarkerCompatible,
     PublicationClaimNotAccepted,
+    PublicationClaimProjectedAsItself,
     PublicationConfirmationMismatch,
     PublicationPreparationStale,
     PublicationRevisionLimitExceeded,
@@ -63,6 +67,7 @@ from cruxible_core.playbill.coverage.contracts import (
     CoverageAccessProfileV1,
     LogicalSourceIdentityV1,
 )
+from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
@@ -200,9 +205,14 @@ def _expectation():
     )
 
 
-def _submitted_publication(tmp_path: Path, *, activate_claim: bool = True):
+def _submitted_publication(
+    tmp_path: Path,
+    *,
+    activate_claim: bool = True,
+    additional_subjects: tuple[SubjectShell, ...] = (),
+):
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed_claim_surface(instance, owner, additional_subjects=additional_subjects)
     clock = [datetime(2026, 8, 22, 12, tzinfo=UTC)]
     coordinator = AuthoringIntentCoordinator(
         instance=instance,
@@ -620,9 +630,92 @@ def test_coordinator_reprepares_after_client_cas_refuses_a_concurrent_edit(
     assert applied.outcome == "applied"
 
 
-def test_prepare_warns_when_body_duplicates_a_live_citation_on_the_target_source(
+_NEIGHBOUR_SUBJECT = SubjectShell(
+    identity=ArtifactIdentity(kind="Subject", name="project.work_item/wi-77"),
+    subject_kind="project.work_item",
+    subject_id="wi-77",
+)
+
+
+def _neighbour_citing_the_target_source(
+    instance: PlaybillInstance,
+    owner: object,
+    actor: AuthenticatedActor,
+) -> None:
+    """Accept one unrelated live Claim whose evidence lives in the target source."""
+
+    neighbour = AuthoringIntentCoordinator(
+        instance=instance,
+        store=AuthoringIntentStore(
+            instance.root / instance.descriptor.storage.exhaust,
+            token_factory=lambda: "3" * 32,
+        ),
+        claim_id_factory=lambda: "CLM-" + "4" * 32,
+        clock=lambda: datetime(2026, 8, 22, 12, tzinfo=UTC),
+    )
+    base = _working_payload(occurrence_count=1)
+    payload = base.model_copy(
+        update={
+            "statement": base.statement.model_copy(
+                update={
+                    "subject": SemanticAddress.whole_artifact(
+                        subject_path(
+                            _NEIGHBOUR_SUBJECT.subject_kind,
+                            _NEIGHBOUR_SUBJECT.subject_id,
+                        )
+                    )
+                }
+            )
+        }
+    )
+    intent = neighbour.create(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp="2026-08-22T12:00:01.000000Z",
+    ).intent
+    submitted = neighbour.submit(intent.intent_id, actor=actor)
+    assert submitted.status.proposal_id is not None
+    assert submitted.status.candidate_digest is not None
+    _activate(
+        instance,
+        owner,
+        proposal_id=submitted.status.proposal_id,
+        candidate_digest=submitted.status.candidate_digest,
+    )
+
+
+def test_prepare_warns_when_body_duplicates_another_claims_citation_on_the_target_source(
     tmp_path: Path,
 ) -> None:
+    instance, owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path,
+        additional_subjects=(_NEIGHBOUR_SUBJECT,),
+    )
+    _neighbour_citing_the_target_source(instance, owner, actor)
+
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    replayed = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+
+    (warning,) = prepared.warnings
+    assert warning.code == "playbill.authoring.publication_citation_anchor_collision"
+    assert warning.source_id == "repo.work-items"
+    assert warning.citation_ids == tuple(sorted(set(warning.citation_ids)))
+    assert replayed.warnings == prepared.warnings
+
+
+def test_prepare_refuses_a_backing_claim_projected_as_its_own_source(
+    tmp_path: Path,
+) -> None:
+    """A source block and a projection block are never the same block."""
+
     instance, owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
         tmp_path
     )
@@ -635,6 +728,8 @@ def test_prepare_warns_when_body_duplicates_a_live_citation_on_the_target_source
         claim_id_factory=lambda: "CLM-" + "4" * 32,
         clock=lambda: datetime(2026, 8, 22, 12, tzinfo=UTC),
     )
+    # The publication's own backing Claim is revised onto evidence that lives in
+    # the very source it is about to be published into.
     revision_payload = _working_payload(occurrence_count=1).model_copy(
         update={"claim_ref": "CLM-" + "2" * 32}
     )
@@ -653,22 +748,15 @@ def test_prepare_warns_when_body_duplicates_a_live_citation_on_the_target_source
         candidate_digest=revised.status.candidate_digest,
     )
 
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    replayed = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-
-    (warning,) = prepared.warnings
-    assert warning.code == "playbill.authoring.publication_citation_anchor_collision"
-    assert warning.source_id == "repo.work-items"
-    assert warning.citation_ids == tuple(sorted(set(warning.citation_ids)))
-    assert replayed.warnings == prepared.warnings
+    with pytest.raises(PublicationClaimProjectedAsItself) as refusal:
+        coordinator.prepare_publication(
+            intent_id,
+            actor=actor,
+            observation=_observation(preimage),
+        )
+    message = str(refusal.value)
+    assert message.startswith("playbill.authoring.publication_claim_projected_as_itself: ")
+    assert "repo.work-items" in message
 
 
 def test_stale_prepare_replay_cannot_return_a_superseded_preparation(

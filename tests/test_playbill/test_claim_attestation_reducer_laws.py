@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -345,6 +346,13 @@ class _LineageInstance:
 
     def tree_at(self, oid: str) -> dict[str, bytes]:
         return self._trees[oid]
+
+    def blob_at(self, oid: str, path: str) -> bytes | None:
+        return self._trees[oid].get(path)
+
+    def blobs_at(self, oid: str, paths: Sequence[str]) -> dict[str, bytes]:
+        tree = self._trees[oid]
+        return {path: tree[path] for path in paths if path in tree}
 
 
 def test_lineage_walk_hits_256_cap_and_reports_incomplete(tmp_path: Path) -> None:

@@ -595,6 +595,10 @@ def test_bounded_claim_lineages_marks_an_unresolved_257th_predecessor_incomplete
     instance = SimpleNamespace(
         accepted_history=lambda: tuple(SimpleNamespace(oid=oid) for oid in oids),
         tree_at=lambda oid: trees[oid],
+        blob_at=lambda oid, path: trees[oid].get(path),
+        blobs_at=lambda oid, paths: {
+            path: trees[oid][path] for path in paths if path in trees[oid]
+        },
     )
     current = rows[-1]
     accepted = _facts((current,), generation="77").coordinate.model_copy(
