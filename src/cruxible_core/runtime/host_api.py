@@ -13,6 +13,7 @@ from typing import TypedDict
 
 from cruxible_client import contracts
 from cruxible_client.contracts.errors import (
+    PlaybillObjectFormatConflict,
     PlaybillReseedRequired,
 )
 from cruxible_core import __version__
@@ -301,30 +302,52 @@ def playbill_host_workspace_detach(
 
 
 def _refuse_detach_with_registered_blocks(instance_id: str) -> None:
-    """Refuse while this host still expects blocks it published to be in the worktree."""
+    """Refuse while this host still expects blocks it published to be in the worktree.
 
-    from cruxible_client.contracts.errors import PlaybillError
+    The one failure this reads as "published nothing" is Playbill never having
+    been initialized under the host: there is no ledger, so there is no
+    registration, so a detachment strands nothing. Every OTHER way of failing to
+    open the host means the registrations could not be READ, and reading an
+    unreadable host as an empty one would let exactly the state this refusal
+    exists to prevent through on a transient fault. Those refuse instead, and
+    say which host could not be opened.
+    """
+
+    from cruxible_client.contracts.errors import PlaybillBootstrapError, PlaybillError
     from cruxible_core.service.playbill_publications import bound_publication_registrations
 
     try:
         instance = get_playbill_manager().get(instance_id)
-    except (ConfigError, PlaybillError):
-        # A host with no Playbill state published nothing, so there is nothing
-        # a detachment can strand.
+    except PlaybillObjectFormatConflict as exc:
+        # A bootstrap error by inheritance, but it means the host is THERE and
+        # unreadable, not absent.
+        raise _detach_cannot_read_host(instance_id, exc) from exc
+    except PlaybillBootstrapError:
         return
+    except (ConfigError, PlaybillError) as exc:
+        raise _detach_cannot_read_host(instance_id, exc) from exc
     registrations = bound_publication_registrations(instance)
     if not registrations:
         return
-    named = ", ".join(
-        sorted(
-            f"{item.preparation.source_id}#{item.preparation.block_id}" for item in registrations
-        )[:5]
+    pairs = sorted(
+        f"{item.preparation.source_id}#{item.preparation.block_id}" for item in registrations
     )
+    named = ", ".join(pairs[:5])
+    if len(pairs) > 5:
+        named = f"{named}, and {len(pairs) - 5} more"
     raise ConfigError(
         f"Playbill host {instance_id!r} still registers {len(registrations)} published "
         f"block(s) in this workspace ({named}); detaching would leave markers no host "
         "owns. Repair: run `cruxible playbill block depublish <source> <block>` for each, "
         "or retire their backing Claims, then detach"
+    )
+
+
+def _detach_cannot_read_host(instance_id: str, exc: Exception) -> ConfigError:
+    return ConfigError(
+        f"Playbill host {instance_id!r} could not be opened, so the blocks it published "
+        f"cannot be read and a detachment cannot be shown to strand nothing ({exc}). "
+        "Repair: make the host readable, then detach"
     )
 
 

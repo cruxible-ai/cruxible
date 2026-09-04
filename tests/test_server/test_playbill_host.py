@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from cruxible_client.contracts.declared_blocks import frame_projection_block
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
@@ -19,6 +20,7 @@ from cruxible_client.contracts.documents import (
 )
 from cruxible_client.contracts.errors import (
     PlaybillBootstrapError,
+    PlaybillFormatError,
     PlaybillReseedRequired,
     ProposalIntegrityError,
 )
@@ -26,6 +28,9 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.workspace_file import WorkspaceFileSourceRequestV1
 from cruxible_core.errors import ConfigError
+from cruxible_core.playbill.authoring.insertions import (
+    publication_confirmation_from_source,
+)
 from cruxible_core.playbill.keys import (
     GeneratedKeyMaterial,
     generate_client_principal_key,
@@ -1440,3 +1445,143 @@ def test_detaching_a_workspace_needs_the_local_socket_that_attaching_needs(
         host_api.playbill_host_workspace_detach("inst_socket_guarded")
 
     assert get_registry().get("inst_socket_guarded").workspace_root is not None  # type: ignore[union-attr]
+
+
+def test_a_detach_refuses_while_the_host_still_registers_a_published_block(
+    host_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    """Card 88's one guarantee, which nothing exercised.
+
+    Nothing stops a detach from stranding published markers except this
+    refusal: the instance is never told the workspace left, so if the detach
+    goes through under live registrations the page keeps markers no host owns,
+    and that is the state with no repair from inside the workspace. It had no
+    test at all.
+
+    The host's Playbill state is supplied through the manager's declared
+    testing seam so that the registration under test is a REAL bound
+    publication -- prepared, confirmed, and registered -- rather than a stub
+    standing in for one.
+    """
+
+    from cruxible_core.service.playbill_publications import service_depublish_playbill_block
+    from tests.test_playbill.test_authoring_insertions_v2 import (
+        _observation,
+        _submitted_publication,
+    )
+
+    del host_client
+    workspace = tmp_path / "published-workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", "--object-format=sha1", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    host_api.create_playbill_host(
+        instance_id="inst_publishing_host",
+        workspace_root=str(workspace),
+        workspace_attachment_authorized=True,
+    )
+
+    published_state = tmp_path / "published-state"
+    published_state.mkdir()
+    instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        published_state
+    )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    assert prepared.preparation is not None
+    preparation = prepared.preparation
+    framed = frame_projection_block(stamp=preparation.stamp, body=b"status: ready\n")
+    offset = preparation.rebased_selector.insertion_offset
+    exact = publication_confirmation_from_source(
+        intent_id=intent_id,
+        expectation=prepared.expectation,
+        observation=_observation(preimage[:offset] + framed + preimage[offset:]),
+    )
+    assert exact is not None
+    assert coordinator.confirm_insertion(intent_id, actor=actor, observation=exact).outcome == (
+        "bound"
+    )
+    get_playbill_manager().register("inst_publishing_host", instance)
+
+    with pytest.raises(ConfigError) as refusal:
+        host_api.playbill_host_workspace_detach(
+            "inst_publishing_host",
+            workspace_attachment_authorized=True,
+        )
+
+    message = str(refusal.value)
+    assert f"{preparation.source_id}#{preparation.block_id}" in message
+    assert "playbill block depublish" in message
+    # Refused means refused: the worktree is still this host's.
+    assert get_registry().get("inst_publishing_host").workspace_root is not None  # type: ignore[union-attr]
+
+    service_depublish_playbill_block(
+        instance,
+        coordinator=coordinator,
+        actor=actor,
+        source_id=preparation.source_id,
+        block_id=preparation.block_id,
+    )
+
+    detached = host_api.playbill_host_workspace_detach(
+        "inst_publishing_host",
+        workspace_attachment_authorized=True,
+    )
+    assert detached.status == "detached"
+    assert get_registry().get("inst_publishing_host").workspace_root is None  # type: ignore[union-attr]
+
+
+def test_a_host_that_cannot_be_opened_refuses_a_detach_instead_of_reading_as_empty(
+    host_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    """An unreadable host is not a host that published nothing.
+
+    Only "Playbill was never initialized here" means there are no registrations
+    to strand. Every other way of failing to open the host means they could not
+    be READ, and treating that as an empty set would let a transient fault
+    permit exactly the detach this refusal exists to prevent.
+    """
+
+    del host_client
+    workspace = tmp_path / "unreadable-workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", "--object-format=sha1", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    host_api.create_playbill_host(
+        instance_id="inst_unreadable_host",
+        workspace_root=str(workspace),
+        workspace_attachment_authorized=True,
+    )
+
+    manager = get_playbill_manager()
+    manager.clear()
+
+    def _fail(instance_id: str):  # type: ignore[no-untyped-def]
+        raise PlaybillFormatError("persisted Playbill trust root is malformed")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(type(manager), "get", staticmethod(_fail))
+        with pytest.raises(ConfigError, match="could not be opened"):
+            host_api.playbill_host_workspace_detach(
+                "inst_unreadable_host",
+                workspace_attachment_authorized=True,
+            )
+
+    assert get_registry().get("inst_unreadable_host").workspace_root is not None  # type: ignore[union-attr]
+
+    # And the one case that genuinely means "published nothing" still detaches.
+    manager.clear()
+    detached = host_api.playbill_host_workspace_detach(
+        "inst_unreadable_host",
+        workspace_attachment_authorized=True,
+    )
+    assert detached.status == "detached"
