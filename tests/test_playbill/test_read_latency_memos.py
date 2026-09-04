@@ -19,6 +19,7 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claims import (
     _self_source_capture_admitted_by_rule,
+    claim_path,
     new_claim_id,
 )
 from cruxible_client.contracts.errors import PlaybillGitError, ProjectionIntegrityError
@@ -30,14 +31,15 @@ from cruxible_core.playbill.authoring.insertions import (
     PublicationClaimProjectedAsItself,
     refuse_claim_projected_as_itself,
 )
+from cruxible_core.playbill.consumption import consumption_artifacts_for_paths
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.git import GitLedger
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.search import PlaybillSearchRequestV1
+from cruxible_core.runtime import playbill_api as runtime_api
 from cruxible_core.service import playbill_evidence, playbill_next
 from cruxible_core.service.playbill_claims import (
     _claim_from_view,
-    service_get_playbill_claim,
     service_list_playbill_claims,
 )
 from cruxible_core.service.playbill_next import (
@@ -365,18 +367,48 @@ def test_the_publication_intent_fold_runs_once_per_durable_stream(
     assert folds == 1
 
 
-def test_one_claim_read_does_not_materialize_extra_generations(
+def test_one_claim_read_materializes_no_generation_and_still_receipts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     instance, _owner = seed_claims(tmp_path)
-    identity = _claim_from_view(service_list_playbill_claims(instance).claims[0]).identity.name
+    claim = _claim_from_view(service_list_playbill_claims(instance).claims[0])
+    identity = claim.identity.name
+    coordinate = instance.accepted_coordinate()
+    path = claim_path(identity)
+
+    class _Manager:
+        def get(self, _instance_id: str) -> Any:
+            return instance
+
+    monkeypatch.setattr(runtime_api, "check_permission", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runtime_api, "get_playbill_manager", lambda: _Manager())
     instance._tree_memo.clear()
 
     counted = _count_read_trees(monkeypatch)
-    service_get_playbill_claim(instance, identity=identity, evaluation_time=EVALUATION_TIME)
+    view = runtime_api.playbill_get_claim(
+        instance.descriptor.instance_id,
+        identity,
+        evaluation_time=EVALUATION_TIME,
+    )
 
-    assert sum(counted.values()) <= 1
+    # One served read reads the paths it answers for and nothing else.
+    assert counted == Counter()
+    assert view.envelope["path"] == path
+    # The narrow read still resolved the ClaimType and the capture contracts.
+    assert view.admission_accounts
+
+    # The receipt is still written, and names the artifact the read served.
+    served = consumption_artifacts_for_paths(instance.tree_at(coordinate.git_oid), (path,))
+    assert served
+    receipted = [
+        (payload["response_artifact_identity"], payload["response_artifact_digest"])
+        for _event, payload in instance.review_operational_store().events(family="consumption")
+        if payload.get("tag") == "playbill-consumption-receipt-v1"
+    ]
+    assert receipted == [
+        (served_identity.model_dump(mode="json"), digest) for served_identity, digest in served
+    ]
 
 
 def _clipped_source_observation(

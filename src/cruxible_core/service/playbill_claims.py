@@ -461,7 +461,7 @@ def service_get_playbill_claim(
         admission_accounts=_claim_admission_accounts(
             instance,
             claim=parsed,
-            tree=instance.tree_at(coordinate.git_oid),
+            tree=_claim_admission_tree(instance, claim=parsed, coordinate=coordinate),
             law=_claim_law_evidence(instance, path=path, at=coordinate),
         ),
         statement=claim_statement_card(parsed),
@@ -591,6 +591,29 @@ def _accepted_generation_time(
     if generation.record is None:
         raise ProposalIntegrityError("a Claim read requires an accepted candidate timestamp")
     return datetime.fromisoformat(generation.record.candidate.timestamp.replace("Z", "+00:00"))
+
+
+def _claim_admission_tree(
+    instance: PlaybillInstance,
+    *,
+    claim: ClaimArtifactAny,
+    coordinate: AcceptedProjectionCoordinate,
+) -> dict[str, bytes]:
+    """Read exactly the accepted paths one Claim's admission accounts resolve.
+
+    ``_claim_admission_accounts`` reads the Claim's own ClaimType and every
+    accepted CaptureContract, and nothing else in the generation. Listing the
+    contract names costs one ``ls-tree`` with no blob payloads, so one Claim
+    read never materializes the whole generation to answer for one Claim.
+    """
+
+    wanted = [claim_type_path(claim.statement.predicate)]
+    wanted.extend(
+        path
+        for path in instance.paths_at(coordinate.git_oid)
+        if path.startswith("capture-contracts/")
+    )
+    return instance.blobs_at(coordinate.git_oid, wanted)
 
 
 def _claim_admission_accounts(
