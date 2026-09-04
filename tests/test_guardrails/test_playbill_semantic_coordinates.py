@@ -524,3 +524,28 @@ def test_installed_compiler_revision_labels_are_exact_and_complete() -> None:
         "p2-b5",
     )
     assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "p2-b5"
+
+
+def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
+    """The freeze guardrail: minting a semantic revision must fail here first.
+
+    Register ruling 2026-09-04, "P2-B6.1 LANDED = FEATURE FREEZE": *patches
+    only, additive wire, no compiler revision label may be added*. Every other
+    coordinate guardrail in this module checks that a revision is well formed;
+    this one checks that no revision is MINTED at all, so a commit that adds a
+    twentieth compiler -- and with it a new accepted derivation and a new
+    ledger lineage -- cannot land under a freeze that forbids exactly that.
+
+    The freeze lifts with the compiler-succession program the same ruling
+    defers to after the dogfood: the release that mints semantic revision 20
+    moves both numbers below, in the same commit that ratifies the succession.
+    Until then, a failure here is the guardrail working.
+    """
+
+    from cruxible_core.playbill.compiler import (
+        COMPILER_REVISION_LABELS,
+        current_compiler_coordinate,
+    )
+
+    assert len(COMPILER_REVISION_LABELS) == 18
+    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "p2-b5"
