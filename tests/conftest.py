@@ -92,3 +92,34 @@ def isolate_cli_context(
 def configs_dir() -> Path:
     """Path to the test config fixtures directory."""
     return Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture(autouse=True)
+def clean_playbill_manager_singleton() -> None:
+    """Start every test with a manager singleton that shadows none of its methods.
+
+    `get_playbill_manager()` is process-wide, and several tests patch a method
+    ON THAT OBJECT rather than on its class -- `monkeypatch.setattr(manager,
+    "get", ...)`. Undo does not DELETE what it set: it writes back the value it
+    read, and reading a method off an instance yields a BOUND METHOD, so the
+    undo installs that bound method into the instance `__dict__`. The singleton
+    then carries a permanent shadow of its own class attribute, and it outlives
+    both `manager.clear()` and the module that made it.
+
+    Nothing notices where it is made, because the shadow IS the real method. A
+    later test that patches the CLASS does: its patch becomes invisible, the
+    real method runs, and the failure lands somewhere else entirely -- a daemon
+    startup test whose injected recovery fold never fires, reported as card 122
+    and reproducible at the base commit with those two files alone.
+
+    Cleaning at SETUP rather than teardown is deliberate: a teardown finalizer
+    can run before `monkeypatch`'s own undo, which would then reinstate the
+    shadow. Only what a test finds when it starts is under its control.
+    """
+
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
+
+    manager = get_playbill_manager()
+    for name, value in tuple(vars(manager).items()):
+        if callable(value) and callable(getattr(type(manager), name, None)):
+            delattr(manager, name)
