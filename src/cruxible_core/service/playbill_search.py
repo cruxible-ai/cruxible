@@ -144,6 +144,12 @@ def _apply_resolution_statuses(
             )
         elif claim.identity.name in selected:
             status = "accepted"
+        elif resolution.cardinality == "many":
+            # A many-cardinality slot selects every eligible contender, so a
+            # Claim that is not selected lost to nothing: it failed its own
+            # ClaimType's admission, and "overturned" would name a rival that
+            # does not exist.
+            status = "refused"
         else:
             status = "overturned"
         statuses[claim.identity.name] = status

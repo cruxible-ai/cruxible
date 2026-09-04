@@ -3208,8 +3208,11 @@ def _projection_items(
                             "block_id": marker.stamp.block_id,
                             "retired_backings": list(related),
                         },
+                        # Depublishing a block is an edit of the page, not a
+                        # repin of it: no verb republishes a retired backing,
+                        # so the row names the change and claims no command.
                         repair=PlaybillNextRepairV1(
-                            operation="playbill.block.repin",
+                            operation="hand_edit",
                             target=target,
                             required_change="depublish_retired_backing_block",
                             arguments=arguments,
@@ -3230,7 +3233,7 @@ def _projection_items(
                             "overturned_backings": list(related),
                         },
                         repair=PlaybillNextRepairV1(
-                            operation="playbill.block.repin",
+                            operation="hand_edit",
                             target=target,
                             required_change="depublish_overturned_backing_block",
                             arguments=arguments,
