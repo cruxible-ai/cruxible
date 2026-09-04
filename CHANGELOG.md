@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **A daemon can allocate more than one Playbill host per bootstrap secret.**
+  Host creation was authorized only while the runtime bootstrap secret was
+  UNCLAIMED, and every other credential a daemon holds is instance-scoped, so
+  after the first `credential claim-bootstrap` nothing on the daemon could
+  allocate a second host; the only repair was a restart, which mints a fresh
+  secret at the same path and takes every hosted instance down with it. Creating
+  a host now joins the daemon-wide operator actions the bootstrap secret
+  authorizes repeatably, alongside server info, restart and stop. Claiming the
+  admin credential stays one-shot. The refusal an instance-scoped credential
+  gets on any daemon-wide operation now names what to present instead.
+
 - **An open proposal that can never activate can be withdrawn.** A proposal
   refused at activation by a hard limit was admitted, evaluated, permanently
   unactivatable and permanently open, so `proposal list` accumulated tombstones

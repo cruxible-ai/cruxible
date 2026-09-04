@@ -118,7 +118,9 @@ def _message_for_error(exc: CoreError) -> str:
         return (
             f"The bearer token is instance-scoped; `{operation}` is a daemon-scope "
             "operation. Use the operator credential (the bootstrap secret or a "
-            "daemon-scope token) in CRUXIBLE_SERVER_BEARER_TOKEN."
+            "daemon-scope token) in CRUXIBLE_SERVER_BEARER_TOKEN. The daemon's "
+            "runtime bootstrap secret keeps authorizing daemon-scope operations "
+            "after `credential claim-bootstrap` has consumed its one-time claim."
         )
     if exc.args:
         return str(exc.args[0])

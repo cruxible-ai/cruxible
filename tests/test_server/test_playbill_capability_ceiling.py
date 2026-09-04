@@ -272,7 +272,9 @@ def test_instance_token_gets_typed_403_for_every_daemon_scope_route(
     assert payload["message"] == (
         f"The bearer token is instance-scoped; `{command}` is a daemon-scope operation. "
         "Use the operator credential (the bootstrap secret or a daemon-scope token) in "
-        "CRUXIBLE_SERVER_BEARER_TOKEN."
+        "CRUXIBLE_SERVER_BEARER_TOKEN. The daemon's runtime bootstrap secret keeps "
+        "authorizing daemon-scope operations after `credential claim-bootstrap` has "
+        "consumed its one-time claim."
     )
     assert payload["message"] != "internal server error"
     # The repair names the served command that mints the operator credential,

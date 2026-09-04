@@ -1269,3 +1269,89 @@ def test_host_show_enforces_initialization_scope_and_path_privacy(
         headers=scoped_headers,
     )
     assert cross_instance.status_code == 403, cross_instance.text
+
+
+def test_a_daemon_allocates_more_than_one_host_per_bootstrap_secret(
+    authenticated_host_client: tuple[TestClient, str],
+) -> None:
+    """Card 98: claiming the bootstrap credential must not make the daemon a one-shot.
+
+    Every other credential on a daemon is instance-scoped and is rejected by
+    `require_unscoped_operator`, so gating host creation on an UNCLAIMED
+    bootstrap secret meant that after the first `credential claim-bootstrap` no
+    credential could allocate a second host. The only repair was restarting the
+    daemon, which mints a fresh secret at the same path and takes every hosted
+    instance offline -- not something a control plane can do to add a tenant.
+    """
+
+    client, bootstrap_secret = authenticated_host_client
+    bootstrap_headers = {"Authorization": f"Bearer {bootstrap_secret}"}
+    first = client.post(
+        "/api/v1/runtime/instances",
+        json={"instance_id": "inst_first_tenant"},
+        headers=bootstrap_headers,
+    )
+    assert first.status_code == 200, first.text
+    claimed = client.post(
+        f"/api/v1/{first.json()['instance_id']}/runtime/bootstrap/claim",
+        json={"bootstrap_secret": bootstrap_secret},
+        headers=bootstrap_headers,
+    )
+    assert claimed.status_code == 200, claimed.text
+
+    second = client.post(
+        "/api/v1/runtime/instances",
+        json={"instance_id": "inst_second_tenant"},
+        headers=bootstrap_headers,
+    )
+
+    assert second.status_code == 200, second.text
+    assert second.json()["instance_id"] == "inst_second_tenant"
+    # The claim itself stays one-shot: the secret allocates hosts, it does not
+    # mint a second admin credential.
+    reclaimed = client.post(
+        "/api/v1/inst_second_tenant/runtime/bootstrap/claim",
+        json={"bootstrap_secret": bootstrap_secret},
+        headers=bootstrap_headers,
+    )
+    assert reclaimed.status_code == 401, reclaimed.text
+
+
+def test_an_instance_scoped_credential_creating_a_host_is_told_what_to_present(
+    authenticated_host_client: tuple[TestClient, str],
+) -> None:
+    """The remaining refusal names the sanctioned way to add a host."""
+
+    client, bootstrap_secret = authenticated_host_client
+    bootstrap_headers = {"Authorization": f"Bearer {bootstrap_secret}"}
+    created = client.post(
+        "/api/v1/runtime/instances",
+        json={"instance_id": "inst_scope_repair"},
+        headers=bootstrap_headers,
+    )
+    assert created.status_code == 200, created.text
+    claimed = client.post(
+        "/api/v1/inst_scope_repair/runtime/bootstrap/claim",
+        json={"bootstrap_secret": bootstrap_secret},
+        headers=bootstrap_headers,
+    )
+    assert claimed.status_code == 200, claimed.text
+
+    refused = client.post(
+        "/api/v1/runtime/instances",
+        json={"instance_id": "inst_from_a_tenant"},
+        headers={"Authorization": f"Bearer {claimed.json()['token']}"},
+    )
+
+    assert refused.status_code == 403, refused.text
+    payload = refused.json()
+    assert payload["error_type"] == "DaemonOperationScopeError"
+    assert payload["context"]["credential_scope"] == "inst_scope_repair"
+    # The sanctioned way to add a host, and the fact card 98 was missing: the
+    # bootstrap secret is still the credential AFTER it has been claimed.
+    assert "bootstrap secret" in payload["message"]
+    assert "after `credential claim-bootstrap`" in payload["message"]
+    assert payload["repair"]["arguments"]["accepted_credentials"] == [
+        "bootstrap secret",
+        "daemon-scope token",
+    ]

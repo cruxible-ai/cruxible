@@ -311,25 +311,26 @@ async def token_auth_middleware(
 
     if bearer_token is not None:
         if (
+            # Daemon-wide operator actions -- global metadata, in-place re-exec,
+            # graceful stop, host inspection, and allocating a host -- are
+            # authorized for the unscoped runtime bootstrap operator and never
+            # for an instance-scoped runtime credential, which resolves below
+            # and is rejected by the runtime's require_unscoped_operator gate.
+            #
+            # Host creation used to be gated on the bootstrap secret being
+            # UNCLAIMED, which made a daemon a one-shot: `credential
+            # claim-bootstrap` consumes the claim, every other credential on the
+            # daemon is instance-scoped, and so no credential could allocate a
+            # second host. The only repair was restarting the daemon, which
+            # mints a fresh secret at the same path -- silently invalidating the
+            # operator's saved copy and taking every hosted instance offline. A
+            # control plane cannot restart the daemon to add a tenant. Creating
+            # a host is a repeatable operator action like the rest of this list,
+            # and it is strictly weaker than the restart and stop already here.
             auth_enabled
-            and _is_playbill_host_create_request(request)
             and bootstrap_secret
             and hmac.compare_digest(bearer_token, bootstrap_secret)
-            and not get_runtime_credential_store().bootstrap_secret_claimed(bootstrap_secret)
-        ):
-            resolved_context = _runtime_bootstrap_operator_context()
-        elif (
-            # Daemon-wide server operations (global metadata and in-place re-exec)
-            # are authorized for the unscoped runtime bootstrap operator,
-            # never for an instance-scoped runtime credential. Unlike host creation,
-            # these are repeatable operator actions, so they are NOT gated on the
-            # one-time bootstrap claim. An instance-scoped credential that presents
-            # its own token still resolves below and is rejected by the runtime's
-            # require_unscoped_operator gate.
-            auth_enabled
-            and _is_server_operation_request(request)
-            and bootstrap_secret
-            and hmac.compare_digest(bearer_token, bootstrap_secret)
+            and (_is_server_operation_request(request) or _is_playbill_host_create_request(request))
         ):
             resolved_context = _runtime_bootstrap_operator_context()
         elif auth_enabled:

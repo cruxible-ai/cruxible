@@ -222,6 +222,15 @@ inside a TCP worktree remains refused; explicit `--workspace DIR` instead writes
 a client-local `server_url` binding without claiming daemon registration. Use a
 local socket when the daemon must advertise ledger refs into that worktree.
 
+With auth on, `host create` is authorized by the daemon's runtime bootstrap
+secret, which is its unscoped operator credential. That authorization is
+repeatable, exactly as it is for `server info`, `server restart` and
+`server stop`: a daemon hosting several instances allocates each of them with
+the same secret, and `credential claim-bootstrap` -- which stays one-shot --
+does not revoke it. An instance-scoped credential cannot allocate a host on the
+daemon that hosts it, and the refusal names the bootstrap secret as the
+credential to present.
+
 `host show` is a zero-authority inspection of workspace registration, exact
 compiler coordinate/revision, and write compatibility; the CLI adds the selected
 transport. The daemon-local managed root is visible only to an unscoped operator,

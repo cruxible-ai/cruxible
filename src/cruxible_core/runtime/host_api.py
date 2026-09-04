@@ -162,8 +162,13 @@ def create_playbill_host(
 
     registry = get_registry()
     selected = (instance_id or "").strip() or registry.generate_governed_instance_id()
-    check_permission("cruxible_playbill_host_create", instance_id=selected)
+    # The daemon-wide scope gate runs FIRST. Allocating a host is not an access
+    # to the instance it allocates -- that instance does not exist yet -- so an
+    # instance-scoped credential reaching this route must be told the real
+    # boundary it crossed and the credential that clears it, rather than the
+    # cross-instance message it happened to trip on the way past.
     require_unscoped_operator("cruxible_playbill_host_create")
+    check_permission("cruxible_playbill_host_create", instance_id=selected)
     if workspace_root is not None and not workspace_attachment_authorized:
         raise ConfigError(
             "Workspace attachment requires a caller connected directly through the local "
