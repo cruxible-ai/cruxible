@@ -161,9 +161,17 @@ NextRepairOperation = Literal[
     "hand_edit",
 ]
 
-# A clipped coverage scan discards every proof for its source, so each of that
-# source's citations reads unobserved for one shared reason.
-_COVERAGE_CLIP_NOTES = frozenset({"coverage_card_limit_exceeded", "coverage_proof_limit_exceeded"})
+# A per-source count cap discards a whole class of coverage evidence for that
+# source at once - its cards, its commitment proofs, or its citation windows -
+# so every citation to it reads unobserved for one shared reason. These are the
+# notes the workspace observation raises when such a cap bites.
+_COVERAGE_CLIP_NOTES = frozenset(
+    {
+        "coverage_card_limit_exceeded",
+        "coverage_proof_limit_exceeded",
+        "coverage_window_limit_exceeded",
+    }
+)
 _SEVERITY_RANK: dict[NextSeverity, int] = {"blocking": 0, "repair": 1, "warning": 2}
 _ALL_DOMAINS: tuple[NextDomain, ...] = (
     "accepted_state",

@@ -316,13 +316,21 @@ def test_a_clipped_coverage_scan_reports_one_row_for_its_whole_source(
     assert len(uncapped) > 1
     assert all("clipped_scan_notes" not in row.detail for row in uncapped)
 
-    clipped = _unobserved_rows(instance, scan_notes=("coverage_proof_limit_exceeded",))
-    assert len(clipped) == 1
-    (row,) = clipped
-    assert row.detail["source_id"] == "fixture.work-items"
-    assert row.detail["clipped_scan_notes"] == ["coverage_proof_limit_exceeded"]
-    assert row.detail["collapsed_citation_count"] == len(uncapped)
-    assert row.repair.operation == "playbill.authoring.bind"
+    for note in (
+        "coverage_card_limit_exceeded",
+        "coverage_proof_limit_exceeded",
+        "coverage_window_limit_exceeded",
+    ):
+        clipped = _unobserved_rows(instance, scan_notes=(note,))
+        assert len(clipped) == 1
+        (row,) = clipped
+        assert row.detail["source_id"] == "fixture.work-items"
+        assert row.detail["clipped_scan_notes"] == [note]
+        assert row.detail["collapsed_citation_count"] == len(uncapped)
+        assert row.repair.operation == "playbill.authoring.bind"
+
+    # A note that is not a per-source cap leaves every citation on its own row.
+    assert len(_unobserved_rows(instance, scan_notes=("coverage_partial",))) == len(uncapped)
 
 
 def _coordinator_contract() -> AcceptedCaptureContract:
