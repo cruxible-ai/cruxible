@@ -136,7 +136,12 @@ non-Provider surfaces from starting, so these lines are the operator's recovery
 signal rather than a daemon-startup failure. When transient process-table reads
 fail without degrading the lane, `Provider lane detail:` reports the bounded
 observation-diagnostic count, retained ring occupancy, and last typed message;
-JSON clients read the same text in `provider_lane.detail`.
+JSON clients read the same text in `provider_lane.detail`. The lane's
+`isolated_executors` field lists the backend ids of the isolated Provider
+executors this daemon discovered at start, sorted; it is empty in core, which
+ships none. A daemon that could not load an executor an installed distribution
+advertises does not start at all, so an empty list means nothing advertised
+itself, never that something advertised itself and failed.
 
 ### Provider runtime operational configuration
 

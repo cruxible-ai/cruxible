@@ -203,6 +203,46 @@ on the host, which is the opposite of what the name promised (maintainer ruling
 backend to use, and a value naming an unregistered backend refuses with that
 backend named in the detail.
 
+### Packaging an executor for discovery
+
+A tenant image ships its executor as an ordinary installed distribution that
+advertises the entry-point group `cruxible.isolated_executors`:
+
+```toml
+[project.entry-points."cruxible.isolated_executors"]
+container = "my_executor_package:ContainerExecutor"
+```
+
+The daemon iterates that group ONCE at start, before it serves anything, loads
+each object — a class is constructed with no arguments; an instance is taken as
+it is — and registers what it publishes. This is the road for an out-of-tree
+executor; a distribution that is installed but does not advertise here is not
+registered, because a backend nothing declares is a backend nothing audited.
+`register_isolated_executor()` remains the in-process seam for an embedded host
+that builds the executor itself.
+
+Discovery FAILS CLOSED, and it is all-or-nothing. An entry point that cannot be
+imported, an object that does not implement the seam, an executor that cannot be
+constructed, and a `backend_id` that collides with one already registered are
+the same outcome: the daemon **refuses to start**, with error code
+`isolated_executor_discovery_failed` naming the entry point's name, its target,
+its group and the distribution that advertises it, and nothing in the group is
+registered — not even the executors whose entry points loaded first. A bad
+advertisement is a startup failure to repair, not a Provider lane that comes up
+degraded. `server info` and `server status` report the registered backend ids on
+the Provider lane, so an operator can confirm what a started daemon discovered.
+
+**The trust boundary is installation, and nothing else.** Any distribution on
+the daemon's `sys.path` that writes this group into its entry-point metadata
+gets its object loaded, and the `IsolatedExecutorRegistrationV1` that object
+reports about ITSELF becomes the evidence that unlocks Provider execution under
+the shared profile. There is no provenance check, no allow-list, no signature
+and no digest pin on a discovered executor. That is defensible because anyone
+who can install a distribution into the daemon's environment can already replace
+the daemon, and it matches the Cloud model where the executor ships inside the
+tenant image — but it means the image build, not the daemon, is what decides
+which executor is trusted.
+
 A non-empty `CRUXIBLE_HOSTED_SERVER_PROFILE` this build does not declare —
 a misspelling, or a profile from a newer image — refuses typed with
 `hosted_profile_unknown` rather than being read as "not shared". Both refusals
