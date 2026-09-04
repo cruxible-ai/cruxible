@@ -22,6 +22,11 @@ from cruxible_client.contracts.claims import (
     claim_path,
     new_claim_id,
 )
+from cruxible_client.contracts.declared_blocks import (
+    ProjectionBlockStampV1,
+    ProjectionClaimBackingV1,
+    ProjectionMarkerSummaryV1,
+)
 from cruxible_client.contracts.errors import PlaybillGitError, ProjectionIntegrityError
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
@@ -52,6 +57,7 @@ from cruxible_core.service.playbill_publications import (
     bound_publication_registrations,
     reset_bound_publication_registration_memo,
 )
+from cruxible_core.service.playbill_query import build_accepted_query_facts
 from cruxible_core.service.playbill_search import service_search_playbill
 from cruxible_core.storage import playbill_projection
 from tests.test_playbill._knowledge_loop_support import seed_claims
@@ -278,11 +284,61 @@ def test_a_serving_piece_is_verified_once_and_a_tampered_piece_is_refused(
             pass
 
 
+def _declared_projection_observation(
+    instance: Any,
+) -> PlaybillNextWorkspaceObservationV1:
+    """Observe one declared block, so `next` reaches the resolution fold.
+
+    Without a marker summary `_projection_items` returns before the fold ever
+    runs, and only `_claim_items` evaluates a verdict: a request with no
+    workspace observation cannot tell a shared verdict map from a per-fold one.
+    """
+
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    row = build_accepted_query_facts(instance, coordinate=instance.accepted_coordinate()).claims[0]
+    stamp = ProjectionBlockStampV1(
+        source_id="fixture.work-items",
+        block_id="status",
+        declared_generation=0,
+        declared_coordinate=coordinate,
+        backing=(
+            ProjectionClaimBackingV1(
+                identity=row.accepted.claim.identity,
+                statement_digest=row.accepted.statement_digest,
+            ),
+        ),
+        body_digest="sha256:" + "b" * 64,
+    )
+    return PlaybillNextWorkspaceObservationV1(
+        source_observations=(
+            PlaybillNextSourceObservationV4(
+                source_id="fixture.work-items",
+                observed_source_digest="sha256:" + "0" * 64,
+                byte_length=1000,
+                marker_summaries=(
+                    ProjectionMarkerSummaryV1(
+                        stamp=stamp,
+                        observed_body_digest="sha256:" + "b" * 64,
+                        start_byte=0,
+                        end_byte=100,
+                    ),
+                ),
+                occurrences=(),
+                commitment_scan_proofs=(),
+                citation_window_observations=(),
+                scan_notes=(),
+                marker_notes=(),
+            ),
+        )
+    )
+
+
 def test_next_evaluates_each_claim_verdict_exactly_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     instance, _owner = seed_claims(tmp_path)
+    observation = _declared_projection_observation(instance)
     evaluated: Counter[str] = Counter()
     original = playbill_evidence.service_evaluate_playbill_claim_verdict
 
@@ -300,18 +356,22 @@ def test_next_evaluates_each_claim_verdict_exactly_once(
         )
         if claim.lifecycle.state == "live"
     )
-    service_playbill_next(
+    result = service_playbill_next(
         instance,
         request=PlaybillNextRequestV1(
             at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
             evaluation_time=EVALUATION_TIME,
             access_profile=ACCESS,
+            workspace_observation=observation,
         ),
     )
 
+    # The observation actually reached the projection fold, so both folds ran.
+    assert "workspace_sources" in result.observed_domains
     assert evaluated
     assert set(evaluated) <= {claim.identity.qualified for claim in live}
     assert max(evaluated.values()) == 1
+    assert sum(evaluated.values()) == len(evaluated)
 
 
 def test_the_claim_read_history_index_is_built_once_per_coordinate(
