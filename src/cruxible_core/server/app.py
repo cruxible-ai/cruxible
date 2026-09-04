@@ -8,7 +8,7 @@ import sqlite3
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 import structlog
 from fastapi import FastAPI, Request
@@ -30,6 +30,7 @@ from cruxible_core.runtime.permissions import init_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.auth import token_auth_middleware
 from cruxible_core.server.config import (
+    get_server_fatal_log_path,
     get_server_state_root,
     is_server_auth_enabled,
     validate_server_startup_settings,
@@ -277,24 +278,57 @@ def run_server(
         _serve(resolved_socket)
 
 
+#: The fatal-fault log handle, held for the life of the process. faulthandler
+#: writes through the file DESCRIPTOR it was handed; a handle that went out of
+#: scope would be closed and the fault trace would land nowhere.
+_fatal_fault_log: IO[bytes] | None = None
+
+
+def enable_fatal_fault_handler(path: Path | None = None) -> Path | None:
+    """Point the fatal-fault handler at the daemon's own log directory.
+
+    A daemon death is never silent. A fatal fault -- a segfault, an abort, a bus
+    error, a stack overflow -- otherwise takes the process out between two
+    access-log lines, leaving the last request logged without a response and
+    nothing at all about the exit; that is exactly how a large compile looked
+    when it killed a daemon hosting two instances.
+
+    faulthandler's default target is stderr, and stderr is NOT where this
+    daemon's log is: `configure_request_logging` binds structlog to a rotating
+    file under `<state-root>/daemon/logs/`, so under a terminal multiplexer a
+    fault trace written to stderr lands in a scrollback nobody keeps and the
+    death still reads as silent in the log an operator actually follows. The
+    trace goes to `fatal.log` beside the request log instead.
+
+    Returns the path the handler writes to, or None when no file could be
+    opened -- an unwritable log directory, or a build where enabling the
+    handler is refused. Losing the trace is not worth refusing to serve, so
+    both degrade to a debug line. A SIGKILL from the kernel's OOM killer still
+    cannot be observed from inside the process; the MemoryError path in
+    authoring preflight is what covers the allocation failure this build sees.
+    """
+
+    global _fatal_fault_log
+    resolved = get_server_fatal_log_path() if path is None else path
+    handle: IO[bytes] | None = None
+    try:
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        # Append, unbuffered: the writer is a signal handler that may be the
+        # last thing this process does, so nothing may be left in a buffer.
+        handle = resolved.open("ab", buffering=0)
+        faulthandler.enable(file=handle)
+    except (ValueError, OSError):
+        if handle is not None:
+            handle.close()
+        _log.debug("faulthandler_unavailable", path=str(resolved))
+        return None
+    _fatal_fault_log = handle
+    return resolved
+
+
 def _serve(resolved_socket: str | None) -> None:
     """Start uvicorn under an already-held state-root lock."""
-    # A daemon death is never silent. A fatal fault -- a segfault, an abort, a
-    # bus error, a stack overflow -- otherwise takes the process out between two
-    # access-log lines, leaving the last request logged without a response and
-    # nothing at all about the exit; that is exactly how a large compile looked
-    # when it killed a daemon hosting two instances. faulthandler writes the
-    # faulting traceback to stderr, which is where the daemon's log already is.
-    # A SIGKILL from the kernel's OOM killer still cannot be observed from
-    # inside the process; the MemoryError path in authoring preflight is what
-    # covers the allocation failure this build can see.
-    try:
-        faulthandler.enable()
-    except (ValueError, OSError):
-        # Only reachable where stderr is not a real file descriptor -- an
-        # embedded or captured run, never the daemon `cruxible server start`
-        # launches. Losing the fault trace there is not worth refusing to serve.
-        _log.debug("faulthandler_unavailable")
+    enable_fatal_fault_handler()
     # Resolve and freeze the process ceiling before registry/config access or
     # uvicorn startup. Unknown names and attempts to reinitialize this process
     # at a different tier therefore fail closed before the daemon serves.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import faulthandler
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.server import app as server_app
 from cruxible_core.server.config import (
     get_runtime_bootstrap_secret,
+    get_server_fatal_log_path,
     get_server_log_path,
     get_server_state_root,
     is_volatile_state_path,
@@ -398,3 +400,41 @@ def test_run_server_reaches_uvicorn_with_runtime_bootstrap_secret(
 
     assert called["host"] == "0.0.0.0"
     assert called["port"] == 8125
+
+
+def test_the_fatal_fault_handler_writes_into_the_daemons_own_log_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A death the daemon cannot refuse is recorded where its log already is.
+
+    faulthandler's default target is stderr, and this daemon's log is a
+    rotating FILE under `<state-root>/daemon/logs/`, so a trace written to
+    stderr lands in a terminal multiplexer's scrollback and the death still
+    reads as silent in the log an operator follows. Nothing in this process can
+    raise a real segfault to prove the wiring, so the proof is the handle
+    itself: whatever `faulthandler` was handed is what a fault will write
+    through, and dumping a traceback through that same handle shows where the
+    bytes land.
+    """
+
+    state_root = tmp_path / "server-state"
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state_root))
+    monkeypatch.delenv("CRUXIBLE_SERVER_LOG_PATH", raising=False)
+    expected = get_server_fatal_log_path()
+    assert expected == (state_root / "daemon" / "logs" / "fatal.log").resolve()
+    assert expected.parent == get_server_log_path().parent
+
+    try:
+        resolved = server_app.enable_fatal_fault_handler()
+        assert resolved == expected
+        handle = server_app._fatal_fault_log
+        assert handle is not None
+        faulthandler.dump_traceback(file=handle)
+    finally:
+        # Restore the session-wide handler this test redirected.
+        faulthandler.enable()
+
+    written = expected.read_text(encoding="utf-8")
+    assert "Current thread" in written
+    assert "test_the_fatal_fault_handler_writes_into_the_daemons_own_log_directory" in written

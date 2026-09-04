@@ -117,6 +117,20 @@ def get_server_log_path(environ: Mapping[str, str] | None = None) -> Path:
     return (get_server_state_root(env) / "daemon" / "logs" / "server.log").resolve()
 
 
+def get_server_fatal_log_path(environ: Mapping[str, str] | None = None) -> Path:
+    """Return the file a fatal fault writes its traceback to.
+
+    A sibling of the request log rather than the request log itself: the
+    request log is structured JSON lines written through a rotating sink, and a
+    C-level fault handler writes plain text through a raw file descriptor with
+    no idea that either is true. Interleaving them would corrupt the one an
+    operator parses. Same directory, so an operator who found one has found the
+    other.
+    """
+
+    return (get_server_log_path(environ).parent / "fatal.log").resolve()
+
+
 def is_volatile_state_path(path: str | Path) -> bool:
     """Return whether *path* resolves under a known volatile temp location."""
     resolved = Path(path).expanduser().resolve()

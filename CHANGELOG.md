@@ -51,9 +51,11 @@
   Compiling was also the step that could take the daemon out under memory
   pressure: an allocation failure during lowering is now logged and refused as
   `playbill.authoring.compile_budget_exceeded` instead of propagating untyped,
-  and the daemon installs a fatal-fault handler so a death it cannot refuse is
-  at least never silent. Chunking the record so a five-thousand-member set can
-  be settled is a later, non-patch change.
+  and the daemon installs a fatal-fault handler writing to
+  `<state-root>/daemon/logs/fatal.log`, beside its request log, so a death it
+  cannot refuse is at least never silent in the log an operator follows.
+  Chunking the record so a five-thousand-member set can be settled is a later,
+  non-patch change.
 
 - **A daemon discovers its isolated Provider executors from what is
   installed.** At start the daemon iterates the `cruxible.isolated_executors`
