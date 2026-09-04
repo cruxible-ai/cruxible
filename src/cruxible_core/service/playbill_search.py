@@ -51,6 +51,8 @@ from cruxible_core.service.playbill_claims import (
 from cruxible_core.service.playbill_verdict_memo import (
     MEMO_CAPACITY,
     claim_set_digest,
+    interval_holds,
+    invariance_interval,
     memo_key,
     verdict_input_fingerprint,
 )
@@ -80,7 +82,8 @@ def _accepted_coordinate(request: PlaybillSearchRequestV1) -> PlaybillAcceptedCo
 # `playbill_verdict_memo` for why each part of the key is there.
 _RESOLUTION_MEMO: (
     "OrderedDict[tuple[str, str, str, str], "
-    "tuple[dict[str, SearchStatus], dict[str, ClaimVerdictResultAny]]]"
+    "tuple[dict[str, SearchStatus], dict[str, ClaimVerdictResultAny], "
+    "tuple[datetime | None, datetime | None]]]"
 ) = OrderedDict()
 
 
@@ -113,27 +116,45 @@ def claim_resolution_statuses(
     fold over the same coordinate and evaluation time; it must never outlive
     that pair.
 
-    The whole derivation is memoized per process on the coordinate, the
-    evaluation instant, the exact Claim set, and a fingerprint of the two stores
-    a verdict reads besides the accepted tree. An `orient` is a READ, and this
-    read used to cross the client's own default timeout at a few hundred Claims;
-    a second read of the same state now evaluates no verdicts at all. Nothing
-    depends on the memo: it is per-process, cold after a restart, and bounded.
+    The whole derivation is memoized per process on the instance, the accepted
+    coordinate, the exact Claim set, and a fingerprint of the two stores a
+    verdict reads besides the accepted tree. The evaluation instant is NOT in
+    the key: every real surface stamps a fresh `utc_now()`, so a wall-clock key
+    could never be hit twice. A verdict is a step function of time whose only
+    breakpoints are the instants it compares against, so the entry carries the
+    interval over which its answer holds and is served for any instant inside
+    it, with each remembered verdict re-stamped with the instant it is served
+    at. An `orient` is a READ, and this read used to cross the client's own
+    default timeout at a few hundred Claims; a second read of the same state now
+    evaluates no verdicts at all. Nothing depends on the memo: it is
+    per-process, cold after a restart, and bounded.
     """
 
     key = memo_key(
+        instance_root=str(instance.root),
         coordinate_digest=canonical_bytes(at.model_dump(mode="json")).hex(),
-        evaluation_time=evaluation_time.isoformat(),
         claim_set_digest=claim_set_digest(tuple(claim.identity.qualified for claim in claims)),
         input_fingerprint=verdict_input_fingerprint(instance),
     )
     remembered = memo_get(_RESOLUTION_MEMO, key)
     if remembered is not None:
-        memoized_statuses, memoized_verdicts = remembered
-        if verdicts_by_identity is not None:
-            verdicts_by_identity.update(memoized_verdicts)
-        return dict(memoized_statuses)
+        memoized_statuses, memoized_verdicts, interval = remembered
+        if interval_holds(interval, evaluation_time=evaluation_time):
+            if verdicts_by_identity is not None:
+                verdicts_by_identity.update(
+                    {
+                        identity: verdict.model_copy(update={"evaluation_time": evaluation_time})
+                        for identity, verdict in memoized_verdicts.items()
+                    }
+                )
+            return dict(memoized_statuses)
 
+    # A caller that arrives with verdicts already in hand did not have them
+    # derived here, so the boundaries this fold can see are not all of them and
+    # the interval would be wider than the truth. Such a fold answers from the
+    # verdicts it was given and remembers nothing.
+    remember = not verdicts_by_identity
+    boundaries: set[datetime] = set()
     verdicts: MutableMapping[str, ClaimVerdictResultAny] = (
         {} if verdicts_by_identity is None else verdicts_by_identity
     )
@@ -156,6 +177,7 @@ def claim_resolution_statuses(
             evaluated_at=evaluation_time,
             claims=tuple(group),
             verdicts_by_identity=verdicts,
+            time_boundaries=boundaries if remember else None,
         )
         groups_by_qualifier: dict[str | None, list[ClaimArtifactAny]] = defaultdict(list)
         for claim in group:
@@ -167,12 +189,17 @@ def claim_resolution_statuses(
             for claim in members
         }
         _apply_resolution_statuses(resolution, statuses, slots=slots)
-    memo_put(
-        _RESOLUTION_MEMO,
-        key,
-        (dict(statuses), dict(verdicts)),
-        capacity=MEMO_CAPACITY,
-    )
+    if remember:
+        memo_put(
+            _RESOLUTION_MEMO,
+            key,
+            (
+                dict(statuses),
+                dict(verdicts),
+                invariance_interval(boundaries, evaluation_time=evaluation_time),
+            ),
+            capacity=MEMO_CAPACITY,
+        )
     return statuses
 
 

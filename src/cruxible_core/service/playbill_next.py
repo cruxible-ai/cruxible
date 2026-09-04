@@ -3300,6 +3300,31 @@ def service_playbill_next(
     # evaluation time, so the folds that need it share the result instead of
     # each walking all 740 Claims. The map dies with the request.
     verdicts_by_identity: dict[str, ClaimVerdictResultAny] = {}
+    # Derive the whole population ONCE, here, through the same fold `orient`
+    # uses. `_claim_items` used to walk every live Claim itself and evaluate
+    # whatever the map did not already hold, so a `next` paid for the entire
+    # derivation even when an `orient` at the same state had just done it: the
+    # memo could not serve a fold that never asked it. Asking it first shares
+    # one answer with every fold in this request and with every later read of
+    # the same state.
+    try:
+        claim_resolution_statuses(
+            instance,
+            claims=tuple(
+                _claim_from_view(view)
+                for view in service_list_playbill_claims(
+                    instance, at=public_coordinate, include_retired=True
+                ).claims
+            ),
+            at=public_coordinate,
+            evaluation_time=request.evaluation_time,
+            verdicts_by_identity=verdicts_by_identity,
+        )
+    except PlaybillError:
+        # A queue is a read of whatever resolves. If the population cannot be
+        # resolved as a whole -- a missing ClaimType, an unreadable store --
+        # each fold falls back to deriving what it needs and reporting on it.
+        verdicts_by_identity.clear()
     workspace_domains, workspace_items = _workspace_items(
         instance,
         coordinate=public_coordinate,

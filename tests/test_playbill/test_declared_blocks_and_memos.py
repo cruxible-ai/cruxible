@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -53,9 +53,14 @@ from cruxible_client.contracts.declared_blocks import (
 from cruxible_core.errors import ConfigError
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
+from cruxible_core.playbill.claim_attestation_store import (
+    STORE_DIRECTORY as CLAIM_ATTESTATION_STORE_DIRECTORY,
+)
+from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
+from cruxible_core.playbill.search import PlaybillSearchRequestV1
 from cruxible_core.runtime import host_api
 from cruxible_core.service import playbill_next as next_service
 from cruxible_core.service import playbill_search as search_service
@@ -64,6 +69,7 @@ from cruxible_core.service.playbill_claims import (
     resolve_playbill_claim_group,
     service_list_playbill_claims,
 )
+from cruxible_core.service.playbill_evidence import service_evaluate_playbill_claim_verdict
 from cruxible_core.service.playbill_next import (
     PlaybillNextItemV1,
     PlaybillNextRequestV1,
@@ -77,8 +83,8 @@ from cruxible_core.service.playbill_publications import (
 )
 from cruxible_core.service.playbill_query import build_accepted_query_facts
 from cruxible_core.service.playbill_search import (
-    claim_resolution_statuses,
     reset_claim_resolution_memo,
+    service_search_playbill,
 )
 from cruxible_core.service.playbill_verdict_memo import verdict_input_fingerprint
 from tests.test_playbill._claim_authoring_support import service_propose_playbill_claim
@@ -796,86 +802,150 @@ def _count_group_resolutions(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     return counted
 
 
-def test_a_second_resolution_read_of_the_same_state_evaluates_no_verdicts(
+def _verdict_boundaries(instance: PlaybillInstance) -> set[datetime]:
+    """Every instant a verdict at this coordinate compares against.
+
+    The same set the memo derives its invariance interval from, collected here
+    through the service so the test names a real breakpoint rather than a
+    number that happens to be far away.
+    """
+
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    boundaries: set[datetime] = set()
+    for row in build_accepted_query_facts(
+        instance, coordinate=instance.accepted_coordinate()
+    ).claims:
+        service_evaluate_playbill_claim_verdict(
+            instance,
+            claim_identity=row.accepted.claim.identity.qualified,
+            evaluation_time=datetime.now(UTC),
+            at=coordinate,
+            time_boundaries=boundaries,
+        )
+    return boundaries
+
+
+def _orient(
+    instance: PlaybillInstance,
+    *,
+    at: AcceptedCoordinate | None = None,
+    evaluation_time: datetime | None = None,
+) -> Any:
+    """One real `orient`, stamped the way the served route stamps it."""
+
+    return service_search_playbill(
+        instance,
+        request=PlaybillSearchRequestV1(
+            mode="orient",
+            accepted_coordinate=at
+            or AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            # The served route calls `utc_now()` per request. A test that pinned
+            # one instant here would prove nothing about the surface.
+            evaluation_time=evaluation_time or datetime.now(UTC),
+            access_profile=CoverageAccessProfileV1(profile_id="resolution-memo"),
+        ),
+    )
+
+
+def _next(instance: PlaybillInstance) -> Any:
+    """One real `next`, over an observation that reaches the resolution fold."""
+
+    return service_playbill_next(
+        instance,
+        request=PlaybillNextRequestV1(
+            at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            evaluation_time=datetime.now(UTC),
+            access_profile=CoverageAccessProfileV1(
+                profile_id="resolution-memo",
+                permitted_access_classes=("instance", "public"),
+            ),
+            workspace_observation=_declared_projection_observation(instance),
+        ),
+    )
+
+
+def test_the_resolution_memo_hits_on_the_surfaces_and_misses_when_its_inputs_move(
     resolution_world: PlaybillInstance,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An `orient` is a read, and a read must not pay twice for the same derivation.
+    """The memo has to hit through `orient` and `next`, or it is not a cache.
 
-    Deriving every live Claim's verdict and resolution status is the first thing
-    both `orient` and `next` do, and at a few hundred Claims it crossed the
-    client's own default timeout -- so the opening move of an SDK session could
-    fail against a perfectly healthy instance. The derivation is a pure function
-    of things that cannot move between two reads at one coordinate, one instant
-    and one Claim set, so the second read is entitled to evaluate nothing at all.
-    It must still answer identically: a memo that changed the answer would be
-    accepted state by the back door.
+    Both surfaces stamp a fresh `utc_now()` per request, so a memo keyed on the
+    evaluation instant could never serve a second read and the whole item would
+    be a no-op nobody noticed. Time is not ignored, though: a verdict is a step
+    function whose breakpoints are the instants it compares against, so the
+    entry carries the interval its answer holds over, and an instant outside
+    that interval evaluates again. So do a moved CAS, a new attestation and a
+    second accepted coordinate -- everything a verdict reads that the accepted
+    coordinate does not name.
     """
 
     instance = resolution_world
     reset_claim_resolution_memo()
-    claims = _resolution_inputs(instance)
-    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     counted = _count_group_resolutions(monkeypatch)
 
-    first = claim_resolution_statuses(
-        instance,
-        claims=claims,
-        at=coordinate,
-        evaluation_time=NOW,
-    )
+    first = _orient(instance)
     assert counted[0] > 0
     evaluated = counted[0]
 
-    verdicts: dict[str, Any] = {}
-    second = claim_resolution_statuses(
-        instance,
-        claims=claims,
-        at=coordinate,
-        evaluation_time=NOW,
-        verdicts_by_identity=verdicts,
-    )
-
+    # A second `orient` at real wall-clock time evaluates nothing and answers
+    # identically -- a memo that changed the answer would be accepted state by
+    # the back door.
+    second = _orient(instance)
     assert counted[0] == evaluated
-    assert second == first
-    # The verdicts the first read derived come back with the statuses, so the
-    # folds that share them are not silently handed an empty map.
-    assert set(verdicts) == {f"Claim:{name}" for name in first}
+    assert second.rows == first.rows
+    assert second.orientation == first.orientation
 
+    # `next` reads the same derivation, so the warm entry serves it too, and a
+    # second `next` likewise evaluates nothing.
+    _next(instance)
+    assert counted[0] == evaluated
+    _next(instance)
+    assert counted[0] == evaluated
 
-def test_a_moved_verdict_input_re_evaluates_instead_of_serving_the_memo(
-    resolution_world: PlaybillInstance,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A verdict reads more than the accepted tree, so the key must name all of it.
-
-    Whether a Claim's capture can be replayed now depends on the content-address
-    store, and whether a principal has attested to it depends on the attestation
-    ledger. Neither is part of the accepted coordinate, so a memo keyed on the
-    coordinate alone would keep serving a verdict derived before an object
-    landed. The key carries a fingerprint of both stores; this proves the
-    fingerprint actually moves when one of them does, and that the moved
-    fingerprint is what sends the read back to the derivation.
-    """
-
-    instance = resolution_world
+    # Crossing a boundary evaluates again: the clock is out of the key, not out
+    # of the law. Everything the verdicts here compare against is already in the
+    # past at `now`, so the answer genuinely holds forward forever -- the
+    # interval is exercised from BELOW the earliest breakpoint.
+    boundaries = _verdict_boundaries(instance)
+    assert boundaries
+    boundary = min(boundaries)
     reset_claim_resolution_memo()
-    claims = _resolution_inputs(instance)
-    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    counted = _count_group_resolutions(monkeypatch)
-
-    before = verdict_input_fingerprint(instance)
-    claim_resolution_statuses(instance, claims=claims, at=coordinate, evaluation_time=NOW)
     evaluated = counted[0]
-    assert evaluated > 0
-    claim_resolution_statuses(instance, claims=claims, at=coordinate, evaluation_time=NOW)
+
+    _orient(instance, evaluation_time=boundary - timedelta(microseconds=1))
+    assert counted[0] > evaluated
+    evaluated = counted[0]
+    # Another instant inside the same interval is the same answer.
+    _orient(instance, evaluation_time=boundary - timedelta(days=1))
+    assert counted[0] == evaluated
+    # The boundary itself is the other side of it.
+    _orient(instance, evaluation_time=boundary)
+    assert counted[0] > evaluated
+    evaluated = counted[0]
+
+    reset_claim_resolution_memo()
+    _orient(instance)
+    evaluated = counted[0]
+
+    # A capture's replay availability is decided by the content-address store,
+    # which the accepted coordinate does not name.
+    before = verdict_input_fingerprint(instance)
+    instance.body_store().store(b"a body no verdict has seen yet\n")
+    assert verdict_input_fingerprint(instance) != before
+    _orient(instance)
+    assert counted[0] > evaluated
+    evaluated = counted[0]
+    _orient(instance)
     assert counted[0] == evaluated
 
-    instance.body_store().store(b"a body no verdict has seen yet\n")
-    after = verdict_input_fingerprint(instance)
-    assert after != before
-
-    claim_resolution_statuses(instance, claims=claims, at=coordinate, evaluation_time=NOW)
+    # As is whether a principal has attested, which lives in its own ledger.
+    attestation_root = (
+        instance.root / instance.descriptor.storage.exhaust / CLAIM_ATTESTATION_STORE_DIRECTORY
+    )
+    attestation_root.mkdir(parents=True, exist_ok=True)
+    (attestation_root / "partition-0000.json").write_bytes(b"{}\n")
+    _orient(instance)
     assert counted[0] > evaluated
 
 
@@ -901,21 +971,18 @@ def test_two_accepted_coordinates_do_not_share_a_resolution_entry(
     assert earlier != latest
 
     reset_claim_resolution_memo()
-    # Only the Claims both generations hold, so the two reads differ in exactly
-    # one input: the coordinate.
-    claims = _resolution_inputs(instance, at=earlier)
     counted = _count_group_resolutions(monkeypatch)
 
-    claim_resolution_statuses(instance, claims=claims, at=earlier, evaluation_time=NOW)
+    _orient(instance, at=earlier)
     evaluated = counted[0]
     assert evaluated > 0
-    claim_resolution_statuses(instance, claims=claims, at=earlier, evaluation_time=NOW)
+    _orient(instance, at=earlier)
     assert counted[0] == evaluated
 
-    claim_resolution_statuses(instance, claims=claims, at=latest, evaluation_time=NOW)
+    _orient(instance, at=latest)
     assert counted[0] > evaluated
     latest_evaluated = counted[0]
 
     # And the earlier coordinate keeps its own entry rather than being displaced.
-    claim_resolution_statuses(instance, claims=claims, at=earlier, evaluation_time=NOW)
+    _orient(instance, at=earlier)
     assert counted[0] == latest_evaluated

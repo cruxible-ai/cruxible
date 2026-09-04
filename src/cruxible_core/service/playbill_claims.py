@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import MutableMapping
+from collections.abc import MutableMapping, MutableSet
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
@@ -703,6 +703,7 @@ def resolve_playbill_claim_group(
     evaluated_at: datetime,
     claims: tuple[ClaimArtifactAny, ...],
     verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
+    time_boundaries: MutableSet[datetime] | None = None,
 ) -> PlaybillClaimGroupResolution:
     """Resolve one already-listed (Subject, predicate) slot without re-listing.
 
@@ -711,6 +712,9 @@ def resolve_playbill_claim_group(
     every group, which made the fold quadratic in Claims. A caller that
     evaluates the same Claims elsewhere in the same request may pass a shared
     verdict map, valid only for this exact coordinate and evaluation time.
+    ``time_boundaries`` collects the instants each verdict could change at, for
+    a caller that memoizes the whole fold over an interval rather than an
+    instant.
     """
 
     from cruxible_core.service.playbill_evidence import (
@@ -737,6 +741,7 @@ def resolve_playbill_claim_group(
                 claim_identity=claim.identity.qualified,
                 evaluation_time=evaluated_at,
                 at=public_coordinate,
+                time_boundaries=time_boundaries,
             ).verdict
             if verdicts_by_identity is not None:
                 verdicts_by_identity[claim.identity.qualified] = shared

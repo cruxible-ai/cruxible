@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import hashlib
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableSet
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -33,6 +33,7 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
 )
 from cruxible_client.contracts.claim_verdicts import (
+    CaptureVerdictEvidenceV1,
     ClaimAdjudicationRuleV1,
     ClaimVerdictResultV1,
     ClaimVerdictResultV2,
@@ -661,6 +662,41 @@ def _reproduced_claim_adjudication_rule(
     raise ProposalIntegrityError("accepted Claim adjudication rule does not reproduce")
 
 
+def _record_verdict_time_boundaries(
+    boundaries: MutableSet[datetime],
+    *,
+    rule: ClaimAdjudicationRuleV1,
+    claim: ClaimArtifactAny,
+    captures: tuple[CaptureVerdictEvidenceV1, ...],
+    attestations: tuple[VerifiedClaimAttestationV1, ...],
+) -> None:
+    """Record every instant at which this verdict's answer could change.
+
+    A verdict is a step function of the evaluation instant, and these are its
+    only breakpoints: the Claim's own effective interval, each capture's
+    observation, source expiry and freshness horizon, and each attestation's
+    observation and validity end. Between two consecutive breakpoints the answer
+    is the same at every instant, which is what lets a read be remembered
+    without pinning the wall clock into its key.
+    """
+
+    for instant in (claim.statement.effective_from, claim.statement.effective_until):
+        if instant is not None:
+            boundaries.add(instant)
+    for capture in captures:
+        boundaries.add(capture.observed_at)
+        if capture.source_effective_until is not None:
+            boundaries.add(capture.source_effective_until)
+        if rule.max_evidence_age is not None:
+            boundaries.add(
+                capture.observed_at + timedelta(microseconds=rule.max_evidence_age.microseconds)
+            )
+    for attestation in attestations:
+        boundaries.add(attestation.statement.observed_at)
+        if attestation.statement.valid_until is not None:
+            boundaries.add(attestation.statement.valid_until)
+
+
 def service_evaluate_playbill_claim_verdict(
     instance: PlaybillInstance,
     *,
@@ -668,8 +704,14 @@ def service_evaluate_playbill_claim_verdict(
     evaluation_time: datetime,
     at: PlaybillAcceptedCoordinate | None = None,
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
+    time_boundaries: MutableSet[datetime] | None = None,
 ) -> PlaybillClaimVerdictQueryAny:
-    """Recompute currency/verdict from accepted evidence at one explicit time."""
+    """Recompute currency/verdict from accepted evidence at one explicit time.
+
+    ``time_boundaries``, when supplied, collects the instants this verdict's
+    answer could change at, so a caller memoizing a whole derivation can say
+    over what interval its answer holds instead of keying on the wall clock.
+    """
 
     if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
         raise ProposalIntegrityError("Claim verdict evaluation_time must be timezone-aware")
@@ -716,6 +758,14 @@ def service_evaluate_playbill_claim_verdict(
         accepted.claim,
         evidence.verified_attestations,
     )
+    if time_boundaries is not None:
+        _record_verdict_time_boundaries(
+            time_boundaries,
+            rule=rule,
+            claim=accepted.claim,
+            captures=captures,
+            attestations=attestations,
+        )
     verdict = evaluate_claim_verdict(
         claim_statement_digest=accepted.statement_digest,
         rule=rule,
