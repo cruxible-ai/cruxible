@@ -14,6 +14,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecy
 from cruxible_client.contracts.claim_types import (
     claim_type_digest,
     claim_type_path,
+    parse_claim_type,
     render_claim_type,
 )
 from cruxible_client.contracts.claims import claim_artifact_digest
@@ -761,6 +762,9 @@ def test_retired_claim_backing_requires_depublication_without_access_disclosure(
     assert row.subject_identity == "corpus.runbook#status"
     assert row.related_identities == (backing.identity.qualified,)
     assert row.detail["retired_backings"] == [backing.identity.qualified]
+    # Its whole held list is gone, so there is nothing left to hold.
+    assert row.detail["backing_state"] == "exhausted"
+    assert row.detail["surviving_backings"] == []
     # No verb republishes a retired backing, and until `block depublish` existed
     # the row named a change with no command behind it. There is a verb now, so
     # the row names it and composes the exact invocation.
@@ -789,6 +793,59 @@ def test_retired_claim_backing_requires_depublication_without_access_disclosure(
         }
     )
     assert _projection_rows(instance, access_hidden) == ()
+
+
+def _claim_type_backing(instance: PlaybillInstance) -> ProjectionArtifactBackingV1:
+    """One held member the retirement of a Claim cannot move: an accepted ClaimType."""
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = next(item for item in sorted(tree) if item.startswith("claim-types/"))
+    parsed = parse_claim_type(tree[path], path=path)
+    return ProjectionArtifactBackingV1(
+        identity=parsed.identity,
+        artifact_digest=claim_type_digest(parsed).tagged,
+    )
+
+
+def test_one_retired_member_of_a_held_list_is_repinned_onto_what_survives(
+    tmp_path: Path,
+) -> None:
+    """A block holds a LIST; one member leaving is not the block leaving.
+
+    Releasing the whole registration because one of up to 512 held members
+    retired names the opposite of what the author should do. The proportionate
+    repair drops that member and re-authors the prose around the rest, and the
+    row composes the repin that holds exactly what survives.
+    """
+
+    instance, owner, claim_id = _published_world(tmp_path)
+    claim_backing = _claim_backing(instance)
+    assert claim_backing.identity.name == claim_id
+    survivor = _claim_type_backing(instance)
+    request = _request(instance, backing=(claim_backing, survivor))
+    assert _projection_rows(instance, request) == ()
+
+    _retire(instance, owner, claim_id)
+    retired = request.model_copy(
+        update={"at": AcceptedCoordinate.from_internal(instance.accepted_coordinate())}
+    )
+
+    (row,) = _projection_rows(instance, retired)
+    assert row.reason == "projection_backing_stale"
+    assert row.detail["backing_state"] == "retired"
+    assert row.detail["retired_backings"] == [claim_backing.identity.qualified]
+    assert row.detail["surviving_backings"] == [survivor.identity.qualified]
+    assert row.repair.operation == "playbill.block.repin"
+    assert row.repair.required_change == "drop_the_retired_backing_then_repin"
+    assert row.repair.arguments["claim"] == [survivor.identity.qualified]
+
+    # Repinning onto what survives clears it; the block stays registered.
+    repinned = retired.model_copy(
+        update={
+            "workspace_observation": _request(instance, backing=(survivor,)).workspace_observation
+        }
+    )
+    assert _projection_rows(instance, repinned) == ()
 
 
 def test_overturned_claim_backing_requires_depublication(tmp_path: Path) -> None:
@@ -837,6 +894,8 @@ def test_overturned_claim_backing_requires_depublication(tmp_path: Path) -> None
     assert row.reason == "projection_backing_stale"
     assert row.related_identities == (backing.identity.qualified,)
     assert row.detail["overturned_backings"] == [backing.identity.qualified]
+    assert row.detail["backing_state"] == "exhausted"
+    assert row.detail["surviving_backings"] == []
     assert row.repair.operation == "playbill.block.depublish"
     assert row.repair.command == "cruxible playbill block depublish corpus.runbook status"
     assert row.repair.required_change == "depublish_overturned_backing_block"

@@ -3195,8 +3195,26 @@ def _projection_items(
                         ),
                     )
                 )
-            if retired:
-                related = tuple(sorted(retired, key=lambda value: value.encode("utf-8")))
+            # A block holds a LIST. One member of it going away is not the
+            # block going away: the proportionate repair is a repin that drops
+            # that member and re-authors the prose around the rest. Releasing
+            # the whole registration is right only when there is nothing left
+            # to hold -- when every held member has retired or been overturned.
+            held_members = frozenset(
+                backing.identity.qualified
+                for backing in marker.stamp.backing
+                if not isinstance(backing, ProjectionQueryBackingV1)
+            )
+            gone = frozenset(retired) | frozenset(overturned)
+            surviving = tuple(sorted(held_members - gone, key=lambda value: value.encode("utf-8")))
+            exhausted = bool(held_members) and not surviving
+            for moved, detail_key, change in (
+                (retired, "retired_backings", "retired"),
+                (overturned, "overturned_backings", "overturned"),
+            ):
+                if not moved:
+                    continue
+                related = tuple(sorted(moved, key=lambda value: value.encode("utf-8")))
                 items.append(
                     _item(
                         severity="repair",
@@ -3206,38 +3224,31 @@ def _projection_items(
                         detail={
                             "source_id": source.source_id,
                             "block_id": marker.stamp.block_id,
-                            "retired_backings": list(related),
+                            detail_key: list(related),
+                            # The discriminator the repair follows from: the
+                            # row's operation is a function of whether the held
+                            # list still has a member to hold.
+                            "backing_state": "exhausted" if exhausted else change,
+                            "surviving_backings": list(surviving),
                         },
-                        # No verb republishes a retired backing, and until
-                        # `block depublish` existed the row named a change with
-                        # no command behind it. There is a verb now, so the row
-                        # names it.
-                        repair=PlaybillNextRepairV1(
-                            operation="playbill.block.depublish",
-                            target=target,
-                            required_change="depublish_retired_backing_block",
-                            arguments=arguments,
-                        ),
-                    )
-                )
-            if overturned:
-                related = tuple(sorted(overturned, key=lambda value: value.encode("utf-8")))
-                items.append(
-                    _item(
-                        severity="repair",
-                        reason="projection_backing_stale",
-                        subject_identity=target,
-                        related_identities=related,
-                        detail={
-                            "source_id": source.source_id,
-                            "block_id": marker.stamp.block_id,
-                            "overturned_backings": list(related),
-                        },
-                        repair=PlaybillNextRepairV1(
-                            operation="playbill.block.depublish",
-                            target=target,
-                            required_change="depublish_overturned_backing_block",
-                            arguments=arguments,
+                        # No verb republishes a retired backing. When something
+                        # survives, the block is repinned onto exactly that;
+                        # when nothing does, the registration is released and
+                        # the marker leaves the page.
+                        repair=(
+                            PlaybillNextRepairV1(
+                                operation="playbill.block.depublish",
+                                target=target,
+                                required_change=f"depublish_{change}_backing_block",
+                                arguments=arguments,
+                            )
+                            if exhausted
+                            else PlaybillNextRepairV1(
+                                operation="playbill.block.repin",
+                                target=target,
+                                required_change=f"drop_the_{change}_backing_then_repin",
+                                arguments={**arguments, "claim": list(surviving)},
+                            )
                         ),
                     )
                 )
@@ -3253,6 +3264,7 @@ def _projection_items(
                             "source_id": source.source_id,
                             "block_id": marker.stamp.block_id,
                             "stale_backings": list(related),
+                            "backing_state": "revised",
                         },
                         # Nothing renders a block, so nothing converges one: a
                         # member that moved is answered by reading the prose

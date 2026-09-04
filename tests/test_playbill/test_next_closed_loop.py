@@ -115,6 +115,12 @@ from tests.test_playbill._knowledge_loop_support import (
     seed_claims,
     subject_shell,
 )
+from tests.test_playbill._published_world import (
+    published_world as _published_world,
+)
+from tests.test_playbill._published_world import (
+    retire_claim as _retire_published_claim,
+)
 from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_authoring_preflight import _seed_claim_surface
@@ -136,6 +142,7 @@ from tests.test_playbill.test_evidence_freshness import _activate as _activate_m
 from tests.test_playbill.test_graph_v4_provider_closure import _accepted_procedure
 from tests.test_playbill.test_projection_next import (
     _claim_backing,
+    _claim_type_backing,
     _instance_with_query,
     _query_backing,
 )
@@ -158,9 +165,11 @@ EXPECTED_OPERATIONS = {
     "floor_stale": "playbill.floor.export",
     "floor_invalid": "playbill.floor.export",
     "projection_dirty": "playbill.block.repin",
-    # Nothing renders a block, so no sync converges one: every drifted block
-    # is answered by a repin over the list the author still means to hold.
-    "projection_backing_stale": "playbill.block.repin",
+    # Nothing renders a block, so no sync converges one: a drifted block is
+    # answered by a repin over the list the author still means to hold. The one
+    # exception is a held list with nothing left in it -- every member retired
+    # or overturned -- where the registration itself is what has to go.
+    "projection_backing_stale": frozenset({"playbill.block.repin", "playbill.block.depublish"}),
     "projection_candidates_changed": "playbill.block.repin",
     # A marker the page has lost is repaired by releasing the registration that
     # demands it; a marker the page has mangled is repaired by restoring it.
@@ -187,6 +196,8 @@ def _expected_operation(key: ClosedLoopKey) -> str:
         return "playbill.block.depublish"
     if key[0] == "projection_marker_invalid":
         return "playbill.block.repin"
+    if key[0] == "projection_backing_stale":
+        return "playbill.block.depublish" if key[1] == "exhausted" else "playbill.block.repin"
     expected = EXPECTED_OPERATIONS[key[0]]
     assert isinstance(expected, str)
     return expected
@@ -239,6 +250,11 @@ def _item_key(item: object) -> ClosedLoopKey:
         elif reason == "projection_marker_invalid":
             status = detail.get("marker_status")
             discriminator = status if status == "registered_marker_missing" else None
+        elif reason == "projection_backing_stale":
+            # Two producers, two repairs: a member that moved is repinned, a
+            # held list with nothing left in it is depublished. The pin has to
+            # tell them apart or it claims a vocabulary the reason lacks.
+            discriminator = detail.get("backing_state")
     return reason, discriminator
 
 
@@ -966,16 +982,66 @@ def _projection_dirty(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def _projection_backing_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+def _projection_backing_stale_revised(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    key: ClosedLoopKey = ("projection_backing_stale", "revised")
     instance, _owner = _instance_with_query(root)
     before = _projection_request(instance, backing=(_claim_backing(instance, stale=True),))
-    row = _row(instance, "projection_backing_stale", before)
-    assert row.repair.operation == EXPECTED_OPERATIONS["projection_backing_stale"]
+    row = _row_by_key(instance, key, before)
+    assert row.repair.operation == _expected_operation(key)
 
-    _assert_gone(
+    _assert_key_gone(
         instance,
-        "projection_backing_stale",
+        key,
         _projection_request(instance, backing=(_claim_backing(instance),)),
+    )
+
+
+def _projection_backing_stale_retired(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    """One member of a held list retires; the rest of the list is still held."""
+
+    key: ClosedLoopKey = ("projection_backing_stale", "retired")
+    instance, owner, claim_id = _published_world(root)
+    survivor = _claim_type_backing(instance)
+    held = _claim_backing(instance)
+    _retire_published_claim(instance, owner, claim_id)
+    before = _projection_request(instance, backing=(held, survivor))
+    row = _row_by_key(instance, key, before)
+    assert row.repair.operation == _expected_operation(key)
+    assert row.repair.required_change == "drop_the_retired_backing_then_repin"
+    assert row.repair.arguments["claim"] == [survivor.identity.qualified]
+
+    _assert_key_gone(instance, key, _projection_request(instance, backing=(survivor,)))
+
+
+def _projection_backing_stale_exhausted(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every held member is gone, so the registration itself is what has to go."""
+
+    key: ClosedLoopKey = ("projection_backing_stale", "exhausted")
+    instance, owner, claim_id = _published_world(root)
+    held = _claim_backing(instance)
+    _retire_published_claim(instance, owner, claim_id)
+    before = _projection_request(instance, backing=(held,))
+    row = _row_by_key(instance, key, before)
+    assert row.repair.operation == _expected_operation(key)
+    assert row.repair.required_change == "depublish_retired_backing_block"
+
+    # Depublishing releases the registration and the marker leaves the page.
+    observation = before.workspace_observation
+    assert observation is not None
+    assert observation.source_observations is not None
+    (source,) = observation.source_observations
+    _assert_key_gone(
+        instance,
+        key,
+        before.model_copy(
+            update={
+                "workspace_observation": observation.model_copy(
+                    update={
+                        "source_observations": (source.model_copy(update={"marker_summaries": ()}),)
+                    }
+                )
+            }
+        ),
     )
 
 
@@ -1349,7 +1415,9 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("floor_stale", None): _floor_stale,
     ("floor_invalid", None): _floor_invalid,
     ("projection_dirty", None): _projection_dirty,
-    ("projection_backing_stale", None): _projection_backing_stale,
+    ("projection_backing_stale", "revised"): _projection_backing_stale_revised,
+    ("projection_backing_stale", "retired"): _projection_backing_stale_retired,
+    ("projection_backing_stale", "exhausted"): _projection_backing_stale_exhausted,
     ("projection_candidates_changed", None): _projection_candidates_changed,
     ("projection_marker_invalid", "registered_marker_missing"): _projection_marker_missing,
     ("projection_marker_invalid", None): _projection_marker_invalid,
@@ -1396,6 +1464,13 @@ def test_every_next_reason_has_an_effective_named_repair(
     assert {
         discriminator for reason, discriminator in CLOSED_LOOP_CASES if reason == "citation_drifted"
     } == {"changed", "gone", "ambiguous"}
+    # One reason, two repairs: every branch of it is registered, so the pin
+    # cannot claim a repair vocabulary only one producer actually has.
+    assert {
+        discriminator
+        for reason, discriminator in CLOSED_LOOP_CASES
+        if reason == "projection_backing_stale"
+    } == {"revised", "retired", "exhausted"}
     assert set(EXPECTED_OPERATIONS) == reasons
     assert HAND_EDIT_NEXT_REASONS == PLAYBILL_HAND_EDIT_NEXT_REASONS
     assert {
