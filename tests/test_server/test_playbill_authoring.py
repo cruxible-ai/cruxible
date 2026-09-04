@@ -113,6 +113,66 @@ def test_http_compile_and_submit_keep_the_frozen_request_boundary(
     assert seen[1] == (instance_id, INTENT_ID)
 
 
+def test_http_compile_renders_a_lowering_fault_typed_instead_of_a_bare_500(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    """Card 124: a validator refusing deep inside lowering is a refusal of the request.
+
+    It used to escape the compile route as an unhandled 500 whose only
+    diagnosis was the daemon log. Whatever lowering raises short of a memory
+    fault now comes back as a typed refusal carrying the validator's message.
+    """
+
+    client, instance_id, _private_key = playbill_http
+
+    def refusing(*_args: object, **_kwargs: object) -> object:
+        raise ValueError("source coordinates/selectors cannot carry locators at $.selector")
+
+    monkeypatch.setattr("cruxible_core.playbill.authoring.preflight.lower_authoring", refusing)
+    payload = {
+        "tag": "playbill-claim-authoring-payload-v1",
+        "statement": {
+            "tag": "playbill-authoring-claim-statement-v1",
+            "subject": {
+                "tag": "playbill-semantic-address-v1",
+                "artifact_path": "subjects/work_item/wi-42.json",
+                "selector": {"scheme": "artifact-v1", "value": ""},
+            },
+            "predicate": "work.status",
+            "qualifier": None,
+            "object": {"kind": "literal", "value": "ready"},
+            "role": "observation",
+            "effective_from": None,
+            "effective_until": None,
+        },
+        "rationale": "Observed ready.",
+        "source": {"tag": "playbill-self-source-body-v1", "content_base64": "cmVhZHk="},
+        "citation_role": None,
+        "claim_ref": None,
+        "existing_claim_dispositions": [],
+    }
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/authoring/compile",
+        json={
+            "tag": "playbill-authoring-intent-compile-request-v1",
+            "payload": payload,
+            "intent_id": None,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["verdict"] == "refused"
+    (diagnostic,) = [
+        item
+        for item in body["frontier"]["diagnostics"]
+        if item["code"] == "playbill.authoring.lowering_invalid"
+    ]
+    assert "cannot carry locators" in diagnostic["message"]
+    assert diagnostic["repairs"][0]["kind"] == "revise_payload"
+
+
 def test_http_input_variants_delegate_without_exposing_a_base(
     playbill_http: tuple[TestClient, str, Path],
     monkeypatch,

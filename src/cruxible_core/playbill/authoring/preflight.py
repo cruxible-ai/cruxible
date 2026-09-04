@@ -877,27 +877,54 @@ def compute_preflight(
                         for item in evaluation.diagnostics
                     )
                 resolved_payload = lowered.resolved_authoring
-        except AuthoringLoweringError as exc:
+        except ValueError as raised:
+            if isinstance(raised, AuthoringLoweringError):
+                refusal = raised
+            else:
+                # A contract validator refusing deep inside lowering is still a
+                # refusal of the request that reached it, and it used to escape
+                # as an unhandled 500 whose only diagnosis was the daemon log.
+                # It is rendered typed, with the validator's own message, and
+                # still logged so a genuine invariant breach is not downgraded
+                # silently.
+                _log.warning(
+                    "authoring_lowering_fault",
+                    intent_id=intent.intent_id,
+                    error_type=raised.__class__.__name__,
+                    detail=str(raised),
+                )
+                refusal = AuthoringLoweringError(
+                    code="playbill.authoring.lowering_invalid",
+                    offending_element="payload",
+                    message=f"The payload could not be lowered: {raised}",
+                    repairs=(
+                        _repair(
+                            "revise_payload",
+                            "Revise the element the message names and compile again.",
+                            None,
+                        ),
+                    ),
+                )
             diagnostics.append(
                 _diagnostic(
-                    code=exc.code,
+                    code=refusal.code,
                     stage="lowering",
-                    offending_element=exc.offending_element,
-                    message=exc.message,
-                    repairs=exc.repairs,
+                    offending_element=refusal.offending_element,
+                    message=refusal.message,
+                    repairs=refusal.repairs,
                 )
             )
             blocked.append(
                 BlockedCheckV1(
                     check="proposal_evaluation",
-                    blocked_by=(exc.code,),
+                    blocked_by=(refusal.code,),
                     reason="Artifact lowering must succeed before semantic laws can evaluate it.",
                 )
             )
             resolved_payload = {
                 "lowering_refusal": {
-                    "code": exc.code,
-                    "offending_element": exc.offending_element,
+                    "code": refusal.code,
+                    "offending_element": refusal.offending_element,
                 },
                 "semantic_identity": intent.semantic_identity,
             }

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **An authoring anchor may quote a URL, and a lowering refusal is never a
+  bare 500.** Every security feed interleaves reference URLs with the fields a
+  Claim rests on, and the locator rule on source selectors -- right for every
+  field that names an address -- applied to the anchor too, so no anchor could
+  span "which CVE" and "what severity"; the compile route then died on it with
+  an unhandled `internal server error` whose only diagnosis was the daemon
+  log. An anchor is quoted source bytes and a URL inside it is bytes: the
+  locator rule now exempts exactly that field (credential material is still
+  refused there). A working selection the capture contracts refuse comes back
+  typed as `playbill.authoring.working_selection_refused` naming the selector
+  and the repair, and any other validator fault inside lowering is rendered as
+  `playbill.authoring.lowering_invalid` with the validator's own message,
+  logged server-side, rather than escaping the route as a 500.
+
 - **A published block has a way out, and a worktree has a way to move.** Two
   verbs the lifecycle was missing. `cruxible playbill block depublish SOURCE_ID
   BLOCK_ID` releases the publication registration that demands a block's frame:

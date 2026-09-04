@@ -944,18 +944,35 @@ def _lower_claim(
     else:
         source = payload.source
         assert isinstance(source, WorkingSelectionObservationV1)
-        built_selection = build_working_selection_capture(
-            store=instance.body_store(),
-            actor_id=actor_id,
-            claim_id=claim_id,
-            rationale=payload.rationale,
-            observed_at=observed_at,
-            accepted_coordinate=public_base,
-            source_id=source.source_id,
-            coordinate=source.coordinate.model_dump(mode="json"),
-            selector=source.selector.model_dump(mode="json"),
-            selected_content=source.selected_content,
-        )
+        try:
+            built_selection = build_working_selection_capture(
+                store=instance.body_store(),
+                actor_id=actor_id,
+                claim_id=claim_id,
+                rationale=payload.rationale,
+                observed_at=observed_at,
+                accepted_coordinate=public_base,
+                source_id=source.source_id,
+                coordinate=source.coordinate.model_dump(mode="json"),
+                selector=source.selector.model_dump(mode="json"),
+                selected_content=source.selected_content,
+            )
+        except (PlaybillError, ValueError) as exc:
+            # The capture contracts refusing the observation -- a selector that
+            # carries a locator, a selection over its byte budget -- is a
+            # refusal of THIS request, and it used to leave as an unhandled
+            # server fault the author could only read in the daemon log.
+            _refuse(
+                "playbill.authoring.working_selection_refused",
+                "source.selector",
+                f"The working selection cannot be captured: {exc}",
+                repair_kind="revise_selection",
+                repair_description=(
+                    "Anchor on prose the source rules admit and grow the window with "
+                    "surrounding lines; a URL may appear in an anchor but never in "
+                    "another selector field."
+                ),
+            )
         built_capture = built_selection
         contract = built_selection.contract
         assert payload.citation_role is not None

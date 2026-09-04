@@ -164,7 +164,20 @@ class CasSourceReferenceV1(_StrictSourceModel):
         return value
 
 
-def _reject_secret_or_locator(value: object, *, location: str = "$") -> None:
+# A selector field that quotes the source's own bytes to locate a window in
+# them. It is prose the author copied out of the file, and a URL inside it is
+# bytes like any other: nothing reads it as an address, so the locator rule
+# does not apply to it. The secret rules still do -- credential material has
+# no business in an anchor whatever it was copied from.
+_QUOTED_SOURCE_KEYS = frozenset({"anchor"})
+
+
+def _reject_secret_or_locator(
+    value: object,
+    *,
+    location: str = "$",
+    quoted_source: bool = False,
+) -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             lowered = key.casefold().replace("-", "_")
@@ -172,19 +185,22 @@ def _reject_secret_or_locator(value: object, *, location: str = "$") -> None:
                 lowered.endswith(f"_{secret}") for secret in _SECRET_KEYS
             ):
                 raise ValueError(f"secret-bearing source field is forbidden at {location}.{key}")
-            _reject_secret_or_locator(item, location=f"{location}.{key}")
+            _reject_secret_or_locator(
+                item,
+                location=f"{location}.{key}",
+                quoted_source=lowered in _QUOTED_SOURCE_KEYS,
+            )
     elif isinstance(value, list):
         for index, item in enumerate(value):
             _reject_secret_or_locator(item, location=f"{location}[{index}]")
     elif isinstance(value, str):
         lowered = value.casefold()
-        if (
-            "://" in value
-            or lowered.startswith("bearer ")
-            or "-----begin private key-----" in lowered
-        ):
+        if lowered.startswith("bearer ") or "-----begin private key-----" in lowered:
+            raise ValueError(f"source coordinates/selectors cannot carry secrets at {location}")
+        if "://" in value and not quoted_source:
             raise ValueError(
-                f"source coordinates/selectors cannot carry locators or secrets at {location}"
+                f"source coordinates/selectors cannot carry locators at {location}; an "
+                "anchor may quote a URL, a coordinate or selector field may not name one"
             )
 
 
