@@ -286,6 +286,7 @@ from cruxible_core.playbill.exhaust.promotions import (
 from cruxible_core.playbill.principal_lifecycle import evaluate_principal_lifecycle
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.proposal_message import proposal_commit_message
+from cruxible_core.playbill.proposal_notes import proposal_evaluation_note
 from cruxible_core.playbill.provider_classifiers import (
     core_provider_bucket_conformance_fixtures,
 )
@@ -3732,6 +3733,15 @@ class ProposalService:
         self.evidence.write_evaluation(evaluation)
         if outcome.candidate is not None:
             self.evidence.write_candidate(outcome.candidate)
+        # The note is written LAST, after every evidence file is durable, so it
+        # can only ever project records that already exist. A re-submission on
+        # the same ref lands on its own commit; a re-evaluation of one commit
+        # restates its note rather than accumulating a second one.
+        self.transport.write_proposal_note(
+            "evaluation",
+            commit_oid,
+            proposal_evaluation_note(admission=admission, evaluation=evaluation),
+        )
         if self.transport.read_main() != current.git_oid:
             raise ProposalIntegrityError("proposal evaluation changed or raced accepted main")
         if self.workspace_advertiser is None:

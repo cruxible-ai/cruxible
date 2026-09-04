@@ -363,6 +363,45 @@ def _approval_receipt(
     )
 
 
+def _reconcile_proposal_notes(
+    instance: PlaybillInstance,
+    *,
+    proposal: ProposalResult,
+    candidate: CandidateRecordAnyVersion,
+) -> None:
+    """Prove Git's copy of this proposal still agrees with the evidence store.
+
+    The store is the source of record and the note refs are its projection, so
+    the two ways they can differ are not the same failure:
+
+    * a note that DISAGREES is a stale or edited projection. Settlement refuses,
+      because a reviewer who approved from the note read something the daemon
+      never wrote -- the point of projecting evidence into Git at all is that
+      the two say the same thing.
+    * a note that is ABSENT is a projection that was never written. Every
+      proposal admitted before these refs existed is in that state, so it is
+      repaired here rather than turned into a refusal that would strand them.
+
+    """
+
+    del candidate
+    evidence = instance.proposal_evidence()
+    oid = proposal.admission.candidate_commit_oid
+    projections = (("evaluation", evidence.evaluation_note(proposal.admission.proposal_id)),)
+    for kind, expected in projections:
+        stored = instance.read_proposal_note(kind, oid)
+        if stored == expected:
+            continue
+        if stored is not None:
+            raise ProposalIntegrityError(
+                f"playbill.proposal.note_disagrees_with_evidence: the {kind} note on this "
+                "candidate commit differs from the proposal evidence the daemon persisted; "
+                "re-read the proposal with `playbill proposal review --json` and settle from "
+                "that, or restore the ledger from its own evidence before activating"
+            )
+        instance.write_proposal_note(kind, oid, expected)
+
+
 def service_activate_playbill_proposal(
     instance: PlaybillInstance,
     *,
@@ -387,6 +426,7 @@ def service_activate_playbill_proposal(
     if candidate.candidate.parent_semantic_root != base.semantic_root:
         raise SettlementIntegrityError("candidate parent root differs from evaluated base")
     approvals = instance.proposal_evidence().read_approvals(candidate.candidate_digest)
+    _reconcile_proposal_notes(instance, proposal=proposal, candidate=candidate)
     bundle = instance.prepare_generation(
         base=base,
         candidate_tree=instance.proposal_tree(evaluation.evaluated_tree_oid),

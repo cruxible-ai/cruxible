@@ -773,6 +773,16 @@ class PlaybillInstance:
 
         return self._ledger.read_proposal_ref(target_ref)
 
+    def write_proposal_note(self, kind: str, oid: str, content: bytes) -> None:
+        """Project one proposal record onto its own candidate commit."""
+
+        self._ledger.write_proposal_note(kind, oid, content)
+
+    def read_proposal_note(self, kind: str, oid: str) -> bytes | None:
+        """Read one candidate commit's projected proposal note, if it carries one."""
+
+        return self._ledger.read_proposal_note(kind, oid)
+
     def review_operational_store(self) -> ReviewOperationalStore:
         """Return the local append-only review observation store.
 
