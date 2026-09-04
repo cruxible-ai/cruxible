@@ -10,7 +10,6 @@ saying what it said. The answer is a currency verdict over the whole list, and
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
@@ -19,13 +18,6 @@ from cruxible_client.contracts.authoring.models import (
     PlaybillBlockSyncReadResultV1,
     PlaybillBlockSyncSuccessorCandidateV1,
 )
-from cruxible_client.contracts.captures import (
-    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
-    capture_contract_digest,
-    capture_is_coordinator_self_source,
-    parse_capture_envelope,
-)
-from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import (
     claim_type_digest,
     claim_type_path,
@@ -33,7 +25,6 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
-    ClaimArtifactV2,
     claim_artifact_digest,
     claim_path,
     claim_statement_digest,
@@ -45,7 +36,6 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.source_references import CasSourceReferenceV1
 from cruxible_client.contracts.subjects import parse_subject, subject_digest, subject_path
 from cruxible_core.playbill.instance import PlaybillInstance
 
@@ -157,59 +147,6 @@ def _terminal_node(
     if not retired:
         raise ProposalIntegrityError("accepted Claim block-sync lineage has no terminal")
     return max(retired, key=lambda item: (item.generation, item.artifact_digest))
-
-
-def _retained_successor_body(
-    instance: PlaybillInstance,
-    *,
-    node: _ClaimNode,
-    predecessor: _ClaimNode | None,
-) -> tuple[bytes, str] | str:
-    claim = node.claim
-    if not isinstance(claim, ClaimArtifactV2):
-        return "missing"
-    predecessor_citation_ids = (
-        {citation.citation_id for citation in predecessor.claim.backing.citations}
-        if predecessor is not None and isinstance(predecessor.claim, ClaimArtifactV2)
-        else set()
-    )
-    introduced = tuple(
-        citation
-        for citation in claim.backing.citations
-        if citation.citation_id not in predecessor_citation_ids and citation.origin == "self_source"
-    )
-    store = instance.body_store()
-    access = BodyAccessContext(principal_id="playbill-block-sync", can_read_body=True)
-    contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
-    contract_digest_value = capture_contract_digest(contract).tagged
-    bodies: list[bytes] = []
-    for citation in introduced:
-        try:
-            envelope = parse_capture_envelope(store.read(citation.capture_digest, access=access))
-            if envelope.capture_contract_digest != contract_digest_value or not (
-                capture_is_coordinator_self_source(
-                    envelope,
-                    contract=contract,
-                    claim_id=claim.identity.name,
-                )
-            ):
-                continue
-            source = envelope.source
-            if not isinstance(source, CasSourceReferenceV1):
-                continue
-            body = store.read(source.content_digest, access=access)
-            body_digest = "sha256:" + hashlib.sha256(body).hexdigest()
-            if body_digest != source.content_digest or body_digest != envelope.commitment.digest:
-                continue
-            bodies.append(body)
-        except (PlaybillError, ValueError):
-            continue
-    if not bodies:
-        return "missing"
-    if len(bodies) != 1:
-        return "ambiguous"
-    body = bodies[0]
-    return body, "sha256:" + hashlib.sha256(body).hexdigest()
 
 
 def _artifact_path(identity: ArtifactIdentity) -> str:

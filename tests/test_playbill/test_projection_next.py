@@ -761,9 +761,11 @@ def test_retired_claim_backing_requires_depublication_without_access_disclosure(
     assert row.subject_identity == "corpus.runbook#status"
     assert row.related_identities == (backing.identity.qualified,)
     assert row.detail["retired_backings"] == [backing.identity.qualified]
-    # Depublishing is an edit of the page: no verb republishes a retired backing.
-    assert row.repair.operation == "hand_edit"
-    assert row.repair.command is None
+    # No verb republishes a retired backing, and until `block depublish` existed
+    # the row named a change with no command behind it. There is a verb now, so
+    # the row names it and composes the exact invocation.
+    assert row.repair.operation == "playbill.block.depublish"
+    assert row.repair.command == "cruxible playbill block depublish corpus.runbook status"
     assert row.repair.required_change == "depublish_retired_backing_block"
 
     assert retired_request.workspace_observation is not None
@@ -835,8 +837,8 @@ def test_overturned_claim_backing_requires_depublication(tmp_path: Path) -> None
     assert row.reason == "projection_backing_stale"
     assert row.related_identities == (backing.identity.qualified,)
     assert row.detail["overturned_backings"] == [backing.identity.qualified]
-    assert row.repair.operation == "hand_edit"
-    assert row.repair.command is None
+    assert row.repair.operation == "playbill.block.depublish"
+    assert row.repair.command == "cruxible playbill block depublish corpus.runbook status"
     assert row.repair.required_change == "depublish_overturned_backing_block"
 
 
@@ -883,16 +885,26 @@ def test_unselected_many_cardinality_backing_is_not_overturned(tmp_path: Path) -
     assert _projection_rows(instance, _request(instance, backing=(backing,))) == ()
 
 
-def test_query_backing_stales_only_when_its_semantic_result_changes(
+def test_query_backing_surfaces_candidates_only_when_its_semantic_result_changes(
     accepted_world: PlaybillInstance,
 ) -> None:
+    """A watched query moving is a candidate signal, not the block going stale.
+
+    The block is accountable for the list it HOLDS; a query beside that list
+    says what could belong in it. Reporting a moved query as a stale backing
+    told an author their prose had fallen out of date with something it never
+    committed to, and left them no way to say no to a candidate on the record.
+    """
+
     (result,) = _projection_rows(
         accepted_world,
         _request(accepted_world, backing=(_query_backing(accepted_world, stale=True),)),
     )
 
-    assert result.reason == "projection_backing_stale"
-    assert result.related_identities == (f"QueryDefinition:{QUERY_NAME}",)
+    assert result.reason == "projection_candidates_changed"
+    assert result.severity == "warning"
+    assert result.detail["watched_query"] == f"QueryDefinition:{QUERY_NAME}"
+    assert result.repair.required_change == "hold_or_decline_the_entered_candidates"
 
 
 def test_query_backing_replays_actual_resolved_parameter_values(tmp_path: Path) -> None:
@@ -960,7 +972,7 @@ def test_query_backing_reacts_to_real_time_dependent_visibility(tmp_path: Path) 
         instance,
         _request(instance, backing=(backing,), evaluation_time=later),
     )
-    assert changed.reason == "projection_backing_stale"
+    assert changed.reason == "projection_candidates_changed"
 
 
 def test_claim_backing_statement_digest_ignores_artifact_only_revision(

@@ -9,6 +9,11 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.declared_blocks import (
+    ProjectionBlockStampV1,
+    ProjectionClaimBackingV1,
+)
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
@@ -31,6 +36,10 @@ from cruxible_core.service.playbill_next import (
     PlaybillNextRequestV1,
     service_playbill_next,
 )
+from cruxible_core.service.playbill_publications import (
+    service_declare_playbill_block,
+    service_depublish_playbill_block,
+)
 from cruxible_core.service.playbill_search import (
     PlaybillSearchRequestV1,
     service_search_playbill,
@@ -40,6 +49,24 @@ from tests.test_playbill._support import initialize_local
 TIMESTAMP = "2026-09-03T12:00:00.000000Z"
 EVALUATION_TIME = datetime(2026, 9, 3, 12, tzinfo=UTC)
 DOCUMENT_PATH = "documents/decommission-probe.json"
+
+
+def _decommission_probe_stamp(instance: PlaybillInstance) -> ProjectionBlockStampV1:
+    """One well-formed stamp, so the door refuses for being closed and nothing else."""
+
+    return ProjectionBlockStampV1(
+        source_id="corpus.runbook",
+        block_id="status",
+        declared_generation=0,
+        declared_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        backing=(
+            ProjectionClaimBackingV1(
+                identity=ArtifactIdentity(kind="Claim", name="CLM-" + "a" * 32),
+                statement_digest="sha256:" + "7" * 64,
+            ),
+        ),
+        body_digest="sha256:" + "8" * 64,
+    )
 
 
 def _shell(body_digest: str) -> DocumentShell:
@@ -260,19 +287,22 @@ def _write_doors() -> tuple[tuple[str, object], ...]:
             ),
         ),
         (
-            "authoring_prepare_publication",
-            lambda instance: AuthoringIntentCoordinator.for_instance(instance).prepare_publication(
-                "AIT-decommission-probe",
-                actor=none,  # type: ignore[arg-type]
-                observation=none,  # type: ignore[arg-type]
+            "block_declare",
+            lambda instance: service_declare_playbill_block(
+                instance,
+                actor_id="owner",
+                stamp=_decommission_probe_stamp(instance),
+                declared_at="2026-08-21T12:00:00.000000Z",
             ),
         ),
         (
-            "authoring_confirm_insertion",
-            lambda instance: AuthoringIntentCoordinator.for_instance(instance).confirm_insertion(
-                "AIT-decommission-probe",
+            "block_depublish",
+            lambda instance: service_depublish_playbill_block(
+                instance,
+                coordinator=AuthoringIntentCoordinator.for_instance(instance),
                 actor=none,  # type: ignore[arg-type]
-                observation=none,  # type: ignore[arg-type]
+                source_id="corpus.runbook",
+                block_id="status",
             ),
         ),
         (

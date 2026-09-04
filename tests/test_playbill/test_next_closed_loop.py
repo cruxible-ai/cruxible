@@ -1042,7 +1042,7 @@ def _projection_marker_invalid(root: Path, _monkeypatch: pytest.MonkeyPatch) -> 
         marker_notes=("projection_marker_invalid",),
     )
     row = _row(instance, "projection_marker_invalid", before)
-    assert row.repair.operation == EXPECTED_OPERATIONS["projection_marker_invalid"]
+    assert row.repair.operation == _expected_operation(("projection_marker_invalid", None))
 
     _assert_gone(
         instance,

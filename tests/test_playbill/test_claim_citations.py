@@ -612,14 +612,22 @@ def test_a_claim_type_that_does_not_name_the_contract_still_reads_uncovered() ->
     )
 
 
-@pytest.mark.parametrize("origin", ["self_source", "self_published"])
-def test_a_copy_of_bytes_this_claim_published_is_admitted_by_no_rule(origin: str) -> None:
-    """Attesting your own page into concrete is what the pages-are-sources ruling refused."""
+def test_a_copy_of_bytes_this_claim_authored_is_admitted_by_no_rule() -> None:
+    """Attesting your own page into concrete is what the pages-are-sources ruling refused.
+
+    It used to run over two origins. The second, `self_published`, was the
+    spelling for a Claim projected back into its own page -- the road the
+    two-block-kinds law refuses -- and no code path in the product ever wrote
+    it, so the case was unreachable and is gone with the origin. `self_source`
+    is the reachable one and the law is unchanged for it: a copy of the
+    author's own body is not independent evidence for the Claim that authored
+    it, whatever the ClaimType's rule says.
+    """
 
     contract = _page_source_contract()
 
     assert not _copy_capture_admitted_by_rule(
-        _v2_claim(role="copy", origin=origin),
+        _v2_claim(role="copy", origin="self_source"),
         claim_type=_type_admitting(contract),
         capture_contract=_accepted(contract),
         capture_digest=CAPTURE_DIGEST,
