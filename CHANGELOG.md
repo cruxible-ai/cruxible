@@ -101,7 +101,15 @@
   `PlaybillBlockSyncReadResultV1`'s body fields optional rather than forbidden:
   the daemon never sends one, and a payload minted before this batch still
   parses. The repairs that named `block sync --all` for a drifted block name
-  `block repin`, because sync converges nothing now.
+  `block repin`, because sync converges nothing now. One row goes with the
+  one-backing gate rather than with the vocabulary:
+  `playbill.projection.backing_lineage_unreadable` was reachable only through
+  that gate, and a block that may hold 512 backings cannot walk 512 succession
+  chains on every queue read. Neither fault it named is unrefused -- a cycle in
+  `predecessor_digest` is a cycle in SHA-256 and cannot be built, and more than
+  one live successor is refused by `block sync` as `block_successor_ambiguous`
+  with every candidate listed, and answered by `block repin --backing DIGEST`.
+  `docs/cli-reference.md` says where each is refused.
 
 - **An orient is a read again.** Deriving every Claim's verdict and resolution
   status crossed the client's own three-minute default timeout at a few hundred

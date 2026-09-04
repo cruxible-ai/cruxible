@@ -749,6 +749,32 @@ is never touched; only the marker line moves.
 discarded anything under this model. It is accepted for one release, emits the
 structured deprecation warning on stderr, and is removed in 0.6.0.
 
+### Where an unreadable backing lineage is refused
+
+`next` reads each held backing's CURRENT state -- retired, overturned, revised
+-- and does not walk its succession chain. It used to, through the one-backing
+gate that made a block syncable, and the walk surfaced two faults as a blocking
+`projection_marker_invalid` row carrying
+`playbill.projection.backing_lineage_unreadable`: a backing whose lineage could
+not be read, and one with more than one live successor. A block now holds up to 512
+backings, so that walk is 512 lineage traversals on every queue read, which is
+not a cost a read-only advisory can carry.
+
+Neither fault is unrefused; they are refused where they can be answered.
+
+* **A cycle is infeasible by construction.** A successor names its predecessor
+  by `predecessor_digest`, and a cycle in that chain would be a cycle in
+  SHA-256. Nothing has to detect it because nothing can build it.
+* **Ambiguity -- more than one live successor to a held backing -- is refused by
+  `block sync` and by `block repin --backing`.** The sync read walks the chain
+  and answers `block_successor_ambiguous`, listing every live candidate; repin
+  takes the exact digest of the one the author means. Both are the commands an
+  author runs when they are about to act on the block, which is the moment the
+  answer is needed.
+
+So the queue tells you a held member moved; the sync tells you which successor
+it moved to, or that it cannot say.
+
 ### Depublishing
 
 `block depublish SOURCE_ID BLOCK_ID` releases the registration that demands a
