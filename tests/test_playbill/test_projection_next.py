@@ -734,7 +734,9 @@ def test_retired_claim_backing_requires_depublication_without_access_disclosure(
     assert row.subject_identity == "corpus.runbook#status"
     assert row.related_identities == (backing.identity.qualified,)
     assert row.detail["retired_backings"] == [backing.identity.qualified]
-    assert row.repair.operation == "playbill.block.repin"
+    # Depublishing is an edit of the page: no verb republishes a retired backing.
+    assert row.repair.operation == "hand_edit"
+    assert row.repair.command is None
     assert row.repair.required_change == "depublish_retired_backing_block"
 
     assert retired_request.workspace_observation is not None
@@ -761,16 +763,20 @@ def test_retired_claim_backing_requires_depublication_without_access_disclosure(
 
 
 def test_overturned_claim_backing_requires_depublication(tmp_path: Path) -> None:
+    # A single-valued slot whose contest was refused: the Claim did not take the
+    # slot and no other Claim holds it either, which is what "overturned" names.
+    # The many-cardinality case is the opposite and is asserted below.
     instance, owner = initialize_local(tmp_path)
     base_type = _claim_type()
     claim_type = base_type.model_copy(
         update={
-            "cardinality": "many",
+            "cardinality": "one",
             "resolution_policy": base_type.resolution_policy.model_copy(
                 update={
-                    "cardinality": "many",
+                    "cardinality": "one",
                     "eligible_verdicts": ("contradicted",),
-                    "selector": "all",
+                    "selector": "only_contender",
+                    "conflict_result": "refuse",
                 }
             ),
         }
@@ -802,7 +808,52 @@ def test_overturned_claim_backing_requires_depublication(tmp_path: Path) -> None
     assert row.reason == "projection_backing_stale"
     assert row.related_identities == (backing.identity.qualified,)
     assert row.detail["overturned_backings"] == [backing.identity.qualified]
+    assert row.repair.operation == "hand_edit"
+    assert row.repair.command is None
     assert row.repair.required_change == "depublish_overturned_backing_block"
+
+
+def test_unselected_many_cardinality_backing_is_not_overturned(tmp_path: Path) -> None:
+    """A many-cardinality slot selects every eligible contender, so nothing competes."""
+
+    instance, owner = initialize_local(tmp_path)
+    base_type = _claim_type()
+    claim_type = base_type.model_copy(
+        update={
+            "cardinality": "many",
+            "resolution_policy": base_type.resolution_policy.model_copy(
+                update={
+                    "cardinality": "many",
+                    "eligible_verdicts": ("contradicted",),
+                    "selector": "all",
+                }
+            ),
+        }
+    )
+    direct = authoring("wi-42", "ready", with_claim_type=False)
+    direct = direct.model_copy(
+        update={
+            "statement": direct.statement.model_copy(
+                update={"claim_type_digest": claim_type_digest(claim_type).tagged}
+            ),
+            "claim_type_artifact": claim_type,
+        }
+    )
+    proposed = service_propose_playbill_claim(
+        instance,
+        authoring=direct,
+        actor_id="owner",
+        proposal_name="projection-unselected-claim",
+        timestamp=TIMESTAMP,
+    )
+    activate(instance, owner, proposed)
+    unselected = _claim_from_view(service_list_playbill_claims(instance).claims[0])
+    backing = ProjectionClaimBackingV1(
+        identity=unselected.identity,
+        statement_digest=proposed.statement_digest,
+    )
+
+    assert _projection_rows(instance, _request(instance, backing=(backing,))) == ()
 
 
 def test_query_backing_stales_only_when_its_semantic_result_changes(
