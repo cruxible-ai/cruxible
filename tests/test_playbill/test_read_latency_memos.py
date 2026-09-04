@@ -9,7 +9,25 @@ from typing import Any
 
 import pytest
 
+from cruxible_client.contracts.captures import (
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    AcceptedCaptureContract,
+    capture_contract_digest,
+    capture_contract_path,
+)
+from cruxible_client.contracts.claims import (
+    _self_source_capture_admitted_by_rule,
+    new_claim_id,
+)
 from cruxible_client.contracts.errors import ProjectionIntegrityError
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicyV1,
+    ClaimEvidenceAdmissionRuleV1,
+)
+from cruxible_core.playbill.authoring.insertions import (
+    PublicationClaimProjectedAsItself,
+    refuse_claim_projected_as_itself,
+)
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.git import GitLedger
 from cruxible_core.playbill.projection import AcceptedCoordinate
@@ -20,7 +38,12 @@ from cruxible_core.service.playbill_claims import (
     service_get_playbill_claim,
     service_list_playbill_claims,
 )
-from cruxible_core.service.playbill_next import PlaybillNextRequestV1, service_playbill_next
+from cruxible_core.service.playbill_next import (
+    PlaybillNextRequestV1,
+    PlaybillNextSourceObservationV4,
+    PlaybillNextWorkspaceObservationV1,
+    service_playbill_next,
+)
 from cruxible_core.service.playbill_publications import (
     bound_publication_registrations,
     reset_bound_publication_registration_memo,
@@ -28,6 +51,8 @@ from cruxible_core.service.playbill_publications import (
 from cruxible_core.service.playbill_search import service_search_playbill
 from cruxible_core.storage import playbill_projection
 from tests.test_playbill._knowledge_loop_support import seed_claims
+from tests.test_playbill.test_claims import _claim as _test_claim
+from tests.test_playbill.test_claims import _claim_type as _test_claim_type
 
 EVALUATION_TIME = datetime(2026, 8, 21, 14, tzinfo=UTC)
 ACCESS = CoverageAccessProfileV1(profile_id="read-latency-test")
@@ -238,3 +263,136 @@ def test_one_claim_read_does_not_materialize_extra_generations(
     service_get_playbill_claim(instance, identity=identity, evaluation_time=EVALUATION_TIME)
 
     assert sum(counted.values()) <= 1
+
+
+def _clipped_source_observation(
+    *,
+    source_id: str,
+    scan_notes: tuple[str, ...],
+) -> PlaybillNextSourceObservationV4:
+    return PlaybillNextSourceObservationV4(
+        source_id=source_id,
+        observed_source_digest="sha256:" + "0" * 64,
+        byte_length=64,
+        marker_summaries=(),
+        occurrences=(),
+        commitment_scan_proofs=(),
+        citation_window_observations=(),
+        scan_notes=scan_notes,
+        marker_notes=(),
+    )
+
+
+def _unobserved_rows(
+    instance: Any,
+    *,
+    scan_notes: tuple[str, ...],
+) -> tuple[Any, ...]:
+    result = service_playbill_next(
+        instance,
+        request=PlaybillNextRequestV1(
+            at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            evaluation_time=EVALUATION_TIME,
+            access_profile=ACCESS,
+            workspace_observation=PlaybillNextWorkspaceObservationV1(
+                source_observations=(
+                    _clipped_source_observation(
+                        source_id="fixture.work-items",
+                        scan_notes=scan_notes,
+                    ),
+                )
+            ),
+        ),
+    )
+    return tuple(item for item in result.items if item.reason == "citation_source_unobserved")
+
+
+def test_a_clipped_coverage_scan_reports_one_row_for_its_whole_source(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = seed_claims(tmp_path)
+
+    uncapped = _unobserved_rows(instance, scan_notes=())
+    assert len(uncapped) > 1
+    assert all("clipped_scan_notes" not in row.detail for row in uncapped)
+
+    clipped = _unobserved_rows(instance, scan_notes=("coverage_proof_limit_exceeded",))
+    assert len(clipped) == 1
+    (row,) = clipped
+    assert row.detail["source_id"] == "fixture.work-items"
+    assert row.detail["clipped_scan_notes"] == ["coverage_proof_limit_exceeded"]
+    assert row.detail["collapsed_citation_count"] == len(uncapped)
+    assert row.repair.operation == "playbill.authoring.bind"
+
+
+def _coordinator_contract() -> AcceptedCaptureContract:
+    contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+    return AcceptedCaptureContract(
+        path=capture_contract_path(contract.identity.name),
+        contract=contract,
+        artifact_digest=capture_contract_digest(contract).tagged,
+    )
+
+
+def test_a_prose_claim_type_admits_its_own_authored_body_and_a_domain_type_does_not() -> None:
+    claim = _test_claim(
+        claim_id=new_claim_id(),
+        capture_digest="sha256:" + "1" * 64,
+        source_digest="sha256:" + "2" * 64,
+        source_length=13,
+    )
+    accepted = _coordinator_contract()
+    domain_type = _test_claim_type()
+
+    # A domain ClaimType names no rule for the coordinator self-source contract,
+    # so the citation is skipped exactly as before and the Claim reads uncovered.
+    assert not _self_source_capture_admitted_by_rule(
+        claim,
+        claim_type=domain_type,
+        capture_contract=accepted,
+        capture_digest=claim.backing.citations[0].capture_digest,
+    )
+
+    prose_type = domain_type.model_copy(
+        update={
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+                rules=(
+                    ClaimEvidenceAdmissionRuleV1(
+                        rule_id="authored-prose",
+                        claim_roles=("normative", "observation"),
+                        capture_contract_digests=(accepted.artifact_digest,),
+                        evidence_kinds=accepted.contract.evidence_kinds,
+                        admission="origin_only",
+                        subject_binding="exact_claim_subject",
+                    ),
+                )
+            )
+        }
+    )
+    assert _self_source_capture_admitted_by_rule(
+        claim,
+        claim_type=prose_type,
+        capture_contract=accepted,
+        capture_digest=claim.backing.citations[0].capture_digest,
+    )
+
+
+def test_a_claim_projected_as_itself_is_refused_by_name() -> None:
+    assert (
+        refuse_claim_projected_as_itself(
+            claim_identity="CLM-0",
+            source_id="program-cards",
+            overlapping_citation_ids=(),
+        )
+        is None
+    )
+    with pytest.raises(PublicationClaimProjectedAsItself) as refusal:
+        refuse_claim_projected_as_itself(
+            claim_identity="CLM-0",
+            source_id="program-cards",
+            overlapping_citation_ids=("cit-b", "cit-a"),
+        )
+    message = str(refusal.value)
+    assert message.startswith("playbill.authoring.publication_claim_projected_as_itself: ")
+    assert "program-cards" in message
+    assert "cit-a, cit-b" in message
