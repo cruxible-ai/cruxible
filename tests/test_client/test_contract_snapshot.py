@@ -403,6 +403,14 @@ def test_no_model_the_contracts_namespace_publishes_is_undeclared() -> None:
     requested path among them -- changed under a frozen surface without the
     freeze noticing. The namespace is the declaration; anything in it is
     covered, and adding a name to it is a pin movement.
+
+    `published` deliberately carries NO module filter beyond excluding
+    `pydantic.BaseModel` itself. A `cruxible_client.contracts.*` prefix here
+    would be the same predicate `_public_models()` uses to compute `covered`,
+    so `published - covered` would be empty by construction and the assertion
+    could never fire. Without the filter a model defined anywhere -- another
+    `cruxible_client` module, or a third-party package -- that reaches the
+    namespace through the `X as X` idiom is published, and this test says so.
     """
 
     import inspect
@@ -417,7 +425,7 @@ def test_no_model_the_contracts_namespace_publishes_is_undeclared() -> None:
         if not name.startswith("_")
         and inspect.isclass(value)
         and issubclass(value, BaseModel)
-        and value.__module__.startswith("cruxible_client.contracts")
+        and value is not BaseModel
     }
     covered = set(generate_contract_manifest()["models"])
 
