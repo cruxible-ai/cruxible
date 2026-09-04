@@ -15,7 +15,10 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.authoring.blocks import repin_projection_block
+from cruxible_client.authoring.blocks import (
+    _apply_projection_restamps,
+    repin_projection_block,
+)
 from cruxible_core.playbill.candidate_cards import derive_candidate_cards
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -32,16 +35,26 @@ CARD_PRIMITIVE_DEFINITION: Path | None = None
 SANCTIONED_CARD_CALLERS = {
     "src/cruxible_core/playbill/candidate_cards.py::derive_candidate_cards",
 }
+_BLOCKS = "packages/cruxible-client/src/cruxible_client/authoring/blocks.py"
 SANCTIONED_CALLERS = {
-    "projection_repin": {
-        "packages/cruxible-client/src/cruxible_client/authoring/blocks.py::repin_projection_block",
-    },
+    "projection_repin": {f"{_BLOCKS}::repin_projection_block"},
+    # `block sync --accept-local` writes the same one line the repin writes, for
+    # the same reason: the stamp is the alignment record, and accepting the
+    # prose an author wrote means moving the body digest onto it. It frames
+    # nothing new -- the block, its held list and its coordinate are the ones
+    # already in the page -- and it proves its output the way the repin does.
+    "projection_accept_local": {f"{_BLOCKS}::_apply_projection_restamps"},
 }
 SANCTIONED_WRITERS: dict[str, tuple[Callable[..., object], str, tuple[str, ...]]] = {
-    "packages/cruxible-client/src/cruxible_client/authoring/blocks.py::repin_projection_block": (
+    f"{_BLOCKS}::repin_projection_block": (
         repin_projection_block,
         "assert_projection_block_frame",
         ("replace one declared block's opening marker",),
+    ),
+    f"{_BLOCKS}::_apply_projection_restamps": (
+        _apply_projection_restamps,
+        "assert_projection_block_frame",
+        ("replace each accepted block's opening marker with the observed body digest",),
     ),
 }
 CARD_DERIVATIVE_WRITERS: dict[str, tuple[Callable[..., object], tuple[str, ...]]] = {
@@ -162,19 +175,23 @@ def test_sanctioned_writer_inventory_matches_primitive_callers() -> None:
 
 
 def test_one_writer_frames_derivative_text_and_the_scan_proves_it() -> None:
-    """The inventory is down to one, and the scan is what keeps it there.
+    """Two writers, both writing one marker line, and the scan keeps it there.
 
-    It was three. The publication road that rendered a Claim into its own page
-    is deleted, and `block sync` no longer converges a block body, so neither
-    frames anything any more -- `sync_projection_blocks` writes only when
-    `--detach` strips a marker pair, and it proves that by re-parsing and by
-    digesting the bytes outside the spans it touched. Declaring the inventory
+    It was three, and the third rendered. The publication road that wrote a
+    Claim into its own page is deleted and `block sync` no longer converges a
+    block body, so nothing renders derivative TEXT any more. What is left both
+    writes the same single line: `block repin` stamps a block on a backing list
+    the author names, and `block sync --accept-local` stamps it on the prose the
+    author wrote. Neither invents a body; both prove their output with
+    `assert_projection_block_frame`. `--detach` is the third write and frames
+    nothing at all -- it strips a marker pair, and proves that by re-parsing and
+    by digesting the bytes outside the spans it touched. Declaring the inventory
     would prove nothing; the scan below enumerates every caller of the framing
     primitives in the whole tree and refuses any that is not sanctioned, so
     rendering reappearing anywhere fails here first.
     """
 
-    assert set(SANCTIONED_CALLERS) == {"projection_repin"}
+    assert set(SANCTIONED_CALLERS) == {"projection_repin", "projection_accept_local"}
     _assert_only_sanctioned_callers(_projection_primitive_callers())
 
 
