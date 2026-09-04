@@ -1425,7 +1425,7 @@ def _citation_commitments(
                     (
                         parsed
                         for generation in reversed(history[first_scanned:target_index])
-                        for content in (instance.tree_at(generation.oid).get(path),)
+                        for content in (instance.blob_at(generation.oid, path),)
                         if content is not None
                         for parsed in (parse_claim(content, path=path),)
                         if claim_artifact_digest(parsed).tagged == predecessor_digest
@@ -2067,9 +2067,10 @@ def _bounded_claim_lineages(
     for generation in reversed(scanned):
         if not expected:
             break
-        tree = instance.tree_at(generation.oid)
-        for path in tuple(sorted(expected, key=lambda item: item.encode("utf-8"))):
-            raw = tree.get(path)
+        wanted = tuple(sorted(expected, key=lambda item: item.encode("utf-8")))
+        blobs = instance.blobs_at(generation.oid, wanted)
+        for path in wanted:
+            raw = blobs.get(path)
             if raw is None:
                 continue
             claim = parse_claim(raw, path=path)
@@ -2128,8 +2129,7 @@ def _attestation_claim_lineage(
     for generation in reversed(scanned):
         if expected is None:
             break
-        tree = instance.tree_at(generation.oid)
-        predecessor_raw = tree.get(path)
+        predecessor_raw = instance.blob_at(generation.oid, path)
         if predecessor_raw is None:
             continue
         predecessor = parse_claim(predecessor_raw, path=path)
@@ -2140,7 +2140,9 @@ def _attestation_claim_lineage(
             _AttestationLineageArtifact(
                 claim=predecessor,
                 artifact_digest=digest,
-                tree=tree,
+                # Only a generation that actually carries a lineage member pays
+                # for its whole tree; the admission accounts need it.
+                tree=instance.tree_at(generation.oid),
             )
         )
         expected = predecessor.lifecycle.predecessor_digest

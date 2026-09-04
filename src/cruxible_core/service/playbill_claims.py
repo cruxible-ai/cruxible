@@ -691,9 +691,8 @@ def resolve_playbill_claim_group(
         service_evaluate_playbill_claim_verdict,
     )
 
-    tree = instance.tree_at(coordinate.git_oid)
     type_path = claim_type_path(predicate)
-    content = tree.get(type_path)
+    content = instance.blob_at(coordinate.git_oid, type_path)
     if content is None:
         raise ClaimNotFoundError(f"ClaimType:{predicate}")
     claim_type = parse_claim_type(content, path=type_path)

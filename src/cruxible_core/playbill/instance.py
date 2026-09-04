@@ -870,6 +870,21 @@ class PlaybillInstance:
             self._tree_memo.move_to_end(oid)
         return dict(cached)
 
+    def blob_at(self, oid: str, path: str) -> bytes | None:
+        """Read one accepted path without materializing its whole generation."""
+
+        return self.blobs_at(oid, (path,)).get(path)
+
+    def blobs_at(self, oid: str, paths: Sequence[str]) -> dict[str, bytes]:
+        """Read an exact set of accepted paths under the same acceptance proof."""
+
+        self.coordinate_for_oid(oid)
+        cached = self._tree_memo.get(oid)
+        if cached is not None:
+            self._tree_memo.move_to_end(oid)
+            return {path: cached[path] for path in dict.fromkeys(paths) if path in cached}
+        return self._ledger.blobs_at(oid, paths)
+
     def proposal_tree(self, oid: str) -> dict[str, bytes]:
         """Read one proposal commit tree for evidence-bound settlement."""
 

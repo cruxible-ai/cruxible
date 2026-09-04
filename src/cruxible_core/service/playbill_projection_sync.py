@@ -81,7 +81,7 @@ def _refusal(
 def _claim_nodes(instance: PlaybillInstance, *, path: str) -> dict[str, _ClaimNode]:
     nodes: dict[str, _ClaimNode] = {}
     for generation in instance.accepted_history():
-        raw = instance.tree_at(generation.oid).get(path)
+        raw = instance.blob_at(generation.oid, path)
         if raw is None:
             continue
         claim = parse_claim(raw, path=path)

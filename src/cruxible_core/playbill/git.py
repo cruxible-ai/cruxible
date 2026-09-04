@@ -67,6 +67,11 @@ class GitTreeChange:
     oid: str | None
 
 
+# One `ls-tree` invocation carries a bounded pathspec so a large request
+# cannot overrun the system argument limit.
+_PATHSPEC_BATCH = 256
+
+
 class GitLedger:
     """A daemon-owned bare repository accessed only through system Git."""
 
@@ -638,6 +643,43 @@ class GitLedger:
         blobs = self.read_blobs(tuple(entry.oid for entry in entries))
         return {entry.path: blobs[entry.oid] for entry in entries}
 
+    def blob_at(self, oid: str, path: str) -> bytes | None:
+        """Read one exact committed blob without materializing its whole tree."""
+
+        return self.blobs_at(oid, (path,)).get(path)
+
+    def blobs_at(self, oid: str, paths: Sequence[str]) -> dict[str, bytes]:
+        """Read an exact set of committed paths without materializing the tree.
+
+        Git walks only the subtrees the pathspec names, so the cost tracks the
+        requested paths rather than the size of the generation. Mode and object
+        type are proven exactly as ``read_tree`` proves them, so a caller
+        cannot reach a symlink or a submodule by naming it, and a path the
+        commit does not carry is simply absent from the result.
+        """
+
+        self._validate_oid(oid)
+        ordered = tuple(dict.fromkeys(paths))
+        if not ordered:
+            return {}
+        if any(not path for path in ordered):
+            raise PlaybillGitError("ledger blob read requires an exact path")
+        wanted = set(ordered)
+        selected: list[GitTreeEntry] = []
+        for start in range(0, len(ordered), _PATHSPEC_BATCH):
+            batch = ordered[start : start + _PATHSPEC_BATCH]
+            for entry in self._list_tree(oid, with_sizes=False, paths=batch):
+                if entry.path not in wanted:
+                    continue
+                if entry.object_type != "blob" or entry.mode != "100644":
+                    raise PlaybillGitError(
+                        f"ledger tree contains unsupported {entry.mode} "
+                        f"{entry.object_type}: {entry.path}"
+                    )
+                selected.append(entry)
+        blobs = self.read_blobs(tuple(entry.oid for entry in selected))
+        return {entry.path: blobs[entry.oid] for entry in selected}
+
     def changed_entries(self, base_oid: str, target_oid: str) -> tuple[GitTreeChange, ...]:
         """Report exactly the paths whose (mode, object) differs between two commits.
 
@@ -758,12 +800,21 @@ class GitLedger:
 
         return self._list_tree(oid, with_sizes=True)
 
-    def _list_tree(self, oid: str, *, with_sizes: bool) -> tuple[GitTreeEntry, ...]:
+    def _list_tree(
+        self,
+        oid: str,
+        *,
+        with_sizes: bool,
+        paths: Sequence[str] | None = None,
+    ) -> tuple[GitTreeEntry, ...]:
         self._validate_oid(oid)
         entries: list[GitTreeEntry] = []
         size_flag = ["-l"] if with_sizes else []
         expected_fields = 4 if with_sizes else 3
-        listing = self._git(["ls-tree", "-r", *size_flag, "-z", "--full-tree", oid])
+        # ``:(literal)`` disables pathspec globbing so a path that carries
+        # wildcard bytes names exactly itself.
+        scope = [] if paths is None else ["--", *(f":(literal){item}" for item in paths)]
+        listing = self._git(["ls-tree", "-r", *size_flag, "-z", "--full-tree", oid, *scope])
         for row in listing.split(b"\x00"):
             if not row:
                 continue
