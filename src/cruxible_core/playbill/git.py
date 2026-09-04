@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import cast
+from typing import Final, cast
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -26,6 +26,16 @@ from cruxible_core.playbill.keys import raw_public_key_hex_from_openssh
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _PROPOSAL_REF_RE = re.compile(r"^refs/proposals/[a-z][a-z0-9_.-]{0,127}/[a-z][a-z0-9_.-]{0,127}$")
 _PROPOSAL_REVIEW_REF_RE = re.compile(r"^refs/heads/proposals/[0-9a-f]{64}$")
+
+# Every Playbill note ref, in one table. The generation descriptor was the
+# first; the proposal evaluation and the approval list are projections of the
+# evidence store that reach Git through exactly the same write, so a note a
+# reviewer reads is never a second mechanism with its own persistence rules.
+NOTE_REFS: Final[Mapping[str, str]] = {
+    "generation": "refs/notes/playbill-gen",
+    "evaluation": "refs/notes/playbill-eval",
+    "approval": "refs/notes/playbill-approval",
+}
 _PASSTHROUGH_ENVIRONMENT = ("PATH", "TMPDIR", "TMP", "TEMP", "SYSTEMROOT")
 _COMMAND_ENVIRONMENT = frozenset(
     {
@@ -70,6 +80,21 @@ class GitTreeChange:
 # One `ls-tree` invocation carries a bounded pathspec so a large request
 # cannot overrun the system argument limit.
 _PATHSPEC_BATCH = 256
+
+
+def _validate_commit_message(message: str) -> None:
+    """Refuse a commit message that is not the prose summary a reviewer reads.
+
+    Nothing ever parses a commit message back, so the only obligations are that
+    it exists, that it is not the blank subject Git would otherwise accept, and
+    that it carries no NUL -- which `commit-tree` truncates at, silently
+    dropping the rest of the summary.
+    """
+
+    if not message.strip():
+        raise PlaybillGitError("commit message must be a nonblank prose summary")
+    if "\x00" in message:
+        raise PlaybillGitError("commit message must not contain a NUL byte")
 
 
 def _proven_blob_entries(entries: tuple[GitTreeEntry, ...]) -> tuple[GitTreeEntry, ...]:
@@ -191,12 +216,14 @@ class GitLedger:
         parent_oid: str,
         sequence: int,
         timestamp: str,
+        message: str,
     ) -> str:
         """Create one signed, still-unsettled generation commit over an exact parent."""
 
         self._validate_oid(parent_oid)
         if sequence < 1:
             raise PlaybillGitError("non-genesis generation sequence must be positive")
+        _validate_commit_message(message)
         tree_oid = self._write_tree(tree)
         environment = {
             "GIT_AUTHOR_NAME": "playbill-daemon",
@@ -215,7 +242,7 @@ class GitLedger:
                     "-p",
                     parent_oid,
                     "-m",
-                    f"Accept Playbill generation {sequence}",
+                    message,
                 ],
                 environment=environment,
             )
@@ -340,10 +367,12 @@ class GitLedger:
         actor_id: str,
         timestamp: str,
         expected_ref_oid: str | None,
+        message: str,
     ) -> tuple[str, str]:
         """Write one unsigned proposal commit and CAS only its actor namespace ref."""
 
         self._validate_oid(base_oid)
+        _validate_commit_message(message)
         if not _PROPOSAL_REF_RE.fullmatch(target_ref):
             raise PlaybillGitError("proposal transport may update only canonical proposal refs")
         actor_namespace = target_ref.split("/")[2]
@@ -374,7 +403,7 @@ class GitLedger:
                     "-p",
                     base_oid,
                     "-m",
-                    "Record Playbill proposal",
+                    message,
                 ],
                 environment=commit_environment,
             )
@@ -435,11 +464,13 @@ class GitLedger:
         base_oid: str,
         actor_id: str,
         timestamp: str,
+        message: str,
     ) -> str:
         """Reproduce the evaluated proposal commit used only by advisory review refs."""
 
         self._validate_oid(tree_oid)
         self._validate_oid(base_oid)
+        _validate_commit_message(message)
         environment = {
             "GIT_AUTHOR_NAME": actor_id,
             "GIT_AUTHOR_EMAIL": f"{actor_id}@proposal.playbill.invalid",
@@ -456,7 +487,7 @@ class GitLedger:
                     "-p",
                     base_oid,
                     "-m",
-                    "Record Playbill proposal",
+                    message,
                 ],
                 environment=environment,
             )
@@ -508,7 +539,28 @@ class GitLedger:
     def activation_lock(self) -> Iterator[None]:
         """Serialize activation/publication and targeted loser collection across processes."""
 
-        path = self.path / "playbill-activation.lock"
+        with self._exclusive_lock("playbill-activation.lock"):
+            yield
+
+    @contextmanager
+    def _note_lock(self) -> Iterator[None]:
+        """Serialize every note write across processes.
+
+        A note ref is an ordinary ref carrying one commit per update, so two
+        writers attaching notes to two *different* commits still contend for the
+        same ref lock. Without this the loser surfaces as an opaque Git ref-lock
+        failure on a write its caller has no way to retry. This lock is
+        deliberately not the activation lock: the generation note is written
+        while activation already holds that one, and a second acquisition of the
+        same file in the same process would deadlock.
+        """
+
+        with self._exclusive_lock("playbill-notes.lock"):
+            yield
+
+    @contextmanager
+    def _exclusive_lock(self, name: str) -> Iterator[None]:
+        path = self.path / name
         descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             os.chmod(path, 0o600)
@@ -585,6 +637,51 @@ class GitLedger:
                 commits.append(fields[2])
         return tuple(sorted(set(commits)))
 
+    def _note_ref(self, kind: str) -> str:
+        ref = NOTE_REFS.get(kind)
+        if ref is None:
+            raise PlaybillGitError(f"unknown Playbill note kind: {kind!r}")
+        return ref
+
+    def _write_note(self, kind: str, oid: str, content: bytes, *, replace: bool) -> None:
+        """Attach one note through the one write every note ref shares.
+
+        `replace` separates the two note lifetimes this ledger has: a generation
+        descriptor is written once and is immutable, while a proposal's
+        evaluation and approval notes are projections of an evidence store that
+        legitimately grows -- a re-evaluation, a second approver -- and must be
+        allowed to restate. Every write proves its own bytes persisted exactly,
+        so neither lifetime depends on Git's reporting.
+        """
+
+        self._validate_oid(oid)
+        ref = self._note_ref(kind)
+        arguments = ["notes", f"--ref={ref}", "add"]
+        if replace:
+            arguments.append("-f")
+        arguments.extend(("-F", "-", oid))
+        with self._note_lock():
+            self._git(arguments, input_bytes=content)
+        if self._read_note(kind, oid) != content:
+            raise PlaybillGitError(f"{kind} note did not persist exactly")
+
+    def _read_note(self, kind: str, oid: str) -> bytes | None:
+        self._validate_oid(oid)
+        result = _command(
+            [
+                "git",
+                f"--git-dir={self.path}",
+                "notes",
+                f"--ref={self._note_ref(kind)}",
+                "show",
+                oid,
+            ],
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout
+
     def write_generation_note(self, oid: str, content: bytes) -> None:
         """Durably attach one immutable descriptor note after the winning main CAS."""
 
@@ -593,12 +690,7 @@ class GitLedger:
             raise PlaybillGitError("generation note target is not the current main ref")
         if self.read_generation_note(oid) is not None:
             raise PlaybillGitError("generation already carries a descriptor note")
-        self._git(
-            ["notes", "--ref=refs/notes/playbill-gen", "add", "-F", "-", oid],
-            input_bytes=content,
-        )
-        if self.read_generation_note(oid) != content:
-            raise PlaybillGitError("generation descriptor note did not persist exactly")
+        self._write_note("generation", oid, content, replace=False)
 
     def write_recovered_generation_note(self, oid: str, content: bytes) -> None:
         """Repair a missing note only for a replay-proven commit on accepted main."""
@@ -608,29 +700,28 @@ class GitLedger:
             raise PlaybillGitError("recovered generation note target is outside main history")
         if self.read_generation_note(oid) is not None:
             raise PlaybillGitError("generation already carries a descriptor note")
-        self._git(
-            ["notes", "--ref=refs/notes/playbill-gen", "add", "-F", "-", oid],
-            input_bytes=content,
-        )
-        if self.read_generation_note(oid) != content:
-            raise PlaybillGitError("recovered generation descriptor note did not persist exactly")
+        self._write_note("generation", oid, content, replace=False)
 
     def read_generation_note(self, oid: str) -> bytes | None:
-        self._validate_oid(oid)
-        result = _command(
-            [
-                "git",
-                f"--git-dir={self.path}",
-                "notes",
-                "--ref=refs/notes/playbill-gen",
-                "show",
-                oid,
-            ],
-            check=False,
-        )
-        if result.returncode != 0:
-            return None
-        return result.stdout
+        return self._read_note("generation", oid)
+
+    def write_proposal_note(self, kind: str, oid: str, content: bytes) -> None:
+        """Project one proposal's evidence onto its own candidate commit.
+
+        Only the proposal note kinds are reachable here: the generation
+        descriptor keeps its own doors, which refuse a second write, because a
+        settled generation's note is a fact about accepted history rather than
+        a restatable projection.
+        """
+
+        if kind not in {"evaluation", "approval"}:
+            raise PlaybillGitError(f"unknown Playbill proposal note kind: {kind!r}")
+        self._write_note(kind, oid, content, replace=True)
+
+    def read_proposal_note(self, kind: str, oid: str) -> bytes | None:
+        if kind not in {"evaluation", "approval"}:
+            raise PlaybillGitError(f"unknown Playbill proposal note kind: {kind!r}")
+        return self._read_note(kind, oid)
 
     def read_main(self) -> str:
         result = self._git(["rev-parse", "--verify", "refs/heads/main"])
@@ -1134,4 +1225,4 @@ def _command(
     return result
 
 
-__all__ = ["GitLedger", "GitTreeChange", "GitTreeEntry"]
+__all__ = ["NOTE_REFS", "GitLedger", "GitTreeChange", "GitTreeEntry"]
