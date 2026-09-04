@@ -75,7 +75,9 @@ is not expressible either -- both members author the same artifact path, so the
 set refuses `playbill.authoring.change_set_member_path_collision` naming the two.
 An inexact closure refuses
 `playbill.authoring.claim_type_succession_closure_incomplete`, whose repair
-lists every required dependent at its exact digest. Four dispositions, spelled
+names every required dependent by identity -- a dependent carries no digest of
+its own, so the digest each required row also reports is a read, not something
+to copy back. Four dispositions, spelled
 by the SDK helpers `carry`, `rescind`, `retire` and `re_author`:
 
 | Helper | Wire disposition | What the dependent becomes |

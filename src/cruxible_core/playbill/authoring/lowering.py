@@ -2180,7 +2180,13 @@ def _stage_claim_type_succession(
             "dependents",
             "A ClaimType succession must disposition its exact reverse-pin closure.",
             repair_kind="replace_dependents",
-            repair_description="Carry exactly the listed dependents at their exact digests.",
+            repair_description=(
+                # A succession dependent has no digest field: it is named by
+                # identity alone and the succession re-reads the bytes itself.
+                # `current_artifact_digest` rides in `required_dependents` as an
+                # informational read, never as something to copy back.
+                "Disposition exactly the listed dependents, each named by the exact identity given."
+            ),
             replacement={
                 "required_dependents": [item.model_dump(mode="json") for item in inventory],
                 "supplied_dependents": sorted(supplied, key=lambda item: item.encode("utf-8")),

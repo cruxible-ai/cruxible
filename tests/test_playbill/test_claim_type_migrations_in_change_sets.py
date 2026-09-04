@@ -510,6 +510,19 @@ def test_an_incomplete_closure_refuses_with_its_exact_required_dependents(
     assert {str(item["identity"]["name"]) for item in required} == set(claims.values())
     assert all(str(item["current_artifact_digest"]).startswith("sha256:") for item in required)
     assert error.repairs[0].kind == "replace_dependents"
+    # The repair must be applicable as written: a dependent is named by identity
+    # alone, so the repair may not ask for a digest the member model has no
+    # field to carry. The digest each required row reports is a read.
+    assert not any("digest" in name for name in ClaimTypeSuccessionDependentV1.model_fields)
+    assert "identity" in error.repairs[0].description
+    assert "digest" not in error.repairs[0].description
+    assert [
+        ClaimTypeSuccessionDependentV1(
+            identity=ArtifactIdentity.model_validate(item["identity"]),
+            disposition="successor",
+        )
+        for item in required
+    ]
     assert instance.accepted_coordinate() == coordinate_before
 
 
