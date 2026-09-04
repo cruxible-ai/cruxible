@@ -82,9 +82,11 @@ that is a keyword, a Subject ID with a hyphen, a predicate leaf that collides
 with a member, an enum member that collides with a structure field -- the fixed
 surface wins attribute access and the accepted name is reached by index:
 `w.kind("dev.class")`, `w.claim_type("sec.vuln.import")`,
-`w.sec.vulnerability["cve-2026-69247"]`, `vulnerability["sec.vuln.claims"]`,
-`w.sec.vuln.severity("cardinality")`, and `w.sec.package.as_kind` for a dotted
-name that is both a predicate and a Subject kind.
+`w.sec.vulnerability["cve-2026-69247"]`, `vulnerability["sec.vuln.claims"]` and
+`w.sec.vuln.severity("cardinality")`. Where a dotted name is BOTH a predicate
+and a Subject kind -- which the vocabulary above happens not to contain -- the
+predicate wins attribute access and the kind is reached as `w.kind("dev.batch")`
+or as that predicate's own `.as_kind`.
 
 `cruxible playbill world stub --out world.pyi` writes the world down as types,
 stamped with the coordinate it was read at, so an editor and a model both

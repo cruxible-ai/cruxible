@@ -377,6 +377,18 @@ class WorldSubject(SubjectRef):
     def __getattr__(self, name: str) -> Any:
         if name.startswith("_"):
             raise AttributeError(name)
+        if name in SUBJECT_MEMBERS:
+            # Reaching here for one of this class's OWN names means the member
+            # ran and raised: Python routes an AttributeError escaping a
+            # property or a method back into __getattr__, which would then
+            # report a real fault -- a mis-built contract object deep inside a
+            # Claim read -- as "no accepted predicate 'claims' is admitted for
+            # this Subject kind". A naming mistake and a broken read would look
+            # identical, and only one of them is the caller's to fix.
+            raise AttributeError(
+                f"reading {name!r} on Subject {self.address!r} failed inside the member "
+                f"itself; {name!r} is one of this Subject's own names, not a predicate"
+            )
         predicate = self._world._predicate_for(self.address.split("/", 1)[0], name)
         return self._world._claims_about(self.address, predicate=predicate.address)
 
@@ -721,6 +733,14 @@ class World:
         give no signal, which is the one failure mode hard state must not have.
         This follows the cursor to exhaustion, and refuses -- typed, naming what
         it had -- if the daemon reports a truncated page it cannot continue.
+
+        A cursor that does not advance is that same refusal, not a page to fetch
+        again. Two ways for a client to be wrong about a truncated list, and
+        only one of them was covered: a daemon that reports no further page, and
+        a daemon that reports the cursor it was just given. The second is skew
+        rather than corruption -- the answer is not wrong, the walk simply never
+        ends -- and an unbounded loop appending the same rows forever is a poor
+        failure mode for a client whose whole thesis is refusing wrong answers.
         """
 
         cached = self._row_cache.get(subject_address)
@@ -749,6 +769,14 @@ class World:
                     f"after {len(rows)} rows and cannot be continued: the daemon reported "
                     "no further page. Repair: read the Claims through `playbill list` with "
                     "an explicit cursor rather than trusting a short answer here"
+                )
+            if cursor is not None and page.cursor == cursor:
+                raise WorldStructureError(
+                    f"the accepted list of Claims about {subject_address!r} is truncated "
+                    f"after {len(rows)} rows and cannot be continued: the daemon handed "
+                    "back the cursor it was given, so the walk does not advance. Repair: "
+                    "read the Claims through `playbill list` with an explicit cursor "
+                    "rather than trusting a short answer here"
                 )
             cursor = page.cursor
         self._row_cache[subject_address] = tuple(rows)

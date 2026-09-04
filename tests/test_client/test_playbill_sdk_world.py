@@ -779,10 +779,17 @@ class _PagedClaimsClient(_WorldClient):
 
     page_size = 20
 
-    def __init__(self, *, total: int = 55, offer_cursor: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        total: int = 55,
+        offer_cursor: bool = True,
+        stuck_cursor: bool = False,
+    ) -> None:
         super().__init__()
         self.total = total
         self.offer_cursor = offer_cursor
+        self.stuck_cursor = stuck_cursor
         self.subject_searches = 0
         for index in range(total):
             self.claim_predicates[_paged_identity(index)] = SEVERITY if index % 2 == 0 else AFFECTS
@@ -819,7 +826,11 @@ class _PagedClaimsClient(_WorldClient):
             orientation=None,
             selection_basis_digest="sha256:" + "4" * 64,
             truncated=truncated,
-            next_cursor=({"offset": stop} if truncated and self.offer_cursor else None),
+            next_cursor=(
+                ({"offset": start} if self.stuck_cursor else {"offset": stop})
+                if truncated and self.offer_cursor
+                else None
+            ),
             result_digest="sha256:" + "5" * 64,
         )
 
@@ -893,6 +904,63 @@ def test_a_truncated_page_with_no_cursor_refuses_rather_than_under_report(
 
     assert "truncated after 20 rows" in str(refused.value)
     assert "sec.vulnerability/cve-2026-69247" in str(refused.value)
+
+
+def test_a_cursor_that_does_not_advance_refuses_rather_than_looping(
+    tmp_path: Path,
+) -> None:
+    """The other way a truncated list cannot be continued, and the worse one.
+
+    A daemon handing back the cursor it was given is skew, not corruption: the
+    page is right, the walk simply never ends. Without this the client appends
+    the same rows forever, which is the one thing a client whose thesis is
+    refusing wrong answers must not do.
+    """
+
+    client = _PagedClaimsClient(total=55, stuck_cursor=True)
+    playbill = _paged_connection(tmp_path, client)
+    vulnerability = playbill.world().sec.vulnerability["cve-2026-69247"]
+
+    with pytest.raises(WorldStructureError) as refused:
+        vulnerability.claims
+
+    assert "the cursor it was given" in str(refused.value)
+    assert "sec.vulnerability/cve-2026-69247" in str(refused.value)
+    # Two calls: the first page, then the one that repeated its cursor.
+    assert client.subject_searches == 2
+
+
+def test_a_failure_inside_a_subject_member_is_not_reported_as_a_naming_mistake(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`claims` is one of this Subject's own names, so reaching __getattr__ for it
+    means the member ran and raised -- a real fault, not an unknown predicate.
+
+    Python routes an AttributeError escaping a property back into __getattr__,
+    which used to answer "no accepted predicate 'claims' is admitted for Subject
+    kind ...". A mis-built contract object deep inside a Claim read and a
+    misspelt predicate then looked identical, and only one of them is the
+    caller's to fix.
+    """
+
+    client = _PagedClaimsClient(total=55)
+    playbill = _paged_connection(tmp_path, client)
+    world = playbill.world()
+    vulnerability = world.sec.vulnerability["cve-2026-69247"]
+
+    def _broken(*_args: object, **_kwargs: object) -> tuple[object, ...]:
+        raise AttributeError("a contract object deep inside the Claim read has no 'envelope'")
+
+    monkeypatch.setattr(World, "_claims_about", _broken)
+
+    with pytest.raises(AttributeError) as refused:
+        vulnerability.claims
+
+    message = str(refused.value)
+    assert "no accepted predicate" not in message
+    assert "failed inside the member itself" in message
+    assert "'claims'" in message
 
 
 # ---------------------------------------------------------------------------
