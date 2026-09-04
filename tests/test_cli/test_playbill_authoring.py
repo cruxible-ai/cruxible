@@ -745,12 +745,24 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
     help_result = runner.invoke(cli, ["playbill", "authoring", "create", "--help"])
     assert help_result.exit_code == 0
     assert "Input kind family: claim | procedure | subject | query_definition" in help_result.output
-    assert "Change-set member kind family: claim | claim_type | claim_type_succession" in (
-        help_result.output
+    # Click wraps the family list, so read it as a list rather than by substring:
+    # a bare `claim_retirement` was satisfied by the sentence *below* the list.
+    unwrapped = " ".join(help_result.output.split())
+    member_family = unwrapped.split("Change-set member kind family: ", 1)[1].split(". ", 1)[0]
+    assert member_family.split(" | ") == [
+        "claim",
+        "claim_type",
+        "claim_type_succession",
+        "claim_retirement",
+        "subject",
+        "query_definition",
+        "procedure_mandate",
+        "procedure",
+    ]
+    assert (
+        "approval_policy and procedure_runtime_policy are the reverse: the member union "
+        "parses either, but a change set refuses either" in unwrapped
     )
-    assert "claim_retirement" in help_result.output
-    assert "procedure_runtime_policy" in help_result.output
-    assert "procedure_mandate" in help_result.output
 
     for name in (
         "claim-existing-capture",
