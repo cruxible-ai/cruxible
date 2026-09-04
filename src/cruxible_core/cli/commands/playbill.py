@@ -20,7 +20,6 @@ from pydantic import TypeAdapter, ValidationError
 
 from cruxible_client import (
     CruxibleClient,
-    Playbill,
     activate_with_workspace_refresh,
     contracts,
     materialize_playbill_floor,
@@ -54,6 +53,7 @@ from cruxible_client.authoring.workspace import (
     validate_playbill_workspace_config_write,
     write_playbill_workspace_config,
 )
+from cruxible_client.authoring.world_stub import render_world_stub_for
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_attestations import (
@@ -4131,14 +4131,10 @@ def world_stub(out_path: str | None) -> None:
     """
 
     rendered = _server_call(
-        lambda client, instance_id: (
-            Playbill._from_client(
-                client,
-                instance_id=instance_id,
-                workspace=Path.cwd(),
-            )
-            .world()
-            .stub()
+        lambda client, instance_id: render_world_stub_for(
+            client,
+            instance_id,
+            workspace=Path.cwd(),
         ),
         command_name="playbill world stub",
     )

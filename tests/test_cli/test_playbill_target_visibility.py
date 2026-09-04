@@ -11,6 +11,8 @@ import pytest
 from click.testing import CliRunner
 
 from cruxible_client import contracts
+from cruxible_client.authoring.world_stub import render_world_stub_for
+from cruxible_core.cli.commands import playbill as playbill_commands
 from cruxible_core.cli.context import CliContextState, save_cli_context
 from cruxible_core.cli.main import MUTATING_COMMAND_TARGETS, cli
 
@@ -686,3 +688,102 @@ def test_instance_decommission_names_the_instance_it_is_about_to_end(
     assert result.exit_code == 0, result.output
     assert calls == [("inst_terminal", "superseded")]
     assert result.stderr == ("target: inst_terminal @ https://terminal.example.test (explicit)\n")
+
+
+def test_the_world_stub_leaf_is_a_read_and_stays_out_of_the_mutating_inventory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Writing a `.pyi` is a read of the accepted world; it names no write target.
+
+    The inventory above is equality-tested, so this is not a second assertion of
+    the same fact: it pins the *reason* the leaf is absent from it, by driving a
+    real generation from a workspace-less cwd and proving the command stays
+    silent on stderr the way every other read does.
+    """
+
+    path = ("playbill", "world", "stub")
+    assert path not in MUTATING_COMMAND_TARGETS
+    assert _command_at_path(path).callback is not None
+
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    coordinate = contracts.PlaybillAcceptedCoordinate(
+        git_oid="11" * 20,
+        semantic_root="sha256:" + "aa" * 32,
+        generation_root="sha256:" + "22" * 32,
+        compiler_digest="sha256:" + "bb" * 32,
+    )
+
+    class StubClient:
+        def search_playbill(
+            self, instance_id: str, **values: object
+        ) -> contracts.PlaybillSearchResult:
+            assert instance_id == "inst_read"
+            return contracts.PlaybillSearchResult(
+                mode="orient",
+                coordinate=coordinate,
+                evaluation_time="2026-09-07T12:00:00Z",
+                rows=[],
+                orientation={"state": "empty"},
+                selection_basis_digest="sha256:" + "cc" * 32,
+                truncated=False,
+                result_digest="sha256:" + "dd" * 32,
+            )
+
+        def list_playbill_claim_types(
+            self, instance_id: str, **_values: object
+        ) -> contracts.PlaybillClaimTypeList:
+            assert instance_id == "inst_read"
+            return contracts.PlaybillClaimTypeList(
+                coordinate=coordinate,
+                claim_types=[
+                    contracts.PlaybillClaimTypeView(
+                        coordinate=coordinate,
+                        path="claim-types/sec.vuln.severity.json",
+                        predicate="sec.vuln.severity",
+                        identity="ClaimType:sec.vuln.severity",
+                        artifact_digest="sha256:" + "ee" * 32,
+                        envelope={
+                            "artifact_format": "playbill-claim-type-v1",
+                            "identity": {"kind": "ClaimType", "name": "sec.vuln.severity"},
+                            "predicate": "sec.vuln.severity",
+                            "allowed_subject_kinds": ("sec.vulnerability",),
+                            "object_kind": "literal",
+                            "literal_schema": {"type": "string", "enum": ["high"]},
+                            "allowed_object_subject_kinds": (),
+                            "cardinality": "one",
+                            "permitted_roles": ("observation",),
+                            "referent_sensitivity": "identity",
+                            "lifecycle": {"state": "live"},
+                        },
+                    )
+                ],
+            )
+
+        def list_playbill_subjects(
+            self, instance_id: str, **_values: object
+        ) -> contracts.PlaybillSubjectList:
+            assert instance_id == "inst_read"
+            return contracts.PlaybillSubjectList(coordinate=coordinate, subjects=[])
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://read.example.test",
+            "--instance-id",
+            "inst_read",
+            "playbill",
+            "world",
+            "stub",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    assert result.stdout.startswith("# playbill-world-stub-v1:")
+    assert "class _W_sec__vuln__severity(ClaimTypeRef):" in result.stdout
+    # The leaf reaches the client through the client package's own sanctioned
+    # entry point, not through a private constructor.
+    assert render_world_stub_for is playbill_commands.render_world_stub_for
