@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- **The accepted world is typed Python, not strings.** `pb.world()` reads the
+  accepted ClaimType vocabulary once and hands it back as objects: dotted kinds
+  nest (`w.sec.package`, `w.dev.batch`), a Subject answers by attribute or by
+  index, a predicate is a `ClaimTypeRef` carrying its own structure, and a
+  literal schema's enum members are values that can only state a Claim under
+  their own predicate -- passing one to another ClaimType refuses, typed, at the
+  builder rather than after a proposal. A non-enum schema validates before the
+  wire, so a 39-character digest refuses at the call site. Every ref carries the
+  coordinate the world was read at and refuses once the connection's orientation
+  moves. Read-back (`subject.claims`, `subject.<predicate>`) walks every page of
+  the accepted list, so a Subject with more Claims than one page still answers in
+  full. `cruxible playbill world stub [--out]` writes the whole vocabulary out as
+  a coordinate-stamped `.pyi` whose classes are closed, so a misspelled kind,
+  Subject, predicate or enum member is a type error rather than `Any`.
+
+- **BEHAVIOUR CHANGE: `ChangeSetDraft.subject(...)` and `.claim_type(...)`
+  return a ref, not the draft.** They now answer a `PendingSubjectRef` /
+  `PendingClaimTypeRef` at the current coordinate, usable directly as
+  `subject=`, `predicate=` or `value=` elsewhere in the same set, so a set that
+  defines a Subject and says something about it never retypes the address.
+  Callers that chained on the return (`draft.subject(...).claim(...)`) must
+  write the two calls separately; `.claim(...)` and `.retire(...)` still return
+  the draft and still chain.
+
+- **BEHAVIOUR CHANGE: a `Playbill` connection no longer demands a workspace
+  source catalog.** The catalog is resolved the first time a surface actually
+  selects from the working tree, so a read-only connection -- orientation,
+  search, `world()`, the new stub leaf -- works from any directory. The refusal
+  is unchanged and still typed; it now lands on `pb.file(...)` and the other
+  workspace-selecting surfaces rather than at connect, which also means a
+  malformed catalog is reported when it is first used.
+
 - **BEHAVIOUR CHANGE: a fresh Playbill ledger is SHA-1, not SHA-256.** An
   instance initialized with no attached workspace now writes a SHA-1 Git
   ledger, because common Git viewers do not recognize a SHA-256 repository and

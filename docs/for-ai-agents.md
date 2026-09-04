@@ -68,16 +68,31 @@ vulnerability.claims            # every live Claim about this Subject
 vulnerability.explain()         # the governance and provenance context
 ~~~
 
-A world is generated at the connection's orientation and refuses once that
-orientation moves, under the same law as every other typed ref: a name that
-resolved at one coordinate may name something else at the next. Subjects load
-per kind on first ask, so orienting in a world with a thousand Subjects costs
-the vocabulary and nothing else.
+`pb.world()` refreshes first, so a world is always built at the instance's
+current accepted coordinate, and it refuses once that orientation moves, under
+the same law as every other typed ref: a name that resolved at one coordinate
+may name something else at the next. `pb.world()` reads no Subjects at all; the
+first Subject access of ANY kind reads every Subject of every kind in one list,
+because the served verb takes neither a kind filter nor a cursor. A read-back
+(`subject.claims`, `subject.<predicate>`) walks every page of the accepted list
+rather than answering with the first one.
+
+Where a name the daemon accepted is not a name Python can spell -- a segment
+that is a keyword, a Subject ID with a hyphen, a predicate leaf that collides
+with a member, an enum member that collides with a structure field -- the fixed
+surface wins attribute access and the accepted name is reached by index:
+`w.kind("dev.class")`, `w.claim_type("sec.vuln.import")`,
+`w.sec.vulnerability["cve-2026-69247"]`, `vulnerability["sec.vuln.claims"]`,
+`w.sec.vuln.severity("cardinality")`, and `w.sec.package.as_kind` for a dotted
+name that is both a predicate and a Subject kind.
 
 `cruxible playbill world stub --out world.pyi` writes the world down as types,
 stamped with the coordinate it was read at, so an editor and a model both
-complete the real vocabulary instead of `Any`. Regenerate it after every
-activation; a stub types one coordinate and carries no authority over the next.
+complete the real vocabulary instead of `Any`. The generated classes are closed,
+so a misspelled kind, Subject, predicate or enum member is a type error rather
+than `Any`; the header says how to bind the runtime object to them. Regenerate
+it after every activation; a stub types one coordinate and carries no authority
+over the next.
 
 ## Write lifecycle
 
