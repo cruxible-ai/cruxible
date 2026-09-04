@@ -12,6 +12,27 @@ admissible values, and every ref it mints carries the coordinate it was read at.
 The world is a READ, never an authority. It refuses once the connection's
 orientation moves, under the same law as every other typed ref, because a name
 that resolved at one coordinate may name something else at the next.
+
+    w = pb.world()
+
+    vulnerability = w.sec.vulnerability["cve-2026-69247"]
+    vulnerability.severity                      # live Claims under that predicate
+    w.sec.vuln.severity.cardinality             # the ClaimType's own structure
+
+    draft = pb.changes(rationale="Name the package this advisory affects.")
+    package = draft.subject(w.sec.package.define("click"))
+    draft.claim(
+        subject=vulnerability,
+        predicate=w.sec.vuln.affects_package,
+        value=package,                          # the same set defines it
+        role="observation",
+        rationale="The advisory names this package.",
+        self_source="affects: click\n",
+        supported_by=None, copied_from=None, qualifier=None,
+        effective_period=None, revises=None, dispositions={}, publish_to=None,
+        subject_definition=None, claim_type_definition=None,
+    )
+    intent = draft.prepare()
 """
 
 from __future__ import annotations

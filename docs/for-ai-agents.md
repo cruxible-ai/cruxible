@@ -34,12 +34,81 @@ This avoids loading an entire structured graph into context merely to answer a
 local question. Stable subject identities, ClaimType contracts, Procedure
 contracts, and recall-only tags are the intended “double-click” points.
 
+## The world is typed
+
+Do not pass strings. `pb.world()` reads the accepted vocabulary once and hands
+it back as objects, so the names in your program are the names the daemon
+accepted rather than spellings you hope match:
+
+~~~python
+w = pb.world()
+
+w.sec.package.cryptography              # SubjectRef, by attribute
+w.sec.vulnerability["cve-2026-69247"]   # SubjectRef, by index for any ID
+w.sec.vuln.affects_package              # ClaimTypeRef for that predicate
+w.sec.vuln.severity.high                # a value only this predicate admits
+w.sec.vuln.severity.cardinality         # object_kind, cardinality, permitted_roles,
+                                        # allowed_object_subject_kinds, referent_sensitivity
+~~~
+
+Dotted kinds nest, so `w.sec.package` and `w.dev.batch` are namespaces on the
+same tree as the predicates. A Subject that does not exist refuses `AbsentSubject`
+naming the kind, the ID and the coordinate; an enum member that does not exist
+refuses naming every member the literal schema admits; a non-enum schema
+validates its constructor before the wire, so `w.dev.batch.landed_at("...")`
+refuses a 39-character digest here rather than after a proposal. A value minted
+under one ClaimType refuses under another, naming both.
+
+Reading back goes through the same objects:
+
+~~~python
+vulnerability = w.sec.vulnerability["cve-2026-69247"]
+vulnerability.affects_package   # tuple[ClaimView, ...] -- live Claims under that predicate
+vulnerability.claims            # every live Claim about this Subject
+vulnerability.explain()         # the governance and provenance context
+~~~
+
+A world is generated at the connection's orientation and refuses once that
+orientation moves, under the same law as every other typed ref: a name that
+resolved at one coordinate may name something else at the next. Subjects load
+per kind on first ask, so orienting in a world with a thousand Subjects costs
+the vocabulary and nothing else.
+
+`cruxible playbill world stub --out world.pyi` writes the world down as types,
+stamped with the coordinate it was read at, so an editor and a model both
+complete the real vocabulary instead of `Any`. Regenerate it after every
+activation; a stub types one coordinate and carries no authority over the next.
+
 ## Write lifecycle
 
 One authoring intent is one changeset. `pb.claim(...)` authors exactly one
 Claim; `pb.changes(rationale=...)` opens a changeset that `.claim(...)`,
 `.claim_type(...)`, `.subject(...)` and `.retire(...)` write into, and
-`.prepare()` compiles the whole set as one intent. The set lowers once,
+`.prepare()` compiles the whole set as one intent. `.subject(...)` and
+`.claim_type(...)` return a ref to what they define, usable as `subject=`,
+`predicate=` or `value=` in that same set, so a set that defines a Subject and
+says something about it never retypes the address:
+
+~~~python
+draft = pb.changes(rationale="Name the package this advisory affects.")
+package = draft.subject(w.sec.package.define("click"))       # a ref, in this set
+draft.claim(
+    subject=w.sec.vulnerability["cve-2026-69247"],
+    predicate=w.sec.vuln.affects_package,
+    value=package,                                           # the same set defines it
+    role="observation",
+    rationale="The advisory names this package.",
+    self_source="affects: click\n",
+    supported_by=None, copied_from=None, qualifier=None,
+    effective_period=None, revises=None, dispositions={}, publish_to=None,
+    subject_definition=None, claim_type_definition=None,
+)
+intent = draft.prepare()
+~~~
+
+Such a ref asserts no reference expectation, because the artifact it names does
+not exist at the coordinate yet; the set lowers definitions before the members
+that read them. The set lowers once,
 proposes once and generates once, and it admits or refuses whole -- one
 malformed member refuses the intent, typed to that member's index. A Claim in
 the set may read a Subject or ClaimType the same set defines. Two sibling Claims
@@ -161,8 +230,8 @@ states fresh under the successor all land together, and `next` reports nothing
 outstanding about the vocabulary afterwards.
 
 Subject-valued Claims are typed relationships, not string literals. Pass an accepted
-`SubjectRef` (or canonical `<subject-kind>/<subject-id>` address) as
-`Playbill.claim(value=...)`; preflight refuses a missing endpoint with the
+`SubjectRef` -- `w.sec.package.cryptography` is one -- or a canonical
+`<subject-kind>/<subject-id>` address as `Playbill.claim(value=...)`; preflight refuses a missing endpoint with the
 `propose_subject` repair and refuses endpoint kinds outside the accepted ClaimType.
 
 For Documents:

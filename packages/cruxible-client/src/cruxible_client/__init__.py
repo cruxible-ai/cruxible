@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     )
     from cruxible_client.authoring.sdk import Playbill, Prediction, PredictionSettlement
     from cruxible_client.authoring.sdk_types import (
+        AbsentSubject,
         AccessProfile,
         ActivationPolicy,
         Audience,
@@ -24,6 +25,11 @@ if TYPE_CHECKING:
         Disposition,
         Duration,
         EffectivePeriod,
+        LiteralSchemaError,
+        LiteralValue,
+        LiteralValueTypeError,
+        PendingClaimTypeRef,
+        PendingSubjectRef,
         ProcedureRef,
         QueryRef,
         ReferentSensitivity,
@@ -38,6 +44,13 @@ if TYPE_CHECKING:
         inspect_workspace_floor,
         materialize_playbill_floor,
         observe_playbill_next_workspace,
+    )
+    from cruxible_client.authoring.world import (
+        KindNamespace,
+        World,
+        WorldClaimType,
+        WorldStructureError,
+        WorldSubject,
     )
     from cruxible_client.contracts.artifacts import (
         ArtifactIdentity,
@@ -67,6 +80,7 @@ if TYPE_CHECKING:
     from cruxible_client.transport.http import CruxibleClient
 
 __all__ = [
+    "AbsentSubject",
     "AccessProfile",
     "ActivationPolicy",
     "Audience",
@@ -89,10 +103,16 @@ __all__ = [
     "CanonicalDurationV1",
     "ContractSchema",
     "EffectivePeriod",
+    "KindNamespace",
+    "LiteralSchemaError",
+    "LiteralValue",
+    "LiteralValueTypeError",
     "LocalEd25519ClaimAttestationSigner",
     "Playbill",
     "Prediction",
     "PredictionSettlement",
+    "PendingClaimTypeRef",
+    "PendingSubjectRef",
     "PlaybillInsertionApplication",
     "PlaybillInsertionApplyError",
     "PlaybillWorkspaceError",
@@ -117,6 +137,10 @@ __all__ = [
     "SubjectRef",
     "TypedRef",
     "TransformNodeV3",
+    "World",
+    "WorldClaimType",
+    "WorldStructureError",
+    "WorldSubject",
 ]
 
 __version__ = "0.5.1"
@@ -137,6 +161,7 @@ def __getattr__(name: str) -> Any:
 
         return getattr(attestations, name)
     if name in {
+        "AbsentSubject",
         "AccessProfile",
         "ActivationPolicy",
         "Audience",
@@ -150,6 +175,11 @@ def __getattr__(name: str) -> Any:
         "Disposition",
         "Duration",
         "EffectivePeriod",
+        "LiteralSchemaError",
+        "LiteralValue",
+        "LiteralValueTypeError",
+        "PendingClaimTypeRef",
+        "PendingSubjectRef",
         "ProcedureRef",
         "QueryRef",
         "ReferentSensitivity",
@@ -161,6 +191,16 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.authoring import sdk_types
 
         return getattr(sdk_types, name)
+    if name in {
+        "KindNamespace",
+        "World",
+        "WorldClaimType",
+        "WorldStructureError",
+        "WorldSubject",
+    }:
+        from cruxible_client.authoring import world
+
+        return getattr(world, name)
     if name in {"ArtifactIdentity", "ArtifactLifecycle", "ArtifactPin"}:
         from cruxible_client.contracts import artifacts as artifact_models
 

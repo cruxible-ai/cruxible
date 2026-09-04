@@ -720,6 +720,23 @@ installed demand policies. `orient` returns counts and exact follow-up filters,
 never arbitrary top rows. Until demand policy is installed it explicitly reports
 `demand: not_installed`.
 
+## playbill world
+
+~~~text
+cruxible playbill world stub [--out PATH]
+~~~
+
+Writes a `.pyi` typing this instance's accepted world -- its Subject kinds, the
+Subject IDs that can be spelled as Python attributes, every predicate, and each
+enum member a literal schema names -- so an editor and a model complete the real
+vocabulary instead of `Any`. Without `--out` the stub goes to standard output.
+
+The stub names in a header comment the exact accepted coordinate it was read at,
+and is byte-identical for that coordinate, so regenerating after an activation
+shows the vocabulary movement as an ordinary diff. It types one coordinate and
+carries no authority over the next: the SDK still refuses a world whose
+orientation has moved.
+
 ## playbill since
 
 ~~~text
