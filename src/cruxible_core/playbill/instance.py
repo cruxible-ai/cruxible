@@ -7,6 +7,7 @@ import os
 import secrets
 import shutil
 import stat
+from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
@@ -184,6 +185,12 @@ def _validate_client_principals(
     return ordered, posture
 
 
+# An accepted tree is immutable, so the only cost of a stale entry is memory.
+# Four generations cover every read path that walks a bounded lineage while
+# keeping the resident set to a handful of trees per served instance.
+_TREE_MEMO_GENERATIONS = 4
+
+
 class PlaybillInstance:
     """A verified opt-in Playbill substrate rooted outside agent workspaces."""
 
@@ -207,6 +214,7 @@ class PlaybillInstance:
         self._claim_attestation_store: ClaimAttestationEvidenceStore | None = None
         self._workspace_advertiser: Callable[[], PlaybillWorkspaceAdvertisement] | None = None
         self._receive_limits = ProposalReceiveLimits()
+        self._tree_memo: OrderedDict[str, dict[str, bytes]] = OrderedDict()
 
     @staticmethod
     def _accepted_query_facts(
@@ -842,10 +850,25 @@ class PlaybillInstance:
         return matches[0]
 
     def tree_at(self, oid: str) -> dict[str, bytes]:
-        """Read an exact Git tree only after proving the OID is accepted history."""
+        """Read an exact Git tree only after proving the OID is accepted history.
+
+        An accepted generation's tree is immutable by construction, so the read
+        is memoized per OID behind the same acceptance proof: the proof runs on
+        every call and only the Git subprocess pair is elided. Callers keep the
+        mutable-dict contract they had before, so each hit returns a fresh
+        shallow copy (a pointer copy per path, not a byte copy).
+        """
 
         self.coordinate_for_oid(oid)
-        return self._ledger.read_tree(oid)
+        cached = self._tree_memo.get(oid)
+        if cached is None:
+            cached = self._ledger.read_tree(oid)
+            self._tree_memo[oid] = cached
+            while len(self._tree_memo) > _TREE_MEMO_GENERATIONS:
+                self._tree_memo.popitem(last=False)
+        else:
+            self._tree_memo.move_to_end(oid)
+        return dict(cached)
 
     def proposal_tree(self, oid: str) -> dict[str, bytes]:
         """Read one proposal commit tree for evidence-bound settlement."""
@@ -905,6 +928,7 @@ class PlaybillInstance:
 
         paths = self._validated_paths(self.root, self.descriptor.storage)
         bodies = ContentAddressedBodyStore(paths["cas"])
+        self._tree_memo.clear()
         self._recovered = recover_instance(
             self._ledger,
             genesis=self._verified_genesis,
