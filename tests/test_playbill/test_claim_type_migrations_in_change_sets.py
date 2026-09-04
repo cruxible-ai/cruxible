@@ -41,8 +41,10 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV1
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.proposal_models import ProposalReceiveLimits
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
+from cruxible_core.playbill.authoring import preflight as preflight_module
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.authoring.lowering import AuthoringLoweringError, lower_authoring
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
@@ -68,6 +70,7 @@ from cruxible_core.service.playbill_next import (
 )
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_activation import _sign
+from tests.test_playbill.test_authoring_change_set_intents import accepted_change_set_record
 from tests.test_playbill.test_authoring_preflight import TIMESTAMP, _seed_claim_surface
 from tests.test_playbill.test_claims import _claim_type
 from tests.test_playbill.test_resolution_contracts import _accept_tree
@@ -1167,3 +1170,126 @@ def test_a_succession_rebases_and_replays_byte_identically(tmp_path: Path) -> No
     replayed = reopened.accepted_coordinate()
     assert replayed == accepted
     assert reopened.tree_at(replayed.git_oid) == before
+
+
+def _retiring_succession_world(
+    tmp_path: Path,
+    *,
+    dependents: int,
+) -> tuple[PlaybillInstance, object, AuthoringIntentCoordinator, ClaimTypeSuccessionMemberV1]:
+    """Accept `dependents` Claims of one predicate, and author the succession that retires them."""
+
+    subjects = tuple(f"wi-fan-{index:03d}" for index in range(dependents))
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(
+        instance,
+        owner,
+        claim_type_override=_literal_affects_package(),
+        additional_subjects=tuple(_shell(SUBJECT_KIND, item) for item in subjects)
+        + (_shell("package", "demo-package"),),
+    )
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+
+    def _authored(subject_id: str) -> ClaimAuthoringPayloadV1:
+        return _claim(subject_id=subject_id, value=LiteralClaimObject(value="demo-package"))
+
+    intent = coordinator.create(
+        actor=actor,
+        payload=_change_set(*(_authored(item) for item in subjects)),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    _accept(instance, owner, coordinator, intent.intent_id, actor)
+    minted = {item.member_identity: item.claim_id for item in intent.change_set_claim_identities}
+    succession = ClaimTypeSuccessionMemberV1(
+        successor=_enum_successor(instance, enum=["other-package"]),
+        dependents=tuple(
+            sorted(
+                (
+                    _dependent(
+                        minted[authoring_member_identity(_authored(item))],
+                        disposition="retire",
+                        reason="was-rescinded",
+                    )
+                    for item in subjects
+                ),
+                key=lambda item: item.identity.qualified.encode("utf-8"),
+            )
+        ),
+    )
+    return instance, owner, coordinator, succession
+
+
+def test_a_succession_dependent_entry_costs_no_more_than_advertised(tmp_path: Path) -> None:
+    """The most expensive entry in any change-set record is still under the bound.
+
+    A succession's dependents are the costliest entries the ledger writes: each
+    one carries the retirement laws AND the succession's, so a dependent entry
+    measures around a fifth more than a plain Claim retirement and six times a
+    Subject. The advertised per-entry cost has to bound THIS, or the ceiling
+    computed from it admits a set the ledger cannot record -- which is card 110.
+    """
+
+    instance, owner, coordinator, succession = _retiring_succession_world(tmp_path, dependents=8)
+    actor = AuthenticatedActor(actor_id="owner")
+    intent = coordinator.create(
+        actor=actor,
+        payload=_change_set(succession),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    _accept(instance, owner, coordinator, intent.intent_id, actor)
+
+    entries, size = accepted_change_set_record(instance)
+    # One authored member; nine record entries -- the successor and its eight
+    # dependents. The member count never bounded this.
+    assert entries == 9
+    assert ProposalReceiveLimits().projected_change_set_record_bytes(entries) >= size
+
+
+def test_a_succession_over_the_record_ceiling_refuses_before_it_is_lowered(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One authored member, twenty-one record entries, refused before the compile.
+
+    The bound that counted authored members read this set as ONE member and let
+    it through however low the ceiling was set. A succession names its exact
+    reverse-pin closure on the member itself, so the entries it will write are
+    readable before anything is staged, and the refusal costs one read rather
+    than the whole compile. `lower_authoring` is replaced with a function that
+    fails, so "never lowered" is proved rather than inferred.
+    """
+
+    instance, _owner, coordinator, succession = _retiring_succession_world(tmp_path, dependents=20)
+    actor = AuthenticatedActor(actor_id="owner")
+    per_member = ProposalReceiveLimits().change_set_record_bytes_per_member
+    instance.bind_receive_limits(ProposalReceiveLimits(max_change_set_record_bytes=3 * per_member))
+    assert instance.proposal_service().receive_limits.max_change_set_members == 3
+    intent = coordinator.create(
+        actor=actor,
+        payload=_change_set(succession),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    def _never(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("a succession over the record ceiling was lowered anyway")
+
+    monkeypatch.setattr(preflight_module, "lower_authoring", _never)
+
+    result = coordinator.preflight(intent.intent_id, actor=actor)
+
+    assert result.verdict == "refused"
+    diagnostic = next(
+        item
+        for item in result.frontier.diagnostics
+        if item.code == "playbill.authoring.change_set_record_too_large"
+    )
+    assert "projects to at least 21 record entries" in diagnostic.message
+    assert diagnostic.repairs[0].replacement == {
+        "record_entries": 21,
+        "record_entries_measured": False,
+        "max_change_set_members": 3,
+        "max_change_set_record_bytes": 3 * per_member,
+        "projected_change_set_record_bytes": 21 * per_member,
+    }

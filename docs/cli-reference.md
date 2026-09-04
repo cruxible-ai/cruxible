@@ -191,13 +191,22 @@ shape refuses loudly rather than silently restoring the default bound.
 The admitted limits a caller reads back carry two further numbers, which are
 ADVERTISEMENTS rather than receive gates: `max_change_set_record_bytes`
 (`4194304`, the per-blob ceiling the ledger's own record of a change set is
-written under) and `change_set_record_bytes_per_member` (`7200`, that record's
-measured cost per member). Their quotient -- 582 members at the defaults -- is
-the largest change set that can be settled, far below `max_changed_members`,
-because the two bound different things: one is what receive accepts, the other
-is what the ledger can record. An intent over that bound is refused at
+written under) and `change_set_record_bytes_per_member` (`11264`, the largest
+measured cost of one ENTRY in that record, over every member kind). Their
+quotient -- 372 record entries at the defaults -- is the largest change set that
+can be settled, far below `max_changed_members`, because the two bound different
+things: one is what receive accepts, the other is what the ledger can record.
+
+The record holds one entry per changed PATH, not one per authored member, and
+two member kinds lower to more than one: a ClaimType succession writes the
+successor plus an entry per dependent it dispositions, and a Claim retirement
+writes the retired Claim plus its live closure. So 372 is the largest set of
+1:1 members that settles, and a set carrying either of those kinds settles at
+however many entries it lowers to. An intent over the bound is refused at
 preflight, typed `playbill.authoring.change_set_record_too_large`, naming the
-member count that fits, before anything is compiled.
+entry count that fits: on the projected count before anything is lowered when
+that already exceeds the bound, and on the exact lowered count -- still before
+the compile -- when it does not.
 
 ## playbill host
 

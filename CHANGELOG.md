@@ -37,13 +37,17 @@
 
 - **A change set the ledger could not record is refused before it is
   compiled.** The ledger writes its record OF a change set as one blob holding
-  an entry per member, measured against the per-blob ceiling; a set well inside
-  every advertised receive budget could still exceed it, and only found out at
-  activation, after a ten-minute compile that could not be reused. The admitted
-  limits now advertise that ceiling and its measured per-member cost, and
-  preflight refuses an oversized set typed
+  an entry per CHANGED PATH -- so a ClaimType succession writes one per
+  dependent it dispositions and a Claim retirement one per Claim in its closure
+  -- measured against the per-blob ceiling; a set well inside every advertised
+  receive budget could still exceed it, and only found out at activation, after
+  a ten-minute compile that could not be reused. The admitted limits now
+  advertise that ceiling and the largest measured cost of one entry across
+  every member kind, and preflight refuses an oversized set typed
   (`playbill.authoring.change_set_record_too_large`), naming the projected
-  record size, the ceiling and the member count that fits, before lowering runs.
+  record size, the ceiling and the entry count that fits: before lowering when
+  the entries a set already declares exceed the bound, and on the exact lowered
+  count -- still before the compile -- when they do not.
   Compiling was also the step that could take the daemon out under memory
   pressure: an allocation failure during lowering is now logged and refused as
   `playbill.authoring.compile_budget_exceeded` instead of propagating untyped,

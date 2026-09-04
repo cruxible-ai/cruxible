@@ -95,15 +95,34 @@ class AuthenticatedActor(_StrictProposalModel):
         return value
 
 
-#: Bytes ONE change-set member costs inside the ledger's own record of the
+#: Bytes ONE change-set record ENTRY costs inside the ledger's own record of the
 #: change set. The record holds one ``members`` entry and one ``law_evidence``
-#: entry per member plus the candidate's scope, and it holds digests and paths
-#: rather than evidence: a 1,002-member record measured 7,046,087 bytes on one
+#: entry per entry in the candidate's scope, and it holds digests and paths
+#: rather than evidence: a 1,002-entry record measured 7,046,087 bytes on one
 #: corpus and 7,046,087 bytes -- identical to the byte -- on a second carrying a
-#: third of the evidence, i.e. 7,032 bytes per member either way. This is that
-#: measurement rounded up, so the projection this bound is computed from is
-#: never smaller than the record it predicts.
-CHANGE_SET_RECORD_BYTES_PER_MEMBER = 7_200
+#: third of the evidence.
+#:
+#: An entry's cost varies by the artifact kind that wrote it, because the laws
+#: evaluated against a Claim are not the laws evaluated against a Subject. The
+#: marginal cost of one further entry, measured on a hermetic instance by
+#: settling each kind at two sizes and reading the accepted record back:
+#:
+#: ===========================================  ==============
+#: Entry written by                             Bytes / entry
+#: ===========================================  ==============
+#: ``SubjectAuthoringPayloadV1``                         1,551
+#: ``ClaimTypeAuthoringPayloadV1``                       4,027
+#: ``ClaimAuthoringPayloadV1`` (and insertion)           6,215
+#: ``ClaimRetirementMemberV1``                           8,670
+#: ``ClaimTypeSuccessionMemberV1`` dependent            10,230
+#: ===========================================  ==============
+#:
+#: This is the LARGEST of those rounded up to the next kibibyte, so a projection
+#: computed from it is never smaller than the record it predicts -- which is the
+#: whole point of the bound: a set it admits must be a set the ledger can write.
+#: A per-kind cost would refuse later and admit more, and is what the post-freeze
+#: card asks for along with a record the ceiling no longer has to bound.
+CHANGE_SET_RECORD_BYTES_PER_MEMBER = 11 * 1024
 
 
 class ProposalReceiveLimits(_StrictProposalModel):
@@ -123,11 +142,18 @@ class ProposalReceiveLimits(_StrictProposalModel):
     carry. The ledger writes its record OF a change set as one blob, measured
     against the per-blob ceiling; a set that satisfies every receive bound above
     can still exceed it, which used to be discovered only at activation, after
-    the compile. Advertising the ceiling and the per-member cost next to the
+    the compile. Advertising the ceiling and the per-entry cost next to the
     member budget lets a caller compute the member count that fits before
     authoring anything -- and the fact that it is far below `max_changed_members`
     is the point, not a contradiction: one is what receive accepts, the other is
     what the ledger can record.
+
+    What both bound is RECORD ENTRIES, not authored members: the record holds one
+    entry per path the set lowers to, and a member may lower to several -- a
+    ClaimType succession writes one per dependent it dispositions, a retirement
+    one per Claim in its closure. `max_change_set_members` is therefore the
+    entry budget, and a set of that many 1:1 members is the largest set it
+    names exactly.
     """
 
     max_files: int = Field(default=250_000, ge=1, le=1_000_000)
@@ -144,7 +170,7 @@ class ProposalReceiveLimits(_StrictProposalModel):
 
     @property
     def max_change_set_members(self) -> int:
-        """Members that fit under the record ceiling, at the measured cost."""
+        """Record entries that fit under the ceiling, at the measured cost."""
 
         return max(
             1,
@@ -152,7 +178,7 @@ class ProposalReceiveLimits(_StrictProposalModel):
         )
 
     def projected_change_set_record_bytes(self, members: int) -> int:
-        """Project the record size a change set of *members* members will write."""
+        """Project the record a change set of *members* record entries writes."""
 
         return members * self.change_set_record_bytes_per_member
 

@@ -1403,23 +1403,135 @@ def test_a_retirement_member_spells_its_claim_ref_the_way_a_claim_does(
     assert again.payload_digest == first.payload_digest
 
 
-def test_the_advertised_record_ceiling_is_the_measured_one() -> None:
-    """The advertised ceiling and per-member cost agree with card 110's reading.
+def accepted_change_set_record(instance: PlaybillInstance) -> tuple[int, int]:
+    """The entry count and byte size of the newest accepted change-set record."""
 
-    The reading: a 1,002-member change-set record measured 7,046,087 bytes --
-    the same to the byte on a corpus carrying a third of the evidence, because
-    the record holds digests and paths, not evidence. That is 7,032 bytes per
-    member, so the 4 MiB per-blob ceiling fits a few hundred members and not a
-    few thousand. A build whose advertised numbers stopped matching that would
-    be advertising a ceiling nobody measured.
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = max(item for item in tree if item.startswith("changesets/cs-"))
+    content = tree[path]
+    return len(json.loads(content)["members"]), len(content)
+
+
+def _measured_subject_set(
+    instance: PlaybillInstance,
+    owner: object,
+    coordinator: AuthoringIntentCoordinator,
+    actor: AuthenticatedActor,
+    count: int,
+) -> None:
+    payload = _change_set(
+        *(
+            SubjectAuthoringPayloadV1(subject=_shell(f"wi-fresh-{index:03d}"))
+            for index in range(count)
+        )
+    )
+    intent = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
+    _accept(instance, owner, coordinator, intent.intent_id, actor)
+
+
+def _measured_claim_type_set(
+    instance: PlaybillInstance,
+    owner: object,
+    coordinator: AuthoringIntentCoordinator,
+    actor: AuthenticatedActor,
+    count: int,
+) -> None:
+    payload = _change_set(
+        *(
+            ClaimTypeAuthoringPayloadV1(
+                claim_type=_predicate_type(f"project.work_item.p{index:03d}")
+            )
+            for index in range(count)
+        )
+    )
+    intent = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
+    _accept(instance, owner, coordinator, intent.intent_id, actor)
+
+
+def _measured_claim_set(
+    instance: PlaybillInstance,
+    owner: object,
+    coordinator: AuthoringIntentCoordinator,
+    actor: AuthenticatedActor,
+    count: int,
+) -> list[str]:
+    payload = _change_set(
+        *(_claim(subject_id=f"wi-cost-{index:03d}", value="ready") for index in range(count))
+    )
+    intent = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
+    _accept(instance, owner, coordinator, intent.intent_id, actor)
+    return [item.claim_id for item in intent.change_set_claim_identities]
+
+
+def _measured_retirement_set(
+    instance: PlaybillInstance,
+    owner: object,
+    coordinator: AuthoringIntentCoordinator,
+    actor: AuthenticatedActor,
+    count: int,
+) -> None:
+    claim_ids = _measured_claim_set(instance, owner, coordinator, actor, count)
+    payload = _change_set(
+        *(
+            ClaimRetirementMemberV1(claim_ref=claim_id, reason="was-rescinded")
+            for claim_id in claim_ids
+        )
+    )
+    intent = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
+    _accept(instance, owner, coordinator, intent.intent_id, actor)
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        pytest.param(_measured_subject_set, id="subject"),
+        pytest.param(_measured_claim_type_set, id="claim_type"),
+        pytest.param(_measured_claim_set, id="claim"),
+        pytest.param(_measured_retirement_set, id="retirement"),
+    ],
+)
+def test_the_advertised_record_ceiling_is_the_measured_one(
+    tmp_path: Path,
+    kind: object,
+) -> None:
+    """The advertised per-entry cost bounds what each member kind actually writes.
+
+    Card 110's reading was one corpus: a 1,002-entry change-set record measured
+    7,046,087 bytes, the same to the byte on a corpus carrying a third of the
+    evidence, because the record holds digests and paths and not evidence. One
+    corpus is one member mix, though, and an entry's cost is the cost of the
+    laws evaluated against the artifact that wrote it -- a Claim entry costs
+    four times a Subject entry. A constant taken from one mix is an average, and
+    an average is not a bound.
+
+    So this settles a real change set of each kind on a hermetic instance, reads
+    the accepted record back off the tree, and asserts the ADVERTISED cost is
+    never smaller than the one measured. The fan-out kind, whose dependents are
+    the most expensive entries of all, is measured where successions live:
+    `test_claim_type_migrations_in_change_sets`.
     """
 
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(
+        instance,
+        owner,
+        additional_subjects=tuple(_shell(f"wi-cost-{index:03d}") for index in range(8)),
+    )
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
     limits = ProposalReceiveLimits()
 
+    kind(instance, owner, coordinator, actor, 8)  # type: ignore[operator]
+
+    entries, size = accepted_change_set_record(instance)
+    assert entries == 8
+    # The whole point of the advertisement: a projection computed from it is
+    # never smaller than the record it predicts, so a set it admits is a set the
+    # ledger can write.
+    assert limits.projected_change_set_record_bytes(entries) >= size
     assert limits.max_change_set_record_bytes == 4 * 1024 * 1024
-    assert limits.change_set_record_bytes_per_member >= 7_046_087 // 1_002
-    assert limits.max_change_set_members == 582
-    assert limits.projected_change_set_record_bytes(1_002) >= 7_046_087
+    assert limits.change_set_record_bytes_per_member == 11 * 1024
+    assert limits.max_change_set_members == 372
     # Advertised next to the member and byte budgets, and deliberately far below
     # the changed-member budget: receive would take this set, the ledger cannot.
     assert limits.max_change_set_members < limits.max_changed_members
@@ -1475,9 +1587,10 @@ def test_a_thousand_member_change_set_refuses_before_it_is_compiled(
     assert str(limits.max_change_set_members) in diagnostic.message
     assert str(limits.max_change_set_record_bytes) in diagnostic.message
     assert str(limits.projected_change_set_record_bytes(1_000)) in diagnostic.message
-    assert "1000 members" in diagnostic.message
+    assert "projects to at least 1000 record entries" in diagnostic.message
     assert diagnostic.repairs[0].replacement == {
-        "authored_members": 1_000,
+        "record_entries": 1_000,
+        "record_entries_measured": False,
         "max_change_set_members": limits.max_change_set_members,
         "max_change_set_record_bytes": limits.max_change_set_record_bytes,
         "projected_change_set_record_bytes": limits.projected_change_set_record_bytes(1_000),
@@ -1518,6 +1631,112 @@ def test_a_set_at_the_record_ceiling_still_compiles(tmp_path: Path) -> None:
     assert {item.code for item in refused.frontier.diagnostics} == {
         "playbill.authoring.change_set_record_too_large"
     }
+
+
+def test_a_set_of_retirements_at_the_old_ceiling_refuses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bound is a bound for the kind that costs the most, not only the least.
+
+    582 members was the ceiling this build first advertised, computed from an
+    average per-member cost that Claim retirements exceed by a fifth. A set of
+    582 of them would have passed preflight, compiled, and been refused at
+    activation for a record the ledger could not write -- which is the whole of
+    card 110. The advertised cost now bounds the most expensive kind, so the
+    set is refused where every other over-large set is: before lowering.
+    """
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    payload = _change_set(
+        *(
+            ClaimRetirementMemberV1(claim_ref=f"CLM-{index:032x}", reason="was-rescinded")
+            for index in range(582)
+        )
+    )
+    intent = coordinator.create(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    def _never(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("a set over the record ceiling was compiled anyway")
+
+    monkeypatch.setattr(preflight_module, "lower_authoring", _never)
+
+    result = coordinator.preflight(intent.intent_id, actor=actor)
+
+    assert result.verdict == "refused"
+    diagnostic = next(
+        item
+        for item in result.frontier.diagnostics
+        if item.code == "playbill.authoring.change_set_record_too_large"
+    )
+    assert "projects to at least 582 record entries" in diagnostic.message
+    assert str(ProposalReceiveLimits().max_change_set_members) in diagnostic.message
+
+
+def test_a_set_that_lowers_to_more_entries_than_it_authors_refuses_before_evaluation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The record bound bounds the record, not the member list that projects it.
+
+    A dependency draft is an entry in the record and not a member of the set:
+    two `ClaimAuthoringPayloadV2` members each carrying a Subject draft author
+    two members and write four paths. The pre-lowering projection counts two and
+    lets them through; the exact count is known once lowering has run, and the
+    refusal still arrives before the evaluation that costs the ten minutes card
+    110 reported. `evaluate_proposal_tree` is replaced with a function that
+    fails, so "never evaluated" is proved rather than inferred from a timing.
+    """
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    per_member = CHANGE_SET_RECORD_BYTES_PER_MEMBER
+    instance.bind_receive_limits(ProposalReceiveLimits(max_change_set_record_bytes=3 * per_member))
+    assert instance.proposal_service().receive_limits.max_change_set_members == 3
+    payload = _change_set(
+        _claim_with_subject_draft("wi-draft-a", _shell("wi-draft-a")),
+        _claim_with_subject_draft("wi-draft-b", _shell("wi-draft-b")),
+    )
+    intent = coordinator.create(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    def _never(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("a set over the record ceiling was evaluated anyway")
+
+    monkeypatch.setattr(preflight_module, "evaluate_proposal_tree", _never)
+
+    result = coordinator.preflight(intent.intent_id, actor=actor)
+
+    assert result.verdict == "refused"
+    diagnostic = next(
+        item
+        for item in result.frontier.diagnostics
+        if item.code == "playbill.authoring.change_set_record_too_large"
+    )
+    # Four: two Claim cards and the two Subject drafts that carry them.
+    assert "lowers to 4 record entries" in diagnostic.message
+    assert diagnostic.repairs[0].replacement == {
+        "record_entries": 4,
+        "record_entries_measured": True,
+        "max_change_set_members": 3,
+        "max_change_set_record_bytes": 3 * per_member,
+        "projected_change_set_record_bytes": 4 * per_member,
+    }
+    assert [item.blocked_by for item in result.frontier.blocked_checks] == [
+        ("playbill.authoring.change_set_record_too_large",)
+    ]
 
 
 def test_a_compile_that_exhausts_memory_refuses_typed_instead_of_propagating(

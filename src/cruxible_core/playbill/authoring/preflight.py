@@ -27,6 +27,8 @@ from cruxible_client.contracts.authoring.models import (
     CandidateStatusV1,
     ChangeSetAuthoringPayloadV1,
     ClaimAuthoringPayloadV1,
+    ClaimRetirementMemberV1,
+    ClaimTypeSuccessionMemberV1,
     DiagnosticFrontierLimitsV1,
     DiagnosticFrontierV1,
     PreflightResultV1,
@@ -620,37 +622,77 @@ def _authored_member_count(payload: AuthoringPayloadV1) -> int:
     return 1
 
 
+def _member_record_entries(member: object) -> int:
+    """Record entries ONE change-set member is known to lower to.
+
+    The ledger's record of a change set holds one entry per path the set lowers
+    to, not one per authored member, and two member kinds fan out: a ClaimType
+    succession writes the successor plus one entry per dependent it dispositions,
+    and a Claim retirement writes the retired Claim plus its live closure. Both
+    carry that closure on the member itself -- a succession whose `dependents`
+    are not the exact reverse-pin closure refuses at lowering, and so does a
+    retirement whose `dependents` are not its inventory -- so the count is
+    readable here, before anything is staged.
+
+    Every other kind is counted 1, which is a floor rather than a bound: a
+    `ClaimAuthoringPayloadV2` installs its dependency drafts as further entries.
+    The exact count is known only once lowering has run, and it is checked there
+    against the same ceiling. This is the cheap pre-lowering filter; that is the
+    bound.
+    """
+
+    if isinstance(member, ClaimTypeSuccessionMemberV1 | ClaimRetirementMemberV1):
+        return 1 + len(member.dependents)
+    return 1
+
+
+def _projected_record_entries(payload: AuthoringPayloadV1) -> int:
+    """Project the record entries this intent writes, before anything is lowered."""
+
+    if isinstance(payload, ChangeSetAuthoringPayloadV1):
+        return sum(_member_record_entries(member) for member in payload.members)
+    return 1
+
+
 def _record_ceiling_diagnostic(
     *,
-    members: int,
+    entries: int,
     limits: ProposalReceiveLimits,
+    measured: bool,
 ) -> AuthoringDiagnosticV1:
     """Refuse a change set the ledger could never record, before compiling it."""
 
     fits = limits.max_change_set_members
-    projected = limits.projected_change_set_record_bytes(members)
+    projected = limits.projected_change_set_record_bytes(entries)
+    counted = (
+        f"lowers to {entries} record entries"
+        if measured
+        else f"projects to at least {entries} record entries"
+    )
+    where = "after lowering, before the compile" if measured else "before lowering"
     return _diagnostic(
         code=CHANGE_SET_RECORD_TOO_LARGE,
         stage="change_set_record",
         offending_element="payload",
         message=(
-            f"This change set has {members} members. The ledger writes its record of a "
-            f"change set as one blob holding an entry per member, at about "
+            f"This change set {counted}. The ledger writes its record of a "
+            f"change set as one blob holding an entry per changed path, at up to "
             f"{limits.change_set_record_bytes_per_member} bytes each, so this one projects "
             f"to about {projected} bytes against a ceiling of "
-            f"{limits.max_change_set_record_bytes}. At most {fits} members fit. Refused "
-            "before lowering: compiling it would spend the whole compile on a set that "
+            f"{limits.max_change_set_record_bytes}. At most {fits} entries fit. Refused "
+            f"{where}: compiling it would spend the whole compile on a set that "
             "cannot activate."
         ),
         repairs=(
             _repair(
                 "split_change_set",
                 (
-                    f"Author this change set as several intents of at most {fits} members "
-                    "each, split so that no entity's members straddle two of them."
+                    f"Author this change set as several intents of at most {fits} record "
+                    "entries each, split so that no entity's members straddle two of them."
                 ),
                 {
-                    "authored_members": members,
+                    "record_entries": entries,
+                    "record_entries_measured": measured,
                     "max_change_set_members": fits,
                     "max_change_set_record_bytes": limits.max_change_set_record_bytes,
                     "projected_change_set_record_bytes": projected,
@@ -692,24 +734,28 @@ def compute_preflight(
     resolved_payload: object
 
     authored_members = _authored_member_count(intent.payload)
-    over_record_ceiling = authored_members > service.receive_limits.max_change_set_members
+    projected_entries = _projected_record_entries(intent.payload)
+    over_record_ceiling = projected_entries > service.receive_limits.max_change_set_members
     if over_record_ceiling:
-        # BEFORE lowering, on the member count alone. Lowering a set this size
-        # builds the whole candidate tree in memory, which is what took the
-        # daemon out on a machine under memory pressure; and even when it
-        # survives, the record it compiles toward cannot be written. Neither
+        # BEFORE lowering, on the projected entry count alone. Lowering a set
+        # this size builds the whole candidate tree in memory, which is what
+        # took the daemon out on a machine under memory pressure; and even when
+        # it survives, the record it compiles toward cannot be written. Neither
         # cost is worth paying to learn a number that is known here.
         _log.warning(
             "authoring_change_set_record_too_large",
             intent_id=intent.intent_id,
             authored_members=authored_members,
+            projected_record_entries=projected_entries,
+            record_entries_measured=False,
             max_change_set_members=service.receive_limits.max_change_set_members,
             max_change_set_record_bytes=service.receive_limits.max_change_set_record_bytes,
         )
         diagnostics.append(
             _record_ceiling_diagnostic(
-                members=authored_members,
+                entries=projected_entries,
                 limits=service.receive_limits,
+                measured=False,
             )
         )
         blocked.append(
@@ -726,14 +772,56 @@ def compute_preflight(
             "change_set_record_refusal": {
                 "code": CHANGE_SET_RECORD_TOO_LARGE,
                 "authored_members": authored_members,
+                "record_entries": projected_entries,
             },
             "semantic_identity": intent.semantic_identity,
         }
     if not over_record_ceiling:
         try:
             lowered = lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
+            record_entries = len(lowered.changed_members)
             if lowered.idempotent:
                 evaluated_tree = current_tree
+                resolved_payload = lowered.resolved_authoring
+            elif record_entries > service.receive_limits.max_change_set_members:
+                # The bound, where the projection above is only a filter.
+                # Lowering is what turns authored members into the entries the
+                # record holds -- a succession's dependents, a retirement's
+                # closure, a Claim's dependency drafts -- so this is the first
+                # point at which the record's size is known rather than
+                # projected, and it is still before the compile. A set that
+                # cannot be written is refused with everything spent on it so
+                # far being one lowering, not a ten-minute evaluation ending in
+                # a proposal that can never activate.
+                _log.warning(
+                    "authoring_change_set_record_too_large",
+                    intent_id=intent.intent_id,
+                    authored_members=authored_members,
+                    projected_record_entries=projected_entries,
+                    record_entries=record_entries,
+                    record_entries_measured=True,
+                    max_change_set_members=service.receive_limits.max_change_set_members,
+                    max_change_set_record_bytes=(
+                        service.receive_limits.max_change_set_record_bytes
+                    ),
+                )
+                diagnostics.append(
+                    _record_ceiling_diagnostic(
+                        entries=record_entries,
+                        limits=service.receive_limits,
+                        measured=True,
+                    )
+                )
+                blocked.append(
+                    BlockedCheckV1(
+                        check="proposal_evaluation",
+                        blocked_by=(CHANGE_SET_RECORD_TOO_LARGE,),
+                        reason=(
+                            "A change set the ledger cannot record is not compiled: "
+                            "evaluation runs only for a set that could be settled."
+                        ),
+                    )
+                )
                 resolved_payload = lowered.resolved_authoring
             else:
                 proposed_tree = lowered.proposed_tree
