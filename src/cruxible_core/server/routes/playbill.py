@@ -34,6 +34,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillAuthoringPreflightRequest,
     PlaybillAuthoringRebaseRequest,
     PlaybillAuthoringSubmitRequest,
+    PlaybillBlockDepublishRequest,
     PlaybillClaimExplainRequest,
     PlaybillCurationAcceptFixedRequest,
     PlaybillCurationListRequest,
@@ -919,6 +920,21 @@ async def abandon_authoring_insertion(
         resolve_server_instance_id(instance_id),
         intent_id,
         expectation_id=req.expectation_id,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/blocks/depublish",
+    response_model=contracts.PlaybillBlockDepublishResultV1,
+)
+async def depublish_playbill_block(
+    instance_id: str,
+    req: PlaybillBlockDepublishRequest,
+) -> contracts.PlaybillBlockDepublishResultV1:
+    return playbill_api.playbill_block_depublish(
+        resolve_server_instance_id(instance_id),
+        req.source_id,
+        req.block_id,
     )
 
 

@@ -761,6 +761,40 @@ def attach_workspace(
     click.echo(f"Config: {config_path}")
 
 
+@workspace_group.command("detach")
+@click.option("--instance-id", default=None, help="Existing registered daemon host ID.")
+@json_option
+@handle_errors
+def detach_workspace(instance_id: str | None, output_json: bool) -> None:
+    """Release a daemon host from the Git worktree it is registered against.
+
+    The registry allows one host per worktree, so re-binding a worktree to a
+    second host needs the first one released. Nothing governed changes: the host
+    keeps its ledger and every read it has ever served, and stops being the host
+    of this directory. Attach the worktree to the new host afterwards.
+    """
+
+    selected = instance_id or _require_instance_id()
+    _echo_active_write_target(
+        instance_id=selected,
+        instance_source="explicit" if instance_id is not None else None,
+    )
+    result = _dispatch_cli(
+        lambda client: client.playbill_host_workspace_detach(selected),
+        lambda: None,
+        allow_local=False,
+        command_name="playbill workspace detach",
+    )
+    assert isinstance(result, contracts.PlaybillWorkspaceDetachResultV1)
+    if output_json:
+        _emit_json(_json_receipt(result))
+        return
+    if result.status == "not_registered":
+        click.echo(f"Playbill host {selected} registers no workspace")
+        return
+    click.echo(f"Detached {result.workspace_root} from Playbill host {selected}")
+
+
 def _active_server_transport() -> str:
     obj = _root_ctx_obj()
     if obj.get("server_url"):
@@ -3091,6 +3125,36 @@ def explain_claim(identity: str, evaluation_time: str | None, output_json: bool)
 @playbill_group.group("block")
 def block_group() -> None:
     """Maintain local declarations without rendering or replacing authored prose."""
+
+
+@block_group.command("depublish")
+@click.argument("source_id")
+@click.argument("block_id")
+@json_option
+@handle_errors
+def depublish_projection(source_id: str, block_id: str, output_json: bool) -> None:
+    """Release the publication registration that demands one page block.
+
+    The registration is what `next` reads to decide a removed marker is a
+    blocking row. Releasing it does not edit the page and does not touch the
+    Claim the block was backed by: strip the markers with `block sync --detach`
+    or by hand, retire the Claim through the ordinary retirement road, and use
+    this when the block itself is not coming back.
+    """
+
+    result = _server_call(
+        lambda client, instance_id: client.depublish_playbill_block(
+            instance_id,
+            source_id,
+            block_id,
+        ),
+        command_name="playbill block depublish",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(f"{result.source_id}#{result.block_id}: {result.outcome}")
+    click.echo(f"Backing Claim: {result.claim_identity}")
 
 
 @block_group.command("repin")

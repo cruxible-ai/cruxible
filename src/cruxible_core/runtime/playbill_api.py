@@ -45,7 +45,10 @@ from cruxible_client.contracts.discovery import (
     ExpansionBudgetV1,
 )
 from cruxible_client.contracts.documents import DocumentShell
-from cruxible_client.contracts.errors import PlaybillBootstrapError, PlaybillDeprecatedWriteError
+from cruxible_client.contracts.errors import (
+    PlaybillBootstrapError,
+    PlaybillDeprecatedWriteError,
+)
 from cruxible_client.contracts.predictions import (
     PlaybillPredictRequestV1,
     PlaybillPredictResultV1,
@@ -229,6 +232,7 @@ from cruxible_core.service.playbill_proposals import (
     service_resolve_playbill_proposal_selector,
     service_withdraw_playbill_proposal,
 )
+from cruxible_core.service.playbill_publications import service_depublish_playbill_block
 from cruxible_core.service.playbill_query import service_run_playbill_query
 from cruxible_core.service.playbill_search import service_search_playbill
 from cruxible_core.service.playbill_since import (
@@ -1375,6 +1379,25 @@ def playbill_authoring_abandon_insertion(
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.abandon_insertion(intent_id, actor=actor, expectation_id=expectation_id)
     return contracts.PlaybillInsertionAbandonResult.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_block_depublish(
+    instance_id: str,
+    source_id: str,
+    block_id: str,
+) -> contracts.PlaybillBlockDepublishResultV1:
+    """Release one bound publication registration, addressed as the page names it."""
+
+    check_permission("cruxible_playbill_block_depublish", instance_id=instance_id)
+    instance = get_playbill_manager().get(instance_id)
+    coordinator, actor = _authoring_coordinator(instance_id)
+    return service_depublish_playbill_block(
+        instance,
+        coordinator=coordinator,
+        actor=actor,
+        source_id=source_id,
+        block_id=block_id,
+    )
 
 
 def playbill_list_claims(

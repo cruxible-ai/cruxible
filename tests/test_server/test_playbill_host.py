@@ -1355,3 +1355,88 @@ def test_an_instance_scoped_credential_creating_a_host_is_told_what_to_present(
         "bootstrap secret",
         "daemon-scope token",
     ]
+
+
+def test_a_workspace_moves_between_hosts_through_the_detach_verb(
+    host_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    """Card 86: the registry rollback that does exactly this had no sanctioned door.
+
+    A worktree belongs to one host -- a UNIQUE index on (backend,
+    workspace_root) -- and re-binding it named two repairs: "archive/rebuild
+    that host", which is not a verb, and "choose another Git worktree", which
+    splits a repository in two.
+    """
+
+    del host_client
+    workspace = tmp_path / "moving-workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", "--object-format=sha1", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    host_api.create_playbill_host(
+        instance_id="inst_first_host",
+        workspace_root=str(workspace),
+        workspace_attachment_authorized=True,
+    )
+
+    with pytest.raises(ConfigError, match="workspace detach --instance-id inst_first_host"):
+        host_api.create_playbill_host(
+            instance_id="inst_second_host",
+            workspace_root=str(workspace),
+            workspace_attachment_authorized=True,
+        )
+
+    detached = host_api.playbill_host_workspace_detach(
+        "inst_first_host",
+        workspace_attachment_authorized=True,
+    )
+    assert detached.status == "detached"
+    assert detached.workspace_root == str(workspace.resolve())
+
+    moved = host_api.create_playbill_host(
+        instance_id="inst_second_host",
+        workspace_root=str(workspace),
+        workspace_attachment_authorized=True,
+    )
+    assert moved.status == "created"
+    registry = get_registry()
+    assert registry.get("inst_first_host").workspace_root is None  # type: ignore[union-attr]
+    assert registry.get("inst_second_host").workspace_root == str(  # type: ignore[union-attr]
+        workspace.resolve()
+    )
+
+    # Repeating it is not an error; there is simply nothing left to release.
+    repeated = host_api.playbill_host_workspace_detach(
+        "inst_first_host",
+        workspace_attachment_authorized=True,
+    )
+    assert repeated.status == "not_registered"
+    assert repeated.workspace_root is None
+
+
+def test_detaching_a_workspace_needs_the_local_socket_that_attaching_needs(
+    host_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    """The daemon has to be able to prove the path it is being asked about."""
+
+    del host_client
+    workspace = tmp_path / "socket-guarded-workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", "--object-format=sha1", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    host_api.create_playbill_host(
+        instance_id="inst_socket_guarded",
+        workspace_root=str(workspace),
+        workspace_attachment_authorized=True,
+    )
+
+    with pytest.raises(ConfigError, match="local\n?\\s*Unix socket"):
+        host_api.playbill_host_workspace_detach("inst_socket_guarded")
+
+    assert get_registry().get("inst_socket_guarded").workspace_root is not None  # type: ignore[union-attr]

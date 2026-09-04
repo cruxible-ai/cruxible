@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "host", "create"): "create",
     ("playbill", "workspace", "attach"): "manual",
+    ("playbill", "workspace", "detach"): "manual",
     ("playbill", "init"): "active",
     ("playbill", "instance", "decommission"): "active",
     ("playbill", "body", "store"): "active",
@@ -45,6 +46,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "document", "propose"): "active",
     ("playbill", "claim-type", "propose"): "active",
     ("playbill", "claim-type", "migrate"): "active",
+    ("playbill", "block", "depublish"): "active",
     ("playbill", "claim", "retire"): "active",
     ("playbill", "claim", "attest"): "active",
     ("playbill", "predict"): "active",
@@ -355,7 +357,12 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                         "playbill",
                         "attach_workspace",
                         "Attach this Git worktree to an existing host.",
-                    )
+                    ),
+                    "detach": _command(
+                        "playbill",
+                        "detach_workspace",
+                        "Release a host from the Git worktree it registers.",
+                    ),
                 },
                 module="playbill",
                 attr="workspace_group",
@@ -401,6 +408,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "block": _group(
                 "Maintain client-owned declared projection blocks.",
                 {
+                    "depublish": _command(
+                        "playbill",
+                        "depublish_projection",
+                        "Release the registration that demands one published block.",
+                    ),
                     "repin": _command(
                         "playbill",
                         "repin_projection",

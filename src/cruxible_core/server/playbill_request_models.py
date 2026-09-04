@@ -208,6 +208,13 @@ PlaybillInsertionPrepareRequest = InsertionPrepareRequestV2
 PlaybillInsertionConfirmRequest = InsertionConfirmRequestV2
 
 
+class PlaybillBlockDepublishRequest(_StrictPlaybillRequest):
+    """The page block whose publication registration is being released."""
+
+    source_id: str = Field(min_length=1)
+    block_id: str = Field(min_length=1)
+
+
 class PlaybillProposeQueryDefinitionRequest(_StrictPlaybillRequest):
     query: QueryDefinitionV1
     proposal_name: str

@@ -41,6 +41,25 @@ def create_playbill_host(
     )
 
 
+@router.post(
+    "/{instance_id}/playbill/workspace-detach",
+    response_model=contracts.PlaybillWorkspaceDetachResultV1,
+)
+def playbill_host_workspace_detach(
+    instance_id: str,
+    request: Request,
+) -> contracts.PlaybillWorkspaceDetachResultV1:
+    """Release one host's Git worktree; only local-socket callers may ask."""
+
+    return host_api.playbill_host_workspace_detach(
+        resolve_server_instance_id(instance_id),
+        workspace_attachment_authorized=(
+            request.scope.get("client") is None
+            and resolve_server_settings().server_socket is not None
+        ),
+    )
+
+
 @router.get(
     "/{instance_id}/playbill/workspace-registration",
     response_model=contracts.PlaybillHostWorkspaceRegistrationV1,

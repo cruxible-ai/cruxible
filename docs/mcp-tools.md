@@ -34,6 +34,7 @@ configured filesystem boundary.
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_playbill_host_create` | Allocate an empty daemon-owned host | `ADMIN` |
+| `cruxible_playbill_host_workspace_detach` | Release one host from the Git worktree it registers | `ADMIN` |
 | `cruxible_playbill_init` | Bootstrap a host with public principal records | `ADMIN` |
 | `cruxible_playbill_instance_decommission` | End one instance's governed writes; reads keep serving and nothing is deleted | `ADMIN` |
 
@@ -128,6 +129,7 @@ from accepted law evidence, never carried forward from acceptance.
 | `cruxible_playbill_authoring_prepare_publication` | Commit a deterministic Claim-backed block against fresh source bytes | `GOVERNED_WRITE` |
 | `cruxible_playbill_authoring_confirm_insertion` | Confirm an exact client-applied insertion or stamped publication | `GOVERNED_WRITE` |
 | `cruxible_playbill_authoring_abandon_insertion` | Abandon an unprepared publication expectation | `GOVERNED_WRITE` |
+| `cruxible_playbill_block_depublish` | Release a bound publication registration for one page block | `GOVERNED_WRITE` |
 
 The coordinator mints every identity, digest, base, timestamp, and proposal reference.
 It reports approval conditions but never obtains or impersonates an approval.

@@ -183,8 +183,9 @@ def create_playbill_host(
         if attached is not None and attached.instance_id != selected:
             raise ConfigError(
                 f"Workspace {str(Path(workspace_root).expanduser().resolve())!r} is already "
-                f"attached to Playbill host {attached.instance_id!r}; archive/rebuild that "
-                f"host or choose another Git worktree before creating {selected!r}"
+                f"attached to Playbill host {attached.instance_id!r}; release it with "
+                f"`cruxible playbill workspace detach --instance-id {attached.instance_id}` "
+                f"or choose another Git worktree before creating {selected!r}"
             )
 
     existing = registry.get(selected)
@@ -208,7 +209,8 @@ def create_playbill_host(
     if registered.record.instance_id != selected:
         raise ConfigError(
             f"Workspace {registered.record.workspace_root!r} is already attached to Playbill "
-            f"host {registered.record.instance_id!r}; archive/rebuild that host or choose "
+            f"host {registered.record.instance_id!r}; release it with `cruxible playbill "
+            f"workspace detach --instance-id {registered.record.instance_id}` or choose "
             f"another Git worktree before creating {selected!r}"
         )
     return contracts.PlaybillHostResult(
@@ -239,6 +241,90 @@ def playbill_host_workspace_registration(
             if expose_workspace_path and record.workspace_root is not None
             else None
         ),
+    )
+
+
+def playbill_host_workspace_detach(
+    instance_id: str,
+    *,
+    workspace_attachment_authorized: bool = False,
+) -> contracts.PlaybillWorkspaceDetachResultV1:
+    """Release one governed host from the Git worktree it is attached to.
+
+    The exclusivity is a UNIQUE index on `(backend, workspace_root)` in the
+    daemon registry, so a worktree belongs to exactly one host and re-binding it
+    to a second one refused with two repairs: "archive/rebuild that host", which
+    has no verb, and "choose another Git worktree", which splits a repository in
+    two. The rollback that performs exactly this operation already existed and
+    was reachable only from an initialization failure. This is that rollback,
+    sanctioned.
+
+    It changes no governed state and deletes nothing: the host keeps its whole
+    ledger and every read it ever served, and stops being the host of this
+    directory. Local-socket callers only, for the same reason attaching is: the
+    daemon has to be able to prove the path it is being asked about is one it
+    can see.
+
+    It refuses while the host still has publication registrations naming blocks
+    in that worktree. Those are markers this host published and still expects to
+    find; detaching under them leaves a page carrying markers no host owns,
+    which is the state that has no repair from inside the workspace.
+    """
+
+    require_unscoped_operator("cruxible_playbill_host_workspace_detach")
+    check_permission("cruxible_playbill_host_workspace_detach", instance_id=instance_id)
+    if not workspace_attachment_authorized:
+        raise ConfigError(
+            "Workspace detachment requires a caller connected directly through the local "
+            "Unix socket"
+        )
+    registry = get_registry()
+    record = registry.get(instance_id)
+    if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
+        raise ConfigError(f"Instance '{instance_id}' is not a governed daemon host")
+    if record.workspace_root is None:
+        return contracts.PlaybillWorkspaceDetachResultV1(
+            instance_id=instance_id,
+            status="not_registered",
+        )
+    _refuse_detach_with_registered_blocks(instance_id)
+    detached = registry.detach_governed_workspace(
+        instance_id,
+        expected_workspace_root=record.workspace_root,
+    )
+    assert detached.workspace_root is None
+    return contracts.PlaybillWorkspaceDetachResultV1(
+        instance_id=instance_id,
+        status="detached",
+        workspace_root=record.workspace_root,
+    )
+
+
+def _refuse_detach_with_registered_blocks(instance_id: str) -> None:
+    """Refuse while this host still expects blocks it published to be in the worktree."""
+
+    from cruxible_client.contracts.errors import PlaybillError
+    from cruxible_core.service.playbill_publications import bound_publication_registrations
+
+    try:
+        instance = get_playbill_manager().get(instance_id)
+    except (ConfigError, PlaybillError):
+        # A host with no Playbill state published nothing, so there is nothing
+        # a detachment can strand.
+        return
+    registrations = bound_publication_registrations(instance)
+    if not registrations:
+        return
+    named = ", ".join(
+        sorted(
+            f"{item.preparation.source_id}#{item.preparation.block_id}" for item in registrations
+        )[:5]
+    )
+    raise ConfigError(
+        f"Playbill host {instance_id!r} still registers {len(registrations)} published "
+        f"block(s) in this workspace ({named}); detaching would leave markers no host "
+        "owns. Repair: run `cruxible playbill block depublish <source> <block>` for each, "
+        "or retire their backing Claims, then detach"
     )
 
 
@@ -310,6 +396,7 @@ def server_stop() -> contracts.ServerStopResult:
 
 __all__ = [
     "create_playbill_host",
+    "playbill_host_workspace_detach",
     "playbill_host_workspace_registration",
     "show_playbill_host",
     "server_info",

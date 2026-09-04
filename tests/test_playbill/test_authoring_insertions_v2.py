@@ -41,6 +41,7 @@ from cruxible_client.contracts.declared_blocks import (
     frame_projection_block,
     parse_projection_blocks,
 )
+from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, subject_path
@@ -80,8 +81,10 @@ from cruxible_core.service.playbill_next import (
     PlaybillNextSourceObservationV4,
     PlaybillNextWorkspaceObservationV1,
     _registered_publication_blocks,
+    _registrations_released_by_retirement,
     service_playbill_next,
 )
+from cruxible_core.service.playbill_publications import service_depublish_playbill_block
 from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_authoring_preflight import (
@@ -1703,3 +1706,160 @@ def test_confirmation_rebases_over_a_concurrent_backing_only_successor(tmp_path:
 # Kept here so the frozen test module owns one absolute instant used by the
 # reducer cases added below without allowing wall-clock construction.
 EVALUATION_TIME = datetime(2026, 8, 26, 12, tzinfo=UTC)
+
+
+def test_a_bound_publication_can_be_depublished_and_the_registration_released(
+    tmp_path: Path,
+) -> None:
+    """Card 113: `bound` was terminal, so a published block could never be unpublished.
+
+    The consequence was a lifecycle with no exit: publish once and that page
+    carries that block, with that id, forever. Removing the marker made `next`
+    emit a blocking row whose named repair was to restore the block a later
+    ruling had told the author to delete.
+    """
+
+    instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    assert prepared.preparation is not None
+    preparation = prepared.preparation
+    framed = frame_projection_block(stamp=preparation.stamp, body=b"status: ready\n")
+    offset = preparation.rebased_selector.insertion_offset
+    final = preimage[:offset] + framed + preimage[offset:]
+    exact = publication_confirmation_from_source(
+        intent_id=intent_id,
+        expectation=prepared.expectation,
+        observation=_observation(final),
+    )
+    assert exact is not None
+    bound = coordinator.confirm_insertion(intent_id, actor=actor, observation=exact)
+    assert bound.outcome == "bound"
+    registered = (preparation.source_id, preparation.block_id)
+    assert registered in (_registered_publication_blocks(instance) or frozenset())
+
+    released = service_depublish_playbill_block(
+        instance,
+        coordinator=coordinator,
+        actor=actor,
+        source_id=preparation.source_id,
+        block_id=preparation.block_id,
+    )
+
+    assert released.outcome == "depublished"
+    assert released.intent_id == intent_id
+    assert released.claim_identity == bound.expectation.claim_identity
+    assert registered not in (_registered_publication_blocks(instance) or frozenset())
+
+    # Idempotent, and it recycles no identity: the second call finds the
+    # released expectation and says so rather than minting a new one.
+    repeated = service_depublish_playbill_block(
+        instance,
+        coordinator=coordinator,
+        actor=actor,
+        source_id=preparation.source_id,
+        block_id=preparation.block_id,
+    )
+    assert repeated.outcome == "already_depublished"
+    assert repeated.expectation_id == released.expectation_id
+    assert repeated.intent_id == released.intent_id
+
+
+def test_depublishing_a_block_no_publication_registers_refuses_by_name(
+    tmp_path: Path,
+) -> None:
+    instance, _owner, coordinator, actor, _intent_id, _preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+
+    with pytest.raises(PlaybillFormatError, match="publication_not_registered"):
+        service_depublish_playbill_block(
+            instance,
+            coordinator=coordinator,
+            actor=actor,
+            source_id="repo.work-items",
+            block_id="pub-nothing-registers-this",
+        )
+
+
+def test_a_retired_backing_releases_the_marker_it_backed(tmp_path: Path) -> None:
+    """The registration never read the Claim's lifecycle, so a retirement freed nothing.
+
+    A ruling that retires a block's backing Claim is a ruling that the block
+    goes. `next` went on reporting the removed marker as blocking, with the
+    repair "restore the projection frame then repin" -- put back the block the
+    ruling told you to delete.
+    """
+
+    instance, owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    assert prepared.preparation is not None
+    preparation = prepared.preparation
+    framed = frame_projection_block(stamp=preparation.stamp, body=b"status: ready\n")
+    offset = preparation.rebased_selector.insertion_offset
+    final = preimage[:offset] + framed + preimage[offset:]
+    exact = publication_confirmation_from_source(
+        intent_id=intent_id,
+        expectation=prepared.expectation,
+        observation=_observation(final),
+    )
+    assert exact is not None
+    bound = coordinator.confirm_insertion(intent_id, actor=actor, observation=exact)
+    assert bound.outcome == "bound"
+
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    registered = (preparation.source_id, preparation.block_id)
+    assert registered in (_registered_publication_blocks(instance) or frozenset())
+    assert registered not in _registrations_released_by_retirement(instance, tree=tree)
+
+    from tests.test_playbill.test_reverse_drift_next import _retire
+
+    _retire(instance, owner, bound.expectation.claim_identity)
+
+    after = instance.tree_at(instance.accepted_coordinate().git_oid)
+    assert registered in (_registered_publication_blocks(instance) or frozenset())
+    assert registered in _registrations_released_by_retirement(instance, tree=after)
+
+    # And the block's absence from the page is no longer a blocking row.
+    request = PlaybillNextRequestV1(
+        at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        evaluation_time=datetime(2026, 8, 23, 12, tzinfo=UTC),
+        access_profile=CoverageAccessProfileV1(
+            profile_id="publication-retirement-test",
+            permitted_access_classes=("instance", "public"),
+        ),
+        workspace_observation=PlaybillNextWorkspaceObservationV1(
+            source_observations=(
+                PlaybillNextSourceObservationV3(
+                    tag="playbill-next-source-observation-v3",
+                    source_id=preparation.source_id,
+                    observed_source_digest=_digest(preimage),
+                    byte_length=len(preimage),
+                    marker_summaries=(),
+                    occurrences=(),
+                    scanned_commitment_digests=(),
+                    scan_complete=True,
+                    scan_notes=(),
+                    marker_notes=(),
+                ),
+            )
+        ),
+    )
+    assert coordinate is not None
+    assert not [
+        item
+        for item in service_playbill_next(instance, request=request).items
+        if item.reason == "projection_marker_invalid"
+    ]

@@ -2987,6 +2987,32 @@ def _registered_publication_blocks(
     )
 
 
+def _registrations_released_by_retirement(
+    instance: PlaybillInstance,
+    *,
+    tree: Mapping[str, bytes],
+) -> frozenset[tuple[str, str]]:
+    """The registered blocks whose backing Claim has been retired.
+
+    The fold reads protocol state and never opens the Claim tree, so a ruling
+    that retired a block's backing Claim left its registration standing and
+    `next` went on demanding the frame -- for a block that same ruling had told
+    the author to delete, with the repair "restore it". A registration whose
+    Claim is retired registers nothing: the world has moved past that page.
+    """
+
+    registrations = bound_publication_registrations(instance)
+    if not registrations:
+        return frozenset()
+    released: set[tuple[str, str]] = set()
+    for item in registrations:
+        path = claim_path(item.claim_identity)
+        raw = tree.get(path)
+        if raw is not None and parse_claim(raw, path=path).lifecycle.state == "retired":
+            released.add((item.preparation.source_id, item.preparation.block_id))
+    return frozenset(released)
+
+
 def _projection_marker_invalid_item(
     *,
     source_id: str,
@@ -3049,7 +3075,10 @@ def _projection_items(
     if not observed_sources:
         return ()
 
+    tree = instance.tree_at(coordinate.git_oid)
     registrations = _registered_publication_blocks(instance)
+    if registrations is not None:
+        registrations -= _registrations_released_by_retirement(instance, tree=tree)
     items: list[PlaybillNextItemV1] = []
     for source in observed_sources:
         observed_block_ids = {marker.stamp.block_id for marker in source.marker_summaries}
@@ -3081,7 +3110,6 @@ def _projection_items(
     if not sources:
         return tuple(items)
 
-    tree = instance.tree_at(coordinate.git_oid)
     facts = build_accepted_query_facts(instance, coordinate=coordinate)
     subjects = {subject.path: subject for subject in facts.subjects}
     providers = {provider.identity.qualified: provider for provider in facts.providers}

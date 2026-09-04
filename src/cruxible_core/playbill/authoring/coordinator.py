@@ -1426,7 +1426,10 @@ class AuthoringIntentCoordinator:
         ).tagged
         if expectation.state == "abandoned":
             return InsertionAbandonResultV1(intent=current, expectation=expectation)
-        if expectation.state in {"bound", "expired", "claim_currency_changed"}:
+        # `bound` is deliberately absent: abandoning a bound publication is the
+        # depublication, and the only way out of a lifecycle that otherwise had
+        # no exit. The other three stay terminal.
+        if expectation.state in {"expired", "claim_currency_changed"}:
             raise PublicationTerminalStateRefused(
                 f"{PublicationTerminalStateRefused.code}: publication is already terminal"
             )

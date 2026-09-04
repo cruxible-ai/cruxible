@@ -1221,6 +1221,28 @@ class PlaybillInsertionAbandonResult(BaseModel):
     expectation: dict[str, Any]
 
 
+class PlaybillBlockDepublishResultV1(BaseModel):
+    """One published block released from the registration that demanded it.
+
+    A publication registration was terminal at `bound`: publish once, and that
+    page carried that block, with that id, forever. `next` demanded the frame
+    back for a block a later ruling had deleted, and the repair it named was to
+    restore it. This is the transition out, addressed the way the page names it
+    -- a source and a block -- rather than by the intent id nobody keeps.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-block-depublish-result-v1"] = "playbill-block-depublish-result-v1"
+    source_id: str
+    block_id: str
+    intent_id: str
+    expectation_id: str
+    outcome: Literal["depublished", "already_depublished"]
+    claim_identity: str
+    coordinate: PlaybillAcceptedCoordinate
+
+
 class PlaybillQueryDefinitionView(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -1828,6 +1850,24 @@ class PlaybillWorkspaceAttachResultV1(BaseModel):
     config_path: str
     transport: str
     git_workspace_note: GitWorkspaceNoteV1 | None = None
+
+
+class PlaybillWorkspaceDetachResultV1(BaseModel):
+    """One daemon host released from the Git worktree it was attached to.
+
+    The registry exclusivity is a UNIQUE index on (backend, workspace_root), so
+    a worktree can only ever be one host's. Moving one between hosts had no
+    verb: the refusal named "archive/rebuild that host", which is not a verb
+    either, and the rollback that does exactly this was reachable only from an
+    initialization failure.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-workspace-detach-result-v1"] = "playbill-workspace-detach-result-v1"
+    instance_id: str
+    status: Literal["detached", "not_registered"]
+    workspace_root: str | None = None
 
 
 class PlaybillWorkspaceFloorStatus(BaseModel):

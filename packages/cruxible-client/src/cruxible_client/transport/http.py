@@ -281,6 +281,24 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillHostResult)
 
+    def depublish_playbill_block(
+        self, instance_id: str, source_id: str, block_id: str
+    ) -> contracts.PlaybillBlockDepublishResultV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/blocks/depublish",
+            json={"source_id": source_id, "block_id": block_id},
+        )
+        return self._parse_model(response, contracts.PlaybillBlockDepublishResultV1)
+
+    def playbill_host_workspace_detach(
+        self, instance_id: str
+    ) -> contracts.PlaybillWorkspaceDetachResultV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/workspace-detach",
+            json={},
+        )
+        return self._parse_model(response, contracts.PlaybillWorkspaceDetachResultV1)
+
     def playbill_host_workspace_registration(
         self, instance_id: str
     ) -> contracts.PlaybillHostWorkspaceRegistrationV1:

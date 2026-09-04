@@ -260,6 +260,16 @@ def handle_playbill_host_create(instance_id: str | None) -> contracts.PlaybillHo
     )
 
 
+def handle_playbill_host_workspace_detach(
+    instance_id: str,
+) -> contracts.PlaybillWorkspaceDetachResultV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.playbill_host_workspace_detach(instance_id),
+        lambda: host_api.playbill_host_workspace_detach(instance_id),
+        operation_name="cruxible_playbill_host_workspace_detach",
+    )
+
+
 def handle_playbill_init(
     instance_id: str,
     principals: list[dict[str, Any]],
@@ -1012,6 +1022,18 @@ def handle_playbill_authoring_abandon_insertion(
             expectation_id=expectation_id,
         ),
         operation_name="cruxible_playbill_authoring_abandon_insertion",
+    )
+
+
+def handle_playbill_block_depublish(
+    instance_id: str,
+    source_id: str,
+    block_id: str,
+) -> contracts.PlaybillBlockDepublishResultV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.depublish_playbill_block(instance_id, source_id, block_id),
+        lambda: playbill_api.playbill_block_depublish(instance_id, source_id, block_id),
+        operation_name="cruxible_playbill_block_depublish",
     )
 
 

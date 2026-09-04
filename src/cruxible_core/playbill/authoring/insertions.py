@@ -481,6 +481,11 @@ def _terminal_v2(
     horizon: timedelta = DEFAULT_INSERTION_TOMBSTONE_HORIZON,
 ) -> InsertionExpectationV2:
     finalized = ensure_utc(finalized_at)
+    # The tombstone commits source bytes only for `bound`, because only a bound
+    # publication asserts that the block landed. A depublication does not lose
+    # which block it took down: the expectation keeps its own `preparation`
+    # across the transition, and that is what names the source and the block
+    # afterwards.
     preparation = expectation.preparation if state == "bound" else None
     tombstone = build_insertion_terminal_tombstone_v2(
         result_key=insertion_result_key(
@@ -537,7 +542,18 @@ def mark_publication_terminal(
 ) -> InsertionExpectationV2:
     if expectation.state == state:
         return expectation
-    if expectation.state in {"bound", "expired", "abandoned", "claim_currency_changed"}:
+    # `bound` is terminal for everything except being taken down. It was
+    # terminal for that too, and the consequence was a lifecycle with no exit:
+    # publish once and that page carries that block, with that id, forever. A
+    # governed page could not be re-modelled, a mistaken publication could not
+    # be withdrawn, and a ruling that retired the backing Claim did not release
+    # the marker -- `next` kept demanding a frame whose repair was to restore
+    # the block the ruling had told you to delete. Abandonment is the one
+    # transition out, and it keeps the preparation, so the record still says
+    # which block was published and which was taken down.
+    if expectation.state == "bound" and state != "abandoned":
+        _raise(PublicationTerminalStateRefused, "publication is already terminal")
+    if expectation.state in {"expired", "abandoned", "claim_currency_changed"}:
         _raise(PublicationTerminalStateRefused, "publication is already terminal")
     if state == "expired" and ensure_utc(finalized_at) < expectation.expires_at:
         raise InsertionProtocolError("publication has not reached expires_at")

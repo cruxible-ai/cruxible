@@ -219,6 +219,7 @@ the compile -- when it does not.
 cruxible playbill host create [--instance-id ID] [--workspace DIR] [--replace]
 cruxible playbill host show INSTANCE [--json]
 cruxible playbill workspace attach [--instance-id ID] [--replace]
+cruxible playbill workspace detach [--instance-id ID] [--json]
 ~~~
 
 Allocates an empty daemon-owned host and remembers it. When the selected daemon
@@ -252,6 +253,15 @@ not an instance-scoped credential. `workspace attach` is client-local and requir
 socket: it writes `.playbill/coverage.json` for an existing host only after the
 daemon proves that it registered the exact current Git worktree. A missing or
 different registration is a typed refusal and no config is written.
+
+`workspace detach` releases a host from the worktree it registers. The registry
+holds one host per worktree, so moving a worktree to a second host needs the
+first one released; nothing governed changes, the host keeps its ledger and
+every read it has ever served, and it stops being the host of this directory.
+It requires the same local socket for the same reason attaching does. It refuses
+while the host still registers published blocks in that worktree, because
+detaching under them leaves a page carrying markers no host owns: depublish
+those blocks (`playbill block depublish`) or retire their backing Claims first.
 
 ## playbill init
 
@@ -648,24 +658,51 @@ cruxible playbill block repin SOURCE_ID BLOCK_ID [--claim ID]... [--query ID]...
   [--evaluation-time TS]
 cruxible playbill block sync [PATH]... [--all] [--check]
   [--detach PATH]... [--discard-local PATH]... [--workspace-root DIR]
+cruxible playbill block depublish SOURCE_ID BLOCK_ID [--json]
 ~~~
 
-Refreshes only the opening marker of an agent-authored declared Markdown block.
-An unstamped block requires explicit Claim or QueryDefinition backings; omitting
-them on an already stamped block preserves its existing backing identities and
-resolved query parameters. The client validates accepted state and atomically
-replaces the marker only when the complete local source still matches its
-observed bytes. It never renders prose, edits the body, or mutates governed
-state. Evidence anchors inside declared blocks are refused client-side; an
-explicit copy citation remains available.
+### Declaring a projection block
+
+`block repin --claim ID --claim ID ...` is how a projection block is created.
+Write the marker pair by hand around the prose you want governed, then repin it
+naming every backing: the daemon re-reads and re-proves each Claim at the
+accepted coordinate and stamps the marker. Up to 64 backings fit in one block
+(`MAX_PROJECTION_BACKINGS_PER_BLOCK`), and a block that would need more refuses
+rather than truncating. **`repin` mints no Claim.** It declares that this
+passage reflects Claims that already exist, which is exactly what a projection
+block is.
+
+The first declaration of a block requires explicit `--claim`/`--query` backings.
+Omitting them on an already-stamped block preserves its existing backing
+identities and resolved query parameters. The client validates accepted state
+and atomically replaces the marker only when the complete local source still
+matches its observed bytes. It never renders prose, edits the body, or mutates
+governed state. Evidence anchors inside declared blocks are refused client-side;
+an explicit copy citation remains available.
+
+The SDK's `draft.claim(publish_to=...)` is the OTHER road, and it is not this
+one. It authors a Claim and projects that same Claim as its own text, so it is
+legal only for a `self_source` Claim and mints exactly one backing -- the
+publishing Claim itself. That is a **source block** published as a projection of
+itself. Use it only where a single self-source Claim really is what the passage
+says; for a passage that reflects accepted Claims, declare the block with
+`repin`.
+
+### Converging and detaching
 
 `block sync` converges only publication-origin blocks backed by one live Claim
 whose retained coordinator self-source carries the accepted body. It follows
 accepted Claim successors, updates the marker and body with one whole-file
 compare-and-swap, and proves the bytes outside every marker by digest before and
 after the atomic temp-file rename. `--check` writes nothing and exits nonzero
-when a change is needed. `--detach PATH` strips a retired block's markers while
-preserving its current body.
+when a change is needed.
+
+`--detach PATH` strips markers while preserving the current body. It covers two
+cases: a block whose backing is retired with no live successor, and a block this
+instance does not own -- markers left behind by the host a worktree was
+previously attached to. Detaching a foreign block reads nothing from that host
+and asserts nothing about it; the row names the coordinate the marker was
+published at.
 
 A block body is overwritten only when it still matches the last-synced body
 digest in its stamp. A local edit is preserved and refused as
@@ -674,6 +711,20 @@ discard it with `--discard-local PATH`. Retired backings with no live successor
 refuse until `--detach PATH` is explicit; two live terminal successors refuse
 as ambiguous. The stale-block row from `playbill next` repairs with
 `cruxible playbill block sync`.
+
+### Depublishing
+
+`block depublish SOURCE_ID BLOCK_ID` releases the publication registration that
+demands a block's frame. A publication is registered when its insertion is
+confirmed, and `playbill next` reports a registered block whose marker is no
+longer in the file as blocking -- correctly, until the block is meant to be
+gone. Depublishing is what says so.
+
+It edits no page and retires no Claim. Strip the markers (`block sync --detach`,
+or by hand), retire the backing Claim through the ordinary retirement road if
+the statement is also being withdrawn, and depublish when the block itself is
+not coming back. A registration whose backing Claim is already retired no longer
+demands its frame, so a retirement alone clears the row without this verb.
 
 ## playbill next
 

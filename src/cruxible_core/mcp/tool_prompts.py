@@ -178,6 +178,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when a pending publication copy should be retired while its accepted self-source "
         "Claim remains governed."
     ),
+    "cruxible_playbill_host_workspace_detach": (
+        "Use when a Git worktree is moving from one governed host to another, so the host "
+        "it is registered against releases it first."
+    ),
+    "cruxible_playbill_block_depublish": (
+        "Use when a published page block is being taken down for good, so the registration "
+        "that demands its frame is released instead of asking for the block back."
+    ),
     "cruxible_playbill_list_claims": (
         "Use when you need accepted Claims, optionally narrowed to a Subject or predicate."
     ),

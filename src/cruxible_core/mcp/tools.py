@@ -69,6 +69,13 @@ def register_tools(
         return handlers.handle_playbill_host_create(instance_id)
 
     @_tool
+    def cruxible_playbill_host_workspace_detach(
+        instance_id: str,
+    ) -> contracts.PlaybillWorkspaceDetachResultV1:
+        """Release one daemon host from the Git worktree it registers."""
+        return handlers.handle_playbill_host_workspace_detach(instance_id)
+
+    @_tool
     def cruxible_playbill_init(
         instance_id: str,
         principals: list[dict[str, Any]],
@@ -529,6 +536,15 @@ def register_tools(
             intent_id,
             expectation_id,
         )
+
+    @_tool
+    def cruxible_playbill_block_depublish(
+        instance_id: str,
+        source_id: str,
+        block_id: str,
+    ) -> contracts.PlaybillBlockDepublishResultV1:
+        """Release the publication registration that demands one page block."""
+        return handlers.handle_playbill_block_depublish(instance_id, source_id, block_id)
 
     @_tool
     def cruxible_playbill_list_claims(
