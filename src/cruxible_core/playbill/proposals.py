@@ -285,6 +285,7 @@ from cruxible_core.playbill.exhaust.promotions import (
 )
 from cruxible_core.playbill.principal_lifecycle import evaluate_principal_lifecycle
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.playbill.proposal_message import proposal_commit_message
 from cruxible_core.playbill.provider_classifiers import (
     core_provider_bucket_conformance_fixtures,
 )
@@ -3626,6 +3627,32 @@ class ProposalService:
             limits=self.receive_limits,
             base_tree=base_tree,
         )
+        is_rebase = current.git_oid != request.proposed_base_oid
+        # Evaluation runs BEFORE the ref moves. Two things depend on it: the
+        # commit message is the change set's own member summary, which only the
+        # evaluated candidate knows; and an evaluation that raises now leaves
+        # the actor's ref exactly where it was, instead of advancing it onto a
+        # commit no admission record will ever name.
+        outcome = evaluate_proposal_tree(
+            base_tree=base_tree,
+            current_tree=current_tree,
+            proposed_tree=validated_tree,
+            current=current,
+            bodies=self.bodies,
+            timestamp=timestamp,
+            rebased=is_rebase,
+            actor_id=actor.actor_id,
+            claim_type_expansions=request.claim_type_expansions,
+            promotion_verifier=self.promotion_verifier,
+            producer_receipt_resolver=self.producer_receipt_resolver,
+            query_facts_provider=self.query_facts_provider,
+        )
+        # A refused proposal has no members to summarize, so it keeps the bare
+        # subject the ledger has always written for it.
+        message = proposal_commit_message(
+            outcome.candidate.members if outcome.candidate is not None else ()
+        )
+
         existing = self.transport.read_proposal_ref(request.target_ref)
         commit_oid, tree_oid = self.transport.create_proposal_commit(
             validated_tree,
@@ -3641,21 +3668,7 @@ class ProposalService:
             actor_id=actor.actor_id,
             timestamp=timestamp,
             expected_ref_oid=existing,
-        )
-        is_rebase = current.git_oid != request.proposed_base_oid
-        outcome = evaluate_proposal_tree(
-            base_tree=base_tree,
-            current_tree=current_tree,
-            proposed_tree=validated_tree,
-            current=current,
-            bodies=self.bodies,
-            timestamp=timestamp,
-            rebased=is_rebase,
-            actor_id=actor.actor_id,
-            claim_type_expansions=request.claim_type_expansions,
-            promotion_verifier=self.promotion_verifier,
-            producer_receipt_resolver=self.producer_receipt_resolver,
-            query_facts_provider=self.query_facts_provider,
+            message=message,
         )
 
         evaluated_tree_oid: str | None = tree_oid
@@ -3672,6 +3685,7 @@ class ProposalService:
                 actor_id=actor.actor_id,
                 timestamp=timestamp,
                 expected_ref_oid=commit_oid,
+                message=message,
             )
         # The admission names the commit the proposal ref actually holds. Evaluation
         # re-commits whenever it derives cards or rebases, so the record is written

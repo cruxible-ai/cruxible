@@ -461,6 +461,7 @@ class ProposalTransportProtocol(Protocol):
         actor_id: str,
         timestamp: str,
         expected_ref_oid: str | None,
+        message: str,
     ) -> tuple[str, str]: ...
 
 

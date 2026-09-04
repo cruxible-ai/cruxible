@@ -83,6 +83,7 @@ from cruxible_core.playbill.projection import (
     projection_manifest_name,
 )
 from cruxible_core.playbill.proposal_evidence import ProposalEvidenceStore
+from cruxible_core.playbill.proposal_message import proposal_commit_message
 from cruxible_core.playbill.proposals import (
     ExhaustPromotionVerifierProtocol,
     ProposalReceiveLimits,
@@ -752,6 +753,11 @@ class PlaybillInstance:
                     base_oid=evaluation.evaluated_base_oid,
                     actor_id=admission.actor_id,
                     timestamp=admission.admitted_at,
+                    # The projection is rebuilt from stored evidence, and the
+                    # summary is a pure function of the candidate's members, so
+                    # this branch carries byte-identical prose to the proposal
+                    # commit the submission itself created.
+                    message=proposal_commit_message(candidate.members),
                 )
             )
         self._ledger.replace_proposal_review_refs(refs)
