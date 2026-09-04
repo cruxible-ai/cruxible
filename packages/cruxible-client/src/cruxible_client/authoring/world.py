@@ -503,8 +503,8 @@ class World:
         "_root",
         "_row_cache",
         "_subject_cache",
-        "_view_cache",
         "_subjects_loaded",
+        "_view_cache",
         "unstructured_predicates",
     )
 
