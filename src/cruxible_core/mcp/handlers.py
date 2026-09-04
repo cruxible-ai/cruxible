@@ -250,7 +250,12 @@ def _get_client() -> CruxibleClient | None:
 #: decommission reason passed the MCP door and then raised the raw pydantic
 #: error from inside the write, where it renders as an untyped failure rather
 #: than a refusal the caller can read. One seam, so the local door and the
-#: served door decide with the same model.
+#: served door reach the same DECISION -- the same model, the same validators,
+#: on the same payload. Not the same rendering: over HTTP the route answers 422
+#: with pydantic's structured error body, and in process the local door raises
+#: a typed `DataValidationError` naming the operation. Same verdict, two
+#: shapes, because in process there is no HTTP envelope to put the other one
+#: in.
 #:
 #: `None` is a declaration, not an omission: that route carries no request body,
 #: so there is no second model to agree with. The guardrail in
@@ -298,7 +303,16 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
 
 
 def _validate_local_request(operation_name: str, payload: Mapping[str, Any]) -> None:
-    """Refuse locally exactly what the served route's request model refuses."""
+    """Refuse locally whatever the served route's request model refuses.
+
+    The decision is the served one, byte for byte: the same model object the
+    route binds, so a payload the route rejects is rejected here for the same
+    reason. What differs is the shape it comes back in -- a typed
+    `DataValidationError` naming the operation rather than the route's 422 --
+    because a library caller has no HTTP response to read. It is not the served
+    refusal; it is the served refusal's verdict, rendered for the door it came
+    through.
+    """
 
     model = MCP_LOCAL_REQUEST_MODELS.get(operation_name)
     if model is None:
