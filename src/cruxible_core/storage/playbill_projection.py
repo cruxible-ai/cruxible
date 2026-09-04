@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import stat
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -42,6 +44,69 @@ from cruxible_core.playbill.projection_subjects import (
     SubjectProjectionView,
     subject_projection_view,
 )
+
+# A bound piece is verified whole — a physical SHA-256 over the file, a
+# ``PRAGMA integrity_check`` page scan and a canonical logical re-export — and
+# that cost is paid per bind, not per generation. The identity below names the
+# exact bytes that were verified: same device and inode, same size, same
+# modification and inode-change timestamps, under the same accepted coordinate
+# and the same manifest digests. Any write to the piece moves st_mtime_ns and
+# st_ctime_ns, so a tampered file misses the memo and is verified again.
+_VERIFIED_PIECE_CAPACITY = 8
+_VERIFIED_PIECES: "OrderedDict[tuple[object, ...], None]" = OrderedDict()
+
+
+def _verified_piece_identity(
+    piece_path: Path,
+    metadata: "os.stat_result",
+    *,
+    expected: AcceptedProjectionCoordinate,
+    manifest: ProjectionManifest,
+    physical_digest: str,
+) -> tuple[object, ...]:
+    return (
+        str(piece_path),
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+        expected.instance_id,
+        expected.git_object_format,
+        expected.git_oid,
+        expected.semantic_root,
+        expected.generation_root,
+        expected.compiler.rule_digest,
+        expected.compiler.schema_version,
+        manifest.logical_digest,
+        physical_digest,
+    )
+
+
+def _piece_already_verified(identity: tuple[object, ...]) -> bool:
+    if identity not in _VERIFIED_PIECES:
+        return False
+    _VERIFIED_PIECES.move_to_end(identity)
+    return True
+
+
+def _record_verified_piece(identity: tuple[object, ...]) -> None:
+    _VERIFIED_PIECES[identity] = None
+    _VERIFIED_PIECES.move_to_end(identity)
+    while len(_VERIFIED_PIECES) > _VERIFIED_PIECE_CAPACITY:
+        _VERIFIED_PIECES.popitem(last=False)
+
+
+def reset_projection_verification_memo() -> None:
+    """Forget every in-process piece verification.
+
+    Verification is memoized on file identity, so a test that simulates
+    corruption without writing to the piece (patching a digest function, say)
+    needs an explicit reset to make the next bind pay the full check again.
+    """
+
+    _VERIFIED_PIECES.clear()
+
 
 _PIECE_RE = re.compile(r"^piece-[0-9a-f]{64}-[0-9]{4}\.sqlite$")
 _MANIFEST_RE = re.compile(r"^projection-[0-9a-f]{64}\.json$")
@@ -790,6 +855,8 @@ def bind_projection(
         raise ProjectionIntegrityError("PB-B supports one-piece serving only")
 
     pieces: list[Path] = []
+    identities: list[tuple[object, ...]] = []
+    already_verified = True
     for piece in manifest.pieces:
         path = manifest_path.parent / piece.name
         if path.is_symlink() or not path.is_file():
@@ -800,6 +867,18 @@ def bind_projection(
         metadata = resolved.stat()
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_size != piece.byte_length:
             raise ProjectionIntegrityError(f"projection piece size mismatch: {piece.name}")
+        identity = _verified_piece_identity(
+            resolved,
+            metadata,
+            expected=expected,
+            manifest=manifest,
+            physical_digest=piece.physical_digest,
+        )
+        identities.append(identity)
+        if _piece_already_verified(identity):
+            pieces.append(resolved)
+            continue
+        already_verified = False
         if physical_file_digest(resolved).tagged != piece.physical_digest:
             raise ProjectionIntegrityError(f"projection piece digest mismatch: {piece.name}")
         pieces.append(resolved)
@@ -810,7 +889,10 @@ def bind_projection(
         connection = sqlite3.connect(f"{index_path.as_uri()}?mode=ro&immutable=1", uri=True)
         connection.row_factory = sqlite3.Row
         _verify_projection_schema(connection)
-        integrity = connection.execute("PRAGMA integrity_check").fetchone()
+        integrity_value: tuple[object, ...] | None = ("ok",)
+        if not already_verified:
+            integrity = connection.execute("PRAGMA integrity_check").fetchone()
+            integrity_value = tuple(integrity) if integrity is not None else None
         metadata_row = connection.execute(
             "SELECT instance_id,git_object_format,git_oid,semantic_root,generation_root "
             "FROM generation_metadata WHERE singleton = 1"
@@ -839,7 +921,6 @@ def bind_projection(
             expected.compiler.schema_version,
             expected.compiler.rule_digest,
         )
-        integrity_value = tuple(integrity) if integrity is not None else None
         binding_metadata = tuple(metadata_row) if metadata_row is not None else None
         compiler = tuple(compiler_row) if compiler_row is not None else None
         assembler = tuple(assembler_row) if assembler_row is not None else None
@@ -860,8 +941,13 @@ def bind_projection(
         sorted_counts = dict(sorted(counts.items(), key=lambda item: item[0].encode("utf-8")))
         if sorted_counts != manifest.row_counts:
             raise ProjectionIntegrityError("projection row counts differ from the manifest")
-        if projection_logical_digest(index_path).tagged != manifest.logical_digest:
+        if (
+            not already_verified
+            and projection_logical_digest(index_path).tagged != manifest.logical_digest
+        ):
             raise ProjectionIntegrityError("projection canonical logical digest mismatch")
+        for identity in identities:
+            _record_verified_piece(identity)
         return ProjectionHandle(
             manifest_path=manifest_path.resolve(strict=True),
             manifest=manifest,
@@ -945,4 +1031,5 @@ __all__ = [
     "load_projection_manifest",
     "physical_file_digest",
     "projection_logical_digest",
+    "reset_projection_verification_memo",
 ]
