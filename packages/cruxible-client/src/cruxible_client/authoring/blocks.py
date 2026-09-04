@@ -926,6 +926,10 @@ def sync_projection_blocks(
                     },
                 )
             )
+        # The two writes cannot meet on one file: a `--detach` run never takes
+        # the accept-local branch (it is gated on `not detach`), and detachment
+        # is the only thing that fills `replacements`. So each pass reads the
+        # bytes it parsed, and neither shifts the other's offsets.
         if restamps:
             _apply_projection_restamps(
                 client,
@@ -938,14 +942,6 @@ def sync_projection_blocks(
                 restamps=restamps,
                 check=check,
             )
-            if not check:
-                try:
-                    content = path.read_bytes()
-                    blocks = parse_projection_blocks(
-                        content, source_id=source_id, allow_bootstrap=True
-                    )
-                except (OSError, ProjectionMarkerError):
-                    replacements.clear()
         if not replacements:
             continue
         replacement = content
