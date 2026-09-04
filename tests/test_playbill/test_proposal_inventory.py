@@ -16,14 +16,20 @@ from cruxible_client.contracts.errors import (
     ProposalAdmissionError,
     ProposalNotFoundError,
     ProposalSelectorAmbiguousError,
+    ProposalWithdrawnError,
 )
-from cruxible_core.playbill.service.documents import service_propose_playbill_document
+from cruxible_core.playbill.service.documents import (
+    service_activate_playbill_proposal,
+    service_propose_playbill_document,
+    service_submit_playbill_approval,
+)
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.server.auth import ResolvedAuthContext
 from cruxible_core.service.playbill_proposals import (
     service_list_playbill_proposals,
     service_playbill_whoami,
+    service_readmit_playbill_proposal,
     service_resolve_playbill_proposal_selector,
     service_withdraw_playbill_proposal,
 )
@@ -36,6 +42,8 @@ from tests.test_playbill._knowledge_loop_support import (
     seed_claims,
     work_item_query,
 )
+from tests.test_playbill._support import client_material
+from tests.test_playbill.test_activation import _sign
 
 
 def test_proposal_inventory_reduces_open_accepted_refused_and_stale(tmp_path: Path) -> None:
@@ -418,6 +426,171 @@ def test_a_stale_proposal_may_be_withdrawn_instead_of_readmitted(tmp_path: Path)
         withdrawn_at=WITHDRAWN_AT,
     )
 
+    entry = next(
+        item
+        for item in service_list_playbill_proposals(instance).entries
+        if item.proposal_id == proposal_id
+    )
+    assert entry.terminal_reason == "withdrawn"
+
+
+def test_a_withdrawn_proposal_cannot_be_activated(tmp_path: Path) -> None:
+    """Withdrawal is terminal in fact, not only in the inventory.
+
+    Nothing read the withdrawal store on the way to settlement, so a withdrawn
+    proposal could be approved and activated and would then report `accepted` --
+    the one outcome its own record says will never happen. Every settlement door
+    refuses it now, naming the record: who withdrew it, when, and why.
+    """
+
+    instance, _owner = seed_claims(tmp_path)
+    opened = submit_query_definition_candidate(
+        instance,
+        query=work_item_query("withdrawn-then-activated"),
+        actor_id="owner",
+        proposal_name="withdrawn-then-activated",
+        timestamp=TIMESTAMP,
+    )
+    proposal_id = opened.proposal.admission.proposal_id
+    service_withdraw_playbill_proposal(
+        instance,
+        proposal_id=proposal_id,
+        actor_id="owner",
+        reason="its change-set record exceeds the ledger blob ceiling",
+        withdrawn_at=WITHDRAWN_AT,
+    )
+
+    with pytest.raises(ProposalWithdrawnError) as excinfo:
+        service_activate_playbill_proposal(
+            instance,
+            proposal_id=proposal_id,
+            activated_by="owner",
+        )
+
+    assert excinfo.value.error_code == "playbill.proposal_withdrawn"
+    assert excinfo.value.actor_id == "owner"
+    assert excinfo.value.withdrawn_at == WITHDRAWN_AT
+    assert "its change-set record exceeds the ledger blob ceiling" in str(excinfo.value)
+    entry = next(
+        item
+        for item in service_list_playbill_proposals(instance).entries
+        if item.proposal_id == proposal_id
+    )
+    assert entry.terminal_reason == "withdrawn"
+
+
+def test_a_withdrawn_proposal_cannot_be_approved(tmp_path: Path) -> None:
+    """The approval door reads the same record the activation door does."""
+
+    instance, _owner = seed_claims(tmp_path)
+    opened = submit_query_definition_candidate(
+        instance,
+        query=work_item_query("withdrawn-then-approved"),
+        actor_id="owner",
+        proposal_name="withdrawn-then-approved",
+        timestamp=TIMESTAMP,
+    )
+    proposal_id = opened.proposal.admission.proposal_id
+    candidate = opened.proposal.candidate
+    assert candidate is not None
+    service_withdraw_playbill_proposal(
+        instance,
+        proposal_id=proposal_id,
+        actor_id="owner",
+        reason="superseded",
+        withdrawn_at=WITHDRAWN_AT,
+    )
+
+    with pytest.raises(ProposalWithdrawnError):
+        service_submit_playbill_approval(
+            instance,
+            proposal_id=proposal_id,
+            attestation=_sign(
+                client_material(instance.root.parent, instance),
+                candidate.candidate_digest,
+                instance.accepted_coordinate().semantic_root,
+            ).attestation,
+            authenticated_submitter="owner",
+        )
+
+
+def test_a_withdrawn_stale_proposal_cannot_be_readmitted(tmp_path: Path) -> None:
+    """Readmission settles the withdrawn tree under a new id, so it refuses too."""
+
+    instance, owner = seed_claims(tmp_path)
+    stale = submit_query_definition_candidate(
+        instance,
+        query=work_item_query("stale-then-withdrawn-then-readmitted"),
+        actor_id="owner",
+        proposal_name="stale-then-withdrawn-then-readmitted",
+        timestamp=TIMESTAMP,
+    )
+    accepted = service_propose_playbill_claim(
+        instance,
+        authoring=authoring("wi-44", "ready", with_claim_type=False),
+        actor_id="owner",
+        proposal_name="advance-head",
+        timestamp=TIMESTAMP,
+    )
+    activate(instance, owner, accepted)
+    proposal_id = stale.proposal.admission.proposal_id
+    service_withdraw_playbill_proposal(
+        instance,
+        proposal_id=proposal_id,
+        actor_id="owner",
+        reason="superseded by the split generations",
+        withdrawn_at=WITHDRAWN_AT,
+    )
+
+    with pytest.raises(ProposalWithdrawnError):
+        service_readmit_playbill_proposal(
+            instance,
+            proposal_id=proposal_id,
+            actor_id="owner",
+        )
+
+
+def test_a_daemon_wide_operator_may_withdraw_a_foreign_proposal(tmp_path: Path) -> None:
+    """A proposal whose author's credential label is gone is not withdrawable by nobody.
+
+    The actor check is on the credential LABEL, because that is the only
+    identity a proposal carries. A rotated, revoked or re-minted credential
+    therefore leaves its open proposals with no author who can present that
+    label, and the inventory keeps them forever -- card 110's graveyard, back
+    through the door withdrawal exists to close. The daemon-wide operator, the
+    authority that already allocates and stops hosts, is the way out; an
+    instance-scoped credential of another label is still refused.
+    """
+
+    instance, _owner = seed_claims(tmp_path)
+    opened = submit_query_definition_candidate(
+        instance,
+        query=work_item_query("orphaned-by-rotation"),
+        actor_id="owner",
+        proposal_name="orphaned-by-rotation",
+        timestamp=TIMESTAMP,
+    )
+    proposal_id = opened.proposal.admission.proposal_id
+
+    with pytest.raises(ProposalAdmissionError, match="or a daemon-wide operator"):
+        service_withdraw_playbill_proposal(
+            instance,
+            proposal_id=proposal_id,
+            actor_id="owner-rotated",
+            reason="the author's credential was rotated",
+            withdrawn_at=WITHDRAWN_AT,
+        )
+
+    result = service_withdraw_playbill_proposal(
+        instance,
+        proposal_id=proposal_id,
+        actor_id="owner-rotated",
+        reason="the author's credential was rotated",
+        withdrawn_at=WITHDRAWN_AT,
+        unscoped_operator=True,
+    )
+
+    assert result.actor_id == "owner-rotated"
     entry = next(
         item
         for item in service_list_playbill_proposals(instance).entries

@@ -20,10 +20,14 @@
   --reason TEXT` (served, and `cruxible_playbill_proposal_withdraw` over MCP)
   writes one immutable withdrawal record beside the admission and reports the
   proposal `settled` with terminal reason `withdrawn`. It touches no accepted
-  state and leaves every byte of the candidate readable. Only the submitting
-  actor may withdraw; an open or stale proposal may be withdrawn, a settled one
-  may not, and a second withdrawal repeats the first answer rather than
-  rewriting its reason.
+  state and leaves every byte of the candidate readable, and it is terminal in
+  fact: approval, activation and readmission all refuse a withdrawn proposal
+  with `playbill.proposal_withdrawn`, naming who withdrew it, when, and why.
+  The submitting actor may withdraw, and so may a daemon-wide operator, whose
+  authority already allocates and stops hosts -- otherwise a proposal whose
+  author's credential label was rotated would be withdrawable by nobody. An
+  open or stale proposal may be withdrawn, a settled one may not, and a second
+  withdrawal repeats the first answer rather than rewriting its reason.
 
 - **A workspace-wide block sync no longer refuses on a source that merely
   quotes marker bytes.** `block sync --all` -- and the sync `proposal activate`

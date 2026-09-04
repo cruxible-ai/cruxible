@@ -24,7 +24,7 @@ from cruxible_client.contracts.canonical import (
     canonical_bytes,
     canonical_digest,
 )
-from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.errors import ProposalIntegrityError, ProposalWithdrawnError
 from cruxible_client.contracts.source_catalog import SourceCompilationManifest
 from cruxible_core.playbill.id_prefixes import resolve_id_prefix
 from cruxible_core.playbill.proposals import (
@@ -132,6 +132,25 @@ class ProposalEvidenceStore:
         if record.proposal_id != proposal_id:
             raise ProposalIntegrityError("withdrawal evidence names another proposal")
         return record
+
+    def refuse_withdrawn(self, proposal_id: str) -> None:
+        """Refuse a settlement door asked to settle a withdrawn proposal.
+
+        Every door that would settle a proposal calls this: approval,
+        activation, and readmission. Without it a withdrawal is a note in the
+        inventory rather than a terminal transition -- a withdrawn proposal
+        could be approved and activated, and the list would then report it
+        `accepted`, which is the outcome the record says will never happen.
+        """
+
+        record = self.read_withdrawal(proposal_id)
+        if record is not None:
+            raise ProposalWithdrawnError(
+                record.proposal_id,
+                actor_id=record.actor_id,
+                reason=record.reason,
+                withdrawn_at=record.withdrawn_at,
+            )
 
     def withdrawn_proposal_ids(self) -> frozenset[str]:
         """Return every withdrawn proposal id, read from its own evidence."""

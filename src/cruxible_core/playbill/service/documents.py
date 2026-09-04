@@ -286,6 +286,10 @@ def _candidate_for_proposal(
     proposal_id: str,
 ) -> tuple[ProposalResult, CandidateRecordAnyVersion]:
     inspection = service_inspect_playbill_proposal(instance, proposal_id=proposal_id)
+    # The settlement doors, approval and activation, both resolve their
+    # candidate here, so this is where a withdrawal becomes terminal in fact
+    # rather than a note in the inventory.
+    instance.proposal_evidence().refuse_withdrawn(inspection.proposal.admission.proposal_id)
     candidate = inspection.proposal.candidate
     if candidate is None:
         diagnostics = inspection.proposal.evaluation.diagnostics

@@ -242,6 +242,37 @@ class ProposalAdmissionError(PlaybillError):
     """An unauthenticated, mis-scoped, oversized, or malformed proposal was refused."""
 
 
+class ProposalWithdrawnError(ProposalAdmissionError):
+    """A settlement door was asked to settle a proposal its actor withdrew.
+
+    Withdrawal is a durable statement that an open proposal will never be
+    settled, so every door that would settle one -- approval, activation,
+    readmission -- refuses here rather than leaving the statement advisory. The
+    refusal names the record that makes it, because the only thing to say to an
+    author who meant to activate is who withdrew it, when, and why.
+    """
+
+    error_code = "playbill.proposal_withdrawn"
+
+    def __init__(
+        self,
+        proposal_id: str,
+        *,
+        actor_id: str,
+        reason: str,
+        withdrawn_at: str,
+    ) -> None:
+        self.proposal_id = proposal_id
+        self.actor_id = actor_id
+        self.reason = reason
+        self.withdrawn_at = withdrawn_at
+        super().__init__(
+            f"{self.error_code}: proposal {proposal_id} was withdrawn by {actor_id!r} at "
+            f"{withdrawn_at} ({reason}); a withdrawal is terminal, so author the change "
+            "again as a new proposal."
+        )
+
+
 class ProposalNotFoundError(PlaybillError):
     """A proposal selector did not resolve to immutable admission evidence."""
 
@@ -378,6 +409,7 @@ __all__ = [
     "ProposalReadmitRequiresResubmission",
     "ProposalNotFoundError",
     "ProposalSelectorAmbiguousError",
+    "ProposalWithdrawnError",
     "ProposalIntegrityError",
     "ProjectionCoordinateError",
     "ProjectionError",

@@ -246,6 +246,10 @@ def service_readmit_playbill_proposal(
     source = _proposal_result(instance, proposal_id)
     if source.admission.actor_id != actor_id:
         raise ProposalAdmissionError("only the source proposal actor may readmit it")
+    # A stale proposal may be withdrawn instead of readmitted, and that is the
+    # actor saying this tree will never be settled. Readmitting it would settle
+    # exactly that tree, under a new proposal id, so it refuses here.
+    instance.proposal_evidence().refuse_withdrawn(source.admission.proposal_id)
     source_status = next(
         (
             entry
@@ -316,6 +320,7 @@ def service_withdraw_playbill_proposal(
     actor_id: str,
     reason: str,
     withdrawn_at: str,
+    unscoped_operator: bool = False,
 ) -> PlaybillProposalWithdrawResultV1:
     """Record one actor's terminal statement that a proposal will not be settled.
 
@@ -323,18 +328,37 @@ def service_withdraw_playbill_proposal(
     record ceiling is the case this exists for -- is admitted, evaluated and
     permanently unactivatable, and nothing removed it from the open inventory.
     Withdrawal is the missing terminal transition: it touches no accepted state
-    and leaves every byte of the candidate readable, and it moves the proposal
-    out of `proposal list --status open`, where an actor reads their work.
+    and leaves every byte of the candidate readable, it moves the proposal out
+    of `proposal list --status open` where an actor reads their work, and every
+    settlement door refuses a proposal that carries one.
 
     Only an OPEN proposal is withdrawable. A settled one already has its terminal
     reason -- accepted, refused, or stale -- and overwriting that with a
     statement of intent would lose the outcome; a stale proposal that should not
     be readmitted is the one exception, since staleness is not an ending.
+
+    WHO may withdraw. Ordinarily the proposal's own actor, matched on
+    `admission.actor_id` -- which is the runtime credential's LABEL, because a
+    label is the only identity a proposal carries and the only one a later
+    request can present. That is deliberately not a tier check: an ADMIN of the
+    same instance is still not the author of somebody else's proposal, and
+    withdrawal is a statement of intent, which only its author has.
+
+    A label is not durable, though. Rotating, revoking or re-minting a
+    credential under a different label would leave that actor's open proposals
+    withdrawable by nobody and permanently in the inventory -- card 110's
+    graveyard, back through the door this verb exists to close. So an UNSCOPED
+    operator, holding a daemon-wide credential rather than an instance-bound
+    one, may withdraw any withdrawable proposal. It is the authority that
+    already allocates and stops hosts, and withdrawal touches no accepted state,
+    so it is a strictly smaller lever than the ones it holds.
     """
 
     admission = instance.proposal_evidence().read_admission(proposal_id)
-    if admission.actor_id != actor_id:
-        raise ProposalAdmissionError("only the source proposal actor may withdraw it")
+    if admission.actor_id != actor_id and not unscoped_operator:
+        raise ProposalAdmissionError(
+            "only the source proposal actor, or a daemon-wide operator, may withdraw it"
+        )
     existing = instance.proposal_evidence().read_withdrawal(admission.proposal_id)
     if existing is not None:
         return PlaybillProposalWithdrawResultV1(

@@ -150,7 +150,11 @@ from cruxible_core.playbill.workspace_file import WorkspaceFileReadRefused
 from cruxible_core.runtime.execution_policy import (
     enforce_customer_code_execution_supported,
 )
-from cruxible_core.runtime.permissions import check_permission, get_current_mode
+from cruxible_core.runtime.permissions import (
+    check_permission,
+    current_request_instance_scope,
+    get_current_mode,
+)
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.actor_identity import local_operator_actor_context
 from cruxible_core.server.auth import (
@@ -647,6 +651,10 @@ def playbill_withdraw_proposal(
         actor_id=_actor_id(),
         reason=reason,
         withdrawn_at=canonical_candidate_timestamp(utc_now()),
+        # No bound instance scope IS the daemon-wide operator credential (or an
+        # auth-off local daemon, which has one operator): the same reading
+        # `require_unscoped_operator` makes for every other daemon-wide lever.
+        unscoped_operator=current_request_instance_scope() is None,
     )
     return contracts.PlaybillProposalWithdrawResult.model_validate(result.model_dump(mode="json"))
 
