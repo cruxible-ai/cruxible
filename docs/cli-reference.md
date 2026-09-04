@@ -34,7 +34,8 @@ runs when it opens a session: orientation folds the whole accepted world, so its
 cost tracks the size of the instance rather than the size of the call, and a
 large healthy instance must not read as an unreachable server. Raising
 `CRUXIBLE_CLIENT_TIMEOUT_S` above the connect budget raises the connect budget
-with it. A timeout never means the request failed: the daemon may still be
+with it. Either variable is refused, typed, unless it names a positive number of
+seconds. A timeout never means the request failed: the daemon may still be
 running it, so verify state before retrying.
 
 ## context
