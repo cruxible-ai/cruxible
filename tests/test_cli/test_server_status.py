@@ -197,6 +197,9 @@ def test_status_json_includes_transport(monkeypatch, runner: CliRunner) -> None:
         "state": "available",
         "code": None,
         "detail": None,
+        # Core registers no isolated executor, so an operator reading this lane
+        # can see that a hosted profile naming a backend is naming nothing.
+        "isolated_executors": [],
     }
 
 
