@@ -31,16 +31,30 @@ def test_mcp_instructions_publish_the_same_transport_semantic_boundary() -> None
     assert "an approval is not activation" in instructions
 
 
-def test_runtime_bootstrap_secret_is_single_use_for_host_create_only() -> None:
-    """Claiming bootstrap closes host allocation without bricking server operations."""
+def test_runtime_bootstrap_secret_repeatably_authorizes_every_daemon_wide_action() -> None:
+    """Host creation is a repeatable operator action, not a one-shot.
+
+    Succeeds `test_runtime_bootstrap_secret_is_single_use_for_host_create_only`,
+    which pinned the opposite law: host creation was authorized only while the
+    bootstrap secret was UNCLAIMED. Card 98 showed what that cost. Every other
+    credential a daemon holds is instance-scoped and is rejected by
+    `require_unscoped_operator`, so after the first `credential
+    claim-bootstrap` NO credential could allocate a second host, and the only
+    repair was restarting the daemon -- which mints a fresh secret at the same
+    path, invalidating the operator's saved copy and taking every hosted
+    instance offline. A multi-tenant control plane cannot restart the daemon to
+    add a tenant.
+
+    The claim itself is still single use; that property lives in the
+    `runtime_bootstrap_claims` table, not here.
+    """
+
     source = inspect.getsource(auth_module.token_auth_middleware)
 
-    host_branch, server_branch = source.split("elif (", maxsplit=1)
-    assert "_is_playbill_host_create_request" in host_branch
-    assert "bootstrap_secret_claimed" in host_branch
-    assert "_is_server_operation_request" in server_branch
-    server_operation_branch = server_branch.split("elif auth_enabled:", maxsplit=1)[0]
-    assert "bootstrap_secret_claimed" not in server_operation_branch
+    operator_branch = source.split("elif auth_enabled:", maxsplit=1)[0]
+    assert "_is_playbill_host_create_request" in operator_branch
+    assert "_is_server_operation_request" in operator_branch
+    assert "bootstrap_secret_claimed" not in operator_branch
 
 
 def test_repeatable_bootstrap_server_operations_are_info_host_show_restart_and_stop() -> None:
@@ -48,7 +62,10 @@ def test_repeatable_bootstrap_server_operations_are_info_host_show_restart_and_s
 
     PC-DF4 added the pre-init host-show route to the set without moving the
     name, leaving a guardrail whose name asserted a narrower set than its body;
-    ops hotfix 1 added the stop route and moved the name with it.
+    ops hotfix 1 added the stop route and moved the name with it. Host creation
+    is authorized alongside this set through its own route predicate rather than
+    by joining it, because it is the one daemon-wide action that carries a body
+    and a route of its own shape.
     """
 
     assert set(auth_module._SERVER_OPERATION_ROUTES) == {
