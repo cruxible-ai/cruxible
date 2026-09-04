@@ -11,7 +11,7 @@ env:
   # (WORKSPACE_FILE_SEED_MANIFEST.provider_commit). The adapter checkout must be
   # at exactly this commit and clean, or the seeding tests skip instead of
   # reproducing the real local materialization.
-  CRUXIBLE_PROVIDERS_COMMIT: aed9c1735e915adfeaa0d3d201942609bb7a8eae
+  CRUXIBLE_PROVIDERS_COMMIT: 8e7436f359dd28c2afdc4b9941fd09e33fa0e470
 
 jobs:
   test:
