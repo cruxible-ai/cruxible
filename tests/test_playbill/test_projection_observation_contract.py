@@ -115,6 +115,10 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "unregistered_projection_block",
         "provider_lane_unavailable",
         "procedure_projection_missing",
+        # Ops hotfix 1 (card 71) ratified the terminal decommission row: a
+        # decommissioned instance answers reads and refuses every write, and
+        # this reason is how the queue says so.
+        "instance_decommissioned",
     }
     assert set(get_args(NextRepairOperation)) == {
         "playbill.authoring.create",
