@@ -14,7 +14,6 @@ import base64
 import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -41,8 +40,11 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate as ClientCoordinate
 from cruxible_client.contracts.semantic import ContentSpan
-from cruxible_core.playbill.authoring import lowering
+from cruxible_core.playbill.authoring import registrations
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.playbill.authoring.registrations import (
+    write_projection_block_declaration,
+)
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from tests.test_playbill._support import initialize_local
@@ -230,6 +232,21 @@ def test_a_self_source_body_that_carries_a_stamped_block_is_its_own_projection(
     assert EVIDENCE_CODE in codes
 
 
+def _declare_block(instance: Any, *, block_id: str = "status") -> None:
+    """Register one declaration-road block: an author-chosen id, no `pub-` prefix."""
+
+    write_projection_block_declaration(
+        instance,
+        source_id=SOURCE_ID,
+        block_id=block_id,
+        declared_generation=1,
+        declared_coordinate=ClientCoordinate.from_internal(instance.accepted_coordinate()),
+        declared_by="owner",
+        declared_at=TIMESTAMP,
+        stamp_digest=_digest(BLOCK_BODY),
+    )
+
+
 def test_an_unprovable_span_into_a_source_that_registers_blocks_refuses(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -238,14 +255,14 @@ def test_an_unprovable_span_into_a_source_that_registers_blocks_refuses(
 
     A raw wire caller that omits the page does not get the benefit of the
     doubt on a page the instance knows carries projection blocks; an unknown
-    page still passes, because nothing registers a block in it.
+    page still passes, because nothing registers a block in it. The fold is
+    the real one, over a real declaration-road registration.
     """
 
     instance, _coordinator_, actor = _world(tmp_path)
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     page = _page()
-    registered = (SimpleNamespace(preparation=SimpleNamespace(source_id=SOURCE_ID)),)
-    monkeypatch.setattr(lowering, "bound_publication_registrations", lambda _instance: registered)
+    _declare_block(instance)
 
     verdict, codes = _preflight_codes(
         coordinator,
@@ -257,7 +274,8 @@ def test_an_unprovable_span_into_a_source_that_registers_blocks_refuses(
     assert verdict == "refused"
     assert UNVERIFIABLE_CODE in codes
 
-    monkeypatch.setattr(lowering, "bound_publication_registrations", lambda _instance: None)
+    # An unreadable fold is not an empty one.
+    monkeypatch.setattr(registrations, "projection_block_declarations", lambda _instance: None)
     verdict, codes = _preflight_codes(
         coordinator,
         actor,
@@ -267,16 +285,82 @@ def test_an_unprovable_span_into_a_source_that_registers_blocks_refuses(
     )
     assert verdict == "refused"
     assert UNVERIFIABLE_CODE in codes
+    monkeypatch.undo()
 
-    monkeypatch.setattr(lowering, "bound_publication_registrations", lambda _instance: ())
+    # A source nothing registers a block in still passes without the page.
+    second = tmp_path / "two"
+    second.mkdir()
+    instance_two, coordinator_two, actor_two = _world(second)
+    del instance_two
     verdict, codes = _preflight_codes(
-        coordinator,
-        actor,
+        coordinator_two,
+        actor_two,
         _selection_payload(
             page, anchor=b"the author also", citation_role="evidence", present_page=False
         ),
     )
     assert verdict == "passed", codes
+
+
+def test_a_marker_stripped_copy_of_a_registered_page_cannot_stand_in_for_it(
+    tmp_path: Path,
+) -> None:
+    """The presented bytes are the caller's; the registration list is not.
+
+    Stripping the markers out of a governed page leaves the block's prose
+    citable and the windows invisible -- the caller's own bytes measured
+    against the caller's own coordinate. The instance says which blocks that
+    source carries, and bytes that carry none of them are not that page.
+    """
+
+    instance, coordinator, actor = _world(tmp_path)
+    _declare_block(instance)
+    stripped = PROSE + BLOCK_BODY + b"trailing prose the author also wrote\n"
+
+    verdict, codes = _preflight_codes(
+        coordinator,
+        actor,
+        _selection_payload(stripped, anchor=b"the block says", citation_role="copy"),
+    )
+
+    assert verdict == "refused"
+    assert UNVERIFIABLE_CODE in codes
+
+
+@pytest.mark.parametrize("citation_role", ["evidence", "copy"])
+def test_the_real_page_admits_prose_outside_every_registered_window(
+    tmp_path: Path,
+    citation_role: str,
+) -> None:
+    """Carrying every registered window is what makes the page provable."""
+
+    instance, coordinator, actor = _world(tmp_path)
+    _declare_block(instance)
+
+    verdict, codes = _preflight_codes(
+        coordinator,
+        actor,
+        _selection_payload(_page(), anchor=b"status: ready", citation_role=citation_role),
+    )
+
+    assert verdict == "passed", codes
+
+
+def test_a_page_missing_one_of_two_registered_windows_refuses(tmp_path: Path) -> None:
+    """Every registered block has to be there, not just the one being cited around."""
+
+    instance, coordinator, actor = _world(tmp_path)
+    _declare_block(instance)
+    _declare_block(instance, block_id="summary")
+
+    verdict, codes = _preflight_codes(
+        coordinator,
+        actor,
+        _selection_payload(_page(), anchor=b"status: ready", citation_role="evidence"),
+    )
+
+    assert verdict == "refused"
+    assert UNVERIFIABLE_CODE in codes
 
 
 def _page_span_capture(instance: Any, base: Any, page: bytes, *, anchor: bytes) -> Any:

@@ -94,7 +94,10 @@ from cruxible_client.contracts.claims import (
     render_claim,
     resolve_cited_source_window,
 )
-from cruxible_client.contracts.declared_blocks import projection_window_intersecting
+from cruxible_client.contracts.declared_blocks import (
+    projection_window_intersecting,
+    stamped_projection_windows,
+)
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandateV1,
@@ -141,7 +144,7 @@ from cruxible_client.contracts.subjects import (
     subject_digest,
     subject_path,
 )
-from cruxible_core.playbill.authoring.registrations import bound_publication_registrations
+from cruxible_core.playbill.authoring.registrations import registered_projection_blocks
 from cruxible_core.playbill.citation_relations import (
     RELATION_CONTRACT_SCHEMA,
     capture_contract_relation_subject,
@@ -553,13 +556,20 @@ def _refuse_citation_into_projection_window(
     block is handed over with the observation and kept in the store, where the
     citation gate reads it back at every later evaluation.
 
-    When the bytes cannot be resolved and the instance registers projection
-    blocks in that source, the span cannot be proved outside them, and an
-    unprovable citation into a governed page refuses rather than passes.
+    The bytes are the caller's, so the caller does not get the last word on
+    them. Whatever page the span was measured against -- presented with the
+    observation or read back from the store -- has to carry every block the
+    INSTANCE registers in that source, or it is not that source's page: a
+    marker-stripped copy carrying the same block prose says nothing about
+    where the windows are. When the page cannot be obtained at all, or is
+    missing a registered window, or the registration fold cannot be read, the
+    span cannot be proved outside the windows, and an unprovable citation into
+    a governed page refuses rather than passes.
     """
 
     store = instance.body_store()
     source_id: str | None = None
+    page: bytes | None = None
     if isinstance(payload.source, WorkingSelectionObservationV1):
         source_id = payload.source.source_id
         page = payload.source.source_content
@@ -577,47 +587,71 @@ def _refuse_citation_into_projection_window(
                     start_byte=payload.source.selector.start_byte,
                     end_byte=payload.source.selector.end_byte,
                 )
-            return
-    cited = projection_window_cited(envelope, store=store)
-    if cited is not None:
-        resolved, window = cited
-        _refuse_evidence_from_projection(
-            source_id=resolved.source_id or source_id,
-            block_id=window.block_id,
-            start_byte=resolved.start_byte,
-            end_byte=resolved.end_byte,
-        )
-    resolved_source = resolve_cited_source_window(envelope, store=store)
-    if resolved_source is None or not resolved_source.whole_source:
-        registered = bound_publication_registrations(instance)
-        cited_source = (
-            envelope.source.source_identity
-            if isinstance(envelope.source, ExternalSourceReferenceV1)
-            else source_id
-        )
-        if cited_source is None:
-            return
-        if registered is None:
-            _refuse(
-                "playbill.projection.window_unverifiable",
-                "source",
-                f"Source {cited_source!r} may carry projection blocks and the registration "
-                "fold cannot be read, so this span cannot be proved outside them.",
-                repair_kind="restore_registry",
-                repair_description="Restore the instance exhaust so registrations can be read.",
+    if page is None:
+        cited = projection_window_cited(envelope, store=store)
+        if cited is not None:
+            resolved, window = cited
+            _refuse_evidence_from_projection(
+                source_id=resolved.source_id or source_id,
+                block_id=window.block_id,
+                start_byte=resolved.start_byte,
+                end_byte=resolved.end_byte,
             )
-        if any(item.preparation.source_id == cited_source for item in registered):
-            _refuse(
-                "playbill.projection.window_unverifiable",
-                "source",
-                f"Source {cited_source!r} registers projection blocks and its whole bytes "
-                "were not presented, so this span cannot be proved outside them.",
-                repair_kind="present_source_content",
-                repair_description=(
-                    "Cite through the SDK or `authoring bind`, which hand over the page "
-                    "(`source_content_base64`) when it declares a block."
-                ),
-            )
+        resolved_source = resolve_cited_source_window(envelope, store=store)
+        if resolved_source is not None and resolved_source.whole_source:
+            page = resolved_source.content
+    cited_source = (
+        envelope.source.source_identity
+        if isinstance(envelope.source, ExternalSourceReferenceV1)
+        else source_id
+    )
+    if cited_source is None:
+        return
+    # The one fold every other consumer reads -- `next`, coverage and the
+    # detach refusal -- and not the publication road alone: since `publish_to`
+    # is gone, every new block is declaration-road, and reading only the
+    # publication registrations would leave this gate blind to exactly the
+    # blocks the instance now mints.
+    registered = registered_projection_blocks(instance)
+    if registered is None:
+        _refuse(
+            "playbill.projection.window_unverifiable",
+            "source",
+            f"Source {cited_source!r} may carry projection blocks and the registration "
+            "fold cannot be read, so this span cannot be proved outside them.",
+            repair_kind="restore_registry",
+            repair_description="Restore the instance exhaust so registrations can be read.",
+        )
+    expected = sorted(block_id for source, block_id in registered if source == cited_source)
+    if not expected:
+        return
+    if page is None:
+        _refuse(
+            "playbill.projection.window_unverifiable",
+            "source",
+            f"Source {cited_source!r} registers projection blocks and its whole bytes "
+            "were not presented, so this span cannot be proved outside them.",
+            repair_kind="present_source_content",
+            repair_description=(
+                "Cite through the SDK or `authoring bind`, which hand over the page "
+                "(`source_content_base64`) when it declares a block."
+            ),
+        )
+    stamped = {window.block_id for window in stamped_projection_windows(page)}
+    missing = [block_id for block_id in expected if block_id not in stamped]
+    if missing:
+        _refuse(
+            "playbill.projection.window_unverifiable",
+            "source",
+            f"The bytes presented for source {cited_source!r} carry no stamped window for "
+            f"registered block {missing[0]!r}, so they are not the page this instance "
+            "governs and this span cannot be proved outside its projection blocks.",
+            repair_kind="present_source_content",
+            repair_description=(
+                "Present the governed page itself, markers included, or repin the block "
+                "the page no longer carries."
+            ),
+        )
 
 
 def _refuse_evidence_from_projection(
