@@ -722,7 +722,21 @@ def sync_projection_blocks(
                 request=PlaybillBlockSyncReadRequestV1(stamp=stamp),
             )
             if read.status not in {"current", "successor"}:
-                if detach and read.reason == "block_backing_retired":
+                # A foreign block is the case --detach exists for. Stripping a
+                # marker pair and keeping the body between them is a purely
+                # local text edit: it claims no authority over the block, reads
+                # nothing from the instance that published it, and asserts
+                # nothing about it afterwards. Gating it behind the same
+                # instance check as a sync left an operator moving a worktree
+                # between hosts with one named repair -- re-attach this worktree
+                # to the host that published the markers -- which is the exact
+                # opposite of what they were doing, and one hand-written
+                # stripper as the only way through.
+                detachable = detach and read.reason in {
+                    "block_backing_retired",
+                    "block_workspace_instance_mismatch",
+                }
+                if detachable:
                     replacement = content[block.body_start : block.body_end]
                     replacements[block.block_id] = replacement
                     original_spans.append((block.opening_start, block.closing_end))
@@ -733,7 +747,18 @@ def sync_projection_blocks(
                             source_id=source_id,
                             block_id=block.block_id,
                             outcome="would_detach" if check else "detached",
-                            detail={"body_digest": block.body_digest},
+                            detail={
+                                "body_digest": block.body_digest,
+                                # The stamp records the coordinate it was
+                                # published at and no instance id, so the
+                                # foreign host is named the only way the file
+                                # can name it.
+                                **(
+                                    {"foreign_declared_git_oid": stamp.declared_coordinate.git_oid}
+                                    if read.reason == "block_workspace_instance_mismatch"
+                                    else {}
+                                ),
+                            },
                         )
                     )
                 else:

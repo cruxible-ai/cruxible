@@ -358,6 +358,53 @@ def test_retired_block_refuses_then_detaches_markers_without_changing_body(tmp_p
     assert source.read_bytes() == b"PREFIX\n" + body + b"SUFFIX\n"
 
 
+def test_a_foreign_instances_block_detaches_instead_of_naming_a_re_attach(
+    tmp_path: Path,
+) -> None:
+    """Card 88: --detach is the case a foreign block IS, and it was gated shut.
+
+    Moving a worktree from one governed host to another leaves the markers the
+    old host published. Both the read and the escape hatch answered
+    workspace_instance_mismatch, whose named repair re-attaches this worktree to
+    the host that published them -- undoing the rebind the operator is doing.
+    Stripping a marker pair and keeping the body is a local text edit that
+    claims no authority over the foreign block at all.
+    """
+
+    source = _workspace(tmp_path)
+    before = source.read_bytes()
+    (block,) = parse_projection_blocks(before, source_id="corpus.runbook")
+    body = before[block.body_start : block.body_end]
+    client = _SyncClient(refusal="block_workspace_instance_mismatch")
+
+    refused = sync_projection_blocks(
+        client,  # type: ignore[arg-type]
+        INSTANCE_ID,
+        workspace=tmp_path,
+        paths=(source,),
+    )
+    assert refused.items[0].reason == "workspace_instance_mismatch"
+    assert source.read_bytes() == before
+
+    detached = sync_projection_blocks(
+        client,  # type: ignore[arg-type]
+        INSTANCE_ID,
+        workspace=tmp_path,
+        detach_paths=(source,),
+    )
+
+    assert detached.items[0].outcome == "detached"
+    assert (
+        detached.items[0].detail["foreign_declared_git_oid"]
+        == block.stamp.declared_coordinate.git_oid
+    )
+    assert (
+        detached.items[0].detail["outside_digest_before"]
+        == detached.items[0].detail["outside_digest_after"]
+    )
+    assert source.read_bytes() == b"PREFIX\n" + body + b"SUFFIX\n"
+
+
 def test_ambiguous_live_successors_emit_exact_repin_selections(tmp_path: Path) -> None:
     source = _workspace(tmp_path)
 
