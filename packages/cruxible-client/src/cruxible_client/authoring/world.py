@@ -80,6 +80,45 @@ def _is_identifier(value: str) -> bool:
     return value.isidentifier() and not keyword.iskeyword(value)
 
 
+# One law for every collision in this module: the fixed surface wins on
+# attribute access, and index access reaches the discovered name. `w.sec.package`
+# is the accepted structure even when a Subject is called `package`;
+# `subject.claims` is every Claim even when a predicate leaf is called `claims`;
+# `severity.cardinality` is the ClaimType's structure even when an enum member
+# is called `cardinality`. Each of those names stays reachable -- by index, or
+# by the ClaimType's call form -- and `__dir__` and the generated stub advertise
+# only what attribute access really answers.
+CLAIM_TYPE_MEMBERS = frozenset(
+    {
+        "address",
+        "allowed_object_subject_kinds",
+        "allowed_subject_kinds",
+        "as_kind",
+        "cardinality",
+        "coordinate",
+        "kind",
+        "literal_schema",
+        "members",
+        "object_kind",
+        "permitted_roles",
+        "predicate",
+        "referent_sensitivity",
+    }
+)
+
+SUBJECT_MEMBERS = frozenset(
+    {
+        "address",
+        "claims",
+        "coordinate",
+        "explain",
+        "kind",
+        "subject_id",
+        "subject_kind",
+    }
+)
+
+
 # ---------------------------------------------------------------------------
 # Literal schema admission
 # ---------------------------------------------------------------------------
@@ -216,6 +255,23 @@ class WorldClaimType(ClaimTypeRef):
 
         return literal_schema_members(self.literal_schema)
 
+    @property
+    def as_kind(self) -> KindNamespace:
+        """Reach the Subject kind this dotted name also names.
+
+        A ClaimType wins attribute access over a Subject kind of the same dotted
+        name, which would otherwise leave `define()` and `subject_ids`
+        unreachable. This is that escape.
+        """
+
+        self._world._assert_current()
+        if not self._node.subject_kind:
+            raise WorldStructureError(
+                f"{self.address!r} is an accepted predicate but not an accepted "
+                "Subject kind, so it names no Subjects"
+            )
+        return KindNamespace(self._world, self._node)
+
     def __call__(self, value: object) -> LiteralValue:
         """Mint one literal object for this predicate, admitted before the wire."""
 
@@ -245,6 +301,13 @@ class WorldClaimType(ClaimTypeRef):
         members = self.members
         if name in members:
             return self(name)
+        if self._node.subject_kind:
+            raise AttributeError(
+                f"{self.address!r} is an accepted predicate and an accepted Subject "
+                f"kind, and the predicate wins attribute access, so it has no {name!r}; "
+                f"reach the kind with {self.address.rsplit('.', 1)[-1]}.as_kind and a "
+                f"Subject with {self.address.rsplit('.', 1)[-1]}[{name!r}]"
+            )
         if members:
             spelled = ", ".join(sorted(members))
             raise AttributeError(
@@ -257,12 +320,25 @@ class WorldClaimType(ClaimTypeRef):
         )
 
     def __dir__(self) -> list[str]:
-        return sorted({*super().__dir__(), *self._node.children, *self.members})
+        # A member named like one of this class's own fields is shadowed by the
+        # field. Advertising it would promise an attribute read that answers the
+        # structure instead; the call form `severity('cardinality')` mints it.
+        reachable = (member for member in self.members if member not in CLAIM_TYPE_MEMBERS)
+        return sorted({*super().__dir__(), *self._node.children, *reachable})
 
 
 @dataclass(frozen=True)
 class WorldSubject(SubjectRef):
-    """One accepted Subject, readable through the verbs that already serve it."""
+    """One accepted Subject, readable through the verbs that already serve it.
+
+    A predicate's last segment answers as an attribute -- `vulnerability.severity`
+    is the live Claims under `sec.vuln.severity`. A leaf that collides with one
+    of this class's own names (`claims`, `explain`, `address`, `coordinate`,
+    `kind`, `subject_kind`, `subject_id`) is shadowed by the member, so it is
+    reachable only by index: `vulnerability["sec.vuln.claims"]`, which also takes
+    a bare leaf and a `ClaimTypeRef`. `__dir__` advertises only the leaves
+    attribute access really answers.
+    """
 
     _world: World = field(repr=False, compare=False)
 
@@ -286,14 +362,27 @@ class WorldSubject(SubjectRef):
         self._world._assert_current()
         return self._world._playbill.explain(self)
 
+    def __getitem__(self, predicate: str | ClaimTypeRef) -> tuple[ClaimView, ...]:
+        """Read the live Claims under one predicate, named in full or by leaf."""
+
+        name = predicate.address if isinstance(predicate, ClaimTypeRef) else predicate
+        kind = self.address.split("/", 1)[0]
+        resolved = (
+            self._world.claim_type(name)
+            if "." in name and self._world._node_at(name) is not None
+            else self._world._predicate_for(kind, name)
+        )
+        return self._world._claims_about(self.address, predicate=resolved.address)
+
     def __getattr__(self, name: str) -> Any:
         if name.startswith("_"):
             raise AttributeError(name)
-        predicate = self._world._predicate_for(self.subject_kind, name)
-        return tuple(claim for claim in self.claims if claim.predicate == predicate.address)
+        predicate = self._world._predicate_for(self.address.split("/", 1)[0], name)
+        return self._world._claims_about(self.address, predicate=predicate.address)
 
     def __dir__(self) -> list[str]:
-        return sorted({*super().__dir__(), *self._world._predicate_leaves(self.subject_kind)})
+        leaves = self._world._predicate_leaves(self.address.split("/", 1)[0])
+        return sorted({*super().__dir__(), *leaves})
 
 
 class KindNamespace:
@@ -394,14 +483,27 @@ class KindNamespace:
 
 
 class World:
-    """The accepted ontology of one instance, as objects rather than strings."""
+    """The accepted ontology of one instance, as objects rather than strings.
+
+    Every name here answers at exactly one coordinate and refuses once the
+    connection's orientation moves -- `kinds`, `predicates`, attribute access,
+    `kind()`, `claim_type()`, `stub()` and every read a ref reaches. Only
+    `repr()` and the immutable fields of a ref already held answer stale, so a
+    debugger can still see what a stale world was.
+
+    `kind()` and `claim_type()` are the escapes for a dotted name attribute
+    access cannot spell: a Python keyword segment, or a kind a predicate of the
+    same name wins.
+    """
 
     __slots__ = (
         "_claim_cache",
         "_coordinate",
         "_playbill",
         "_root",
+        "_row_cache",
         "_subject_cache",
+        "_view_cache",
         "_subjects_loaded",
         "unstructured_predicates",
     )
@@ -419,7 +521,9 @@ class World:
         self._root = root
         self._subject_cache: dict[str, dict[str, WorldSubject]] = {}
         self._subjects_loaded = False
-        self._claim_cache: dict[str, tuple[ClaimView, ...]] = {}
+        self._row_cache: dict[str, tuple[Mapping[str, object], ...]] = {}
+        self._claim_cache: dict[tuple[str, str | None], tuple[ClaimView, ...]] = {}
+        self._view_cache: dict[str, ClaimView] = {}
         self.unstructured_predicates = unstructured_predicates
 
     @property
@@ -430,12 +534,20 @@ class World:
     def kinds(self) -> tuple[str, ...]:
         """Every accepted Subject kind this world knows, byte-sorted."""
 
-        return tuple(sorted(self._walk(lambda node: node.subject_kind)))
+        self._assert_current()
+        return self._kind_paths()
 
     @property
     def predicates(self) -> tuple[str, ...]:
         """Every accepted predicate this world knows, byte-sorted."""
 
+        self._assert_current()
+        return self._predicate_paths()
+
+    def _kind_paths(self) -> tuple[str, ...]:
+        return tuple(sorted(self._walk(lambda node: node.subject_kind)))
+
+    def _predicate_paths(self) -> tuple[str, ...]:
         return tuple(sorted(self._walk(lambda node: node.structure is not None)))
 
     def stub(self) -> str:
@@ -506,26 +618,49 @@ class World:
         assert isinstance(built, WorldClaimType)
         return built
 
-    def _predicate_leaves(self, subject_kind: str) -> Mapping[str, str]:
-        """Map each unambiguous last segment to the predicate it names for a kind."""
+    def kind(self, subject_kind: str) -> KindNamespace:
+        """Read one accepted Subject kind by its full dotted name.
+
+        The escape for a kind whose segments attribute access cannot spell -- a
+        Python keyword such as `dev.class` -- and for one a predicate of the same
+        dotted name wins, exactly as `claim_type` is the escape for a predicate.
+        """
+
+        node = self._node_at(subject_kind)
+        if node is None or not node.subject_kind:
+            raise WorldStructureError(f"{subject_kind!r} is not an accepted Subject kind")
+        self._assert_current()
+        return KindNamespace(self, node)
+
+    def _leaf_map(self, subject_kind: str) -> Mapping[str, list[str]]:
+        """Map each predicate last segment to every predicate it names for a kind."""
 
         by_leaf: dict[str, list[str]] = {}
-        for predicate in self.predicates:
+        for predicate in self._predicate_paths():
             node = self._node_at(predicate)
             assert node is not None and node.structure is not None
             if subject_kind not in node.structure.allowed_subject_kinds:
                 continue
             by_leaf.setdefault(predicate.rsplit(".", 1)[-1], []).append(predicate)
-        return {leaf: names[0] for leaf, names in by_leaf.items() if len(names) == 1}
+        return by_leaf
+
+    def _predicate_leaves(self, subject_kind: str) -> Mapping[str, str]:
+        """Map each leaf attribute access really answers to the predicate it names.
+
+        A leaf that is ambiguous, or that a `WorldSubject` member already claims,
+        is left out: it is reachable by index, and advertising it here -- in
+        `dir()` and in the generated stub -- would promise an attribute read that
+        answers something else.
+        """
+
+        return {
+            leaf: names[0]
+            for leaf, names in self._leaf_map(subject_kind).items()
+            if len(names) == 1 and leaf not in SUBJECT_MEMBERS and _is_identifier(leaf)
+        }
 
     def _predicate_for(self, subject_kind: str, leaf: str) -> WorldClaimType:
-        by_leaf: dict[str, list[str]] = {}
-        for predicate in self.predicates:
-            node = self._node_at(predicate)
-            assert node is not None and node.structure is not None
-            if subject_kind not in node.structure.allowed_subject_kinds:
-                continue
-            by_leaf.setdefault(predicate.rsplit(".", 1)[-1], []).append(predicate)
+        by_leaf = self._leaf_map(subject_kind)
         candidates = sorted(by_leaf.get(leaf, ()))
         if len(candidates) == 1:
             return self.claim_type(candidates[0])
@@ -577,32 +712,79 @@ class World:
             )
         self._subjects_loaded = True
 
-    def _claims_about(self, subject_address: str) -> tuple[ClaimView, ...]:
-        self._assert_current()
-        cached = self._claim_cache.get(subject_address)
+    def _claim_rows(self, subject_address: str) -> tuple[Mapping[str, object], ...]:
+        """Walk every page of the subject-filtered list, cached per Subject.
+
+        The served list carries a row budget, so one call answers the first page
+        and says so. A read that returned that page as if it were the whole
+        answer would under-report a Subject with more Claims than the budget and
+        give no signal, which is the one failure mode hard state must not have.
+        This follows the cursor to exhaustion, and refuses -- typed, naming what
+        it had -- if the daemon reports a truncated page it cannot continue.
+        """
+
+        cached = self._row_cache.get(subject_address)
         if cached is not None:
             return cached
         from cruxible_client.authoring.sdk import _subject_address
 
-        playbill = self._playbill
-        page = playbill._search(
-            mode="list",
-            query=None,
-            kinds=("claim",),
-            statuses=(),
-            subject=_subject_address(subject_address).model_dump(mode="json"),
-        )
-        views = tuple(
-            view
-            for view in (
-                playbill.claim_view(str(row["identity"]))
-                for row in page.rows
-                if isinstance(row.get("identity"), str)
+        subject = _subject_address(subject_address).model_dump(mode="json")
+        rows: list[Mapping[str, object]] = []
+        cursor: Mapping[str, object] | None = None
+        while True:
+            page = self._playbill._search(
+                mode="list",
+                query=None,
+                kinds=("claim",),
+                statuses=(),
+                subject=subject,
+                cursor=cursor,
             )
-            if view.lifecycle_state == "live"
-        )
-        self._claim_cache[subject_address] = views
-        return views
+            rows.extend(row for row in page.rows if isinstance(row, Mapping))
+            if not page.truncated:
+                break
+            if page.cursor is None or not page.rows:
+                raise WorldStructureError(
+                    f"the accepted list of Claims about {subject_address!r} is truncated "
+                    f"after {len(rows)} rows and cannot be continued: the daemon reported "
+                    "no further page. Repair: read the Claims through `playbill list` with "
+                    "an explicit cursor rather than trusting a short answer here"
+                )
+            cursor = page.cursor
+        self._row_cache[subject_address] = tuple(rows)
+        return self._row_cache[subject_address]
+
+    def _claims_about(
+        self,
+        subject_address: str,
+        *,
+        predicate: str | None = None,
+    ) -> tuple[ClaimView, ...]:
+        self._assert_current()
+        cached = self._claim_cache.get((subject_address, predicate))
+        if cached is not None:
+            return cached
+        playbill = self._playbill
+        views: list[ClaimView] = []
+        for row in self._claim_rows(subject_address):
+            identity = row.get("identity")
+            if not isinstance(identity, str):
+                continue
+            # The served row already names the predicate and marks a retired
+            # Claim, so a per-predicate view reads only the Claims that can
+            # survive the filter instead of every Claim about the Subject.
+            if predicate is not None and row.get("predicate") != predicate:
+                continue
+            if row.get("status") == "retired":
+                continue
+            view = self._view_cache.get(identity)
+            if view is None:
+                view = playbill.claim_view(identity)
+                self._view_cache[identity] = view
+            if view.lifecycle_state == "live":
+                views.append(view)
+        self._claim_cache[(subject_address, predicate)] = tuple(views)
+        return self._claim_cache[(subject_address, predicate)]
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("_"):
@@ -620,9 +802,11 @@ class World:
         return sorted({*super().__dir__(), *self._root.children})
 
     def __repr__(self) -> str:
+        # Deliberately does not assert the coordinate: a debugger looking at a
+        # stale world must still be able to see what it was.
         return (
             f"<World at {self._coordinate.git_oid} "
-            f"kinds={len(self.kinds)} predicates={len(self.predicates)}>"
+            f"kinds={len(self._kind_paths())} predicates={len(self._predicate_paths())}>"
         )
 
 
@@ -734,7 +918,9 @@ def build_world(
 
 
 __all__ = [
+    "CLAIM_TYPE_MEMBERS",
     "KindNamespace",
+    "SUBJECT_MEMBERS",
     "World",
     "WorldClaimType",
     "WorldStructureError",

@@ -1737,14 +1737,20 @@ class Playbill:
         Strings are the one place the SDK gave away what it knows. The daemon
         already publishes the accepted ClaimTypes, so this reads them once and
         hands back a tree of kinds, predicates and admissible values, every ref
-        stamped with this connection's orientation. Subjects are not read here:
-        a kind loads its own on first ask, so orienting in a world with a
-        thousand Subjects costs the vocabulary and nothing else.
+        stamped with this connection's orientation.
+
+        This refreshes first, so a world is always built at the instance's
+        current accepted coordinate rather than at whatever this connection last
+        installed. No Subject is read here. The first Subject access of any kind
+        reads every Subject of every kind in one list, because the served verb
+        takes neither a kind filter nor a cursor; a world with a thousand
+        Subjects therefore costs the vocabulary at `world()` and that one list
+        the first time any Subject is named.
         """
 
         from cruxible_client.authoring.world import build_world
 
-        self.orient()
+        self.refresh()
         listing = self._client.list_playbill_claim_types(
             self._instance_id,
             at=_api_coordinate(self.coordinate),
@@ -2487,6 +2493,7 @@ class Playbill:
         kinds: Collection[str],
         statuses: Collection[str],
         subject: Mapping[str, object] | None = None,
+        cursor: Mapping[str, object] | None = None,
         at_active_coordinate: bool = True,
     ) -> SearchPage:
         result = self._client.search_playbill(
@@ -2496,6 +2503,7 @@ class Playbill:
             kinds=tuple(kinds),
             statuses=tuple(statuses),
             subject=None if subject is None else dict(subject),
+            cursor=None if cursor is None else dict(cursor),
             at=(
                 None
                 if self._coordinate is None or not at_active_coordinate

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -25,7 +26,12 @@ from cruxible_client.authoring.sdk_types import (
     PendingSubjectRef,
     ReferentSensitivity,
 )
-from cruxible_client.authoring.world import World, WorldClaimType, WorldStructureError
+from cruxible_client.authoring.world import (
+    KindNamespace,
+    World,
+    WorldClaimType,
+    WorldStructureError,
+)
 from cruxible_client.authoring.world_stub import STUB_HEADER_TAG
 from cruxible_client.contracts.projection import AcceptedCoordinate
 
@@ -125,6 +131,7 @@ class _WorldClient:
         self.claim_type_list_calls = 0
         self.searches: list[dict[str, Any]] = []
         self.claim_reads: list[str] = []
+        self.claim_predicates: dict[str, str] = {}
         self.retired_severity = False
 
     def search_playbill(self, _instance_id: str, **values: Any) -> api.PlaybillSearchResult:
@@ -140,8 +147,8 @@ class _WorldClient:
                     },
                     "status": "accepted",
                     "subject": values["subject"],
-                    "predicate": SEVERITY,
-                    "title": SEVERITY,
+                    "predicate": self.claim_predicates.get("CLM-" + "9" * 32, SEVERITY),
+                    "title": self.claim_predicates.get("CLM-" + "9" * 32, SEVERITY),
                 }
             ]
             if values.get("subject") is not None
@@ -199,6 +206,7 @@ class _WorldClient:
 
     def get_playbill_claim(self, _instance_id: str, identity: str, **_values: Any) -> Any:
         self.claim_reads.append(identity)
+        predicate = self.claim_predicates.get(identity, SEVERITY)
         return api.PlaybillClaimViewV2(
             tag="playbill-claim-read-v2",
             coordinate_kind="canonical",
@@ -210,7 +218,7 @@ class _WorldClient:
                     "artifact_path": "subjects/sec.vulnerability/cve-2026-69247.json",
                     "selector": {"scheme": "artifact-v1", "value": ""},
                 },
-                predicate=SEVERITY,
+                predicate=predicate,
                 object={"kind": "literal", "value": "high"},
                 role="observation",
                 qualifier=None,
@@ -223,7 +231,7 @@ class _WorldClient:
                         "subject": {
                             "artifact_path": "subjects/sec.vulnerability/cve-2026-69247.json"
                         },
-                        "predicate": SEVERITY,
+                        "predicate": predicate,
                         "qualifier": None,
                         "role": "observation",
                         "object": {"kind": "literal", "value": "high"},
@@ -425,9 +433,18 @@ def test_the_facade_stops_answering_once_the_orientation_moves(
         lambda: world.sec.package.cryptography,
         lambda: world.sec.vuln.severity,
         lambda: world.sec.package.define("click"),
+        lambda: world.kinds,
+        lambda: world.predicates,
+        lambda: world.kind("sec.package"),
+        lambda: world.claim_type(SEVERITY),
+        lambda: world.stub(),
     ):
         with pytest.raises(ValueError, match="differs from the active orientation"):
             read()
+
+    # `repr` deliberately stays outside the law: a debugger holding a stale
+    # world must still be able to see what it was.
+    assert repr(world).startswith(f"<World at {'a' * 40} ")
 
 
 def test_a_retired_claim_type_leaves_the_world_it_was_read_from(
@@ -662,11 +679,17 @@ def test_the_stub_is_byte_identical_for_the_same_coordinate_and_moves_with_it(
 
     assert first.startswith(f"# {STUB_HEADER_TAG}:")
     assert f"#   git_oid          {'a' * 40}" in first
-    assert "class _W_sec__vuln__severity(WorldClaimType):" in first
+    # The emitted classes inherit no runtime class carrying `__getattr__`, which
+    # is what makes an undeclared name a type error rather than `Any`.
+    assert "class _W_sec__vuln__severity(ClaimTypeRef):" in first
     assert "    high: LiteralValue" in first
     assert "    low: LiteralValue" in first
-    assert "    cryptography: WorldSubject" in first
-    assert "class _W_sec__vulnerability(KindNamespace):" in first
+    assert "    cryptography: _S_sec__package" in first
+    assert "class _W_sec__vulnerability:" in first
+    assert "class _S_sec__vulnerability(SubjectRef):" in first
+    assert "    severity: tuple[ClaimView, ...]" in first
+    assert "WorldClaimType):" not in first
+    assert "KindNamespace):" not in first
     # `cve-2026-69247` is not a Python identifier, so it is reachable only by
     # index and the stub does not pretend otherwise.
     assert "cve-2026-69247" not in first
@@ -743,3 +766,421 @@ def test_the_world_is_built_from_orient_and_the_claim_type_list_only(
         _COORDINATE.model_dump(mode="json")
     )
     assert world.unstructured_predicates == ()
+
+
+# ---------------------------------------------------------------------------
+# Paging: a read that under-reports without saying so is the one failure mode
+# hard state must not have.
+# ---------------------------------------------------------------------------
+
+
+class _PagedClaimsClient(_WorldClient):
+    """A daemon whose subject-filtered list answers in pages, exactly as it does."""
+
+    page_size = 20
+
+    def __init__(self, *, total: int = 55, offer_cursor: bool = True) -> None:
+        super().__init__()
+        self.total = total
+        self.offer_cursor = offer_cursor
+        self.subject_searches = 0
+        for index in range(total):
+            self.claim_predicates[_paged_identity(index)] = SEVERITY if index % 2 == 0 else AFFECTS
+
+    def search_playbill(self, instance_id: str, **values: Any) -> api.PlaybillSearchResult:
+        if values.get("subject") is None:
+            return super().search_playbill(instance_id, **values)
+        self.searches.append(dict(values))
+        self.subject_searches += 1
+        cursor = values.get("cursor")
+        start = 0 if cursor is None else int(cursor["offset"])
+        stop = min(start + self.page_size, self.total)
+        rows = [
+            {
+                "kind": "claim",
+                "identity": _paged_identity(index),
+                "address": {
+                    "artifact_path": f"claims/{_paged_identity(index)}.json",
+                    "selector": {"kind": "claim_statement"},
+                },
+                "status": "accepted",
+                "subject": values["subject"],
+                "predicate": self.claim_predicates[_paged_identity(index)],
+                "title": self.claim_predicates[_paged_identity(index)],
+            }
+            for index in range(start, stop)
+        ]
+        truncated = stop < self.total
+        return api.PlaybillSearchResult(
+            mode=values["mode"],
+            coordinate=self.coordinate,
+            evaluation_time=str(values["evaluation_time"]),
+            rows=rows,
+            orientation=None,
+            selection_basis_digest="sha256:" + "4" * 64,
+            truncated=truncated,
+            next_cursor=({"offset": stop} if truncated and self.offer_cursor else None),
+            result_digest="sha256:" + "5" * 64,
+        )
+
+
+def _paged_identity(index: int) -> str:
+    return "CLM-" + f"{index:032d}"
+
+
+def _paged_connection(tmp_path: Path, client: _PagedClaimsClient) -> Playbill:
+    _workspace(tmp_path)
+    return Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+
+
+def test_a_subject_reads_every_page_of_its_claims_not_only_the_first(
+    tmp_path: Path,
+) -> None:
+    """Fifty-five live Claims must not answer as fifty, silently."""
+
+    client = _PagedClaimsClient(total=55)
+    playbill = _paged_connection(tmp_path, client)
+    vulnerability = playbill.world().sec.vulnerability["cve-2026-69247"]
+
+    claims = vulnerability.claims
+
+    assert len(claims) == 55
+    assert client.subject_searches == 3
+    assert [row.get("cursor") for row in client.searches if row.get("subject") is not None] == [
+        None,
+        {"offset": 20},
+        {"offset": 40},
+    ]
+    assert len(vulnerability.severity) == 28
+    assert len(vulnerability.affects_package) == 27
+    # The pages were walked once and every Claim was read once; the predicate
+    # views are served from what the Subject already read.
+    assert len(client.claim_reads) == 55
+
+
+def test_a_predicate_view_reads_only_the_claims_that_can_survive_its_filter(
+    tmp_path: Path,
+) -> None:
+    """The served row already names the predicate, so the other reads are waste."""
+
+    client = _PagedClaimsClient(total=55)
+    playbill = _paged_connection(tmp_path, client)
+    vulnerability = playbill.world().sec.vulnerability["cve-2026-69247"]
+
+    under_severity = vulnerability.severity
+
+    assert len(under_severity) == 28
+    assert client.subject_searches == 3
+    assert len(client.claim_reads) == 28
+
+
+def test_a_truncated_page_with_no_cursor_refuses_rather_than_under_report(
+    tmp_path: Path,
+) -> None:
+    """A short answer with no signal is worse than a refusal that names the cap."""
+
+    client = _PagedClaimsClient(total=55, offer_cursor=False)
+    playbill = _paged_connection(tmp_path, client)
+    vulnerability = playbill.world().sec.vulnerability["cve-2026-69247"]
+
+    with pytest.raises(WorldStructureError) as refused:
+        vulnerability.claims
+
+    assert "truncated after 20 rows" in str(refused.value)
+    assert "sec.vulnerability/cve-2026-69247" in str(refused.value)
+
+
+# ---------------------------------------------------------------------------
+# Freshness, and the connection a read-only caller is allowed to open
+# ---------------------------------------------------------------------------
+
+
+def test_a_world_is_built_at_the_instances_current_coordinate(
+    connection: tuple[Playbill, _WorldClient],
+) -> None:
+    """A world built at a coordinate the instance has left is a stale answer."""
+
+    playbill, client = connection
+    assert playbill.world().coordinate.git_oid == "a" * 40
+
+    # Another connection accepts a generation. This one is told nothing.
+    client.coordinate = _MOVED_COORDINATE
+
+    world = playbill.world()
+
+    assert world.coordinate.git_oid == "b" * 40
+    assert playbill.coordinate.git_oid == "b" * 40
+
+
+def test_a_read_only_connection_needs_no_workspace_source_catalog(
+    tmp_path: Path,
+) -> None:
+    """Reads touch no working tree, so they must not demand a writer's setup."""
+
+    client = _WorldClient()
+    playbill = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+
+    assert not (tmp_path / ".playbill").exists()
+    assert playbill.world().kinds == ("dev.batch", "sec.package", "sec.vulnerability")
+
+
+def test_selecting_a_file_still_refuses_at_the_same_typed_point(
+    tmp_path: Path,
+) -> None:
+    """Deferring the refusal must not remove it, and it must land before the wire."""
+
+    from cruxible_client.authoring.sdk_types import SourceSelectionError
+
+    client = _WorldClient()
+    playbill = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    before = len(client.searches)
+
+    with pytest.raises(SourceSelectionError) as refused:
+        playbill.file("notes.txt")
+
+    assert "exactly one .playbill/sources.yaml or sources.yaml" in str(refused.value)
+    assert len(client.searches) == before
+
+
+# ---------------------------------------------------------------------------
+# Collisions: the fixed surface wins, and index access reaches the rest
+# ---------------------------------------------------------------------------
+
+
+class _CollidingClient(_WorldClient):
+    """A world whose accepted names collide with the facade's own."""
+
+    def list_playbill_claim_types(
+        self, _instance_id: str, *, at: Any = None
+    ) -> api.PlaybillClaimTypeList:
+        self.claim_type_list_calls += 1
+        return api.PlaybillClaimTypeList(
+            coordinate=self.coordinate,
+            claim_types=[
+                _claim_type(
+                    SEVERITY,
+                    literal_schema={
+                        "type": "string",
+                        "enum": ["cardinality", "high", "low"],
+                    },
+                ),
+                # The predicate leaf collides with `WorldSubject.claims`.
+                _claim_type("sec.vuln.claims"),
+                # The dotted name is an accepted predicate AND an accepted kind.
+                _claim_type(
+                    "sec.package",
+                    object_kind="subject",
+                    literal_schema=None,
+                    allowed_object_subject_kinds=("sec.package",),
+                ),
+            ],
+        )
+
+
+def test_a_predicate_leaf_that_a_member_shadows_is_reachable_by_index(
+    tmp_path: Path,
+) -> None:
+    """`subject.claims` keeps its documented meaning; the predicate has an escape."""
+
+    client = _CollidingClient()
+    client.claim_predicates["CLM-" + "9" * 32] = "sec.vuln.claims"
+    _workspace(tmp_path)
+    playbill = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    world = playbill.world()
+    vulnerability = world.sec.vulnerability["cve-2026-69247"]
+
+    # The member answers what it has always answered: every live Claim.
+    assert len(vulnerability.claims) == 1
+    # The shadowed predicate is reachable by index, by leaf or in full.
+    assert vulnerability["sec.vuln.claims"] == vulnerability.claims
+    assert vulnerability["claims"] == vulnerability.claims
+    assert vulnerability[world.claim_type("sec.vuln.claims")] == vulnerability.claims
+    # Nothing advertises it as an attribute, in `dir()` or in the stub.
+    assert "sec.vuln.claims" not in set(world._predicate_leaves("sec.vulnerability").values())
+    assert "reach it with subject['sec.vuln.claims']" in world.stub()
+
+
+def test_an_enum_member_a_structure_field_shadows_is_minted_by_the_call_form(
+    tmp_path: Path,
+) -> None:
+    """A member called `cardinality` must not steal the ClaimType's own structure."""
+
+    client = _CollidingClient()
+    _workspace(tmp_path)
+    playbill = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    severity = playbill.world().sec.vuln.severity
+
+    assert severity.cardinality is Cardinality.ONE
+    assert severity("cardinality").value == "cardinality"
+    assert "cardinality" not in set(dir(severity)) - set(object.__dir__(severity))
+    assert "mint it with severity('cardinality')" in playbill.world().stub()
+
+
+def test_a_kind_a_predicate_shadows_stays_reachable_as_a_kind(
+    tmp_path: Path,
+) -> None:
+    """One dotted name, two accepted things: the predicate wins, the kind escapes."""
+
+    client = _CollidingClient()
+    _workspace(tmp_path)
+    playbill = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    world = playbill.world()
+
+    package = world.sec.package
+    assert isinstance(package, WorldClaimType)
+    assert isinstance(package.as_kind, KindNamespace)
+    assert package.as_kind.subject_kind == "sec.package"
+    assert package.as_kind.define("click").address == "sec.package/click"
+    assert package["cryptography"].address == "sec.package/cryptography"
+    assert world.kind("sec.package").subject_ids == ("cryptography",)
+
+    with pytest.raises(AttributeError, match="as_kind"):
+        package.define
+
+
+# ---------------------------------------------------------------------------
+# Names attribute access cannot spell
+# ---------------------------------------------------------------------------
+
+
+class _KeywordSegmentClient(_WorldClient):
+    """A world whose accepted grammar admits segments Python reserves."""
+
+    def list_playbill_claim_types(
+        self, _instance_id: str, *, at: Any = None
+    ) -> api.PlaybillClaimTypeList:
+        self.claim_type_list_calls += 1
+        return api.PlaybillClaimTypeList(
+            coordinate=self.coordinate,
+            claim_types=[
+                _claim_type("sec.vuln.import", allowed_subject_kinds=("dev.class",)),
+                _claim_type(SEVERITY),
+            ],
+        )
+
+
+def test_a_python_keyword_segment_leaves_the_stub_parseable(
+    tmp_path: Path,
+) -> None:
+    """One unspellable segment used to break the whole file, not just its line."""
+
+    client = _KeywordSegmentClient()
+    _workspace(tmp_path)
+    playbill = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    world = playbill.world()
+
+    assert "dev.class" in world.kinds
+    assert "sec.vuln.import" in world.predicates
+
+    rendered = world.stub()
+    ast.parse(rendered)
+    assert "    class: " not in rendered
+    assert "    import: " not in rendered
+    assert "'class' is not a Python attribute" in rendered
+    assert "'import' is not a Python attribute" in rendered
+
+    # The escapes the stub names are the escapes that work.
+    assert world.kind("dev.class").subject_kind == "dev.class"
+    assert world.claim_type("sec.vuln.import").address == "sec.vuln.import"
+    with pytest.raises(WorldStructureError, match="not an accepted Subject kind"):
+        world.kind("sec.vuln")
+
+
+def test_a_type_checker_rejects_every_misspelling_the_stub_names(
+    connection: tuple[Playbill, _WorldClient],
+    tmp_path: Path,
+) -> None:
+    """Completion without rejection is the property the stub exists to buy."""
+
+    playbill, _client = connection
+    project = tmp_path / "typo-project"
+    project.mkdir()
+    (project / "world.pyi").write_text(playbill.world().stub(), encoding="utf-8")
+    (project / "typos.py").write_text(
+        "from __future__ import annotations\n"
+        "\n"
+        "from world import World\n"
+        "\n"
+        "\n"
+        "def misspellings(world: World) -> None:\n"
+        "    world.sec.vuln.sevrity.high\n"
+        "    world.sec.vuln.severity.hgih\n"
+        "    world.sekk.package\n"
+        "    world.sec.package.cryptografy\n"
+        "    world.totally_absent\n",
+        encoding="utf-8",
+    )
+    (project / "correct.py").write_text(
+        "from __future__ import annotations\n"
+        "\n"
+        "from world import World\n"
+        "\n"
+        "\n"
+        "def spelled_right(world: World) -> None:\n"
+        "    world.sec.vuln.severity.high\n"
+        "    world.sec.package.cryptography\n"
+        "    world.sec.vulnerability['cve-2026-69247'].severity\n"
+        "    world.sec.package.define('click')\n",
+        encoding="utf-8",
+    )
+
+    report = _mypy(project, "typos.py")
+    for line in range(7, 12):
+        assert f"typos.py:{line}: error:" in report, report
+    assert report.count("attr-defined") == 5, report
+
+    assert _mypy(project, "correct.py") == "", _mypy(project, "correct.py")
+
+
+def _mypy(project: Path, target: str) -> str:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "mypy",
+            "--no-incremental",
+            "--follow-imports=silent",
+            "--no-error-summary",
+            target,
+        ],
+        cwd=project,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed.stdout + completed.stderr

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -334,6 +335,8 @@ def test_the_cli_leaf_writes_a_coordinate_stamped_stub_for_the_live_world(
     rendered = out_path.read_text(encoding="utf-8")
     assert rendered.startswith(f"# {STUB_HEADER_TAG}:")
     assert f"#   git_oid          {playbill.coordinate.git_oid}" in rendered
-    assert "class _W_sec__vuln__severity(WorldClaimType):" in rendered
+    assert "class _W_sec__vuln__severity(ClaimTypeRef):" in rendered
     assert "    high: LiteralValue" in rendered
     assert rendered == playbill.world().stub()
+    # The stub the daemon's own world renders is a file a type checker reads.
+    ast.parse(rendered)
