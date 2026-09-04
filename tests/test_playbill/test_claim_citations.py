@@ -16,15 +16,18 @@ from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
     CaptureContractV1,
     DirectByteSpanSelectionV1,
+    DirectForeignSourceSelectionV1,
     build_coordinator_self_source_capture,
     build_direct_claim_capture,
     build_direct_claim_selection_capture,
+    build_foreign_source_capture,
     capture_contract_digest,
     capture_contract_path,
     classify_capture_reuse,
+    foreign_source_capture_contract,
     render_capture_contract,
 )
-from cruxible_client.contracts.claim_types import ClaimType, render_claim_type
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
 from cruxible_client.contracts.claims import (
     ClaimArtifactV2,
     ClaimBackingV2,
@@ -45,7 +48,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRuleV1,
 )
 from cruxible_client.contracts.semantic import ContentSpan
-from cruxible_client.contracts.subjects import render_subject, subject_path
+from cruxible_client.contracts.subjects import render_subject, subject_digest, subject_path
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
@@ -641,3 +644,235 @@ def test_a_copy_of_the_compilers_own_self_assertion_is_admitted_by_no_rule() -> 
             capture_contract=_accepted(builtin),
             capture_digest=CAPTURE_DIGEST,
         )
+
+
+PAGE_SOURCE_IDENTITY = "docs.governed-page"
+PAGE_BODY = b"a copy is the ruling's own word for what a page block is\n"
+
+
+def _page_capture(instance, base):
+    """Capture a governed page's bytes the way a page-as-source is captured.
+
+    A foreign logical source: bytes the proposer presents and the daemon commits
+    to exactly. Its contract is DECLARED and is not one of the compiler's two
+    self-assertion contracts, which is the whole shape item 16 exists to open.
+    """
+
+    stored = instance.body_store().store(PAGE_BODY)
+    return build_foreign_source_capture(
+        store=instance.body_store(),
+        actor_id="owner",
+        claim_id=CLAIM_ID,
+        rationale="the governed page block this Claim is about",
+        observed_at=datetime(2026, 8, 20, 12, tzinfo=timezone.utc),
+        accepted_coordinate=AcceptedCoordinate.from_internal(base),
+        selection=DirectForeignSourceSelectionV1(
+            logical_source_identity=PAGE_SOURCE_IDENTITY,
+            span=ContentSpan(
+                content_digest=stored.digest,
+                start_byte=0,
+                end_byte=len(PAGE_BODY),
+            ),
+        ),
+    )
+
+
+def _type_naming(contract: CaptureContractV1) -> ClaimType:
+    """The domain ClaimType, plus one rule naming `contract` for its own roles."""
+
+    base = _claim_type()
+    return base.model_copy(
+        update={
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+                rules=(
+                    *base.evidence_admission_policy.rules,
+                    ClaimEvidenceAdmissionRuleV1(
+                        rule_id="page-copy",
+                        claim_roles=("normative", "observation"),
+                        capture_contract_digests=(capture_contract_digest(contract).tagged,),
+                        evidence_kinds=contract.evidence_kinds,
+                        admission="direct",
+                        subject_binding="exact_claim_subject",
+                    ),
+                )
+            )
+        }
+    )
+
+
+def _claim_citing(capture, *, contract: CaptureContractV1, claim_type: ClaimType, role: str):
+    shell = _subject()
+    assert capture.envelope.commitment.byte_length is not None
+    claim = _claim(
+        claim_id=CLAIM_ID,
+        capture_digest=capture.capture_digest,
+        source_digest=capture.source_body_digest,
+        source_length=capture.envelope.commitment.byte_length,
+    )
+    claim_type_digest_value = claim_type_digest(claim_type).tagged
+    return claim.model_copy(
+        update={
+            "statement": claim.statement.model_copy(
+                update={"claim_type_digest": claim_type_digest_value}
+            ),
+            "backing": ClaimBackingV2(
+                referent_context=claim.backing.referent_context,
+                capture_digests=(capture.capture_digest,),
+                citations=(
+                    build_claim_citation(
+                        claim.identity,
+                        capture_digest=capture.capture_digest,
+                        role=role,  # type: ignore[arg-type]
+                        origin="independent",
+                    ),
+                ),
+                source_mappings=claim.backing.source_mappings,
+            ),
+            "pins": tuple(
+                sorted(
+                    (
+                        ArtifactPin(
+                            role="capture-contract",
+                            target=contract.identity,
+                            artifact_digest=capture_contract_digest(contract).tagged,
+                        ),
+                        ArtifactPin(
+                            role="claim-type",
+                            target=claim_type.identity,
+                            artifact_digest=claim_type_digest_value,
+                        ),
+                        ArtifactPin(
+                            role="subject",
+                            target=shell.identity,
+                            artifact_digest=subject_digest(shell).tagged,
+                        ),
+                    ),
+                    key=lambda item: (item.role, item.target.qualified),
+                )
+            ),
+        }
+    )
+
+
+def _verdict(
+    instance,
+    base,
+    *,
+    capture,
+    contract: CaptureContractV1,
+    claim_type: ClaimType,
+    name: str,
+):
+    """Submit one Claim citing `capture` as a copy, and read the coverage verdict."""
+
+    shell = _subject()
+    claim = _claim_citing(capture, contract=contract, claim_type=claim_type, role="copy")
+    proposed = _submit(
+        instance,
+        {
+            **instance.tree_at(base.git_oid),
+            subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
+            "claim-types/project.work_item/status.json": render_claim_type(claim_type),
+            capture_contract_path(contract.identity.name): render_capture_contract(contract),
+            claim_path(CLAIM_ID): render_claim(claim),
+        },
+        base.git_oid,
+        name,
+        "2026-08-20T12:00:00.000000Z",
+    )
+    assert proposed.evaluation.diagnostics == (), proposed.evaluation.diagnostics
+    assert isinstance(proposed.candidate, CandidateRecordV3)
+    return _claim_evidence(proposed.candidate)
+
+
+def _direct_selection_capture(instance, base):
+    """A capture under the compiler's own direct self-assertion contract.
+
+    Deliberately the SELECTION builder, not the value builder. A direct
+    self-source capture is `verified_self_source`, so the citation-origin gate
+    forces `origin: self_source` on it and it can never wear `independent` at
+    all. A direct SELECTION capture is only `direct_selection_bound`: it may
+    legitimately carry `origin: independent`, and every domain ClaimType already
+    names the direct contract. So this is the exact shape where the copy
+    carve-out would hand a Claim a way to cover itself with a copy of the value
+    it just authored, and the contract-identity gate is the only thing standing
+    in the way.
+    """
+
+    substrate = b"status: ready\n"
+    substrate_digest = instance.body_store().store(substrate).digest
+    return build_direct_claim_selection_capture(
+        store=instance.body_store(),
+        actor_id="owner",
+        claim_id=CLAIM_ID,
+        rationale="a copy of the value this Claim itself authored",
+        observed_at=datetime(2026, 8, 20, 12, tzinfo=timezone.utc),
+        accepted_coordinate=AcceptedCoordinate.from_internal(base),
+        selection=DirectByteSpanSelectionV1(
+            span=ContentSpan(
+                content_digest=substrate_digest,
+                start_byte=0,
+                end_byte=len(substrate),
+            )
+        ),
+    )
+
+
+def test_a_copy_of_a_page_covers_only_when_the_claim_type_names_its_contract(tmp_path) -> None:
+    """Card 120's ruling, read as a coverage VERDICT rather than a predicate.
+
+    The four predicate tests above prove what `_copy_capture_admitted_by_rule`
+    answers; none of them proves it is WIRED. Delete the
+    `and not _copy_capture_admitted_by_rule(...)` clause from the eligibility
+    gate in `evaluate_claim_law` and every one of them still passes, because the
+    helper is intact and nothing reads the verdict. This reads the verdict.
+    """
+
+    instance, _owner = initialize_local(tmp_path)
+    base = instance.accepted_coordinate()
+    contract = foreign_source_capture_contract(PAGE_SOURCE_IDENTITY)
+
+    covered = _verdict(
+        instance,
+        base,
+        capture=_page_capture(instance, base),
+        contract=contract,
+        claim_type=_type_naming(contract),
+        name="page-copy-named",
+    )
+    uncovered = _verdict(
+        instance,
+        base,
+        capture=_page_capture(instance, base),
+        contract=contract,
+        claim_type=_claim_type(),
+        name="page-copy-unnamed",
+    )
+
+    assert covered.initial_verdict == "supported"
+    assert covered.evidence_basis == ("direct",)
+    assert uncovered.initial_verdict == "uncovered"
+    assert uncovered.evidence_basis == ("origin_only",)
+
+
+def test_a_copy_of_the_compilers_own_self_assertion_never_reaches_a_verdict(tmp_path) -> None:
+    """A domain type names the direct contract already; the gate still holds.
+
+    So the carve-out cannot be turned into a way for any Claim to cover itself
+    with a copy of the value it just authored -- the case the maintainer named.
+    """
+
+    instance, _owner = initialize_local(tmp_path)
+    base = instance.accepted_coordinate()
+
+    evidence = _verdict(
+        instance,
+        base,
+        capture=_direct_selection_capture(instance, base),
+        contract=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+        claim_type=_claim_type(),
+        name="direct-copy",
+    )
+
+    assert evidence.initial_verdict == "uncovered"
+    assert evidence.evidence_basis == ("origin_only",)
