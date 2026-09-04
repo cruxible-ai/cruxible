@@ -229,6 +229,21 @@ class ProviderRuntimeOperationalConfigV1(_StrictOperationalModel):
         return value
 
 
+PROVIDER_LANE_NOT_APPLICABLE_DETAIL = (
+    "this hosted profile runs no Provider code: the lane is out of scope here, not degraded"
+)
+
+
+def _inapplicable_lane_status() -> tuple[Literal["not_applicable"], None, str] | None:
+    """The lane's answer when this deployment runs no Provider code at all."""
+
+    from cruxible_core.runtime.execution_policy import provider_lane_applicable
+
+    if provider_lane_applicable():
+        return None
+    return ("not_applicable", None, PROVIDER_LANE_NOT_APPLICABLE_DETAIL)
+
+
 class ProviderRuntimeOperator:
     """One daemon process's local custody, leases, and installed deployments."""
 
@@ -273,10 +288,10 @@ class ProviderRuntimeOperator:
         self.unavailable_code: ProviderLaneUnavailableCodeV1 | None = None
         self.unavailable_reason: str | None = None
         self._lane_status_snapshot: tuple[
-            Literal["available", "unavailable"],
+            Literal["available", "unavailable", "not_applicable"],
             ProviderLaneUnavailableCodeV1 | None,
             str | None,
-        ] = ("available", None, None)
+        ] = _inapplicable_lane_status() or ("available", None, None)
         self.config = ProviderRuntimeOperationalConfigV1()
         self.process_leases: ProviderProcessLeaseStore | None = None
         self.secret_store: FileProviderSecretStore | None = None
@@ -457,6 +472,14 @@ class ProviderRuntimeOperator:
             self._refresh_lane_status_locked()
 
     def _refresh_lane_status_locked(self) -> None:
+        inapplicable = _inapplicable_lane_status()
+        if inapplicable is not None:
+            # A lane this deployment cannot run has no health to report, and
+            # folding failures into one would describe a lane that broke.
+            self.unavailable_code = None
+            self.unavailable_reason = None
+            self._lane_status_snapshot = inapplicable
+            return
         failures = [*self._construction_failures.values()]
         failures.extend((code, message) for code, message in self._recovery_failures.items())
         if not failures:
@@ -648,7 +671,9 @@ class ProviderRuntimeOperator:
     def lane_status(
         self,
     ) -> tuple[
-        Literal["available", "unavailable"], ProviderLaneUnavailableCodeV1 | None, str | None
+        Literal["available", "unavailable", "not_applicable"],
+        ProviderLaneUnavailableCodeV1 | None,
+        str | None,
     ]:
         return self._lane_status_snapshot
 

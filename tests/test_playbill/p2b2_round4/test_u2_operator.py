@@ -310,3 +310,40 @@ def test_degraded_detail_is_latest_reason_codes_and_count(short_root: Path) -> N
         "codes=[provider_process_lease_invalid,provider_runtime_recovery_failed]; count=2"
     )
     assert "first" not in detail
+
+
+def test_a_hosted_profile_that_runs_no_provider_code_reports_a_lane_that_does_not_apply(
+    short_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cloud ask: a lane out of scope is a third answer, not a broken one.
+
+    A shared hosted profile with no registered isolated executor cannot spawn a
+    Provider and will not until one is registered here, so reporting the lane
+    available and then refusing every run is a health field saying the opposite
+    of what it means. `unavailable` would be wrong the other way: every code in
+    that vocabulary describes a lane that broke.
+    """
+
+    monkeypatch.setenv("CRUXIBLE_HOSTED_SERVER_PROFILE", "shared")
+    monkeypatch.delenv("CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND", raising=False)
+
+    operator = ProviderRuntimeOperator(short_root)
+    state, code, detail = operator.lane_status()
+
+    assert state == "not_applicable"
+    assert code is None
+    assert detail is not None and "out of scope" in detail
+
+    # And a failure does not turn an inapplicable lane into a broken one.
+    operator.mark_unavailable("provider_process_lease_invalid", "offline")
+    assert operator.lane_status()[0] == "not_applicable"
+
+
+def test_an_unreadable_hosted_profile_is_a_misconfiguration_not_an_absence(
+    short_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Failing closed at the spawn is the guard; the lane must not normalize it."""
+
+    monkeypatch.setenv("CRUXIBLE_HOSTED_SERVER_PROFILE", "not-a-profile-this-build-knows")
+
+    assert ProviderRuntimeOperator(short_root).lane_status()[0] == "available"

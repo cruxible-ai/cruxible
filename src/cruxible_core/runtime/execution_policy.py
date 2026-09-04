@@ -231,6 +231,25 @@ def customer_code_execution_supported(environ: Mapping[str, str] | None = None) 
     return True
 
 
+def provider_lane_applicable(environ: Mapping[str, str] | None = None) -> bool:
+    """Whether the Provider lane is part of this deployment's surface at all.
+
+    Distinct from "the lane is healthy". A shared hosted profile with no
+    registered isolated executor cannot run Provider code and will not until one
+    is registered here -- so reporting that lane as available, and then refusing
+    every run, is a health field saying the opposite of what it means.
+
+    A profile this build cannot read stays applicable: that is a
+    misconfiguration to be refused typed at the spawn, not an absence to be
+    reported as normal.
+    """
+
+    profile = hosted_server_profile(environ)
+    if profile is None or profile not in KNOWN_HOSTED_SERVER_PROFILES:
+        return True
+    return customer_code_execution_supported(environ)
+
+
 def enforce_customer_code_execution_supported(
     environ: Mapping[str, str] | None = None,
 ) -> None:

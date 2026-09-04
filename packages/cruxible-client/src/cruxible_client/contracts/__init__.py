@@ -271,7 +271,13 @@ class ProviderLaneStatusV1(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["cruxible-provider-lane-status-v1"] = "cruxible-provider-lane-status-v1"
-    state: Literal["available", "unavailable"]
+    # `not_applicable` is a third answer, not a softer `unavailable`: the lane
+    # is not broken, it is not part of this deployment's surface. A hosted
+    # profile that cannot run Provider code at all reported `available` and then
+    # refused every run, which is the one thing a health field must not do; and
+    # `unavailable` would have demanded a refusal code, and every code in that
+    # vocabulary describes a lane that broke.
+    state: Literal["available", "unavailable", "not_applicable"]
     code: ProviderLaneUnavailableCodeV1 | None
     detail: str | None
     # Backend ids of the isolated executors this daemon registered at start, from
@@ -282,10 +288,12 @@ class ProviderLaneStatusV1(BaseModel):
 
     @model_validator(mode="after")
     def _state_matches_reason(self) -> ProviderLaneStatusV1:
-        if self.state == "available" and self.code is not None:
-            raise ValueError("available Provider lane cannot carry a refusal code")
+        if self.state != "unavailable" and self.code is not None:
+            raise ValueError("only an unavailable Provider lane carries a refusal code")
         if self.state == "unavailable" and (self.code is None or self.detail is None):
             raise ValueError("unavailable Provider lane requires a typed code and detail")
+        if self.state == "not_applicable" and self.detail is None:
+            raise ValueError("an inapplicable Provider lane must say why it does not apply")
         if self.isolated_executors != tuple(
             sorted(set(self.isolated_executors), key=lambda item: item.encode("utf-8"))
         ):

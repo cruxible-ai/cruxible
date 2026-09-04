@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -197,6 +198,9 @@ def provider_budget_translation_digest(translation: ProviderBudgetTranslationV1)
     return typed_digest(Sha256Value, PROVIDER_BUDGET_TRANSLATION_DOMAIN, payload).tagged
 
 
+_OBSERVER_BACKEND_RE = re.compile(r"^[a-z0-9]+(?:[.\-][a-z0-9]+)*$")
+
+
 class ProviderEgressObservationV1(_StrictProviderExecutionModel):
     tag: Literal["playbill-provider-egress-observation-v1"] = (
         "playbill-provider-egress-observation-v1"
@@ -204,8 +208,27 @@ class ProviderEgressObservationV1(_StrictProviderExecutionModel):
     declared_endpoints: tuple[str, ...] = ()
     observed_endpoints: tuple[str, ...] = ()
     dynamic_endpoint_forms: tuple[Literal["dynamic:target-from-run-input"], ...] = ()
+    # Deliberately not an enum. A proprietary egress observer is a real
+    # observer, and OSS cannot enumerate the backends it does not ship; a
+    # closed set here would have meant every cloud-owned observer either lying
+    # about which backend saw the traffic or not being recordable at all. What
+    # IS closed is the SHAPE: dotted lower-case segments, so an out-of-tree
+    # observer namespaces itself (`cloud.<name>`) and a receipt cannot carry
+    # prose, whitespace or a control character in the field an operator reads
+    # to decide how much the observation is worth. The value is digested with
+    # the rest of the observation, so it is a fact about the run, not a label.
     observer_backend: str
     observer_grade: Literal["attribution", "conformance"]
+
+    @field_validator("observer_backend")
+    @classmethod
+    def _backend(cls, value: str) -> str:
+        if _OBSERVER_BACKEND_RE.fullmatch(value) is None:
+            raise ValueError(
+                "egress observer backend must be dotted lower-case segments, "
+                "namespaced for an out-of-tree observer (for example 'cloud.netns-proxy')"
+            )
+        return value
 
     @field_validator("declared_endpoints", "observed_endpoints", "dynamic_endpoint_forms")
     @classmethod

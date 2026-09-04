@@ -95,6 +95,12 @@ SELF_ATTACKS: tuple[tuple[str, Callable[[dict[str, object]], None]], ...] = (
         lambda surface: _mutate_mcp(surface, "input_schema_digest", "sha256:" + "0" * 64),
     ),
     ("mcp-delegate", lambda surface: _mutate_mcp(surface, "delegate", "hidden.delegate")),
+    # The per-tool verb-to-tool join a cloud overlay reads: a tool quietly
+    # reaching one more facade verb is a widening of what MCP publishes.
+    (
+        "mcp-facade-operations",
+        lambda surface: _mutate_mcp(surface, "facade_operations", ["playbill_hidden"]),
+    ),
     ("cli-hidden-leaf", _add_hidden_cli_leaf),
 )
 

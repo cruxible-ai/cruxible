@@ -22,6 +22,19 @@ must equal the worktree root for floor export, status, and activation refresh;
 a nested explicit root is refused rather than allowing a write above its
 configured filesystem boundary.
 
+## Which verb each tool publishes
+
+`tests/goldens/playbill/served-surface-dp0b-v1.json` is the machine-readable
+inventory of the whole served surface, and its `surface.mcp_tools` rows carry
+`facade_operations`: the facade verbs each tool reaches, per tool. A deployment
+that decides per-verb what may be reached over MCP reads the join there rather
+than inferring it from the `cruxible_<verb>` / `handle_<verb>` spelling, which
+nothing guarantees. An empty list means the tool reaches no facade verb
+directly; `surface.mcp_facade_operations` still bounds the whole lane.
+
+Every row is covered by the snapshot's `succession.surface_digest`, so a tool
+that starts reaching one more verb moves the pin.
+
 ## Runtime
 
 | Tool | Purpose | Permission |

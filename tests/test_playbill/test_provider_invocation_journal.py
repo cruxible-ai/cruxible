@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import get_args
 
 import pytest
+from pydantic import ValidationError
 
 import cruxible_core.service.playbill_procedure_runs as procedure_run_service
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
@@ -1184,3 +1185,36 @@ def test_provider_call_budget_subtracts_elapsed_run_time_at_each_spawn(tmp_path:
         0
     ].budget_translation.runtime_wall_clock_seconds
     assert invoker.wall_windows == [pytest.approx(admitted_window - 0.4)]
+
+
+@pytest.mark.parametrize(
+    "backend",
+    ["child-self-report", "sandbox", "cloud.netns-proxy", "cloud.proxy-v2"],
+)
+def test_an_egress_observer_backend_may_be_namespaced_by_an_out_of_tree_observer(
+    backend: str,
+) -> None:
+    """Cloud ask: OSS cannot enumerate the observers it does not ship.
+
+    A closed set here would have meant a proprietary observer either lying
+    about which backend saw the traffic or not being recordable at all.
+    """
+
+    observation = ProviderEgressObservationV1(
+        observer_backend=backend,
+        observer_grade="attribution",
+    )
+
+    assert observation.observer_backend == backend
+
+
+@pytest.mark.parametrize("backend", ["", "Cloud Proxy", "cloud..proxy", "cloud/proxy", "cloud\n"])
+def test_an_egress_observer_backend_is_a_name_not_prose(backend: str) -> None:
+    """What is closed is the SHAPE: the field an operator reads to weigh the
+    observation cannot carry whitespace, a control character or a path."""
+
+    with pytest.raises(ValidationError):
+        ProviderEgressObservationV1(
+            observer_backend=backend,
+            observer_grade="attribution",
+        )

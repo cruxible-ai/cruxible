@@ -70,6 +70,39 @@ def _mcp_facade_operations(path: Path = MCP_HANDLERS) -> list[str]:
     )
 
 
+def _handler_facade_operations(path: Path = MCP_HANDLERS) -> dict[str, list[str]]:
+    """Which facade verbs each MCP handler reaches, by handler name.
+
+    The flat `mcp_facade_operations` list says the MCP lane can reach a verb; it
+    does not say WHICH tool reaches it, so recovering the join meant trusting
+    the `cruxible_<verb>` / `handle_<verb>` naming convention, which nothing
+    guarantees. An overlay that decides per-verb whether a tenant may reach a
+    verb over MCP needs the join to be a fact in the artifact rather than a
+    spelling it infers.
+    """
+
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    operations: dict[str, list[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        # References, not only calls: a handler that hands the facade verb to
+        # the dispatcher as a callable reaches it exactly as much as one that
+        # calls it, and reads as a bare attribute in the tree.
+        called = sorted(
+            {
+                item.attr
+                for item in ast.walk(node)
+                if isinstance(item, ast.Attribute)
+                and isinstance(item.value, ast.Name)
+                and item.value.id in {"playbill_api", "host_api"}
+            }
+        )
+        if called:
+            operations[node.name] = called
+    return operations
+
+
 def _type_name(annotation: object) -> str | None:
     if annotation is None:
         return None
@@ -158,6 +191,7 @@ def _mcp_surface() -> list[dict[str, object]]:
     server = FastMCP("playbill-v1-served-surface")
     register_tools(server)
     tools = getattr(server, "_tool_manager").list_tools()
+    handler_operations = _handler_facade_operations()
     result: list[dict[str, object]] = []
     for tool in tools:
         function = inspect.unwrap(tool.fn)
@@ -172,6 +206,15 @@ def _mcp_surface() -> list[dict[str, object]]:
                 "name": tool.name,
                 "permission": TOOL_PERMISSIONS[tool.name].name,
                 "delegate": delegate,
+                # The published verb-to-tool join, per tool, so an overlay reads
+                # it instead of inferring it from the two names matching.
+                "facade_operations": sorted(
+                    {
+                        operation
+                        for handler in handler_calls
+                        for operation in handler_operations.get(handler, ())
+                    }
+                ),
                 "input_schema_digest": _schema_digest(tool.parameters),
                 "output_schema_digest": _schema_digest(tool.output_schema),
             }
