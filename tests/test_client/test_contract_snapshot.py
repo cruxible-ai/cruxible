@@ -113,6 +113,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillAuthoringIntentView",
         "PlaybillAuthoringPreflightResult",
         "PlaybillAuthoringSubmitResult",
+        "PlaybillBlockDeclareResultV1",
         "PlaybillBlockDepublishResultV1",
         "PlaybillBlockSyncItemV1",
         "PlaybillBlockSyncReadRequestV1",

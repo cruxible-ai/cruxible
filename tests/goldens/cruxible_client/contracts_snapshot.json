@@ -73,7 +73,7 @@
         "floor_invalid",
         "projection_dirty",
         "projection_backing_stale",
-        "self_published_source_stale",
+        "projection_candidates_changed",
         "claim_dependency_stale",
         "claim_attestation_threshold_met",
         "claim_contradicting_evidence_available",
@@ -7557,6 +7557,171 @@
         "status"
       ]
     },
+    "PlaybillBlockDeclareResultV1": {
+      "fields": {
+        "block_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "block_id",
+          "required": true,
+          "schema": {
+            "title": "Block Id",
+            "type": "string"
+          }
+        },
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "declared_generation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "declared_generation",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Declared Generation",
+            "type": "integer"
+          }
+        },
+        "outcome": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "outcome",
+          "required": true,
+          "schema": {
+            "enum": [
+              "declared",
+              "redeclared"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          }
+        },
+        "source_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source_id",
+          "required": true,
+          "schema": {
+            "title": "Source Id",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-block-declare-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-block-declare-result-v1",
+            "default": "playbill-block-declare-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One projection block registered with the instance that governs its page.\n\nA block declared with `block repin` was known only to the bytes in the page:\n`next` could ask whether a marker was sanctioned for one declaration road\nand answered it by a string prefix, and `workspace detach` could not refuse\non a block it had never heard of. The declaration is protocol state, not\naccepted state -- it records that this instance stands behind this marker,\nnot what the marker says.",
+        "properties": {
+          "block_id": {
+            "title": "Block Id",
+            "type": "string"
+          },
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "declared_generation": {
+            "minimum": 0,
+            "title": "Declared Generation",
+            "type": "integer"
+          },
+          "outcome": {
+            "enum": [
+              "declared",
+              "redeclared"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-block-declare-result-v1",
+            "default": "playbill-block-declare-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "block_id",
+          "outcome",
+          "declared_generation",
+          "coordinate"
+        ],
+        "title": "PlaybillBlockDeclareResultV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "block_id",
+        "coordinate",
+        "declared_generation",
+        "outcome",
+        "source_id"
+      ]
+    },
     "PlaybillBlockDepublishResultV1": {
       "fields": {
         "block_id": {
@@ -7570,13 +7735,23 @@
           }
         },
         "claim_identity": {
-          "has_default": false,
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
           "has_default_factory": false,
           "json_name": "claim_identity",
-          "required": true,
+          "required": false,
           "schema": {
-            "title": "Claim Identity",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Identity"
           }
         },
         "coordinate": {
@@ -7589,22 +7764,59 @@
           }
         },
         "expectation_id": {
-          "has_default": false,
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
           "has_default_factory": false,
           "json_name": "expectation_id",
-          "required": true,
+          "required": false,
           "schema": {
-            "title": "Expectation Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expectation Id"
           }
         },
         "intent_id": {
-          "has_default": false,
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
           "has_default_factory": false,
           "json_name": "intent_id",
-          "required": true,
+          "required": false,
           "schema": {
-            "title": "Intent Id",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Intent Id"
+          }
+        },
+        "origin": {
+          "default": "publication",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "origin",
+          "required": false,
+          "schema": {
+            "default": "publication",
+            "enum": [
+              "publication",
+              "declaration"
+            ],
+            "title": "Origin",
             "type": "string"
           }
         },
@@ -7697,18 +7909,51 @@
             "type": "string"
           },
           "claim_identity": {
-            "title": "Claim Identity",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Identity"
           },
           "coordinate": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
           },
           "expectation_id": {
-            "title": "Expectation Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expectation Id"
           },
           "intent_id": {
-            "title": "Intent Id",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Intent Id"
+          },
+          "origin": {
+            "default": "publication",
+            "enum": [
+              "publication",
+              "declaration"
+            ],
+            "title": "Origin",
             "type": "string"
           },
           "outcome": {
@@ -7733,10 +7978,7 @@
         "required": [
           "source_id",
           "block_id",
-          "intent_id",
-          "expectation_id",
           "outcome",
-          "claim_identity",
           "coordinate"
         ],
         "title": "PlaybillBlockDepublishResultV1",
@@ -7744,10 +7986,7 @@
       },
       "required_fields": [
         "block_id",
-        "claim_identity",
         "coordinate",
-        "expectation_id",
-        "intent_id",
         "outcome",
         "source_id"
       ]
@@ -7793,6 +8032,8 @@
           "schema": {
             "enum": [
               "unchanged",
+              "stale",
+              "dirty",
               "synced",
               "would_sync",
               "detached",
@@ -7829,23 +8070,16 @@
                   "workspace_not_attached",
                   "workspace_binding_invalid",
                   "workspace_instance_mismatch",
-                  "workspace_source_catalog_missing",
                   "workspace_source_catalog_invalid",
                   "source_path_invalid",
                   "source_not_projection_target",
                   "block_marker_malformed",
                   "block_unstamped",
-                  "block_multi_backing",
-                  "block_query_backing",
                   "block_locally_modified",
                   "block_backing_missing",
                   "block_backing_changed",
-                  "block_not_publication_origin",
-                  "block_publication_registry_unavailable",
                   "block_backing_retired",
                   "block_successor_ambiguous",
-                  "block_successor_body_missing",
-                  "block_successor_body_ambiguous",
                   "block_concurrent_edit",
                   "block_frame_invalid",
                   "block_sync_failed"
@@ -7997,6 +8231,8 @@
           "outcome": {
             "enum": [
               "unchanged",
+              "stale",
+              "dirty",
               "synced",
               "would_sync",
               "detached",
@@ -8019,23 +8255,16 @@
                   "workspace_not_attached",
                   "workspace_binding_invalid",
                   "workspace_instance_mismatch",
-                  "workspace_source_catalog_missing",
                   "workspace_source_catalog_invalid",
                   "source_path_invalid",
                   "source_not_projection_target",
                   "block_marker_malformed",
                   "block_unstamped",
-                  "block_multi_backing",
-                  "block_query_backing",
                   "block_locally_modified",
                   "block_backing_missing",
                   "block_backing_changed",
-                  "block_not_publication_origin",
-                  "block_publication_registry_unavailable",
                   "block_backing_retired",
                   "block_successor_ambiguous",
-                  "block_successor_body_missing",
-                  "block_successor_body_ambiguous",
                   "block_concurrent_edit",
                   "block_frame_invalid",
                   "block_sync_failed"
@@ -8249,7 +8478,7 @@
                     }
                   ]
                 },
-                "maxItems": 64,
+                "maxItems": 512,
                 "minItems": 1,
                 "title": "Backing",
                 "type": "array"
@@ -8606,6 +8835,40 @@
             "title": "Generation"
           }
         },
+        "moved_backings": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "moved_backings",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "playbill-projection-artifact-backing-v1": "#/$defs/ProjectionArtifactBackingV1",
+                  "playbill-projection-claim-backing-v1": "#/$defs/ProjectionClaimBackingV1",
+                  "playbill-projection-query-backing-v1": "#/$defs/ProjectionQueryBackingV1"
+                },
+                "propertyName": "tag"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/ProjectionArtifactBackingV1"
+                },
+                {
+                  "$ref": "#/$defs/ProjectionClaimBackingV1"
+                },
+                {
+                  "$ref": "#/$defs/ProjectionQueryBackingV1"
+                }
+              ]
+            },
+            "title": "Moved Backings",
+            "type": "array"
+          }
+        },
         "original_artifact_digest": {
           "default": null,
           "default_json_serializable": true,
@@ -8640,12 +8903,8 @@
                   "block_workspace_instance_mismatch",
                   "block_backing_missing",
                   "block_backing_changed",
-                  "block_not_publication_origin",
-                  "block_publication_registry_unavailable",
                   "block_backing_retired",
-                  "block_successor_ambiguous",
-                  "block_successor_body_missing",
-                  "block_successor_body_ambiguous"
+                  "block_successor_ambiguous"
                 ],
                 "type": "string"
               },
@@ -8934,6 +9193,7 @@
           }
         },
         "additionalProperties": false,
+        "description": "What the daemon can say about one declared block, without rendering it.\n\nThis read used to return the accepted BODY a single-Claim block would be\nrewritten to. Nothing renders any more: a projection block is prose the\nagent wrote, held to an explicit backing list, and the only question worth\nasking of accepted state is whether that list still reads as it did. So the\nbody fields stay in the shape and are never populated -- an older client\nthat asks for them gets nothing rather than a rewrite it did not expect --\nand the answer is a currency verdict over EVERY held backing instead of one.",
         "properties": {
           "artifact_digest": {
             "anyOf": [
@@ -9037,6 +9297,32 @@
             "default": null,
             "title": "Generation"
           },
+          "moved_backings": {
+            "default": [],
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "playbill-projection-artifact-backing-v1": "#/$defs/ProjectionArtifactBackingV1",
+                  "playbill-projection-claim-backing-v1": "#/$defs/ProjectionClaimBackingV1",
+                  "playbill-projection-query-backing-v1": "#/$defs/ProjectionQueryBackingV1"
+                },
+                "propertyName": "tag"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/ProjectionArtifactBackingV1"
+                },
+                {
+                  "$ref": "#/$defs/ProjectionClaimBackingV1"
+                },
+                {
+                  "$ref": "#/$defs/ProjectionQueryBackingV1"
+                }
+              ]
+            },
+            "title": "Moved Backings",
+            "type": "array"
+          },
           "original_artifact_digest": {
             "anyOf": [
               {
@@ -9056,12 +9342,8 @@
                   "block_workspace_instance_mismatch",
                   "block_backing_missing",
                   "block_backing_changed",
-                  "block_not_publication_origin",
-                  "block_publication_registry_unavailable",
                   "block_backing_retired",
-                  "block_successor_ambiguous",
-                  "block_successor_body_missing",
-                  "block_successor_body_ambiguous"
+                  "block_successor_ambiguous"
                 ],
                 "type": "string"
               },
@@ -9227,6 +9509,8 @@
               "outcome": {
                 "enum": [
                   "unchanged",
+                  "stale",
+                  "dirty",
                   "synced",
                   "would_sync",
                   "detached",
@@ -9249,23 +9533,16 @@
                       "workspace_not_attached",
                       "workspace_binding_invalid",
                       "workspace_instance_mismatch",
-                      "workspace_source_catalog_missing",
                       "workspace_source_catalog_invalid",
                       "source_path_invalid",
                       "source_not_projection_target",
                       "block_marker_malformed",
                       "block_unstamped",
-                      "block_multi_backing",
-                      "block_query_backing",
                       "block_locally_modified",
                       "block_backing_missing",
                       "block_backing_changed",
-                      "block_not_publication_origin",
-                      "block_publication_registry_unavailable",
                       "block_backing_retired",
                       "block_successor_ambiguous",
-                      "block_successor_body_missing",
-                      "block_successor_body_ambiguous",
                       "block_concurrent_edit",
                       "block_frame_invalid",
                       "block_sync_failed"
@@ -9992,7 +10269,6 @@
             "enum": [
               "independent",
               "self_source",
-              "self_published",
               "legacy"
             ],
             "title": "Citation Origin",
@@ -10161,7 +10437,6 @@
             "enum": [
               "independent",
               "self_source",
-              "self_published",
               "legacy"
             ],
             "title": "Citation Origin",
@@ -11014,7 +11289,6 @@
                 "enum": [
                   "independent",
                   "self_source",
-                  "self_published",
                   "legacy"
                 ],
                 "title": "Citation Origin",
@@ -11502,7 +11776,6 @@
                 "enum": [
                   "independent",
                   "self_source",
-                  "self_published",
                   "legacy"
                 ],
                 "title": "Citation Origin",
@@ -15229,7 +15502,6 @@
                 "enum": [
                   "independent",
                   "self_source",
-                  "self_published",
                   "legacy"
                 ],
                 "title": "Citation Origin",
@@ -21934,6 +22206,18 @@
               },
               "selector": {
                 "$ref": "#/$defs/WorkingAnchorWindowV1"
+              },
+              "source_content_base64": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Content Base64"
               },
               "source_id": {
                 "title": "Source Id",
@@ -34184,6 +34468,8 @@
               "outcome": {
                 "enum": [
                   "unchanged",
+                  "stale",
+                  "dirty",
                   "synced",
                   "would_sync",
                   "detached",
@@ -34206,23 +34492,16 @@
                       "workspace_not_attached",
                       "workspace_binding_invalid",
                       "workspace_instance_mismatch",
-                      "workspace_source_catalog_missing",
                       "workspace_source_catalog_invalid",
                       "source_path_invalid",
                       "source_not_projection_target",
                       "block_marker_malformed",
                       "block_unstamped",
-                      "block_multi_backing",
-                      "block_query_backing",
                       "block_locally_modified",
                       "block_backing_missing",
                       "block_backing_changed",
-                      "block_not_publication_origin",
-                      "block_publication_registry_unavailable",
                       "block_backing_retired",
                       "block_successor_ambiguous",
-                      "block_successor_body_missing",
-                      "block_successor_body_ambiguous",
                       "block_concurrent_edit",
                       "block_frame_invalid",
                       "block_sync_failed"

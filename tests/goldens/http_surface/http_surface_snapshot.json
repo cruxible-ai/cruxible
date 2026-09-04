@@ -27,12 +27,6 @@
   "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/abandon": {
     "POST": "PlaybillInsertionAbandonResult"
   },
-  "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/confirm": {
-    "POST": "PlaybillInsertionConfirmResultV2"
-  },
-  "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/prepare": {
-    "POST": "PlaybillInsertionPrepareResult"
-  },
   "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/preflight": {
     "POST": "PlaybillAuthoringPreflightResult"
   },
@@ -47,6 +41,9 @@
   },
   "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/submit": {
     "POST": "PlaybillAuthoringSubmitResult"
+  },
+  "/api/v1/{instance_id}/playbill/blocks/declare": {
+    "POST": "PlaybillBlockDeclareResultV1"
   },
   "/api/v1/{instance_id}/playbill/blocks/depublish": {
     "POST": "PlaybillBlockDepublishResultV1"
