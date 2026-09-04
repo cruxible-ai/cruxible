@@ -14,6 +14,7 @@ from cruxible_client.authoring.inputs import (
     ClaimRetirementInput,
     ClaimTypeInput,
     ClaimTypeSuccessionInput,
+    ExactContentObjectInput,
     ExistingCaptureInput,
     LiteralObjectInput,
     ProcedureInput,
@@ -59,6 +60,7 @@ AuthoringExampleName = Literal[
     "claim-flow-a",
     "claim-self-source",
     "claim-subject-relation",
+    "claim-exact-content",
     "procedure",
     "claim-adjudicate-contradicting-evidence",
     "claim-cite-supporting-evidence",
@@ -295,6 +297,32 @@ def claim_subject_relation_example() -> ClaimInput:
         role="observation",
         rationale="Replace with why this vulnerability affects the accepted package.",
         source=SelfSourceInput(kind="self_source", body="affected package: replace-me\n"),
+    )
+
+
+def claim_exact_content_example() -> ClaimInput:
+    """A Claim whose object IS the text, not a value that names it.
+
+    Rulings and method laws are this shape: the statement is the wording, so the
+    object carries the body rather than a literal the ClaimType admits. `text`
+    is the ordinary spelling; `content_base64` is the same object for bytes that
+    are not text.
+    """
+
+    return ClaimInput(
+        kind="claim",
+        subject="project.method/replace-me",
+        predicate="project.method.law",
+        object=ExactContentObjectInput(
+            kind="exact_content",
+            text="Replace with the ruling exactly as it was written.\n",
+        ),
+        role="normative",
+        rationale="Replace with why this wording is the governed one.",
+        source=SelfSourceInput(
+            kind="self_source",
+            body="Replace with the ruling exactly as it was written.\n",
+        ),
     )
 
 
@@ -561,6 +589,7 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
     "claim-flow-a": claim_flow_a_example,
     "claim-self-source": claim_self_source_example,
     "claim-subject-relation": claim_subject_relation_example,
+    "claim-exact-content": claim_exact_content_example,
     "procedure": procedure_example,
     "query-claims-by-type": query_claims_by_type_example,
     "subject": subject_example,
@@ -581,6 +610,7 @@ AUTHORING_EXAMPLE_NAMES: Final[tuple[AuthoringExampleName, ...]] = (
     "claim-flow-a",
     "claim-self-source",
     "claim-subject-relation",
+    "claim-exact-content",
     "procedure",
     "claim-adjudicate-contradicting-evidence",
     "claim-cite-supporting-evidence",
@@ -650,6 +680,7 @@ __all__ = [
     "claim_type_succession_example",
     "claim_existing_capture_example",
     "claim_flow_a_example",
+    "claim_exact_content_example",
     "claim_self_source_example",
     "claim_subject_relation_example",
     "document_example",

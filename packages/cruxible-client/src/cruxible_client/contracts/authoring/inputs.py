@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal, TypeAlias, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
 from cruxible_client.contracts.artifacts import ArtifactIdentity
@@ -78,8 +78,30 @@ class SubjectObjectInput(_StrictInputModel):
 
 
 class ExactContentObjectInput(_StrictInputModel):
+    """The exact bytes a Claim's object IS, spelled as text or as base64.
+
+    `text` is the ordinary spelling and stays the ordinary spelling: rulings and
+    method laws are prose, and prose typed into JSON should not have to be
+    encoded first. `content_base64` is for the bytes text cannot carry -- a body
+    that is not valid UTF-8, or one whose exact bytes matter more than its
+    reading -- and is the same spelling the SDK's own `ExactContent` lowers to,
+    so the two doors put identical bytes in the ledger.
+
+    Exactly one of them, because two spellings of one body are two bodies the
+    moment they disagree, and the digest is over the bytes.
+    """
+
     kind: Literal["exact_content"]
-    text: str
+    text: str | None = None
+    content_base64: str | None = None
+
+    @model_validator(mode="after")
+    def _one_spelling(self) -> "ExactContentObjectInput":
+        if (self.text is None) == (self.content_base64 is None):
+            raise ValueError(
+                "an exact_content object carries exactly one of text or content_base64"
+            )
+        return self
 
 
 AuthoringObjectInput: TypeAlias = Annotated[
@@ -295,6 +317,9 @@ def _claim_object(
         return SubjectClaimObject(
             address=_subject_address(value.subject, field_path="input.object.subject")
         )
+    if value.content_base64 is not None:
+        return AuthoringExactContentObjectV1(content_base64=value.content_base64)
+    assert value.text is not None
     return AuthoringExactContentObjectV1(
         content_base64=base64.b64encode(value.text.encode("utf-8")).decode("ascii")
     )

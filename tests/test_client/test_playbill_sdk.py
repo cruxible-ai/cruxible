@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +15,8 @@ from cruxible_client import (
     ClaimRole,
     ClaimTypeRef,
     Disposition,
+    ExactContent,
+    ExactContentTypeError,
     Playbill,
     ReferentSensitivity,
     SubjectRef,
@@ -31,12 +34,14 @@ from cruxible_client.contracts.artifacts import (
     ArtifactLifecycle,
 )
 from cruxible_client.contracts.authoring.models import (
+    AuthoringExactContentObjectV1,
     ClaimAuthoringPayloadV2,
     ClaimAuthoringPayloadV3,
 )
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicyV1,
     ClaimAttestationConsequenceRuleV1,
+    ClaimType,
 )
 from cruxible_client.contracts.claims import LiteralClaimObject, SubjectClaimObject
 from cruxible_client.contracts.declared_blocks import (
@@ -45,6 +50,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
+    ClaimEvidenceAdmissionPolicyV1,
     ClaimResolutionPolicyV1,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -70,6 +76,7 @@ class _Client:
         self.audit_request: dict[str, object] | None = None
         self.retirement_request: dict[str, object] | None = None
         self.claim_type_object_kinds: dict[str, str] = {"sec.vuln.affects_package": "subject"}
+        self.claim_type_reads = 0
 
     def get_playbill_claim_type(
         self,
@@ -78,6 +85,7 @@ class _Client:
         *,
         at: api.PlaybillAcceptedCoordinate,
     ) -> api.PlaybillClaimTypeView:
+        self.claim_type_reads += 1
         return api.PlaybillClaimTypeView(
             coordinate=at,
             path=f"claim-types/{predicate}.json",
@@ -1508,3 +1516,156 @@ def test_refusal_diagnostic_maps_exact_payload_path_to_the_call_expression(
     assert diagnostic.offending_element == "statement.role"
     assert diagnostic.call_site is not None
     assert diagnostic.call_site.expression == "ClaimRole.NORMATIVE"
+
+
+def _staged_claim_type(predicate: str, *, object_kind: str) -> ClaimType:
+    """One whole ClaimType a change set can define, minimal but real."""
+
+    return ClaimType(
+        identity=ArtifactIdentity(kind="ClaimType", name=predicate),
+        predicate=predicate,
+        allowed_subject_kinds=("sec.vuln",),
+        allowed_object_subject_kinds=("sec.package",) if object_kind == "subject" else (),
+        object_kind=object_kind,  # type: ignore[arg-type]
+        literal_schema={"type": "string"} if object_kind == "literal" else None,
+        cardinality="one",
+        permitted_roles=("normative", "observation"),
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(rules=()),
+        admission_policy=ClaimAdmissionPolicyV1(),
+        resolution_policy=ClaimResolutionPolicyV1(
+            cardinality="one",
+            eligible_verdicts=("supported",),
+            selector="only_contender",
+        ),
+    )
+
+
+def test_exact_content_authors_the_object_the_wire_has_always_carried(
+    tmp_path: Path,
+) -> None:
+    """Card 84: rulings and method laws are exact-content Claims, and the SDK can say so."""
+
+    _workspace(tmp_path)
+    client = _Client()
+    client.claim_type_object_kinds.update({"docs.exact": "exact_content"})
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_test",
+        workspace=tmp_path,
+    )
+
+    draft = pb.claim(
+        predicate="docs.exact",
+        value=ExactContent("the ruling exactly as it was written\n"),
+        rationale="The statement is the wording, so the object is the wording.",
+        self_source="the ruling exactly as it was written\n",
+        **_OBJECT_KIND_CLAIM_DEFAULTS,  # type: ignore[arg-type]
+    )
+
+    assert draft.payload.statement.object == AuthoringExactContentObjectV1(
+        content_base64=base64.b64encode(b"the ruling exactly as it was written\n").decode("ascii")
+    )
+    assert draft.payload.statement.object.content == b"the ruling exactly as it was written\n"
+
+
+def test_exact_content_keeps_bytes_that_are_not_text(tmp_path: Path) -> None:
+    """A body whose exact bytes matter more than its reading is still one object."""
+
+    _workspace(tmp_path)
+    client = _Client()
+    client.claim_type_object_kinds.update({"docs.exact": "exact_content"})
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_test",
+        workspace=tmp_path,
+    )
+
+    draft = pb.claim(
+        predicate="docs.exact",
+        value=ExactContent(b"\xff\xfe not utf-8"),
+        rationale="The bytes are the object.",
+        self_source="binary body",
+        **_OBJECT_KIND_CLAIM_DEFAULTS,  # type: ignore[arg-type]
+    )
+
+    assert draft.payload.statement.object.content == b"\xff\xfe not utf-8"
+
+
+def test_exact_content_on_a_literal_predicate_refuses_before_the_wire(
+    tmp_path: Path,
+) -> None:
+    """The preflight kind check: exact bytes name their own kind, so the only
+    question left is whether the predicate states one."""
+
+    _workspace(tmp_path)
+    client = _Client()
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_test",
+        workspace=tmp_path,
+    )
+
+    with pytest.raises(ExactContentTypeError) as refused:
+        pb.claim(
+            predicate="docs.plain",
+            value=ExactContent("a body a literal predicate cannot hold"),
+            rationale="The predicate states a literal.",
+            self_source="literal predicate",
+            **_OBJECT_KIND_CLAIM_DEFAULTS,  # type: ignore[arg-type]
+        )
+
+    assert refused.value.code == "playbill.sdk.exact_content_claim_type_mismatch"
+    assert "docs.plain" in str(refused.value)
+    assert "literal" in str(refused.value)
+
+
+def test_a_string_value_reads_the_object_kind_from_the_sets_own_definition(
+    tmp_path: Path,
+) -> None:
+    """Card 85: the same set already answered, so the accepted coordinate is not asked.
+
+    The typed ref path never needed a lookup. The string convenience path did,
+    and it went straight past the definition sitting in this very set to read
+    the accepted ClaimType -- which in a first generation is a coordinate that
+    does not exist yet.
+    """
+
+    _workspace(tmp_path)
+    client = _Client()
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_test",
+        workspace=tmp_path,
+    )
+    reads_before = client.claim_type_reads
+
+    draft = pb.changes(rationale="Define the predicate and state one Claim under it.")
+    draft.claim_type(_staged_claim_type("sec.vuln.affects", object_kind="subject"))
+    draft.claim(
+        subject="sec.vuln/cve-2026-0001",
+        predicate="sec.vuln.affects",
+        value="sec.package/click",
+        role=ClaimRole.OBSERVATION,
+        rationale="The advisory names this package.",
+        supported_by=None,
+        copied_from=None,
+        self_source="affects: click\n",
+        qualifier=None,
+        effective_period=None,
+        revises=None,
+        dispositions={},
+        publish_to=None,
+        subject_definition=None,
+        claim_type_definition=None,
+    )
+
+    compiled = draft._compiled()
+    claim = next(
+        member
+        for member in compiled.payload.members
+        if member.model_dump(mode="json")["tag"].startswith("playbill-claim-authoring-payload-")
+    )
+
+    assert isinstance(claim.statement.object, SubjectClaimObject)
+    assert claim.statement.object.address.artifact_path == "subjects/sec.package/click.json"
+    assert client.claim_type_reads == reads_before, "the set's own definition answered"

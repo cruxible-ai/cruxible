@@ -137,6 +137,37 @@ class LiteralValue:
 
 
 @dataclass(frozen=True)
+class ExactContent:
+    """The exact bytes a Claim's object IS, rather than a value that names them.
+
+    Rulings and method laws are `exact_content` Claims: the object is not a
+    literal the ClaimType admits and not an address, it is the text as written.
+    The wire has carried that shape all along; the SDK could not spell it, so
+    an author with 85 of them built them by hand through the compiled payload
+    path instead.
+
+    `content` takes `str` or `bytes` and keeps bytes: a Claim's object is
+    exactly the bytes the daemon digests, and text is UTF-8 on the way in so
+    that "as written" and "as digested" are the same thing.
+
+    There is deliberately no media type. The accepted artifact carries a digest
+    and a span and has nowhere to put one, so a media type accepted here would
+    be dropped between this object and the ledger -- which is worse than not
+    offering it, because the caller would believe it had been recorded.
+    """
+
+    content: bytes
+
+    def __init__(self, content: bytes | str) -> None:
+        if isinstance(content, str):
+            object.__setattr__(self, "content", content.encode("utf-8"))
+        elif isinstance(content, bytes):
+            object.__setattr__(self, "content", content)
+        else:
+            raise TypeError("exact content must be str or bytes")
+
+
+@dataclass(frozen=True)
 class Duration:
     value: int
 
@@ -344,6 +375,21 @@ class LiteralValueTypeError(PlaybillSdkError):
         )
 
 
+class ExactContentTypeError(PlaybillSdkError):
+    """Exact bytes were passed to a ClaimType whose object is not exact content."""
+
+    code = "playbill.sdk.exact_content_claim_type_mismatch"
+
+    def __init__(self, *, predicate: str, object_kind: str) -> None:
+        self.predicate = predicate
+        self.object_kind = object_kind
+        super().__init__(
+            f"ClaimType {predicate!r} states a {object_kind} object, so it cannot carry the "
+            "exact bytes of a body. Repair: state this under a predicate whose object_kind "
+            f"is exact_content, or pass the {object_kind} value {predicate!r} admits."
+        )
+
+
 class LiteralSchemaError(PlaybillSdkError):
     """A value refused by its ClaimType's declared literal schema."""
 
@@ -404,6 +450,8 @@ __all__ = [
     "Disposition",
     "Duration",
     "EffectivePeriod",
+    "ExactContent",
+    "ExactContentTypeError",
     "IncompatibleDaemonVersion",
     "InsertionOperation",
     "LiteralSchemaError",

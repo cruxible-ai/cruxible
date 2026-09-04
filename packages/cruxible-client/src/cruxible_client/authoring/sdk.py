@@ -52,6 +52,8 @@ from cruxible_client.authoring.sdk_types import (
     Disposition,
     Duration,
     EffectivePeriod,
+    ExactContent,
+    ExactContentTypeError,
     LiteralValue,
     LiteralValueTypeError,
     PendingClaimTypeRef,
@@ -93,6 +95,7 @@ from cruxible_client.contracts.authoring.models import (
     AUTHORING_SDK_VERSION,
     AuthoringChangeSetMemberV1,
     AuthoringClaimStatementV1,
+    AuthoringExactContentObjectV1,
     AuthoringExistingClaimDispositionV1,
     AuthoringProgramOperationV1,
     AuthoringProgramStampV1,
@@ -630,7 +633,7 @@ class ChangeSetDraft:
         *,
         subject: str | SubjectRef,
         predicate: str | ClaimTypeRef,
-        value: CanonicalValue | SubjectRef | LiteralValue,
+        value: CanonicalValue | SubjectRef | LiteralValue | ExactContent,
         role: ClaimRole | str,
         rationale: str,
         supported_by: EvidenceSelection | CaptureRef | None,
@@ -663,6 +666,7 @@ class ChangeSetDraft:
             publish_to=publish_to,
             subject_definition=subject_definition,
             claim_type_definition=claim_type_definition,
+            staged_object_kinds=self._staged_object_kinds(),
         )
         assert isinstance(draft.payload, ClaimAuthoringPayloadV1)
         self._members.append(
@@ -674,6 +678,23 @@ class ChangeSetDraft:
             )
         )
         return self
+
+    def _staged_object_kinds(self) -> dict[str, str]:
+        """The object kinds this set's own ClaimType definitions declare, by predicate.
+
+        A ref returned by `.claim_type(...)` already carries its object kind, so
+        a caller who keeps the ref needs nothing here. A caller who names the
+        predicate as a string does: the object-kind lookup would otherwise skip
+        the definition sitting in this very set and read the accepted
+        coordinate, where in a first generation there is no coordinate at all.
+        Same set, same answer, whichever way the predicate is spelled.
+        """
+
+        return {
+            member.payload.claim_type.predicate: member.payload.claim_type.object_kind
+            for member in self._members
+            if isinstance(member.payload, ClaimTypeAuthoringPayloadV1)
+        }
 
     def subject(self, definition: SubjectDraft | SubjectShell) -> PendingSubjectRef:
         """Define one Subject inside this changeset, and return a ref to it.
@@ -1781,7 +1802,7 @@ class Playbill:
         *,
         subject: str | SubjectRef,
         predicate: str | ClaimTypeRef,
-        value: CanonicalValue | SubjectRef | LiteralValue,
+        value: CanonicalValue | SubjectRef | LiteralValue | ExactContent,
         role: ClaimRole | str,
         rationale: str,
         supported_by: EvidenceSelection | CaptureRef | None,
@@ -1820,7 +1841,7 @@ class Playbill:
         sites: dict[str, CallSite],
         subject: str | SubjectRef,
         predicate: str | ClaimTypeRef,
-        value: CanonicalValue | SubjectRef | LiteralValue,
+        value: CanonicalValue | SubjectRef | LiteralValue | ExactContent,
         role: ClaimRole | str,
         rationale: str,
         supported_by: EvidenceSelection | CaptureRef | None,
@@ -1833,6 +1854,7 @@ class Playbill:
         publish_to: InsertionSelection | None,
         subject_definition: SubjectDraft | None,
         claim_type_definition: ClaimTypeDraft | None,
+        staged_object_kinds: Mapping[str, str] | None = None,
     ) -> ClaimDraft:
         """Build one authored Claim from decisions plus its caller's call sites.
 
@@ -1860,8 +1882,27 @@ class Playbill:
             elif subject_name.endswith(".yaml"):
                 subject_name = subject_name.removesuffix(".yaml")
         predicate_name = _address(predicate, RefKind.CLAIM_TYPE)
-        statement_object: LiteralClaimObject | SubjectClaimObject
-        if isinstance(value, LiteralValue):
+        statement_object: LiteralClaimObject | SubjectClaimObject | AuthoringExactContentObjectV1
+        if isinstance(value, ExactContent):
+            # Exact bytes name their own kind, so the only question left is
+            # whether the predicate states one. Asking here turns a shape the
+            # daemon would refuse into a refusal that names the predicate and
+            # the kind it does state, before anything is written.
+            object_kind = self._claim_type_object_kind(
+                predicate_name=predicate_name,
+                predicate=predicate,
+                claim_type_definition=claim_type_definition,
+                staged_object_kinds=staged_object_kinds,
+            )
+            if object_kind != "exact_content":
+                raise ExactContentTypeError(
+                    predicate=predicate_name,
+                    object_kind=object_kind,
+                )
+            statement_object = AuthoringExactContentObjectV1(
+                content_base64=base64.b64encode(value.content).decode("ascii")
+            )
+        elif isinstance(value, LiteralValue):
             # A typed literal already names the ClaimType that admits it, so it
             # answers the object kind without a read and refuses the wrong
             # predicate here rather than in the daemon's preflight.
@@ -1880,6 +1921,7 @@ class Playbill:
                 predicate_name=predicate_name,
                 predicate=predicate,
                 claim_type_definition=claim_type_definition,
+                staged_object_kinds=staged_object_kinds,
             )
             statement_object = (
                 SubjectClaimObject(address=_subject_address(value))
@@ -2023,6 +2065,8 @@ class Playbill:
                 (
                     "statement.object.address"
                     if isinstance(statement_object, SubjectClaimObject)
+                    else "statement.object.content_base64"
+                    if isinstance(statement_object, AuthoringExactContentObjectV1)
                     else "statement.object.value"
                 ),
             ),
@@ -2045,6 +2089,11 @@ class Playbill:
             "value": (
                 statement_object.address.model_dump(mode="json")
                 if isinstance(statement_object, SubjectClaimObject)
+                # The program stamp records the decision, not the body: exact
+                # content is already stored and digested by the daemon, and a
+                # second copy of it here would put the same bytes in the stamp.
+                else statement_object.content_base64
+                if isinstance(statement_object, AuthoringExactContentObjectV1)
                 else statement_object.value
             ),
             "role": claim_role.value,
@@ -2105,8 +2154,16 @@ class Playbill:
         predicate_name: str,
         predicate: str | ClaimTypeRef,
         claim_type_definition: ClaimTypeDraft | None,
+        staged_object_kinds: Mapping[str, str] | None = None,
     ) -> Literal["literal", "subject", "exact_content"]:
-        """Resolve the exact ClaimType before interpreting address-shaped strings."""
+        """Resolve the exact ClaimType before interpreting an untyped object.
+
+        Three answers a change set already holds, tried before the accepted
+        coordinate is read: the definition this Claim carries as a dependency
+        draft, the ref a same-set definition returned, and the definitions the
+        same set staged under other names. Only then is there anything to ask
+        the daemon, and in a first generation there is no coordinate to ask at.
+        """
 
         if claim_type_definition is not None:
             return claim_type_definition.definition.object_kind
@@ -2117,6 +2174,9 @@ class Playbill:
                 Literal["literal", "subject", "exact_content"],
                 predicate.object_kind,
             )
+        staged = (staged_object_kinds or {}).get(predicate_name)
+        if staged in _CLAIM_TYPE_OBJECT_KINDS:
+            return cast(Literal["literal", "subject", "exact_content"], staged)
         coordinate = (
             predicate.coordinate if isinstance(predicate, ClaimTypeRef) else self.coordinate
         )
