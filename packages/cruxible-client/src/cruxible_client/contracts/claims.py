@@ -529,7 +529,18 @@ class ClaimArtifactV2(_StrictClaimModel):
         return self
 
 
-ClaimRetirementReason: TypeAlias = Literal["was-rescinded", "was-wrong"]
+ClaimRetirementReason: TypeAlias = Literal["was-rescinded", "was-wrong", "superseded"]
+"""Why a Claim's lineage ends, in the reader's own filter.
+
+`was-wrong` says the statement was false. `was-rescinded` says the authority
+behind it was withdrawn. Neither describes the ordinary case of a shape a later
+ruling replaced: twenty-six Claims that correctly said "this block is
+published", under a publication shape a ruling then withdrew, were neither
+wrong nor rescinded, and spelling them `was-rescinded` put the less informative
+of the two recorded facts in the field a reader can filter on. `superseded` is
+that case, and only that case: the statement stood, and the shape it was made
+under does not.
+"""
 
 
 class ClaimRetirementAttributionV1(_StrictClaimModel):

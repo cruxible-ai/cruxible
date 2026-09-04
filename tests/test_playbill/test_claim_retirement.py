@@ -270,7 +270,7 @@ def _accepted_dependency_world(tmp_path: Path):  # type: ignore[no-untyped-def]
     return instance, owner, STATUS_CLAIM_ID, SUMMARY_CLAIM_ID, leaf_id
 
 
-@pytest.mark.parametrize("reason", ["was-rescinded", "was-wrong"])
+@pytest.mark.parametrize("reason", ["was-rescinded", "was-wrong", "superseded"])
 def test_root_only_retirement_is_idempotent_and_post_activation_terminal(
     tmp_path: Path,
     reason: str,

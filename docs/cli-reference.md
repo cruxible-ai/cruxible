@@ -520,7 +520,9 @@ both members author the same artifact path, and the set refuses
 that predecessor's exact digest; `dependents` is the exact closure computed over
 the staged tree. Each dependent takes `successor` (carry it, re-pinned),
 `retire` (a tombstone, with `claim_retirement_reason` `was-rescinded` for a
-rescission) or `re_author` (a sibling Claim member of the same set, naming that
+rescission, `was-wrong` for a statement that was false, or `superseded` for the
+ordinary case of a statement that stood under a shape a later ruling replaced)
+or `re_author` (a sibling Claim member of the same set, naming that
 Claim again under the successor, named by `successor_claim_id`). The standalone
 route's fourth, deprecated word `invalidation` parses here and refuses typed,
 naming `cruxible playbill claim-type migrate` as the road that still tolerates

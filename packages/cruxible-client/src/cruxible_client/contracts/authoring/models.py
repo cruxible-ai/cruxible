@@ -1018,7 +1018,14 @@ class ClaimTypeSuccessionMemberV1(_StrictAuthoringModel):
     @classmethod
     def _successor(cls, value: ClaimType) -> ClaimType:
         if value.lifecycle.state != "live":
-            raise ValueError("a ClaimType succession installs a live successor")
+            # The standalone migration route accepts a byte-identical retiring
+            # successor without comment, so an author who knows one road did not
+            # know the other: the refusal now says which road takes it.
+            raise ValueError(
+                "a ClaimType succession installs a live successor; retire a ClaimType "
+                "through `cruxible playbill claim-type migrate`, which is the road that "
+                "takes a retiring successor"
+            )
         if value.lifecycle.predecessor_digest is None:
             raise ValueError(
                 "a ClaimType succession member names the predecessor it succeeds; "

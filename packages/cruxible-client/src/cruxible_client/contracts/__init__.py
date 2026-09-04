@@ -1015,7 +1015,7 @@ class PlaybillClaimRetirePreflight(BaseModel):
     coordinate: PlaybillAcceptedCoordinate
     root_identity: dict[str, Any]
     root_predecessor_digest: str
-    reason: Literal["was-rescinded", "was-wrong"]
+    reason: Literal["was-rescinded", "was-wrong", "superseded"]
     effective_until: str | None
     required_dependents: list[dict[str, Any]]
     # Advisory, never required: live Claims left citing this Claim's Captures.

@@ -170,7 +170,7 @@ by the SDK helpers `carry`, `rescind`, `retire` and `re_author`:
 |---|---|---|
 | `carry(claim)` | `successor` | Re-pinned to the successor, otherwise unchanged. |
 | `rescind(claim)` | `retire` + reason `was-rescinded` | A tombstone that keeps the exact statement it was accepted with, under the vocabulary it was accepted under. |
-| `retire(claim, reason=..., effective_until=...)` | `retire` | An attributed retirement, landing with the succession. |
+| `retire(claim, reason=..., effective_until=...)` | `retire` | An attributed retirement, landing with the succession. `was-wrong` for a false statement, `was-rescinded` for withdrawn authority, `superseded` for a statement that stood under a shape a later ruling replaced. |
 | `re_author(claim)` | `re_author` | Said again by a sibling Claim member of the same set, lowered under the successor. |
 
 The standalone route knows a fourth word, `invalidation`, deprecated there and
