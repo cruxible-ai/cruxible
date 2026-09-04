@@ -33,7 +33,11 @@
   is exact accepted bytes. An inferred walk now notes such a source
   `skipped: source_not_projection_target` and moves on, so a lawful activation
   stops exiting non-zero over it. A path the caller names explicitly still
-  refuses: there the caller asserted the file declares a block.
+  refuses: there the caller asserted the file declares a block. So does a page
+  that DOES declare one, in every selection mode -- a stamped page whose
+  closing marker was deleted, or one repeating a block identity, is a
+  projection target with a defect, and only a source declaring nothing at all
+  is skipped.
 
 - **A change set the ledger could not record is refused before it is
   compiled.** The ledger writes its record OF a change set as one blob holding

@@ -35,6 +35,7 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionQueryBackingV1,
     ProjectionResolvedParameterBindingV1,
     assert_projection_block_frame,
+    declares_projection_block,
     discover_projection_blocks,
     frame_projection_block,
     parse_projection_blocks,
@@ -289,8 +290,15 @@ def _not_a_projection_target_item(
     produced a refusal whose only repair was to hand-edit it, which is exactly
     the repair a capture of accepted bytes cannot take, and the refusal then
     turned every lawful activation that runs the same walk into a non-zero exit.
-    A file with no well-formed declaration is not a projection target, so the
+    A file with no declaration at all is not a projection target, so the
     inferred walk notes it and moves on.
+
+    ONLY that file. A page that declares a block and declares it badly -- a
+    stamped page whose closing marker was deleted, one repeating a block
+    identity -- is a projection target with a defect, and skipping it would hide
+    a real defect behind a clean exit code until somebody happened to name that
+    path. `declares_projection_block` draws the line, and this item is reachable
+    only on its false side.
     """
 
     relative = _relative_path(root, path)
@@ -343,7 +351,7 @@ def _discover_source(
             raise ProjectionMarkerError("projection markers disagree on logical source")
         return next(iter(source_ids)), None
     except ProjectionMarkerError as exc:
-        if inferred:
+        if inferred and not declares_projection_block(content):
             return None, _not_a_projection_target_item(
                 root=root,
                 path=resolved,
@@ -617,10 +625,16 @@ def sync_projection_blocks(
             # source, not necessarily a projection page: a captured report ABOUT
             # the marker grammar carries the marker bytes verbatim and is exact
             # accepted bytes, so "hand edit it" is the one repair it cannot
-            # take. An inferred selection notes it and moves on; a path the
-            # caller named still refuses, because there the caller asserted that
-            # this file declares a block.
-            if all_sources:
+            # take. An inferred selection notes such a source and moves on; a
+            # path the caller named still refuses, because there the caller
+            # asserted that this file declares a block.
+            #
+            # The selection mode is only half the question. A catalogued page
+            # that DOES declare a block and declares it badly is a projection
+            # target with a defect, and it refuses here too -- otherwise a real
+            # marker defect is hidden from `--all`, and from the sync every
+            # activation runs as its last step, behind a zero exit code.
+            if all_sources and not declares_projection_block(content):
                 items.append(
                     _not_a_projection_target_item(
                         root=root,

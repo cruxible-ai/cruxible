@@ -630,3 +630,113 @@ def test_the_catalog_free_workspace_walk_also_skips_a_quoting_capture(
     assert rows["corpus/runbook.md"].outcome == "synced"
     assert result.has_refusals is False
     assert NEW_BODY in source.read_bytes()
+
+
+def _broken_projection_page(root: Path, *, source_id: str, locator: str) -> Path:
+    """A catalogued projection page, stamped, with its closing marker deleted."""
+
+    stamp = ProjectionBlockStampV1(
+        source_id=source_id,
+        block_id="pub-broken",
+        declared_generation=1,
+        declared_coordinate=OLD_COORDINATE,
+        backing=(
+            ProjectionClaimBackingV1(
+                identity=ArtifactIdentity(kind="Claim", name="CLM-" + "b" * 32),
+                statement_digest="sha256:" + "9" * 64,
+            ),
+        ),
+        body_digest=_digest(OLD_BODY),
+    )
+    framed = frame_projection_block(stamp=stamp, body=OLD_BODY)
+    page = root / locator
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_bytes(b"PREFIX\n" + framed.rsplit(b"<!-- /playbill:block:", 1)[0])
+    return page
+
+
+def test_a_registered_page_with_a_deleted_closing_marker_still_refuses_under_all(
+    tmp_path: Path,
+) -> None:
+    """A real marker defect is not hidden behind "not a projection target".
+
+    The skip exists for a capture that merely QUOTES the grammar. This page
+    carries its own stamp -- bytes only a sync writes -- and is catalogued under
+    the source id that stamp names, so it is a projection page by every
+    available reading, with a defect. Classifying it by the selection mode alone
+    made `block sync --all` skip it with `has_refusals` False, and the sync that
+    `proposal activate` runs as its last step therefore exited zero over a
+    broken page until somebody happened to name that path.
+    """
+
+    source = _workspace(tmp_path)
+    _broken_projection_page(tmp_path, source_id="repo.notes", locator="notes/page.md")
+    _catalog_a_second_source(tmp_path, name="repo.notes", locator="notes/page.md")
+
+    result = sync_projection_blocks(
+        _SyncClient(),  # type: ignore[arg-type]
+        INSTANCE_ID,
+        workspace=tmp_path,
+        all_sources=True,
+    )
+
+    rows = {item.path: item for item in result.items}
+    assert rows["notes/page.md"].outcome == "refused"
+    assert rows["notes/page.md"].reason == "block_marker_malformed"
+    assert result.has_refusals is True
+    # The lawful source in the same walk still converges: one broken page is
+    # one refusal, not a stopped walk.
+    assert rows["corpus/runbook.md"].outcome == "synced"
+    assert NEW_BODY in source.read_bytes()
+
+
+def test_a_registered_page_that_repeats_a_block_identity_still_refuses_under_all(
+    tmp_path: Path,
+) -> None:
+    """The second marker defect review found hidden: a duplicated identity."""
+
+    _workspace(tmp_path)
+    page = _broken_projection_page(tmp_path, source_id="repo.notes", locator="notes/page.md")
+    stamped = page.read_bytes().rstrip(b"\n").split(b"\n")[1] + b"\n"
+    page.write_bytes(page.read_bytes() + b"<!-- /playbill:block:pub-broken -->\n" + stamped)
+    _catalog_a_second_source(tmp_path, name="repo.notes", locator="notes/page.md")
+
+    result = sync_projection_blocks(
+        _SyncClient(),  # type: ignore[arg-type]
+        INSTANCE_ID,
+        workspace=tmp_path,
+        all_sources=True,
+    )
+
+    rows = {item.path: item for item in result.items}
+    assert rows["notes/page.md"].outcome == "refused"
+    assert rows["notes/page.md"].reason == "block_marker_malformed"
+    assert "repeats block identity" in str(rows["notes/page.md"].detail["message"])
+    assert result.has_refusals is True
+
+
+def test_the_catalog_free_walk_also_refuses_a_page_that_declares_a_block_badly(
+    tmp_path: Path,
+) -> None:
+    """The inferred walk with no catalog draws the same line."""
+
+    _workspace(tmp_path)
+    (tmp_path / ".playbill" / "sources.yaml").unlink()
+    _broken_projection_page(tmp_path, source_id="repo.notes", locator="notes/page.md")
+    capture = tmp_path / "history" / "agent-reports.md"
+    capture.parent.mkdir()
+    capture.write_bytes(_QUOTING_CAPTURE)
+
+    result = sync_projection_blocks(
+        _SyncClient(),  # type: ignore[arg-type]
+        INSTANCE_ID,
+        workspace=tmp_path,
+        all_sources=True,
+    )
+
+    rows = {item.path: item for item in result.items}
+    assert rows["notes/page.md"].outcome == "refused"
+    assert rows["notes/page.md"].reason == "block_marker_malformed"
+    assert rows["history/agent-reports.md"].outcome == "skipped"
+    assert rows["history/agent-reports.md"].reason == "source_not_projection_target"
+    assert result.has_refusals is True

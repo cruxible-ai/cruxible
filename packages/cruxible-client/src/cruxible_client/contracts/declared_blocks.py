@@ -7,6 +7,7 @@ import binascii
 import hashlib
 import json
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Any, Literal, TypeAlias
@@ -429,26 +430,17 @@ def render_projection_closing(block_id: str) -> bytes:
     return b"<!-- /playbill:block:" + block_id.encode("ascii") + b" -->\n"
 
 
-def _parse_projection_blocks(
-    content: bytes,
-    *,
-    source_id: str | None,
-    allow_bootstrap: bool = False,
-) -> tuple[ParsedProjectionBlock, ...]:
-    """Parse one complete source, refusing every ambiguous declaration boundary."""
+def _marker_candidate_lines(content: bytes) -> Iterator[tuple[bytes, int, int]]:
+    """Yield every line outside a code fence that looks like a projection marker.
 
-    if len(content) > MAX_PROJECTION_SOURCE_BYTES:
-        raise ProjectionMarkerError("projection source exceeds its 4 MiB byte ceiling")
-    try:
-        content.decode("utf-8")
-    except UnicodeError as exc:
-        raise ProjectionMarkerError("projection source is not valid UTF-8") from exc
+    The one scan of the marker grammar. Both the parser and the "does this
+    source declare a block at all" question run over it, so a fenced quotation
+    of the grammar is invisible to both by construction rather than by two
+    implementations agreeing.
+    """
 
     fence_character: int | None = None
     fence_length = 0
-    active: tuple[str, ProjectionBlockStampV1 | None, int, int] | None = None
-    seen: set[str] = set()
-    blocks: list[ParsedProjectionBlock] = []
     offset = 0
     for line in content.splitlines(keepends=True):
         line_start = offset
@@ -478,6 +470,79 @@ def _parse_projection_blocks(
             or candidate.startswith(b"<!-- /playbill:block:")
         ):
             continue
+        yield line, line_start, offset
+
+
+def declares_projection_block(content: bytes) -> bool:
+    """Whether this source DECLARES a projection block, well or badly.
+
+    A workspace-wide sync infers its targets from marker bytes, and prose ABOUT
+    the marker grammar carries those bytes verbatim; parsing such a capture
+    raises the same `ProjectionMarkerError` a genuinely broken projection page
+    raises, so the error alone cannot tell "this is not a projection page" from
+    "this projection page is broken". Answering the first question is what this
+    is for: only a source that declares NOTHING may be skipped, and one that
+    declares a block badly must still refuse.
+
+    Two things count as a declaration, and nothing else does:
+
+    * a STAMP -- an opening marker carrying its base64url stamp. Only a sync
+      writes one, so a source carrying one is a projection page whatever else
+      is wrong with it;
+    * a complete opening/closing pair, even unstamped: a bootstrap block an
+      author wrote by hand and has not synced yet is still a declaration.
+
+    A lone unstamped opening is neither. That is what a quoted grammar looks
+    like, and it is also what a half-written bootstrap page looks like; nothing
+    in the bytes separates them, so an inferred walk lets it be and naming the
+    path explicitly -- which asserts the file declares a block -- still refuses.
+
+    Never raises: a source too large to parse, or not UTF-8, declares nothing
+    here and is refused by the parser on its own terms.
+    """
+
+    if len(content) > MAX_PROJECTION_SOURCE_BYTES:
+        return False
+    try:
+        content.decode("utf-8")
+    except UnicodeError:
+        return False
+    opened: str | None = None
+    for line, _line_start, _offset in _marker_candidate_lines(content):
+        if line != line.lstrip(b" ") or line.endswith(b"\r\n"):
+            continue
+        if _STAMPED_OPEN.fullmatch(line) is not None:
+            return True
+        bootstrap = _BOOTSTRAP_OPEN.fullmatch(line)
+        if bootstrap is not None:
+            opened = bootstrap.group(1).decode("ascii")
+            continue
+        closing = _CLOSE.fullmatch(line)
+        if closing is not None and opened == closing.group(1).decode("ascii"):
+            return True
+    return False
+
+
+def _parse_projection_blocks(
+    content: bytes,
+    *,
+    source_id: str | None,
+    allow_bootstrap: bool = False,
+) -> tuple[ParsedProjectionBlock, ...]:
+    """Parse one complete source, refusing every ambiguous declaration boundary."""
+
+    if len(content) > MAX_PROJECTION_SOURCE_BYTES:
+        raise ProjectionMarkerError("projection source exceeds its 4 MiB byte ceiling")
+    try:
+        content.decode("utf-8")
+    except UnicodeError as exc:
+        raise ProjectionMarkerError("projection source is not valid UTF-8") from exc
+
+    active: tuple[str, ProjectionBlockStampV1 | None, int, int] | None = None
+    seen: set[str] = set()
+    blocks: list[ParsedProjectionBlock] = []
+    for line, line_start, offset in _marker_candidate_lines(content):
+        candidate = line.lstrip(b" ")
         if line != candidate:
             raise ProjectionMarkerError("projection marker must begin at column zero")
         if line.endswith(b"\r\n"):
@@ -669,6 +734,7 @@ __all__ = [
     "ProjectionQueryBackingV1",
     "ProjectionResolvedParameterBindingV1",
     "assert_projection_block_frame",
+    "declares_projection_block",
     "frame_projection_block",
     "parse_projection_blocks",
     "projection_parameter_digest",
