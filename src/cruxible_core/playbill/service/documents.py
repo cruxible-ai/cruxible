@@ -40,6 +40,7 @@ from cruxible_core.playbill.cas import BodyAccessContext, CasObjectMetadata
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.projection_documents import DocumentProjectionView
+from cruxible_core.playbill.proposal_notes import proposal_approval_note
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
@@ -343,7 +344,16 @@ def service_submit_playbill_approval(
         principals=signing_generation.principals,
         purpose="principal-lifecycle" if principal_lifecycle else "ordinary-artifact",
     )
-    instance.proposal_evidence().write_approval(candidate.candidate_digest, submission)
+    evidence = instance.proposal_evidence()
+    evidence.write_approval(candidate.candidate_digest, submission)
+    # The store is durable before Git hears about it, and the note restates the
+    # WHOLE canonical list rather than appending one signer, so a second
+    # approver's note and a re-read of the store are the same bytes.
+    instance.write_proposal_note(
+        "approval",
+        proposal.admission.candidate_commit_oid,
+        evidence.approval_note(candidate.candidate_digest),
+    )
     return _approval_receipt(proposal_id, candidate, verified)
 
 
@@ -382,12 +392,18 @@ def _reconcile_proposal_notes(
       proposal admitted before these refs existed is in that state, so it is
       repaired here rather than turned into a refusal that would strand them.
 
+    A candidate with no approvals is left with no approval note: an empty list
+    projects nothing, and writing one on every unapproved activation would add
+    a Git write to the settlement path to say so.
     """
 
-    del candidate
     evidence = instance.proposal_evidence()
     oid = proposal.admission.candidate_commit_oid
-    projections = (("evaluation", evidence.evaluation_note(proposal.admission.proposal_id)),)
+    approvals = evidence.read_approvals(candidate.candidate_digest)
+    projections = (
+        ("evaluation", evidence.evaluation_note(proposal.admission.proposal_id)),
+        ("approval", proposal_approval_note(approvals)),
+    )
     for kind, expected in projections:
         stored = instance.read_proposal_note(kind, oid)
         if stored == expected:
@@ -399,6 +415,8 @@ def _reconcile_proposal_notes(
                 "re-read the proposal with `playbill proposal review --json` and settle from "
                 "that, or restore the ledger from its own evidence before activating"
             )
+        if kind == "approval" and not approvals:
+            continue
         instance.write_proposal_note(kind, oid, expected)
 
 

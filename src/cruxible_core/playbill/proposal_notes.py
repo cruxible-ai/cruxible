@@ -8,6 +8,9 @@ only the byte shapes, so neither of the two callers can drift from the other.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
+from cruxible_client.contracts.attestations import ApprovalSubmission
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.proposal_models import (
@@ -66,8 +69,23 @@ def proposal_evaluation_note(
     return admission_bytes(admission) + evaluation_bytes(evaluation)
 
 
+def proposal_approval_note(approvals: Sequence[ApprovalSubmission]) -> bytes:
+    """Render the note that projects one candidate's approvals onto its commit.
+
+    One note carries the whole canonical list rather than one note per signer,
+    because Git attaches at most one note per ref per object: a second approver
+    restates the list, and the list is exactly what an approval-policy check
+    reasons over. Each entry keeps the signer's own Ed25519 signature, so the
+    note a reviewer reads out of Git is independently verifiable against the
+    principal registry rather than a claim the daemon makes about it.
+    """
+
+    return canonical_bytes([item.model_dump(mode="json") for item in approvals]) + b"\n"
+
+
 __all__ = [
     "admission_bytes",
     "evaluation_bytes",
+    "proposal_approval_note",
     "proposal_evaluation_note",
 ]

@@ -13,11 +13,16 @@ from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.proposal_notes import (
     admission_bytes,
     evaluation_bytes,
+    proposal_approval_note,
     proposal_evaluation_note,
 )
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
-from cruxible_core.playbill.service.documents import service_activate_playbill_proposal
+from cruxible_core.playbill.service.documents import (
+    service_activate_playbill_proposal,
+    service_submit_playbill_approval,
+)
 from tests.test_playbill._support import initialize_local
+from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_proposals import _proposal_tree, _shell
 
 TIMESTAMP = "2026-08-11T12:30:00.000000Z"
@@ -156,6 +161,78 @@ def test_activation_repairs_a_missing_note_instead_of_stranding_the_proposal(
     assert instance.read_proposal_note(
         "evaluation", result.admission.candidate_commit_oid
     ) == proposal_evaluation_note(admission=result.admission, evaluation=result.evaluation)
+
+
+def test_an_unapproved_candidate_is_left_without_an_approval_note(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    result = _submit(instance)
+
+    receipt = service_activate_playbill_proposal(
+        instance,
+        proposal_id=result.admission.proposal_id,
+        activated_by="owner",
+    )
+
+    assert receipt.status == "accepted"
+    assert instance.read_proposal_note("approval", result.admission.candidate_commit_oid) is None
+
+
+def test_the_approval_note_lists_every_signer_with_its_own_signature(tmp_path: Path) -> None:
+    instance, owner = initialize_local(tmp_path)
+    result = _submit(instance)
+    assert result.candidate is not None
+    submission = _sign(
+        owner,
+        result.candidate.candidate_digest,
+        result.candidate.candidate.parent_semantic_root,
+    )
+
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=result.admission.proposal_id,
+        attestation=submission.attestation,
+        authenticated_submitter="approval-relay",
+    )
+
+    note = _git_notes_show(
+        instance._ledger.path,
+        NOTE_REFS["approval"],
+        result.admission.candidate_commit_oid,
+    )
+    approvals = instance.proposal_evidence().read_approvals(result.candidate.candidate_digest)
+    assert note == proposal_approval_note(approvals)
+    assert submission.attestation.sig.encode("ascii") in note
+    assert b'"signer_id":"owner"' in note
+
+
+def test_activation_refuses_an_approval_note_that_disagrees_with_the_store(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    result = _submit(instance)
+    assert result.candidate is not None
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=result.admission.proposal_id,
+        attestation=_sign(
+            owner,
+            result.candidate.candidate_digest,
+            result.candidate.candidate.parent_semantic_root,
+        ).attestation,
+        authenticated_submitter="approval-relay",
+    )
+    instance.write_proposal_note(
+        "approval",
+        result.admission.candidate_commit_oid,
+        proposal_approval_note(()),
+    )
+
+    with pytest.raises(ProposalIntegrityError, match="note_disagrees_with_evidence"):
+        service_activate_playbill_proposal(
+            instance,
+            proposal_id=result.admission.proposal_id,
+            activated_by="owner",
+        )
 
 
 def test_the_note_kind_table_is_the_only_vocabulary(tmp_path: Path) -> None:

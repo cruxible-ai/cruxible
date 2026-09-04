@@ -31,6 +31,7 @@ from cruxible_core.playbill.id_prefixes import resolve_id_prefix
 from cruxible_core.playbill.proposal_notes import (
     admission_bytes,
     evaluation_bytes,
+    proposal_approval_note,
     proposal_evaluation_note,
 )
 from cruxible_core.playbill.proposals import (
@@ -263,6 +264,11 @@ class ProposalEvidenceStore:
             admission=self.read_admission(proposal_id),
             evaluation=self.read_evaluation(proposal_id),
         )
+
+    def approval_note(self, candidate_digest_value: str) -> bytes:
+        """Re-render one candidate's approval note from the source of record."""
+
+        return proposal_approval_note(self.read_approvals(candidate_digest_value))
 
     def read_candidate(self, candidate_digest_value: str) -> CandidateRecordAnyVersion:
         """Read one canonical validated candidate by its frozen C_s digest."""
