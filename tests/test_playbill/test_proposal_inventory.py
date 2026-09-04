@@ -24,7 +24,7 @@ from cruxible_core.playbill.service.documents import (
     service_submit_playbill_approval,
 )
 from cruxible_core.runtime import playbill_api
-from cruxible_core.runtime.permissions import PermissionMode
+from cruxible_core.runtime.permissions import PermissionMode, request_instance_scope
 from cruxible_core.server.auth import ResolvedAuthContext
 from cruxible_core.service.playbill_proposals import (
     service_list_playbill_proposals,
@@ -597,3 +597,136 @@ def test_a_daemon_wide_operator_may_withdraw_a_foreign_proposal(tmp_path: Path) 
         if item.proposal_id == proposal_id
     )
     assert entry.terminal_reason == "withdrawn"
+
+
+def _withdraw_through_the_served_verb(
+    instance,  # type: ignore[no-untyped-def]
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    proposal_id: str,
+    credential_label: str,
+    instance_scope: str | None,
+):  # type: ignore[no-untyped-def]
+    """Call the served withdraw verb as one runtime credential presents itself.
+
+    One credential, two bindings, because the daemon derives them from one
+    record: `get_current_auth_context()` carries the LABEL a proposal's
+    admission is matched on, and the request instance scope carries the
+    boundary the middleware binds from the same credential. An unscoped
+    daemon-wide operator presents `None` in both; every persisted runtime
+    credential is bound to exactly one instance and presents that id in both.
+
+    The facade is where the override lives -- the service takes a flag, and
+    `current_request_instance_scope() is None` is what decides it -- so this
+    goes through `playbill_api`, not through the service.
+    """
+
+    class Manager:
+        def get(self, _instance_id: str):  # type: ignore[no-untyped-def]
+            return instance
+
+    monkeypatch.setattr(playbill_api, "get_playbill_manager", lambda: Manager())
+    monkeypatch.setattr(playbill_api, "check_permission", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        playbill_api,
+        "get_current_auth_context",
+        lambda: ResolvedAuthContext(
+            principal_id="cred_opaque",
+            principal_label=credential_label,
+            credential_type="runtime_credential",
+            instance_scope=instance_scope,
+            role="governed_write",
+            effective_permission_mode=PermissionMode.GOVERNED_WRITE,
+        ),
+    )
+    with request_instance_scope(instance_scope):
+        return playbill_api.playbill_withdraw_proposal(
+            instance.descriptor.instance_id,
+            proposal_id,
+            "the author's credential was rotated",
+        )
+
+
+def test_an_unscoped_operator_credential_withdraws_a_foreign_proposal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The daemon-wide operator path, as a request actually presents it.
+
+    `service_withdraw_playbill_proposal` takes the override as a flag; the
+    served verb is what decides it, from the credential's bound instance scope.
+    A credential with NO bound scope is the daemon-wide operator -- the same
+    reading `require_unscoped_operator` makes for every other daemon-wide lever
+    -- and it is the way out of card 110's graveyard when the proposal's author
+    holds a label nobody can present any more.
+    """
+
+    instance, _owner = seed_claims(tmp_path)
+    opened = submit_query_definition_candidate(
+        instance,
+        query=work_item_query("foreign-to-the-operator"),
+        actor_id="owner",
+        proposal_name="foreign-to-the-operator",
+        timestamp=TIMESTAMP,
+    )
+    proposal_id = opened.proposal.admission.proposal_id
+
+    result = _withdraw_through_the_served_verb(
+        instance,
+        monkeypatch,
+        proposal_id=proposal_id,
+        credential_label="daemon-operator",
+        instance_scope=None,
+    )
+
+    assert result.proposal_id == proposal_id
+    assert result.actor_id == "daemon-operator"
+    assert result.already_withdrawn is False
+    entry = next(
+        item
+        for item in service_list_playbill_proposals(instance).entries
+        if item.proposal_id == proposal_id
+    )
+    assert entry.status == "settled"
+    assert entry.terminal_reason == "withdrawn"
+
+
+def test_an_instance_scoped_credential_may_not_withdraw_a_foreign_proposal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other side of the same line, and the reason it is a line at all.
+
+    A credential BOUND to this instance is not the daemon-wide operator, however
+    high its tier: on a shared daemon that binding is the tenant boundary. It
+    may withdraw its own proposals and no others, so a foreign one refuses typed
+    and stays open. Without this, dropping the `is None` from the override would
+    hand every scoped credential the operator's reach and nothing would fail.
+    """
+
+    instance, _owner = seed_claims(tmp_path)
+    opened = submit_query_definition_candidate(
+        instance,
+        query=work_item_query("foreign-to-the-tenant"),
+        actor_id="owner",
+        proposal_name="foreign-to-the-tenant",
+        timestamp=TIMESTAMP,
+    )
+    proposal_id = opened.proposal.admission.proposal_id
+
+    with pytest.raises(ProposalAdmissionError, match="or a daemon-wide operator"):
+        _withdraw_through_the_served_verb(
+            instance,
+            monkeypatch,
+            proposal_id=proposal_id,
+            credential_label="another-tenant-writer",
+            instance_scope=instance.descriptor.instance_id,
+        )
+
+    entry = next(
+        item
+        for item in service_list_playbill_proposals(instance).entries
+        if item.proposal_id == proposal_id
+    )
+    assert entry.status == "open"
+    assert instance.proposal_evidence().read_withdrawal(proposal_id) is None
