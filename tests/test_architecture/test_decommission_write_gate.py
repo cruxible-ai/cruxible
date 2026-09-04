@@ -23,6 +23,15 @@ observation and recovery planes stay open. That is why `get`, `resume`,
 `status` and `list_pending` are absent even though the protocol roll-forward
 they run can persist a transition: rolling an expectation forward to `expired`
 is the instance describing what already happened to it, not a new intent.
+
+The inventory equality below is a law over the GATED functions, and it can only
+see the doors it already knows: it catches a gate removed and a gate added
+undeclared, but a door ADDED with no gate leaves the observed set exactly as it
+was. So the coordinator's persisting doors are derived independently, by
+call-graph closure to `self.store.{create,transition,record_program_stamp}`,
+and every one of them has to be gated or declared above as roll-forward. That
+is the half of "adding a governed-write door without gating it has to move this
+inventory" the equality could not carry on its own.
 """
 
 from __future__ import annotations
@@ -33,6 +42,28 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "src"
 GATE_NAMES = frozenset({"require_writable", "_require_writable"})
+
+COORDINATOR = "cruxible_core/playbill/authoring/coordinator.py"
+COORDINATOR_CLASS = "AuthoringIntentCoordinator"
+# The three store calls that put a row in the authoring intent log. Reaching one
+# of these, however many private helpers deep, is what makes a door PERSIST.
+STORE_WRITES = frozenset({"create", "transition", "record_program_stamp"})
+
+# Public coordinator methods that persist WITHOUT a gate, each declared here
+# with the reason. All four are the protocol roll-forward described at the top
+# of this module: reading a pending intent may expire an expectation that has
+# already lapsed, which is the instance describing what happened to it, not a
+# new intent. A decommissioned instance keeps serving what it accepted, so
+# these stay open on purpose. A name is added here only for that reason -- a
+# door that persists a new intent belongs in DECLARED_WRITE_GATES instead.
+DECLARED_ROLL_FORWARD_DOORS = frozenset(
+    {
+        f"{COORDINATOR_CLASS}.get",
+        f"{COORDINATOR_CLASS}.resume",
+        f"{COORDINATOR_CLASS}.list_pending",
+        f"{COORDINATOR_CLASS}.status",
+    }
+)
 
 # module path -> the qualified names that refuse a decommissioned instance.
 DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
@@ -108,6 +139,94 @@ def _gated_functions(path: Path) -> set[str]:
 
     walk(tree)
     return gated
+
+
+def _coordinator_persisting_methods() -> set[str]:
+    """Public coordinator methods that reach a store write, by call-graph closure.
+
+    The inventory law below is an equality over the GATED functions, so it
+    catches a gate removed and a gate added somewhere undeclared -- but a NEW
+    door that persists and was never gated leaves the observed set unchanged
+    and sails through. Deriving the persisting set independently is what closes
+    that: a method persists if it names `self.store.<create|transition|
+    record_program_stamp>` itself, or if it calls a sibling method that does,
+    however many private helpers deep.
+    """
+
+    path = SOURCE / COORDINATOR
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    body = next(
+        node.body
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == COORDINATOR_CLASS
+    )
+    methods = {
+        node.name: node
+        for node in body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    def _self_attributes(node: ast.AST) -> set[str]:
+        """`self.<name>` anywhere under `node`."""
+
+        return {
+            item.attr
+            for item in ast.walk(node)
+            if isinstance(item, ast.Attribute)
+            and isinstance(item.value, ast.Name)
+            and item.value.id == "self"
+        }
+
+    def _writes_store(node: ast.AST) -> bool:
+        """`self.store.<create|transition|record_program_stamp>` anywhere under `node`."""
+
+        return any(
+            item.attr in STORE_WRITES
+            and isinstance(item.value, ast.Attribute)
+            and item.value.attr == "store"
+            and isinstance(item.value.value, ast.Name)
+            and item.value.value.id == "self"
+            for item in ast.walk(node)
+            if isinstance(item, ast.Attribute)
+        )
+
+    writes_directly = {name: _writes_store(node) for name, node in methods.items()}
+    calls_siblings = {name: _self_attributes(node) & set(methods) for name, node in methods.items()}
+
+    def persists(name: str) -> bool:
+        pending = [name]
+        seen: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            if writes_directly.get(current, False):
+                return True
+            pending.extend(calls_siblings.get(current, set()))
+        return False
+
+    return {
+        f"{COORDINATOR_CLASS}.{name}"
+        for name in methods
+        if not name.startswith("_") and persists(name)
+    }
+
+
+def test_every_coordinator_door_that_persists_is_gated_or_declared() -> None:
+    persisting = _coordinator_persisting_methods()
+    accounted = set(DECLARED_WRITE_GATES[COORDINATOR]) | DECLARED_ROLL_FORWARD_DOORS
+
+    assert persisting, "the closure found no persisting coordinator door at all"
+    assert persisting - accounted == set(), (
+        "these public coordinator methods reach the intent log and neither "
+        "refuse a decommissioned instance nor stand declared as roll-forward "
+        "doors, so a dead instance would accept a new intent through them"
+    )
+    assert DECLARED_ROLL_FORWARD_DOORS <= persisting, (
+        "a declared roll-forward door no longer persists; drop it from the "
+        "declaration rather than leaving a stale exemption standing"
+    )
 
 
 def test_the_declared_write_plane_is_exactly_the_gated_one() -> None:
