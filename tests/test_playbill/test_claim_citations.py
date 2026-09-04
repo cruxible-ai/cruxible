@@ -13,6 +13,8 @@ from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, ty
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+    AcceptedCaptureContract,
+    CaptureContractV1,
     DirectByteSpanSelectionV1,
     build_coordinator_self_source_capture,
     build_direct_claim_capture,
@@ -22,12 +24,14 @@ from cruxible_client.contracts.captures import (
     classify_capture_reuse,
     render_capture_contract,
 )
-from cruxible_client.contracts.claim_types import render_claim_type
+from cruxible_client.contracts.claim_types import ClaimType, render_claim_type
 from cruxible_client.contracts.claims import (
     ClaimArtifactV2,
     ClaimBackingV2,
     ClaimLawEvidenceV1,
     LegacyCitationReferenceV1,
+    _capture_is_explicitly_eligible,
+    _copy_capture_admitted_by_rule,
     build_claim_citation,
     claim_artifact_digest,
     claim_citation_references,
@@ -35,6 +39,10 @@ from cruxible_client.contracts.claims import (
     merge_claim_citations,
     parse_claim,
     render_claim,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicyV1,
+    ClaimEvidenceAdmissionRuleV1,
 )
 from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_client.contracts.subjects import render_subject, subject_path
@@ -44,6 +52,7 @@ from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.playbill.settlement import ChangeActorBinding
 from cruxible_core.service.playbill_claims import service_get_playbill_claim
 from cruxible_core.service.playbill_coverage import build_accepted_evidence_index_v2
+from tests.test_playbill._pc_c_support import capture_contract as _capture_contract
 from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_claims import _claim, _claim_type, _subject
@@ -516,3 +525,119 @@ def _claim_evidence(candidate: CandidateRecordV3) -> ClaimLawEvidenceV1:
             if item.path == claim_path(CLAIM_ID)
         )
     )
+
+
+def _accepted(contract: CaptureContractV1) -> AcceptedCaptureContract:
+    return AcceptedCaptureContract(
+        path=capture_contract_path(contract.identity.name),
+        contract=contract,
+        artifact_digest=capture_contract_digest(contract).tagged,
+    )
+
+
+def _page_source_contract() -> CaptureContractV1:
+    """A declared source contract, the way a governed page is captured.
+
+    Not one of the compiler's own self-assertion contracts: the bytes exist
+    whether or not this Claim is authored, which is what makes a `copy` of them
+    something a ClaimType can honestly admit.
+    """
+
+    return _capture_contract(name="docs.page-capture-v1")
+
+
+def _type_admitting(contract: CaptureContractV1) -> ClaimType:
+    return _claim_type().model_copy(
+        update={
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+                rules=(
+                    ClaimEvidenceAdmissionRuleV1(
+                        rule_id="page-copy",
+                        claim_roles=("normative", "observation"),
+                        capture_contract_digests=(capture_contract_digest(contract).tagged,),
+                        evidence_kinds=contract.evidence_kinds,
+                        admission="direct",
+                        subject_binding="exact_claim_subject",
+                    ),
+                )
+            )
+        }
+    )
+
+
+def test_a_copy_citation_is_never_evidence_by_its_shape_alone() -> None:
+    """Card 120: the eligibility gate admits an independent evidence role and nothing else."""
+
+    assert not _capture_is_explicitly_eligible(
+        _v2_claim(role="copy"),
+        capture_digest=CAPTURE_DIGEST,
+    )
+
+
+def test_a_claim_type_that_names_the_contract_admits_a_copy_citation() -> None:
+    """The ruling's own word for a page citation can cover the Claim that cites it.
+
+    `copied_from` lowers as role `copy`, and the eligibility gate skipped it one
+    citation-role before any admission policy was read -- so the honest spelling
+    of "the object bytes ARE these bytes" made the Claim permanently uncoverable
+    and the only repair was to describe a copy as evidence.
+    """
+
+    contract = _page_source_contract()
+
+    assert _copy_capture_admitted_by_rule(
+        _v2_claim(role="copy"),
+        claim_type=_type_admitting(contract),
+        capture_contract=_accepted(contract),
+        capture_digest=CAPTURE_DIGEST,
+    )
+
+
+def test_a_claim_type_that_does_not_name_the_contract_still_reads_uncovered() -> None:
+    """No loophole: the rule decides, and a type that never named the contract says no."""
+
+    contract = _page_source_contract()
+    silent = _claim_type().model_copy(
+        update={"evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(rules=())}
+    )
+
+    assert not _copy_capture_admitted_by_rule(
+        _v2_claim(role="copy"),
+        claim_type=silent,
+        capture_contract=_accepted(contract),
+        capture_digest=CAPTURE_DIGEST,
+    )
+
+
+@pytest.mark.parametrize("origin", ["self_source", "self_published"])
+def test_a_copy_of_bytes_this_claim_published_is_admitted_by_no_rule(origin: str) -> None:
+    """Attesting your own page into concrete is what the pages-are-sources ruling refused."""
+
+    contract = _page_source_contract()
+
+    assert not _copy_capture_admitted_by_rule(
+        _v2_claim(role="copy", origin=origin),
+        claim_type=_type_admitting(contract),
+        capture_contract=_accepted(contract),
+        capture_digest=CAPTURE_DIGEST,
+    )
+
+
+def test_a_copy_of_the_compilers_own_self_assertion_is_admitted_by_no_rule() -> None:
+    """The Claim quoting its own authoring is not a page citing a source.
+
+    Every domain ClaimType already names the direct self-asserted contract, so
+    without this the carve-out would hand every one of them a way to cover
+    itself with a copy of the value it just authored.
+    """
+
+    for builtin in (
+        DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    ):
+        assert not _copy_capture_admitted_by_rule(
+            _v2_claim(role="copy"),
+            claim_type=_type_admitting(builtin),
+            capture_contract=_accepted(builtin),
+            capture_digest=CAPTURE_DIGEST,
+        )

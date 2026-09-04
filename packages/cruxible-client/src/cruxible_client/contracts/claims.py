@@ -34,6 +34,8 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    COORDINATOR_SELF_SOURCE_CONTRACT_ID,
+    DIRECT_SELF_ASSERTED_CONTRACT_ID,
     AcceptedCaptureContract,
     CaptureContractV1,
     CaptureEnvelopeAny,
@@ -1108,6 +1110,69 @@ def _self_source_capture_admitted_by_rule(
     )
 
 
+_COMPILER_SELF_ASSERTION_CONTRACT_IDS: frozenset[str] = frozenset(
+    {DIRECT_SELF_ASSERTED_CONTRACT_ID, COORDINATOR_SELF_SOURCE_CONTRACT_ID}
+)
+"""The two contracts whose bytes a Claim's own authoring produced."""
+
+
+def _copy_capture_admitted_by_rule(
+    claim: ClaimArtifactAny,
+    *,
+    claim_type: ClaimType,
+    capture_contract: AcceptedCaptureContract,
+    capture_digest: str,
+) -> bool:
+    """Let a ClaimType's admission policy decide an independent copy citation.
+
+    `copy` is the vocabulary's own word for the relation a page block has to the
+    capture of its page: the object bytes ARE the cited bytes. It was also the
+    one relation that could never cover anything, because the eligibility gate
+    admitted `evidence` alone and ran one citation-role earlier than the
+    ClaimType's policy. So the honest spelling made a Claim uncoverable, and the
+    only way to be covered was to describe a copy as evidence -- the door and
+    the vocabulary disagreeing, silently.
+
+    The same shape as the coordinator self-source carve-out, and the same limit:
+    the rule has to NAME the capture's contract for the Claim's role. A domain
+    ClaimType whose policy does not name it still reads such a Claim as
+    uncovered, exactly as before, so this is not a way for any citation to
+    become evidence by relabelling itself.
+
+    Two further gates keep it from being one, because unlike the self-source
+    carve-out there is no single contract that marks the case.
+
+    The compiler's own self-assertion contracts are excluded outright. Their
+    bytes are produced by this Claim's own authoring -- a direct value, a
+    coordinator body -- so a copy of them is the Claim quoting itself, and every
+    domain ClaimType names the direct contract already. A page, by contrast, is
+    captured under a DECLARED source contract: bytes that exist whether or not
+    this Claim is authored, which is what makes the ruling's `copy` relation
+    something a rule can honestly admit.
+
+    `origin` stays `independent` throughout. A copy of bytes this Claim itself
+    published is the attest-everything-into-concrete move the pages-are-sources
+    ruling refused, and it is still skipped here.
+    """
+
+    if isinstance(claim.backing, ClaimBacking):
+        return False
+    if capture_contract.contract.identity.name in _COMPILER_SELF_ASSERTION_CONTRACT_IDS:
+        return False
+    associations = tuple(
+        item for item in claim.backing.citations if item.capture_digest == capture_digest
+    )
+    if not associations:
+        return False
+    if any(item.role != "copy" or item.origin != "independent" for item in associations):
+        return False
+    return any(
+        claim.statement.role in rule.claim_roles
+        and capture_contract.artifact_digest in rule.capture_contract_digests
+        for rule in claim_type.evidence_admission_policy.rules
+    )
+
+
 @dataclass(frozen=True)
 class CaptureEvidenceKindAdmission:
     evidence_kind: str
@@ -1908,14 +1973,23 @@ def evaluate_claim_law(
                     "A Procedure-produced Capture requires its exact accepted Procedure pin.",
                     path=path,
                 )
-        if not _capture_is_explicitly_eligible(
-            claim,
-            capture_digest=capture_digest_value,
-        ) and not _self_source_capture_admitted_by_rule(
-            claim,
-            claim_type=contract,
-            capture_contract=resolved_contract,
-            capture_digest=capture_digest_value,
+        if (
+            not _capture_is_explicitly_eligible(
+                claim,
+                capture_digest=capture_digest_value,
+            )
+            and not _self_source_capture_admitted_by_rule(
+                claim,
+                claim_type=contract,
+                capture_contract=resolved_contract,
+                capture_digest=capture_digest_value,
+            )
+            and not _copy_capture_admitted_by_rule(
+                claim,
+                claim_type=contract,
+                capture_contract=resolved_contract,
+                capture_digest=capture_digest_value,
+            )
         ):
             continue
         capture_admissions: set[Literal["origin_only", "direct", "derivational"]] = set()
