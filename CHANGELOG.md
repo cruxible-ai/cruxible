@@ -60,11 +60,16 @@
   entry-point group and registers every executor it advertises, so the registry
   that decides whether the shared hosted profile may run Provider code is built
   from the packages actually present rather than from an environment variable's
-  claim. An entry point that cannot be loaded, does not implement the executor
-  seam, or collides with a backend id already registered stops the daemon with
-  a typed refusal naming the entry point, and registers nothing. `server info`
-  now reports the registered backend ids on the Provider lane; core registers
-  none.
+  claim. Discovery is all-or-nothing: every advertised executor is loaded and
+  its registration read before any of them reaches the registry, so an entry
+  point that cannot be loaded, does not implement the executor seam, or
+  collides with a backend id already registered stops the daemon with a typed
+  refusal -- naming the entry point, its target, its group and the distribution
+  that advertises it -- and registers nothing, not even the executors whose
+  entry points loaded before it. `server info` now reports the registered
+  backend ids on the Provider lane; core registers none. Installation on the
+  daemon's `sys.path` is the whole trust boundary; see
+  `docs/hosted-runtime-image.md`.
 
 - **Reads no longer re-read what an accepted generation already proved.** An
   accepted tree, a serving projection piece's verification, the Claim read

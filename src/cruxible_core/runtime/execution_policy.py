@@ -58,10 +58,31 @@ class IsolatedExecutor(Protocol):
 
 #: Isolated executors registered in THIS process. Empty in core on purpose:
 #: there is no container executor in this repository, so no environment value
-#: can make execution under the shared profile isolated. An out-of-tree
-#: executor registers itself here at import time, which is what turns
-#: `CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND` from a claim into a selector.
+#: can make execution under the shared profile isolated. An out-of-tree executor
+#: reaches this registry by advertising itself in the
+#: `cruxible.isolated_executors` entry-point group, which the daemon iterates
+#: once at start (`discover_isolated_executors`); an embedded host may also call
+#: `register_isolated_executor` directly. Either way it is the registration, not
+#: the environment, that turns `CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND` from
+#: a claim into a selector -- and being installed on the daemon's `sys.path` is
+#: the WHOLE trust boundary: there is no provenance check, allow-list or digest
+#: pin on what a discovered distribution supplies.
 _REGISTERED_ISOLATED_EXECUTORS: dict[str, IsolatedExecutorRegistrationV1] = {}
+
+
+def _refuse_backend_collision(
+    registration: IsolatedExecutorRegistrationV1,
+    *,
+    against: Mapping[str, IsolatedExecutorRegistrationV1],
+) -> None:
+    """One collision law, for the in-process seam and for discovery alike."""
+
+    existing = against.get(registration.backend_id)
+    if existing is not None and existing != registration:
+        raise ValueError(
+            f"isolated executor backend {registration.backend_id!r} is already registered "
+            f"with implementation {existing.implementation_digest}"
+        )
 
 
 def register_isolated_executor(executor: IsolatedExecutor) -> IsolatedExecutorRegistrationV1:
@@ -74,12 +95,7 @@ def register_isolated_executor(executor: IsolatedExecutor) -> IsolatedExecutorRe
     """
 
     registration = executor.registration()
-    existing = _REGISTERED_ISOLATED_EXECUTORS.get(registration.backend_id)
-    if existing is not None and existing != registration:
-        raise ValueError(
-            f"isolated executor backend {registration.backend_id!r} is already registered "
-            f"with implementation {existing.implementation_digest}"
-        )
+    _refuse_backend_collision(registration, against=_REGISTERED_ISOLATED_EXECUTORS)
     _REGISTERED_ISOLATED_EXECUTORS[registration.backend_id] = registration
     return registration
 
@@ -96,31 +112,52 @@ def discover_isolated_executors(
 ) -> tuple[IsolatedExecutorRegistrationV1, ...]:
     """Register every isolated executor the installed distributions advertise.
 
-    Called once at daemon start. Each entry point is loaded and handed to
-    ``register_isolated_executor``, so the registry that decides the shared
-    profile's execution policy is built from what is INSTALLED rather than from
-    what an environment variable claims. Loading is the only discovery step:
-    an object that is not an ``IsolatedExecutor``, one whose registration is
-    malformed, and one that collides with an already-registered backend id are
-    all the same failure -- the daemon refuses to start, typed, naming the
-    entry point, and the backend it advertised stays unregistered.
+    Called once at daemon start. Every entry point in the group is loaded and
+    its registration read BEFORE any of them reaches the process registry, so
+    the registry that decides the shared profile's execution policy is built
+    from what is INSTALLED rather than from what an environment variable claims
+    -- and is built whole or not at all. An object that is not an
+    ``IsolatedExecutor``, one whose registration is malformed, and one that
+    collides with a backend id already registered or staged are all the same
+    failure: the daemon refuses to start, typed, naming the entry point, and
+    NOTHING in this group is registered, including the executors whose entry
+    points loaded before it. A partly-registered daemon -- one backend live
+    because it sorted first, its sibling missing because the distribution is
+    broken -- is exactly the state failing closed exists to prevent.
     """
 
-    registered: list[IsolatedExecutorRegistrationV1] = []
+    staged: dict[str, IsolatedExecutorRegistrationV1] = {}
+    ordered: list[IsolatedExecutorRegistrationV1] = []
     for entry_point in sorted(
         entry_points(group=group),
         key=lambda item: item.name.encode("utf-8"),
     ):
-        registered.append(_register_entry_point(entry_point, group=group))
-    return tuple(registered)
+        registration = _staged_registration(entry_point, group=group, staged=staged)
+        staged[registration.backend_id] = registration
+        ordered.append(registration)
+    # Commit. Every refusal above happened before this line, so the registry
+    # never holds a prefix of a discovery that failed.
+    _REGISTERED_ISOLATED_EXECUTORS.update(staged)
+    return tuple(ordered)
 
 
-def _register_entry_point(
+def _staged_registration(
     entry_point: EntryPoint,
     *,
     group: str,
+    staged: Mapping[str, IsolatedExecutorRegistrationV1],
 ) -> IsolatedExecutorRegistrationV1:
-    """Load one advertised executor and register it, or refuse typed."""
+    """Load one advertised executor and read its registration, or refuse typed."""
+
+    def _refusal(detail: str) -> IsolatedExecutorDiscoveryError:
+        distribution = entry_point.dist
+        return IsolatedExecutorDiscoveryError(
+            name=entry_point.name,
+            entry_point=entry_point.value,
+            distribution=None if distribution is None else distribution.name,
+            group=group,
+            detail=detail,
+        )
 
     try:
         loaded = entry_point.load()
@@ -130,25 +167,20 @@ def _register_entry_point(
         # daemon's.
         executor = loaded() if isinstance(loaded, type) else loaded
     except Exception as exc:  # noqa: BLE001 - any load failure is one refusal
-        raise IsolatedExecutorDiscoveryError(
-            entry_point.value,
-            group,
-            f"{type(exc).__name__}: {exc}",
-        ) from exc
+        raise _refusal(f"{type(exc).__name__}: {exc}") from exc
     if not isinstance(executor, IsolatedExecutor):
-        raise IsolatedExecutorDiscoveryError(
-            entry_point.value,
-            group,
-            f"{type(executor).__name__} does not implement the IsolatedExecutor protocol",
+        raise _refusal(
+            f"{type(executor).__name__} does not implement the IsolatedExecutor protocol"
         )
     try:
-        return register_isolated_executor(executor)
+        registration = executor.registration()
+        _refuse_backend_collision(
+            registration,
+            against={**_REGISTERED_ISOLATED_EXECUTORS, **staged},
+        )
     except Exception as exc:  # noqa: BLE001 - registration refusals are one refusal
-        raise IsolatedExecutorDiscoveryError(
-            entry_point.value,
-            group,
-            f"{type(exc).__name__}: {exc}",
-        ) from exc
+        raise _refusal(f"{type(exc).__name__}: {exc}") from exc
+    return registration
 
 
 def hosted_server_profile(environ: Mapping[str, str] | None = None) -> str | None:

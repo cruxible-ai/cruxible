@@ -350,14 +350,38 @@ class IsolatedExecutorDiscoveryError(ExecutionError):
 
     error_code = "isolated_executor_discovery_failed"
 
-    def __init__(self, entry_point: str, group: str, detail: str) -> None:
+    def __init__(
+        self,
+        *,
+        name: str,
+        entry_point: str,
+        distribution: str | None,
+        group: str,
+        detail: str,
+    ) -> None:
+        self.name = name
         self.entry_point = entry_point
+        self.distribution = distribution
         self.group = group
         self.detail = detail
+        # The repair is "remove or repair the distribution", so the message has
+        # to name the distribution. A module name is not a package name, and
+        # `importlib.metadata` hands the package over on the same object, so an
+        # operator reading this knows what to uninstall without going looking.
+        advertised = (
+            f"distribution {distribution!r}"
+            if distribution is not None
+            else "an unknown distribution"
+        )
+        repair = (
+            f"remove or repair {distribution!r}"
+            if distribution is not None
+            else "remove or repair the distribution that advertises it"
+        )
         super().__init__(
-            f"Isolated executor entry point {entry_point!r} in group {group!r} could not be "
-            f"registered: {detail}; repair: remove or repair the distribution that "
-            "advertises it, then start the daemon again."
+            f"Isolated executor entry point {name!r} = {entry_point!r} in group {group!r}, "
+            f"advertised by {advertised}, could not be registered: {detail}; "
+            f"repair: {repair}, then start the daemon again."
         )
 
 

@@ -444,6 +444,34 @@ def test_an_entry_point_that_cannot_be_imported_refuses_typed_and_registers_noth
     assert registered_isolated_executors() == {}
 
 
+def test_a_discovery_refusal_names_the_distribution_the_operator_must_repair(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    empty_registry: None,
+) -> None:
+    """The repair is "remove the distribution", so the refusal names which one.
+
+    A module name is not a package name: an operator told to remove
+    `fake_executor_pkg` still has to work out that the thing to uninstall is
+    `fake-executor`. `importlib.metadata` hands the answer over on the same
+    object the entry point came from, so the refusal names the entry point's
+    own name, its target, its group, and the distribution that advertised it.
+    """
+
+    _install(monkeypatch, tmp_path, {"broken": "fake_executor_pkg:missing_attribute"})
+
+    with pytest.raises(IsolatedExecutorDiscoveryError) as excinfo:
+        discover_isolated_executors()
+
+    assert excinfo.value.name == "broken"
+    assert excinfo.value.distribution == "fake-executor"
+    message = str(excinfo.value)
+    assert "'broken' = 'fake_executor_pkg:missing_attribute'" in message
+    assert f"group {policy_module.ISOLATED_EXECUTOR_ENTRY_POINT_GROUP!r}" in message
+    assert "advertised by distribution 'fake-executor'" in message
+    assert "repair: remove or repair 'fake-executor'" in message
+
+
 def test_an_object_that_is_not_an_executor_refuses_typed(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -477,20 +505,27 @@ def test_one_broken_advertisement_stops_the_whole_discovery(
     tmp_path: Path,
     empty_registry: None,
 ) -> None:
-    """A partly-registered daemon is the state fail-closed exists to prevent."""
+    """A partly-registered daemon is the state fail-closed exists to prevent.
+
+    The good entry point sorts FIRST, so it is loaded and its registration read
+    before the broken one refuses. Nothing may be in the registry afterwards:
+    an ordering in which the refusal happens to come first proves the daemon
+    fails closed only for that ordering.
+    """
 
     _install(
         monkeypatch,
         tmp_path,
         {
-            "aa-broken": "fake_executor_pkg:missing_attribute",
-            "zz-packaged": "fake_executor_pkg:packaged",
+            "aa-packaged": "fake_executor_pkg:packaged",
+            "zz-broken": "fake_executor_pkg:missing_attribute",
         },
     )
 
-    with pytest.raises(IsolatedExecutorDiscoveryError):
+    with pytest.raises(IsolatedExecutorDiscoveryError) as excinfo:
         discover_isolated_executors()
 
+    assert excinfo.value.name == "zz-broken"
     assert registered_isolated_executors() == {}
 
 
