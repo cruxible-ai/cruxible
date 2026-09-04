@@ -288,7 +288,13 @@ def _serve(resolved_socket: str | None) -> None:
     # A SIGKILL from the kernel's OOM killer still cannot be observed from
     # inside the process; the MemoryError path in authoring preflight is what
     # covers the allocation failure this build can see.
-    faulthandler.enable()
+    try:
+        faulthandler.enable()
+    except (ValueError, OSError):
+        # Only reachable where stderr is not a real file descriptor -- an
+        # embedded or captured run, never the daemon `cruxible server start`
+        # launches. Losing the fault trace there is not worth refusing to serve.
+        _log.debug("faulthandler_unavailable")
     # Resolve and freeze the process ceiling before registry/config access or
     # uvicorn startup. Unknown names and attempts to reinitialize this process
     # at a different tier therefore fail closed before the daemon serves.
