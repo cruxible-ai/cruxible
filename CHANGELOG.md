@@ -114,13 +114,23 @@
 - **An orient is a read again.** Deriving every Claim's verdict and resolution
   status crossed the client's own three-minute default timeout at a few hundred
   Claims, so `Playbill.connect()` could fail against a healthy instance. That
-  derivation is memoized per process on the accepted coordinate, the evaluation
-  instant, the exact Claim set, and a fingerprint of the two stores a verdict
-  reads besides the accepted tree -- the content-addressed body store and the
+  derivation is memoized per process on the instance, the accepted coordinate,
+  the exact Claim set, and a fingerprint of the two stores a verdict reads
+  besides the accepted tree -- the content-addressed body store and the
   attestation ledger -- so a second read of the same state evaluates no verdicts
-  at all. It is a cache and nothing else: bounded, cold after a restart, cleared
-  on activation, and not a projection table. The registration fold is likewise
-  read once per `next` rather than three times plus once per block.
+  at all. The evaluation instant is deliberately NOT part of that key: every
+  served read stamps a fresh one, so keying on it would mean never serving a
+  second read. Time is not ignored, though. A verdict is a step function of the
+  instant whose only breakpoints are what it compares against -- a Claim's
+  effective interval, a capture's observation, source expiry and freshness
+  horizon, an attestation's validity window -- so the entry records the interval
+  over which its answer holds and is served for any instant inside it, and
+  crossing a breakpoint re-derives. `playbill next` asks the same derivation
+  first, so one answer serves every fold in the request instead of the queue
+  walking every live Claim itself. It is a cache and nothing else: bounded, cold
+  after a restart, cleared on activation, and not a projection table. The
+  registration fold is likewise read once per `next` rather than three times
+  plus once per block.
 
 - **The ledger's per-blob ceiling rises to 64 MiB, and the two member budgets
   become one number.** A change set's own ledger record costs up to 11,264 bytes
