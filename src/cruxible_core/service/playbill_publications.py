@@ -7,7 +7,10 @@ publication was actually confirmed.
 
 from __future__ import annotations
 
+import os
+from collections import OrderedDict
 from dataclasses import dataclass
+from pathlib import Path
 
 from cruxible_client.contracts.authoring.models import PublicationPreparationV2
 from cruxible_client.contracts.errors import PlaybillError
@@ -25,14 +28,66 @@ class BoundPublicationRegistration:
     preparation: PublicationPreparationV2
 
 
+# The fold reads and parses every durable event file. On a worked instance that
+# is hundreds of megabytes, and one `block sync --check` asks the same question
+# once per block. The identity below names the exact stream that was folded:
+# every event file's directory, name, inode, size and both timestamps. Any
+# append or rewrite moves it, so a changed stream is folded again.
+_REGISTRATION_MEMO_CAPACITY = 4
+_REGISTRATION_MEMO: "OrderedDict[tuple[object, ...], tuple[BoundPublicationRegistration, ...]]" = (
+    OrderedDict()
+)
+
+
+def _intent_stream_identity(root: Path) -> tuple[object, ...] | None:
+    """Name the durable event stream without reading a single event."""
+
+    entries: list[tuple[object, ...]] = []
+    try:
+        for directory in sorted(root.glob("AIT-*"), key=lambda item: item.name):
+            events = directory / "events"
+            if not events.is_dir():
+                continue
+            for path in sorted(events.glob("*.json"), key=lambda item: item.name):
+                metadata = os.lstat(path)
+                entries.append(
+                    (
+                        directory.name,
+                        path.name,
+                        metadata.st_mode,
+                        metadata.st_dev,
+                        metadata.st_ino,
+                        metadata.st_size,
+                        metadata.st_mtime_ns,
+                        metadata.st_ctime_ns,
+                    )
+                )
+    except OSError:
+        return None
+    return (str(root), tuple(entries))
+
+
+def reset_bound_publication_registration_memo() -> None:
+    """Forget every in-process publication fold."""
+
+    _REGISTRATION_MEMO.clear()
+
+
 def bound_publication_registrations(
     instance: PlaybillInstance,
 ) -> tuple[BoundPublicationRegistration, ...] | None:
     """Fold latest intent events, or return ``None`` when the fold is unavailable."""
 
     exhaust_root = instance.root / instance.descriptor.storage.exhaust
-    if not (exhaust_root / "authoring-intents").is_dir():
+    intent_root = exhaust_root / "authoring-intents"
+    if not intent_root.is_dir():
         return ()
+    identity = _intent_stream_identity(intent_root)
+    if identity is not None:
+        memoized = _REGISTRATION_MEMO.get(identity)
+        if memoized is not None:
+            _REGISTRATION_MEMO.move_to_end(identity)
+            return memoized
     try:
         latest = {
             event.intent.intent_id: event.intent
@@ -54,7 +109,7 @@ def bound_publication_registrations(
         for expectation in intent.insertion_expectations
         if expectation.state == "bound" and expectation.preparation is not None
     ]
-    return tuple(
+    folded = tuple(
         sorted(
             registrations,
             key=lambda item: (
@@ -65,6 +120,16 @@ def bound_publication_registrations(
             ),
         )
     )
+    if identity is not None:
+        _REGISTRATION_MEMO[identity] = folded
+        _REGISTRATION_MEMO.move_to_end(identity)
+        while len(_REGISTRATION_MEMO) > _REGISTRATION_MEMO_CAPACITY:
+            _REGISTRATION_MEMO.popitem(last=False)
+    return folded
 
 
-__all__ = ["BoundPublicationRegistration", "bound_publication_registrations"]
+__all__ = [
+    "BoundPublicationRegistration",
+    "bound_publication_registrations",
+    "reset_bound_publication_registration_memo",
+]

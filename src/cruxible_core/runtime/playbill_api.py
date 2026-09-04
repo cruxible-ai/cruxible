@@ -336,8 +336,10 @@ def _record_consumed_paths(
         context=_consumption_context(),
         operation=operation,
         coordinate=coordinate,
+        # One receipt names exactly the paths it served: read those, not the
+        # whole generation.
         artifacts=consumption_artifacts_for_paths(
-            instance.tree_at(coordinate.git_oid),
+            instance.blobs_at(coordinate.git_oid, paths),
             paths,
         ),
     )

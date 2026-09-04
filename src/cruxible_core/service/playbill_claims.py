@@ -404,10 +404,9 @@ def _accepted_claim_ids(
     *,
     coordinate: AcceptedProjectionCoordinate,
 ) -> tuple[str, ...]:
-    tree = instance.tree_at(coordinate.git_oid)
     return tuple(
         path.rsplit("/", 1)[-1].removesuffix(".json")
-        for path in tree
+        for path in instance.paths_at(coordinate.git_oid)
         if path.startswith("claims/") and path.endswith(".json")
     )
 
