@@ -48,6 +48,9 @@
   "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/submit": {
     "POST": "PlaybillAuthoringSubmitResult"
   },
+  "/api/v1/{instance_id}/playbill/blocks/depublish": {
+    "POST": "PlaybillBlockDepublishResultV1"
+  },
   "/api/v1/{instance_id}/playbill/bodies": {
     "POST": "PlaybillCasObjectResult"
   },
@@ -245,6 +248,9 @@
   },
   "/api/v1/{instance_id}/playbill/whoami": {
     "GET": "PlaybillWhoAmI"
+  },
+  "/api/v1/{instance_id}/playbill/workspace-detach": {
+    "POST": "PlaybillWorkspaceDetachResultV1"
   },
   "/api/v1/{instance_id}/playbill/workspace-registration": {
     "GET": "PlaybillHostWorkspaceRegistrationV1"
