@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -530,13 +531,42 @@ class ClaimReadHistoryIndex:
         return self._claim_types
 
 
+_HISTORY_INDEX_MEMO_COORDINATES = 4
+
+
 def _claim_read_history_index(
     instance: ClaimReadSourceProtocol,
     *,
     coordinate: AcceptedProjectionCoordinate,
 ) -> ClaimReadHistoryIndex:
-    """Index ClaimTypes and latest Claim evidence with one history traversal."""
+    """Index ClaimTypes and latest Claim evidence once per accepted coordinate.
 
+    The index is a pure function of immutable accepted history, so it is
+    memoized on the read source when that source offers somewhere to park it -
+    every verdict evaluation used to rebuild the whole traversal, and one
+    ``next`` evaluates every Claim twice. A read source without the memo (a
+    replay shim, say) keeps building it per call.
+    """
+
+    memo = getattr(instance, "claim_read_history_memo", None)
+    if isinstance(memo, OrderedDict):
+        cached = memo.get(coordinate.git_oid)
+        if isinstance(cached, ClaimReadHistoryIndex):
+            memo.move_to_end(coordinate.git_oid)
+            return cached
+        built = _build_claim_read_history_index(instance, coordinate=coordinate)
+        memo[coordinate.git_oid] = built
+        while len(memo) > _HISTORY_INDEX_MEMO_COORDINATES:
+            memo.popitem(last=False)
+        return built
+    return _build_claim_read_history_index(instance, coordinate=coordinate)
+
+
+def _build_claim_read_history_index(
+    instance: ClaimReadSourceProtocol,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+) -> ClaimReadHistoryIndex:
     history = instance.accepted_history()
     found_coordinate = False
     generation_oids: list[str] = []

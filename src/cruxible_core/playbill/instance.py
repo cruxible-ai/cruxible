@@ -215,6 +215,9 @@ class PlaybillInstance:
         self._workspace_advertiser: Callable[[], PlaybillWorkspaceAdvertisement] | None = None
         self._receive_limits = ProposalReceiveLimits()
         self._tree_memo: OrderedDict[str, dict[str, bytes]] = OrderedDict()
+        # Read services keyed by accepted coordinate park their derived
+        # history indexes here so activation drops them with one clear().
+        self.claim_read_history_memo: OrderedDict[str, object] = OrderedDict()
 
     @staticmethod
     def _accepted_query_facts(
@@ -954,6 +957,7 @@ class PlaybillInstance:
         paths = self._validated_paths(self.root, self.descriptor.storage)
         bodies = ContentAddressedBodyStore(paths["cas"])
         self._tree_memo.clear()
+        self.claim_read_history_memo.clear()
         self._recovered = recover_instance(
             self._ledger,
             genesis=self._verified_genesis,
