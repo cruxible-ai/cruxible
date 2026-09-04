@@ -9,11 +9,20 @@ it, or dropping a gate, has to move this inventory deliberately.
 
 An authoring draft is on it too: creating an intent persists a record in the
 exhaust, so a decommissioned instance refuses it rather than accumulating
-drafts that can never be submitted.
+drafts that can never be submitted. Creating one was the only coordinator door
+gated at first, which left every draft that ALREADY existed fully mutable on a
+dead instance -- its payload replaceable, its preflight recomputable, its
+publication preparable, confirmable and abandonable. So the inventory now names
+every coordinator method that persists, and names each one directly rather than
+resting on the one it delegates to: a door that keeps its gate only because of
+who it calls loses it silently the day it stops calling them.
 
 Reads, replay, crash roll-forward and consumption exhaust are deliberately NOT
 here: a decommissioned instance keeps serving what it already accepted, so the
-observation and recovery planes stay open.
+observation and recovery planes stay open. That is why `get`, `resume`,
+`status` and `list_pending` are absent even though the protocol roll-forward
+they run can persist a transition: rolling an expectation forward to `expired`
+is the instance describing what already happened to it, not a new intent.
 """
 
 from __future__ import annotations
@@ -35,7 +44,19 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
         }
     ),
     "cruxible_core/playbill/authoring/coordinator.py": frozenset(
-        {"AuthoringIntentCoordinator.create"}
+        {
+            "AuthoringIntentCoordinator.create",
+            "AuthoringIntentCoordinator.create_input",
+            "AuthoringIntentCoordinator.replace_payload",
+            "AuthoringIntentCoordinator.preflight",
+            "AuthoringIntentCoordinator.compile",
+            "AuthoringIntentCoordinator.compile_input",
+            "AuthoringIntentCoordinator.rebase",
+            "AuthoringIntentCoordinator.submit",
+            "AuthoringIntentCoordinator.prepare_publication",
+            "AuthoringIntentCoordinator.confirm_insertion",
+            "AuthoringIntentCoordinator.abandon_insertion",
+        }
     ),
     "cruxible_core/playbill/proposals.py": frozenset({"ProposalService.submit"}),
     "cruxible_core/playbill/service/documents.py": frozenset({"service_submit_playbill_approval"}),

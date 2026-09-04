@@ -201,6 +201,88 @@ def _write_doors() -> tuple[tuple[str, object], ...]:
             ),
         ),
         (
+            "authoring_create_input",
+            lambda instance: AuthoringIntentCoordinator.for_instance(instance).create_input(
+                actor=none,  # type: ignore[arg-type]
+                input=none,  # type: ignore[arg-type]
+                canonical_timestamp=TIMESTAMP,
+            ),
+        ),
+        (
+            # Every door below this line acts on a draft that ALREADY exists,
+            # which is exactly what a decommissioned instance used to leave
+            # fully mutable: the intent id is a placeholder, so a refusal here
+            # is proof the gate ran before the store was ever opened.
+            "authoring_replace_payload",
+            lambda instance: AuthoringIntentCoordinator.for_instance(instance).replace_payload(
+                "AIT-decommission-probe",
+                actor=none,  # type: ignore[arg-type]
+                payload=none,  # type: ignore[arg-type]
+            ),
+        ),
+        (
+            "authoring_preflight",
+            lambda instance: AuthoringIntentCoordinator.for_instance(instance).preflight(
+                "AIT-decommission-probe",
+                actor=none,  # type: ignore[arg-type]
+            ),
+        ),
+        (
+            "authoring_compile",
+            lambda instance: AuthoringIntentCoordinator.for_instance(instance).compile(
+                actor=none,  # type: ignore[arg-type]
+                payload=none,  # type: ignore[arg-type]
+                canonical_timestamp=TIMESTAMP,
+                intent_id="AIT-decommission-probe",
+            ),
+        ),
+        (
+            "authoring_compile_input",
+            lambda instance: AuthoringIntentCoordinator.for_instance(instance).compile_input(
+                actor=none,  # type: ignore[arg-type]
+                input=none,  # type: ignore[arg-type]
+                canonical_timestamp=TIMESTAMP,
+                intent_id="AIT-decommission-probe",
+            ),
+        ),
+        (
+            "authoring_rebase",
+            lambda instance: AuthoringIntentCoordinator.for_instance(instance).rebase(
+                "AIT-decommission-probe",
+                actor=none,  # type: ignore[arg-type]
+            ),
+        ),
+        (
+            "authoring_submit",
+            lambda instance: AuthoringIntentCoordinator.for_instance(instance).submit(
+                "AIT-decommission-probe",
+                actor=none,  # type: ignore[arg-type]
+            ),
+        ),
+        (
+            "authoring_prepare_publication",
+            lambda instance: AuthoringIntentCoordinator.for_instance(instance).prepare_publication(
+                "AIT-decommission-probe",
+                actor=none,  # type: ignore[arg-type]
+                observation=none,  # type: ignore[arg-type]
+            ),
+        ),
+        (
+            "authoring_confirm_insertion",
+            lambda instance: AuthoringIntentCoordinator.for_instance(instance).confirm_insertion(
+                "AIT-decommission-probe",
+                actor=none,  # type: ignore[arg-type]
+                observation=none,  # type: ignore[arg-type]
+            ),
+        ),
+        (
+            "authoring_abandon_insertion",
+            lambda instance: AuthoringIntentCoordinator.for_instance(instance).abandon_insertion(
+                "AIT-decommission-probe",
+                actor=none,  # type: ignore[arg-type]
+            ),
+        ),
+        (
             "approval",
             lambda instance: service_submit_playbill_approval(
                 instance,

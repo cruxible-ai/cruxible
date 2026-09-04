@@ -398,6 +398,7 @@ class AuthoringIntentCoordinator:
     ) -> AuthoringIntentViewV1:
         """Atomically bind friendly IDs to one accepted base, then persist the intent."""
 
+        self.instance.require_writable()
         base = self.instance.accepted_coordinate()
         coordinate = AcceptedCoordinate.from_internal(base)
         payload = lower_authoring_input(input, tree=self.instance.tree_at(base.git_oid))
@@ -446,6 +447,7 @@ class AuthoringIntentCoordinator:
     def rebase(self, intent_id: str, *, actor: AuthenticatedActor) -> AuthoringIntentViewV1:
         """Advance one refused, unsubmitted intent to the current accepted coordinate."""
 
+        self.instance.require_writable()
         current = self.store.get(intent_id, actor_id=actor.actor_id)
         status = current.candidate_status
         next_coordinate = AcceptedCoordinate.from_internal(self.instance.accepted_coordinate())
@@ -521,6 +523,7 @@ class AuthoringIntentCoordinator:
         *,
         actor: AuthenticatedActor,
     ) -> PreflightResultV1:
+        self.instance.require_writable()
         _computed, updated = self._compute_and_bind_preflight(intent_id, actor=actor)
         if updated.last_preflight is None:  # pragma: no cover - transition invariant
             raise RuntimeError("preflight transition omitted its result")
@@ -564,6 +567,7 @@ class AuthoringIntentCoordinator:
         reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
         program_stamp: AuthoringProgramStampV1 | None = None,
     ) -> PreflightResultV1:
+        self.instance.require_writable()
         view = (
             self.create(
                 actor=actor,
@@ -591,6 +595,7 @@ class AuthoringIntentCoordinator:
         canonical_timestamp: str,
         intent_id: str | None = None,
     ) -> PreflightResultV1:
+        self.instance.require_writable()
         if intent_id is None:
             view = self.create_input(
                 actor=actor,
@@ -791,6 +796,7 @@ class AuthoringIntentCoordinator:
         *,
         actor: AuthenticatedActor,
     ) -> AuthoringSubmitResultV1:
+        self.instance.require_writable()
         current = self._refresh_protocol(
             self.store.get(intent_id, actor_id=actor.actor_id),
             actor=actor,
@@ -1046,6 +1052,7 @@ class AuthoringIntentCoordinator:
         observation: PublicationSourceObservationV2,
         expectation_id: str | None = None,
     ) -> InsertionPrepareResultV2:
+        self.instance.require_writable()
         before = self.store.get(intent_id, actor_id=actor.actor_id)
         current = self._refresh_protocol(before, actor=actor)
         expectation = _select_expectation(current, expectation_id)
@@ -1264,6 +1271,7 @@ class AuthoringIntentCoordinator:
         observation: InsertionConfirmationObservationV2,
         expectation_id: str | None = None,
     ) -> InsertionConfirmResultV2:
+        self.instance.require_writable()
         before = self.store.get(intent_id, actor_id=actor.actor_id)
         current = self._refresh_protocol(before, actor=actor)
         expectation = _select_expectation(current, expectation_id)
@@ -1402,6 +1410,7 @@ class AuthoringIntentCoordinator:
         actor: AuthenticatedActor,
         expectation_id: str | None = None,
     ) -> InsertionAbandonResultV1:
+        self.instance.require_writable()
         current = self._refresh_protocol(
             self.store.get(intent_id, actor_id=actor.actor_id),
             actor=actor,
@@ -1454,6 +1463,7 @@ class AuthoringIntentCoordinator:
         reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
         program_stamp: AuthoringProgramStampV1 | None = None,
     ) -> AuthoringIntentViewV1:
+        self.instance.require_writable()
         if program_stamp is not None:
             _validate_program_stamp(program_stamp)
             if reference_expectations is None:
