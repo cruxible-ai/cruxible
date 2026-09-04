@@ -74,6 +74,7 @@ from cruxible_core.playbill.keys import (
     public_key_hex_from_private_file,
     raw_public_key_hex_from_openssh,
 )
+from cruxible_core.playbill.memo import memo_get, memo_put
 from cruxible_core.playbill.producer_receipts import local_producer_receipt_resolver
 from cruxible_core.playbill.projection import (
     AcceptedCoordinate,
@@ -863,23 +864,18 @@ class PlaybillInstance:
         """
 
         self.coordinate_for_oid(oid)
-        cached = self._tree_memo.get(oid)
+        cached = memo_get(self._tree_memo, oid)
         if cached is None:
             cached = self._ledger.read_tree(oid)
-            self._tree_memo[oid] = cached
-            while len(self._tree_memo) > _TREE_MEMO_GENERATIONS:
-                self._tree_memo.popitem(last=False)
-        else:
-            self._tree_memo.move_to_end(oid)
+            memo_put(self._tree_memo, oid, cached, capacity=_TREE_MEMO_GENERATIONS)
         return dict(cached)
 
     def paths_at(self, oid: str) -> tuple[str, ...]:
         """List accepted paths without reading a single blob payload."""
 
         self.coordinate_for_oid(oid)
-        cached = self._tree_memo.get(oid)
+        cached = memo_get(self._tree_memo, oid)
         if cached is not None:
-            self._tree_memo.move_to_end(oid)
             return tuple(cached)
         return tuple(entry.path for entry in self._ledger.list_tree(oid))
 
@@ -892,9 +888,8 @@ class PlaybillInstance:
         """Read an exact set of accepted paths under the same acceptance proof."""
 
         self.coordinate_for_oid(oid)
-        cached = self._tree_memo.get(oid)
+        cached = memo_get(self._tree_memo, oid)
         if cached is not None:
-            self._tree_memo.move_to_end(oid)
             return {path: cached[path] for path in dict.fromkeys(paths) if path in cached}
         return self._ledger.blobs_at(oid, paths)
 

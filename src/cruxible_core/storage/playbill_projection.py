@@ -25,6 +25,7 @@ from cruxible_client.contracts.projection_extensions import (
     ProjectionFact,
 )
 from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.memo import memo_get, memo_put
 from cruxible_core.playbill.projection import (
     PROJECTION_SCHEMA_VERSION,
     AcceptedProjectionCoordinate,
@@ -53,7 +54,7 @@ from cruxible_core.playbill.projection_subjects import (
 # and the same manifest digests. Any write to the piece moves st_mtime_ns and
 # st_ctime_ns, so a tampered file misses the memo and is verified again.
 _VERIFIED_PIECE_CAPACITY = 8
-_VERIFIED_PIECES: "OrderedDict[tuple[object, ...], None]" = OrderedDict()
+_VERIFIED_PIECES: "OrderedDict[tuple[object, ...], bool]" = OrderedDict()
 
 
 def _verified_piece_identity(
@@ -84,17 +85,11 @@ def _verified_piece_identity(
 
 
 def _piece_already_verified(identity: tuple[object, ...]) -> bool:
-    if identity not in _VERIFIED_PIECES:
-        return False
-    _VERIFIED_PIECES.move_to_end(identity)
-    return True
+    return memo_get(_VERIFIED_PIECES, identity) is True
 
 
 def _record_verified_piece(identity: tuple[object, ...]) -> None:
-    _VERIFIED_PIECES[identity] = None
-    _VERIFIED_PIECES.move_to_end(identity)
-    while len(_VERIFIED_PIECES) > _VERIFIED_PIECE_CAPACITY:
-        _VERIFIED_PIECES.popitem(last=False)
+    memo_put(_VERIFIED_PIECES, identity, True, capacity=_VERIFIED_PIECE_CAPACITY)
 
 
 def reset_projection_verification_memo() -> None:

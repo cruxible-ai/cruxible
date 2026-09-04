@@ -72,6 +72,7 @@ from cruxible_client.contracts.standing_mandates import (
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.memo import memo_get, memo_put
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.service.documents import (
@@ -550,14 +551,11 @@ def _claim_read_history_index(
 
     memo = getattr(instance, "claim_read_history_memo", None)
     if isinstance(memo, OrderedDict):
-        cached = memo.get(coordinate.git_oid)
+        cached = memo_get(memo, coordinate.git_oid)
         if isinstance(cached, ClaimReadHistoryIndex):
-            memo.move_to_end(coordinate.git_oid)
             return cached
         built = _build_claim_read_history_index(instance, coordinate=coordinate)
-        memo[coordinate.git_oid] = built
-        while len(memo) > _HISTORY_INDEX_MEMO_COORDINATES:
-            memo.popitem(last=False)
+        memo_put(memo, coordinate.git_oid, built, capacity=_HISTORY_INDEX_MEMO_COORDINATES)
         return built
     return _build_claim_read_history_index(instance, coordinate=coordinate)
 

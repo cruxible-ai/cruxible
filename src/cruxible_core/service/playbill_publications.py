@@ -16,6 +16,7 @@ from cruxible_client.contracts.authoring.models import PublicationPreparationV2
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.memo import memo_get, memo_put
 
 
 @dataclass(frozen=True)
@@ -84,9 +85,8 @@ def bound_publication_registrations(
         return ()
     identity = _intent_stream_identity(intent_root)
     if identity is not None:
-        memoized = _REGISTRATION_MEMO.get(identity)
+        memoized = memo_get(_REGISTRATION_MEMO, identity)
         if memoized is not None:
-            _REGISTRATION_MEMO.move_to_end(identity)
             return memoized
     try:
         latest = {
@@ -121,10 +121,7 @@ def bound_publication_registrations(
         )
     )
     if identity is not None:
-        _REGISTRATION_MEMO[identity] = folded
-        _REGISTRATION_MEMO.move_to_end(identity)
-        while len(_REGISTRATION_MEMO) > _REGISTRATION_MEMO_CAPACITY:
-            _REGISTRATION_MEMO.popitem(last=False)
+        memo_put(_REGISTRATION_MEMO, identity, folded, capacity=_REGISTRATION_MEMO_CAPACITY)
     return folded
 
 

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections import Counter
+import threading
+from collections import Counter, OrderedDict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -110,6 +111,75 @@ def test_a_memoized_tree_is_handed_out_as_an_independent_copy(tmp_path: Path) ->
 
     second = instance.tree_at(oid)
     assert set(second) == paths
+
+
+class _PreemptingMemo(OrderedDict[str, dict[str, bytes]]):
+    """A tree memo that hands control to an activation mid-read, exactly once.
+
+    Read routes are serialized on the event loop, but ``activate_proposal`` is a
+    sync handler and therefore runs in the anyio worker threadpool, where its
+    ``refresh()`` clears this dict. This stands in for that interleaving
+    deterministically: the reader is released the moment the clear has landed,
+    so the second half of the read runs against an emptied memo.
+    """
+
+    def __init__(self, *, reading: threading.Event, cleared: threading.Event) -> None:
+        super().__init__()
+        self._reading = reading
+        self._cleared = cleared
+        self._armed = True
+
+    def _preempt(self) -> None:
+        if not self._armed:
+            return
+        self._armed = False
+        self._reading.set()
+        assert self._cleared.wait(30)
+
+    def get(self, key: str, default: object = None) -> object:  # type: ignore[override]
+        value = super().get(key, default)  # type: ignore[arg-type]
+        if value is not None:
+            self._preempt()
+        return value
+
+    def __getitem__(self, key: str) -> dict[str, bytes]:
+        value = super().__getitem__(key)
+        self._preempt()
+        return value
+
+    def clear(self) -> None:
+        super().clear()
+        self._cleared.set()
+
+
+def test_a_cached_read_survives_an_activation_clearing_the_memo_under_it(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    oid = instance.accepted_coordinate().git_oid
+    expected = instance.tree_at(oid)
+
+    reading = threading.Event()
+    cleared = threading.Event()
+    memo = _PreemptingMemo(reading=reading, cleared=cleared)
+    memo[oid] = dict(expected)
+    instance._tree_memo = memo
+
+    def activate_concurrently() -> None:
+        assert reading.wait(30)
+        instance.refresh()
+
+    worker = threading.Thread(target=activate_concurrently)
+    worker.start()
+    try:
+        # The read finds the entry, the activation empties the memo under it,
+        # and the read must still answer with the accepted tree rather than
+        # raising out of the promotion it can no longer perform.
+        assert instance.tree_at(oid) == expected
+    finally:
+        cleared.set()
+        worker.join(30)
+    assert not worker.is_alive()
 
 
 def test_blob_and_path_reads_agree_with_the_whole_tree(tmp_path: Path) -> None:
