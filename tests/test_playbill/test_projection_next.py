@@ -326,6 +326,66 @@ def test_unprojected_procedure_advisory_is_coordinate_bound_and_policy_controlle
     )
 
 
+def test_a_malformed_presentation_policy_fails_the_projection_advisory_closed(
+    tmp_path: Path,
+) -> None:
+    """A policy the client could not read is not a policy that permits the row.
+
+    `test_reverse_drift_next.py` pinned this law on the reverse-drift fold,
+    which this batch removed with the `self_published` origin. The law itself
+    did not go: `_procedure_projection_items` still refuses to advise when the
+    observation carries a presentation-policy note, and nothing else in the
+    tree named `presentation_policy_notes` against `next` any more. Re-pinned
+    here on the consumer that survives.
+    """
+
+    instance, _owner = initialize_local(tmp_path)
+    before = instance.accepted_coordinate()
+    procedure = _accepted_procedure()
+    real_tree_at = PlaybillInstance.tree_at
+
+    def with_procedure(self, oid):  # type: ignore[no-untyped-def]
+        tree = dict(real_tree_at(self, oid))
+        tree[procedure.path] = render_procedure(procedure.procedure)
+        return tree
+
+    public = ClientAcceptedCoordinate.model_validate(
+        AcceptedCoordinate.from_internal(before).model_dump(mode="json")
+    )
+    observation = PlaybillNextWorkspaceObservationV1(
+        presentation_policy=PlaybillPresentationPolicyV2(),
+        projection_coverage=PlaybillProjectionCoverageObservationV1(
+            coordinate=public,
+            complete_kinds=("Procedure",),
+            bindings=(),
+        ),
+    )
+    request = PlaybillNextRequestV1(
+        evaluation_time=NOW,
+        access_profile=CoverageAccessProfileV1(
+            profile_id="presentation-policy-fail-closed",
+            permitted_access_classes=("instance",),
+        ),
+        workspace_observation=observation,
+    )
+    noted = request.model_copy(
+        update={
+            "workspace_observation": observation.model_copy(
+                update={"presentation_policy_notes": ("presentation_policy_unreadable",)}
+            )
+        }
+    )
+
+    with mock.patch.object(PlaybillInstance, "tree_at", with_procedure):
+        advised = service_playbill_next(instance, request=request)
+        failed_closed = service_playbill_next(instance, request=noted)
+
+    assert [item.reason for item in advised.items if item.reason == "procedure_projection_missing"]
+    assert not [
+        item for item in failed_closed.items if item.reason == "procedure_projection_missing"
+    ]
+
+
 def test_service_next_coalesces_projection_advice_in_its_own_observed_domain(
     tmp_path: Path,
 ) -> None:
