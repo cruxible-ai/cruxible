@@ -375,21 +375,6 @@ class RuntimeCredentialStore:
             bootstrap_secret=bootstrap_secret,
         )
 
-    def bootstrap_secret_claimed(self, bootstrap_secret: str) -> bool:
-        """Return whether a bootstrap secret has already been exchanged."""
-        bootstrap_secret_hash = _hash_token(bootstrap_secret)
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT 1
-                FROM runtime_bootstrap_claims
-                WHERE bootstrap_secret_hash = ?
-                LIMIT 1
-                """,
-                (bootstrap_secret_hash,),
-            ).fetchone()
-        return row is not None
-
     def authenticate(self, token: str) -> RuntimeCredentialRecord | None:
         """Return the active credential matching *token*, if one exists."""
         token_hash = _hash_token(token)
