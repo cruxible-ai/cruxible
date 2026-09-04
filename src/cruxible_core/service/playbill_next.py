@@ -161,12 +161,33 @@ NextRepairOperation = Literal[
     "hand_edit",
 ]
 
-# A per-source count cap discards a whole class of coverage evidence for that
-# source at once - its cards, its commitment proofs, or its citation windows -
-# so every citation to it reads unobserved for one shared reason. These are the
-# notes the workspace observation raises when such a cap bites.
-_COVERAGE_CLIP_NOTES = frozenset(
+# A citation reads unobserved for one of two kinds of reason. Either the
+# citation itself is no longer where the source says it is - a finding about
+# that citation, repaired one citation at a time - or the source's own coverage
+# scan never produced the evidence the gate consults, in which case every
+# citation to that source reads unobserved whatever the citation says and the
+# repair is to the scan, not to any citation.
+#
+# These are the notes an observation raises for the second kind: the span never
+# arrived, or arrived reporting itself less than complete, or a per-source count
+# cap discarded a whole class of its evidence. Anything else - an individual
+# proof, window, card or occurrence the observation dropped - is not
+# whole-source and is deliberately absent, because collapsing on it would put a
+# cause in the served row that the row cannot prove.
+_COVERAGE_SOURCE_SCAN_DEFECT_NOTES = frozenset(
     {
+        # the span never arrived, or does not answer this read
+        "coverage_access_mismatch",
+        "coverage_coordinate_mismatch",
+        "coverage_result_version_unsupported",
+        "coverage_span_ambiguous",
+        "coverage_span_missing",
+        # the span arrived reporting itself less than complete
+        "coverage_denied",
+        "coverage_partial",
+        "coverage_stale",
+        "coverage_unavailable",
+        # a per-source count cap discarded a whole class of the evidence
         "coverage_card_limit_exceeded",
         "coverage_proof_limit_exceeded",
         "coverage_window_limit_exceeded",
@@ -2444,6 +2465,34 @@ def _claim_dependency_items(
     return tuple(items)
 
 
+def _source_scan_defect_notes(
+    observed: PlaybillNextSourceObservationAny,
+) -> tuple[str, ...] | None:
+    """Report the notes evidencing a defect in the source's own scan.
+
+    A defect here is whole-source: the evidence ``_source_citation_item``
+    consults was never collected, so every citation to this source falls
+    through the same gate no matter what the citation says. ``None`` means the
+    scan is healthy and an unobserved citation there is a finding about that
+    citation, to be repaired one citation at a time.
+
+    Both observation versions are covered. V4 says so through its notes alone;
+    V3 additionally carries ``scan_complete``, and its own validator forbids an
+    incomplete scan from asserting any occurrence or scanned digest, so an
+    incomplete V3 scan is whole-source by construction even when it names no
+    note at all.
+    """
+
+    notes = tuple(
+        note for note in observed.scan_notes if note in _COVERAGE_SOURCE_SCAN_DEFECT_NOTES
+    )
+    if notes:
+        return notes
+    if isinstance(observed, PlaybillNextSourceObservationV3) and not observed.scan_complete:
+        return ()
+    return None
+
+
 def _source_citation_item(
     *,
     citation_id: str,
@@ -2543,7 +2592,7 @@ def _source_citation_item(
 def _citation_unobserved_item(
     commitment: _CitationCommitment,
     *,
-    clipped_scan_notes: tuple[str, ...] = (),
+    source_scan_notes: tuple[str, ...] = (),
     collapsed_citation_count: int = 0,
 ) -> PlaybillNextItemV1:
     source_id = commitment.source_id
@@ -2551,15 +2600,19 @@ def _citation_unobserved_item(
     lineage_detail = (
         {} if commitment.lineage_note is None else {"lineage_note": commitment.lineage_note}
     )
-    # A source whose coverage scan was clipped observes none of its citations,
-    # so every one of them reads unobserved for one reason. Report the clip
-    # once, naming the note and how many citations it covers, instead of
-    # hundreds of look-alike rows an agent cannot tell apart.
-    clip_detail: dict[str, object] = (
+    # A source whose own coverage scan came back defective observes none of its
+    # citations, so every one of them reads unobserved for that one reason.
+    # Report the cause once, naming what the scan reported and how many
+    # citations stand behind it, instead of hundreds of look-alike rows an
+    # agent cannot tell apart - and name the *cause*, not a co-symptom: a row
+    # that says "the window cap was exceeded" sends a reader to raise a cap
+    # that would clear nothing.
+    collapsed_detail: dict[str, object] = (
         {}
-        if not clipped_scan_notes
+        if not collapsed_citation_count
         else {
-            "clipped_scan_notes": list(clipped_scan_notes),
+            "unobserved_cause": "source_scan_incomplete",
+            "source_scan_notes": list(source_scan_notes),
             "collapsed_citation_count": collapsed_citation_count,
         }
     )
@@ -2573,7 +2626,7 @@ def _citation_unobserved_item(
             "source_id": source_id,
             "expected_source_digest": commitment.source_digest,
             **lineage_detail,
-            **clip_detail,
+            **collapsed_detail,
         },
         repair=PlaybillNextRepairV1(
             operation="playbill.authoring.bind",
@@ -2750,16 +2803,13 @@ def _workspace_items(
             coordinate=coordinate,
             evaluation_time=evaluation_time,
         )
-        clipped_notes_by_source = {
+        defective_scan_notes = {
             source.source_id: notes
             for source in observation.source_observations
-            if isinstance(source, PlaybillNextSourceObservationV4)
-            for notes in (
-                tuple(note for note in source.scan_notes if note in _COVERAGE_CLIP_NOTES),
-            )
-            if notes
+            for notes in (_source_scan_defect_notes(source),)
+            if notes is not None
         }
-        clipped_commitments: dict[str, list[_CitationCommitment]] = defaultdict(list)
+        defective_commitments: dict[str, list[_CitationCommitment]] = defaultdict(list)
         for citation_id in sorted(commitments, key=lambda item: item.encode("ascii")):
             commitment = commitments[citation_id]
             if commitment.source_id is None or commitment.source_digest is None:
@@ -2774,17 +2824,17 @@ def _workspace_items(
                 continue
             if (
                 item.reason == "citation_source_unobserved"
-                and commitment.source_id in clipped_notes_by_source
+                and commitment.source_id in defective_scan_notes
             ):
-                clipped_commitments[commitment.source_id].append(commitment)
+                defective_commitments[commitment.source_id].append(commitment)
                 continue
             items.append(item)
-        for source_id in sorted(clipped_commitments, key=lambda item: item.encode("utf-8")):
-            group = clipped_commitments[source_id]
+        for source_id in sorted(defective_commitments, key=lambda item: item.encode("utf-8")):
+            group = defective_commitments[source_id]
             items.append(
                 _citation_unobserved_item(
                     group[0],
-                    clipped_scan_notes=clipped_notes_by_source[source_id],
+                    source_scan_notes=defective_scan_notes[source_id],
                     collapsed_citation_count=len(group),
                 )
             )

@@ -411,7 +411,7 @@ def test_one_claim_read_materializes_no_generation_and_still_receipts(
     ]
 
 
-def _clipped_source_observation(
+def _scanned_source_observation(
     *,
     source_id: str,
     scan_notes: tuple[str, ...],
@@ -433,7 +433,15 @@ def _unobserved_rows(
     instance: Any,
     *,
     scan_notes: tuple[str, ...],
+    other_source_notes: tuple[str, ...] | None = None,
 ) -> tuple[Any, ...]:
+    sources = [_scanned_source_observation(source_id="fixture.work-items", scan_notes=scan_notes)]
+    if other_source_notes is not None:
+        sources.append(
+            _scanned_source_observation(
+                source_id="fixture.other-notes", scan_notes=other_source_notes
+            )
+        )
     result = service_playbill_next(
         instance,
         request=PlaybillNextRequestV1(
@@ -441,11 +449,8 @@ def _unobserved_rows(
             evaluation_time=EVALUATION_TIME,
             access_profile=ACCESS,
             workspace_observation=PlaybillNextWorkspaceObservationV1(
-                source_observations=(
-                    _clipped_source_observation(
-                        source_id="fixture.work-items",
-                        scan_notes=scan_notes,
-                    ),
+                source_observations=tuple(
+                    sorted(sources, key=lambda item: item.source_id.encode("utf-8"))
                 )
             ),
         ),
@@ -453,30 +458,52 @@ def _unobserved_rows(
     return tuple(item for item in result.items if item.reason == "citation_source_unobserved")
 
 
-def test_a_clipped_coverage_scan_reports_one_row_for_its_whole_source(
+def test_a_defective_coverage_scan_reports_one_row_naming_its_cause(
     tmp_path: Path,
 ) -> None:
     instance, _owner = seed_claims(tmp_path)
 
-    uncapped = _unobserved_rows(instance, scan_notes=())
-    assert len(uncapped) > 1
-    assert all("clipped_scan_notes" not in row.detail for row in uncapped)
+    healthy = _unobserved_rows(instance, scan_notes=())
+    assert len(healthy) > 1
+    assert all("unobserved_cause" not in row.detail for row in healthy)
 
-    for note in (
-        "coverage_card_limit_exceeded",
-        "coverage_proof_limit_exceeded",
-        "coverage_window_limit_exceeded",
+    # Every note that says the source's own scan is incomplete collapses its
+    # citations onto one row, and the row names the cause, not a co-symptom.
+    for notes in (
+        ("coverage_partial",),
+        ("coverage_stale",),
+        ("coverage_denied",),
+        ("coverage_unavailable",),
+        ("coverage_span_missing",),
+        ("coverage_result_version_unsupported",),
+        ("coverage_card_limit_exceeded",),
+        ("coverage_proof_limit_exceeded",),
+        ("coverage_window_limit_exceeded",),
+        # The program instance's own shape: partial *and* window-capped. The
+        # cap is reported truthfully alongside, never as the cause.
+        ("coverage_partial", "coverage_window_limit_exceeded"),
     ):
-        clipped = _unobserved_rows(instance, scan_notes=(note,))
-        assert len(clipped) == 1
-        (row,) = clipped
+        collapsed = _unobserved_rows(instance, scan_notes=notes)
+        assert len(collapsed) == 1
+        (row,) = collapsed
         assert row.detail["source_id"] == "fixture.work-items"
-        assert row.detail["clipped_scan_notes"] == [note]
-        assert row.detail["collapsed_citation_count"] == len(uncapped)
+        assert row.detail["unobserved_cause"] == "source_scan_incomplete"
+        assert row.detail["source_scan_notes"] == list(notes)
+        assert row.detail["collapsed_citation_count"] == len(healthy)
         assert row.repair.operation == "playbill.authoring.bind"
 
-    # A note that is not a per-source cap leaves every citation on its own row.
-    assert len(_unobserved_rows(instance, scan_notes=("coverage_partial",))) == len(uncapped)
+    # A note about one dropped item is not a whole-source defect: those
+    # citations each keep their own row, because the scan can still speak to
+    # them one at a time.
+    assert len(_unobserved_rows(instance, scan_notes=("coverage_proof_invalid",))) == len(healthy)
+
+    # A second, healthy source in the same observation is untouched.
+    mixed = _unobserved_rows(
+        instance,
+        scan_notes=("coverage_partial",),
+        other_source_notes=(),
+    )
+    assert sum(1 for row in mixed if row.detail["source_id"] == "fixture.work-items") == 1
 
 
 def _coordinator_contract() -> AcceptedCaptureContract:

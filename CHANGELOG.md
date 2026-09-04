@@ -7,11 +7,13 @@
   history index and the durable publication fold are each done once and reused
   behind the same proofs they always ran; the resolution fold lists the
   projection once instead of once per slot, and every read that wanted one path
-  asks for that path rather than the whole generation. On a 740-Claim instance
-  `orient` goes from 868 s to under 9 s (3 s warm), `list` and `search` from
-  ~900 s to 3 s, `next` from 29 min to 44 s, and `block sync --check` over 26
-  blocks from 15 min to 6 s. No read answers differently: a tampered projection
-  piece is still refused, and replay drops every memo.
+  asks for that path rather than the whole generation. Measured on a 740-Claim
+  instance: `orient` goes from 868 s to 9.2 s on the first request after a
+  restart -- which carries a once-per-process recovery replay -- and 3.0 s on
+  every request after that; `list` and `search` from ~900 s to 3 s; `next` from
+  29 min to 46 s cold and 27 s warm; and `block sync --check` over 26 blocks
+  from 15 min to 6 s. No read answers differently: a tampered projection piece
+  is still refused, and replay drops every memo.
 
 - **BEHAVIOUR CHANGE: "overturned" now means a Claim lost a slot, not that it
   failed its own admission.** A many-cardinality slot selects every eligible
@@ -32,18 +34,25 @@
   page, and a ClaimType that does not name it still reads such a Claim as
   uncovered.
 
-- **A clipped coverage scan reports once per source.** A per-source count cap on
-  cards, commitment proofs or citation windows discards that source's whole
-  coverage evidence at once, so `next` now emits one `citation_source_unobserved`
-  row for it, carrying `clipped_scan_notes` and `collapsed_citation_count`,
-  instead of one look-alike row per citation. Sources under the cap are
-  unchanged.
+- **A defective coverage scan reports once per source, and names why.** When a
+  source's own coverage scan never arrived, came back less than complete, or had
+  a whole class of its evidence discarded by a per-source count cap, no citation
+  to that source can be proved whatever the citation says. `next` now emits one
+  `citation_source_unobserved` row for such a source, carrying
+  `unobserved_cause: "source_scan_incomplete"`, the `source_scan_notes` the scan
+  reported (a count-cap note among them when a cap did bite) and
+  `collapsed_citation_count`, instead of one look-alike row per citation. A
+  healthy scan is unchanged: a citation unobserved there is a finding about that
+  citation and keeps its own row.
 
 - **`CRUXIBLE_CLIENT_CONNECT_TIMEOUT_S`** (default 900 s) gives the single
   orientation an SDK `Playbill.connect()` runs its own read budget, separate
   from `CRUXIBLE_CLIENT_TIMEOUT_S` (default 180 s) and never below it, so a
   healthy but large instance cannot read as an unreachable server. Both knobs
-  are documented in the CLI reference.
+  are documented in the CLI reference. `CRUXIBLE_CLIENT_TIMEOUT_S` is now
+  validated: a value that is not a positive number is refused as a typed
+  configuration error, where `0`, a negative number or unparsable text used to
+  be accepted or raise an untyped error.
 
 - **The accepted world is typed Python, not strings.** `pb.world()` reads the
   accepted ClaimType vocabulary once and hands it back as objects: dotted kinds

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, TypeVar, cast
 
 import httpx
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -91,16 +92,24 @@ class _TransportGuard:
     def __init__(self, client: httpx.Client, target: str) -> None:
         self._client = client
         self._target = target
-        self._override: httpx.Timeout | None = None
+        # The override covers every request the calling thread issues inside
+        # the block, so it is held per thread: a client shared between threads
+        # must not hand one thread's orientation budget to another thread's
+        # ordinary call.
+        self._budget_state = threading.local()
+
+    @property
+    def _override(self) -> httpx.Timeout | None:
+        return cast("httpx.Timeout | None", getattr(self._budget_state, "override", None))
 
     @contextmanager
     def budget(self, timeout: httpx.Timeout) -> Iterator[None]:
         previous = self._override
-        self._override = timeout
+        self._budget_state.override = timeout
         try:
             yield
         finally:
-            self._override = previous
+            self._budget_state.override = previous
 
     def _guard(self, method: str, *args: Any, **kwargs: Any) -> httpx.Response:
         if self._override is not None:

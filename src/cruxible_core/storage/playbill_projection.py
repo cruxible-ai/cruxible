@@ -884,10 +884,15 @@ def bind_projection(
         connection = sqlite3.connect(f"{index_path.as_uri()}?mode=ro&immutable=1", uri=True)
         connection.row_factory = sqlite3.Row
         _verify_projection_schema(connection)
-        integrity_value: tuple[object, ...] | None = ("ok",)
+        # A piece already verified in this process under this exact file
+        # identity does not re-run the page scan. Record that the check did not
+        # run rather than synthesizing a passing result for it: a forged "ok"
+        # would read, here and to anything that later surfaced it, as a check
+        # that ran.
+        integrity_ok = already_verified
         if not already_verified:
             integrity = connection.execute("PRAGMA integrity_check").fetchone()
-            integrity_value = tuple(integrity) if integrity is not None else None
+            integrity_ok = integrity is not None and tuple(integrity) == ("ok",)
         metadata_row = connection.execute(
             "SELECT instance_id,git_object_format,git_oid,semantic_root,generation_root "
             "FROM generation_metadata WHERE singleton = 1"
@@ -927,7 +932,7 @@ def bind_projection(
             and assembler[1] == 1
         )
         if (
-            integrity_value != ("ok",)
+            not integrity_ok
             or binding_metadata != expected_metadata
             or compiler != expected_compiler
             or not assembler_valid
