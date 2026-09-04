@@ -54,10 +54,33 @@ class ClaimTypeRef:
 
 
 @dataclass(frozen=True)
+class PendingSubjectRef(SubjectRef):
+    """A Subject the same changeset defines, referenced before acceptance.
+
+    A `SubjectRef` asserts "this address existed at this coordinate", and
+    preflight verifies exactly that. A Subject its own set is defining did not
+    exist there, so this ref deliberately mints no reference expectation: the
+    set lowers the definition before the Claims that read it, and the daemon
+    resolves the address inside the generation instead of against the base.
+    """
+
+
+@dataclass(frozen=True)
 class ClaimRef:
     address: str
     coordinate: AcceptedCoordinate
     kind: ClassVar[RefKind] = RefKind.CLAIM
+
+
+@dataclass(frozen=True)
+class PendingClaimTypeRef(ClaimTypeRef):
+    """A ClaimType the same changeset defines, referenced before acceptance.
+
+    Carries the object kind it was defined with so a Claim in the same set can
+    be lowered without reading a ClaimType that is not accepted yet.
+    """
+
+    object_kind: str
 
 
 @dataclass(frozen=True)
@@ -96,6 +119,21 @@ class SlotRef:
     address: str
     coordinate: AcceptedCoordinate
     kind: ClassVar[RefKind] = RefKind.SLOT
+
+
+@dataclass(frozen=True)
+class LiteralValue:
+    """One literal object typed to the exact ClaimType that admits it.
+
+    A bare `"high"` is admissible under every string-valued predicate, so the
+    SDK cannot tell a severity from a status until the daemon reads it. This
+    carries the predicate it was minted under, which is what lets the value be
+    refused against the wrong ClaimType before the wire rather than after.
+    """
+
+    predicate: str
+    value: CanonicalValue
+    coordinate: AcceptedCoordinate
 
 
 @dataclass(frozen=True)
@@ -268,6 +306,55 @@ class ReferenceKindError(PlaybillSdkError):
     code = "playbill.sdk.reference_kind_mismatch"
 
 
+class AbsentSubject(PlaybillSdkError):
+    """No Subject of this kind carries this ID at the world's coordinate."""
+
+    code = "playbill.sdk.subject_absent_in_world"
+
+    def __init__(
+        self,
+        *,
+        subject_kind: str,
+        subject_id: str,
+        coordinate: AcceptedCoordinate,
+    ) -> None:
+        self.subject_kind = subject_kind
+        self.subject_id = subject_id
+        self.coordinate = coordinate
+        super().__init__(
+            f"no accepted Subject {subject_kind}/{subject_id} exists at coordinate "
+            f"{coordinate.git_oid}. Repair: define it in this changeset with "
+            f"world.{subject_kind}.define({subject_id!r}), or search for the "
+            "address the daemon actually accepted."
+        )
+
+
+class LiteralValueTypeError(PlaybillSdkError):
+    """A typed literal minted under one ClaimType was passed to another."""
+
+    code = "playbill.sdk.literal_value_claim_type_mismatch"
+
+    def __init__(self, *, minted_under: str, passed_to: str) -> None:
+        self.minted_under = minted_under
+        self.passed_to = passed_to
+        super().__init__(
+            f"this value was minted under ClaimType {minted_under!r} and cannot state a "
+            f"Claim under ClaimType {passed_to!r}. Repair: take the value from "
+            f"the predicate you are stating -- world.{passed_to}."
+        )
+
+
+class LiteralSchemaError(PlaybillSdkError):
+    """A value refused by its ClaimType's declared literal schema."""
+
+    code = "playbill.sdk.literal_schema_violation"
+
+    def __init__(self, *, predicate: str, reason: str) -> None:
+        self.predicate = predicate
+        self.reason = reason
+        super().__init__(f"ClaimType {predicate!r} does not admit this value: {reason}")
+
+
 class SourceSelectionError(PlaybillSdkError):
     code = "playbill.sdk.source_selection_refused"
 
@@ -300,6 +387,7 @@ class IncompatibleDaemonVersion(PlaybillSdkError):
 
 
 __all__ = [
+    "AbsentSubject",
     "AccessProfile",
     "ActivationPolicy",
     "Audience",
@@ -318,6 +406,11 @@ __all__ = [
     "EffectivePeriod",
     "IncompatibleDaemonVersion",
     "InsertionOperation",
+    "LiteralSchemaError",
+    "LiteralValue",
+    "LiteralValueTypeError",
+    "PendingClaimTypeRef",
+    "PendingSubjectRef",
     "PlaybillSdkError",
     "ProcedureRef",
     "QueryRef",

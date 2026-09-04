@@ -711,6 +711,16 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "expand": _command(
                 "playbill", "expand", "Expand one address into a bounded context capsule."
             ),
+            "world": _group(
+                "Read the accepted vocabulary as typed Python.",
+                {
+                    "stub": _command(
+                        "playbill", "world_stub", "Write a .pyi typing the accepted world."
+                    )
+                },
+                module="playbill",
+                attr="world_group",
+            ),
             "floor": _group(
                 "Materialize the deterministic greppable floor.",
                 {

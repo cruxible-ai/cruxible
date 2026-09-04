@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from pydantic import SecretStr, TypeAdapter
 
@@ -52,6 +52,10 @@ from cruxible_client.authoring.sdk_types import (
     Disposition,
     Duration,
     EffectivePeriod,
+    LiteralValue,
+    LiteralValueTypeError,
+    PendingClaimTypeRef,
+    PendingSubjectRef,
     ProcedureRef,
     QueryRef,
     ReferenceKindError,
@@ -169,6 +173,9 @@ from cruxible_client.contracts.temporal import format_datetime
 from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
 
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from cruxible_client.authoring.world import World
+
 SDK_CONTRACT_SNAPSHOT_DIGEST = AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST
 
 _SUBJECT_RE = re.compile(
@@ -282,6 +289,11 @@ def _expectation(
         return None
     _address(value, expected)
     if expected is RefKind.SLOT:
+        return None
+    if isinstance(value, (PendingSubjectRef, PendingClaimTypeRef)):
+        # A same-set definition did not exist at the coordinate this ref names,
+        # so asserting it there would refuse in preflight against the base tree.
+        # The set lowers definitions before the members that read them.
         return None
     return AuthoringReferenceExpectationV1(
         payload_path=payload_path,
@@ -618,7 +630,7 @@ class ChangeSetDraft:
         *,
         subject: str | SubjectRef,
         predicate: str | ClaimTypeRef,
-        value: CanonicalValue | SubjectRef,
+        value: CanonicalValue | SubjectRef | LiteralValue,
         role: ClaimRole | str,
         rationale: str,
         supported_by: EvidenceSelection | CaptureRef | None,
@@ -663,11 +675,15 @@ class ChangeSetDraft:
         )
         return self
 
-    def subject(self, definition: SubjectDraft | SubjectShell) -> ChangeSetDraft:
-        """Define one Subject inside this changeset.
+    def subject(self, definition: SubjectDraft | SubjectShell) -> PendingSubjectRef:
+        """Define one Subject inside this changeset, and return a ref to it.
 
         A Claim member may still carry its Subject as a dependency draft; this
         is for the Subjects a set defines that no single Claim owns.
+
+        The ref it returns is usable as `subject=` or `value=` in the same set,
+        which is what lets one changeset define a Subject and say something
+        about it without the caller retyping the address as a string.
         """
 
         shell = definition.shell if isinstance(definition, SubjectDraft) else definition
@@ -679,13 +695,20 @@ class ChangeSetDraft:
                 decisions={"kind": "subject", "subject": shell.identity.name},
             )
         )
-        return self
+        return PendingSubjectRef(
+            address=shell.identity.name,
+            coordinate=self._playbill.coordinate,
+        )
 
-    def claim_type(self, definition: ClaimTypeDraft | ClaimType) -> ChangeSetDraft:
-        """Define one whole ClaimType inside this changeset.
+    def claim_type(self, definition: ClaimTypeDraft | ClaimType) -> PendingClaimTypeRef:
+        """Define one whole ClaimType inside this changeset, and return a ref.
 
         Succeeding an accepted ClaimType stays on `/claim-types/proposals`,
         where the migration a succession demands is decided.
+
+        The ref it returns is usable as `predicate=` in the same set, and
+        carries the object kind the definition declares so a Claim under it
+        lowers without reading a ClaimType that is not accepted yet.
         """
 
         value = definition.definition if isinstance(definition, ClaimTypeDraft) else definition
@@ -697,7 +720,11 @@ class ChangeSetDraft:
                 decisions={"kind": "claim_type", "predicate": value.predicate},
             )
         )
-        return self
+        return PendingClaimTypeRef(
+            address=value.predicate,
+            coordinate=self._playbill.coordinate,
+            object_kind=value.object_kind,
+        )
 
     def retire(
         self,
@@ -1231,7 +1258,7 @@ class Playbill:
         self._client = client
         self._instance_id = instance_id
         self._workspace = workspace.expanduser().resolve()
-        self._sources = WorkspaceSources(self._workspace)
+        self._workspace_sources: WorkspaceSources | None = None
         self._access_profile = access_profile
         self._clock = clock
         self._coordinate: AcceptedCoordinate | None = None
@@ -1349,6 +1376,20 @@ class Playbill:
 
     def __exit__(self, *_args: object) -> None:
         self.close()
+
+    @property
+    def _sources(self) -> WorkspaceSources:
+        """Resolve the workspace source catalog the first time one is needed.
+
+        Reads -- orientation, search, `world()` -- touch no working tree, so
+        demanding a catalog at connect made every read depend on a writer's
+        setup. The refusal is unchanged; it now lands on the first surface that
+        actually selects from the workspace.
+        """
+
+        if self._workspace_sources is None:
+            self._workspace_sources = WorkspaceSources(self._workspace)
+        return self._workspace_sources
 
     @property
     def coordinate(self) -> AcceptedCoordinate:
@@ -1690,6 +1731,30 @@ class Playbill:
         )
         return ClaimTypeDraft(self, definition)
 
+    def world(self) -> World:
+        """Read this instance's accepted vocabulary as typed objects.
+
+        Strings are the one place the SDK gave away what it knows. The daemon
+        already publishes the accepted ClaimTypes, so this reads them once and
+        hands back a tree of kinds, predicates and admissible values, every ref
+        stamped with this connection's orientation. Subjects are not read here:
+        a kind loads its own on first ask, so orienting in a world with a
+        thousand Subjects costs the vocabulary and nothing else.
+        """
+
+        from cruxible_client.authoring.world import build_world
+
+        self.orient()
+        listing = self._client.list_playbill_claim_types(
+            self._instance_id,
+            at=_api_coordinate(self.coordinate),
+        )
+        return build_world(
+            self,
+            coordinate=self.coordinate,
+            claim_type_envelopes=tuple(view.envelope for view in listing.claim_types),
+        )
+
     def changes(self, *, rationale: str | None = None) -> ChangeSetDraft:
         """Open one changeset that any mix of members can be authored into.
 
@@ -1705,7 +1770,7 @@ class Playbill:
         *,
         subject: str | SubjectRef,
         predicate: str | ClaimTypeRef,
-        value: CanonicalValue | SubjectRef,
+        value: CanonicalValue | SubjectRef | LiteralValue,
         role: ClaimRole | str,
         rationale: str,
         supported_by: EvidenceSelection | CaptureRef | None,
@@ -1744,7 +1809,7 @@ class Playbill:
         sites: dict[str, CallSite],
         subject: str | SubjectRef,
         predicate: str | ClaimTypeRef,
-        value: CanonicalValue | SubjectRef,
+        value: CanonicalValue | SubjectRef | LiteralValue,
         role: ClaimRole | str,
         rationale: str,
         supported_by: EvidenceSelection | CaptureRef | None,
@@ -1784,11 +1849,21 @@ class Playbill:
             elif subject_name.endswith(".yaml"):
                 subject_name = subject_name.removesuffix(".yaml")
         predicate_name = _address(predicate, RefKind.CLAIM_TYPE)
-        if isinstance(value, SubjectRef):
+        statement_object: LiteralClaimObject | SubjectClaimObject
+        if isinstance(value, LiteralValue):
+            # A typed literal already names the ClaimType that admits it, so it
+            # answers the object kind without a read and refuses the wrong
+            # predicate here rather than in the daemon's preflight.
+            if value.predicate != predicate_name:
+                raise LiteralValueTypeError(
+                    minted_under=value.predicate,
+                    passed_to=predicate_name,
+                )
             self._assert_coordinate(value.coordinate)
-            statement_object: LiteralClaimObject | SubjectClaimObject = SubjectClaimObject(
-                address=_subject_address(value.address)
-            )
+            statement_object = LiteralClaimObject(value=normalize_canonical(value.value))
+        elif isinstance(value, SubjectRef):
+            self._assert_coordinate(value.coordinate)
+            statement_object = SubjectClaimObject(address=_subject_address(value.address))
         elif isinstance(value, str) and _SUBJECT_RE.fullmatch(value):
             object_kind = self._claim_type_object_kind(
                 predicate_name=predicate_name,
@@ -2024,6 +2099,13 @@ class Playbill:
 
         if claim_type_definition is not None:
             return claim_type_definition.definition.object_kind
+        if isinstance(predicate, PendingClaimTypeRef):
+            if predicate.object_kind not in _CLAIM_TYPE_OBJECT_KINDS:
+                return "literal"
+            return cast(
+                Literal["literal", "subject", "exact_content"],
+                predicate.object_kind,
+            )
         coordinate = (
             predicate.coordinate if isinstance(predicate, ClaimTypeRef) else self.coordinate
         )
@@ -2404,6 +2486,7 @@ class Playbill:
         query: str | None,
         kinds: Collection[str],
         statuses: Collection[str],
+        subject: Mapping[str, object] | None = None,
         at_active_coordinate: bool = True,
     ) -> SearchPage:
         result = self._client.search_playbill(
@@ -2412,6 +2495,7 @@ class Playbill:
             query=query,
             kinds=tuple(kinds),
             statuses=tuple(statuses),
+            subject=None if subject is None else dict(subject),
             at=(
                 None
                 if self._coordinate is None or not at_active_coordinate

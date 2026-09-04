@@ -20,6 +20,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from cruxible_client import (
     CruxibleClient,
+    Playbill,
     activate_with_workspace_refresh,
     contracts,
     materialize_playbill_floor,
@@ -4105,6 +4106,50 @@ def orient(
         evaluation_time=evaluation_time,
         output_json=output_json,
     )
+
+
+@playbill_group.group("world")
+def world_group() -> None:
+    """Read the accepted vocabulary as typed Python."""
+
+
+@world_group.command("stub")
+@click.option(
+    "--out",
+    "out_path",
+    default=None,
+    help="Write the stub to this path instead of standard output.",
+)
+@handle_errors
+def world_stub(out_path: str | None) -> None:
+    """Write a .pyi stub typing this instance's accepted world.
+
+    A world is discovered at runtime, so an editor and a model both see `Any`
+    where the instance's own kinds, Subjects and predicates are. This writes
+    them down as types at exactly one accepted coordinate, which the stub names
+    in its header. Regenerate it after every activation.
+    """
+
+    rendered = _server_call(
+        lambda client, instance_id: (
+            Playbill._from_client(
+                client,
+                instance_id=instance_id,
+                workspace=Path.cwd(),
+            )
+            .world()
+            .stub()
+        ),
+        command_name="playbill world stub",
+    )
+    if out_path is None:
+        click.echo(rendered, nl=False)
+        return
+    target = Path(out_path).expanduser()
+    if target.parent != Path("."):
+        target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(rendered, encoding="utf-8")
+    click.echo(f"Wrote {target}")
 
 
 @playbill_group.command("expand")
