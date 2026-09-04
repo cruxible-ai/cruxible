@@ -444,7 +444,6 @@ def test_sdk_declared_block_refuses_every_citation_role_inside_it(
         "effective_period": None,
         "revises": None,
         "dispositions": {},
-        "publish_to": None,
         "subject_definition": None,
         "claim_type_definition": None,
     }
@@ -906,7 +905,6 @@ def test_cold_claim_prepares_one_payload_with_dependencies_and_program_stamp(
         effective_period=None,
         revises=None,
         dispositions={},
-        publish_to=None,
         subject_definition=subject,
         claim_type_definition=claim_type,
     )
@@ -944,7 +942,6 @@ def test_subject_values_build_typed_objects_and_only_refs_pin_a_coordinate(
         "effective_period": None,
         "revises": None,
         "dispositions": {},
-        "publish_to": None,
         "subject_definition": None,
         "claim_type_definition": None,
     }
@@ -991,7 +988,6 @@ def test_address_shaped_strings_follow_the_accepted_claim_type_object_kind(
         "effective_period": None,
         "revises": None,
         "dispositions": {},
-        "publish_to": None,
         "subject_definition": None,
         "claim_type_definition": None,
     }
@@ -1019,7 +1015,6 @@ _OBJECT_KIND_CLAIM_DEFAULTS: dict[str, Any] = {
     "effective_period": None,
     "revises": None,
     "dispositions": {},
-    "publish_to": None,
     "subject_definition": None,
     "claim_type_definition": None,
 }
@@ -1143,7 +1138,6 @@ def test_claim_requires_exactly_one_explicit_source_role(tmp_path: Path) -> None
             effective_period=None,
             revises=None,
             dispositions={"CLM-" + "1" * 32: Disposition.NOT_TESTED},
-            publish_to=None,
             subject_definition=None,
             claim_type_definition=None,
         )
@@ -1175,7 +1169,6 @@ def test_typed_refs_emit_coordinate_assertions_without_entering_the_payload(
         effective_period=None,
         revises=None,
         dispositions={},
-        publish_to=None,
         subject_definition=None,
         claim_type_definition=None,
     )
@@ -1223,7 +1216,6 @@ def test_plain_strings_never_forge_coordinate_assertions_or_change_yaml_shorthan
         "self_source": "Patch within 48 hours.",
         "qualifier": None,
         "effective_period": None,
-        "publish_to": None,
         "subject_definition": None,
         "claim_type_definition": None,
     }
@@ -1272,7 +1264,6 @@ def test_capture_ref_builds_v3_authoring_and_owns_the_contract_expectation(
         effective_period=None,
         revises=None,
         dispositions={},
-        publish_to=None,
         subject_definition=None,
         claim_type_definition=None,
     )
@@ -1387,7 +1378,6 @@ def test_capture_ref_from_a_copy_cannot_be_promoted_to_independent_evidence(
             effective_period=None,
             revises=None,
             dispositions={},
-            publish_to=None,
             subject_definition=None,
             claim_type_definition=None,
         )
@@ -1529,7 +1519,6 @@ def test_refusal_diagnostic_maps_exact_payload_path_to_the_call_expression(
         effective_period=None,
         revises=None,
         dispositions={},
-        publish_to=None,
         subject_definition=None,
         claim_type_definition=None,
     ).prepare()
@@ -1676,7 +1665,6 @@ def test_a_string_value_reads_the_object_kind_from_the_sets_own_definition(
         effective_period=None,
         revises=None,
         dispositions={},
-        publish_to=None,
         subject_definition=None,
         claim_type_definition=None,
     )

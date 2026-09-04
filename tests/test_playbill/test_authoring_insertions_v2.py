@@ -1,4 +1,15 @@
-"""Flow-B v2 publication wire and reducer laws."""
+"""Publication-v2 wire shapes, and the reducer laws over records already written.
+
+Nothing in the product mints a publication any more: a Claim projected as its own
+page text was the overlap the two-block-kinds law refuses, so `insertion_target`
+refuses at the authoring door and the prepare/confirm road is gone. What an
+instance that published before that ruling still holds is here -- its bound
+registration still folds, `next` still reports the marker it owns, coverage still
+resolves the card, and `block depublish` still releases it. Those records are
+written by `tests.support.legacy_publications`, the only thing left that can
+write one, and that is the point: the laws below have to keep holding for records
+nothing can create again.
+"""
 
 from __future__ import annotations
 
@@ -10,20 +21,16 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cruxible_client.authoring.insertions import (
-    PlaybillInsertionApplyError,
-    apply_playbill_publication,
-)
 from cruxible_client.authoring.workspace import _projection_marker_observation
-from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.authoring.models import (
     AuthoringExistingClaimDispositionV1,
     InsertionAnchorWindowV1,
+    InsertionExpectationV2,
     InsertionTargetV2,
     PublicationSourceObservationV2,
     SelfSourceBodyV1,
     WorkingDigestCoordinateV1,
-    build_insertion_expectation_v2,
     insertion_prepare_terminal_operation_v2_key,
     insertion_target_v2_digest,
     publication_block_id,
@@ -32,36 +39,16 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.claims import (
     ClaimArtifactV2,
     LiteralClaimObject,
+    claim_artifact_digest,
     claim_path,
+    claim_statement_digest,
     parse_claim,
     render_claim,
 )
-from cruxible_client.contracts.declared_blocks import (
-    ProjectionBootstrapUnstampedError,
-    frame_projection_block,
-    parse_projection_blocks,
-)
+from cruxible_client.contracts.declared_blocks import parse_projection_blocks
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.subjects import SubjectShell, subject_path
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.playbill.authoring.insertions import (
-    PublicationAnchorAmbiguous,
-    PublicationAnchorStale,
-    PublicationBodyNotMarkerCompatible,
-    PublicationClaimNotAccepted,
-    PublicationClaimProjectedAsItself,
-    PublicationConfirmationMismatch,
-    PublicationPreparationStale,
-    PublicationRevisionLimitExceeded,
-    PublicationSourceHasUnrepinnedBlock,
-    PublicationTerminalStateRefused,
-    build_publication_preparation,
-    mark_publication_prepared,
-    publication_confirmation_from_source,
-    publication_confirmation_matches,
-)
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.coverage.adapter import observe_working_source
 from cruxible_core.playbill.coverage.contracts import (
@@ -69,7 +56,7 @@ from cruxible_core.playbill.coverage.contracts import (
     LogicalSourceIdentityV1,
 )
 from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.proposals import AuthenticatedActor
+from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
@@ -85,21 +72,18 @@ from cruxible_core.service.playbill_next import (
     service_playbill_next,
 )
 from cruxible_core.service.playbill_publications import service_depublish_playbill_block
+from tests.support.legacy_publications import register_legacy_publication
 from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_authoring_preflight import (
     TIMESTAMP,
     _seed_claim_surface,
     _self_source_payload,
-    _working_payload,
 )
 
-COORDINATE = AcceptedCoordinate(
-    git_oid="1" * 64,
-    semantic_root="sha256:" + "2" * 64,
-    generation_root="sha256:" + "3" * 64,
-    compiler_digest="sha256:" + "4" * 64,
-)
+# The body every fixture below publishes: the authored Claim's own self-source
+# body, which is what the removed road framed into the page.
+PUBLISHED_BODY = b"status: ready\n"
 
 
 def _digest(content: bytes) -> str:
@@ -131,6 +115,46 @@ def _activate(
         activated_by="owner",
     )
     assert activated.status == "accepted"
+
+
+def _retire(instance, owner, claim_id: str) -> None:  # type: ignore[no-untyped-def]
+    """Retire one accepted Claim through an ordinary proposal.
+
+    It used to live beside the reverse-drift tests. Those tested a `next` row
+    that could only fire on a citation origin nothing ever wrote, so they went
+    with the origin; this is the part of them that was about retirement.
+    """
+
+    base = instance.accepted_coordinate()
+    path = claim_path(claim_id)
+    tree = instance.tree_at(base.git_oid)
+    claim = parse_claim(tree[path], path=path)
+    assert isinstance(claim, ClaimArtifactV2)
+    retired = claim.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired",
+                predecessor_digest=claim_artifact_digest(claim).tagged,
+            )
+        }
+    )
+    tree[path] = render_claim(retired)
+    submitted = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/retire-published-copy",
+            proposed_base_oid=base.git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp="2026-08-21T12:01:00.000000Z",
+    )
+    assert submitted.evaluation.candidate_digest is not None
+    _activate(
+        instance,
+        owner,
+        proposal_id=submitted.admission.proposal_id,
+        candidate_digest=submitted.evaluation.candidate_digest,
+    )
 
 
 def _successor_payload(claim_id: str, *, value: str):  # type: ignore[no-untyped-def]
@@ -195,27 +219,21 @@ def _observation(content: bytes) -> PublicationSourceObservationV2:
     )
 
 
-def _expectation():
-    return build_insertion_expectation_v2(
-        expectation_id=_digest(b"expectation"),
-        state="pending",
-        claim_identity="CLM-" + "a" * 32,
-        original_claim_artifact_digest=_digest(b"claim"),
-        claim_statement_digest=_digest(b"statement"),
-        accepted_claim_coordinate=COORDINATE,
-        target=_target(),
-        expires_at=datetime(2026, 8, 28, 12, tzinfo=UTC),
-    )
-
-
 def _submitted_publication(
     tmp_path: Path,
     *,
     activate_claim: bool = True,
-    additional_subjects: tuple[SubjectShell, ...] = (),
 ):
+    """Submit -- and by default accept -- the Claim a legacy publication backs.
+
+    The payload carries no `insertion_target`, because the authoring door
+    refuses one now: this intent reaches acceptance exactly as any other Flow-B
+    Claim does. The target arrives later, from `_registered_publication`, which
+    writes the record the removed road used to write.
+    """
+
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner, additional_subjects=additional_subjects)
+    _seed_claim_surface(instance, owner)
     clock = [datetime(2026, 8, 22, 12, tzinfo=UTC)]
     coordinator = AuthoringIntentCoordinator(
         instance=instance,
@@ -228,16 +246,9 @@ def _submitted_publication(
     )
     actor = AuthenticatedActor(actor_id="owner")
     preimage = b"# work item\n"
-    payload = _self_source_payload(insertion_target=_target(preimage)).model_copy(
-        update={
-            "source": SelfSourceBodyV1(
-                content_base64=base64.b64encode(b"status: ready\n").decode("ascii")
-            )
-        }
-    )
     intent = coordinator.create(
         actor=actor,
-        payload=payload,
+        payload=_self_source_payload(),
         canonical_timestamp=TIMESTAMP,
     ).intent
     submitted = coordinator.submit(intent.intent_id, actor=actor)
@@ -251,52 +262,63 @@ def _submitted_publication(
             candidate_digest=submitted.status.candidate_digest,
         )
     resumed = coordinator.resume(intent.intent_id, actor=actor).intent
-    assert resumed.insertion_expectation is not None
-    assert resumed.insertion_expectation.state == (
-        "pending" if activate_claim else "awaiting_claim_acceptance"
-    )
+    assert resumed.insertion_expectations == ()
     return instance, owner, coordinator, actor, intent.intent_id, preimage, clock
 
 
-def _final_source(intent_id: str, prepared, preimage: bytes) -> bytes:  # type: ignore[no-untyped-def]
-    assert prepared.preparation is not None
-    preparation = prepared.preparation
-    framed = frame_projection_block(stamp=preparation.stamp, body=b"status: ready\n")
-    offset = preparation.rebased_selector.insertion_offset
-    final = preimage[:offset] + framed + preimage[offset:]
-    assert (
-        publication_confirmation_from_source(
-            intent_id=intent_id,
-            expectation=prepared.expectation,
-            observation=_observation(final),
-        )
-        is not None
+def _registered_publication(
+    instance: PlaybillInstance,
+    coordinator: AuthoringIntentCoordinator,
+    actor: AuthenticatedActor,
+    intent_id: str,
+    preimage: bytes,
+    *,
+    observed_at: datetime = datetime(2026, 8, 22, 12, tzinfo=UTC),
+) -> tuple[InsertionExpectationV2, bytes]:
+    """Land the bound registration, and the page bytes, an old instance holds.
+
+    The Claim is accepted, so its artifact and statement digests are read back
+    from the accepted tree exactly as the vanished mint read them from the
+    lowered one. The coverage join compares the registration's statement digest
+    against the live Claim, so a fixture that invented one would resolve nothing.
+    """
+
+    stored = coordinator.store.get(intent_id, actor_id=actor.actor_id)
+    path = claim_path(stored.semantic_identity)
+    coordinate = instance.accepted_coordinate()
+    accepted = parse_claim(instance.tree_at(coordinate.git_oid)[path], path=path)
+    return register_legacy_publication(
+        coordinator.store,
+        intent_id,
+        actor_id=actor.actor_id,
+        target=_target(preimage),
+        preimage=preimage,
+        body=PUBLISHED_BODY,
+        accepted_coordinate=AcceptedCoordinate.from_internal(coordinate),
+        accepted_generation=next(
+            generation.sequence
+            for generation in instance.accepted_history()
+            if generation.oid == coordinate.git_oid
+        ),
+        claim_artifact_digest=claim_artifact_digest(accepted).tagged,
+        claim_statement_digest=claim_statement_digest(accepted.statement).tagged,
+        observed_at=observed_at,
     )
-    return final
 
 
-def _prepared_publication_next_request(tmp_path: Path):  # type: ignore[no-untyped-def]
+def _published_publication_next_request(tmp_path: Path):  # type: ignore[no-untyped-def]
+    """One registered publication, its page bytes, and a `next` request over them."""
+
     instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
         tmp_path
     )
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    assert prepared.expectation.state == "prepared"
-    assert prepared.preparation is not None
-    landed = apply_playbill_publication(
-        preimage,
-        intent_id=intent_id,
-        expectation=prepared.expectation.model_dump(mode="json"),
-        retained_body=b"status: ready\n",
-    )
+    bound, landed = _registered_publication(instance, coordinator, actor, intent_id, preimage)
+    assert bound.preparation is not None
     markers = tuple(
         block.summary()
         for block in parse_projection_blocks(
-            landed.content,
-            source_id=prepared.preparation.source_id,
+            landed,
+            source_id=bound.preparation.source_id,
         )
     )
     request = PlaybillNextRequestV1(
@@ -311,8 +333,8 @@ def _prepared_publication_next_request(tmp_path: Path):  # type: ignore[no-untyp
                 PlaybillNextSourceObservationV3(
                     tag="playbill-next-source-observation-v3",
                     source_id="repo.work-items",
-                    observed_source_digest=_digest(landed.content),
-                    byte_length=len(landed.content),
+                    observed_source_digest=_digest(landed),
+                    byte_length=len(landed),
                     marker_summaries=markers,
                     occurrences=(),
                     scanned_commitment_digests=(),
@@ -323,7 +345,7 @@ def _prepared_publication_next_request(tmp_path: Path):  # type: ignore[no-untyp
             )
         ),
     )
-    return instance, coordinator, actor, intent_id, prepared, landed, request
+    return instance, coordinator, actor, intent_id, bound, landed, request
 
 
 def test_v2_target_and_source_observation_digest_exact_bytes() -> None:
@@ -366,671 +388,98 @@ def test_publication_block_id_is_deterministic_and_parser_safe() -> None:
     assert len(first) == 36
 
 
-def test_prepare_confirmation_binds_the_block_frame_not_unrelated_file_bytes() -> None:
-    expectation = _expectation()
-    preparation = build_publication_preparation(
-        expectation,
-        observation=_observation(b"status: \n"),
-        body=b"ready\n",
-        accepted_coordinate=COORDINATE,
-        accepted_generation=7,
-    )
-    prepared = mark_publication_prepared(expectation, preparation=preparation)
-    opening = preparation.block_start_byte
-    final = (
-        b"status: \n"[: preparation.rebased_selector.insertion_offset]
-        + frame_projection_block(stamp=preparation.stamp, body=b"ready\n")
-        + b"status: \n"[preparation.rebased_selector.insertion_offset :]
-    )
-    moved = b"unrelated prefix\n" + final + b"unrelated suffix\n"
-    confirmation = publication_confirmation_from_source(
-        intent_id="AIT-" + "b" * 32,
-        expectation=prepared,
-        observation=_observation(moved),
-    )
-
-    assert preparation.revision == 1
-    assert preparation.block_start_byte == opening == len(b"status: \n")
-    assert confirmation is not None
-    assert publication_confirmation_matches(
-        prepared,
-        confirmation,
-        intent_id="AIT-" + "b" * 32,
-    )
-    assert not publication_confirmation_matches(
-        prepared,
-        confirmation,
-        intent_id="AIT-" + "c" * 32,
-    )
-
-
-@pytest.mark.parametrize(
-    "mismatch",
-    [
-        "preparation_digest",
-        "source_id",
-        "occurrence_count",
-        "stamp",
-        "body_digest",
-    ],
-)
-def test_coordinator_refuses_each_exact_block_frame_binding_mismatch(
-    tmp_path: Path,
-    mismatch: str,
-) -> None:
-    _instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
-        tmp_path
-    )
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    final = _final_source(intent_id, prepared, preimage)
-    exact = publication_confirmation_from_source(
-        intent_id=intent_id,
-        expectation=prepared.expectation,
-        observation=_observation(final),
-    )
-    assert exact is not None
-    if mismatch == "preparation_digest":
-        changed = exact.model_copy(update={"preparation_digest": "sha256:" + "1" * 64})
-    elif mismatch == "source_id":
-        changed = exact.model_copy(update={"source_id": "repo.other"})
-    elif mismatch == "occurrence_count":
-        changed = exact.model_copy(update={"observed_occurrence_count": 2})
-    elif mismatch == "stamp":
-        changed = exact.model_copy(
-            update={
-                "marker_summary": exact.marker_summary.model_copy(
-                    update={
-                        "stamp": exact.marker_summary.stamp.model_copy(
-                            update={
-                                "body_digest": "sha256:" + "2" * 64,
-                            }
-                        )
-                    }
-                )
-            }
-        )
-    else:
-        changed = exact.model_copy(
-            update={
-                "marker_summary": exact.marker_summary.model_copy(
-                    update={"observed_body_digest": "sha256:" + "3" * 64}
-                )
-            }
-        )
-
-    assert not publication_confirmation_matches(
-        prepared.expectation,
-        changed,
-        intent_id=intent_id,
-    )
-    with pytest.raises(PublicationConfirmationMismatch, match="exact preparation"):
-        coordinator.confirm_insertion(intent_id, actor=actor, observation=changed)
-
-
-def test_prepare_refuses_stale_ambiguous_and_marker_incompatible_bodies() -> None:
-    expectation = _expectation()
-    with pytest.raises(PublicationAnchorStale):
-        build_publication_preparation(
-            expectation,
-            observation=_observation(b"state: "),
-            body=b"ready\n",
-            accepted_coordinate=COORDINATE,
-            accepted_generation=7,
-        )
-    with pytest.raises(PublicationAnchorAmbiguous):
-        build_publication_preparation(
-            expectation,
-            observation=_observation(b"status: \nstatus: \n"),
-            body=b"ready\n",
-            accepted_coordinate=COORDINATE,
-            accepted_generation=7,
-        )
-    with pytest.raises(PublicationBodyNotMarkerCompatible):
-        build_publication_preparation(
-            expectation,
-            observation=_observation(b"status: \n"),
-            body=b"ready without terminal LF",
-            accepted_coordinate=COORDINATE,
-            accepted_generation=7,
-        )
-    bootstrap = (
-        b"<!-- playbill:block:draft -->\nunstamped\n<!-- /playbill:block:draft -->\nstatus: \n"
-    )
-    with pytest.raises(ProjectionBootstrapUnstampedError):
-        parse_projection_blocks(bootstrap, source_id=expectation.target.source_id)
-    with pytest.raises(PublicationSourceHasUnrepinnedBlock, match="block repin"):
-        build_publication_preparation(
-            expectation,
-            observation=_observation(bootstrap),
-            body=b"ready\n",
-            accepted_coordinate=COORDINATE,
-            accepted_generation=7,
-        )
-
-
-def test_reprepare_is_deterministic_and_increments_only_for_a_new_clean_preimage() -> None:
-    expectation = _expectation()
-    first = build_publication_preparation(
-        expectation,
-        observation=_observation(b"status: \n"),
-        body=b"ready\n",
-        accepted_coordinate=COORDINATE,
-        accepted_generation=7,
-    )
-    prepared = mark_publication_prepared(expectation, preparation=first)
-    retry = build_publication_preparation(
-        prepared,
-        observation=_observation(b"status: \n"),
-        body=b"ready\n",
-        accepted_coordinate=COORDINATE,
-        accepted_generation=7,
-    )
-    revised = build_publication_preparation(
-        prepared,
-        observation=_observation(b"prefix\nstatus: \n"),
-        body=b"ready\n",
-        accepted_coordinate=COORDINATE,
-        accepted_generation=7,
-    )
-
-    assert retry == first
-    assert revised.revision == 2
-    assert revised.preparation_digest != first.preparation_digest
-    assert mark_publication_prepared(prepared, preparation=revised).preparation == revised
-    with pytest.raises(PublicationPreparationStale):
-        mark_publication_prepared(
-            prepared,
-            preparation=revised.model_copy(update={"revision": 3}),
-        )
-
-
-def test_reprepare_has_a_fixed_revision_cap_with_exact_retry_still_allowed() -> None:
-    expectation = _expectation()
-    last_content = b""
-    for revision in range(1, 17):
-        last_content = b"prefix " * revision + b"status: \n"
-        preparation = build_publication_preparation(
-            expectation,
-            observation=_observation(last_content),
-            body=b"ready\n",
-            accepted_coordinate=COORDINATE,
-            accepted_generation=7,
-        )
-        assert preparation.revision == revision
-        expectation = mark_publication_prepared(expectation, preparation=preparation)
-
-    assert (
-        build_publication_preparation(
-            expectation,
-            observation=_observation(last_content),
-            body=b"ready\n",
-            accepted_coordinate=COORDINATE,
-            accepted_generation=7,
-        )
-        == expectation.preparation
-    )
-    with pytest.raises(
-        PublicationRevisionLimitExceeded,
-        match="16-revision limit; confirm the revision-16 postimage.*7-day expiry",
-    ):
-        build_publication_preparation(
-            expectation,
-            observation=_observation(b"one more prefix\nstatus: \n"),
-            body=b"ready\n",
-            accepted_coordinate=COORDINATE,
-            accepted_generation=7,
-        )
-
-
-def test_coordinator_reprepares_after_client_cas_refuses_a_concurrent_edit(
+def test_only_a_registered_publication_block_suppresses_next_orphan_repair(
     tmp_path: Path,
 ) -> None:
-    _instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
-        tmp_path
-    )
-    first = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    assert first.preparation is not None
-    assert first.inserted_block_base64 is not None
-    assert base64.b64decode(first.inserted_block_base64, validate=True) == frame_projection_block(
-        stamp=first.preparation.stamp,
-        body=b"status: ready\n",
-    )
-    malformed = first.model_dump(mode="json")
-    malformed["inserted_block_base64"] = base64.b64encode(b"wrong\n").decode("ascii")
-    with pytest.raises(ValidationError, match="differ from their preparation"):
-        type(first).model_validate(malformed)
-    concurrent = b"concurrent heading\n" + preimage
-    with pytest.raises(PlaybillInsertionApplyError, match="anchor is stale"):
-        apply_playbill_publication(
-            concurrent,
-            intent_id=intent_id,
-            expectation=first.expectation.model_dump(mode="json"),
-            retained_body=b"status: ready\n",
-        )
+    """A `pub-` marker the instance does not register is a hole, and says so.
 
-    revised = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(concurrent),
+    The registration is the whole of what tells `next` that a publication block
+    on the page is accounted for. An identically-shaped marker for a block no
+    expectation registers is the orphan case, and its repair names both ways out
+    -- remove the block, or register it -- rather than assuming which one the
+    author meant.
+    """
+
+    instance, _coordinator, _actor, _intent_id, bound, _landed, request = (
+        _published_publication_next_request(tmp_path)
     )
-    assert revised.outcome == "prepared"
-    assert revised.preparation is not None
-    assert revised.preparation.revision == 2
-    applied = apply_playbill_publication(
-        concurrent,
-        intent_id=intent_id,
-        expectation=revised.expectation.model_dump(mode="json"),
-        retained_body=b"status: ready\n",
-    )
-    assert applied.outcome == "applied"
+    assert bound.preparation is not None
+    registered = (bound.preparation.source_id, bound.preparation.block_id)
+    assert registered in (_registered_publication_blocks(instance) or frozenset())
+    assert not [
+        item
+        for item in service_playbill_next(instance, request=request).items
+        if item.reason == "unregistered_projection_block"
+    ]
 
-
-_NEIGHBOUR_SUBJECT = SubjectShell(
-    identity=ArtifactIdentity(kind="Subject", name="project.work_item/wi-77"),
-    subject_kind="project.work_item",
-    subject_id="wi-77",
-)
-
-
-def _neighbour_citing_the_target_source(
-    instance: PlaybillInstance,
-    owner: object,
-    actor: AuthenticatedActor,
-) -> None:
-    """Accept one unrelated live Claim whose evidence lives in the target source."""
-
-    neighbour = AuthoringIntentCoordinator(
-        instance=instance,
-        store=AuthoringIntentStore(
-            instance.root / instance.descriptor.storage.exhaust,
-            token_factory=lambda: "3" * 32,
-        ),
-        claim_id_factory=lambda: "CLM-" + "4" * 32,
-        clock=lambda: datetime(2026, 8, 22, 12, tzinfo=UTC),
-    )
-    base = _working_payload(occurrence_count=1)
-    payload = base.model_copy(
+    # A second block of exactly the same shape, for an expectation that was
+    # never minted. The registered marker stays on the page beside it, so the
+    # only difference between the two rows is the registration itself.
+    unregistered_block_id = publication_block_id(_digest(b"an expectation nothing minted"))
+    source_observation = request.workspace_observation.source_observations[0]
+    (marker,) = source_observation.marker_summaries
+    span = marker.end_byte - marker.start_byte
+    orphan_marker = marker.model_copy(
         update={
-            "statement": base.statement.model_copy(
+            "stamp": marker.stamp.model_copy(update={"block_id": unregistered_block_id}),
+            "start_byte": marker.end_byte,
+            "end_byte": marker.end_byte + span,
+        }
+    )
+    orphan_request = request.model_copy(
+        update={
+            "workspace_observation": request.workspace_observation.model_copy(
                 update={
-                    "subject": SemanticAddress.whole_artifact(
-                        subject_path(
-                            _NEIGHBOUR_SUBJECT.subject_kind,
-                            _NEIGHBOUR_SUBJECT.subject_id,
-                        )
+                    "source_observations": (
+                        source_observation.model_copy(
+                            update={"marker_summaries": (marker, orphan_marker)}
+                        ),
                     )
                 }
             )
         }
     )
-    intent = neighbour.create(
-        actor=actor,
-        payload=payload,
-        canonical_timestamp="2026-08-22T12:00:01.000000Z",
-    ).intent
-    submitted = neighbour.submit(intent.intent_id, actor=actor)
-    assert submitted.status.proposal_id is not None
-    assert submitted.status.candidate_digest is not None
-    _activate(
-        instance,
-        owner,
-        proposal_id=submitted.status.proposal_id,
-        candidate_digest=submitted.status.candidate_digest,
-    )
 
-
-def test_prepare_warns_when_body_duplicates_another_claims_citation_on_the_target_source(
-    tmp_path: Path,
-) -> None:
-    instance, owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
-        tmp_path,
-        additional_subjects=(_NEIGHBOUR_SUBJECT,),
-    )
-    _neighbour_citing_the_target_source(instance, owner, actor)
-
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    replayed = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-
-    (warning,) = prepared.warnings
-    assert warning.code == "playbill.authoring.publication_citation_anchor_collision"
-    assert warning.source_id == "repo.work-items"
-    assert warning.citation_ids == tuple(sorted(set(warning.citation_ids)))
-    assert replayed.warnings == prepared.warnings
-
-
-def test_prepare_refuses_a_backing_claim_projected_as_its_own_source(
-    tmp_path: Path,
-) -> None:
-    """A source block and a projection block are never the same block."""
-
-    instance, owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
-        tmp_path
-    )
-    revision_coordinator = AuthoringIntentCoordinator(
-        instance=instance,
-        store=AuthoringIntentStore(
-            instance.root / instance.descriptor.storage.exhaust,
-            token_factory=lambda: "3" * 32,
-        ),
-        claim_id_factory=lambda: "CLM-" + "4" * 32,
-        clock=lambda: datetime(2026, 8, 22, 12, tzinfo=UTC),
-    )
-    # The publication's own backing Claim is revised onto evidence that lives in
-    # the very source it is about to be published into.
-    revision_payload = _working_payload(occurrence_count=1).model_copy(
-        update={"claim_ref": "CLM-" + "2" * 32}
-    )
-    revision_intent = revision_coordinator.create(
-        actor=actor,
-        payload=revision_payload,
-        canonical_timestamp="2026-08-22T12:00:01.000000Z",
-    ).intent
-    revised = revision_coordinator.submit(revision_intent.intent_id, actor=actor)
-    assert revised.status.proposal_id is not None
-    assert revised.status.candidate_digest is not None
-    _activate(
-        instance,
-        owner,
-        proposal_id=revised.status.proposal_id,
-        candidate_digest=revised.status.candidate_digest,
-    )
-
-    with pytest.raises(PublicationClaimProjectedAsItself) as refusal:
-        coordinator.prepare_publication(
-            intent_id,
-            actor=actor,
-            observation=_observation(preimage),
-        )
-    message = str(refusal.value)
-    assert message.startswith("playbill.authoring.publication_claim_projected_as_itself: ")
-    assert "repo.work-items" in message
-
-
-def test_stale_prepare_replay_cannot_return_a_superseded_preparation(
-    tmp_path: Path,
-) -> None:
-    _instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
-        tmp_path
-    )
-    first = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    response_loss_retry = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    assert response_loss_retry.expectation == first.expectation
-    assert response_loss_retry.preparation == first.preparation
-
-    concurrent = b"concurrent heading\n" + preimage
-    second = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(concurrent),
-    )
-    assert second.preparation is not None and second.preparation.revision == 2
-
-    reverted = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    assert reverted.preparation is not None and reverted.preparation.revision == 3
-    durable = coordinator.store.get(intent_id, actor_id=actor.actor_id)
-    assert durable.insertion_expectation == reverted.expectation
-
-    applied = apply_playbill_publication(
-        preimage,
-        intent_id=intent_id,
-        expectation=reverted.expectation.model_dump(mode="json"),
-        retained_body=b"status: ready\n",
-    )
-    confirmation = publication_confirmation_from_source(
-        intent_id=intent_id,
-        expectation=reverted.expectation,
-        observation=_observation(applied.content),
-    )
-    assert confirmation is not None
-    confirmed = coordinator.confirm_insertion(
-        intent_id,
-        actor=actor,
-        observation=confirmation,
-    )
-    assert confirmed.outcome == "bound"
-
-
-def test_prepare_before_claim_acceptance_refuses_without_terminalizing_then_recovers(
-    tmp_path: Path,
-) -> None:
-    instance, owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
-        tmp_path, activate_claim=False
-    )
-    with pytest.raises(PublicationClaimNotAccepted):
-        coordinator.prepare_publication(
-            intent_id,
-            actor=actor,
-            observation=_observation(preimage),
-        )
-    unchanged = coordinator.store.get(intent_id, actor_id=actor.actor_id)
-    assert unchanged.insertion_expectation is not None
-    assert unchanged.insertion_expectation.state == "awaiting_claim_acceptance"
-    assert unchanged.candidate_status.proposal_id is not None
-    assert unchanged.candidate_status.candidate_digest is not None
-
-    _activate(
-        instance,
-        owner,
-        proposal_id=unchanged.candidate_status.proposal_id,
-        candidate_digest=unchanged.candidate_status.candidate_digest,
-    )
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    assert prepared.outcome == "prepared"
-    assert prepared.expectation.state == "prepared"
-
-
-def test_pin_15_prepared_status_never_passively_terminalizes_and_exact_confirm_rescues(
-    tmp_path: Path,
-) -> None:
-    instance, _owner, coordinator, actor, intent_id, preimage, clock = _submitted_publication(
-        tmp_path
-    )
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    assert prepared.preparation is not None
-    preparation = prepared.preparation
-    framed = frame_projection_block(stamp=preparation.stamp, body=b"status: ready\n")
-    offset = preparation.rebased_selector.insertion_offset
-    final = preimage[:offset] + framed + preimage[offset:]
-    exact = publication_confirmation_from_source(
-        intent_id=intent_id,
-        expectation=prepared.expectation,
-        observation=_observation(final),
-    )
-    assert exact is not None
-
-    clock[0] = datetime(2026, 8, 29, 12, tzinfo=UTC)
-    resumed = coordinator.resume(intent_id, actor=actor).intent
-    assert resumed.insertion_expectation is not None
-    assert resumed.insertion_expectation.state == "prepared"
-    bound = coordinator.confirm_insertion(intent_id, actor=actor, observation=exact)
-
-    assert bound.outcome == "bound"
-    assert bound.expectation.state == "bound"
-    assert instance.accepted_coordinate().git_oid == preparation.accepted_coordinate.git_oid
-    accepted_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    path = claim_path(bound.intent.semantic_identity)
-    accepted_claim = parse_claim(accepted_tree[path], path=path)
-    assert isinstance(accepted_claim, ClaimArtifactV2)
-    assert all(citation.origin != "self_published" for citation in accepted_claim.backing.citations)
-
-
-def test_only_confirmed_publication_registration_suppresses_next_orphan_repair(
-    tmp_path: Path,
-) -> None:
-    _instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
-        tmp_path
-    )
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    assert prepared.expectation.state == "prepared"
-    assert prepared.preparation is not None
-
-    landed = apply_playbill_publication(
-        preimage,
-        intent_id=intent_id,
-        expectation=prepared.expectation.model_dump(mode="json"),
-        retained_body=b"status: ready\n",
-    )
-    markers = tuple(
-        block.summary()
-        for block in parse_projection_blocks(
-            landed.content,
-            source_id=prepared.preparation.source_id,
-        )
-    )
-    coordinate = AcceptedCoordinate.from_internal(_instance.accepted_coordinate())
-    request = PlaybillNextRequestV1(
-        at=coordinate,
-        evaluation_time=datetime(2026, 8, 23, 12, tzinfo=UTC),
-        access_profile=CoverageAccessProfileV1(
-            profile_id="publication-orphan-test",
-            permitted_access_classes=("instance", "public"),
-        ),
-        workspace_observation=PlaybillNextWorkspaceObservationV1(
-            source_observations=(
-                PlaybillNextSourceObservationV3(
-                    tag="playbill-next-source-observation-v3",
-                    source_id="repo.work-items",
-                    observed_source_digest=_digest(landed.content),
-                    byte_length=len(landed.content),
-                    marker_summaries=markers,
-                    occurrences=(),
-                    scanned_commitment_digests=(),
-                    scan_complete=True,
-                    scan_notes=(),
-                    marker_notes=(),
-                ),
-            )
-        ),
-    )
-    prepared_orphaned = tuple(
+    orphaned = tuple(
         item
-        for item in service_playbill_next(_instance, request=request).items
+        for item in service_playbill_next(instance, request=orphan_request).items
         if item.reason == "unregistered_projection_block"
     )
-    assert len(prepared_orphaned) == 1
-    assert prepared_orphaned[0].severity == "warning"
-    assert prepared_orphaned[0].repair.operation == "playbill.document.propose"
-    assert prepared_orphaned[0].repair.required_change == ("remove_or_register_projection_block")
-    assert prepared_orphaned[0].repair.arguments == {
+    assert len(orphaned) == 1
+    assert orphaned[0].severity == "warning"
+    assert orphaned[0].repair.required_change == "remove_or_register_projection_block"
+    assert orphaned[0].repair.arguments == {
         "source_id": "repo.work-items",
-        "block_id": prepared.preparation.block_id,
+        "block_id": unregistered_block_id,
     }
     assert (
-        prepared.preparation.source_id,
-        prepared.preparation.block_id,
-    ) not in (_registered_publication_blocks(_instance) or frozenset())
-
-    confirmation = publication_confirmation_from_source(
-        intent_id=intent_id,
-        expectation=prepared.expectation,
-        observation=_observation(landed.content),
-    )
-    assert confirmation is not None
-    confirmed = coordinator.confirm_insertion(
-        intent_id,
-        actor=actor,
-        observation=confirmation,
-    )
-    assert confirmed.outcome == "bound"
-    assert (
-        prepared.preparation.source_id,
-        prepared.preparation.block_id,
-    ) in (_registered_publication_blocks(_instance) or frozenset())
-    assert not [
-        item
-        for item in service_playbill_next(_instance, request=request).items
-        if item.reason == "unregistered_projection_block"
-    ]
+        "repo.work-items",
+        unregistered_block_id,
+    ) not in (_registered_publication_blocks(instance) or frozenset())
 
 
-def test_confirmed_publication_resolves_exact_then_drifted_coverage(tmp_path: Path) -> None:
+def test_registered_publication_resolves_exact_then_drifted_coverage(tmp_path: Path) -> None:
     instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
         tmp_path
     )
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    assert prepared.preparation is not None
-    landed = apply_playbill_publication(
-        preimage,
-        intent_id=intent_id,
-        expectation=prepared.expectation.model_dump(mode="json"),
-        retained_body=b"status: ready\n",
-    )
+    bound, landed = _registered_publication(instance, coordinator, actor, intent_id, preimage)
+    assert bound.preparation is not None
     source = LogicalSourceIdentityV1(plane="external", identity="repo.work-items")
-
-    before_confirmation = service_resolve_playbill_coverage(
-        instance,
-        instance_id=instance.descriptor.instance_id,
-        observations=(observe_working_source(source, landed.content),),
-    )
-    assert before_confirmation.summary.candidate == 1
-    assert before_confirmation.summary.exact == 0
-
-    confirmation = publication_confirmation_from_source(
-        intent_id=intent_id,
-        expectation=prepared.expectation,
-        observation=_observation(landed.content),
-    )
-    assert confirmation is not None
-    coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
 
     exact = service_resolve_playbill_coverage(
         instance,
         instance_id=instance.descriptor.instance_id,
-        observations=(observe_working_source(source, landed.content),),
+        observations=(observe_working_source(source, landed),),
     )
     assert exact.summary.exact == 1
     assert exact.summary.candidate == 0
     (exact_card,) = exact.spans[0].cards
     assert exact_card.accepted_source == source
     assert exact_card.line_overlay is not None
-    assert exact_card.line_overlay.start_byte == prepared.preparation.body_start_byte
-    assert exact_card.line_overlay.end_byte == prepared.preparation.body_end_byte
+    assert exact_card.line_overlay.start_byte == bound.preparation.body_start_byte
+    assert exact_card.line_overlay.end_byte == bound.preparation.body_end_byte
 
-    changed = landed.content.replace(b"status: ready\n", b"status: stale\n", 1)
+    changed = landed.replace(PUBLISHED_BODY, b"status: stale\n", 1)
     drifted = service_resolve_playbill_coverage(
         instance,
         instance_id=instance.descriptor.instance_id,
@@ -1039,36 +488,35 @@ def test_confirmed_publication_resolves_exact_then_drifted_coverage(tmp_path: Pa
     assert drifted.summary.drifted == 1
     assert drifted.summary.candidate == 0
     (drifted_card,) = drifted.spans[0].cards
-    assert drifted_card.expected_commitment_digest == _digest(b"status: ready\n")
+    assert drifted_card.expected_commitment_digest == _digest(PUBLISHED_BODY)
     assert drifted_card.observed_commitment_digest == _digest(b"status: stale\n")
 
+    # Releasing the registration demotes the very same bytes back to a
+    # candidate: the exact card was the registration's, never the block's.
+    service_depublish_playbill_block(
+        instance,
+        coordinator=coordinator,
+        actor=actor,
+        source_id=bound.preparation.source_id,
+        block_id=bound.preparation.block_id,
+    )
+    released = service_resolve_playbill_coverage(
+        instance,
+        instance_id=instance.descriptor.instance_id,
+        observations=(observe_working_source(source, landed),),
+    )
+    assert released.summary.exact == 0
+    assert released.summary.candidate == 1
 
-def test_confirmed_publication_coverage_fold_is_lock_free_and_nonrecovering(
+
+def test_registered_publication_coverage_fold_is_lock_free_and_nonrecovering(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
         tmp_path
     )
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    assert prepared.preparation is not None
-    landed = apply_playbill_publication(
-        preimage,
-        intent_id=intent_id,
-        expectation=prepared.expectation.model_dump(mode="json"),
-        retained_body=b"status: ready\n",
-    )
-    confirmation = publication_confirmation_from_source(
-        intent_id=intent_id,
-        expectation=prepared.expectation,
-        observation=_observation(landed.content),
-    )
-    assert confirmation is not None
-    coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
+    _bound, landed = _registered_publication(instance, coordinator, actor, intent_id, preimage)
 
     lock_path = coordinator.store.root / ".lock"
     lock_path.unlink(missing_ok=True)
@@ -1081,38 +529,22 @@ def test_confirmed_publication_coverage_fold_is_lock_free_and_nonrecovering(
     result = service_resolve_playbill_coverage(
         instance,
         instance_id=instance.descriptor.instance_id,
-        observations=(observe_working_source(source, landed.content),),
+        observations=(observe_working_source(source, landed),),
     )
 
     assert result.summary.exact == 1
     assert not lock_path.exists()
 
 
-def test_confirmed_publication_only_promotes_its_exact_block_occurrence(tmp_path: Path) -> None:
+def test_registered_publication_only_promotes_its_exact_block_occurrence(
+    tmp_path: Path,
+) -> None:
     instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
         tmp_path
     )
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    assert prepared.preparation is not None
-    landed = apply_playbill_publication(
-        preimage,
-        intent_id=intent_id,
-        expectation=prepared.expectation.model_dump(mode="json"),
-        retained_body=b"status: ready\n",
-    )
-    confirmation = publication_confirmation_from_source(
-        intent_id=intent_id,
-        expectation=prepared.expectation,
-        observation=_observation(landed.content),
-    )
-    assert confirmation is not None
-    coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
+    _bound, landed = _registered_publication(instance, coordinator, actor, intent_id, preimage)
 
-    duplicate = b"status: ready\n" + landed.content
+    duplicate = PUBLISHED_BODY + landed
     source = LogicalSourceIdentityV1(plane="external", identity="repo.work-items")
     result = service_resolve_playbill_coverage(
         instance,
@@ -1128,7 +560,7 @@ def test_confirmed_publication_only_promotes_its_exact_block_occurrence(tmp_path
 
 
 @pytest.mark.parametrize("claim_mutation", ["retired", "restated"])
-def test_confirmed_publication_never_promotes_a_nonmatching_live_claim(
+def test_registered_publication_never_promotes_a_nonmatching_live_claim(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     claim_mutation: str,
@@ -1136,28 +568,9 @@ def test_confirmed_publication_never_promotes_a_nonmatching_live_claim(
     instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
         tmp_path
     )
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    assert prepared.preparation is not None
-    landed = apply_playbill_publication(
-        preimage,
-        intent_id=intent_id,
-        expectation=prepared.expectation.model_dump(mode="json"),
-        retained_body=b"status: ready\n",
-    )
-    confirmation = publication_confirmation_from_source(
-        intent_id=intent_id,
-        expectation=prepared.expectation,
-        observation=_observation(landed.content),
-    )
-    assert confirmation is not None
-    bound = coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
-    assert bound.expectation.state == "bound"
+    bound, landed = _registered_publication(instance, coordinator, actor, intent_id, preimage)
 
-    claim_path_value = claim_path(bound.expectation.claim_identity)
+    claim_path_value = claim_path(bound.claim_identity)
     coordinate = instance.accepted_coordinate()
     accepted_tree = instance.tree_at(coordinate.git_oid)
     accepted = parse_claim(accepted_tree[claim_path_value], path=claim_path_value)
@@ -1189,38 +602,42 @@ def test_confirmed_publication_never_promotes_a_nonmatching_live_claim(
     result = service_resolve_playbill_coverage(
         instance,
         instance_id=instance.descriptor.instance_id,
-        observations=(observe_working_source(source, landed.content),),
+        observations=(observe_working_source(source, landed),),
     )
     assert result.summary.exact == 0
 
 
-def test_prepared_then_abandoned_expectation_retains_terminal_tombstone_shape(
+def test_an_abandoned_publication_retains_its_terminal_tombstone_shape(
     tmp_path: Path,
 ) -> None:
-    _instance, coordinator, actor, intent_id, prepared, _landed, _request = (
-        _prepared_publication_next_request(tmp_path)
+    """The tombstone commits page bytes only while the block is claimed to be there.
+
+    A depublication is not a publication that never happened: the expectation
+    keeps its own preparation, so the record still names the source and the
+    block it took down. What the tombstone drops is the preparation DIGEST,
+    because a tombstone that still committed the postimage would be asserting a
+    page state the instance no longer stands behind.
+    """
+
+    instance, coordinator, actor, intent_id, bound, _landed, _request = (
+        _published_publication_next_request(tmp_path)
     )
 
     abandoned = coordinator.abandon_insertion(intent_id, actor=actor)
 
-    assert prepared.expectation.state == "prepared"
+    assert bound.state == "bound"
     assert abandoned.expectation.state == "abandoned"
     assert abandoned.expectation.terminal_tombstone is not None
     assert abandoned.expectation.terminal_tombstone.preparation_digest is None
+    assert abandoned.expectation.preparation == bound.preparation
+    assert not (_registered_publication_blocks(instance) or frozenset())
 
 
 def test_block_repin_cannot_manufacture_a_false_publication_orphan(tmp_path: Path) -> None:
-    instance, coordinator, actor, intent_id, prepared, landed, request = (
-        _prepared_publication_next_request(tmp_path)
+    instance, _coordinator, _actor, _intent_id, bound, _landed, request = (
+        _published_publication_next_request(tmp_path)
     )
-    confirmation = publication_confirmation_from_source(
-        intent_id=intent_id,
-        expectation=prepared.expectation,
-        observation=_observation(landed.content),
-    )
-    assert confirmation is not None
-    bound = coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
-    assert bound.expectation.state == "bound"
+    assert bound.preparation is not None
 
     source_observation = request.workspace_observation.source_observations[0]
     repinned_markers = tuple(
@@ -1248,8 +665,8 @@ def test_block_repin_cannot_manufacture_a_false_publication_orphan(tmp_path: Pat
     )
 
     assert (
-        prepared.preparation.source_id,
-        prepared.preparation.block_id,
+        bound.preparation.source_id,
+        bound.preparation.block_id,
     ) in (_registered_publication_blocks(instance) or frozenset())
     assert not [
         item
@@ -1265,29 +682,21 @@ def test_bound_publication_marker_corruption_surfaces_exact_blocking_repair(
     corruption: str,
     observation_version: int,
 ) -> None:
-    instance, coordinator, actor, intent_id, prepared, landed, request = (
-        _prepared_publication_next_request(tmp_path)
+    instance, _coordinator, _actor, _intent_id, bound, landed, request = (
+        _published_publication_next_request(tmp_path)
     )
-    confirmation = publication_confirmation_from_source(
-        intent_id=intent_id,
-        expectation=prepared.expectation,
-        observation=_observation(landed.content),
-    )
-    assert confirmation is not None
-    bound = coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
-    assert bound.expectation.state == "bound"
-    assert prepared.preparation is not None
-    block_id = prepared.preparation.block_id
-    source_id = prepared.preparation.source_id
-    (parsed,) = parse_projection_blocks(landed.content, source_id=source_id)
+    assert bound.preparation is not None
+    block_id = bound.preparation.block_id
+    source_id = bound.preparation.source_id
+    (parsed,) = parse_projection_blocks(landed, source_id=source_id)
     if corruption == "closing_id_changed":
         closer = f"<!-- /playbill:block:{block_id} -->\n".encode()
-        corrupted = landed.content.replace(
+        corrupted = landed.replace(
             closer,
             b"<!-- /playbill:block:pub-CORRUPTED -->\n",
         )
     else:
-        corrupted = landed.content[: parsed.opening_start] + landed.content[parsed.opening_end :]
+        corrupted = landed[: parsed.opening_start] + landed[parsed.opening_end :]
 
     marker_summaries, marker_notes = _projection_marker_observation(source_id, corrupted)
     assert marker_summaries == []
@@ -1349,9 +758,17 @@ def test_bound_publication_marker_corruption_surfaces_exact_blocking_repair(
 def test_prepared_publication_can_be_abandoned_without_observing_the_source(
     tmp_path: Path,
 ) -> None:
-    instance, coordinator, actor, intent_id, prepared, _landed, request = (
-        _prepared_publication_next_request(tmp_path)
+    """Abandoning takes no observation, and the released marker becomes the orphan.
+
+    The function keeps its name because another `next` scenario module drives
+    this exact case by it; the record it abandons is a registered publication,
+    which is the only kind an instance can hold now.
+    """
+
+    instance, coordinator, actor, intent_id, bound, _landed, request = (
+        _published_publication_next_request(tmp_path)
     )
+    assert bound.preparation is not None
 
     abandoned = coordinator.abandon_insertion(intent_id, actor=actor)
 
@@ -1363,22 +780,38 @@ def test_prepared_publication_can_be_abandoned_without_observing_the_source(
     )
     assert len(orphaned) == 1
     assert orphaned[0].severity == "warning"
-    assert orphaned[0].repair.operation == "playbill.document.propose"
     assert orphaned[0].repair.required_change == "remove_or_register_projection_block"
     assert orphaned[0].repair.arguments == {
         "source_id": "repo.work-items",
-        "block_id": prepared.preparation.block_id,
+        "block_id": bound.preparation.block_id,
     }
 
 
-def test_voluntary_projection_marker_is_not_a_publication_orphan(tmp_path: Path) -> None:
-    instance, _coordinator, _actor, _intent_id, _prepared, _landed, request = (
-        _prepared_publication_next_request(tmp_path)
+def test_a_marker_no_registration_knows_is_an_orphan_whatever_its_id(tmp_path: Path) -> None:
+    """A block id is not a sanction, and it never was a good proxy for one.
+
+    This test used to hold the opposite: a marker whose block id did not begin
+    `pub-` was left alone, because that prefix was the only structurally
+    recognizable identity class and the question "does this instance stand
+    behind this marker?" was answered by spelling. Every block an agent declared
+    with `block repin` was therefore checked against nothing, and `workspace
+    detach` could not refuse on one. Both roads register now, under the identity
+    the fold owns -- the source and block the page itself names -- so a marker
+    no registration knows is an orphan whichever road wrote it.
+    """
+
+    instance, _coordinator, _actor, _intent_id, _bound, _landed, request = (
+        _published_publication_next_request(tmp_path)
     )
     source_observation = request.workspace_observation.source_observations[0]
     (publication_marker,) = source_observation.marker_summaries
+    span = publication_marker.end_byte - publication_marker.start_byte
     voluntary_marker = publication_marker.model_copy(
-        update={"stamp": publication_marker.stamp.model_copy(update={"block_id": "notes"})}
+        update={
+            "stamp": publication_marker.stamp.model_copy(update={"block_id": "notes"}),
+            "start_byte": publication_marker.end_byte,
+            "end_byte": publication_marker.end_byte + span,
+        }
     )
     voluntary_request = request.model_copy(
         update={
@@ -1386,7 +819,7 @@ def test_voluntary_projection_marker_is_not_a_publication_orphan(tmp_path: Path)
                 update={
                     "source_observations": (
                         source_observation.model_copy(
-                            update={"marker_summaries": (voluntary_marker,)}
+                            update={"marker_summaries": (publication_marker, voluntary_marker)}
                         ),
                     )
                 }
@@ -1394,318 +827,37 @@ def test_voluntary_projection_marker_is_not_a_publication_orphan(tmp_path: Path)
         }
     )
 
-    assert not [
+    orphans = [
         item
         for item in service_playbill_next(instance, request=voluntary_request).items
         if item.reason == "unregistered_projection_block"
     ]
+    assert [item.subject_identity for item in orphans] == ["repo.work-items#notes"]
+    (orphan,) = orphans
+    assert orphan.severity == "warning"
+    assert orphan.repair.required_change == "remove_or_register_projection_block"
 
 
-def test_prepare_response_loss_and_terminal_conflicts_are_deterministic(tmp_path: Path) -> None:
-    instance, _owner, coordinator, actor, intent_id, preimage, clock = _submitted_publication(
-        tmp_path
-    )
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    assert prepared.preparation is not None
-    clock[0] = datetime(2026, 8, 29, 12, tzinfo=UTC)
-
-    first = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    retry = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-
-    assert first.outcome == retry.outcome == "expired"
-    assert first.expectation == retry.expectation
-    expired_registrations = _registered_publication_blocks(instance)
-    assert expired_registrations is not None
-    assert (
-        prepared.preparation.source_id,
-        prepared.preparation.block_id,
-    ) not in expired_registrations
-    with pytest.raises(PublicationTerminalStateRefused):
-        coordinator.prepare_publication(
-            intent_id,
-            actor=actor,
-            observation=_observation(b"changed source\n"),
-        )
-
-
-def test_pending_abandon_is_idempotent_and_retains_one_terminal_tombstone(
+def test_abandon_is_idempotent_and_retains_one_terminal_tombstone(
     tmp_path: Path,
 ) -> None:
-    _instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+    instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
         tmp_path
     )
+    _bound, _landed = _registered_publication(instance, coordinator, actor, intent_id, preimage)
 
     abandoned = coordinator.abandon_insertion(intent_id, actor=actor)
     retry = coordinator.abandon_insertion(intent_id, actor=actor)
 
     assert abandoned.expectation.state == "abandoned"
     assert abandoned.expectation.terminal_tombstone is not None
-    assert retry.model_dump_json() == abandoned.model_dump_json()
+    # The candidate status is derived and recomputed on every read, so the
+    # replay is over the durable record: the same one expectation, with the same
+    # one tombstone, and no second abandonment beside it.
+    excluded = {"intent": {"candidate_status"}}
+    assert retry.model_dump(exclude=excluded) == abandoned.model_dump(exclude=excluded)
     resumed = coordinator.resume(intent_id, actor=actor).intent
     assert resumed.insertion_expectation == abandoned.expectation
-    with pytest.raises(PublicationTerminalStateRefused):
-        coordinator.prepare_publication(
-            intent_id,
-            actor=actor,
-            observation=_observation(preimage),
-        )
-
-
-def test_prepared_to_expired_prepare_response_loss_replays_terminal_result(
-    tmp_path: Path,
-) -> None:
-    _instance, _owner, coordinator, actor, intent_id, preimage, clock = _submitted_publication(
-        tmp_path
-    )
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    assert prepared.outcome == "prepared"
-    clock[0] = datetime(2026, 8, 29, 12, tzinfo=UTC)
-
-    terminal = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    retry = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-
-    assert terminal.outcome == retry.outcome == "expired"
-    assert retry.model_dump_json() == terminal.model_dump_json()
-
-
-def test_prepared_to_currency_changed_prepare_response_loss_replays_terminal_result(
-    tmp_path: Path,
-) -> None:
-    instance, owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
-        tmp_path
-    )
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    assert prepared.outcome == "prepared"
-    original = coordinator.store.get(intent_id, actor_id=actor.actor_id)
-    successor_coordinator = AuthoringIntentCoordinator.for_instance(instance)
-    successor = successor_coordinator.create(
-        actor=actor,
-        payload=_successor_payload(original.semantic_identity, value="done"),
-        canonical_timestamp="2026-08-21T12:00:02.000000Z",
-    ).intent
-    submitted = successor_coordinator.submit(successor.intent_id, actor=actor)
-    assert submitted.status.proposal_id is not None
-    assert submitted.status.candidate_digest is not None
-    _activate(
-        instance,
-        owner,
-        proposal_id=submitted.status.proposal_id,
-        candidate_digest=submitted.status.candidate_digest,
-    )
-
-    terminal = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    retry = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-
-    assert terminal.outcome == retry.outcome == "claim_currency_changed"
-    assert retry.model_dump_json() == terminal.model_dump_json()
-    assert prepared.preparation is not None
-    currency_changed_registrations = _registered_publication_blocks(instance)
-    assert currency_changed_registrations is not None
-    assert (
-        prepared.preparation.source_id,
-        prepared.preparation.block_id,
-    ) not in currency_changed_registrations
-
-
-def test_prepared_to_expired_confirm_response_loss_replays_terminal_result(
-    tmp_path: Path,
-) -> None:
-    _instance, _owner, coordinator, actor, intent_id, preimage, clock = _submitted_publication(
-        tmp_path
-    )
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    final = _final_source(intent_id, prepared, preimage)
-    exact = publication_confirmation_from_source(
-        intent_id=intent_id,
-        expectation=prepared.expectation,
-        observation=_observation(final),
-    )
-    assert exact is not None
-    nonmatching = exact.model_copy(update={"observed_occurrence_count": 2})
-    clock[0] = datetime(2026, 8, 29, 12, tzinfo=UTC)
-
-    terminal = coordinator.confirm_insertion(
-        intent_id,
-        actor=actor,
-        observation=nonmatching,
-    )
-    retry = coordinator.confirm_insertion(
-        intent_id,
-        actor=actor,
-        observation=nonmatching,
-    )
-
-    assert terminal.outcome == retry.outcome == "expired"
-    assert retry.model_dump_json() == terminal.model_dump_json()
-
-
-def test_exact_postimage_prepare_rescues_after_expiry_and_confirm_retry_is_idempotent(
-    tmp_path: Path,
-) -> None:
-    _instance, _owner, coordinator, actor, intent_id, preimage, clock = _submitted_publication(
-        tmp_path
-    )
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    final = _final_source(intent_id, prepared, preimage)
-    clock[0] = datetime(2026, 8, 29, 12, tzinfo=UTC)
-
-    rescued = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(final),
-    )
-    assert rescued.outcome == "bound"
-    confirmation = publication_confirmation_from_source(
-        intent_id=intent_id,
-        expectation=rescued.expectation,
-        observation=_observation(final),
-    )
-    assert confirmation is not None
-    retry = coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
-    assert retry.outcome == "already_bound"
-
-    wrong = confirmation.model_copy(update={"observed_occurrence_count": 2})
-    with pytest.raises(PublicationTerminalStateRefused):
-        coordinator.confirm_insertion(intent_id, actor=actor, observation=wrong)
-
-
-def test_prepared_currency_change_is_passive_until_exact_confirmation(tmp_path: Path) -> None:
-    instance, owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
-        tmp_path
-    )
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    final = _final_source(intent_id, prepared, preimage)
-    original = coordinator.store.get(intent_id, actor_id=actor.actor_id)
-    other = AuthoringIntentCoordinator.for_instance(instance)
-    successor = other.create(
-        actor=actor,
-        payload=_successor_payload(original.semantic_identity, value="done"),
-        canonical_timestamp="2026-08-21T12:00:02.000000Z",
-    ).intent
-    submitted = other.submit(successor.intent_id, actor=actor)
-    assert submitted.status.proposal_id is not None
-    assert submitted.status.candidate_digest is not None
-    _activate(
-        instance,
-        owner,
-        proposal_id=submitted.status.proposal_id,
-        candidate_digest=submitted.status.candidate_digest,
-    )
-
-    passive = coordinator.resume(intent_id, actor=actor).intent
-    assert passive.insertion_expectation is not None
-    assert passive.insertion_expectation.state == "prepared"
-    confirmation = publication_confirmation_from_source(
-        intent_id=intent_id,
-        expectation=passive.insertion_expectation,
-        observation=_observation(final),
-    )
-    assert confirmation is not None
-    bound = coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
-    assert bound.outcome == "bound"
-
-
-def test_confirmation_rebases_over_a_concurrent_backing_only_successor(tmp_path: Path) -> None:
-    instance, owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
-        tmp_path
-    )
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    final = _final_source(intent_id, prepared, preimage)
-    original_intent = coordinator.store.get(intent_id, actor_id=actor.actor_id)
-
-    backing_coordinator = AuthoringIntentCoordinator.for_instance(instance)
-    backing_intent = backing_coordinator.create(
-        actor=actor,
-        payload=_working_payload(occurrence_count=1).model_copy(
-            update={"claim_ref": original_intent.semantic_identity}
-        ),
-        canonical_timestamp="2026-08-21T12:00:02.000000Z",
-    ).intent
-    submitted = backing_coordinator.submit(backing_intent.intent_id, actor=actor)
-    assert submitted.status.proposal_id is not None
-    assert submitted.status.candidate_digest is not None
-    _activate(
-        instance,
-        owner,
-        proposal_id=submitted.status.proposal_id,
-        candidate_digest=submitted.status.candidate_digest,
-    )
-    path = claim_path(original_intent.semantic_identity)
-    before = parse_claim(instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path)
-    assert isinstance(before, ClaimArtifactV2)
-
-    confirmation = publication_confirmation_from_source(
-        intent_id=intent_id,
-        expectation=prepared.expectation,
-        observation=_observation(final),
-    )
-    assert confirmation is not None
-    bound = coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
-    after = parse_claim(instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path)
-
-    assert bound.outcome == "bound"
-    assert isinstance(after, ClaimArtifactV2)
-    assert after.statement == before.statement
-    assert {item.citation_id for item in before.backing.citations}.issubset(
-        item.citation_id for item in after.backing.citations
-    )
-
-
-# Kept here so the frozen test module owns one absolute instant used by the
-# reducer cases added below without allowing wall-clock construction.
-EVALUATION_TIME = datetime(2026, 8, 26, 12, tzinfo=UTC)
 
 
 def test_a_bound_publication_can_be_depublished_and_the_registration_released(
@@ -1722,24 +874,9 @@ def test_a_bound_publication_can_be_depublished_and_the_registration_released(
     instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
         tmp_path
     )
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    assert prepared.preparation is not None
-    preparation = prepared.preparation
-    framed = frame_projection_block(stamp=preparation.stamp, body=b"status: ready\n")
-    offset = preparation.rebased_selector.insertion_offset
-    final = preimage[:offset] + framed + preimage[offset:]
-    exact = publication_confirmation_from_source(
-        intent_id=intent_id,
-        expectation=prepared.expectation,
-        observation=_observation(final),
-    )
-    assert exact is not None
-    bound = coordinator.confirm_insertion(intent_id, actor=actor, observation=exact)
-    assert bound.outcome == "bound"
+    bound, _landed = _registered_publication(instance, coordinator, actor, intent_id, preimage)
+    assert bound.preparation is not None
+    preparation = bound.preparation
     registered = (preparation.source_id, preparation.block_id)
     assert registered in (_registered_publication_blocks(instance) or frozenset())
 
@@ -1753,7 +890,7 @@ def test_a_bound_publication_can_be_depublished_and_the_registration_released(
 
     assert released.outcome == "depublished"
     assert released.intent_id == intent_id
-    assert released.claim_identity == bound.expectation.claim_identity
+    assert released.claim_identity == bound.claim_identity
     assert registered not in (_registered_publication_blocks(instance) or frozenset())
 
     # Idempotent, and it recycles no identity: the second call finds the
@@ -1770,14 +907,24 @@ def test_a_bound_publication_can_be_depublished_and_the_registration_released(
     assert repeated.intent_id == released.intent_id
 
 
-def test_depublishing_a_block_no_publication_registers_refuses_by_name(
+def test_depublishing_a_block_no_registration_names_refuses_by_name(
     tmp_path: Path,
 ) -> None:
+    """Releasing a block nothing registers refuses without inventing a road.
+
+    The refusal used to say "no bound publication registers this", which is a
+    true sentence about one of the two roads and a misleading one about the
+    other: a block declared with `block repin` is registered by a declaration
+    and never by a publication, so a caller who released one and asked again
+    was told their block had never been a publication -- which it had not, and
+    which was not the question.
+    """
+
     instance, _owner, coordinator, actor, _intent_id, _preimage, _clock = _submitted_publication(
         tmp_path
     )
 
-    with pytest.raises(PlaybillFormatError, match="publication_not_registered"):
+    with pytest.raises(PlaybillFormatError, match="playbill.block.not_registered"):
         service_depublish_playbill_block(
             instance,
             coordinator=coordinator,
@@ -1799,38 +946,26 @@ def test_a_retired_backing_releases_the_marker_it_backed(tmp_path: Path) -> None
     instance, owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
         tmp_path
     )
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    assert prepared.preparation is not None
-    preparation = prepared.preparation
-    framed = frame_projection_block(stamp=preparation.stamp, body=b"status: ready\n")
-    offset = preparation.rebased_selector.insertion_offset
-    final = preimage[:offset] + framed + preimage[offset:]
-    exact = publication_confirmation_from_source(
-        intent_id=intent_id,
-        expectation=prepared.expectation,
-        observation=_observation(final),
-    )
-    assert exact is not None
-    bound = coordinator.confirm_insertion(intent_id, actor=actor, observation=exact)
-    assert bound.outcome == "bound"
+    bound, _landed = _registered_publication(instance, coordinator, actor, intent_id, preimage)
+    assert bound.preparation is not None
+    preparation = bound.preparation
 
-    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     registered = (preparation.source_id, preparation.block_id)
-    assert registered in (_registered_publication_blocks(instance) or frozenset())
-    assert registered not in _registrations_released_by_retirement(instance, tree=tree)
+    folded = _registered_publication_blocks(instance)
+    assert folded is not None
+    assert registered in folded
+    assert registered not in _registrations_released_by_retirement(folded, tree=tree)
 
-    from tests.test_playbill.test_reverse_drift_next import _retire
+    _retire(instance, owner, bound.claim_identity)
 
-    _retire(instance, owner, bound.expectation.claim_identity)
-
-    after = instance.tree_at(instance.accepted_coordinate().git_oid)
-    assert registered in (_registered_publication_blocks(instance) or frozenset())
-    assert registered in _registrations_released_by_retirement(instance, tree=after)
+    after_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    after_fold = _registered_publication_blocks(instance)
+    assert after_fold is not None
+    # The registration itself stands -- a retirement is not a depublication --
+    # and it is the retirement fold that stops it demanding the frame.
+    assert registered in after_fold
+    assert registered in _registrations_released_by_retirement(after_fold, tree=after_tree)
 
     # And the block's absence from the page is no longer a blocking row.
     request = PlaybillNextRequestV1(
@@ -1857,7 +992,6 @@ def test_a_retired_backing_releases_the_marker_it_backed(tmp_path: Path) -> None
             )
         ),
     )
-    assert coordinate is not None
     assert not [
         item
         for item in service_playbill_next(instance, request=request).items
@@ -1882,27 +1016,11 @@ def test_depublishing_releases_the_registration_and_leaves_the_marker_to_remove(
     instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
         tmp_path
     )
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    assert prepared.preparation is not None
-    preparation = prepared.preparation
-    framed = frame_projection_block(stamp=preparation.stamp, body=b"status: ready\n")
-    offset = preparation.rebased_selector.insertion_offset
-    final = preimage[:offset] + framed + preimage[offset:]
-    exact = publication_confirmation_from_source(
-        intent_id=intent_id,
-        expectation=prepared.expectation,
-        observation=_observation(final),
-    )
-    assert exact is not None
-    assert coordinator.confirm_insertion(intent_id, actor=actor, observation=exact).outcome == (
-        "bound"
-    )
+    bound, landed = _registered_publication(instance, coordinator, actor, intent_id, preimage)
+    assert bound.preparation is not None
+    preparation = bound.preparation
 
-    marker_summaries, marker_notes = _projection_marker_observation(preparation.source_id, final)
+    marker_summaries, marker_notes = _projection_marker_observation(preparation.source_id, landed)
     assert [summary["stamp"]["block_id"] for summary in marker_summaries] == [preparation.block_id]
 
     def _next_items():  # type: ignore[no-untyped-def]
@@ -1918,8 +1036,8 @@ def test_depublishing_releases_the_registration_and_leaves_the_marker_to_remove(
                     PlaybillNextSourceObservationV3(
                         tag="playbill-next-source-observation-v3",
                         source_id=preparation.source_id,
-                        observed_source_digest=_digest(final),
-                        byte_length=len(final),
+                        observed_source_digest=_digest(landed),
+                        byte_length=len(landed),
                         marker_summaries=tuple(marker_summaries),
                         occurrences=(),
                         scanned_commitment_digests=(),

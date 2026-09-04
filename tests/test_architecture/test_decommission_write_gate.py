@@ -84,9 +84,15 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
             "AuthoringIntentCoordinator.compile_input",
             "AuthoringIntentCoordinator.rebase",
             "AuthoringIntentCoordinator.submit",
-            "AuthoringIntentCoordinator.prepare_publication",
-            "AuthoringIntentCoordinator.confirm_insertion",
             "AuthoringIntentCoordinator.abandon_insertion",
+        }
+    ),
+    # Both roads that register a block are writes: declaring one records that
+    # this instance stands behind a marker, and releasing one withdraws that.
+    "cruxible_core/service/playbill_publications.py": frozenset(
+        {
+            "service_declare_playbill_block",
+            "service_depublish_playbill_block",
         }
     ),
     "cruxible_core/playbill/proposals.py": frozenset({"ProposalService.submit"}),

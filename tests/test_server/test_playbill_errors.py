@@ -22,7 +22,7 @@ from cruxible_core.errors import (
     PermissionDeniedError,
     RuntimeCredentialNotFoundError,
 )
-from cruxible_core.playbill.authoring.insertions import PublicationClaimNotAccepted
+from cruxible_core.playbill.authoring.insertions import PublicationTerminalStateRefused
 from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationIncomplete
 from cruxible_core.playbill.search import PlaybillSearchBudgetsV1
 from cruxible_core.server.errors import error_to_response
@@ -110,15 +110,24 @@ def test_request_validation_envelope_retains_field_errors() -> None:
 
 
 def test_insertion_protocol_refusal_is_a_typed_bad_request() -> None:
-    error = PublicationClaimNotAccepted(
-        "playbill.authoring.publication_claim_not_accepted: Claim is not accepted"
+    """An insertion-protocol refusal is a 400 carrying its own code.
+
+    It used to be spelled with the refusal that guarded preparing before the
+    Claim was accepted. Nothing prepares any more; the transitions an instance
+    that already published still makes -- expiry, currency loss, the abandon
+    that `block depublish` performs -- refuse through the same base class, and
+    this pins that the mapping is by class rather than by member.
+    """
+
+    error = PublicationTerminalStateRefused(
+        "playbill.authoring.publication_terminal_state: publication is already terminal"
     )
 
     status, body = error_to_response(error)
 
     assert status == 400
-    assert body.error_type == "PublicationClaimNotAccepted"
-    assert body.error_code == "playbill.authoring.publication_claim_not_accepted"
+    assert body.error_type == "PublicationTerminalStateRefused"
+    assert body.error_code == "playbill.authoring.publication_terminal_state"
 
 
 def test_daemon_proposal_integrity_failure_is_never_reported_as_a_conflict() -> None:

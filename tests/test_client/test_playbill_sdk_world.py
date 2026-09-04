@@ -525,7 +525,6 @@ def test_a_same_set_definition_returns_refs_usable_in_the_same_set(
         effective_period=None,
         revises=None,
         dispositions={},
-        publish_to=None,
         subject_definition=None,
         claim_type_definition=None,
     )
@@ -595,7 +594,6 @@ def test_a_same_set_claim_type_ref_lowers_without_reading_the_unaccepted_type(
         effective_period=None,
         revises=None,
         dispositions={},
-        publish_to=None,
         subject_definition=None,
         claim_type_definition=None,
     )
@@ -636,7 +634,6 @@ def test_a_value_minted_under_one_claim_type_refuses_under_another(
             effective_period=None,
             revises=None,
             dispositions={},
-            publish_to=None,
             subject_definition=None,
             claim_type_definition=None,
         )

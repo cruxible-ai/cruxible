@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Mapping, MutableMapping
 from datetime import datetime
 from typing import Protocol
@@ -19,6 +19,7 @@ from cruxible_client.contracts.procedures.artifacts import parse_procedure
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.playbill.claim_slots import ClaimSlotClassification, classify_claim_slot
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.memo import memo_get, memo_put
 from cruxible_core.playbill.query.semantic_discovery import (
     MATCH_BASIS_PRIORITY,
     discovery_tokens,
@@ -47,6 +48,12 @@ from cruxible_core.service.playbill_claims import (
     resolve_playbill_claim_group,
     service_list_playbill_claims,
 )
+from cruxible_core.service.playbill_verdict_memo import (
+    MEMO_CAPACITY,
+    claim_set_digest,
+    memo_key,
+    verdict_input_fingerprint,
+)
 
 
 class PlaybillSearchError(PlaybillError):
@@ -67,6 +74,20 @@ def _accepted_coordinate(request: PlaybillSearchRequestV1) -> PlaybillAcceptedCo
     return PlaybillAcceptedCoordinate.model_validate(
         request.accepted_coordinate.model_dump(mode="json")
     )
+
+
+# Bounded, per-process, and keyed on every input the derivation reads. See
+# `playbill_verdict_memo` for why each part of the key is there.
+_RESOLUTION_MEMO: (
+    "OrderedDict[tuple[str, str, str, str], "
+    "tuple[dict[str, SearchStatus], dict[str, ClaimVerdictResultAny]]]"
+) = OrderedDict()
+
+
+def reset_claim_resolution_memo() -> None:
+    """Forget every remembered derivation; activation and tests call this."""
+
+    _RESOLUTION_MEMO.clear()
 
 
 def _resolution_key(claim: ClaimArtifactAny) -> bytes:
@@ -91,8 +112,31 @@ def claim_resolution_statuses(
     ``verdicts_by_identity`` lets one request share Claim verdicts with another
     fold over the same coordinate and evaluation time; it must never outlive
     that pair.
+
+    The whole derivation is memoized per process on the coordinate, the
+    evaluation instant, the exact Claim set, and a fingerprint of the two stores
+    a verdict reads besides the accepted tree. An `orient` is a READ, and this
+    read used to cross the client's own default timeout at a few hundred Claims;
+    a second read of the same state now evaluates no verdicts at all. Nothing
+    depends on the memo: it is per-process, cold after a restart, and bounded.
     """
 
+    key = memo_key(
+        coordinate_digest=canonical_bytes(at.model_dump(mode="json")).hex(),
+        evaluation_time=evaluation_time.isoformat(),
+        claim_set_digest=claim_set_digest(tuple(claim.identity.qualified for claim in claims)),
+        input_fingerprint=verdict_input_fingerprint(instance),
+    )
+    remembered = memo_get(_RESOLUTION_MEMO, key)
+    if remembered is not None:
+        memoized_statuses, memoized_verdicts = remembered
+        if verdicts_by_identity is not None:
+            verdicts_by_identity.update(memoized_verdicts)
+        return dict(memoized_statuses)
+
+    verdicts: MutableMapping[str, ClaimVerdictResultAny] = (
+        {} if verdicts_by_identity is None else verdicts_by_identity
+    )
     live_groups: dict[bytes, list[ClaimArtifactAny]] = defaultdict(list)
     statuses: dict[str, SearchStatus] = {}
     for claim in claims:
@@ -111,7 +155,7 @@ def claim_resolution_statuses(
             coordinate=coordinate,
             evaluated_at=evaluation_time,
             claims=tuple(group),
-            verdicts_by_identity=verdicts_by_identity,
+            verdicts_by_identity=verdicts,
         )
         groups_by_qualifier: dict[str | None, list[ClaimArtifactAny]] = defaultdict(list)
         for claim in group:
@@ -123,6 +167,12 @@ def claim_resolution_statuses(
             for claim in members
         }
         _apply_resolution_statuses(resolution, statuses, slots=slots)
+    memo_put(
+        _RESOLUTION_MEMO,
+        key,
+        (dict(statuses), dict(verdicts)),
+        capacity=MEMO_CAPACITY,
+    )
     return statuses
 
 

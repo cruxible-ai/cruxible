@@ -37,7 +37,6 @@ from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.registry import get_registry, reset_registry
-from tests.test_client.test_playbill_authoring import OBSERVATION
 from tests.test_playbill._claim_type_support import claim_type_input_example
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
@@ -612,56 +611,21 @@ def test_cli_whoami_explains_credential_binding_and_lists_open_proposals(
     assert calls == ["whoami:inst_authoring", "proposals:inst_authoring:open"]
 
 
-def test_cli_insertion_confirm_and_abandon_use_the_opaque_intent(
+def test_cli_insertion_abandon_uses_the_opaque_intent(
     monkeypatch,
-    tmp_path: Path,
 ) -> None:  # type: ignore[no-untyped-def]
-    observation = tmp_path / "observation.json"
-    observation.write_text(json.dumps(OBSERVATION))
+    """The one insertion verb left, and it still carries a named expectation.
+
+    It used to cover prepare and confirm too. Nothing mints a publication
+    expectation any more, so nothing can be prepared or confirmed; abandoning
+    one an instance already holds is how a page gets its block back, and a
+    change set that published several members still needs the caller's chosen
+    expectation carried through untouched.
+    """
+
     calls: list[tuple[str, object, str | None]] = []
 
     class StubClient:
-        def prepare_playbill_authoring_publication(
-            self,
-            instance_id: str,
-            intent_id: str,
-            *,
-            observation: dict[str, object],
-            expectation_id: str | None = None,
-        ) -> contracts.PlaybillInsertionPrepareResult:
-            calls.append((intent_id, observation, expectation_id))
-            return contracts.PlaybillInsertionPrepareResult(
-                tag="playbill-insertion-prepare-result-v2",
-                outcome="prepared",
-                intent={"intent_id": intent_id},
-                expectation={"state": "prepared"},
-                preparation={"preparation_digest": "sha256:" + "7" * 64},
-                warnings=[
-                    contracts.PlaybillPublicationPrepareWarning(
-                        tag="playbill-publication-prepare-warning-v1",
-                        code="playbill.authoring.publication_citation_anchor_collision",
-                        source_id="repo.work-items",
-                        citation_ids=["sha256:" + "8" * 64],
-                    )
-                ],
-            )
-
-        def confirm_playbill_authoring_insertion(
-            self,
-            instance_id: str,
-            intent_id: str,
-            *,
-            observation: dict[str, object],
-            expectation_id: str | None = None,
-        ) -> contracts.PlaybillInsertionConfirmResultV2:
-            calls.append((intent_id, observation, expectation_id))
-            return contracts.PlaybillInsertionConfirmResultV2(
-                tag="playbill-insertion-confirm-result-v2",
-                outcome="bound",
-                intent={"intent_id": intent_id},
-                expectation={"state": "bound"},
-            )
-
         def abandon_playbill_authoring_insertion(
             self,
             instance_id: str,
@@ -685,57 +649,16 @@ def test_cli_insertion_confirm_and_abandon_use_the_opaque_intent(
         "authoring",
     ]
     runner = CliRunner()
-    confirmed = runner.invoke(
-        cli,
-        [*common, "confirm-insertion", INTENT_ID, str(observation), "--json"],
-    )
-    prepared = runner.invoke(
-        cli,
-        [*common, "prepare-publication", INTENT_ID, str(observation), "--json"],
-    )
     abandoned = runner.invoke(cli, [*common, "abandon-insertion", INTENT_ID, "--json"])
-    # A change set publishes one expectation per publishing member, so the three
-    # commands must carry the caller's chosen expectation through untouched.
-    named = [
-        runner.invoke(
-            cli,
-            [
-                *common,
-                "confirm-insertion",
-                INTENT_ID,
-                str(observation),
-                "--expectation-id",
-                EXPECTATION_ID,
-                "--json",
-            ],
-        ),
-        runner.invoke(
-            cli,
-            [
-                *common,
-                "prepare-publication",
-                INTENT_ID,
-                str(observation),
-                "--expectation-id",
-                EXPECTATION_ID,
-                "--json",
-            ],
-        ),
-        runner.invoke(
-            cli,
-            [*common, "abandon-insertion", INTENT_ID, "--expectation-id", EXPECTATION_ID, "--json"],
-        ),
-    ]
+    named = runner.invoke(
+        cli,
+        [*common, "abandon-insertion", INTENT_ID, "--expectation-id", EXPECTATION_ID, "--json"],
+    )
 
-    assert confirmed.exit_code == prepared.exit_code == abandoned.exit_code == 0
-    assert [result.exit_code for result in named] == [0, 0, 0]
-    assert json.loads(prepared.stdout)["warnings"][0]["citation_ids"] == ["sha256:" + "8" * 64]
+    assert abandoned.exit_code == 0
+    assert named.exit_code == 0
     assert calls == [
-        (INTENT_ID, OBSERVATION, None),
-        (INTENT_ID, OBSERVATION, None),
         (INTENT_ID, "abandon", None),
-        (INTENT_ID, OBSERVATION, EXPECTATION_ID),
-        (INTENT_ID, OBSERVATION, EXPECTATION_ID),
         (INTENT_ID, "abandon", EXPECTATION_ID),
     ]
 

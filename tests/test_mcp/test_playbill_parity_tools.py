@@ -85,52 +85,6 @@ def test_attestation_door_example_hints_have_mcp_client_parity() -> None:
         )
 
 
-def test_publication_prepare_handler_preserves_advisory_warnings(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    warning = contracts.PlaybillPublicationPrepareWarning(
-        tag="playbill-publication-prepare-warning-v1",
-        code="playbill.authoring.publication_citation_anchor_collision",
-        source_id="repo.work-items",
-        citation_ids=["sha256:" + "8" * 64],
-    )
-
-    def stub(
-        _instance_id: str,
-        _intent_id: str,
-        *,
-        observation: object,
-        expectation_id: str | None = None,
-    ):
-        assert observation is not None
-        assert expectation_id is None
-        return contracts.PlaybillInsertionPrepareResult(
-            tag="playbill-insertion-prepare-result-v2",
-            outcome="prepared",
-            intent={"intent_id": "AIT-" + "1" * 32},
-            expectation={"state": "prepared"},
-            preparation={"preparation_digest": "sha256:" + "7" * 64},
-            warnings=[warning],
-        )
-
-    monkeypatch.setattr(
-        "cruxible_core.runtime.playbill_api.playbill_authoring_prepare_publication", stub
-    )
-    result = handlers.handle_playbill_authoring_prepare_publication(
-        "inst",
-        "AIT-" + "1" * 32,
-        {
-            "tag": "playbill-publication-source-observation-v2",
-            "source_id": "repo.work-items",
-            "content_base64": "",
-            "content_digest": (
-                "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-            ),
-            "byte_length": 0,
-        },
-    )
-
-    assert result.warnings == [warning]
-
-
 def test_flow_a_bind_reads_workspace_and_sends_only_the_lowered_payload(
     monkeypatch,  # type: ignore[no-untyped-def]
     tmp_path: Path,

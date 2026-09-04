@@ -313,6 +313,13 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ProcedureRunRequestV2", "evaluation_time"): "EVALUATION INSTANT",
     ("ProcedureRunStateV2", "evaluation_time"): "EVALUATION INSTANT",
     ("ProjectionBlockStampV1", "declared_generation"): "SETTLEMENT ORDER",
+    ("PlaybillBlockDeclareResultV1", "declared_generation"): "SETTLEMENT ORDER",
+    ("DeclaredBlockRegistration", "declared_generation"): "SETTLEMENT ORDER",
+    # The instant the daemon recorded a workspace's declaration. It is
+    # protocol state -- nothing orders, expires or evaluates by it -- but it IS
+    # the instant the assertion "this instance stands behind this marker" was
+    # made, so it declares the same clock every other such record does.
+    ("DeclaredBlockRegistration", "declared_at"): "ASSERTION TIME",
     ("ProjectionQueryBackingV1", "declared_evaluation_time"): "EVALUATION INSTANT",
     ("ProposalAdmissionRecord", "admitted_at"): "ASSERTION TIME",
     ("ProposalWithdrawalRecordV1", "withdrawn_at"): "ASSERTION TIME",

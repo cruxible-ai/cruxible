@@ -560,17 +560,6 @@ class CoverageCardV2(CoverageCardV1):
             raise ValueError("coverage card associations must name its Claim set")
         return self
 
-    @property
-    def is_self_published_copy(self) -> bool:
-        """Whether this card contains the explicit publication association."""
-
-        return any(
-            isinstance(item.reference, ClaimCitationV1)
-            and item.reference.role == "copy"
-            and item.reference.origin == "self_published"
-            for item in self.citation_associations
-        )
-
 
 class CoverageSpanResultV3(_StrictCoverageModel):
     """One locally proved span, independent of unrelated batch truncation."""

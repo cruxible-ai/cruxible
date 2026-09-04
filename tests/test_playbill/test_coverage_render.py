@@ -248,26 +248,29 @@ def _associated_v2_card(*, role: str, origin: str) -> CoverageCardV2:
     )
 
 
-def test_only_explicit_self_published_copy_association_gets_the_publication_variant() -> None:
-    published = _associated_v2_card(role="copy", origin="self_published")
-    self_source = _associated_v2_card(role="copy", origin="self_source")
-    published_evidence = _associated_v2_card(role="evidence", origin="self_published")
+def test_a_card_renders_the_role_and_origin_of_every_association_it_carries() -> None:
+    """A card says what each citation IS, and the vocabulary it says it in is reachable.
 
-    rendered = render_card(published)
+    It used to carry a "published copy / not independent evidence" annotation
+    keyed on the `self_published` citation origin. No code path in the product
+    ever wrote that origin, so the annotation could never print and the card
+    that DOES describe a published passage was keyed on a different value
+    entirely -- two vocabularies for one fact, one of them unreachable. The
+    origin is gone; what a card must still do is name each association's role
+    and origin plainly, so a reader can tell a copy from evidence.
+    """
 
-    assert published.is_self_published_copy is True
-    assert "published copy" in rendered
-    assert "roles copy" in rendered
-    assert "origins self_published" in rendered
-    assert "not independent evidence" in rendered
-    assert self_source.is_self_published_copy is False
-    assert "published copy" not in render_card(self_source)
-    assert published_evidence.is_self_published_copy is False
-    assert "published copy" not in render_card(published_evidence)
+    copied = _associated_v2_card(role="copy", origin="self_source")
+    evidence = _associated_v2_card(role="evidence", origin="independent")
+
+    assert "roles copy" in render_card(copied)
+    assert "origins self_source" in render_card(copied)
+    assert "roles evidence" in render_card(evidence)
+    assert "origins independent" in render_card(evidence)
 
 
 def test_v2_drift_variant_keeps_association_and_names_both_commitments() -> None:
-    exact = _associated_v2_card(role="copy", origin="self_published")
+    exact = _associated_v2_card(role="copy", origin="self_source")
     changed = sha256(b"changed publication bytes")
     drifted = CoverageCardV2.model_validate(
         {
@@ -284,7 +287,7 @@ def test_v2_drift_variant_keeps_association_and_names_both_commitments() -> None
     assert rendered.startswith("drifted  ")
     assert f"expected {sha256(CITED)}" in rendered
     assert f"observed {changed}" in rendered
-    assert "published copy" in rendered
+    assert "roles copy" in rendered
 
 
 # -- clipped candidates are always reported --------------------------------

@@ -59,9 +59,8 @@ def test_admin_default_profile_is_exactly_the_writer_path(
         "cruxible_playbill_authoring_preflight",
         "cruxible_playbill_authoring_submit",
         "cruxible_playbill_authoring_status",
-        "cruxible_playbill_authoring_prepare_publication",
-        "cruxible_playbill_authoring_confirm_insertion",
         "cruxible_playbill_authoring_abandon_insertion",
+        "cruxible_playbill_block_declare",
         "cruxible_playbill_block_depublish",
         "cruxible_playbill_discover",
         "cruxible_playbill_search",
@@ -123,7 +122,7 @@ def test_state_authoring_and_review_profiles_separate_proposal_from_settlement(
     assert "cruxible_playbill_claim_retire" in authoring
     assert "cruxible_playbill_proposal_readmit" in authoring
     assert "cruxible_playbill_authoring_submit" in authoring
-    assert "cruxible_playbill_authoring_confirm_insertion" in authoring
+    assert "cruxible_playbill_block_declare" in authoring
     assert "cruxible_playbill_authoring_abandon_insertion" in authoring
     assert "cruxible_playbill_submit_approval" not in authoring
     assert "cruxible_playbill_activate" not in authoring

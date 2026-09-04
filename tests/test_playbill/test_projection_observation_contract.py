@@ -102,8 +102,11 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "floor_invalid",
         "projection_dirty",
         "projection_backing_stale",
+        # A watched query surfaces CANDIDATES for a block's held list; its
+        # result moving is not the block falling out of date with what it
+        # holds, so it is its own row rather than a stale backing.
+        "projection_candidates_changed",
         "projection_marker_invalid",
-        "self_published_source_stale",
         "claim_dependency_stale",
         "claim_attestation_threshold_met",
         "claim_contradicting_evidence_available",
@@ -125,6 +128,10 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "playbill.authoring.bind",
         "playbill.claim.retire",
         "playbill.floor.export",
+        # A row that names a change a verb performs must name the verb. Two
+        # projection rows used to answer `hand_edit` with "depublish this
+        # block", which is a served command.
+        "playbill.block.depublish",
         "playbill.block.repin",
         "playbill.block.sync",
         "playbill.document.propose",

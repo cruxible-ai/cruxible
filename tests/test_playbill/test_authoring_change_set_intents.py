@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.authoring.insertions import apply_playbill_publication
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.authoring.inputs import (
     ChangeSetInput,
@@ -31,13 +30,9 @@ from cruxible_client.contracts.authoring.models import (
     ClaimDependencyDraftsV1,
     ClaimRetirementMemberV1,
     ClaimTypeAuthoringPayloadV1,
-    InsertionAnchorWindowV1,
-    InsertionConfirmationObservationV2,
-    InsertionTargetV2,
     PublicationSourceObservationV2,
     SelfSourceBodyV1,
     SubjectAuthoringPayloadV1,
-    WorkingDigestCoordinateV1,
     authoring_change_set_membership,
     authoring_member_identity,
     authoring_payload_digest,
@@ -52,7 +47,6 @@ from cruxible_client.contracts.claims import (
     claim_path,
     parse_claim,
 )
-from cruxible_client.contracts.declared_blocks import parse_projection_blocks
 from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import (
@@ -63,21 +57,13 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_core.playbill.authoring import preflight as preflight_module
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.playbill.authoring.insertions import PublicationAnchorStale
 from cruxible_core.playbill.authoring.lowering import AuthoringLoweringError, lower_authoring
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
-from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
-)
-from cruxible_core.service.playbill_next import (
-    PlaybillNextRequestV1,
-    PlaybillNextSourceObservationV3,
-    PlaybillNextWorkspaceObservationV1,
-    service_playbill_next,
 )
 from cruxible_core.service.playbill_proposal_receive import load_proposal_receive_config
 from tests.test_playbill._support import initialize_local
@@ -496,28 +482,6 @@ def test_the_changed_member_ceiling_is_an_operator_knob_that_ignores_cards(
     }
 
 
-def _page_target(page: bytes, anchor: bytes) -> InsertionTargetV2:
-    start = page.index(anchor)
-    return InsertionTargetV2(
-        source_id="repo.work-items",
-        coordinate=WorkingDigestCoordinateV1(
-            source_content_digest=_digest(page),
-            source_byte_length=len(page),
-        ),
-        initial_preimage_digest=_digest(page),
-        initial_preimage_byte_length=len(page),
-        selector=InsertionAnchorWindowV1(
-            anchor_content_base64=base64.b64encode(anchor).decode("ascii"),
-            anchor_bytes_digest=_digest(anchor),
-            start_byte=start,
-            end_byte=start + len(anchor),
-            insertion_offset=start + len(anchor),
-            observed_occurrence_count=1,
-        ),
-        operation="insert_after",
-    )
-
-
 def _digest(content: bytes) -> str:
     return "sha256:" + hashlib.sha256(content).hexdigest()
 
@@ -531,250 +495,15 @@ def _observation(content: bytes) -> PublicationSourceObservationV2:
     )
 
 
-PAGE = b"# work item\n## alpha\n## beta\n## gamma\n"
-
-
-def _publishing_set(*anchors: bytes) -> tuple[ChangeSetAuthoringPayloadV1, dict[str, bytes]]:
-    """One change set that publishes one Claim per anchor into the same page."""
-
-    bodies: dict[str, bytes] = {}
-    members = []
-    for index, anchor in enumerate(anchors):
-        body = f"status: ready ({index})\n".encode()
-        member = _claim(
-            qualifier=f"q{index}",
-            body=body.decode("utf-8"),
-            insertion_target=_page_target(PAGE, anchor),
-        )
-        bodies[authoring_member_identity(member)] = body
-        members.append(member)
-    return _change_set(*members), bodies
-
-
-def test_three_publications_into_one_page_apply_in_anchor_order(tmp_path: Path) -> None:
-    """One set publishes three Claims into one source, each seeing the fresh bytes."""
-
-    instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
-    coordinator = _coordinator(instance)
-    actor = AuthenticatedActor(actor_id="owner")
-
-    payload, bodies = _publishing_set(b"## alpha\n", b"## beta\n", b"## gamma\n")
-    intent = coordinator.create(
-        actor=actor,
-        payload=payload,
-        canonical_timestamp=TIMESTAMP,
-    ).intent
-    _accept(instance, owner, coordinator, intent.intent_id, actor)
-
-    resumed = coordinator.resume(intent.intent_id, actor=actor).intent
-    assert resumed.insertion_expectation is None
-    assert len(resumed.insertion_expectations) == 3
-    assert {item.state for item in resumed.insertion_expectations} == {"pending"}
-
-    claim_ids = {
-        item.member_identity: item.claim_id for item in resumed.change_set_claim_identities
-    }
-    by_claim = {
-        expectation.claim_identity: expectation for expectation in resumed.insertion_expectations
-    }
-    ordered = sorted(
-        (
-            (member.insertion_target.selector.insertion_offset, member)  # type: ignore[union-attr]
-            for member in payload.members
-            if isinstance(member, ClaimAuthoringPayloadV1)
-        ),
-        key=lambda item: item[0],
-    )
-
-    current = PAGE
-    for _offset, member in ordered:
-        identity = authoring_member_identity(member)
-        expectation = by_claim[claim_ids[identity]]
-        prepared = coordinator.prepare_publication(
-            intent.intent_id,
-            actor=actor,
-            observation=_observation(current),
-            expectation_id=expectation.expectation_id,
-        )
-        assert prepared.expectation.state == "prepared"
-        landed = apply_playbill_publication(
-            current,
-            intent_id=intent.intent_id,
-            expectation=prepared.expectation.model_dump(mode="json"),
-            retained_body=bodies[identity],
-        )
-        current = landed.content
-        confirmed = coordinator.confirm_insertion(
-            intent.intent_id,
-            actor=actor,
-            observation=InsertionConfirmationObservationV2.model_validate(landed.observation),
-            expectation_id=expectation.expectation_id,
-        )
-        assert confirmed.expectation.state == "bound"
-
-    final = coordinator.resume(intent.intent_id, actor=actor).intent
-    assert {item.state for item in final.insertion_expectations} == {"bound"}
-    for index, anchor in enumerate((b"## alpha\n", b"## beta\n", b"## gamma\n")):
-        assert current.index(f"status: ready ({index})\n".encode()) > current.index(anchor)
-
-
-def test_a_stale_anchor_on_one_member_leaves_the_bound_member_alone(tmp_path: Path) -> None:
-    """One member's stale anchor refuses that member, not the whole page."""
-
-    instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
-    coordinator = _coordinator(instance)
-    actor = AuthenticatedActor(actor_id="owner")
-
-    payload, bodies = _publishing_set(b"## alpha\n", b"## beta\n")
-    intent = coordinator.create(
-        actor=actor,
-        payload=payload,
-        canonical_timestamp=TIMESTAMP,
-    ).intent
-    _accept(instance, owner, coordinator, intent.intent_id, actor)
-    resumed = coordinator.resume(intent.intent_id, actor=actor).intent
-    claim_ids = {
-        item.member_identity: item.claim_id for item in resumed.change_set_claim_identities
-    }
-    by_claim = {item.claim_identity: item for item in resumed.insertion_expectations}
-    members = sorted(
-        (member for member in payload.members if isinstance(member, ClaimAuthoringPayloadV1)),
-        key=lambda member: member.insertion_target.selector.insertion_offset,  # type: ignore[union-attr]
-    )
-
-    first_identity = authoring_member_identity(members[0])
-    first = by_claim[claim_ids[first_identity]]
-    prepared = coordinator.prepare_publication(
-        intent.intent_id,
-        actor=actor,
-        observation=_observation(PAGE),
-        expectation_id=first.expectation_id,
-    )
-    landed = apply_playbill_publication(
-        PAGE,
-        intent_id=intent.intent_id,
-        expectation=prepared.expectation.model_dump(mode="json"),
-        retained_body=bodies[first_identity],
-    )
-    coordinator.confirm_insertion(
-        intent.intent_id,
-        actor=actor,
-        observation=InsertionConfirmationObservationV2.model_validate(landed.observation),
-        expectation_id=first.expectation_id,
-    )
-
-    second = by_claim[claim_ids[authoring_member_identity(members[1])]]
-    rewritten = landed.content.replace(b"## beta\n", b"")
-    with pytest.raises(PublicationAnchorStale):
-        coordinator.prepare_publication(
-            intent.intent_id,
-            actor=actor,
-            observation=_observation(rewritten),
-            expectation_id=second.expectation_id,
-        )
-    after = coordinator.resume(intent.intent_id, actor=actor).intent
-    states = {item.expectation_id: item.state for item in after.insertion_expectations}
-    assert states[first.expectation_id] == "bound"
-    assert states[second.expectation_id] == "pending"
-
-
-def _next_is_clean_after(instance: PlaybillInstance, source: bytes) -> bool:
-    """Say whether `next` reports no unregistered block in the published page."""
-
-    markers = tuple(
-        sorted(
-            (
-                block.summary()
-                for block in parse_projection_blocks(source, source_id="repo.work-items")
-            ),
-            key=lambda summary: summary.stamp.block_id.encode("ascii"),
-        )
-    )
-    request = PlaybillNextRequestV1(
-        at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-        evaluation_time=datetime(2026, 8, 23, 12, tzinfo=UTC),
-        access_profile=CoverageAccessProfileV1(
-            profile_id="change-set-publication",
-            permitted_access_classes=("instance", "public"),
-        ),
-        workspace_observation=PlaybillNextWorkspaceObservationV1(
-            source_observations=(
-                PlaybillNextSourceObservationV3(
-                    tag="playbill-next-source-observation-v3",
-                    source_id="repo.work-items",
-                    observed_source_digest=_digest(source),
-                    byte_length=len(source),
-                    marker_summaries=markers,
-                    occurrences=(),
-                    scanned_commitment_digests=(),
-                    scan_complete=True,
-                    scan_notes=(),
-                    marker_notes=(),
-                ),
-            )
-        ),
-    )
-    return not [
-        item
-        for item in service_playbill_next(instance, request=request).items
-        if item.reason == "unregistered_projection_block"
-    ]
-
-
-def _publish_every_expectation(
-    coordinator: AuthoringIntentCoordinator,
-    actor: AuthenticatedActor,
-    intent_id: str,
-    *,
-    payload: ChangeSetAuthoringPayloadV1,
-    bodies: dict[str, bytes],
-    page: bytes,
-) -> bytes:
-    """Prepare, apply and confirm every publication in one set, in anchor order."""
-
-    resumed = coordinator.resume(intent_id, actor=actor).intent
-    claim_ids = {
-        item.member_identity: item.claim_id for item in resumed.change_set_claim_identities
-    }
-    by_claim = {item.claim_identity: item for item in resumed.insertion_expectations}
-    publishing = sorted(
-        (
-            member
-            for member in payload.members
-            if isinstance(member, ClaimAuthoringPayloadV1) and member.insertion_target is not None
-        ),
-        key=lambda member: member.insertion_target.selector.insertion_offset,  # type: ignore[union-attr]
-    )
-    current = page
-    for member in publishing:
-        identity = authoring_member_identity(member)
-        expectation = by_claim[claim_ids[identity]]
-        prepared = coordinator.prepare_publication(
-            intent_id,
-            actor=actor,
-            observation=_observation(current),
-            expectation_id=expectation.expectation_id,
-        )
-        landed = apply_playbill_publication(
-            current,
-            intent_id=intent_id,
-            expectation=prepared.expectation.model_dump(mode="json"),
-            retained_body=bodies[identity],
-        )
-        current = landed.content
-        coordinator.confirm_insertion(
-            intent_id,
-            actor=actor,
-            observation=InsertionConfirmationObservationV2.model_validate(landed.observation),
-            expectation_id=expectation.expectation_id,
-        )
-    return current
-
-
 def test_eighty_members_of_every_kind_become_exactly_one_generation(tmp_path: Path) -> None:
-    """The maximal intent: claims, definitions, retirements, a revision, publications."""
+    """The maximal intent: claims, definitions, retirements and a revision.
+
+    It used to carry three publications too. Publishing a Claim as its own page
+    text is the overlap the two-block-kinds law refuses and the road is gone;
+    what this test is about -- eighty heterogeneous members admitting, lowering
+    and landing as exactly one generation -- is unchanged, so the three
+    publication members became three more ordinary Claims.
+    """
 
     instance, owner = initialize_local(tmp_path)
     _seed_claim_surface(instance, owner)
@@ -806,16 +535,9 @@ def test_eighty_members_of_every_kind_become_exactly_one_generation(tmp_path: Pa
         claim_ref=seeded[2],
         rationale="Revise the seeded status in place.",
     )
-    published, bodies = [], {}
-    for index, anchor in enumerate((b"## alpha\n", b"## beta\n", b"## gamma\n")):
-        body = f"status: ready (pub{index})\n".encode()
-        member = _claim(
-            qualifier=f"pub{index}",
-            body=body.decode("utf-8"),
-            insertion_target=_page_target(PAGE, anchor),
-        )
-        bodies[authoring_member_identity(member)] = body
-        published.append(member)
+    published = [
+        _claim(qualifier=f"pub{index}", body=f"status: ready (pub{index})\n") for index in range(3)
+    ]
     plain = [
         _claim(
             subject_id=f"wi-b{index % 5}",
@@ -857,16 +579,6 @@ def test_eighty_members_of_every_kind_become_exactly_one_generation(tmp_path: Pa
     for retired_id in seeded[:2]:
         retired = parse_claim(tree[claim_path(retired_id)], path=claim_path(retired_id))
         assert retired.lifecycle.state == "retired"
-
-    final = _publish_every_expectation(
-        coordinator,
-        actor,
-        intent.intent_id,
-        payload=payload,
-        bodies=bodies,
-        page=PAGE,
-    )
-    assert _next_is_clean_after(instance, final)
 
 
 def test_an_indexed_member_reference_expectation_resolves_and_refuses(
@@ -1529,12 +1241,20 @@ def test_the_advertised_record_ceiling_is_the_measured_one(
     # never smaller than the record it predicts, so a set it admits is a set the
     # ledger can write.
     assert limits.projected_change_set_record_bytes(entries) >= size
-    assert limits.max_change_set_record_bytes == 4 * 1024 * 1024
+    assert limits.max_change_set_record_bytes == 64 * 1024 * 1024
     assert limits.change_set_record_bytes_per_member == 11 * 1024
-    assert limits.max_change_set_members == 372
-    # Advertised next to the member and byte budgets, and deliberately far below
-    # the changed-member budget: receive would take this set, the ledger cannot.
-    assert limits.max_change_set_members < limits.max_changed_members
+    assert limits.max_change_set_members == 5_957
+    # ONE budget, not two. At the 4 MiB ceiling this shipped with, 372 entries
+    # fit and the ledger refused sets receive had already taken; at 64 MiB the
+    # whole advertised member budget fits under the record ceiling -- 5,000
+    # entries project to 56,320,000 bytes, about 53.7 MiB -- so what receive
+    # accepts is what the ledger can record.
+    assert limits.max_change_set_members > limits.max_changed_members
+    assert limits.projected_change_set_record_bytes(limits.max_changed_members) == 56_320_000
+    assert (
+        limits.projected_change_set_record_bytes(limits.max_changed_members)
+        <= limits.max_change_set_record_bytes
+    )
 
 
 def test_a_thousand_member_change_set_refuses_before_it_is_compiled(
@@ -1554,6 +1274,13 @@ def test_a_thousand_member_change_set_refuses_before_it_is_compiled(
     _seed_claim_surface(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
+    # The ceiling this law was measured against. It is 64 MiB now, under which
+    # 1,000 entries fit with room to spare, and the refusal path does not vary
+    # with the ceiling -- so the 4 MiB ceiling is bound explicitly rather than
+    # authoring the ~6,000-member set the raised one would need to cross.
+    limits = ProposalReceiveLimits(max_change_set_record_bytes=4 * 1024 * 1024)
+    instance.bind_receive_limits(limits)
+    assert limits.max_change_set_members == 372
     payload = _change_set(
         *(
             SubjectAuthoringPayloadV1(subject=_shell(f"wi-bulk-{index:04d}"))
@@ -1581,7 +1308,6 @@ def test_a_thousand_member_change_set_refuses_before_it_is_compiled(
         for item in result.frontier.diagnostics
         if item.code == "playbill.authoring.change_set_record_too_large"
     )
-    limits = ProposalReceiveLimits()
     # The refusal names the measured limit, in members and in bytes, and the
     # size this set would have written.
     assert str(limits.max_change_set_members) in diagnostic.message
@@ -1651,6 +1377,12 @@ def test_a_set_of_retirements_at_the_old_ceiling_refuses(
     _seed_claim_surface(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
+    # 582 is a count taken against the 4 MiB ceiling this build first shipped,
+    # so that ceiling is bound explicitly here: the ceiling has since moved to
+    # 64 MiB, and what this pins is the per-ENTRY cost being the most expensive
+    # kind's rather than an average, which is true at any ceiling.
+    limits = ProposalReceiveLimits(max_change_set_record_bytes=4 * 1024 * 1024)
+    instance.bind_receive_limits(limits)
     payload = _change_set(
         *(
             ClaimRetirementMemberV1(claim_ref=f"CLM-{index:032x}", reason="was-rescinded")
@@ -1677,7 +1409,7 @@ def test_a_set_of_retirements_at_the_old_ceiling_refuses(
         if item.code == "playbill.authoring.change_set_record_too_large"
     )
     assert "projects to at least 582 record entries" in diagnostic.message
-    assert str(ProposalReceiveLimits().max_change_set_members) in diagnostic.message
+    assert str(limits.max_change_set_members) in diagnostic.message
 
 
 def test_a_set_that_lowers_to_more_entries_than_it_authors_refuses_before_evaluation(

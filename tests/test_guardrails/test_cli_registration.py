@@ -118,8 +118,11 @@ def test_every_command_registered_on_a_group_is_in_the_lazy_cli_map() -> None:
 def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     """A command defined but never registered is dead or invisible, never fine."""
     group_claims, leaf_claims = _walk_lazy_map(CLI_COMMANDS)
-    assert len(leaf_claims) == 109, (
-        f"expected 109 Playbill/host leaf commands, found {len(leaf_claims)}"
+    # 107, down from 109: `authoring prepare-publication` and `authoring
+    # confirm-insertion` went with the publication road that minted the
+    # expectation they acted on.
+    assert len(leaf_claims) == 107, (
+        f"expected 107 Playbill/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)

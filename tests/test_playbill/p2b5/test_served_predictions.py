@@ -653,7 +653,6 @@ entries:
         effective_period=None,
         revises=None,
         dispositions={},
-        publish_to=None,
         subject_definition=None,
         claim_type_definition=None,
     )

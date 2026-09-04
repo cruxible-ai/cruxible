@@ -72,12 +72,6 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "settlement_proposal_id_mismatch": "settle_the_proposal_the_candidate_was_admitted_under",
     "settlement_receipt_mismatch": "reproduce_the_terminal_receipt_before_settling",
     "block_frame_invalid": "restore_the_block_marker_frame_the_stamp_declares",
-    "block_multi_backing": "stamp_the_block_with_exactly_one_backing",
-    "block_query_backing": "back_the_block_with_a_claim_or_artifact_instead_of_a_query",
-    "block_not_publication_origin": "sync_the_block_from_the_source_that_published_it",
-    "block_publication_registry_unavailable": "restore_the_publication_registry_then_sync",
-    "block_successor_body_ambiguous": "repin_the_block_to_one_exact_successor_body",
-    "block_successor_body_missing": "publish_the_successor_body_before_repinning",
     "block_marker_malformed": "repair_the_block_marker_to_the_declared_grammar",
     # A first stamp names the backing the author chose, so no served command can
     # supply it: sync skips the block until the marker carries one.
@@ -107,18 +101,29 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperationV1] = {
     "prediction_unsettleable_rule": RepairOperationV1(operation="playbill.predict"),
     "prediction_deadline_passed": RepairOperationV1(operation="playbill.predict"),
     "settlement_evidence_mismatch": RepairOperationV1(operation="playbill.settle"),
+    # Nothing renders a block, so no sync converges one; what `block sync --all`
+    # does is FIND every block whose held list has moved and name the repin that
+    # answers each. A producer that knows the source and block names the repin
+    # itself, with its arguments; this fallback is the runnable command for a
+    # caller that knows only the code.
     "block_backing_changed": RepairOperationV1(
         operation="playbill.block.sync", arguments={"all": True}
     ),
     "block_backing_missing": RepairOperationV1(
         operation="playbill.block.sync", arguments={"all": True}
     ),
+    # A retired member cannot be un-retired, so the block either stops holding
+    # it or the marker leaves the page. The producer names `sync --detach PATH`
+    # with the path it knows; this fallback names the sweep that finds them.
     "block_backing_retired": RepairOperationV1(
         operation="playbill.block.sync", arguments={"all": True}
     ),
     "block_concurrent_edit": RepairOperationV1(
         operation="playbill.block.sync", arguments={"all": True}
     ),
+    # The prose moved away from what the stamp committed. The author wrote it, so
+    # the repair is to re-read the block against its backings and re-stamp it;
+    # the producer names that repin with its source and block.
     "block_locally_modified": RepairOperationV1(
         operation="playbill.block.sync", arguments={"all": True}
     ),

@@ -129,7 +129,7 @@ PlaybillNextReason: TypeAlias = Literal[
     "floor_invalid",
     "projection_dirty",
     "projection_backing_stale",
-    "self_published_source_stale",
+    "projection_candidates_changed",
     "claim_dependency_stale",
     "claim_attestation_threshold_met",
     "claim_contradicting_evidence_available",
@@ -979,7 +979,7 @@ class PlaybillCaptureAdmissionAccount(BaseModel):
     citation_id: str
     capture_digest: str
     citation_role: Literal["evidence", "copy", "legacy"]
-    citation_origin: Literal["independent", "self_source", "self_published", "legacy"]
+    citation_origin: Literal["independent", "self_source", "legacy"]
     capture_contract_identity: str
     capture_contract_digest: str
     status: Literal["admitted", "not_admitted", "not_evidence"]
@@ -1229,6 +1229,27 @@ class PlaybillInsertionAbandonResult(BaseModel):
     expectation: dict[str, Any]
 
 
+class PlaybillBlockDeclareResultV1(BaseModel):
+    """One projection block registered with the instance that governs its page.
+
+    A block declared with `block repin` was known only to the bytes in the page:
+    `next` could ask whether a marker was sanctioned for one declaration road
+    and answered it by a string prefix, and `workspace detach` could not refuse
+    on a block it had never heard of. The declaration is protocol state, not
+    accepted state -- it records that this instance stands behind this marker,
+    not what the marker says.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-block-declare-result-v1"] = "playbill-block-declare-result-v1"
+    source_id: str
+    block_id: str
+    outcome: Literal["declared", "redeclared"]
+    declared_generation: int = Field(ge=0)
+    coordinate: PlaybillAcceptedCoordinate
+
+
 class PlaybillBlockDepublishResultV1(BaseModel):
     """One published block released from the registration that demanded it.
 
@@ -1244,11 +1265,25 @@ class PlaybillBlockDepublishResultV1(BaseModel):
     tag: Literal["playbill-block-depublish-result-v1"] = "playbill-block-depublish-result-v1"
     source_id: str
     block_id: str
-    intent_id: str
-    expectation_id: str
+    # A block declared with `block repin` has no intent, no expectation and no
+    # publishing Claim -- it is prose held to a list. Those three fields name a
+    # publication and are absent for a declaration, which `origin` says.
+    origin: Literal["publication", "declaration"] = "publication"
+    intent_id: str | None = None
+    expectation_id: str | None = None
     outcome: Literal["depublished", "already_depublished"]
-    claim_identity: str
+    claim_identity: str | None = None
     coordinate: PlaybillAcceptedCoordinate
+
+    @model_validator(mode="after")
+    def _origin_shape(self) -> "PlaybillBlockDepublishResultV1":
+        publication = (self.intent_id, self.expectation_id, self.claim_identity)
+        if self.origin == "publication":
+            if any(value is None for value in publication):
+                raise ValueError("a released publication names its intent, expectation and Claim")
+        elif any(value is not None for value in publication):
+            raise ValueError("a released declaration names no intent, expectation or Claim")
+        return self
 
 
 class PlaybillQueryDefinitionView(BaseModel):

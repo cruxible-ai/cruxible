@@ -60,6 +60,30 @@ class _RepinClient:
         self.query_verdict = "completed"
         self.clipped_budgets: list[str] = []
         self.on_claim = lambda: None
+        self.declared: list[dict[str, Any]] = []
+
+    def declare_playbill_block(
+        self,
+        _instance_id: str,
+        stamp: dict[str, Any],
+    ) -> api.PlaybillBlockDeclareResultV1:
+        """Record the declaration a repin makes after it writes the marker.
+
+        A stamped marker the instance has never heard of is an orphan to every
+        reader that asks whether a block is sanctioned, so the write is only
+        half the operation: the page carries the stamp and the instance carries
+        the registration. The stub keeps what it was told so the tests can pin
+        that the two agree.
+        """
+
+        self.declared.append(stamp)
+        return api.PlaybillBlockDeclareResultV1(
+            source_id=stamp["source_id"],
+            block_id=stamp["block_id"],
+            outcome="declared",
+            declared_generation=stamp["declared_generation"],
+            coordinate=COORDINATE,
+        )
 
     def search_playbill(self, _instance_id: str, **values: Any) -> api.PlaybillSearchResult:
         return api.PlaybillSearchResult(
@@ -185,6 +209,29 @@ def test_bootstrap_repin_changes_only_opening_then_preserves_or_replaces_backing
     assert preserved.backing[0].identity.name == "CLM-first"
     changed = _repin(client, tmp_path, claims=("CLM-second",))
     assert changed.backing[0].identity.name == "CLM-second"
+
+
+def test_a_repin_registers_the_marker_it_just_wrote(tmp_path: Path) -> None:
+    """The page and the instance have to agree that a block exists.
+
+    A stamped marker the instance has never heard of is what every reader that
+    asks "is this block sanctioned?" calls an orphan, and before this a block an
+    agent declared was never registered anywhere -- the question was answered by
+    whether its id happened to begin `pub-`, a spelling only the retired
+    publication road minted. A repin declares what it wrote, in that order: the
+    marker lands first, because a registration for a marker that never landed
+    would be the same disagreement in the other direction.
+    """
+
+    source = _workspace(tmp_path)
+    client = _RepinClient()
+
+    stamp = _repin(client, tmp_path, claims=("CLM-first",))
+
+    assert [item["block_id"] for item in client.declared] == ["summary"]
+    assert client.declared[0] == stamp.model_dump(mode="json")
+    (block,) = parse_projection_blocks(source.read_bytes(), source_id="corpus.runbook")
+    assert block.stamp == stamp
 
 
 def test_body_edit_is_preserved_and_repin_updates_only_its_commitment(tmp_path: Path) -> None:

@@ -15,9 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
-from cruxible_client.authoring.insertions import apply_playbill_publication
-from cruxible_core.playbill.authoring.insertions import build_publication_preparation
+from cruxible_client.authoring.blocks import repin_projection_block
 from cruxible_core.playbill.candidate_cards import derive_candidate_cards
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -28,23 +26,15 @@ PRIMITIVES = {"frame_projection_block", "render_projection_opening"}
 # The card renderers live beside the writer that calls them, so the scan skips
 # nothing: every caller in the tree is enumerated and must be sanctioned.
 CARD_PRIMITIVE_DEFINITION: Path | None = None
-# One persistent tree writer, plus the read-only block-sync renderer that shows a
-# card without ever writing one into a candidate tree.
+# One persistent tree writer, and only one. The block-sync read used to render a
+# candidate card as the body it would rewrite a block to; nothing renders a block
+# any more, so that caller is gone with the rendering.
 SANCTIONED_CARD_CALLERS = {
     "src/cruxible_core/playbill/candidate_cards.py::derive_candidate_cards",
-    "src/cruxible_core/service/playbill_projection_sync.py::_read_artifact_backing",
 }
 SANCTIONED_CALLERS = {
     "projection_repin": {
         "packages/cruxible-client/src/cruxible_client/authoring/blocks.py::repin_projection_block",
-    },
-    "projection_sync": {
-        "packages/cruxible-client/src/cruxible_client/authoring/blocks.py::sync_projection_blocks",
-    },
-    "publication_v2": {
-        "packages/cruxible-client/src/cruxible_client/authoring/insertions.py::"
-        "apply_playbill_publication",
-        "src/cruxible_core/playbill/authoring/insertions.py::build_publication_preparation",
     },
 }
 SANCTIONED_WRITERS: dict[str, tuple[Callable[..., object], str, tuple[str, ...]]] = {
@@ -52,25 +42,6 @@ SANCTIONED_WRITERS: dict[str, tuple[Callable[..., object], str, tuple[str, ...]]
         repin_projection_block,
         "assert_projection_block_frame",
         ("replace one declared block's opening marker",),
-    ),
-    "packages/cruxible-client/src/cruxible_client/authoring/blocks.py::sync_projection_blocks": (
-        sync_projection_blocks,
-        "frame_projection_block",
-        ("atomically synchronize accepted publication block bytes",),
-    ),
-    "packages/cruxible-client/src/cruxible_client/authoring/insertions.py::"
-    "apply_playbill_publication": (
-        apply_playbill_publication,
-        "frame_projection_block",
-        ("apply one prepared publication to client-observed bytes",),
-    ),
-    "src/cruxible_core/playbill/authoring/insertions.py::build_publication_preparation": (
-        build_publication_preparation,
-        "frame_projection_block",
-        (
-            "prepare a full-file publication postimage from an insertion expectation",
-            "reproduce and verify the exact framed block bytes from a preparation",
-        ),
     ),
 }
 CARD_DERIVATIVE_WRITERS: dict[str, tuple[Callable[..., object], tuple[str, ...]]] = {
@@ -188,22 +159,22 @@ def test_sanctioned_writer_inventory_matches_primitive_callers() -> None:
     for writer, primitive, operations in SANCTIONED_WRITERS.values():
         assert f"{primitive}(" in inspect.getsource(writer)
         assert operations
-    assert (
-        len(
-            SANCTIONED_WRITERS[
-                "src/cruxible_core/playbill/authoring/insertions.py::build_publication_preparation"
-            ][2]
-        )
-        == 2
-    )
 
 
-def test_projection_primitive_callers_equal_the_two_writer_inventory() -> None:
-    assert set(SANCTIONED_CALLERS) == {
-        "projection_repin",
-        "projection_sync",
-        "publication_v2",
-    }
+def test_one_writer_frames_derivative_text_and_the_scan_proves_it() -> None:
+    """The inventory is down to one, and the scan is what keeps it there.
+
+    It was three. The publication road that rendered a Claim into its own page
+    is deleted, and `block sync` no longer converges a block body, so neither
+    frames anything any more -- `sync_projection_blocks` writes only when
+    `--detach` strips a marker pair, and it proves that by re-parsing and by
+    digesting the bytes outside the spans it touched. Declaring the inventory
+    would prove nothing; the scan below enumerates every caller of the framing
+    primitives in the whole tree and refuses any that is not sanctioned, so
+    rendering reappearing anywhere fails here first.
+    """
+
+    assert set(SANCTIONED_CALLERS) == {"projection_repin"}
     _assert_only_sanctioned_callers(_projection_primitive_callers())
 
 

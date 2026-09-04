@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.authoring.sdk_types import Duration, InsertionOperation
+from cruxible_client.authoring.sdk_types import Duration
 from cruxible_client.authoring.selectors import WorkspaceSources
 from cruxible_client.authoring.workspace import observe_playbill_next_workspace
 from cruxible_client.contracts.source_catalog import SourceCatalog
@@ -58,14 +58,6 @@ def test_workspace_selector_lowers_evidence_and_insertion_from_exact_bytes(
     assert observation.coordinate.source_content_digest == (
         "sha256:" + hashlib.sha256(content).hexdigest()
     )
-
-    insertion = selected.insertion(
-        operation=InsertionOperation.AFTER,
-        anchor="within 48 hours",
-    ).target(b" (governed)")
-    assert insertion.tag == "playbill-insertion-target-v2"
-    assert insertion.operation == "insert_after"
-    assert insertion.selector.insertion_offset == content.index(b"within 48 hours") + 15
 
 
 def test_selector_refuses_ambiguous_and_unmapped_paths(tmp_path: Path) -> None:

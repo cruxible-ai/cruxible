@@ -34,6 +34,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillAuthoringPreflightRequest,
     PlaybillAuthoringRebaseRequest,
     PlaybillAuthoringSubmitRequest,
+    PlaybillBlockDeclareRequest,
     PlaybillBlockDepublishRequest,
     PlaybillClaimExplainRequest,
     PlaybillCurationAcceptFixedRequest,
@@ -46,8 +47,6 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillFloorExportRequest,
     PlaybillInitRequest,
     PlaybillInsertionAbandonRequest,
-    PlaybillInsertionConfirmRequest,
-    PlaybillInsertionPrepareRequest,
     PlaybillInstanceDecommissionRequest,
     PlaybillNextRequest,
     PlaybillNextRequestV2,
@@ -874,40 +873,6 @@ async def authoring_intent_status(
 
 
 @router.post(
-    "/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/prepare",
-    response_model=contracts.PlaybillInsertionPrepareResult,
-)
-async def prepare_authoring_publication(
-    instance_id: str,
-    intent_id: str,
-    req: PlaybillInsertionPrepareRequest,
-) -> contracts.PlaybillInsertionPrepareResult:
-    return playbill_api.playbill_authoring_prepare_publication(
-        resolve_server_instance_id(instance_id),
-        intent_id,
-        observation=req.observation,
-        expectation_id=req.expectation_id,
-    )
-
-
-@router.post(
-    "/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/confirm",
-    response_model=contracts.PlaybillInsertionConfirmResultV2,
-)
-async def confirm_authoring_insertion(
-    instance_id: str,
-    intent_id: str,
-    req: PlaybillInsertionConfirmRequest,
-) -> contracts.PlaybillInsertionConfirmResultV2:
-    return playbill_api.playbill_authoring_confirm_insertion(
-        resolve_server_instance_id(instance_id),
-        intent_id,
-        observation=req.observation,
-        expectation_id=req.expectation_id,
-    )
-
-
-@router.post(
     "/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/abandon",
     response_model=contracts.PlaybillInsertionAbandonResult,
 )
@@ -920,6 +885,20 @@ async def abandon_authoring_insertion(
         resolve_server_instance_id(instance_id),
         intent_id,
         expectation_id=req.expectation_id,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/blocks/declare",
+    response_model=contracts.PlaybillBlockDeclareResultV1,
+)
+async def declare_playbill_block(
+    instance_id: str,
+    req: PlaybillBlockDeclareRequest,
+) -> contracts.PlaybillBlockDeclareResultV1:
+    return playbill_api.playbill_block_declare(
+        resolve_server_instance_id(instance_id),
+        req.stamp,
     )
 
 

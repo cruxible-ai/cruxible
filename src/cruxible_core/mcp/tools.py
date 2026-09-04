@@ -495,36 +495,6 @@ def register_tools(
         return handlers.handle_playbill_authoring_status(instance_id, intent_id)
 
     @_tool
-    def cruxible_playbill_authoring_confirm_insertion(
-        instance_id: str,
-        intent_id: str,
-        observation: dict[str, Any],
-        expectation_id: str | None = None,
-    ) -> contracts.PlaybillInsertionConfirmResultV2:
-        """Confirm an exact stamped publication."""
-        return handlers.handle_playbill_authoring_confirm_insertion(
-            instance_id,
-            intent_id,
-            observation,
-            expectation_id,
-        )
-
-    @_tool
-    def cruxible_playbill_authoring_prepare_publication(
-        instance_id: str,
-        intent_id: str,
-        observation: dict[str, Any],
-        expectation_id: str | None = None,
-    ) -> contracts.PlaybillInsertionPrepareResult:
-        """Prepare an exact Claim-backed publication from fresh whole-source bytes."""
-        return handlers.handle_playbill_authoring_prepare_publication(
-            instance_id,
-            intent_id,
-            observation,
-            expectation_id,
-        )
-
-    @_tool
     def cruxible_playbill_authoring_abandon_insertion(
         instance_id: str,
         intent_id: str,
@@ -536,6 +506,14 @@ def register_tools(
             intent_id,
             expectation_id,
         )
+
+    @_tool
+    def cruxible_playbill_block_declare(
+        instance_id: str,
+        stamp: dict[str, Any],
+    ) -> contracts.PlaybillBlockDeclareResultV1:
+        """Register one projection block a workspace just stamped into its page."""
+        return handlers.handle_playbill_block_declare(instance_id, stamp)
 
     @_tool
     def cruxible_playbill_block_depublish(

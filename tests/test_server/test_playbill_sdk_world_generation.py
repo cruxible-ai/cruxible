@@ -202,7 +202,6 @@ def test_a_same_set_definition_lands_with_the_claim_that_reads_it_in_one_generat
         effective_period=None,
         revises=None,
         dispositions={},
-        publish_to=None,
         subject_definition=None,
         claim_type_definition=None,
     )
@@ -219,7 +218,6 @@ def test_a_same_set_definition_lands_with_the_claim_that_reads_it_in_one_generat
         effective_period=None,
         revises=None,
         dispositions={},
-        publish_to=None,
         subject_definition=None,
         claim_type_definition=None,
     )
@@ -270,7 +268,6 @@ def test_a_same_set_claim_type_ref_states_a_claim_under_the_type_it_defines(
         effective_period=None,
         revises=None,
         dispositions={},
-        publish_to=None,
         subject_definition=None,
         claim_type_definition=None,
     )

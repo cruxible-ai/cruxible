@@ -2362,12 +2362,8 @@ PlaybillBlockSyncReadReason: TypeAlias = Literal[
     "block_workspace_instance_mismatch",
     "block_backing_missing",
     "block_backing_changed",
-    "block_not_publication_origin",
-    "block_publication_registry_unavailable",
     "block_backing_retired",
     "block_successor_ambiguous",
-    "block_successor_body_missing",
-    "block_successor_body_ambiguous",
 ]
 
 
@@ -2399,6 +2395,17 @@ class PlaybillBlockSyncReadRequestV1(_StrictAuthoringModel):
 
 
 class PlaybillBlockSyncReadResultV1(_StrictAuthoringModel):
+    """What the daemon can say about one declared block, without rendering it.
+
+    This read used to return the accepted BODY a single-Claim block would be
+    rewritten to. Nothing renders any more: a projection block is prose the
+    agent wrote, held to an explicit backing list, and the only question worth
+    asking of accepted state is whether that list still reads as it did. So the
+    body fields stay in the shape and are never populated -- an older client
+    that asks for them gets nothing rather than a rewrite it did not expect --
+    and the answer is a currency verdict over EVERY held backing instead of one.
+    """
+
     tag: Literal["playbill-block-sync-read-result-v1"] = "playbill-block-sync-read-result-v1"
     status: PlaybillBlockSyncReadStatus
     original_artifact_digest: str | None = None
@@ -2406,6 +2413,9 @@ class PlaybillBlockSyncReadResultV1(_StrictAuthoringModel):
     coordinate: AcceptedCoordinate | None = None
     generation: int | None = Field(default=None, ge=0)
     backing: ProjectionBackingV1 | None = None
+    # The current spelling of every held backing that moved under the stamp.
+    # A block holds a LIST, so naming one is not enough to repair it.
+    moved_backings: tuple[ProjectionBackingV1, ...] = ()
     body_content_base64: str | None = None
     body_digest: str | None = None
     successor_candidates: tuple[PlaybillBlockSyncSuccessorCandidateV1, ...] = ()
@@ -2435,21 +2445,16 @@ class PlaybillBlockSyncReadResultV1(_StrictAuthoringModel):
     @model_validator(mode="after")
     def _result_shape(self) -> "PlaybillBlockSyncReadResultV1":
         success = self.status in {"current", "successor"}
-        success_values = (
-            self.original_artifact_digest,
-            self.artifact_digest,
-            self.coordinate,
-            self.generation,
-            self.backing,
-            self.body_content_base64,
-            self.body_digest,
-        )
-        if success != all(value is not None for value in success_values):
-            raise ValueError("successful block sync reads require the complete retained body")
+        if success != (self.coordinate is not None and self.generation is not None):
+            raise ValueError("a block currency verdict names the coordinate it was read at")
+        if self.body_content_base64 is not None or self.body_digest is not None:
+            raise ValueError("a block sync read renders no body")
         if success and (self.reason is not None or self.successor_candidates):
             raise ValueError("successful block sync reads cannot carry a refusal")
         if not success and self.reason is None:
             raise ValueError("refused block sync reads require a typed reason")
+        if (self.status == "successor") != bool(self.moved_backings):
+            raise ValueError("a successor verdict names exactly the backings that moved")
         if self.reason == "block_successor_ambiguous":
             if len(self.successor_candidates) < 2:
                 raise ValueError("ambiguous block sync reads require successor candidates")
@@ -2462,12 +2467,6 @@ class PlaybillBlockSyncReadResultV1(_StrictAuthoringModel):
             )
         ):
             raise ValueError("block sync successor candidates must be digest-sorted")
-        if success:
-            assert self.body_content_base64 is not None
-            assert self.body_digest is not None
-            body = base64.b64decode(self.body_content_base64, validate=True)
-            if "sha256:" + hashlib.sha256(body).hexdigest() != self.body_digest:
-                raise ValueError("block sync retained body does not reproduce its digest")
         return self
 
     @property
@@ -2477,8 +2476,14 @@ class PlaybillBlockSyncReadResultV1(_StrictAuthoringModel):
         return base64.b64decode(self.body_content_base64, validate=True)
 
 
+# `synced` and `would_sync` are the outcomes of a write this verb no longer
+# performs: nothing renders a block body, so nothing rewrites one. They stay in
+# the vocabulary because narrowing a result enum is a wire removal, and a caller
+# holding an older result must still parse. `block sync` produces neither.
 PlaybillBlockSyncOutcome: TypeAlias = Literal[
     "unchanged",
+    "stale",
+    "dirty",
     "synced",
     "would_sync",
     "detached",
@@ -2491,23 +2496,16 @@ PlaybillBlockSyncReason: TypeAlias = Literal[
     "workspace_not_attached",
     "workspace_binding_invalid",
     "workspace_instance_mismatch",
-    "workspace_source_catalog_missing",
     "workspace_source_catalog_invalid",
     "source_path_invalid",
     "source_not_projection_target",
     "block_marker_malformed",
     "block_unstamped",
-    "block_multi_backing",
-    "block_query_backing",
     "block_locally_modified",
     "block_backing_missing",
     "block_backing_changed",
-    "block_not_publication_origin",
-    "block_publication_registry_unavailable",
     "block_backing_retired",
     "block_successor_ambiguous",
-    "block_successor_body_missing",
-    "block_successor_body_ambiguous",
     "block_concurrent_edit",
     "block_frame_invalid",
     "block_sync_failed",
@@ -2540,7 +2538,11 @@ class PlaybillBlockSyncItemV1(_StrictAuthoringModel):
 
     @model_validator(mode="after")
     def _item_shape(self) -> "PlaybillBlockSyncItemV1":
-        reasoned = self.outcome in {"skipped", "refused", "unsyncable"}
+        # `stale` and `dirty` are findings, not refusals, but they are just as
+        # reasoned: a block whose held list moved names which reason moved it,
+        # and a block whose prose moved names that. Every one of them carries a
+        # repair, because a finding with no named change is a row nobody acts on.
+        reasoned = self.outcome in {"skipped", "refused", "unsyncable", "stale", "dirty"}
         if reasoned != (self.reason is not None):
             raise ValueError("block sync skipped/refusal outcomes require exactly one typed reason")
         if reasoned != (self.repair is not None):
@@ -2562,7 +2564,13 @@ class PlaybillBlockSyncResultV1(_StrictAuthoringModel):
             item.outcome in {"synced", "would_sync", "detached", "would_detach"}
             for item in self.items
         )
-        refused = any(item.outcome in {"refused", "unsyncable"} for item in self.items)
+        # A stale held list and a hand-edited body are findings this verb
+        # reports and cannot repair, so they count as refusals for the exit
+        # code: `block sync` at the end of an activation must not answer clean
+        # over a page that has drifted from the state it declares.
+        refused = any(
+            item.outcome in {"refused", "unsyncable", "stale", "dirty"} for item in self.items
+        )
         if self.changed_file_count != len(changed):
             raise ValueError("block sync changed-file count does not reproduce")
         if self.would_change != prospective or self.has_refusals != refused:

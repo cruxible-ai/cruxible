@@ -14,7 +14,6 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from cruxible_client.contracts import (
     PLAYBILL_HAND_EDIT_NEXT_REASONS,
-    PlaybillBlockSyncReadRequestV1,
     PlaybillNextReason,
     ProviderLaneStatusV1,
 )
@@ -48,7 +47,6 @@ from cruxible_client.contracts.claim_verdicts import (
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     ClaimArtifactV3,
-    ClaimCitationV1,
     ClaimLawEvidenceAny,
     LiteralClaimObject,
     _is_claim_type_rederivation,
@@ -124,10 +122,10 @@ from cruxible_core.service.playbill_evidence import (
     current_verified_claim_attestations,
     service_evaluate_playbill_claim_verdict,
 )
-from cruxible_core.service.playbill_projection_sync import (
-    service_read_playbill_block_sync_backing,
+from cruxible_core.service.playbill_publications import (
+    ProjectionBlockRegistration,
+    registered_projection_blocks,
 )
-from cruxible_core.service.playbill_publications import bound_publication_registrations
 from cruxible_core.service.playbill_query import build_accepted_query_facts
 from cruxible_core.service.playbill_search import claim_resolution_statuses
 
@@ -155,6 +153,7 @@ NextRepairOperation = Literal[
     "playbill.authoring.bind",
     "playbill.claim.retire",
     "playbill.floor.export",
+    "playbill.block.depublish",
     "playbill.block.repin",
     "playbill.block.sync",
     "playbill.document.propose",
@@ -650,6 +649,7 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "playbill.authoring.bind": "playbill authoring bind",
     "playbill.claim.retire": "playbill claim retire",
     "playbill.floor.export": "playbill floor export",
+    "playbill.block.depublish": "playbill block depublish",
     "playbill.block.repin": "playbill block repin",
     "playbill.block.sync": "playbill block sync",
     "playbill.document.propose": "playbill document propose",
@@ -720,6 +720,18 @@ def _repair_command(
         claim_id = values.get("claim_id")
         if isinstance(claim_id, str) and claim_id:
             parts.extend(["--claim", shlex.quote(claim_id)])
+        claims = values.get("claim")
+        if isinstance(claims, (list, tuple)):
+            for value in claims:
+                if isinstance(value, str) and value:
+                    parts.extend(["--claim", shlex.quote(value.removeprefix("Claim:"))])
+    elif operation == "playbill.block.depublish":
+        source_id = values.get("source_id")
+        block_id = values.get("block_id")
+        if isinstance(source_id, str) and isinstance(block_id, str):
+            parts.extend([shlex.quote(source_id), shlex.quote(block_id)])
+        else:
+            return None
     elif operation == "playbill.block.sync":
         if values.get("all") is True:
             parts.append("--all")
@@ -1196,16 +1208,6 @@ class _CitationCommitment:
 
 
 @dataclass(frozen=True)
-class _SourceAssociation:
-    citation_id: str
-    claim_identity: str
-    commitment_digest: str
-    source_id: str
-    qualifying_publication: bool
-    stale_publication: bool
-
-
-@dataclass(frozen=True)
 class _CitationRelationUse:
     capture_digest: str
     citation_id: str
@@ -1526,79 +1528,6 @@ def _citation_commitments(
     return result
 
 
-def _source_associations(
-    instance: PlaybillInstance,
-    *,
-    coordinate: PlaybillAcceptedCoordinate,
-    evaluation_time: datetime,
-) -> tuple[_SourceAssociation, ...]:
-    """Fold historical citation pins without relying on the live-only coverage index."""
-
-    listed = service_list_playbill_claims(instance, at=coordinate, include_retired=True)
-    store = instance.body_store()
-    access = BodyAccessContext(principal_id="playbill-next", can_read_body=True)
-    associations: list[_SourceAssociation] = []
-    verdicts: dict[str, str] = {}
-    try:
-        for view in listed.claims:
-            claim = _claim_from_view(view)
-            for reference in claim_citation_references(claim):
-                envelope = parse_capture_envelope(
-                    store.read(reference.capture_digest, access=access)
-                )
-                source = envelope.source
-                if (
-                    not isinstance(source, ExternalSourceReferenceV1)
-                    or source.coordinate_type != FOREIGN_SOURCE_COORDINATE_TYPE
-                ):
-                    continue
-                qualifying = (
-                    isinstance(reference, ClaimCitationV1)
-                    and reference.role == "copy"
-                    and reference.origin == "self_published"
-                )
-                stale = False
-                if qualifying:
-                    if claim.lifecycle.state == "retired":
-                        stale = True
-                    else:
-                        verdict = verdicts.get(claim.identity.qualified)
-                        if verdict is None:
-                            verdict = service_evaluate_playbill_claim_verdict(
-                                instance,
-                                claim_identity=claim.identity.qualified,
-                                evaluation_time=evaluation_time,
-                                at=coordinate,
-                            ).verdict.verdict
-                            verdicts[claim.identity.qualified] = verdict
-                        stale = verdict == "contradicted"
-                associations.append(
-                    _SourceAssociation(
-                        citation_id=reference.citation_id,
-                        claim_identity=claim.identity.qualified,
-                        commitment_digest=envelope.commitment.digest,
-                        source_id=source.source_identity,
-                        qualifying_publication=qualifying,
-                        stale_publication=stale,
-                    )
-                )
-    except Exception as exc:
-        raise PlaybillNextAcceptedStateInvalid(
-            f"{PlaybillNextAcceptedStateInvalid.code}: publication association fold is invalid"
-        ) from exc
-    return tuple(
-        sorted(
-            associations,
-            key=lambda item: (
-                item.source_id.encode("utf-8"),
-                item.commitment_digest.encode("ascii"),
-                item.claim_identity.encode("utf-8"),
-                item.citation_id.encode("ascii"),
-            ),
-        )
-    )
-
-
 def _claim_cites_retired_item(
     *,
     coordinate: PlaybillAcceptedCoordinate,
@@ -1677,13 +1606,13 @@ def _citation_relation_items(
     access_profile: CoverageAccessProfileV1,
     observation: PlaybillNextWorkspaceObservationV1 | None,
     door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...] = (),
-) -> tuple[tuple[PlaybillNextItemV1, ...], frozenset[tuple[str, str]]]:
+) -> tuple[PlaybillNextItemV1, ...]:
     """Serve retirement relations from the immutable accepted-coordinate slice."""
 
     if not access_profile.permits("instance"):
-        return (), frozenset()
+        return ()
     if not any(path.startswith("claims/") for path in instance.paths_at(coordinate.git_oid)):
-        return (), frozenset()
+        return ()
     public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
     retirement_sequences = _claim_retirement_sequences(instance) if door_events else {}
     accepted_sequence_by_semantic_root = (
@@ -1796,7 +1725,6 @@ def _citation_relation_items(
             items.append(item)
         exact_subjects.add(live_identity)
 
-    suppressed_publications: set[tuple[str, str]] = set()
     for source_id in sorted(uses_by_source, key=lambda item: item.encode("utf-8")):
         observed = observed_sources[source_id]
         current: list[tuple[int, int, str, _CitationRelationUse, WorkingOccurrenceV1]] = []
@@ -1970,118 +1898,6 @@ def _citation_relation_items(
                     ),
                 )
             )
-            suppressed_publications.update(
-                (source_id, entry[3].commitment_digest) for entry in component
-            )
-    return tuple(items), frozenset(suppressed_publications)
-
-
-def _self_published_source_items(
-    instance: PlaybillInstance,
-    *,
-    coordinate: PlaybillAcceptedCoordinate,
-    evaluation_time: datetime,
-    access_profile: CoverageAccessProfileV1,
-    observation: PlaybillNextWorkspaceObservationV1 | None,
-    suppressed_relations: frozenset[tuple[str, str]] = frozenset(),
-) -> tuple[PlaybillNextItemV1, ...]:
-    if (
-        observation is None
-        or observation.source_observations is None
-        or not access_profile.permits("instance")
-    ):
-        return ()
-    if observation.presentation_policy_notes:
-        return ()
-    policy = upgrade_playbill_presentation_policy(
-        observation.presentation_policy or PlaybillPresentationPolicyV1()
-    )
-    archival = set(policy.archival_source_ids)
-    observed = {
-        item.source_id: item
-        for item in observation.source_observations
-        if isinstance(
-            item,
-            (
-                PlaybillNextSourceObservationV3,
-                PlaybillNextSourceObservationV4,
-            ),
-        )
-        and (
-            not item.scan_notes
-            if isinstance(item, PlaybillNextSourceObservationV4)
-            else item.scan_complete
-        )
-        and not item.scan_notes
-        and not item.marker_notes
-    }
-    associations = _source_associations(
-        instance,
-        coordinate=coordinate,
-        evaluation_time=evaluation_time,
-    )
-    grouped: dict[tuple[str, str], list[_SourceAssociation]] = defaultdict(list)
-    for association in associations:
-        grouped[(association.source_id, association.commitment_digest)].append(association)
-
-    items: list[PlaybillNextItemV1] = []
-    for (source_id, commitment_digest), group in sorted(
-        grouped.items(), key=lambda item: (item[0][0].encode("utf-8"), item[0][1].encode("ascii"))
-    ):
-        if (source_id, commitment_digest) in suppressed_relations:
-            continue
-        source = observed.get(source_id)
-        if source is None or source_id in archival:
-            continue
-        occurrences = tuple(
-            item
-            for item in source.occurrences
-            if item.observed_commitment_digest == commitment_digest
-        )
-        if len(occurrences) != 1:
-            continue
-        occurrence = occurrences[0]
-        if any(
-            occurrence.line_overlay.start_byte < marker.end_byte
-            and occurrence.line_overlay.end_byte > marker.start_byte
-            for marker in source.marker_summaries
-        ):
-            continue
-        if any(not item.qualifying_publication for item in group):
-            continue
-        if any(item.qualifying_publication and not item.stale_publication for item in group):
-            continue
-        stale = tuple(
-            sorted(
-                {item.claim_identity for item in group if item.stale_publication},
-                key=lambda item: item.encode("utf-8"),
-            )
-        )
-        if not stale:
-            continue
-        items.append(
-            _item(
-                severity="warning",
-                reason="self_published_source_stale",
-                subject_identity=source_id,
-                related_identities=stale,
-                detail={
-                    "source_id": source_id,
-                    "commitment_digest": commitment_digest,
-                    "occurrence_identity_digest": occurrence.identity_digest,
-                    "stale_claim_identities": list(stale),
-                },
-                repair=PlaybillNextRepairV1(
-                    operation="playbill.authoring.create",
-                    target=source_id,
-                    required_change="review_self_published_passage",
-                    arguments={
-                        "source_id": source_id,
-                        "occurrence_identity_digest": occurrence.identity_digest,
-                    },
-                ),
-            )
-        )
     return tuple(items)
 
 
@@ -2976,19 +2792,20 @@ def _document_items(
 
 def _registered_publication_blocks(
     instance: PlaybillInstance,
-) -> frozenset[tuple[str, str]] | None:
-    """Fold durable bound publication identities from latest intent events."""
+) -> dict[tuple[str, str], ProjectionBlockRegistration] | None:
+    """Fold every block this instance registers, whichever road declared it.
 
-    registrations = bound_publication_registrations(instance)
-    if registrations is None:
-        return None
-    return frozenset(
-        (item.preparation.source_id, item.preparation.block_id) for item in registrations
-    )
+    Both roads, one identity: the pair the page itself names. Before this the
+    question "is this marker sanctioned?" was asked only of block ids beginning
+    `pub-`, which is a spelling the retired publication road minted, so a block
+    an agent declared with `block repin` was never checked against anything.
+    """
+
+    return registered_projection_blocks(instance)
 
 
 def _registrations_released_by_retirement(
-    instance: PlaybillInstance,
+    registrations: Mapping[tuple[str, str], ProjectionBlockRegistration],
     *,
     tree: Mapping[str, bytes],
 ) -> frozenset[tuple[str, str]]:
@@ -2999,18 +2816,51 @@ def _registrations_released_by_retirement(
     `next` went on demanding the frame -- for a block that same ruling had told
     the author to delete, with the repair "restore it". A registration whose
     Claim is retired registers nothing: the world has moved past that page.
+
+    Only a publication registration has a backing Claim to retire. A block an
+    agent declared holds a LIST, and a retirement inside that list is reported
+    as a stale backing on the block, not as the block ceasing to exist.
+
+    It takes the already-folded registrations rather than folding again: the
+    fold walks every durable intent event, and one `next` used to reach it from
+    three places plus once per block.
     """
 
-    registrations = bound_publication_registrations(instance)
-    if not registrations:
-        return frozenset()
     released: set[tuple[str, str]] = set()
-    for item in registrations:
-        path = claim_path(item.claim_identity)
+    for key, registration in registrations.items():
+        publication = registration.publication
+        if publication is None:
+            continue
+        path = claim_path(publication.claim_identity)
         raw = tree.get(path)
         if raw is not None and parse_claim(raw, path=path).lifecycle.state == "retired":
-            released.add((item.preparation.source_id, item.preparation.block_id))
+            released.add(key)
     return frozenset(released)
+
+
+def _query_row_claim_identities(result: object) -> frozenset[str]:
+    """Every Claim a query result was read through, as qualified identities.
+
+    A watched query's rows are candidates for a block's held list, and the only
+    identity a held list can carry is an artifact's. A row names the Claims it
+    was read through, so those are the rows a repin could hold.
+    """
+
+    identities: set[str] = set()
+    for row in getattr(result, "rows", ()):
+        visibilities = list(getattr(row, "read_claims", ()))
+        relation = getattr(row, "relation_claim", None)
+        if relation is not None:
+            visibilities.append(relation)
+        visibilities.extend(getattr(row, "path", ()))
+        for visibility in visibilities:
+            path = getattr(visibility, "claim_path", None)
+            if not isinstance(path, str):
+                continue
+            name = path.rsplit("/", 1)[-1].removesuffix(".json")
+            if name:
+                identities.add(f"Claim:{name}")
+    return frozenset(identities)
 
 
 def _projection_marker_invalid_item(
@@ -3029,6 +2879,11 @@ def _projection_marker_invalid_item(
     if block_id is not None:
         detail["block_id"] = block_id
         arguments["block_id"] = block_id
+    # A registered block whose marker is not in the page is the author having
+    # removed it. The instance is the half that still expects it, so the repair
+    # is to release the registration, not to put back a block a ruling may have
+    # told the author to delete -- which was the only named repair before
+    # `block depublish` existed, and the reason a re-modelled page had none.
     return _item(
         severity="blocking",
         reason="projection_marker_invalid",
@@ -3036,9 +2891,17 @@ def _projection_marker_invalid_item(
         related_identities=(),
         detail=detail,
         repair=PlaybillNextRepairV1(
-            operation="playbill.block.repin",
+            operation=(
+                "playbill.block.depublish"
+                if marker_status == "registered_marker_missing"
+                else "playbill.block.repin"
+            ),
             target=target,
-            required_change="restore_projection_frame_then_repin",
+            required_change=(
+                "depublish_or_restore_the_registered_block"
+                if marker_status == "registered_marker_missing"
+                else "restore_projection_frame_then_repin"
+            ),
             arguments=arguments,
         ),
     )
@@ -3076,9 +2939,13 @@ def _projection_items(
         return ()
 
     tree = instance.tree_at(coordinate.git_oid)
-    registrations = _registered_publication_blocks(instance)
-    if registrations is not None:
-        registrations -= _registrations_released_by_retirement(instance, tree=tree)
+    # One fold per `next`. The registration fold parses every durable intent
+    # event, and the queue used to reach it from three places and once more per
+    # syncable block; the retirement release now reads the same folded result.
+    folded = _registered_publication_blocks(instance)
+    registrations: frozenset[tuple[str, str]] | None = None
+    if folded is not None:
+        registrations = frozenset(folded) - _registrations_released_by_retirement(folded, tree=tree)
     items: list[PlaybillNextItemV1] = []
     for source in observed_sources:
         observed_block_ids = {marker.stamp.block_id for marker in source.marker_summaries}
@@ -3124,11 +2991,7 @@ def _projection_items(
     for source in sources:
         for marker in source.marker_summaries:
             registration = (source.source_id, marker.stamp.block_id)
-            if (
-                marker.stamp.block_id.startswith("pub-")
-                and registrations is not None
-                and registration not in registrations
-            ):
+            if registrations is not None and registration not in registrations:
                 target = f"{source.source_id}#{marker.stamp.block_id}"
                 items.append(
                     _item(
@@ -3140,8 +3003,12 @@ def _projection_items(
                             "source_id": source.source_id,
                             "block_id": marker.stamp.block_id,
                         },
+                        # A repin declares the block to the instance, so the
+                        # verb that registers a marker is the verb that wrote
+                        # it. Removing the marker is the other road, and the
+                        # required change still names both.
                         repair=PlaybillNextRepairV1(
-                            operation="playbill.document.propose",
+                            operation="playbill.block.repin",
                             target=target,
                             required_change="remove_or_register_projection_block",
                             arguments={
@@ -3153,9 +3020,10 @@ def _projection_items(
                 )
             visible = True
             stale: list[str] = []
-            body_digest_detail: dict[str, str] = {}
             retired: list[str] = []
             overturned: list[str] = []
+            watched: str | None = None
+            candidates: frozenset[str] | None = None
             for backing in marker.stamp.backing:
                 if isinstance(backing, ProjectionClaimBackingV1):
                     claim = claims.get(backing.identity.qualified)
@@ -3213,7 +3081,13 @@ def _projection_items(
                     if projection_query_semantic_result_digest(result) != (
                         backing.semantic_result_digest
                     ):
-                        stale.append(backing.identity.qualified)
+                        # A watched query is not a member of the held list: it
+                        # SURFACES candidates for it. Its result moving is not
+                        # the block falling out of date with what it holds, so
+                        # it is reported as candidates that changed and never
+                        # as a stale backing.
+                        watched = backing.identity.qualified
+                        candidates = _query_row_claim_identities(result)
                 elif isinstance(backing, ProjectionArtifactBackingV1):
                     try:
                         if backing.identity.kind == "ClaimType":
@@ -3245,61 +3119,6 @@ def _projection_items(
             if not visible:
                 continue
             target = f"{source.source_id}#{marker.stamp.block_id}"
-            syncable = (
-                (registration in registrations if registrations is not None else False)
-                and len(marker.stamp.backing) == 1
-                and isinstance(
-                    marker.stamp.backing[0],
-                    (ProjectionClaimBackingV1, ProjectionArtifactBackingV1),
-                )
-            )
-            if syncable:
-                claim_backing = marker.stamp.backing[0]
-                try:
-                    sync_read = service_read_playbill_block_sync_backing(
-                        instance,
-                        request=PlaybillBlockSyncReadRequestV1(stamp=marker.stamp),
-                    )
-                except PlaybillError as exc:
-                    items.append(
-                        _item(
-                            severity="blocking",
-                            reason="projection_marker_invalid",
-                            subject_identity=target,
-                            related_identities=(claim_backing.identity.qualified,),
-                            detail={
-                                "source_id": source.source_id,
-                                "block_id": marker.stamp.block_id,
-                                "error_code": "playbill.projection.backing_lineage_unreadable",
-                                "message": str(exc),
-                            },
-                            repair=PlaybillNextRepairV1(
-                                operation="playbill.block.repin",
-                                target=target,
-                                required_change="repin_explicit_current_claim_backing",
-                                arguments={
-                                    "source_id": source.source_id,
-                                    "block_id": marker.stamp.block_id,
-                                    "claim_id": claim_backing.identity.name,
-                                },
-                            ),
-                        )
-                    )
-                    syncable = False
-                else:
-                    terminal_body_digest = sync_read.body_digest
-                    if (
-                        sync_read.status in {"current", "successor"}
-                        and terminal_body_digest is not None
-                        and terminal_body_digest != marker.stamp.body_digest
-                    ):
-                        identity = claim_backing.identity.qualified
-                        if identity not in stale:
-                            stale.append(identity)
-                        body_digest_detail = {
-                            "stamped_body_digest": marker.stamp.body_digest,
-                            "terminal_body_digest": terminal_body_digest,
-                        }
             identities = tuple(
                 sorted(
                     (backing.identity.qualified for backing in marker.stamp.backing),
@@ -3307,6 +3126,54 @@ def _projection_items(
                 )
             )
             arguments = {"source_id": source.source_id, "block_id": marker.stamp.block_id}
+            if watched is not None and candidates is not None:
+                # The stamp commits the query's result DIGEST, not its rows, so
+                # the delta is named against the list the block actually holds:
+                # what the query now returns and the block does not hold, and
+                # what the block holds and the query no longer returns. Those
+                # are the two things an agent can act on.
+                held_claims = frozenset(
+                    backing.identity.qualified
+                    for backing in marker.stamp.backing
+                    if isinstance(backing, ProjectionClaimBackingV1)
+                )
+                entered = tuple(
+                    sorted(candidates - held_claims, key=lambda value: value.encode("utf-8"))
+                )
+                left = tuple(
+                    sorted(held_claims - candidates, key=lambda value: value.encode("utf-8"))
+                )
+                items.append(
+                    _item(
+                        severity="warning",
+                        reason="projection_candidates_changed",
+                        subject_identity=target,
+                        related_identities=tuple(
+                            sorted(
+                                set(entered) | set(left),
+                                key=lambda value: value.encode("utf-8"),
+                            )
+                        ),
+                        detail={
+                            "source_id": source.source_id,
+                            "block_id": marker.stamp.block_id,
+                            "watched_query": watched,
+                            "entered": list(entered),
+                            "left": list(left),
+                            # Two spellings of one verb. Repinning WITH the
+                            # entered rows holds them; repinning without them
+                            # re-stamps the new result digest, which is the
+                            # agent saying no to them on the record.
+                            "decline_by": "playbill block repin without --claim",
+                        },
+                        repair=PlaybillNextRepairV1(
+                            operation="playbill.block.repin",
+                            target=target,
+                            required_change="hold_or_decline_the_entered_candidates",
+                            arguments={**arguments, "claim": list(entered)},
+                        ),
+                    )
+                )
             if marker.observed_body_digest != marker.stamp.body_digest:
                 items.append(
                     _item(
@@ -3341,11 +3208,12 @@ def _projection_items(
                             "block_id": marker.stamp.block_id,
                             "retired_backings": list(related),
                         },
-                        # Depublishing a block is an edit of the page, not a
-                        # repin of it: no verb republishes a retired backing,
-                        # so the row names the change and claims no command.
+                        # No verb republishes a retired backing, and until
+                        # `block depublish` existed the row named a change with
+                        # no command behind it. There is a verb now, so the row
+                        # names it.
                         repair=PlaybillNextRepairV1(
-                            operation="hand_edit",
+                            operation="playbill.block.depublish",
                             target=target,
                             required_change="depublish_retired_backing_block",
                             arguments=arguments,
@@ -3366,7 +3234,7 @@ def _projection_items(
                             "overturned_backings": list(related),
                         },
                         repair=PlaybillNextRepairV1(
-                            operation="hand_edit",
+                            operation="playbill.block.depublish",
                             target=target,
                             required_change="depublish_overturned_backing_block",
                             arguments=arguments,
@@ -3385,19 +3253,15 @@ def _projection_items(
                             "source_id": source.source_id,
                             "block_id": marker.stamp.block_id,
                             "stale_backings": list(related),
-                            **body_digest_detail,
                         },
+                        # Nothing renders a block, so nothing converges one: a
+                        # member that moved is answered by reading the prose
+                        # against the new state and re-stamping the list.
                         repair=PlaybillNextRepairV1(
-                            operation=(
-                                "playbill.block.sync" if syncable else "playbill.block.repin"
-                            ),
+                            operation="playbill.block.repin",
                             target=target,
-                            required_change=(
-                                "sync_unique_publication_successor"
-                                if syncable
-                                else "review_block_supersede_prose_then_repin"
-                            ),
-                            arguments={"all": True} if syncable else arguments,
+                            required_change="review_block_supersede_prose_then_repin",
+                            arguments=arguments,
                         ),
                     )
                 )
@@ -3437,7 +3301,7 @@ def service_playbill_next(
         if domain == "accepted_state" or domain in workspace_domains
     )
     unobserved = tuple(domain for domain in _ALL_DOMAINS if domain not in observed)
-    relation_items, suppressed_publications = _citation_relation_items(
+    relation_items = _citation_relation_items(
         instance,
         coordinate=coordinate,
         access_profile=request.access_profile,
@@ -3480,14 +3344,6 @@ def service_playbill_next(
                     observation=request.workspace_observation,
                 ),
                 *relation_items,
-                *_self_published_source_items(
-                    instance,
-                    coordinate=public_coordinate,
-                    evaluation_time=request.evaluation_time,
-                    access_profile=request.access_profile,
-                    observation=request.workspace_observation,
-                    suppressed_relations=suppressed_publications,
-                ),
                 *_claim_dependency_items(
                     instance,
                     coordinate=coordinate,

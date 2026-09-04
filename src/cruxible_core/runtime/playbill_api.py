@@ -27,9 +27,7 @@ from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV2,
     ClaimAuthoringPayloadV3,
     ClaimTypeSuccessionMemberV1,
-    InsertionConfirmationObservationV2,
     PreflightResultV1,
-    PublicationSourceObservationV2,
     WorkingSelectionObservationV1,
 )
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
@@ -39,6 +37,7 @@ from cruxible_client.contracts.claim_attestations import (
 )
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
+from cruxible_client.contracts.declared_blocks import ProjectionBlockStampV1
 from cruxible_client.contracts.discovery import (
     DiscoveryBudgetV1,
     ExpandRequestV1,
@@ -62,7 +61,7 @@ from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.subjects import SubjectShell
-from cruxible_client.contracts.temporal import utc_now
+from cruxible_client.contracts.temporal import format_datetime, utc_now
 from cruxible_client.contracts.types import (
     GitObjectFormat,
     OperatingProfile,
@@ -232,7 +231,10 @@ from cruxible_core.service.playbill_proposals import (
     service_resolve_playbill_proposal_selector,
     service_withdraw_playbill_proposal,
 )
-from cruxible_core.service.playbill_publications import service_depublish_playbill_block
+from cruxible_core.service.playbill_publications import (
+    service_declare_playbill_block,
+    service_depublish_playbill_block,
+)
 from cruxible_core.service.playbill_query import service_run_playbill_query
 from cruxible_core.service.playbill_search import service_search_playbill
 from cruxible_core.service.playbill_since import (
@@ -1333,42 +1335,6 @@ def playbill_authoring_status(
     return contracts.PlaybillCandidateStatus.model_validate(result.model_dump(mode="json"))
 
 
-def playbill_authoring_confirm_insertion(
-    instance_id: str,
-    intent_id: str,
-    *,
-    observation: InsertionConfirmationObservationV2,
-    expectation_id: str | None = None,
-) -> contracts.PlaybillInsertionConfirmResultV2:
-    check_permission("cruxible_playbill_authoring_confirm_insertion", instance_id=instance_id)
-    coordinator, actor = _authoring_coordinator(instance_id)
-    result = coordinator.confirm_insertion(
-        intent_id,
-        actor=actor,
-        observation=observation,
-        expectation_id=expectation_id,
-    )
-    return contracts.PlaybillInsertionConfirmResultV2.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_authoring_prepare_publication(
-    instance_id: str,
-    intent_id: str,
-    *,
-    observation: PublicationSourceObservationV2,
-    expectation_id: str | None = None,
-) -> contracts.PlaybillInsertionPrepareResult:
-    check_permission("cruxible_playbill_authoring_prepare_publication", instance_id=instance_id)
-    coordinator, actor = _authoring_coordinator(instance_id)
-    result = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=observation,
-        expectation_id=expectation_id,
-    )
-    return contracts.PlaybillInsertionPrepareResult.model_validate(result.model_dump(mode="json"))
-
-
 def playbill_authoring_abandon_insertion(
     instance_id: str,
     intent_id: str,
@@ -1379,6 +1345,23 @@ def playbill_authoring_abandon_insertion(
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.abandon_insertion(intent_id, actor=actor, expectation_id=expectation_id)
     return contracts.PlaybillInsertionAbandonResult.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_block_declare(
+    instance_id: str,
+    stamp: ProjectionBlockStampV1,
+) -> contracts.PlaybillBlockDeclareResultV1:
+    """Register one projection block a workspace just stamped into its page."""
+
+    check_permission("cruxible_playbill_block_declare", instance_id=instance_id)
+    instance = get_playbill_manager().get(instance_id)
+    _coordinator, actor = _authoring_coordinator(instance_id)
+    return service_declare_playbill_block(
+        instance,
+        actor_id=actor.actor_id,
+        stamp=stamp,
+        declared_at=cast(str, format_datetime(utc_now())),
+    )
 
 
 def playbill_block_depublish(

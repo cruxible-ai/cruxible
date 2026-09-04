@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import get_args
 
 import pytest
@@ -136,17 +137,10 @@ from tests.test_playbill.test_graph_v4_provider_closure import _accepted_procedu
 from tests.test_playbill.test_projection_next import (
     _claim_backing,
     _instance_with_query,
+    _query_backing,
 )
 from tests.test_playbill.test_projection_next import (
     _request as _projection_request,
-)
-from tests.test_playbill.test_reverse_drift_next import (
-    _publish_self_published_claim,
-    _published_world,
-    _retire,
-)
-from tests.test_playbill.test_reverse_drift_next import (
-    _request as _published_request,
 )
 
 EVALUATION_TIME = datetime(2026, 8, 24, 18, tzinfo=UTC)
@@ -164,9 +158,13 @@ EXPECTED_OPERATIONS = {
     "floor_stale": "playbill.floor.export",
     "floor_invalid": "playbill.floor.export",
     "projection_dirty": "playbill.block.repin",
-    "projection_backing_stale": frozenset({"playbill.block.repin", "playbill.block.sync"}),
-    "projection_marker_invalid": "playbill.block.repin",
-    "self_published_source_stale": "playbill.authoring.create",
+    # Nothing renders a block, so no sync converges one: every drifted block
+    # is answered by a repin over the list the author still means to hold.
+    "projection_backing_stale": "playbill.block.repin",
+    "projection_candidates_changed": "playbill.block.repin",
+    # A marker the page has lost is repaired by releasing the registration that
+    # demands it; a marker the page has mangled is repaired by restoring it.
+    "projection_marker_invalid": frozenset({"playbill.block.repin", "playbill.block.depublish"}),
     "claim_dependency_stale": "playbill.authoring.create",
     "claim_attestation_threshold_met": "playbill.authoring.create",
     "claim_contradicting_evidence_available": "playbill.authoring.create",
@@ -175,7 +173,7 @@ EXPECTED_OPERATIONS = {
     "document_modified": "playbill.document.propose",
     "claim_cites_retired": "playbill.claim.retire",
     "retired_claim_source_stale": "playbill.document.propose",
-    "unregistered_projection_block": "playbill.document.propose",
+    "unregistered_projection_block": "playbill.block.repin",
     "provider_lane_unavailable": "hand_edit",
     "procedure_projection_missing": "hand_edit",
     "instance_decommissioned": "hand_edit",
@@ -185,6 +183,10 @@ EXPECTED_OPERATIONS = {
 def _expected_operation(key: ClosedLoopKey) -> str:
     if key == ("citation_drifted", "gone"):
         return "playbill.claim.retire"
+    if key == ("projection_marker_invalid", "registered_marker_missing"):
+        return "playbill.block.depublish"
+    if key[0] == "projection_marker_invalid":
+        return "playbill.block.repin"
     expected = EXPECTED_OPERATIONS[key[0]]
     assert isinstance(expected, str)
     return expected
@@ -230,11 +232,13 @@ def _assert_gone(instance, reason: str, request: PlaybillNextRequestV1) -> None:
 def _item_key(item: object) -> ClosedLoopKey:
     reason = getattr(item, "reason")
     detail = getattr(item, "detail")
-    discriminator = (
-        detail.get("drift_state")
-        if reason == "citation_drifted" and isinstance(detail, Mapping)
-        else None
-    )
+    discriminator = None
+    if isinstance(detail, Mapping):
+        if reason == "citation_drifted":
+            discriminator = detail.get("drift_state")
+        elif reason == "projection_marker_invalid":
+            status = detail.get("marker_status")
+            discriminator = status if status == "registered_marker_missing" else None
     return reason, discriminator
 
 
@@ -966,10 +970,7 @@ def _projection_backing_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
     instance, _owner = _instance_with_query(root)
     before = _projection_request(instance, backing=(_claim_backing(instance, stale=True),))
     row = _row(instance, "projection_backing_stale", before)
-    expected = EXPECTED_OPERATIONS["projection_backing_stale"]
-    assert isinstance(expected, frozenset)
-    assert expected == {"playbill.block.repin", "playbill.block.sync"}
-    assert row.repair.operation == "playbill.block.repin"
+    assert row.repair.operation == EXPECTED_OPERATIONS["projection_backing_stale"]
 
     _assert_gone(
         instance,
@@ -978,21 +979,58 @@ def _projection_backing_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
     )
 
 
-def _projection_backing_stale_sync(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _projection_candidates_changed(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    """A watched query whose result moved names the rows and the repin that answers them."""
+
+    instance, _owner = _instance_with_query(root)
+    backing = (_claim_backing(instance), _query_backing(instance, stale=True))
+    row = _row(
+        instance,
+        "projection_candidates_changed",
+        _projection_request(instance, backing=backing),
+    )
+    assert row.severity == "warning"
+    assert row.repair.operation == EXPECTED_OPERATIONS["projection_candidates_changed"]
+    assert row.repair.required_change == "hold_or_decline_the_entered_candidates"
+
+    # Re-stamping the block on the query's current result is the agent's
+    # explicit "no", and it clears the row without holding anything.
+    _assert_gone(
+        instance,
+        "projection_candidates_changed",
+        _projection_request(instance, backing=(_claim_backing(instance), _query_backing(instance))),
+    )
+
+
+def _projection_marker_missing(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A registered block the page has lost is repaired by releasing its registration."""
+
     instance, _owner = _instance_with_query(root)
     monkeypatch.setattr(
         "cruxible_core.service.playbill_next._registered_publication_blocks",
-        lambda _instance: {("corpus.runbook", "status")},
+        lambda _instance: {
+            ("corpus.runbook", "status"): SimpleNamespace(
+                source_id="corpus.runbook",
+                block_id="status",
+                origin="declaration",
+                publication=None,
+            ),
+            ("corpus.runbook", "gone"): SimpleNamespace(
+                source_id="corpus.runbook",
+                block_id="gone",
+                origin="declaration",
+                publication=None,
+            ),
+        },
     )
-    before = _projection_request(instance, backing=(_claim_backing(instance, stale=True),))
-    row = _row(instance, "projection_backing_stale", before)
-    assert row.repair.operation == "playbill.block.sync"
-
-    _assert_gone(
+    request = _projection_request(instance, backing=(_claim_backing(instance),))
+    row = _row_by_key(
         instance,
-        "projection_backing_stale",
-        _projection_request(instance, backing=(_claim_backing(instance),)),
+        ("projection_marker_invalid", "registered_marker_missing"),
+        request,
     )
+    assert row.repair.operation == "playbill.block.depublish"
+    assert row.repair.required_change == "depublish_or_restore_the_registered_block"
 
 
 def _projection_marker_invalid(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1011,26 +1049,6 @@ def _projection_marker_invalid(root: Path, _monkeypatch: pytest.MonkeyPatch) -> 
         "projection_marker_invalid",
         _projection_request(instance, backing=backing),
     )
-
-
-def _publish_replacement_claim(instance, owner) -> None:  # type: ignore[no-untyped-def]
-    _publish_self_published_claim(
-        instance,
-        owner,
-        timestamp="2026-08-21T12:02:00.000000Z",
-        successor_timestamp="2026-08-21T12:02:01.000000Z",
-        proposal_suffix="replacement-self-published-copy",
-    )
-
-
-def _self_published_source_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
-    instance, owner, claim_id = _published_world(root)
-    _retire(instance, owner, claim_id)
-    row = _row(instance, "self_published_source_stale", _published_request(instance))
-    assert row.repair.operation == EXPECTED_OPERATIONS["self_published_source_stale"]
-
-    _publish_replacement_claim(instance, owner)
-    _assert_gone(instance, "self_published_source_stale", _published_request(instance))
 
 
 def _claim_dependency_stale(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1332,9 +1350,9 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("floor_invalid", None): _floor_invalid,
     ("projection_dirty", None): _projection_dirty,
     ("projection_backing_stale", None): _projection_backing_stale,
-    ("projection_backing_stale", "sync"): _projection_backing_stale_sync,
+    ("projection_candidates_changed", None): _projection_candidates_changed,
+    ("projection_marker_invalid", "registered_marker_missing"): _projection_marker_missing,
     ("projection_marker_invalid", None): _projection_marker_invalid,
-    ("self_published_source_stale", None): _self_published_source_stale,
     ("claim_dependency_stale", None): _claim_dependency_stale,
     ("claim_attestation_threshold_met", None): _claim_attestation_threshold,
     ("claim_contradicting_evidence_available", None): lambda root, monkeypatch: (

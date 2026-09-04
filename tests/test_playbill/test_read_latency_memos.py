@@ -32,10 +32,6 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
 )
-from cruxible_core.playbill.authoring.insertions import (
-    PublicationClaimProjectedAsItself,
-    refuse_claim_projected_as_itself,
-)
 from cruxible_core.playbill.consumption import consumption_artifacts_for_paths
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.git import GitLedger
@@ -616,24 +612,3 @@ def test_a_prose_claim_type_admits_its_own_authored_body_and_a_domain_type_does_
         capture_contract=accepted,
         capture_digest=claim.backing.citations[0].capture_digest,
     )
-
-
-def test_a_claim_projected_as_itself_is_refused_by_name() -> None:
-    assert (
-        refuse_claim_projected_as_itself(
-            claim_identity="CLM-0",
-            source_id="program-cards",
-            overlapping_citation_ids=(),
-        )
-        is None
-    )
-    with pytest.raises(PublicationClaimProjectedAsItself) as refusal:
-        refuse_claim_projected_as_itself(
-            claim_identity="CLM-0",
-            source_id="program-cards",
-            overlapping_citation_ids=("cit-b", "cit-a"),
-        )
-    message = str(refusal.value)
-    assert message.startswith("playbill.authoring.publication_claim_projected_as_itself: ")
-    assert "program-cards" in message
-    assert "cit-a, cit-b" in message

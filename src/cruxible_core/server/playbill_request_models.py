@@ -20,7 +20,10 @@ from cruxible_client.contracts.authoring.models import (
     InsertionPrepareRequestV2,
 )
 from cruxible_client.contracts.claim_types import ClaimType
-from cruxible_client.contracts.declared_blocks import PlaybillReviewWorkspaceObservationV1
+from cruxible_client.contracts.declared_blocks import (
+    PlaybillReviewWorkspaceObservationV1,
+    ProjectionBlockStampV1,
+)
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
@@ -206,6 +209,12 @@ class PlaybillInsertionAbandonRequest(_StrictPlaybillRequest):
 
 PlaybillInsertionPrepareRequest = InsertionPrepareRequestV2
 PlaybillInsertionConfirmRequest = InsertionConfirmRequestV2
+
+
+class PlaybillBlockDeclareRequest(_StrictPlaybillRequest):
+    """The stamp a workspace just wrote, offered to the instance for registration."""
+
+    stamp: ProjectionBlockStampV1
 
 
 class PlaybillBlockDepublishRequest(_StrictPlaybillRequest):

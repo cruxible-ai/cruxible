@@ -12,7 +12,6 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from cruxible_client.contracts.declared_blocks import frame_projection_block
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
@@ -28,9 +27,6 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.workspace_file import WorkspaceFileSourceRequestV1
 from cruxible_core.errors import ConfigError
-from cruxible_core.playbill.authoring.insertions import (
-    publication_confirmation_from_source,
-)
 from cruxible_core.playbill.keys import (
     GeneratedKeyMaterial,
     generate_client_principal_key,
@@ -1461,13 +1457,15 @@ def test_a_detach_refuses_while_the_host_still_registers_a_published_block(
 
     The host's Playbill state is supplied through the manager's declared
     testing seam so that the registration under test is a REAL bound
-    publication -- prepared, confirmed, and registered -- rather than a stub
-    standing in for one.
+    publication -- the record an instance that published before the
+    two-block-kinds ruling still holds -- rather than a stub standing in for
+    one. Nothing authors such a record any more, which is exactly why the
+    refusal has to keep reading it.
     """
 
     from cruxible_core.service.playbill_publications import service_depublish_playbill_block
     from tests.test_playbill.test_authoring_insertions_v2 import (
-        _observation,
+        _registered_publication,
         _submitted_publication,
     )
 
@@ -1489,24 +1487,9 @@ def test_a_detach_refuses_while_the_host_still_registers_a_published_block(
     instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
         published_state
     )
-    prepared = coordinator.prepare_publication(
-        intent_id,
-        actor=actor,
-        observation=_observation(preimage),
-    )
-    assert prepared.preparation is not None
-    preparation = prepared.preparation
-    framed = frame_projection_block(stamp=preparation.stamp, body=b"status: ready\n")
-    offset = preparation.rebased_selector.insertion_offset
-    exact = publication_confirmation_from_source(
-        intent_id=intent_id,
-        expectation=prepared.expectation,
-        observation=_observation(preimage[:offset] + framed + preimage[offset:]),
-    )
-    assert exact is not None
-    assert coordinator.confirm_insertion(intent_id, actor=actor, observation=exact).outcome == (
-        "bound"
-    )
+    bound, _landed = _registered_publication(instance, coordinator, actor, intent_id, preimage)
+    assert bound.preparation is not None
+    preparation = bound.preparation
     get_playbill_manager().register("inst_publishing_host", instance)
 
     with pytest.raises(ConfigError) as refusal:

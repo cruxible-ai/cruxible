@@ -33,7 +33,6 @@ from cruxible_client.contracts.authoring.models import (
     DiagnosticFrontierV1,
     PreflightResultV1,
     RepairAlternativeV1,
-    SelfSourceBodyV1,
     WorkingSelectionObservationV1,
     build_preflight_certificate,
 )
@@ -569,22 +568,32 @@ def _claim_surface_diagnostics(
     """Refusals knowable from one authored Claim's own surface, before any tree."""
 
     diagnostics: list[AuthoringDiagnosticV1] = []
-    if payload.insertion_target is not None and not isinstance(payload.source, SelfSourceBodyV1):
+    if payload.insertion_target is not None:
+        # A Claim projected as its own text is the overlap the two-block-kinds
+        # law refuses: the page attests itself into concrete. The field stays
+        # on the payload so an intent stored before this ruling still parses
+        # and its bound registration still folds; nothing may carry one in.
         diagnostics.append(
             _diagnostic(
-                code="playbill.authoring.insertion_target_requires_self_source",
+                code="playbill.authoring.insertion_target_removed",
                 stage="source_binding",
                 offending_element=f"{prefix}insertion_target",
-                message="Publication insertion is available only for a Flow-B body.",
+                message=(
+                    "Publishing a Claim as its own page text is no longer authored: a "
+                    "projection block is prose held to accepted Claims, never a Claim "
+                    "rendered into a page."
+                ),
                 repairs=(
                     _repair(
-                        "replace_source",
-                        "Use a retained self-source body for publication insertion.",
-                        {"required_source_tag": "playbill-self-source-body-v1"},
+                        "author_a_source_block",
+                        "Write the prose in the page, capture the page as a source, and "
+                        "cite the span it states -- the source-block route.",
+                        None,
                     ),
                     _repair(
-                        "omit_insertion_target",
-                        "Omit insertion_target and keep the existing Flow-A binding.",
+                        "declare_a_projection_block",
+                        "Declare a projection block over accepted Claims with "
+                        "`playbill block repin --claim ...`.",
                         None,
                     ),
                 ),

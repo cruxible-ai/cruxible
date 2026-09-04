@@ -405,6 +405,13 @@ def service_activate_playbill_proposal(
     if activation.status not in {"accepted", "lost_cas"}:
         raise SettlementIntegrityError("activation returned an unsupported terminal status")
     status = cast(Literal["accepted", "lost_cas"], activation.status)
+    # Accepted state moved. Every per-process read memo keyed on a coordinate is
+    # keyed on the old one and would simply miss, but a memo that outlives the
+    # state it summarizes is the kind of thing that is only ever discovered as a
+    # stale answer, so activation forgets them outright.
+    from cruxible_core.service.playbill_search import reset_claim_resolution_memo
+
+    reset_claim_resolution_memo()
     instance.refresh()
     advertisement = instance.advertise_workspace()
     return PlaybillActivationReceipt(

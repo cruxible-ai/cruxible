@@ -6,6 +6,7 @@ import hashlib
 import unittest.mock as mock
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -74,12 +75,17 @@ from tests.test_playbill._knowledge_loop_support import (
     seed_claims,
     work_item_query,
 )
+from tests.test_playbill._published_world import (
+    published_world as _published_world,
+)
+from tests.test_playbill._published_world import (
+    retire_claim as _retire,
+)
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_claims import _claim_type
 from tests.test_playbill.test_graph_v4_provider_closure import _accepted_procedure
 from tests.test_playbill.test_query_execution_service import _instance_with_query
 from tests.test_playbill.test_resolution_contracts import _accept_tree
-from tests.test_playbill.test_reverse_drift_next import _published_world, _retire
 
 NOW = datetime(2026, 8, 16, 21, tzinfo=UTC)
 BODY = "sha256:" + hashlib.sha256(b"status: ready\n").hexdigest()
@@ -90,6 +96,23 @@ EDITED_BODY = "sha256:" + hashlib.sha256(b"status: blocked\n").hexdigest()
 def accepted_world(tmp_path_factory: pytest.TempPathFactory) -> PlaybillInstance:
     instance, _owner = _instance_with_query(tmp_path_factory.mktemp("projection-accepted"))
     return instance
+
+
+def _registration(source_id: str, block_id: str) -> SimpleNamespace:
+    """One folded registration, shaped as the fold hands it over.
+
+    The fold is keyed on the pair the page names and carries the road that
+    declared it. A test that only needs "this pair is registered" says so with
+    a declaration, because a declaration is what `block repin` writes and a
+    publication carries a Claim these tests do not have.
+    """
+
+    return SimpleNamespace(
+        source_id=source_id,
+        block_id=block_id,
+        origin="declaration",
+        publication=None,
+    )
 
 
 def _claim_backing(instance: PlaybillInstance, *, stale: bool = False) -> ProjectionClaimBackingV1:
@@ -647,7 +670,9 @@ def test_missing_registered_projection_marker_surfaces_runnable_block_row(
     )
     monkeypatch.setattr(
         "cruxible_core.service.playbill_next._registered_publication_blocks",
-        lambda _instance: frozenset({("corpus.runbook", "pub-status")}),
+        lambda _instance: {
+            ("corpus.runbook", "pub-status"): _registration("corpus.runbook", "pub-status")
+        },
     )
 
     (row,) = _projection_rows(accepted_world, request)
@@ -664,7 +689,7 @@ def test_missing_registered_projection_marker_surfaces_runnable_block_row(
         "source_id": "corpus.runbook",
         "block_id": "pub-status",
     }
-    assert row.repair.command == "cruxible playbill block repin corpus.runbook pub-status"
+    assert row.repair.command == "cruxible playbill block depublish corpus.runbook pub-status"
 
 
 def test_invalid_projection_marker_recovers_registered_block_identity(
@@ -678,7 +703,9 @@ def test_invalid_projection_marker_recovers_registered_block_identity(
     )
     monkeypatch.setattr(
         "cruxible_core.service.playbill_next._registered_publication_blocks",
-        lambda _instance: frozenset({("corpus.runbook", "pub-status")}),
+        lambda _instance: {
+            ("corpus.runbook", "pub-status"): _registration("corpus.runbook", "pub-status")
+        },
     )
 
     (row,) = _projection_rows(accepted_world, request)

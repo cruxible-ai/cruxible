@@ -302,9 +302,15 @@ def playbill_host_workspace_detach(
 
 
 def _refuse_detach_with_registered_blocks(instance_id: str) -> None:
-    """Refuse while this host still expects blocks it published to be in the worktree.
+    """Refuse while this host still registers blocks in the worktree.
 
-    The one failure this reads as "published nothing" is Playbill never having
+    Both declaration roads count, and the check keys on the pair the page names
+    rather than on a block id's spelling: a block an agent declared with
+    `block repin` is exactly as stranded by a detachment as one the retired
+    publication road minted, and it was invisible here because it carried no
+    `pub-` prefix.
+
+    The one failure this reads as "registered nothing" is Playbill never having
     been initialized under the host: there is no ledger, so there is no
     registration, so a detachment strands nothing. Every OTHER way of failing to
     open the host means the registrations could not be READ, and reading an
@@ -314,7 +320,7 @@ def _refuse_detach_with_registered_blocks(instance_id: str) -> None:
     """
 
     from cruxible_client.contracts.errors import PlaybillBootstrapError, PlaybillError
-    from cruxible_core.service.playbill_publications import bound_publication_registrations
+    from cruxible_core.service.playbill_publications import registered_projection_blocks
 
     try:
         instance = get_playbill_manager().get(instance_id)
@@ -326,17 +332,20 @@ def _refuse_detach_with_registered_blocks(instance_id: str) -> None:
         return
     except (ConfigError, PlaybillError) as exc:
         raise _detach_cannot_read_host(instance_id, exc) from exc
-    registrations = bound_publication_registrations(instance)
+    registrations = registered_projection_blocks(instance)
+    if registrations is None:
+        raise _detach_cannot_read_host(
+            instance_id,
+            ConfigError("the block registration fold could not be read"),
+        )
     if not registrations:
         return
-    pairs = sorted(
-        f"{item.preparation.source_id}#{item.preparation.block_id}" for item in registrations
-    )
+    pairs = sorted(f"{source}#{block}" for source, block in registrations)
     named = ", ".join(pairs[:5])
     if len(pairs) > 5:
         named = f"{named}, and {len(pairs) - 5} more"
     raise ConfigError(
-        f"Playbill host {instance_id!r} still registers {len(registrations)} published "
+        f"Playbill host {instance_id!r} still registers {len(registrations)} governed "
         f"block(s) in this workspace ({named}); detaching would leave markers no host "
         "owns. Repair: run `cruxible playbill block depublish <source> <block>` for each, "
         "or retire their backing Claims, then detach"

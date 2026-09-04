@@ -14,10 +14,8 @@ from pydantic import TypeAdapter, ValidationError
 import cruxible_client
 from cruxible_client import AccessProfile, ClaimRef, CruxibleClient, Playbill
 from cruxible_client.authoring.inputs import AuthoringInputError, AuthoringInputV1
-from cruxible_client.authoring.insertions import apply_playbill_publication
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from tests.test_client.test_playbill_publication_v2 import _prepared
 
 COORDINATE = {
     "tag": "playbill-accepted-coordinate-v1",
@@ -27,13 +25,6 @@ COORDINATE = {
     "compiler_digest": "sha256:" + "4" * 64,
 }
 INTENT_ID = "AIT-" + "5" * 32
-_PUBLICATION_EXPECTATION, _PUBLICATION_PREPARATION = _prepared()
-OBSERVATION = apply_playbill_publication(
-    b"status: \n",
-    intent_id=INTENT_ID,
-    expectation=_PUBLICATION_EXPECTATION.model_dump(mode="json"),
-    retained_body=b"ready\n",
-).observation
 
 
 def _client(handler: Any) -> CruxibleClient:
@@ -333,69 +324,6 @@ def test_client_whoami_and_proposal_list_use_read_routes_and_status_query() -> N
     assert proposals.status_filter == "open"
     assert [item.method for item in captured] == ["GET", "GET"]
     assert dict(captured[1].url.params) == {"status": "open"}
-
-
-def test_client_speaks_typed_publication_prepare_and_confirm_v2_requests() -> None:
-    captured: list[httpx.Request] = []
-    expectation, preparation = _prepared()
-    application = apply_playbill_publication(
-        b"status: \n",
-        intent_id=INTENT_ID,
-        expectation=expectation.model_dump(mode="json"),
-        retained_body=b"ready\n",
-    )
-    source_observation = {
-        "tag": "playbill-publication-source-observation-v2",
-        "source_id": "repo.work-items",
-        "content_base64": "c3RhdHVzOiAK",
-        "content_digest": "sha256:2057146a92cc2be7c3d74dff0748516100b06acdd276849838d45e7364ee3dfa",
-        "byte_length": 9,
-    }
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured.append(request)
-        if request.url.path.endswith("/prepare"):
-            return httpx.Response(
-                200,
-                json={
-                    "tag": "playbill-insertion-prepare-result-v2",
-                    "outcome": "prepared",
-                    "intent": {"intent_id": INTENT_ID},
-                    "expectation": expectation.model_dump(mode="json"),
-                    "preparation": preparation.model_dump(mode="json"),
-                    "warnings": [
-                        {
-                            "tag": "playbill-publication-prepare-warning-v1",
-                            "code": ("playbill.authoring.publication_citation_anchor_collision"),
-                            "source_id": "repo.work-items",
-                            "citation_ids": ["sha256:" + "9" * 64],
-                        }
-                    ],
-                },
-            )
-        return httpx.Response(
-            200,
-            json={
-                "tag": "playbill-insertion-confirm-result-v2",
-                "outcome": "bound",
-                "intent": {"intent_id": INTENT_ID},
-                "expectation": {"state": "bound"},
-            },
-        )
-
-    client = _client(handler)
-    prepared = client.prepare_playbill_authoring_publication(
-        "inst", INTENT_ID, observation=source_observation
-    )
-    confirmed = client.confirm_playbill_authoring_insertion(
-        "inst", INTENT_ID, observation=application.observation
-    )
-
-    assert prepared.outcome == "prepared"
-    assert prepared.warnings[0].citation_ids == ["sha256:" + "9" * 64]
-    assert confirmed.outcome == "bound"
-    assert json.loads(captured[0].content)["tag"] == "playbill-insertion-prepare-request-v2"
-    assert json.loads(captured[1].content)["tag"] == "playbill-insertion-confirm-request-v2"
 
 
 def test_removed_brief_has_no_sdk_export_builder_or_authoring_union_arm() -> None:

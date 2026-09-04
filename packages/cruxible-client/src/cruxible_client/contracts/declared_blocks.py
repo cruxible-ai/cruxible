@@ -34,8 +34,15 @@ PROJECTION_QUERY_SEMANTIC_RESULT_DOMAIN = "playbill-projection-query-semantic-re
 PROJECTION_QUERY_PARAMETER_DOMAIN = "playbill-query-parameters-v1"
 MAX_PROJECTION_SOURCE_BYTES = 4 * 1024 * 1024
 MAX_PROJECTION_BLOCKS_PER_SOURCE = 128
-MAX_PROJECTION_STAMP_BYTES = 16 * 1024
-MAX_PROJECTION_BACKINGS_PER_BLOCK = 64
+# A stamp is a base64 comment line, so both ceilings are about what one marker
+# may carry rather than about correctness. The old pair -- 64 backings inside
+# 16 KiB -- made the ceiling a LAYOUT constraint: a table of 66 governed rows
+# had to be cut in two at a row number that means nothing to a reader, and the
+# author discovered the limit by counting Claims rather than by writing the
+# page. A held list is the whole point of a projection block, so it is sized
+# for a real table.
+MAX_PROJECTION_STAMP_BYTES = 128 * 1024
+MAX_PROJECTION_BACKINGS_PER_BLOCK = 512
 MAX_PROJECTION_SCAN_BYTES = 32 * 1024 * 1024
 MAX_PROJECTION_CARDS_PER_SOURCE = 256
 MAX_PROJECTION_COVERAGE_BINDINGS = 1024
@@ -327,6 +334,14 @@ class ProjectionBlockStampV1(_StrictDeclaredBlockModel):
         identities = tuple(item.identity.qualified for item in value)
         if identities != tuple(sorted(set(identities), key=lambda item: item.encode("utf-8"))):
             raise ValueError("projection block backings must be sorted and unique by identity")
+        # A block is a held list, optionally WATCHING one query. The held list
+        # is what the block is accountable for -- every Claim and artifact in
+        # it is drift-checked -- and the query surfaces candidates for it. Two
+        # queries would be two answers to "what should be here?" with no rule
+        # for reconciling them, so one is the ceiling.
+        queries = sum(1 for item in value if isinstance(item, ProjectionQueryBackingV1))
+        if queries > 1:
+            raise ValueError("a projection block watches at most one query")
         return value
 
 

@@ -51,6 +51,12 @@ from cruxible_core.service.playbill_next import (
     post_retirement_examined_support_suppresses_claim_cites_retired,
     service_playbill_next,
 )
+from tests.test_playbill._published_world import (
+    published_world as _published_world,
+)
+from tests.test_playbill._published_world import (
+    retire_claim as _retire,
+)
 from tests.test_playbill._support import client_material
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_authoring_existing_capture import shared_capture_world
@@ -61,7 +67,6 @@ from tests.test_playbill.test_claim_retirement import (
     _request as _retirement_request,
 )
 from tests.test_playbill.test_retirement_citing_advisory import copied_from_world
-from tests.test_playbill.test_reverse_drift_next import _published_world, _retire
 
 EVALUATION_TIME = datetime(2026, 8, 24, 18, tzinfo=UTC)
 
@@ -527,12 +532,6 @@ def test_retired_source_window_is_served_without_retired_claim_cards_and_repair_
     assert row.subject_identity == "document:work-items"
     assert row.repair.operation == "playbill.document.propose"
     assert row.repair.required_change == "revise_retired_claim_source_span"
-    assert not [
-        item
-        for item in _next(instance, observation).items
-        if item.reason == "self_published_source_stale"
-    ]
-
     replacement = b"status: replaced"
     replacement_body = instance.store_document_body(replacement)
     successor = document.model_copy(

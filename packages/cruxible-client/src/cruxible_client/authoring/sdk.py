@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import os
 import re
@@ -32,10 +31,6 @@ from cruxible_client.authoring.blocks import (
 from cruxible_client.authoring.context import (
     PlaybillContextResolutionError,
     resolve_playbill_context,
-)
-from cruxible_client.authoring.insertions import (
-    apply_playbill_publication,
-    replace_publication_file,
 )
 from cruxible_client.authoring.sdk_types import (
     AccessProfile,
@@ -72,7 +67,6 @@ from cruxible_client.authoring.sdk_types import (
 from cruxible_client.authoring.selectors import (
     EvidenceSelection,
     FileSelector,
-    InsertionSelection,
     WorkspaceSources,
 )
 from cruxible_client.authoring.source_map import (
@@ -111,7 +105,6 @@ from cruxible_client.contracts.authoring.models import (
     ClaimTypeSuccessionMemberV1,
     ExistingCaptureCitationSourceV1,
     ProcedureAuthoringPayloadV2,
-    PublicationSourceObservationV2,
     SelfSourceBodyV1,
     SubjectAuthoringPayloadV1,
     authoring_member_identity,
@@ -643,7 +636,6 @@ class ChangeSetDraft:
         effective_period: EffectivePeriod | None,
         revises: str | ClaimRef | None,
         dispositions: Mapping[str | ClaimRef, Disposition | str],
-        publish_to: InsertionSelection | None,
         subject_definition: SubjectDraft | None,
         claim_type_definition: ClaimTypeDraft | None,
     ) -> ChangeSetDraft:
@@ -663,7 +655,6 @@ class ChangeSetDraft:
             effective_period=effective_period,
             revises=revises,
             dispositions=dispositions,
-            publish_to=publish_to,
             subject_definition=subject_definition,
             claim_type_definition=claim_type_definition,
             staged_object_kinds=self._staged_object_kinds(),
@@ -1130,6 +1121,14 @@ class Proposal:
 
 
 class Publication:
+    """One publication expectation an EXISTING intent owns.
+
+    Nothing mints a new one: the `publish_to` road is gone, and a projection
+    block is declared with `block repin` over accepted Claims instead. What
+    remains is the exit an instance that already published needs -- read the
+    state, and abandon (depublish) the expectation.
+    """
+
     def __init__(self, intent: Intent, expectation: dict[str, object]) -> None:
         self._intent = intent
         self._expectation = expectation
@@ -1144,95 +1143,6 @@ class Publication:
         if not isinstance(value, str):
             raise ValueError("insertion expectation omitted its ID")
         return value
-
-    def _retained_body(self) -> bytes:
-        """Return the authored body this one expectation publishes.
-
-        A changeset publishes one Claim per member, so the body comes from the
-        member whose minted Claim ID the expectation names, not from "the"
-        payload -- there is no single payload to take it from.
-        """
-
-        payload = self._intent._draft.payload
-        member: ClaimAuthoringPayloadV1 | None = None
-        if isinstance(payload, ChangeSetAuthoringPayloadV1):
-            claim_identity = self._expectation.get("claim_identity")
-            raw_identities = self._intent._raw.get("change_set_claim_identities")
-            minted = {
-                str(item.get("member_identity")): item.get("claim_id")
-                for item in (raw_identities if isinstance(raw_identities, list) else [])
-                if isinstance(item, Mapping)
-            }
-            for candidate in payload.members:
-                if not isinstance(candidate, ClaimAuthoringPayloadV1):
-                    continue
-                if minted.get(authoring_member_identity(candidate)) == claim_identity:
-                    member = candidate
-                    break
-        elif isinstance(payload, ClaimAuthoringPayloadV1):
-            member = payload
-        if member is None or not isinstance(member.source, SelfSourceBodyV1):
-            raise ValueError("publication requires a retained self-source body")
-        return member.source.content
-
-    def _path(self) -> Path:
-        target = self._expectation.get("target")
-        patch = self._expectation.get("patch")
-        source = target if isinstance(target, Mapping) else patch
-        if not isinstance(source, Mapping) or not isinstance(source.get("source_id"), str):
-            raise ValueError("insertion expectation omitted its source")
-        return self._intent._playbill._sources.path_for_source(str(source["source_id"]))
-
-    def prepare(self) -> Publication:
-        path = self._path()
-        content = path.read_bytes()
-        target = cast(Mapping[str, object], self._expectation["target"])
-        observation = PublicationSourceObservationV2(
-            source_id=cast(str, target["source_id"]),
-            content_base64=base64.b64encode(content).decode("ascii"),
-            content_digest="sha256:" + hashlib.sha256(content).hexdigest(),
-            byte_length=len(content),
-        )
-        result = self._intent._playbill._client.prepare_playbill_authoring_publication(
-            self._intent._playbill._instance_id,
-            self._intent.intent_id,
-            observation=observation.model_dump(mode="json"),
-            expectation_id=self.expectation_id,
-        )
-        self._intent._raw = result.intent
-        self._expectation = result.expectation
-        return self
-
-    def apply(self) -> Publication:
-        self.prepare()
-        if self.state == "bound":
-            return self
-        if self.state != "prepared":
-            raise ValueError(f"publication cannot apply from state {self.state!r}")
-        path = self._path()
-        retained_body = self._retained_body()
-        expected = path.read_bytes()
-        application = apply_playbill_publication(
-            expected,
-            intent_id=self._intent.intent_id,
-            expectation=self._expectation,
-            retained_body=retained_body,
-        )
-        if application.outcome == "applied":
-            replace_publication_file(
-                path,
-                expected=expected,
-                replacement=application.content,
-            )
-        result = self._intent._playbill._client.confirm_playbill_authoring_insertion(
-            self._intent._playbill._instance_id,
-            self._intent.intent_id,
-            observation=application.observation,
-            expectation_id=self.expectation_id,
-        )
-        self._intent._raw = result.intent
-        self._expectation = result.expectation
-        return self
 
     def status(self) -> str:
         self._intent._refresh_raw()
@@ -1812,7 +1722,6 @@ class Playbill:
         effective_period: EffectivePeriod | None,
         revises: str | ClaimRef | None,
         dispositions: Mapping[str | ClaimRef, Disposition | str],
-        publish_to: InsertionSelection | None,
         subject_definition: SubjectDraft | None,
         claim_type_definition: ClaimTypeDraft | None,
     ) -> ClaimDraft:
@@ -1830,7 +1739,6 @@ class Playbill:
             effective_period=effective_period,
             revises=revises,
             dispositions=dispositions,
-            publish_to=publish_to,
             subject_definition=subject_definition,
             claim_type_definition=claim_type_definition,
         )
@@ -1851,7 +1759,6 @@ class Playbill:
         effective_period: EffectivePeriod | None,
         revises: str | ClaimRef | None,
         dispositions: Mapping[str | ClaimRef, Disposition | str],
-        publish_to: InsertionSelection | None,
         subject_definition: SubjectDraft | None,
         claim_type_definition: ClaimTypeDraft | None,
         staged_object_kinds: Mapping[str, str] | None = None,
@@ -1871,8 +1778,6 @@ class Playbill:
         branches = tuple(item is not None for item in (supported_by, copied_from, self_source))
         if sum(branches) != 1:
             raise ValueError("exactly one of supported_by, copied_from, or self_source is required")
-        if publish_to is not None and self_source is None:
-            raise ValueError("publish_to is legal only for self_source claims")
         subject_name = _address(subject, RefKind.SUBJECT)
         if isinstance(subject, str):
             # PC-HR moved accepted artifacts to .json without retiring the
@@ -1999,11 +1904,6 @@ class Playbill:
                 )
                 for claim_id, disposition in sorted_dispositions
             ),
-            insertion_target=(
-                None
-                if publish_to is None
-                else publish_to.target(cast(str, self_source).encode("utf-8"))
-            ),
             dependency_drafts=ClaimDependencyDraftsV1(
                 subject=None if subject_definition is None else subject_definition.shell,
                 claim_type=(
@@ -2087,7 +1987,6 @@ class Playbill:
             "effective_period": ("statement.effective_from", "statement.effective_until"),
             "revises": ("claim_ref",),
             "dispositions": ("existing_claim_dispositions",),
-            "publish_to": ("insertion_target",),
             "subject_definition": ("dependency_drafts.subject",),
             "claim_type_definition": ("dependency_drafts.claim_type",),
         }
@@ -2135,15 +2034,6 @@ class Playbill:
             "dispositions": {
                 identity: disposition.value for identity, disposition in sorted_dispositions
             },
-            "publication": (
-                None
-                if publish_to is None
-                else {
-                    "source_id": publish_to.source_id,
-                    "operation": publish_to.operation.value,
-                    "anchor": publish_to.anchor_text,
-                }
-            ),
             "dependency_drafts": payload.dependency_drafts.model_dump(mode="json"),
         }
         return ClaimDraft(

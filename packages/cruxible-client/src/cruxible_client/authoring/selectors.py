@@ -10,10 +10,8 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
-from cruxible_client.authoring.sdk_types import InsertionOperation, SourceSelectionError
+from cruxible_client.authoring.sdk_types import SourceSelectionError
 from cruxible_client.contracts.authoring.models import (
-    InsertionAnchorWindowV1,
-    InsertionTargetV2,
     WorkingAnchorWindowV1,
     WorkingDigestCoordinateV1,
     WorkingSelectionObservationV1,
@@ -141,49 +139,6 @@ class EvidenceSelection:
 
 
 @dataclass(frozen=True)
-class InsertionSelection:
-    path: Path
-    source_id: str
-    content: bytes
-    operation: InsertionOperation
-    anchor_text: str
-    start_byte: int
-    end_byte: int
-
-    def target(self, inserted: bytes) -> InsertionTargetV2:
-        """Freeze only the initial source and selector; publication frames after acceptance."""
-
-        del inserted
-        if self.operation is InsertionOperation.BEFORE:
-            offset = self.start_byte
-        elif self.operation is InsertionOperation.AFTER:
-            offset = self.end_byte
-        elif self.operation is InsertionOperation.REPLACE:
-            offset = self.start_byte
-        else:
-            offset = len(self.content)
-        anchor = self.content[self.start_byte : self.end_byte]
-        return InsertionTargetV2(
-            source_id=self.source_id,
-            coordinate=WorkingDigestCoordinateV1(
-                source_content_digest=_digest(self.content),
-                source_byte_length=len(self.content),
-            ),
-            initial_preimage_digest=_digest(self.content),
-            initial_preimage_byte_length=len(self.content),
-            selector=InsertionAnchorWindowV1(
-                anchor_content_base64=base64.b64encode(anchor).decode("ascii"),
-                anchor_bytes_digest=_digest(anchor),
-                start_byte=self.start_byte,
-                end_byte=self.end_byte,
-                insertion_offset=offset,
-                observed_occurrence_count=1,
-            ),
-            operation=self.operation.value,
-        )
-
-
-@dataclass(frozen=True)
 class FileSelector:
     path: Path
     source_id: str
@@ -213,41 +168,6 @@ class FileSelector:
             source_id=self.source_id,
             content=self.content,
             anchor_text=text,
-            start_byte=start,
-            end_byte=end,
-        )
-
-    def insertion(
-        self,
-        *,
-        operation: InsertionOperation,
-        anchor: str,
-    ) -> InsertionSelection:
-        if operation is InsertionOperation.APPEND:
-            raise SourceSelectionError("use append() for an append selection")
-        start, end = _unique_window(self.content, anchor)
-        return InsertionSelection(
-            path=self.path,
-            source_id=self.source_id,
-            content=self.content,
-            operation=operation,
-            anchor_text=anchor,
-            start_byte=start,
-            end_byte=end,
-        )
-
-    def append(self) -> InsertionSelection:
-        end = len(self.content)
-        start = max(0, end - 4096)
-        anchor = self.content[start:end]
-        if anchor and self.content.count(anchor) != 1:
-            raise SourceSelectionError("append tail anchor is ambiguous within the source")
-        return InsertionSelection(
-            path=self.path,
-            source_id=self.source_id,
-            content=self.content,
-            operation=InsertionOperation.APPEND,
-            anchor_text=anchor.decode("utf-8", errors="replace"),
             start_byte=start,
             end_byte=end,
         )
@@ -355,6 +275,5 @@ class WorkspaceSources:
 __all__ = [
     "EvidenceSelection",
     "FileSelector",
-    "InsertionSelection",
     "WorkspaceSources",
 ]

@@ -224,13 +224,6 @@ class ActivationPolicy(str, Enum):
     EPOCH_CHECK = "epoch-check"
 
 
-class InsertionOperation(str, Enum):
-    BEFORE = "insert_before"
-    AFTER = "insert_after"
-    REPLACE = "replace_window"
-    APPEND = "append"
-
-
 class ClaimObjectKind(str, Enum):
     LITERAL = "literal"
     SUBJECT = "subject"
@@ -453,7 +446,6 @@ __all__ = [
     "ExactContent",
     "ExactContentTypeError",
     "IncompatibleDaemonVersion",
-    "InsertionOperation",
     "LiteralSchemaError",
     "LiteralValue",
     "LiteralValueTypeError",

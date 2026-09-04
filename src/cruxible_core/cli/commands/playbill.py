@@ -2919,54 +2919,6 @@ def authoring_intent_status(intent_id: str, output_json: bool) -> None:
     _emit_json(result.model_dump(mode="json"))
 
 
-@authoring_group.command("confirm-insertion")
-@click.argument("intent_id")
-@click.argument("observation", type=click.Path(exists=True, dir_okay=False))
-@click.option("--expectation-id", default=None, help=_EXPECTATION_ID_HELP)
-@json_option
-@handle_errors
-def confirm_authoring_insertion(
-    intent_id: str,
-    observation: str,
-    expectation_id: str | None,
-    output_json: bool,
-) -> None:
-    result = _server_call(
-        lambda client, instance_id: client.confirm_playbill_authoring_insertion(
-            instance_id,
-            intent_id,
-            observation=_read_mapping(observation),
-            expectation_id=expectation_id,
-        ),
-        command_name="playbill authoring confirm-insertion",
-    )
-    _emit_json(result.model_dump(mode="json"))
-
-
-@authoring_group.command("prepare-publication")
-@click.argument("intent_id")
-@click.argument("observation", type=click.Path(exists=True, dir_okay=False))
-@click.option("--expectation-id", default=None, help=_EXPECTATION_ID_HELP)
-@json_option
-@handle_errors
-def prepare_authoring_publication(
-    intent_id: str,
-    observation: str,
-    expectation_id: str | None,
-    output_json: bool,
-) -> None:
-    result = _server_call(
-        lambda client, instance_id: client.prepare_playbill_authoring_publication(
-            instance_id,
-            intent_id,
-            observation=_read_mapping(observation),
-            expectation_id=expectation_id,
-        ),
-        command_name="playbill authoring prepare-publication",
-    )
-    _emit_json(result.model_dump(mode="json"))
-
-
 @authoring_group.command("abandon-insertion")
 @click.argument("intent_id")
 @click.option("--expectation-id", default=None, help=_EXPECTATION_ID_HELP)
@@ -3247,7 +3199,11 @@ def repin_projection(
 @block_group.command("sync")
 @click.argument("paths", nargs=-1, type=click.Path(dir_okay=False))
 @click.option("--all", "all_sources", is_flag=True, help="Synchronize every catalog source.")
-@click.option("--check", is_flag=True, help="Report safe changes without writing them.")
+@click.option(
+    "--check",
+    is_flag=True,
+    help="Accepted for compatibility; this command reports and never converges a body.",
+)
 @click.option(
     "--detach",
     "detach_paths",
@@ -3260,7 +3216,7 @@ def repin_projection(
     "discard_local_paths",
     multiple=True,
     type=click.Path(dir_okay=False),
-    help="Allow accepted bytes to replace a locally edited block in this path.",
+    help="Treat a locally edited block body in this path as intended, not as drift.",
 )
 @click.option("--workspace-root", default=".", show_default=True, type=click.Path(file_okay=False))
 @json_option
@@ -3274,7 +3230,15 @@ def sync_projection(
     workspace_root: str,
     output_json: bool,
 ) -> None:
-    """Converge safe publication blocks to their current accepted Claim bodies."""
+    """Report whether each declared block still reads as its stamp says.
+
+    Nothing renders a block, so nothing is converged: each block is reported
+    `unchanged`, `stale` when a held backing moved under it, or `dirty` when
+    its prose moved away from the stamp, and the repair for both is a repin.
+    The one edit this command still makes is `--detach`, which strips the
+    marker pair of a block whose backing is retired or whose host this
+    worktree has left, keeping the prose between the markers.
+    """
 
     result = _server_call(
         lambda client, instance_id: sync_projection_blocks(
@@ -3300,6 +3264,9 @@ def sync_projection(
             click.echo(f"{target}: {item.outcome}{suffix}")
             if item.repair is not None:
                 click.echo(f"  repair: {render_served_repair(item.repair)}")
+    # `would_change` is now only ever a pending detach. A stale or dirty block
+    # is a finding this command cannot repair, and it counts as a refusal, so
+    # an activation's closing sweep does not exit clean over a drifted page.
     if (check and result.would_change) or result.has_refusals:
         raise click.exceptions.Exit(1)
 

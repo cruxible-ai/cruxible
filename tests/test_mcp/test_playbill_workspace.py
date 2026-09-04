@@ -17,7 +17,6 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
     ProjectionClaimBackingV1,
     frame_projection_block,
-    parse_projection_blocks,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.errors import ConfigError, DataValidationError
@@ -160,7 +159,7 @@ def test_activate_from_nested_cwd_refreshes_the_containing_git_worktree(
     assert not (nested / ".playbill/floor").exists()
 
 
-def test_library_mode_activate_syncs_an_attached_workspace(
+def test_library_mode_activate_checks_an_attached_workspace(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -180,7 +179,6 @@ def test_library_mode_activate_syncs_an_attached_workspace(
         encoding="utf-8",
     )
     old_body = b"status: old\n"
-    new_body = b"status: current\n"
     stamp = ProjectionBlockStampV1(
         source_id="corpus.runbook",
         block_id="pub-mcp",
@@ -196,6 +194,7 @@ def test_library_mode_activate_syncs_an_attached_workspace(
     )
     source = workspace / "runbook.md"
     source.write_bytes(frame_projection_block(stamp=stamp, body=old_body))
+    before = source.read_bytes()
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
     monkeypatch.setattr(
         handlers.playbill_api,
@@ -216,18 +215,18 @@ def test_library_mode_activate_syncs_an_attached_workspace(
         request: contracts.PlaybillBlockSyncReadRequestV1,
     ) -> contracts.PlaybillBlockSyncReadResultV1:
         assert instance_id == "inst_test"
+        moved = ProjectionClaimBackingV1(
+            identity=request.stamp.backing[0].identity,
+            statement_digest="sha256:" + "a" * 64,
+        )
         return contracts.PlaybillBlockSyncReadResultV1(
             status="successor",
             original_artifact_digest="sha256:" + "8" * 64,
             artifact_digest="sha256:" + "9" * 64,
             coordinate=AcceptedCoordinate.model_validate(_coordinate().model_dump()),
             generation=2,
-            backing=ProjectionClaimBackingV1(
-                identity=request.stamp.backing[0].identity,
-                statement_digest="sha256:" + "a" * 64,
-            ),
-            body_content_base64=base64.b64encode(new_body).decode("ascii"),
-            body_digest="sha256:" + hashlib.sha256(new_body).hexdigest(),
+            backing=moved,
+            moved_backings=(moved,),
         )
 
     monkeypatch.setattr(
@@ -238,12 +237,21 @@ def test_library_mode_activate_syncs_an_attached_workspace(
 
     result = handlers.handle_playbill_activate("inst_test", "proposal-1")
 
+    # The closing sweep an activation runs REPORTS: nothing renders a block, so
+    # a block whose held backing moved is named `stale` and the page is left
+    # exactly as the author wrote it. It counts as a refusal so the sweep does
+    # not answer clean over a page that has drifted from the state it declares.
     assert result.status == "accepted"
     assert result.block_sync is not None
-    assert result.block_sync.has_refusals is False
-    assert [item.outcome for item in result.block_sync.items] == ["synced"]
-    (block,) = parse_projection_blocks(source.read_bytes(), source_id="corpus.runbook")
-    assert source.read_bytes()[block.body_start : block.body_end] == new_body
+    assert [(item.outcome, item.reason) for item in result.block_sync.items] == [
+        ("stale", "block_backing_changed")
+    ], result.block_sync.items
+    assert result.block_sync.items[0].reason == "block_backing_changed"
+    assert result.block_sync.items[0].repair is not None
+    assert result.block_sync.items[0].repair.operation == "playbill.block.repin"
+    assert result.block_sync.has_refusals is True
+    assert result.block_sync.changed_file_count == 0
+    assert source.read_bytes() == before
 
 
 def test_workspace_status_compares_the_installed_floor(

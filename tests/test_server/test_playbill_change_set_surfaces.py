@@ -103,7 +103,6 @@ def _add_parity_claim(draft: ChangeSetDraft) -> None:
         effective_period=None,
         revises=None,
         dispositions={},
-        publish_to=None,
         subject_definition=None,
         claim_type_definition=None,
     )
@@ -326,7 +325,6 @@ def test_the_sdk_builder_authors_a_mixed_changeset_that_preflights_clean(
         effective_period=None,
         revises=None,
         dispositions={},
-        publish_to=None,
         subject_definition=None,
         claim_type_definition=None,
     )

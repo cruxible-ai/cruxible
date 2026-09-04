@@ -1,8 +1,15 @@
-"""Read-only resolution of syncable publication-backed projection blocks."""
+"""Whether a declared block's held backings still read as its stamp says.
+
+Nothing renders. This read used to resolve one Claim backing to the accepted
+body a block would be rewritten to; a projection block is agent-authored prose
+held to an explicit list, so the only question accepted state can answer about
+it is whether every member of that list is still there, still live, and still
+saying what it said. The answer is a currency verdict over the whole list, and
+`block sync` reports it without writing a byte.
+"""
 
 from __future__ import annotations
 
-import base64
 import hashlib
 from dataclasses import dataclass
 
@@ -40,15 +47,7 @@ from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityErr
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.source_references import CasSourceReferenceV1
 from cruxible_client.contracts.subjects import parse_subject, subject_digest, subject_path
-from cruxible_core.playbill.candidate_cards import (
-    render_candidate_card,
-)
-from cruxible_core.playbill.compiler import (
-    artifact_kinds_for_compiler,
-    candidate_card_renderer_digest_for_compiler,
-)
 from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.service.playbill_publications import bound_publication_registrations
 
 
 @dataclass(frozen=True)
@@ -234,13 +233,14 @@ def _artifact_digest(*, identity: ArtifactIdentity, path: str, raw: bytes) -> st
     return subject_digest(subject).tagged
 
 
-def _read_artifact_backing(
+def _artifact_backing_state(
     instance: PlaybillInstance,
     *,
     stamp_coordinate: AcceptedCoordinate,
+    current: AcceptedCoordinate,
     backing: ProjectionArtifactBackingV1,
-) -> PlaybillBlockSyncReadResultV1:
-    """Render the latest governed vocabulary/entity card with the pinned compiler."""
+) -> ProjectionArtifactBackingV1 | PlaybillBlockSyncReadResultV1 | None:
+    """The artifact backing's current spelling when it moved, ``None`` when it did not."""
 
     path = _artifact_path(backing.identity)
     original_raw = instance.tree_at(stamp_coordinate.git_oid).get(path)
@@ -265,8 +265,6 @@ def _read_artifact_backing(
             detail="the artifact backing digest does not reproduce at its declared coordinate",
             original_artifact_digest=original_digest,
         )
-
-    current = instance.accepted_coordinate()
     current_raw = instance.tree_at(current.git_oid).get(path)
     if current_raw is None:
         return _refusal(
@@ -284,80 +282,25 @@ def _read_artifact_backing(
             detail="the governed artifact backing does not reproduce at the current coordinate",
             original_artifact_digest=original_digest,
         )
-    if candidate_card_renderer_digest_for_compiler(current.compiler) is None:
-        return _refusal(
-            status="unsyncable",
-            reason="block_backing_changed",
-            detail="the accepted compiler has no pinned candidate-card renderer",
-            original_artifact_digest=original_digest,
-        )
-    body = render_candidate_card(
-        path,
-        current_raw,
-        artifact_kinds=artifact_kinds_for_compiler(current.compiler),
-    )
-    body_digest = "sha256:" + hashlib.sha256(body).hexdigest()
-    generation = instance.accepted_history()[-1]
-    return PlaybillBlockSyncReadResultV1(
-        status="current" if current_digest == original_digest else "successor",
-        original_artifact_digest=original_digest,
+    if current_digest == original_digest:
+        return None
+    return ProjectionArtifactBackingV1(
+        identity=backing.identity,
         artifact_digest=current_digest,
-        coordinate=AcceptedCoordinate.from_internal(current),
-        generation=generation.sequence,
-        backing=ProjectionArtifactBackingV1(
-            identity=backing.identity,
-            artifact_digest=current_digest,
-        ),
-        body_content_base64=base64.b64encode(body).decode("ascii"),
-        body_digest=body_digest,
     )
 
 
-def service_read_playbill_block_sync_backing(
+def _claim_backing_state(
     instance: PlaybillInstance,
     *,
-    request: PlaybillBlockSyncReadRequestV1,
-) -> PlaybillBlockSyncReadResultV1:
-    """Resolve one marker to its unique current accepted Claim body without writing."""
+    stamp_coordinate: AcceptedCoordinate,
+    backing: ProjectionClaimBackingV1,
+    preferred_successor_digest: str | None,
+) -> tuple[ProjectionClaimBackingV1 | None, _ClaimNode] | PlaybillBlockSyncReadResultV1:
+    """The Claim backing's terminal spelling, or the typed refusal its lineage earns."""
 
-    stamp = request.stamp
-    if len(stamp.backing) != 1:
-        return _refusal(
-            status="unsyncable",
-            reason="block_backing_changed",
-            detail="sync requires exactly one supported backing",
-        )
-    try:
-        declared = AcceptedCoordinate.from_internal(
-            instance.coordinate_for_oid(stamp.declared_coordinate.git_oid)
-        )
-    except PlaybillError:
-        return _refusal(
-            status="refused",
-            reason="block_workspace_instance_mismatch",
-            detail="the marker coordinate is not accepted by the attached instance",
-        )
-    if declared != stamp.declared_coordinate:
-        return _refusal(
-            status="refused",
-            reason="block_workspace_instance_mismatch",
-            detail="the marker coordinate differs from the attached instance coordinate",
-        )
-    backing = stamp.backing[0]
-    if isinstance(backing, ProjectionArtifactBackingV1):
-        return _read_artifact_backing(
-            instance,
-            stamp_coordinate=declared,
-            backing=backing,
-        )
-    if not isinstance(backing, ProjectionClaimBackingV1):
-        return _refusal(
-            status="unsyncable",
-            reason="block_backing_changed",
-            detail="sync requires a Claim, ClaimType, or Subject backing",
-        )
     path = claim_path(backing.identity.name)
-    raw = instance.tree_at(declared.git_oid).get(path)
+    raw = instance.tree_at(stamp_coordinate.git_oid).get(path)
     if raw is None:
         return _refusal(
             status="unsyncable",
@@ -375,37 +318,13 @@ def service_read_playbill_block_sync_backing(
             detail="the marker backing does not reproduce at its declared coordinate",
         )
     original_digest = claim_artifact_digest(original).tagged
-    registrations = bound_publication_registrations(instance)
-    if registrations is None:
-        return _refusal(
-            status="unsyncable",
-            reason="block_publication_registry_unavailable",
-            detail="the bound publication registry could not be read",
-            original_artifact_digest=original_digest,
-        )
-    origin = tuple(
-        registration
-        for registration in registrations
-        if registration.preparation.source_id == stamp.source_id
-        and registration.preparation.block_id == stamp.block_id
-        and registration.claim_identity == backing.identity.name
-        and len(registration.preparation.stamp.backing) == 1
-        and isinstance(registration.preparation.stamp.backing[0], ProjectionClaimBackingV1)
-    )
-    if not origin:
-        return _refusal(
-            status="unsyncable",
-            reason="block_not_publication_origin",
-            detail="the marker is not associated with a confirmed publication",
-            original_artifact_digest=original_digest,
-        )
     nodes = _claim_nodes(instance, path=path)
     if original_digest not in nodes:
         raise ProposalIntegrityError("accepted Claim block-sync origin disappeared from history")
     terminal = _terminal_node(
         nodes=nodes,
         original_digest=original_digest,
-        preferred_successor_digest=request.preferred_successor_digest,
+        preferred_successor_digest=preferred_successor_digest,
     )
     if isinstance(terminal, tuple):
         return _refusal(
@@ -422,39 +341,120 @@ def service_read_playbill_block_sync_backing(
             detail="the accepted Claim lineage terminates in retirement",
             original_artifact_digest=original_digest,
         )
-    predecessor = (
-        None
-        if terminal.claim.lifecycle.predecessor_digest is None
-        else nodes.get(terminal.claim.lifecycle.predecessor_digest)
-    )
-    resolved_body = _retained_successor_body(instance, node=terminal, predecessor=predecessor)
-    if isinstance(resolved_body, str):
-        if resolved_body == "missing":
-            return _refusal(
-                status="unsyncable",
-                reason="block_successor_body_missing",
-                detail="the terminal Claim introduced no retained coordinator self-source body",
-                original_artifact_digest=original_digest,
-            )
-        return _refusal(
-            status="unsyncable",
-            reason="block_successor_body_ambiguous",
-            detail="the terminal Claim introduced multiple coordinator self-source bodies",
-            original_artifact_digest=original_digest,
-        )
-    body, body_digest = resolved_body
-    return PlaybillBlockSyncReadResultV1(
-        status="current" if terminal.artifact_digest == original_digest else "successor",
-        original_artifact_digest=original_digest,
-        artifact_digest=terminal.artifact_digest,
-        coordinate=terminal.coordinate,
-        generation=terminal.generation,
-        backing=ProjectionClaimBackingV1(
+    if terminal.artifact_digest == original_digest:
+        return None, terminal
+    return (
+        ProjectionClaimBackingV1(
             identity=ArtifactIdentity(kind="Claim", name=terminal.claim.identity.name),
             statement_digest=claim_statement_digest(terminal.claim.statement).tagged,
         ),
-        body_content_base64=base64.b64encode(body).decode("ascii"),
-        body_digest=body_digest,
+        terminal,
+    )
+
+
+def service_read_playbill_block_sync_backing(
+    instance: PlaybillInstance,
+    *,
+    request: PlaybillBlockSyncReadRequestV1,
+) -> PlaybillBlockSyncReadResultV1:
+    """Say whether every backing a marker holds still reads as the marker says.
+
+    A watched query is deliberately not consulted here. A query surfaces
+    CANDIDATES for the held list; its result moving is not the block falling out
+    of date with what it holds, and `next` reports that separately as
+    `projection_candidates_changed`. Re-evaluating one is also the expensive
+    part of the projection fold, and `block sync` is the cheap check an
+    activation runs over a whole workspace.
+    """
+
+    stamp = request.stamp
+    try:
+        declared = AcceptedCoordinate.from_internal(
+            instance.coordinate_for_oid(stamp.declared_coordinate.git_oid)
+        )
+    except PlaybillError:
+        return _refusal(
+            status="refused",
+            reason="block_workspace_instance_mismatch",
+            detail="the marker coordinate is not accepted by the attached instance",
+        )
+    if declared != stamp.declared_coordinate:
+        return _refusal(
+            status="refused",
+            reason="block_workspace_instance_mismatch",
+            detail="the marker coordinate differs from the attached instance coordinate",
+        )
+    accepted = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    generation = instance.accepted_history()[-1].sequence
+    moved: list[ProjectionArtifactBackingV1 | ProjectionClaimBackingV1] = []
+    # The CURRENT spelling of every held backing, moved or not. `block repin
+    # --backing DIGEST` asks this read to name one exact successor and re-stamp
+    # it, and a block whose backing has not moved must still answer with the
+    # backing it has rather than with nothing.
+    current: list[ProjectionArtifactBackingV1 | ProjectionClaimBackingV1] = []
+    original_digest: str | None = None
+    current_digest: str | None = None
+    held = 0
+    for backing in stamp.backing:
+        if isinstance(backing, ProjectionArtifactBackingV1):
+            held += 1
+            artifact = _artifact_backing_state(
+                instance,
+                stamp_coordinate=declared,
+                current=accepted,
+                backing=backing,
+            )
+            if isinstance(artifact, PlaybillBlockSyncReadResultV1):
+                return artifact
+            original_digest = backing.artifact_digest
+            current_digest = (
+                backing.artifact_digest if artifact is None else artifact.artifact_digest
+            )
+            current.append(backing if artifact is None else artifact)
+            if artifact is not None:
+                moved.append(artifact)
+            continue
+        if not isinstance(backing, ProjectionClaimBackingV1):
+            continue
+        held += 1
+        claim_state = _claim_backing_state(
+            instance,
+            stamp_coordinate=declared,
+            backing=backing,
+            preferred_successor_digest=request.preferred_successor_digest,
+        )
+        if isinstance(claim_state, PlaybillBlockSyncReadResultV1):
+            return claim_state
+        successor, terminal = claim_state
+        original_digest = (
+            claim_artifact_digest(
+                parse_claim(
+                    instance.tree_at(declared.git_oid)[claim_path(backing.identity.name)],
+                    path=claim_path(backing.identity.name),
+                )
+            ).tagged
+            if original_digest is None
+            else original_digest
+        )
+        current_digest = terminal.artifact_digest
+        current.append(backing if successor is None else successor)
+        if successor is not None:
+            moved.append(successor)
+    if held == 0:
+        return _refusal(
+            status="unsyncable",
+            reason="block_backing_changed",
+            detail="the marker holds no Claim or artifact backing to check",
+        )
+    single = current[0] if held == 1 else None
+    return PlaybillBlockSyncReadResultV1(
+        status="successor" if moved else "current",
+        original_artifact_digest=original_digest if held == 1 else None,
+        artifact_digest=current_digest if held == 1 else None,
+        coordinate=accepted,
+        generation=generation,
+        backing=single,
+        moved_backings=tuple(moved),
     )
 
 

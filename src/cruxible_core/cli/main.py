@@ -421,7 +421,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                     "sync": _command(
                         "playbill",
                         "sync_projection",
-                        "Converge safe publication blocks to accepted Claim bodies.",
+                        "Report whether each declared block still reads as its stamp says.",
                     ),
                 },
                 module="playbill",
@@ -616,16 +616,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                         "playbill",
                         "authoring_intent_status",
                         "Read the path to acceptance.",
-                    ),
-                    "confirm-insertion": _command(
-                        "playbill",
-                        "confirm_authoring_insertion",
-                        "Confirm a client-applied publication copy.",
-                    ),
-                    "prepare-publication": _command(
-                        "playbill",
-                        "prepare_authoring_publication",
-                        "Prepare a Claim-backed publication against fresh source bytes.",
                     ),
                     "abandon-insertion": _command(
                         "playbill",

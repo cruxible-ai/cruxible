@@ -12,11 +12,9 @@ from cruxible_client.authoring.examples import claim_flow_a_example, procedure_e
 from cruxible_client.contracts.authoring.inputs import CarriedContractInput, lower_authoring_input
 from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayloadV2
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-from cruxible_core.playbill.authoring.insertions import PublicationClaimNotAccepted
 from cruxible_core.playbill.claim_type_inputs import (
     lower_claim_type_input,
 )
-from tests.test_client.test_playbill_authoring import OBSERVATION
 from tests.test_playbill._claim_type_support import claim_type_input_example
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
@@ -26,14 +24,6 @@ COORDINATE = contracts.PlaybillAcceptedCoordinate(
     compiler_digest="sha256:" + "4" * 64,
 )
 INTENT_ID = "AIT-" + "5" * 32
-
-EMPTY_PUBLICATION_OBSERVATION = {
-    "tag": "playbill-publication-source-observation-v2",
-    "source_id": "repo.work-items",
-    "content_base64": "",
-    "content_digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "byte_length": 0,
-}
 
 
 def test_http_compile_and_submit_keep_the_frozen_request_boundary(
@@ -253,41 +243,6 @@ def test_http_claim_retire_route_delegates_the_typed_request(
     assert seen[0][0:2] == (instance_id, claim_id)  # type: ignore[index]
     assert getattr(seen[0][2], "tag") == "playbill-claim-retire-request-v1"  # type: ignore[index]
     assert "base" not in response.request.content.decode()
-
-
-def test_http_prepare_route_maps_insertion_protocol_refusal_to_typed_400(
-    playbill_http: tuple[TestClient, str, Path],
-    monkeypatch,
-) -> None:  # type: ignore[no-untyped-def]
-    client, instance_id, _private_key = playbill_http
-
-    def prepare_refusal(
-        selected: str,
-        intent_id: str,
-        *,
-        observation: object,
-        expectation_id: str | None = None,
-    ):
-        assert (selected, intent_id) == (instance_id, INTENT_ID)
-        raise PublicationClaimNotAccepted(
-            "playbill.authoring.publication_claim_not_accepted: Claim is not accepted"
-        )
-
-    monkeypatch.setattr(
-        "cruxible_core.runtime.playbill_api.playbill_authoring_prepare_publication",
-        prepare_refusal,
-    )
-    response = client.post(
-        f"/api/v1/{instance_id}/playbill/authoring/intents/{INTENT_ID}/insertion/prepare",
-        json={
-            "tag": "playbill-insertion-prepare-request-v2",
-            "observation": EMPTY_PUBLICATION_OBSERVATION,
-        },
-    )
-
-    assert response.status_code == 400, response.text
-    assert response.json()["error_type"] == "PublicationClaimNotAccepted"
-    assert response.json()["error_code"] == "playbill.authoring.publication_claim_not_accepted"
 
 
 def test_http_create_flow_a_stub_surfaces_the_bind_refusal(
@@ -754,29 +709,19 @@ def test_http_proposal_selector_resolves_against_a_live_instance(
     }
 
 
-def test_http_insertion_confirm_and_abandon_are_typed(
+def test_http_insertion_abandon_is_typed(
     playbill_http: tuple[TestClient, str, Path],
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
+    """The one insertion route left is typed end to end.
+
+    Prepare and confirm are gone with the road that minted the expectation they
+    acted on. Abandoning one an instance already holds is the exit `block
+    depublish` performs, and it still speaks a typed request and a typed result.
+    """
+
     client, instance_id, _private_key = playbill_http
     seen: list[str] = []
-
-    def confirm_stub(
-        selected: str,
-        intent_id: str,
-        *,
-        observation: object,
-        expectation_id: str | None = None,
-    ):
-        assert selected == instance_id
-        assert intent_id == INTENT_ID
-        seen.append("confirm")
-        return contracts.PlaybillInsertionConfirmResultV2(
-            tag="playbill-insertion-confirm-result-v2",
-            outcome="bound",
-            intent={"intent_id": intent_id},
-            expectation={"state": "bound"},
-        )
 
     def abandon_stub(selected: str, intent_id: str, *, expectation_id: str | None = None):
         assert (selected, intent_id) == (instance_id, INTENT_ID)
@@ -786,70 +731,15 @@ def test_http_insertion_confirm_and_abandon_are_typed(
             expectation={"state": "abandoned"},
         )
 
-    def prepare_stub(
-        selected: str,
-        intent_id: str,
-        *,
-        observation: object,
-        expectation_id: str | None = None,
-    ):
-        assert selected == instance_id
-        assert intent_id == INTENT_ID
-        seen.append("prepare")
-        return contracts.PlaybillInsertionPrepareResult(
-            tag="playbill-insertion-prepare-result-v2",
-            outcome="prepared",
-            intent={"intent_id": intent_id},
-            expectation={"state": "prepared"},
-            preparation={"preparation_digest": "sha256:" + "7" * 64},
-            warnings=[
-                contracts.PlaybillPublicationPrepareWarning(
-                    tag="playbill-publication-prepare-warning-v1",
-                    code="playbill.authoring.publication_citation_anchor_collision",
-                    source_id="repo.work-items",
-                    citation_ids=["sha256:" + "8" * 64],
-                )
-            ],
-        )
-
-    monkeypatch.setattr(
-        "cruxible_core.runtime.playbill_api.playbill_authoring_confirm_insertion",
-        confirm_stub,
-    )
     monkeypatch.setattr(
         "cruxible_core.runtime.playbill_api.playbill_authoring_abandon_insertion",
         abandon_stub,
-    )
-    monkeypatch.setattr(
-        "cruxible_core.runtime.playbill_api.playbill_authoring_prepare_publication",
-        prepare_stub,
-    )
-    confirmed = client.post(
-        f"/api/v1/{instance_id}/playbill/authoring/intents/{INTENT_ID}/insertion/confirm",
-        json={"tag": "playbill-insertion-confirm-request-v2", "observation": OBSERVATION},
     )
     abandoned = client.post(
         f"/api/v1/{instance_id}/playbill/authoring/intents/{INTENT_ID}/insertion/abandon",
         json={"tag": "playbill-insertion-abandon-request-v1"},
     )
-    prepared = client.post(
-        f"/api/v1/{instance_id}/playbill/authoring/intents/{INTENT_ID}/insertion/prepare",
-        json={
-            "tag": "playbill-insertion-prepare-request-v2",
-            "observation": {
-                "tag": "playbill-publication-source-observation-v2",
-                "source_id": "repo.work-items",
-                "content_base64": "",
-                "content_digest": (
-                    "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-                ),
-                "byte_length": 0,
-            },
-        },
-    )
 
-    assert confirmed.status_code == prepared.status_code == abandoned.status_code == 200
-    assert confirmed.json()["outcome"] == "bound"
-    assert prepared.json()["outcome"] == "prepared"
-    assert prepared.json()["warnings"][0]["citation_ids"] == ["sha256:" + "8" * 64]
-    assert seen == ["confirm", "abandon", "prepare"]
+    assert abandoned.status_code == 200, abandoned.text
+    assert abandoned.json()["expectation"]["state"] == "abandoned"
+    assert seen == ["abandon"]

@@ -97,31 +97,23 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
     schemas = _schemas()
     compile_schema = schemas["cruxible_playbill_authoring_compile"].inputSchema
     submit_schema = schemas["cruxible_playbill_authoring_submit"].inputSchema
-    confirm_schema = schemas["cruxible_playbill_authoring_confirm_insertion"].inputSchema
-    prepare_schema = schemas["cruxible_playbill_authoring_prepare_publication"].inputSchema
+    abandon_schema = schemas["cruxible_playbill_authoring_abandon_insertion"].inputSchema
 
     assert set(compile_schema["properties"]) == {"instance_id", "payload", "intent_id"}
     assert set(submit_schema["properties"]) == {"instance_id", "intent_id"}
-    # An intent that publishes several Claims owns one expectation per publishing
-    # member, so the call names the one it is about; a singular Claim intent may
-    # omit it. That is the only plumbing these tools expose.
-    assert set(confirm_schema["properties"]) == {
+    # An intent that published several Claims owns one expectation per
+    # publishing member, so the call that releases one names the one it is
+    # about; a singular Claim intent may omit it. That is the only plumbing
+    # this tool exposes.
+    assert set(abandon_schema["properties"]) == {
         "instance_id",
         "intent_id",
-        "observation",
-        "expectation_id",
-    }
-    assert set(prepare_schema["properties"]) == {
-        "instance_id",
-        "intent_id",
-        "observation",
         "expectation_id",
     }
     forbidden = {"base", "claim_id", "candidate_digest", "predecessor_digest"}
     assert forbidden.isdisjoint(compile_schema["properties"])
     assert forbidden.isdisjoint(submit_schema["properties"])
-    assert forbidden.isdisjoint(confirm_schema["properties"])
-    assert forbidden.isdisjoint(prepare_schema["properties"])
+    assert forbidden.isdisjoint(abandon_schema["properties"])
 
     example_schema = schemas["cruxible_playbill_authoring_example"].inputSchema
     assert example_schema["properties"]["name"]["enum"] == [

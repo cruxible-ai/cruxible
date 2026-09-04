@@ -425,7 +425,6 @@ def test_sdk_cold_claim_delivers_source_lint_without_refusing_preflight(
         effective_period=None,
         revises=None,
         dispositions={},
-        publish_to=None,
         subject_definition=subject,
         claim_type_definition=claim_type,
     ).prepare()
@@ -489,7 +488,6 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
         effective_period=None,
         revises=None,
         dispositions={},
-        publish_to=None,
         subject_definition=subject,
         claim_type_definition=claim_type,
     ).prepare()
@@ -515,7 +513,6 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
         effective_period=None,
         revises=claim_id,
         dispositions={claim_id: Disposition.CONTRADICT},
-        publish_to=None,
         subject_definition=None,
         claim_type_definition=None,
     )
@@ -546,7 +543,6 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
         effective_period=None,
         revises=missing_revision_id,
         dispositions={claim_id: Disposition.CONTRADICT},
-        publish_to=None,
         subject_definition=None,
         claim_type_definition=None,
     ).prepare()
@@ -624,7 +620,6 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
         effective_period=None,
         revises=claim_id,
         dispositions={},
-        publish_to=None,
         subject_definition=None,
         claim_type_definition=None,
     )
@@ -660,7 +655,6 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
         effective_period=None,
         revises=claim_id,
         dispositions={claim_id: Disposition.CONTRADICT},
-        publish_to=None,
         subject_definition=None,
         claim_type_definition=None,
     )
@@ -743,7 +737,6 @@ def test_sdk_retirement_replay_survives_a_fresh_http_client_process_boundary(
         effective_period=None,
         revises=None,
         dispositions={},
-        publish_to=None,
         subject_definition=subject,
         claim_type_definition=claim_type,
     ).prepare()
@@ -898,7 +891,6 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         effective_period=None,
         revises=None,
         dispositions={},
-        publish_to=None,
         subject_definition=policy_subject,
         claim_type_definition=triage_type,
     ).prepare()
@@ -928,7 +920,6 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         effective_period=None,
         revises=None,
         dispositions={ClaimRef(kev_identity, pb.coordinate): Disposition.SUPPORT},
-        publish_to=None,
         subject_definition=None,
         claim_type_definition=None,
     ).prepare()
@@ -992,7 +983,6 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
             effective_period=None,
             revises=None,
             dispositions={},
-            publish_to=None,
             subject_definition=subject,
             claim_type_definition=None,
         ).prepare()
@@ -1023,7 +1013,6 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         effective_period=None,
         revises=None,
         dispositions={},
-        publish_to=None,
         subject_definition=guidance_subject,
         claim_type_definition=None,
     ).prepare()
@@ -1096,44 +1085,6 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         for field in row["fields"]
         if field["name"] == "policy_id"
     }
-
-    publication_subject = pb.subject(
-        subject="secops.policy/published-guidance",
-        pins=(),
-        lifecycle=ArtifactLifecycle(),
-    )
-    published_text = "\nGoverned guidance: retain the seventy-two-hour boundary.\n"
-    publication_intent = pb.claim(
-        subject=publication_subject.address,
-        predicate=ClaimTypeRef(triage_type.predicate, pb.coordinate),
-        value={"deadline_hours": 72, "trigger": "published_guidance"},
-        role=ClaimRole.NORMATIVE,
-        rationale="Publish the accepted guidance back into its declared source.",
-        supported_by=None,
-        copied_from=None,
-        self_source=published_text,
-        qualifier=None,
-        effective_period=None,
-        revises=None,
-        dispositions={},
-        publish_to=pb.file("corpus/vuln-response-runbook.md").append(),
-        subject_definition=publication_subject,
-        claim_type_definition=None,
-    ).prepare()
-    assert not publication_intent.refused, publication_intent.diagnostics
-    publication_intent.submit()
-    publication_proposal = publication_intent.status().proposal_id
-    assert publication_proposal is not None
-    _approve_and_activate(http, instance_id, private_key_path, publication_proposal)
-    publication = publication_intent.publication
-    assert publication is not None
-    publication_path = workspace / "corpus" / "vuln-response-runbook.md"
-    publication_path.chmod(0o640)
-    publication.apply()
-    assert published_text in publication_path.read_text(encoding="utf-8")
-    assert publication_path.stat().st_mode & 0o777 == 0o640
-    assert publication.state in {"confirming", "bound"}
-    pb.refresh()
 
     procedure = pb.procedure(
         definition=_abstract_assess_procedure(),

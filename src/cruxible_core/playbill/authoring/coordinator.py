@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Literal, cast
@@ -35,66 +33,35 @@ from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV1,
     ExistingCaptureCitationSourceV1,
     InsertionAbandonResultV1,
-    InsertionConfirmationObservationV2,
-    InsertionConfirmResultV2,
     InsertionExpectationV2,
-    InsertionPrepareResultV2,
     PreflightResultV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
-    PublicationPreparationV2,
-    PublicationPrepareWarningV1,
-    PublicationSourceObservationV2,
-    SelfSourceBodyV1,
     authoring_change_set_membership,
     authoring_create_fingerprint,
     authoring_member_identity,
     authoring_payload_digest,
-    insertion_confirm_operation_v2_key,
-    insertion_prepare_operation_v2_key,
-    insertion_prepare_terminal_operation_v2_key,
     reference_expectations_digest,
 )
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.captures import (
-    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
-    capture_contract_digest,
-    capture_is_coordinator_self_source,
     parse_capture_envelope,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
-    ClaimArtifactV2,
-    claim_artifact_digest,
-    claim_citation_references,
     claim_path,
     claim_statement_digest,
     new_claim_id,
     parse_claim,
 )
 from cruxible_client.contracts.errors import ApprovalIntegrityError, PlaybillError
-from cruxible_client.contracts.source_references import (
-    CasSourceReferenceV1,
-    ExternalSourceReferenceV1,
-)
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime, utc_now
 from cruxible_core.playbill.authoring.insertions import (
-    PUBLICATION_EXPECTATION_EXPIRY,
     InsertionProtocolError,
-    PublicationClaimNotAccepted,
-    PublicationConfirmationMismatch,
-    PublicationNotPrepared,
     PublicationTerminalStateRefused,
-    build_publication_preparation,
-    mark_publication_bound,
     mark_publication_claim_accepted,
-    mark_publication_prepared,
     mark_publication_terminal,
-    mint_insertion_expectation_v2,
-    publication_confirmation_from_source,
-    publication_confirmation_matches,
-    refuse_claim_projected_as_itself,
 )
 from cruxible_core.playbill.authoring.preflight import ComputedPreflight, compute_preflight
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
@@ -157,42 +124,6 @@ def _rebase_operation_key(
             "next_base_coordinate": next_coordinate.model_dump(mode="json"),
         },
     ).tagged
-
-
-def _publication_payload(
-    intent: AuthoringIntentV1,
-    claim_identity: str,
-) -> ClaimAuthoringPayloadV1:
-    """Return the authored Claim whose body one expectation publishes."""
-
-    payload = intent.payload
-    if isinstance(payload, ClaimAuthoringPayloadV1):
-        return payload
-    if isinstance(payload, ChangeSetAuthoringPayloadV1):
-        claim_ids = {
-            item.member_identity: item.claim_id for item in intent.change_set_claim_identities
-        }
-        for member in payload.members:
-            if not isinstance(member, ClaimAuthoringPayloadV1):
-                continue
-            if claim_ids.get(authoring_member_identity(member)) == claim_identity:
-                return member
-    raise InsertionProtocolError("publication intent lost its Flow-B self-source")
-
-
-def _rendered_publication_block(
-    intent: AuthoringIntentV1,
-    preparation: PublicationPreparationV2 | None,
-    *,
-    claim_identity: str,
-) -> str | None:
-    if preparation is None:
-        return None
-    payload = _publication_payload(intent, claim_identity)
-    if not isinstance(payload.source, SelfSourceBodyV1):
-        raise InsertionProtocolError("publication intent lost its Flow-B self-source")
-    framed = build_publication_preparation(preparation, body=payload.source.content)
-    return base64.b64encode(framed).decode("ascii")
 
 
 def _select_expectation(
@@ -935,12 +866,13 @@ class AuthoringIntentCoordinator:
             proposal_id=result.admission.proposal_id,
             candidate_digest=result.candidate.candidate_digest,
         )
+        # Nothing mints a publication expectation any more: a Claim projected as
+        # its own page text was the mint-era overlap the two-block-kinds law
+        # refuses, and the authoring door refuses `insertion_target` outright.
+        # An intent that already carries expectations keeps them, so an instance
+        # that published before this ruling still folds, reads and depublishes
+        # its registrations.
         insertion_expectations = preflighted.insertion_expectations
-        if not insertion_expectations:
-            insertion_expectations = self._mint_publication_expectations(
-                preflighted,
-                computed=computed,
-            )
         singular = (
             insertion_expectations[0]
             if insertion_expectations and isinstance(preflighted.payload, ClaimAuthoringPayloadV1)
@@ -978,430 +910,12 @@ class AuthoringIntentCoordinator:
             members=self._submit_members(computed, preflighted),
         )
 
-    def _mint_publication_expectations(
-        self,
-        preflighted: AuthoringIntentV1,
-        *,
-        computed: ComputedPreflight,
-    ) -> tuple[InsertionExpectationV2, ...]:
-        """Mint one publication expectation per publishing Claim, set or singleton."""
-
-        payload = preflighted.payload
-        publishing: tuple[tuple[str | None, ClaimAuthoringPayloadV1, str], ...]
-        if isinstance(payload, ClaimAuthoringPayloadV1):
-            publishing = (
-                ((None, payload, preflighted.semantic_identity),)
-                if payload.insertion_target is not None
-                else ()
-            )
-        elif isinstance(payload, ChangeSetAuthoringPayloadV1):
-            claim_ids = {
-                item.member_identity: item.claim_id
-                for item in preflighted.change_set_claim_identities
-            }
-            publishing = tuple(
-                (identity, member, claim_ids[identity])
-                for identity, member in (
-                    (authoring_member_identity(item), item)
-                    for item in payload.members
-                    if isinstance(item, ClaimAuthoringPayloadV1)
-                )
-                if member.insertion_target is not None
-            )
-        else:
-            publishing = ()
-        if not publishing:
-            return ()
-        if computed.lowered is None:  # pragma: no cover - passing preflight invariant
-            raise RuntimeError("passing insertion preflight omitted its lowered Claim")
-        created_at = parse_datetime(preflighted.canonical_timestamp)
-        if created_at is None:  # pragma: no cover - validated timestamp
-            raise RuntimeError("AuthoringIntent timestamp did not parse")
-        minted: list[InsertionExpectationV2] = []
-        for member_identity, member, claim_id in publishing:
-            lowered_path = claim_path(claim_id)
-            lowered_claim = parse_claim(
-                computed.lowered.proposed_tree[lowered_path],
-                path=lowered_path,
-            )
-            minted.append(
-                mint_insertion_expectation_v2(
-                    preflighted,
-                    original_claim_artifact_digest=claim_artifact_digest(lowered_claim).tagged,
-                    claim_statement_digest=claim_statement_digest(lowered_claim.statement).tagged,
-                    expires_at=created_at + PUBLICATION_EXPECTATION_EXPIRY,
-                    payload=member,
-                    claim_identity=claim_id,
-                    member_identity=member_identity,
-                )
-            )
-        return tuple(sorted(minted, key=lambda item: item.expectation_id.encode("ascii")))
-
     def status(self, intent_id: str, *, actor: AuthenticatedActor) -> CandidateStatusV1:
         intent = self._refresh_protocol(
             self.store.get(intent_id, actor_id=actor.actor_id),
             actor=actor,
         )
         return intent.candidate_status
-
-    def prepare_publication(
-        self,
-        intent_id: str,
-        *,
-        actor: AuthenticatedActor,
-        observation: PublicationSourceObservationV2,
-        expectation_id: str | None = None,
-    ) -> InsertionPrepareResultV2:
-        self.instance.require_writable()
-        before = self.store.get(intent_id, actor_id=actor.actor_id)
-        current = self._refresh_protocol(before, actor=actor)
-        expectation = _select_expectation(current, expectation_id)
-        if expectation.state == "awaiting_claim_acceptance":
-            raise PublicationClaimNotAccepted(
-                f"{PublicationClaimNotAccepted.code}: the governed Claim is not accepted"
-            )
-        exact = publication_confirmation_from_source(
-            intent_id=intent_id,
-            expectation=expectation,
-            observation=observation,
-        )
-        operation_key = insertion_prepare_operation_v2_key(
-            expectation.expectation_id,
-            observation,
-            live_expectation_digest=expectation.expectation_digest,
-        )
-        terminal_operation_key = insertion_prepare_terminal_operation_v2_key(
-            expectation.expectation_id,
-            observation,
-        )
-        if expectation.state == "bound":
-            if exact is None:
-                raise PublicationTerminalStateRefused(
-                    f"{PublicationTerminalStateRefused.code}: conflicting terminal preparation"
-                )
-            return InsertionPrepareResultV2(
-                outcome="bound",
-                intent=current,
-                expectation=expectation,
-                preparation=expectation.preparation,
-                inserted_block_base64=_rendered_publication_block(
-                    current,
-                    expectation.preparation,
-                    claim_identity=expectation.claim_identity,
-                ),
-            )
-        if expectation.state in {"expired", "claim_currency_changed", "abandoned"}:
-            replayed = self.store.operation_result(
-                intent_id,
-                actor_id=actor.actor_id,
-                operation_key=terminal_operation_key,
-            )
-            replayed_expectation = (
-                None
-                if replayed is None
-                else _matching_expectation(replayed, expectation.expectation_id)
-            )
-            before_expectation = _matching_expectation(before, expectation.expectation_id)
-            if (
-                replayed is None
-                and isinstance(before_expectation, InsertionExpectationV2)
-                and before_expectation.state
-                not in {"bound", "expired", "abandoned", "claim_currency_changed"}
-                and expectation.state in {"expired", "claim_currency_changed"}
-            ):
-                replayed = self.store.transition(
-                    intent_id,
-                    actor_id=actor.actor_id,
-                    operation_key=terminal_operation_key,
-                    transform=lambda intent: intent,
-                )
-                replayed_expectation = _matching_expectation(
-                    replayed,
-                    expectation.expectation_id,
-                )
-            if (
-                replayed is None
-                or not isinstance(replayed_expectation, InsertionExpectationV2)
-                or replayed_expectation.state not in {"expired", "claim_currency_changed"}
-            ):
-                raise PublicationTerminalStateRefused(
-                    f"{PublicationTerminalStateRefused.code}: publication is already terminal"
-                )
-            terminal_outcome: Literal["expired", "claim_currency_changed"] = (
-                "expired" if replayed_expectation.state == "expired" else "claim_currency_changed"
-            )
-            return InsertionPrepareResultV2(
-                outcome=terminal_outcome,
-                intent=replayed,
-                expectation=replayed_expectation,
-                preparation=replayed_expectation.preparation,
-                inserted_block_base64=_rendered_publication_block(
-                    replayed,
-                    replayed_expectation.preparation,
-                    claim_identity=expectation.claim_identity,
-                ),
-            )
-        evaluation_time = self.clock()
-        if exact is not None:
-
-            def bind_applied(intent: AuthoringIntentV1) -> AuthoringIntentV1:
-                live = _live_expectation(intent, expectation)
-                return intent.model_copy(
-                    update=_replaced_expectation(
-                        intent,
-                        mark_publication_bound(
-                            intent,
-                            live,
-                            observation=exact,
-                            finalized_at=evaluation_time,
-                        ),
-                    )
-                )
-
-            bound = self.store.transition(
-                intent_id,
-                actor_id=actor.actor_id,
-                operation_key=operation_key,
-                transform=bind_applied,
-            )
-            bound_expectation = _select_expectation(bound, expectation.expectation_id)
-            return InsertionPrepareResultV2(
-                outcome="bound",
-                intent=bound,
-                expectation=bound_expectation,
-                preparation=bound_expectation.preparation,
-                inserted_block_base64=_rendered_publication_block(
-                    bound,
-                    bound_expectation.preparation,
-                    claim_identity=expectation.claim_identity,
-                ),
-            )
-
-        terminal_state = self._publication_guard_state(
-            current,
-            expectation,
-            evaluation_time=evaluation_time,
-        )
-        if terminal_state is not None:
-            terminal = self._transition_publication_terminal(
-                current,
-                expectation=expectation,
-                actor=actor,
-                state=terminal_state,
-                evaluation_time=evaluation_time,
-                operation_key=terminal_operation_key,
-            )
-            terminal_expectation = _select_expectation(terminal, expectation.expectation_id)
-            return InsertionPrepareResultV2(
-                outcome=terminal_state,
-                intent=terminal,
-                expectation=terminal_expectation,
-                preparation=terminal_expectation.preparation,
-                inserted_block_base64=_rendered_publication_block(
-                    terminal,
-                    terminal_expectation.preparation,
-                    claim_identity=expectation.claim_identity,
-                ),
-            )
-        current_claim = self._current_claim_by_identity(expectation.claim_identity)
-        if current_claim is None:
-            raise InsertionProtocolError("accepted publication Claim is missing")
-        body = self._publication_body(current, current_claim, expectation=expectation)
-        refuse_claim_projected_as_itself(
-            claim_identity=expectation.claim_identity,
-            source_id=observation.source_id,
-            overlapping_citation_ids=self._own_source_overlap_citations(
-                current_claim,
-                source_id=observation.source_id,
-                body=body,
-            ),
-        )
-        coordinate = expectation.accepted_claim_coordinate
-        if coordinate is None:  # pragma: no cover - expectation invariant
-            raise RuntimeError("accepted publication omitted its Claim coordinate")
-        preparation = build_publication_preparation(
-            expectation,
-            observation=observation,
-            body=body,
-            accepted_coordinate=coordinate,
-            accepted_generation=self._accepted_sequence(coordinate),
-        )
-        was_prepared = expectation.preparation == preparation
-        warnings = self._publication_prepare_warnings(
-            source_id=observation.source_id,
-            body=body,
-        )
-
-        def persist_preparation(intent: AuthoringIntentV1) -> AuthoringIntentV1:
-            live = _live_expectation(intent, expectation)
-            if live.expectation_digest != expectation.expectation_digest:
-                raise InsertionProtocolError("publication expectation changed during prepare")
-            return intent.model_copy(
-                update=_replaced_expectation(
-                    intent,
-                    mark_publication_prepared(live, preparation=preparation),
-                )
-            )
-
-        prepared = self.store.transition(
-            intent_id,
-            actor_id=actor.actor_id,
-            operation_key=operation_key,
-            transform=persist_preparation,
-        )
-        prepared_expectation = _select_expectation(prepared, expectation.expectation_id)
-        return InsertionPrepareResultV2(
-            outcome="already_prepared" if was_prepared else "prepared",
-            intent=prepared,
-            expectation=prepared_expectation,
-            preparation=prepared_expectation.preparation,
-            inserted_block_base64=_rendered_publication_block(
-                prepared,
-                prepared_expectation.preparation,
-                claim_identity=expectation.claim_identity,
-            ),
-            warnings=warnings,
-        )
-
-    def confirm_insertion(
-        self,
-        intent_id: str,
-        *,
-        actor: AuthenticatedActor,
-        observation: InsertionConfirmationObservationV2,
-        expectation_id: str | None = None,
-    ) -> InsertionConfirmResultV2:
-        self.instance.require_writable()
-        before = self.store.get(intent_id, actor_id=actor.actor_id)
-        current = self._refresh_protocol(before, actor=actor)
-        expectation = _select_expectation(current, expectation_id)
-        operation_key = insertion_confirm_operation_v2_key(
-            expectation.expectation_id,
-            observation,
-        )
-        if expectation.state == "bound":
-            if not publication_confirmation_matches(
-                expectation,
-                observation,
-                intent_id=intent_id,
-            ):
-                raise PublicationTerminalStateRefused(
-                    f"{PublicationTerminalStateRefused.code}: conflicting terminal confirmation"
-                )
-            return InsertionConfirmResultV2(
-                outcome="already_bound",
-                intent=current,
-                expectation=expectation,
-            )
-        if expectation.state in {"expired", "claim_currency_changed", "abandoned"}:
-            replayed = self.store.operation_result(
-                intent_id,
-                actor_id=actor.actor_id,
-                operation_key=operation_key,
-            )
-            replayed_expectation = (
-                None
-                if replayed is None
-                else _matching_expectation(replayed, expectation.expectation_id)
-            )
-            before_expectation = _matching_expectation(before, expectation.expectation_id)
-            if (
-                replayed is None
-                and isinstance(before_expectation, InsertionExpectationV2)
-                and before_expectation.state
-                not in {"bound", "expired", "abandoned", "claim_currency_changed"}
-                and expectation.state in {"expired", "claim_currency_changed"}
-            ):
-                replayed = self.store.transition(
-                    intent_id,
-                    actor_id=actor.actor_id,
-                    operation_key=operation_key,
-                    transform=lambda intent: intent,
-                )
-                replayed_expectation = _matching_expectation(
-                    replayed,
-                    expectation.expectation_id,
-                )
-            if (
-                replayed is not None
-                and isinstance(replayed_expectation, InsertionExpectationV2)
-                and replayed_expectation.state in {"expired", "claim_currency_changed"}
-            ):
-                replayed_outcome: Literal["expired", "claim_currency_changed"] = (
-                    "expired"
-                    if replayed_expectation.state == "expired"
-                    else "claim_currency_changed"
-                )
-                return InsertionConfirmResultV2(
-                    outcome=replayed_outcome,
-                    intent=replayed,
-                    expectation=replayed_expectation,
-                )
-            raise PublicationTerminalStateRefused(
-                f"{PublicationTerminalStateRefused.code}: publication is already terminal"
-            )
-        if expectation.state != "prepared":
-            raise PublicationNotPrepared(
-                f"{PublicationNotPrepared.code}: publication has no durable preparation"
-            )
-
-        evaluation_time = self.clock()
-        if publication_confirmation_matches(
-            expectation,
-            observation,
-            intent_id=intent_id,
-        ):
-
-            def bind(intent: AuthoringIntentV1) -> AuthoringIntentV1:
-                live = _live_expectation(intent, expectation)
-                return intent.model_copy(
-                    update=_replaced_expectation(
-                        intent,
-                        mark_publication_bound(
-                            intent,
-                            live,
-                            observation=observation,
-                            finalized_at=evaluation_time,
-                        ),
-                    )
-                )
-
-            bound = self.store.transition(
-                intent_id,
-                actor_id=actor.actor_id,
-                operation_key=operation_key,
-                transform=bind,
-            )
-            bound_expectation = _select_expectation(bound, expectation.expectation_id)
-            return InsertionConfirmResultV2(
-                outcome="bound",
-                intent=bound,
-                expectation=bound_expectation,
-            )
-
-        terminal_state = self._publication_guard_state(
-            current,
-            expectation,
-            evaluation_time=evaluation_time,
-        )
-        if terminal_state is not None:
-            terminal = self._transition_publication_terminal(
-                current,
-                expectation=expectation,
-                actor=actor,
-                state=terminal_state,
-                evaluation_time=evaluation_time,
-                operation_key=operation_key,
-            )
-            terminal_expectation = _select_expectation(terminal, expectation.expectation_id)
-            return InsertionConfirmResultV2(
-                outcome=terminal_state,
-                intent=terminal,
-                expectation=terminal_expectation,
-            )
-        raise PublicationConfirmationMismatch(
-            f"{PublicationConfirmationMismatch.code}: observation differs from exact preparation"
-        )
 
     def abandon_insertion(
         self,
@@ -1688,130 +1202,6 @@ class AuthoringIntentCoordinator:
         path = claim_path(intent.semantic_identity)
         content = self.instance.tree_at(self.instance.accepted_coordinate().git_oid).get(path)
         return None if content is None else parse_claim(content, path=path)
-
-    def _publication_body(
-        self,
-        intent: AuthoringIntentV1,
-        claim: ClaimArtifactAny,
-        *,
-        expectation: InsertionExpectationV2,
-    ) -> bytes:
-        payload = _publication_payload(intent, expectation.claim_identity)
-        if not isinstance(payload.source, SelfSourceBodyV1):
-            raise InsertionProtocolError("publication intent lost its Flow-B self-source")
-        if not isinstance(claim, ClaimArtifactV2):
-            raise InsertionProtocolError("publication Claim has no citation-backed retained body")
-        expected_digest = "sha256:" + hashlib.sha256(payload.source.content).hexdigest()
-        store = self.instance.body_store()
-        access = BodyAccessContext(principal_id="playbill-publication", can_read_body=True)
-        contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
-        contract_digest_value = capture_contract_digest(contract).tagged
-        bodies: list[bytes] = []
-        for citation in claim.backing.citations:
-            if citation.origin != "self_source":
-                continue
-            envelope = parse_capture_envelope(store.read(citation.capture_digest, access=access))
-            if envelope.capture_contract_digest != contract_digest_value or not (
-                capture_is_coordinator_self_source(
-                    envelope,
-                    contract=contract,
-                    claim_id=claim.identity.name,
-                )
-            ):
-                continue
-            source = envelope.source
-            if not isinstance(source, CasSourceReferenceV1):
-                continue
-            body = store.read(source.content_digest, access=access)
-            if "sha256:" + hashlib.sha256(body).hexdigest() == expected_digest:
-                bodies.append(body)
-        if not bodies:
-            raise InsertionProtocolError(
-                "accepted Claim does not retain the publication body under its self-source backing"
-            )
-        if any(body != bodies[0] for body in bodies[1:]):  # pragma: no cover - digest invariant
-            raise RuntimeError("one retained publication digest resolved to different bytes")
-        return bodies[0]
-
-    def _own_source_overlap_citations(
-        self,
-        claim: ClaimArtifactAny,
-        *,
-        source_id: str,
-        body: bytes,
-    ) -> tuple[str, ...]:
-        """Name this Claim's own citations of bytes inside the body being framed."""
-
-        store = self.instance.body_store()
-        access = BodyAccessContext(principal_id="playbill-publication", can_read_body=True)
-        found: set[str] = set()
-        for citation in claim_citation_references(claim):
-            try:
-                envelope = parse_capture_envelope(
-                    store.read(citation.capture_digest, access=access)
-                )
-                if (
-                    not isinstance(envelope.source, ExternalSourceReferenceV1)
-                    or envelope.source.source_identity != source_id
-                    or envelope.commitment.materialization != "cas"
-                ):
-                    continue
-                commitment = store.read(envelope.commitment.digest, access=access)
-            except PlaybillError:
-                continue
-            if commitment and commitment in body:
-                found.add(citation.citation_id)
-        return tuple(sorted(found, key=lambda item: item.encode("ascii")))
-
-    def _publication_prepare_warnings(
-        self,
-        *,
-        source_id: str,
-        body: bytes,
-    ) -> tuple[PublicationPrepareWarningV1, ...]:
-        """Report exact retained anchors that this body would duplicate in one source."""
-
-        store = self.instance.body_store()
-        access = BodyAccessContext(principal_id="playbill-publication", can_read_body=True)
-        tree = self.instance.tree_at(self.instance.accepted_coordinate().git_oid)
-        citation_ids: set[str] = set()
-        for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-            if not path.startswith("claims/"):
-                continue
-            claim = parse_claim(tree[path], path=path)
-            if claim.lifecycle.state != "live":
-                continue
-            for citation in claim_citation_references(claim):
-                try:
-                    envelope = parse_capture_envelope(
-                        store.read(citation.capture_digest, access=access)
-                    )
-                    if (
-                        not isinstance(envelope.source, ExternalSourceReferenceV1)
-                        or envelope.source.source_identity != source_id
-                        or envelope.commitment.materialization != "cas"
-                    ):
-                        continue
-                    commitment = store.read(envelope.commitment.digest, access=access)
-                except PlaybillError:
-                    continue
-                if commitment and commitment in body:
-                    citation_ids.add(citation.citation_id)
-        if not citation_ids:
-            return ()
-        return (
-            PublicationPrepareWarningV1(
-                source_id=source_id,
-                citation_ids=tuple(sorted(citation_ids, key=lambda item: item.encode("ascii"))),
-            ),
-        )
-
-    def _accepted_sequence(self, coordinate: AcceptedCoordinate) -> int:
-        return next(
-            generation.sequence
-            for generation in self.instance.accepted_history()
-            if generation.oid == coordinate.git_oid
-        )
 
     def _publication_claim_current(self, expectation: InsertionExpectationV2) -> bool:
         current_claim = self._current_claim_by_identity(expectation.claim_identity)

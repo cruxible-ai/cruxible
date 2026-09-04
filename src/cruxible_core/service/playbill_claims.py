@@ -125,7 +125,7 @@ class CaptureAdmissionAccountV1(_StrictClaimServiceModel):
     citation_id: str
     capture_digest: str
     citation_role: Literal["evidence", "copy", "legacy"]
-    citation_origin: Literal["independent", "self_source", "self_published", "legacy"]
+    citation_origin: Literal["independent", "self_source", "legacy"]
     capture_contract_identity: str
     capture_contract_digest: str
     status: Literal["admitted", "not_admitted", "not_evidence"]

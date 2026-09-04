@@ -322,7 +322,12 @@ class ClaimBacking(_StrictClaimModel):
 
 
 CitationRole: TypeAlias = Literal["evidence", "copy"]
-CitationOrigin: TypeAlias = Literal["independent", "self_source", "self_published"]
+# A citation is independent evidence or the author's own body. There was a
+# third spelling, `self_published`, for a Claim projected back into the page it
+# came from -- the road the two-block-kinds law refuses -- and no code path in
+# the product ever wrote one, so no accepted artifact carries it and nothing
+# that once parsed stops parsing.
+CitationOrigin: TypeAlias = Literal["independent", "self_source"]
 
 
 def claim_citation_id(
@@ -1426,11 +1431,6 @@ def _citation_origin_refusal(
     verified_self_source = direct_self_source or coordinator_self_source
     self_source_origin_permitted = verified_self_source or direct_selection_bound
     for association in associations:
-        if association.origin == "self_published" and association.role != "copy":
-            return (
-                "playbill.claim.self_published_role_invalid",
-                "A self-published association must be a non-evidentiary copy.",
-            )
         if verified_self_source and association.origin != "self_source":
             return (
                 "playbill.claim.self_source_origin_mismatch",

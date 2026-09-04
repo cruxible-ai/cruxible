@@ -166,17 +166,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_authoring_status": (
         "Use when you need exactly what still separates an authored candidate from acceptance."
     ),
-    "cruxible_playbill_authoring_confirm_insertion": (
-        "Use after applying a pending insertion or prepared publication to bind its exact "
-        "observed postimage."
-    ),
-    "cruxible_playbill_authoring_prepare_publication": (
-        "Use after the Flow-B Claim is accepted to prepare one exact stamped publication "
-        "against fresh whole-source bytes."
+    "cruxible_playbill_block_declare": (
+        "Use after stamping a projection block so the instance registers the marker; "
+        "`cruxible playbill block repin` does this for you."
     ),
     "cruxible_playbill_authoring_abandon_insertion": (
-        "Use when a pending publication copy should be retired while its accepted self-source "
-        "Claim remains governed."
+        "Use to release a publication expectation an instance already holds; nothing mints "
+        "a new one."
     ),
     "cruxible_playbill_host_workspace_detach": (
         "Use when a Git worktree is moving from one governed host to another, so the host "

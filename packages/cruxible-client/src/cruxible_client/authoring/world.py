@@ -29,7 +29,7 @@ that resolved at one coordinate may name something else at the next.
         rationale="The advisory names this package.",
         self_source="affects: click\n",
         supported_by=None, copied_from=None, qualifier=None,
-        effective_period=None, revises=None, dispositions={}, publish_to=None,
+        effective_period=None, revises=None, dispositions={},
         subject_definition=None, claim_type_definition=None,
     )
     intent = draft.prepare()

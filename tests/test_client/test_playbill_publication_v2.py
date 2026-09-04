@@ -1,4 +1,10 @@
-"""Client-side publication-v2 framing and whole-file CAS laws."""
+"""The one atomic whole-file write a workspace edit is allowed to make.
+
+The publication road that used this compare-and-swap is gone -- nothing frames a
+Claim into a page any more -- but the write itself is not the publication's: it
+is what every block edit goes through, and losing a concurrent author's edit is
+the failure it exists to refuse.
+"""
 
 from __future__ import annotations
 
@@ -8,75 +14,8 @@ import pytest
 
 from cruxible_client.authoring.insertions import (
     PlaybillInsertionApplyError,
-    apply_playbill_publication,
     replace_publication_file,
 )
-from cruxible_core.playbill.authoring.insertions import (
-    build_publication_preparation,
-    mark_publication_prepared,
-)
-from tests.test_playbill.test_authoring_insertions_v2 import COORDINATE, _expectation, _observation
-
-
-def _prepared():  # type: ignore[no-untyped-def]
-    expectation = _expectation()
-    preparation = build_publication_preparation(
-        expectation,
-        observation=_observation(b"status: \n"),
-        body=b"ready\n",
-        accepted_coordinate=COORDINATE,
-        accepted_generation=7,
-    )
-    return mark_publication_prepared(expectation, preparation=preparation), preparation
-
-
-def test_publication_apply_is_byte_deterministic_and_idempotent() -> None:
-    expectation, preparation = _prepared()
-
-    applied = apply_playbill_publication(
-        b"status: \n",
-        intent_id="AIT-" + "a" * 32,
-        expectation=expectation.model_dump(mode="json"),
-        retained_body=b"ready\n",
-    )
-    retry = apply_playbill_publication(
-        applied.content,
-        intent_id="AIT-" + "a" * 32,
-        expectation=expectation.model_dump(mode="json"),
-        retained_body=b"ready\n",
-    )
-
-    assert applied.outcome == "applied"
-    assert retry.outcome == "already_applied"
-    assert retry.content == applied.content
-    assert retry.observation == applied.observation
-    assert retry.observation["preparation_digest"] == preparation.preparation_digest
-
-
-def test_publication_apply_refuses_wrong_body_and_duplicate_block() -> None:
-    expectation, _preparation = _prepared()
-    payload = expectation.model_dump(mode="json")
-
-    with pytest.raises(PlaybillInsertionApplyError, match="retained accepted body"):
-        apply_playbill_publication(
-            b"status: \n",
-            intent_id="AIT-" + "a" * 32,
-            expectation=payload,
-            retained_body=b"wrong\n",
-        )
-    applied = apply_playbill_publication(
-        b"status: \n",
-        intent_id="AIT-" + "a" * 32,
-        expectation=payload,
-        retained_body=b"ready\n",
-    )
-    with pytest.raises(PlaybillInsertionApplyError, match="conflicting publication block"):
-        apply_playbill_publication(
-            applied.content + applied.content,
-            intent_id="AIT-" + "a" * 32,
-            expectation=payload,
-            retained_body=b"ready\n",
-        )
 
 
 def test_publication_file_replace_refuses_a_concurrent_edit(

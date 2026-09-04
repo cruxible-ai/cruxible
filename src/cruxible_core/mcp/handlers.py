@@ -31,10 +31,6 @@ from cruxible_client.authoring.sources import (
     mapped_root_aliases,
 )
 from cruxible_client.contracts.attestations import ApprovalAttestation
-from cruxible_client.contracts.authoring.models import (
-    InsertionConfirmationObservationV2,
-    PublicationSourceObservationV2,
-)
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequestV1,
     ClaimAttestationAppendResultV1,
@@ -42,6 +38,7 @@ from cruxible_client.contracts.claim_attestations import (
     PreparedClaimAttestationRequestV1,
 )
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
+from cruxible_client.contracts.declared_blocks import ProjectionBlockStampV1
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
@@ -85,14 +82,13 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillAuthoringInputCreateRequest,
     PlaybillAuthoringPreflightRequest,
     PlaybillAuthoringSubmitRequest,
+    PlaybillBlockDeclareRequest,
     PlaybillBlockDepublishRequest,
     PlaybillCurationAcceptFixedRequest,
     PlaybillCurationOverruleRequest,
     PlaybillCurationSuppressRequest,
     PlaybillInitRequest,
     PlaybillInsertionAbandonRequest,
-    PlaybillInsertionConfirmRequest,
-    PlaybillInsertionPrepareRequest,
     PlaybillInstanceDecommissionRequest,
     PlaybillProposalReadmitRequest,
     PlaybillProposalWithdrawRequest,
@@ -266,11 +262,10 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_playbill_authoring_abandon_insertion": TypeAdapter(PlaybillInsertionAbandonRequest),
     "cruxible_playbill_authoring_bind": TypeAdapter(PlaybillAuthoringInputCompileRequest),
     "cruxible_playbill_authoring_compile": TypeAdapter(PlaybillAuthoringInputCompileRequest),
-    "cruxible_playbill_authoring_confirm_insertion": TypeAdapter(PlaybillInsertionConfirmRequest),
     "cruxible_playbill_authoring_create": TypeAdapter(PlaybillAuthoringInputCreateRequest),
     "cruxible_playbill_authoring_preflight": TypeAdapter(PlaybillAuthoringPreflightRequest),
-    "cruxible_playbill_authoring_prepare_publication": TypeAdapter(PlaybillInsertionPrepareRequest),
     "cruxible_playbill_authoring_submit": TypeAdapter(PlaybillAuthoringSubmitRequest),
+    "cruxible_playbill_block_declare": TypeAdapter(PlaybillBlockDeclareRequest),
     "cruxible_playbill_block_depublish": TypeAdapter(PlaybillBlockDepublishRequest),
     "cruxible_playbill_claim_attest": None,  # shared preparation helper builds the body
     "cruxible_playbill_claim_attest_new_capture": None,  # same shared helper
@@ -1108,62 +1103,6 @@ def handle_playbill_authoring_status(
     )
 
 
-def handle_playbill_authoring_confirm_insertion(
-    instance_id: str,
-    intent_id: str,
-    observation: dict[str, Any],
-    expectation_id: str | None = None,
-) -> contracts.PlaybillInsertionConfirmResultV2:
-    request = InsertionConfirmationObservationV2.model_validate(observation)
-    return _dispatch_remote_or_local(
-        lambda client: client.confirm_playbill_authoring_insertion(
-            instance_id,
-            intent_id,
-            observation=request.model_dump(mode="json"),
-            expectation_id=expectation_id,
-        ),
-        lambda: playbill_api.playbill_authoring_confirm_insertion(
-            instance_id,
-            intent_id,
-            observation=request,
-            expectation_id=expectation_id,
-        ),
-        operation_name="cruxible_playbill_authoring_confirm_insertion",
-        local_payload={
-            "observation": request.model_dump(mode="json"),
-            "expectation_id": expectation_id,
-        },
-    )
-
-
-def handle_playbill_authoring_prepare_publication(
-    instance_id: str,
-    intent_id: str,
-    observation: dict[str, Any],
-    expectation_id: str | None = None,
-) -> contracts.PlaybillInsertionPrepareResult:
-    request = PublicationSourceObservationV2.model_validate(observation)
-    return _dispatch_remote_or_local(
-        lambda client: client.prepare_playbill_authoring_publication(
-            instance_id,
-            intent_id,
-            observation=request.model_dump(mode="json"),
-            expectation_id=expectation_id,
-        ),
-        lambda: playbill_api.playbill_authoring_prepare_publication(
-            instance_id,
-            intent_id,
-            observation=request,
-            expectation_id=expectation_id,
-        ),
-        operation_name="cruxible_playbill_authoring_prepare_publication",
-        local_payload={
-            "observation": request.model_dump(mode="json"),
-            "expectation_id": expectation_id,
-        },
-    )
-
-
 def handle_playbill_authoring_abandon_insertion(
     instance_id: str,
     intent_id: str,
@@ -1182,6 +1121,19 @@ def handle_playbill_authoring_abandon_insertion(
         ),
         operation_name="cruxible_playbill_authoring_abandon_insertion",
         local_payload={"expectation_id": expectation_id},
+    )
+
+
+def handle_playbill_block_declare(
+    instance_id: str,
+    stamp: Mapping[str, Any],
+) -> contracts.PlaybillBlockDeclareResultV1:
+    parsed = ProjectionBlockStampV1.model_validate(dict(stamp))
+    return _dispatch_remote_or_local(
+        lambda client: client.declare_playbill_block(instance_id, parsed.model_dump(mode="json")),
+        lambda: playbill_api.playbill_block_declare(instance_id, parsed),
+        operation_name="cruxible_playbill_block_declare",
+        local_payload={"stamp": parsed.model_dump(mode="json")},
     )
 
 

@@ -19,8 +19,6 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentCreateRequestV1,
     AuthoringIntentCreateRequestV2,
     AuthoringIntentCreateRequestV3,
-    InsertionConfirmRequestV2,
-    InsertionPrepareRequestV2,
 )
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequestV1,
@@ -280,6 +278,15 @@ class CruxibleClient:
             json=payload,
         )
         return self._parse_model(response, contracts.PlaybillHostResult)
+
+    def declare_playbill_block(
+        self, instance_id: str, stamp: Mapping[str, Any]
+    ) -> contracts.PlaybillBlockDeclareResultV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/blocks/declare",
+            json={"stamp": dict(stamp)},
+        )
+        return self._parse_model(response, contracts.PlaybillBlockDeclareResultV1)
 
     def depublish_playbill_block(
         self, instance_id: str, source_id: str, block_id: str
@@ -1083,40 +1090,6 @@ class CruxibleClient:
             f"/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/status"
         )
         return self._parse_model(response, contracts.PlaybillCandidateStatus)
-
-    def confirm_playbill_authoring_insertion(
-        self,
-        instance_id: str,
-        intent_id: str,
-        *,
-        observation: Mapping[str, Any],
-        expectation_id: str | None = None,
-    ) -> contracts.PlaybillInsertionConfirmResultV2:
-        request = InsertionConfirmRequestV2.model_validate(
-            {"observation": dict(observation), "expectation_id": expectation_id}
-        )
-        response = self._client.post(
-            f"/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/confirm",
-            json=request.model_dump(mode="json"),
-        )
-        return self._parse_model(response, contracts.PlaybillInsertionConfirmResultV2)
-
-    def prepare_playbill_authoring_publication(
-        self,
-        instance_id: str,
-        intent_id: str,
-        *,
-        observation: Mapping[str, Any],
-        expectation_id: str | None = None,
-    ) -> contracts.PlaybillInsertionPrepareResult:
-        request = InsertionPrepareRequestV2.model_validate(
-            {"observation": dict(observation), "expectation_id": expectation_id}
-        )
-        response = self._client.post(
-            f"/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/prepare",
-            json=request.model_dump(mode="json"),
-        )
-        return self._parse_model(response, contracts.PlaybillInsertionPrepareResult)
 
     def abandon_playbill_authoring_insertion(
         self,
