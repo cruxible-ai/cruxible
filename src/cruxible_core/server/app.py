@@ -24,6 +24,7 @@ from cruxible_client.contracts.errors import (
 from cruxible_client.contracts.temporal import ISO_8601_FORMAT_HINT
 from cruxible_core import __version__
 from cruxible_core.errors import CoreError
+from cruxible_core.runtime.execution_policy import discover_isolated_executors
 from cruxible_core.runtime.permissions import init_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.auth import token_auth_middleware
@@ -78,6 +79,16 @@ def _format_request_validation_error(error: Mapping[str, Any]) -> str:
 def create_app() -> FastAPI:
     """Create and configure the Cruxible server app."""
     get_registry()
+    # Fails CLOSED and BEFORE any route exists: a distribution that advertises
+    # an isolated executor this build cannot load leaves the shared hosted
+    # profile refusing every Provider run for a reason no caller could see, so
+    # the daemon refuses to start instead and names the entry point.
+    registrations = discover_isolated_executors()
+    if registrations:
+        _log.info(
+            "isolated_executors_registered",
+            backend_ids=[item.backend_id for item in registrations],
+        )
     manager = get_playbill_manager()
     try:
         manager.recover_provider_runtime()

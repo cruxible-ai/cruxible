@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **A daemon discovers its isolated Provider executors from what is
+  installed.** At start the daemon iterates the `cruxible.isolated_executors`
+  entry-point group and registers every executor it advertises, so the registry
+  that decides whether the shared hosted profile may run Provider code is built
+  from the packages actually present rather than from an environment variable's
+  claim. An entry point that cannot be loaded, does not implement the executor
+  seam, or collides with a backend id already registered stops the daemon with
+  a typed refusal naming the entry point, and registers nothing. `server info`
+  now reports the registered backend ids on the Provider lane; core registers
+  none.
+
 - **Reads no longer re-read what an accepted generation already proved.** An
   accepted tree, a serving projection piece's verification, the Claim read
   history index and the durable publication fold are each done once and reused

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from cruxible_client import contracts
 from cruxible_core.errors import (
     CustomerCodeExecutionUnsupportedError,
     HostedProfileUnknownError,
+    IsolatedExecutorDiscoveryError,
 )
 from cruxible_core.playbill import provider_local_runtime as runtime_module
 from cruxible_core.playbill.service import provider_seed as seed_module
@@ -18,6 +20,7 @@ from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.execution_policy import (
     ISOLATION_BACKEND_NOT_IMPLEMENTED,
     customer_code_execution_supported,
+    discover_isolated_executors,
     enforce_customer_code_execution_supported,
     register_isolated_executor,
     registered_isolated_executors,
@@ -311,3 +314,190 @@ def test_a_second_executor_cannot_silently_take_over_a_backend_id(
 
     with pytest.raises(ValueError, match="already registered"):
         register_isolated_executor(_Impostor("stub-isolation"))
+
+
+class _FakeDistribution:
+    """A real on-disk distribution advertising executors at an entry-point group.
+
+    Nothing here is a double: the files are the ones a wheel installs, and
+    discovery reads them through `importlib.metadata` exactly as it will read a
+    Cloud tenant image's executor package.
+    """
+
+    def __init__(self, root: Path, *, module: str, entry_points: dict[str, str]) -> None:
+        self.root = root
+        (root / f"{module}.py").write_text(_EXECUTOR_MODULE, encoding="utf-8")
+        dist_info = root / "fake_executor-1.0.dist-info"
+        dist_info.mkdir()
+        (dist_info / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: fake-executor\nVersion: 1.0\n",
+            encoding="utf-8",
+        )
+        rendered = "\n".join(f"{name} = {value}" for name, value in entry_points.items())
+        (dist_info / "entry_points.txt").write_text(
+            f"[{policy_module.ISOLATED_EXECUTOR_ENTRY_POINT_GROUP}]\n{rendered}\n",
+            encoding="utf-8",
+        )
+
+
+_EXECUTOR_MODULE = '''
+from cruxible_client import contracts
+
+
+class PackagedExecutor:
+    def registration(self):
+        return contracts.IsolatedExecutorRegistrationV1(
+            backend_id="packaged-isolation",
+            implementation_digest="sha256:" + "7" * 64,
+            capabilities=("process-isolation",),
+        )
+
+
+packaged = PackagedExecutor()
+
+
+class NotAnExecutor:
+    """Advertised, loadable, and missing the one method the seam requires."""
+
+
+class UnbuildableExecutor:
+    def __init__(self):
+        raise RuntimeError("the image never shipped the runtime this needs")
+
+    def registration(self):  # pragma: no cover - never constructed
+        raise AssertionError("unreachable")
+'''
+
+
+@pytest.fixture
+def empty_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(policy_module, "_REGISTERED_ISOLATED_EXECUTORS", {})
+
+
+def _install(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    entry_points: dict[str, str],
+) -> None:
+    _FakeDistribution(tmp_path, module="fake_executor_pkg", entry_points=entry_points)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+
+
+def test_a_packaged_executor_is_discovered_and_registered_at_start(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    empty_registry: None,
+) -> None:
+    """The registry is built from what is INSTALLED, never from an env string."""
+
+    _install(
+        monkeypatch,
+        tmp_path,
+        {"packaged": "fake_executor_pkg:packaged"},
+    )
+
+    registered = discover_isolated_executors()
+
+    assert [item.backend_id for item in registered] == ["packaged-isolation"]
+    assert set(registered_isolated_executors()) == {"packaged-isolation"}
+    monkeypatch.setenv(PROFILE, "shared")
+    monkeypatch.setenv(BACKEND, "packaged-isolation")
+    assert customer_code_execution_supported() is True
+
+
+def test_a_discovered_backend_id_reaches_the_server_info_provider_lane(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    empty_registry: None,
+) -> None:
+    """An operator can see which backend is doing the isolating, by id."""
+
+    _install(monkeypatch, tmp_path, {"packaged": "fake_executor_pkg:packaged"})
+    discover_isolated_executors()
+
+    lane = contracts.ProviderLaneStatusV1(
+        state="available",
+        code=None,
+        detail=None,
+        isolated_executors=tuple(sorted(registered_isolated_executors())),
+    )
+
+    assert lane.isolated_executors == ("packaged-isolation",)
+
+
+def test_an_entry_point_that_cannot_be_imported_refuses_typed_and_registers_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    empty_registry: None,
+) -> None:
+    """Fail closed: a broken advertisement stops the daemon, naming itself."""
+
+    _install(monkeypatch, tmp_path, {"broken": "fake_executor_pkg:missing_attribute"})
+
+    with pytest.raises(IsolatedExecutorDiscoveryError) as excinfo:
+        discover_isolated_executors()
+
+    assert excinfo.value.entry_point == "fake_executor_pkg:missing_attribute"
+    assert excinfo.value.group == policy_module.ISOLATED_EXECUTOR_ENTRY_POINT_GROUP
+    assert "repair:" in str(excinfo.value)
+    assert registered_isolated_executors() == {}
+
+
+def test_an_object_that_is_not_an_executor_refuses_typed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    empty_registry: None,
+) -> None:
+    _install(monkeypatch, tmp_path, {"wrong": "fake_executor_pkg:NotAnExecutor"})
+
+    with pytest.raises(IsolatedExecutorDiscoveryError) as excinfo:
+        discover_isolated_executors()
+
+    assert "IsolatedExecutor protocol" in str(excinfo.value)
+    assert registered_isolated_executors() == {}
+
+
+def test_an_executor_that_cannot_be_constructed_refuses_typed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    empty_registry: None,
+) -> None:
+    _install(monkeypatch, tmp_path, {"unbuildable": "fake_executor_pkg:UnbuildableExecutor"})
+
+    with pytest.raises(IsolatedExecutorDiscoveryError) as excinfo:
+        discover_isolated_executors()
+
+    assert "RuntimeError" in str(excinfo.value)
+    assert registered_isolated_executors() == {}
+
+
+def test_one_broken_advertisement_stops_the_whole_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    empty_registry: None,
+) -> None:
+    """A partly-registered daemon is the state fail-closed exists to prevent."""
+
+    _install(
+        monkeypatch,
+        tmp_path,
+        {
+            "aa-broken": "fake_executor_pkg:missing_attribute",
+            "zz-packaged": "fake_executor_pkg:packaged",
+        },
+    )
+
+    with pytest.raises(IsolatedExecutorDiscoveryError):
+        discover_isolated_executors()
+
+    assert registered_isolated_executors() == {}
+
+
+def test_a_daemon_with_no_advertised_executor_registers_nothing(
+    empty_registry: None,
+) -> None:
+    """Core ships no executor; discovery over an empty group is a no-op."""
+
+    assert discover_isolated_executors() == ()
+    assert registered_isolated_executors() == {}

@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from importlib.metadata import EntryPoint, entry_points
 from typing import Protocol, runtime_checkable
 
 from cruxible_client.contracts import IsolatedExecutorRegistrationV1
 from cruxible_core.errors import (
     CustomerCodeExecutionUnsupportedError,
     HostedProfileUnknownError,
+    IsolatedExecutorDiscoveryError,
 )
 
 SHARED_HOSTED_SERVER_PROFILE = "shared"
@@ -37,6 +39,13 @@ HOSTED_PROFILE_UNKNOWN = "hosted_profile_unknown"
 KNOWN_HOSTED_SERVER_PROFILES = frozenset({SHARED_HOSTED_SERVER_PROFILE})
 
 ISOLATION_BACKEND_NOT_IMPLEMENTED = "isolation backend not implemented"
+
+#: The entry-point group an out-of-tree executor distribution advertises itself
+#: under. Pinned by the Cloud control plane, which ships its executor in the
+#: tenant image: the daemon iterates this group once at start, and a
+#: distribution that is installed but does not advertise here is not registered,
+#: because a backend nothing declares is a backend nothing audited.
+ISOLATED_EXECUTOR_ENTRY_POINT_GROUP = "cruxible.isolated_executors"
 
 
 @runtime_checkable
@@ -79,6 +88,67 @@ def registered_isolated_executors() -> Mapping[str, IsolatedExecutorRegistration
     """Return every isolated executor registered in this process, by backend id."""
 
     return dict(_REGISTERED_ISOLATED_EXECUTORS)
+
+
+def discover_isolated_executors(
+    *,
+    group: str = ISOLATED_EXECUTOR_ENTRY_POINT_GROUP,
+) -> tuple[IsolatedExecutorRegistrationV1, ...]:
+    """Register every isolated executor the installed distributions advertise.
+
+    Called once at daemon start. Each entry point is loaded and handed to
+    ``register_isolated_executor``, so the registry that decides the shared
+    profile's execution policy is built from what is INSTALLED rather than from
+    what an environment variable claims. Loading is the only discovery step:
+    an object that is not an ``IsolatedExecutor``, one whose registration is
+    malformed, and one that collides with an already-registered backend id are
+    all the same failure -- the daemon refuses to start, typed, naming the
+    entry point, and the backend it advertised stays unregistered.
+    """
+
+    registered: list[IsolatedExecutorRegistrationV1] = []
+    for entry_point in sorted(
+        entry_points(group=group),
+        key=lambda item: item.name.encode("utf-8"),
+    ):
+        registered.append(_register_entry_point(entry_point, group=group))
+    return tuple(registered)
+
+
+def _register_entry_point(
+    entry_point: EntryPoint,
+    *,
+    group: str,
+) -> IsolatedExecutorRegistrationV1:
+    """Load one advertised executor and register it, or refuse typed."""
+
+    try:
+        loaded = entry_point.load()
+        # An entry point may advertise the executor itself or the class that
+        # builds it; a class is constructed with no arguments, because every
+        # input an executor needs is its own package's business, never the
+        # daemon's.
+        executor = loaded() if isinstance(loaded, type) else loaded
+    except Exception as exc:  # noqa: BLE001 - any load failure is one refusal
+        raise IsolatedExecutorDiscoveryError(
+            entry_point.value,
+            group,
+            f"{type(exc).__name__}: {exc}",
+        ) from exc
+    if not isinstance(executor, IsolatedExecutor):
+        raise IsolatedExecutorDiscoveryError(
+            entry_point.value,
+            group,
+            f"{type(executor).__name__} does not implement the IsolatedExecutor protocol",
+        )
+    try:
+        return register_isolated_executor(executor)
+    except Exception as exc:  # noqa: BLE001 - registration refusals are one refusal
+        raise IsolatedExecutorDiscoveryError(
+            entry_point.value,
+            group,
+            f"{type(exc).__name__}: {exc}",
+        ) from exc
 
 
 def hosted_server_profile(environ: Mapping[str, str] | None = None) -> str | None:

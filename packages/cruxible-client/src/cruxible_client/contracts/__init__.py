@@ -273,6 +273,11 @@ class ProviderLaneStatusV1(BaseModel):
     state: Literal["available", "unavailable"]
     code: ProviderLaneUnavailableCodeV1 | None
     detail: str | None
+    # Backend ids of the isolated executors this daemon registered at start, from
+    # the `cruxible.isolated_executors` entry-point group. Empty is the ordinary
+    # answer and the honest one: core ships no executor, so a hosted profile
+    # that names a backend nothing registered can be seen to be naming nothing.
+    isolated_executors: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def _state_matches_reason(self) -> ProviderLaneStatusV1:
@@ -280,6 +285,10 @@ class ProviderLaneStatusV1(BaseModel):
             raise ValueError("available Provider lane cannot carry a refusal code")
         if self.state == "unavailable" and (self.code is None or self.detail is None):
             raise ValueError("unavailable Provider lane requires a typed code and detail")
+        if self.isolated_executors != tuple(
+            sorted(set(self.isolated_executors), key=lambda item: item.encode("utf-8"))
+        ):
+            raise ValueError("Provider lane isolated executor ids must be sorted and unique")
         return self
 
 

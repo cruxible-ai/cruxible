@@ -23,6 +23,7 @@ from cruxible_core.playbill.compiler import (
     current_compiler_coordinate,
 )
 from cruxible_core.playbill.workspace_advertisement import workspace_git_object_format
+from cruxible_core.runtime.execution_policy import registered_isolated_executors
 from cruxible_core.runtime.permissions import (
     check_permission,
     current_request_instance_scope,
@@ -261,6 +262,9 @@ def server_info() -> contracts.ServerInfoResult:
             state=lane_state,
             code=lane_code,
             detail=lane_detail,
+            isolated_executors=tuple(
+                sorted(registered_isolated_executors(), key=lambda item: item.encode("utf-8"))
+            ),
         ),
         compiler_coordinate=current.rule_digest,
         compiler_revision=COMPILER_REVISION_LABELS[current],

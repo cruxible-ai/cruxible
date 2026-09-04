@@ -338,6 +338,29 @@ class HostedProfileUnknownError(ExecutionError):
         )
 
 
+class IsolatedExecutorDiscoveryError(ExecutionError):
+    """An advertised isolated executor could not be loaded or registered.
+
+    Fails CLOSED at daemon start rather than at the first Provider run: an
+    operator who installed an executor package that this build cannot load has
+    a daemon whose execution policy it cannot establish, and starting anyway
+    would leave the shared profile refusing for a reason nobody can see. The
+    broken backend stays unregistered either way.
+    """
+
+    error_code = "isolated_executor_discovery_failed"
+
+    def __init__(self, entry_point: str, group: str, detail: str) -> None:
+        self.entry_point = entry_point
+        self.group = group
+        self.detail = detail
+        super().__init__(
+            f"Isolated executor entry point {entry_point!r} in group {group!r} could not be "
+            f"registered: {detail}; repair: remove or repair the distribution that "
+            "advertises it, then start the daemon again."
+        )
+
+
 class TransportError(ExecutionError):
     """Error during state release transport operations."""
 
