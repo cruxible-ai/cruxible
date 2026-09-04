@@ -535,14 +535,20 @@ class World:
             at=_api_coordinate(self._coordinate),
         )
         for view in listing.subjects:
-            envelope = view.envelope
-            subject_kind = envelope.get("subject_kind")
-            subject_id = envelope.get("subject_id")
-            if not isinstance(subject_kind, str) or not isinstance(subject_id, str):
+            facts = {
+                str(fact.get("schema_id")): fact.get("value")
+                for fact in view.facts
+                if isinstance(fact, Mapping)
+            }
+            address = _subject_address_of(view.envelope, facts)
+            if address is None:
                 continue
-            lifecycle = envelope.get("lifecycle")
-            if isinstance(lifecycle, Mapping) and lifecycle.get("state") == "retired":
-                continue
+            lifecycle = facts.get("playbill.subject.lifecycle")
+            if isinstance(lifecycle, Mapping):
+                state = lifecycle.get("lifecycle")
+                if isinstance(state, Mapping) and state.get("state") == "retired":
+                    continue
+            subject_kind, subject_id = address
             self._subject_cache.setdefault(subject_kind, {})[subject_id] = WorldSubject(
                 address=f"{subject_kind}/{subject_id}",
                 coordinate=self._coordinate,
@@ -597,6 +603,28 @@ class World:
             f"<World at {self._coordinate.git_oid} "
             f"kinds={len(self.kinds)} predicates={len(self.predicates)}>"
         )
+
+
+def _subject_address_of(
+    envelope: Mapping[str, object],
+    facts: Mapping[str, object],
+) -> tuple[str, str] | None:
+    """Read one Subject's kind and ID from its projection, or None if unreadable."""
+
+    identity_fact = facts.get("playbill.subject.identity")
+    if isinstance(identity_fact, Mapping):
+        subject_kind = identity_fact.get("subject_kind")
+        subject_id = identity_fact.get("subject_id")
+        if isinstance(subject_kind, str) and isinstance(subject_id, str):
+            return subject_kind, subject_id
+    identity = envelope.get("identity")
+    if not isinstance(identity, str):
+        return None
+    name = identity.removeprefix("Subject:")
+    if name.count("/") != 1:
+        return None
+    subject_kind, subject_id = name.split("/", 1)
+    return subject_kind, subject_id
 
 
 def _insert(root: _Node, path: str) -> _Node:
