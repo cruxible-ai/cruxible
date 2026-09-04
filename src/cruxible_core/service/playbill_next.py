@@ -161,6 +161,9 @@ NextRepairOperation = Literal[
     "hand_edit",
 ]
 
+# A clipped coverage scan discards every proof for its source, so each of that
+# source's citations reads unobserved for one shared reason.
+_COVERAGE_CLIP_NOTES = frozenset({"coverage_card_limit_exceeded", "coverage_proof_limit_exceeded"})
 _SEVERITY_RANK: dict[NextSeverity, int] = {"blocking": 0, "repair": 1, "warning": 2}
 _ALL_DOMAINS: tuple[NextDomain, ...] = (
     "accepted_state",
@@ -2529,11 +2532,28 @@ def _source_citation_item(
     )
 
 
-def _citation_unobserved_item(commitment: _CitationCommitment) -> PlaybillNextItemV1:
+def _citation_unobserved_item(
+    commitment: _CitationCommitment,
+    *,
+    clipped_scan_notes: tuple[str, ...] = (),
+    collapsed_citation_count: int = 0,
+) -> PlaybillNextItemV1:
     source_id = commitment.source_id
     assert source_id is not None
     lineage_detail = (
         {} if commitment.lineage_note is None else {"lineage_note": commitment.lineage_note}
+    )
+    # A source whose coverage scan was clipped observes none of its citations,
+    # so every one of them reads unobserved for one reason. Report the clip
+    # once, naming the note and how many citations it covers, instead of
+    # hundreds of look-alike rows an agent cannot tell apart.
+    clip_detail: dict[str, object] = (
+        {}
+        if not clipped_scan_notes
+        else {
+            "clipped_scan_notes": list(clipped_scan_notes),
+            "collapsed_citation_count": collapsed_citation_count,
+        }
     )
     return _item(
         severity="warning",
@@ -2545,6 +2565,7 @@ def _citation_unobserved_item(commitment: _CitationCommitment) -> PlaybillNextIt
             "source_id": source_id,
             "expected_source_digest": commitment.source_digest,
             **lineage_detail,
+            **clip_detail,
         },
         repair=PlaybillNextRepairV1(
             operation="playbill.authoring.bind",
@@ -2721,6 +2742,16 @@ def _workspace_items(
             coordinate=coordinate,
             evaluation_time=evaluation_time,
         )
+        clipped_notes_by_source = {
+            source.source_id: notes
+            for source in observation.source_observations
+            if isinstance(source, PlaybillNextSourceObservationV4)
+            for notes in (
+                tuple(note for note in source.scan_notes if note in _COVERAGE_CLIP_NOTES),
+            )
+            if notes
+        }
+        clipped_commitments: dict[str, list[_CitationCommitment]] = defaultdict(list)
         for citation_id in sorted(commitments, key=lambda item: item.encode("ascii")):
             commitment = commitments[citation_id]
             if commitment.source_id is None or commitment.source_digest is None:
@@ -2731,8 +2762,24 @@ def _workspace_items(
                 observed=observed.get(commitment.source_id),
                 coordinate=coordinate,
             )
-            if item is not None:
-                items.append(item)
+            if item is None:
+                continue
+            if (
+                item.reason == "citation_source_unobserved"
+                and commitment.source_id in clipped_notes_by_source
+            ):
+                clipped_commitments[commitment.source_id].append(commitment)
+                continue
+            items.append(item)
+        for source_id in sorted(clipped_commitments, key=lambda item: item.encode("utf-8")):
+            group = clipped_commitments[source_id]
+            items.append(
+                _citation_unobserved_item(
+                    group[0],
+                    clipped_scan_notes=clipped_notes_by_source[source_id],
+                    collapsed_citation_count=len(group),
+                )
+            )
     projection = observation.projection_coverage
     if (
         projection is not None
