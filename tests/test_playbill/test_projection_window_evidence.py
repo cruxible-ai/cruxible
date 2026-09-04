@@ -400,3 +400,149 @@ def test_lowered_claims_keep_citing_the_selection_not_the_page(tmp_path: Path) -
     (span,) = mapping.spans
     assert span.content_digest == _digest(b"status: ready")
     assert (span.start_byte, span.end_byte) == (0, len(b"status: ready"))
+
+
+def test_a_claim_accepted_before_this_law_stays_retirable_and_revisable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The law is forward-looking: it must not strand what it did not admit.
+
+    A copy-role Claim citing bytes inside a stamped window was admissible
+    before this batch. Both exits from such a Claim -- revising it, retiring
+    it -- are themselves Claim successions the same gate reads, so without a
+    grandfathering rule the artifact would be permanently unretirable and
+    unrevisable. The Captures a successor inherits unchanged are the exemption;
+    a Capture cited a way its predecessor did not cite it is new evidence and
+    is refused like any other.
+    """
+
+    from cruxible_client.contracts import claims as claims_contract
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.claims import (
+        build_claim_citation,
+        claim_artifact_digest,
+        render_claim,
+    )
+    from cruxible_core.playbill.claim_retirement import service_retire_claim
+    from tests.test_playbill.test_claim_citations import _activate
+    from tests.test_playbill.test_claim_retirement import _activate as _activate_retirement
+    from tests.test_playbill.test_claim_retirement import _request as _retirement_request
+
+    instance, owner = initialize_local(tmp_path)
+    base = instance.accepted_coordinate()
+    contract = foreign_source_capture_contract(PAGE_SOURCE_IDENTITY)
+    page = _page(source_id=PAGE_SOURCE_IDENTITY)
+    claim_type = _type_naming(contract)
+    inside = _claim_citing(
+        _page_span_capture(instance, base, page, anchor=b"the block says"),
+        contract=contract,
+        claim_type=claim_type,
+        role="copy",
+    )
+
+    # Admit it the way the commit before this batch did: no window gate at all.
+    monkeypatch.setattr(claims_contract, "projection_window_cited", lambda *_a, **_k: None)
+    admitted = _submit(
+        instance,
+        _candidate_tree(instance, base, contract, claim_type, inside),
+        base.git_oid,
+        "pre-law-window-claim",
+        "2026-08-20T12:00:00.000000Z",
+    )
+    assert admitted.evaluation.diagnostics == (), admitted.evaluation.diagnostics
+    assert _claim_law_evidence(admitted.candidate).initial_verdict == "supported"
+    _activate(
+        instance,
+        owner,
+        admitted.candidate,
+        admitted.evaluation.evaluated_tree_oid,
+        sequence=1,
+    )
+    monkeypatch.undo()
+
+    # The gate is live again, and a revision that inherits the Capture set
+    # unchanged passes it.
+    accepted = instance.accepted_coordinate()
+    revision = inside.model_copy(
+        update={
+            "backing": inside.backing.model_copy(
+                update={
+                    "referent_context": inside.backing.referent_context.model_copy(
+                        update={"observed_at": datetime(2026, 8, 20, 12, 2, tzinfo=UTC)}
+                    )
+                }
+            ),
+            "lifecycle": ArtifactLifecycle(predecessor_digest=claim_artifact_digest(inside).tagged),
+        }
+    )
+    revised = _submit(
+        instance,
+        {
+            **instance.tree_at(accepted.git_oid),
+            claim_path(inside.identity.name): (render_claim(revision)),
+        },
+        accepted.git_oid,
+        "window-claim-revision",
+        "2026-08-20T12:02:00.000000Z",
+    )
+    assert revised.evaluation.diagnostics == (), revised.evaluation.diagnostics
+    _activate(
+        instance,
+        owner,
+        revised.candidate,
+        revised.evaluation.evaluated_tree_oid,
+        sequence=2,
+    )
+
+    # A successor that cites the same Capture a NEW way is new evidence.
+    revised_coordinate = instance.accepted_coordinate()
+    escalated = revision.model_copy(
+        update={
+            "backing": revision.backing.model_copy(
+                update={
+                    "citations": tuple(
+                        sorted(
+                            (
+                                *revision.backing.citations,
+                                build_claim_citation(
+                                    revision.identity,
+                                    capture_digest=revision.backing.capture_digests[0],
+                                    role="evidence",
+                                    origin="independent",
+                                ),
+                            ),
+                            key=lambda item: item.citation_id,
+                        )
+                    )
+                }
+            ),
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=claim_artifact_digest(revision).tagged
+            ),
+        }
+    )
+    refused = _submit(
+        instance,
+        {
+            **instance.tree_at(revised_coordinate.git_oid),
+            claim_path(inside.identity.name): render_claim(escalated),
+        },
+        revised_coordinate.git_oid,
+        "window-claim-escalation",
+        "2026-08-20T12:03:00.000000Z",
+    )
+    assert EVIDENCE_CODE in {item.code for item in refused.evaluation.diagnostics}
+
+    # And the exit stays open: the retirement of the accepted Claim is admitted.
+    retirement = service_retire_claim(
+        instance,
+        claim_id=inside.identity.name,
+        request=_retirement_request(instance, mode="submit"),
+        actor=AuthenticatedActor(actor_id="owner"),
+    )
+    assert retirement.proposal is not None
+    assert retirement.proposal.proposal.candidate is not None
+    assert retirement.proposal.proposal.evaluation.diagnostics == ()
+    _activate_retirement(instance, owner, retirement)
+    instance.refresh()

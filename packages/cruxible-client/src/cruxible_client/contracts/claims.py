@@ -1158,6 +1158,57 @@ def resolve_cited_source_window(
     return None
 
 
+def _citation_ids_by_capture(claim: ClaimArtifactAny) -> dict[str, frozenset[str]]:
+    """Every explicit association a Claim holds, grouped by the Capture it names."""
+
+    grouped: dict[str, set[str]] = {}
+    if isinstance(claim.backing, ClaimBackingV2):
+        for citation in claim.backing.citations:
+            grouped.setdefault(citation.capture_digest, set()).add(citation.citation_id)
+    return {digest: frozenset(ids) for digest, ids in grouped.items()}
+
+
+def inherited_capture_digests(
+    claim: ClaimArtifactAny,
+    *,
+    path: str,
+    predecessor: AcceptedClaim | None,
+) -> frozenset[str]:
+    """Captures a successor inherits unchanged from its exact accepted predecessor.
+
+    The projection-window law is forward-looking. It refuses NEW evidence taken
+    from a projection block; it must not strand state an instance already
+    accepted, because the only exits from a Claim -- retiring it, revising it --
+    are themselves Claim successions the same gate would refuse, leaving the
+    artifact unretirable and unrevisable. A successor is exempt for exactly the
+    Captures it inherits: the Capture was already in the predecessor's backing
+    AND the successor adds no association to it the predecessor did not hold. A
+    Capture cited a new way, or cited for the first time, is new evidence and is
+    gated like any other.
+
+    A retirement carries its predecessor's backing verbatim by construction
+    (``_is_attributed_retirement``), so it is exempt outright.
+    """
+
+    if predecessor is None or predecessor.path != path:
+        return frozenset()
+    if claim.lifecycle.predecessor_digest != predecessor.artifact_digest:
+        return frozenset()
+    previous = predecessor.claim
+    accepted_captures = frozenset(previous.backing.capture_digests)
+    if claim.lifecycle.state == "retired":
+        return accepted_captures
+    previous_citations = _citation_ids_by_capture(previous)
+    current_citations = _citation_ids_by_capture(claim)
+    return frozenset(
+        digest
+        for digest in claim.backing.capture_digests
+        if digest in accepted_captures
+        and current_citations.get(digest, frozenset())
+        <= previous_citations.get(digest, frozenset())
+    )
+
+
 def projection_window_cited(
     envelope: CaptureEnvelopeAny,
     *,
@@ -2000,6 +2051,7 @@ def evaluate_claim_law(
     capture_contract_pin_digests = {
         pin.artifact_digest for pin in claim.pins if pin.role == "capture-contract"
     }
+    inherited_captures = inherited_capture_digests(claim, path=path, predecessor=predecessor)
     for capture_digest_value in claim.backing.capture_digests:
         envelope = None
         resolved_contract = None
@@ -2050,7 +2102,14 @@ def evaluate_claim_law(
         # Evidence never comes from a projection window, whatever the role or
         # origin of the citation. The cited capture's own bytes are the
         # manifest of its windows; the client guard is only the fast path.
-        cited = projection_window_cited(envelope, store=capture_store)
+        # A Capture inherited unchanged from the accepted predecessor is not
+        # new evidence, so the law never strands what it did not admit: the
+        # retirement and the revision of an already-accepted Claim stay open.
+        cited = (
+            None
+            if capture_digest_value in inherited_captures
+            else projection_window_cited(envelope, store=capture_store)
+        )
         if cited is not None:
             resolved, window = cited
             return _diagnostic(
