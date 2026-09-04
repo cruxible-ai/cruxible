@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import faulthandler
 import os
 import sqlite3
 import sys
@@ -278,6 +279,16 @@ def run_server(
 
 def _serve(resolved_socket: str | None) -> None:
     """Start uvicorn under an already-held state-root lock."""
+    # A daemon death is never silent. A fatal fault -- a segfault, an abort, a
+    # bus error, a stack overflow -- otherwise takes the process out between two
+    # access-log lines, leaving the last request logged without a response and
+    # nothing at all about the exit; that is exactly how a large compile looked
+    # when it killed a daemon hosting two instances. faulthandler writes the
+    # faulting traceback to stderr, which is where the daemon's log already is.
+    # A SIGKILL from the kernel's OOM killer still cannot be observed from
+    # inside the process; the MemoryError path in authoring preflight is what
+    # covers the allocation failure this build can see.
+    faulthandler.enable()
     # Resolve and freeze the process ceiling before registry/config access or
     # uvicorn startup. Unknown names and attempts to reinitialize this process
     # at a different tier therefore fail closed before the daemon serves.

@@ -188,6 +188,17 @@ file, tag `cruxible-proposal-receive-operational-config-v1`, with one entry:
 An absent file is the default. A file that exists and cannot be read as this
 shape refuses loudly rather than silently restoring the default bound.
 
+The admitted limits a caller reads back carry two further numbers, which are
+ADVERTISEMENTS rather than receive gates: `max_change_set_record_bytes`
+(`4194304`, the per-blob ceiling the ledger's own record of a change set is
+written under) and `change_set_record_bytes_per_member` (`7200`, that record's
+measured cost per member). Their quotient -- 582 members at the defaults -- is
+the largest change set that can be settled, far below `max_changed_members`,
+because the two bound different things: one is what receive accepts, the other
+is what the ledger can record. An intent over that bound is refused at
+preflight, typed `playbill.authoring.change_set_record_too_large`, naming the
+member count that fits, before anything is compiled.
+
 ## playbill host
 
 ~~~text
@@ -486,7 +497,9 @@ operator form of the same law and builds its candidate with the same code.
 
 There is no semantic member ceiling; how many
 changed members one daemon will receive in a single submission is the operator's
-`max_changed_members` bound in `daemon/proposal-receive.json`.
+`max_changed_members` bound in `daemon/proposal-receive.json`. Settling a change
+set additionally requires it to fit under the advertised change-set record
+ceiling described there, which preflight checks before lowering anything.
 
 An intent that publishes more than one Claim owns one publication expectation
 per publishing member, so `prepare-publication`, `confirm-insertion` and

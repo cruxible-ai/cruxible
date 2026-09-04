@@ -95,6 +95,17 @@ class AuthenticatedActor(_StrictProposalModel):
         return value
 
 
+#: Bytes ONE change-set member costs inside the ledger's own record of the
+#: change set. The record holds one ``members`` entry and one ``law_evidence``
+#: entry per member plus the candidate's scope, and it holds digests and paths
+#: rather than evidence: a 1,002-member record measured 7,046,087 bytes on one
+#: corpus and 7,046,087 bytes -- identical to the byte -- on a second carrying a
+#: third of the evidence, i.e. 7,032 bytes per member either way. This is that
+#: measurement rounded up, so the projection this bound is computed from is
+#: never smaller than the record it predicts.
+CHANGE_SET_RECORD_BYTES_PER_MEMBER = 7_200
+
+
 class ProposalReceiveLimits(_StrictProposalModel):
     """Every bound proposal receive enforces before a single member is parsed.
 
@@ -106,6 +117,17 @@ class ProposalReceiveLimits(_StrictProposalModel):
     change, how large a single member may be, and how deep a member path may
     nest -- so an oversized submission is refused on cheap metadata instead of
     after parsing.
+
+    The last two are ADVERTISEMENTS rather than receive gates, and they are here
+    because this is the object a caller reads to learn what a submission may
+    carry. The ledger writes its record OF a change set as one blob, measured
+    against the per-blob ceiling; a set that satisfies every receive bound above
+    can still exceed it, which used to be discovered only at activation, after
+    the compile. Advertising the ceiling and the per-member cost next to the
+    member budget lets a caller compute the member count that fits before
+    authoring anything -- and the fact that it is far below `max_changed_members`
+    is the point, not a contradiction: one is what receive accepts, the other is
+    what the ledger can record.
     """
 
     max_files: int = Field(default=250_000, ge=1, le=1_000_000)
@@ -113,6 +135,26 @@ class ProposalReceiveLimits(_StrictProposalModel):
     max_file_bytes: int = Field(default=8 * 1024 * 1024, ge=1, le=2**40)
     max_total_bytes: int = Field(default=512 * 1024 * 1024, ge=1, le=2**44)
     max_path_depth: int = Field(default=8, ge=1, le=64)
+    max_change_set_record_bytes: int = Field(default=4 * 1024 * 1024, ge=1, le=2**40)
+    change_set_record_bytes_per_member: int = Field(
+        default=CHANGE_SET_RECORD_BYTES_PER_MEMBER,
+        ge=1,
+        le=2**20,
+    )
+
+    @property
+    def max_change_set_members(self) -> int:
+        """Members that fit under the record ceiling, at the measured cost."""
+
+        return max(
+            1,
+            self.max_change_set_record_bytes // self.change_set_record_bytes_per_member,
+        )
+
+    def projected_change_set_record_bytes(self, members: int) -> int:
+        """Project the record size a change set of *members* members will write."""
+
+        return members * self.change_set_record_bytes_per_member
 
 
 class ProposalAdmissionRequest(_StrictProposalModel):
@@ -322,6 +364,7 @@ __all__ = [
     "ProposalAdmissionRecord",
     "ProposalAdmissionRequest",
     "ProposalEvaluationRecord",
+    "CHANGE_SET_RECORD_BYTES_PER_MEMBER",
     "ProposalReceiveLimits",
     "ProposalResult",
     "ProposalTransportProtocol",

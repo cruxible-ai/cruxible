@@ -6,6 +6,7 @@ import base64
 import hashlib
 import itertools
 import json
+import os
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -54,9 +55,13 @@ from cruxible_client.contracts.claims import (
 from cruxible_client.contracts.declared_blocks import parse_projection_blocks
 from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.proposal_models import ProposalReceiveLimits
+from cruxible_client.contracts.proposal_models import (
+    CHANGE_SET_RECORD_BYTES_PER_MEMBER,
+    ProposalReceiveLimits,
+)
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
+from cruxible_core.playbill.authoring import preflight as preflight_module
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.authoring.insertions import PublicationAnchorStale
 from cruxible_core.playbill.authoring.lowering import AuthoringLoweringError, lower_authoring
@@ -1396,3 +1401,159 @@ def test_a_retirement_member_spells_its_claim_ref_the_way_a_claim_does(
     assert again.intent_id == first.intent_id
     assert again.create_fingerprint == first.create_fingerprint
     assert again.payload_digest == first.payload_digest
+
+
+def test_the_advertised_record_ceiling_is_the_measured_one() -> None:
+    """The advertised ceiling and per-member cost agree with card 110's reading.
+
+    The reading: a 1,002-member change-set record measured 7,046,087 bytes --
+    the same to the byte on a corpus carrying a third of the evidence, because
+    the record holds digests and paths, not evidence. That is 7,032 bytes per
+    member, so the 4 MiB per-blob ceiling fits a few hundred members and not a
+    few thousand. A build whose advertised numbers stopped matching that would
+    be advertising a ceiling nobody measured.
+    """
+
+    limits = ProposalReceiveLimits()
+
+    assert limits.max_change_set_record_bytes == 4 * 1024 * 1024
+    assert limits.change_set_record_bytes_per_member >= 7_046_087 // 1_002
+    assert limits.max_change_set_members == 582
+    assert limits.projected_change_set_record_bytes(1_002) >= 7_046_087
+    # Advertised next to the member and byte budgets, and deliberately far below
+    # the changed-member budget: receive would take this set, the ledger cannot.
+    assert limits.max_change_set_members < limits.max_changed_members
+
+
+def test_a_thousand_member_change_set_refuses_before_it_is_compiled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Card 106 + 110: the refusal arrives before lowering, naming the limit.
+
+    The durability acceptance for a 1,000-member set is that it either
+    completes or refuses typed BEFORE compiling, and that the process survives
+    either way. Lowering is the step that built the whole candidate tree in
+    memory and took a daemon out; this asserts it is never entered, so there is
+    no allocation to survive rather than a larger one that happened to fit.
+    """
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    payload = _change_set(
+        *(
+            SubjectAuthoringPayloadV1(subject=_shell(f"wi-bulk-{index:04d}"))
+            for index in range(1_000)
+        )
+    )
+    intent = coordinator.create(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    def _never(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("a set over the record ceiling was compiled anyway")
+
+    monkeypatch.setattr(preflight_module, "lower_authoring", _never)
+    pid_before = os.getpid()
+
+    result = coordinator.preflight(intent.intent_id, actor=actor)
+
+    assert os.getpid() == pid_before
+    assert result.verdict == "refused"
+    diagnostic = next(
+        item
+        for item in result.frontier.diagnostics
+        if item.code == "playbill.authoring.change_set_record_too_large"
+    )
+    limits = ProposalReceiveLimits()
+    # The refusal names the measured limit, in members and in bytes, and the
+    # size this set would have written.
+    assert str(limits.max_change_set_members) in diagnostic.message
+    assert str(limits.max_change_set_record_bytes) in diagnostic.message
+    assert str(limits.projected_change_set_record_bytes(1_000)) in diagnostic.message
+    assert "1000 members" in diagnostic.message
+    assert diagnostic.repairs[0].replacement == {
+        "authored_members": 1_000,
+        "max_change_set_members": limits.max_change_set_members,
+        "max_change_set_record_bytes": limits.max_change_set_record_bytes,
+        "projected_change_set_record_bytes": limits.projected_change_set_record_bytes(1_000),
+    }
+    assert [item.blocked_by for item in result.frontier.blocked_checks] == [
+        ("playbill.authoring.change_set_record_too_large",)
+    ]
+
+
+def test_a_set_at_the_record_ceiling_still_compiles(tmp_path: Path) -> None:
+    """The bound refuses the sets that cannot activate, and only those."""
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    per_member = CHANGE_SET_RECORD_BYTES_PER_MEMBER
+    instance.bind_receive_limits(ProposalReceiveLimits(max_change_set_record_bytes=3 * per_member))
+    assert instance.proposal_service().receive_limits.max_change_set_members == 3
+    payload = _change_set(
+        SubjectAuthoringPayloadV1(subject=_shell("wi-2")),
+        SubjectAuthoringPayloadV1(subject=_shell("wi-3")),
+        _claim(subject_id="wi-2", value="ready"),
+    )
+    intent = coordinator.create(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    assert coordinator.preflight(intent.intent_id, actor=actor).verdict == "passed"
+
+    instance.bind_receive_limits(ProposalReceiveLimits(max_change_set_record_bytes=2 * per_member))
+    assert instance.proposal_service().receive_limits.max_change_set_members == 2
+    refused = coordinator.preflight(intent.intent_id, actor=actor)
+
+    assert refused.verdict == "refused"
+    assert {item.code for item in refused.frontier.diagnostics} == {
+        "playbill.authoring.change_set_record_too_large"
+    }
+
+
+def test_a_compile_that_exhausts_memory_refuses_typed_instead_of_propagating(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Card 106: the allocation failure the process CAN see is never untyped."""
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    payload = _change_set(
+        SubjectAuthoringPayloadV1(subject=_shell("wi-2")),
+        _claim(subject_id="wi-2", value="ready"),
+    )
+    intent = coordinator.create(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    def _exhausted(*_args: object, **_kwargs: object) -> object:
+        raise MemoryError()
+
+    monkeypatch.setattr(preflight_module, "lower_authoring", _exhausted)
+    pid_before = os.getpid()
+
+    result = coordinator.preflight(intent.intent_id, actor=actor)
+
+    assert os.getpid() == pid_before
+    assert result.verdict == "refused"
+    diagnostic = next(
+        item
+        for item in result.frontier.diagnostics
+        if item.code == "playbill.authoring.compile_budget_exceeded"
+    )
+    assert diagnostic.owner == "daemon"
+    assert str(ProposalReceiveLimits().max_change_set_members) in diagnostic.message

@@ -9,6 +9,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
+import structlog
+
 from cruxible_client.contracts.authoring.models import (
     AUTHORING_CANDIDATE_TREE_DIGEST_DOMAIN,
     AUTHORING_INSTANCE_DESCRIPTOR_DIGEST_DOMAIN,
@@ -57,6 +59,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_artifact_digest,
     procedure_path,
 )
+from cruxible_client.contracts.proposal_models import ProposalReceiveLimits
 from cruxible_client.contracts.query.definitions import (
     parse_query_definition,
     query_definition_digest,
@@ -86,6 +89,11 @@ class ComputedPreflight:
     evaluated_tree: dict[str, bytes]
     evaluation: CandidateEvaluation | None
 
+
+_log = structlog.get_logger("cruxible.playbill.authoring.preflight")
+
+CHANGE_SET_RECORD_TOO_LARGE = "playbill.authoring.change_set_record_too_large"
+COMPILE_BUDGET_EXCEEDED = "playbill.authoring.compile_budget_exceeded"
 
 _PAYLOAD_PATH_PART_RE = re.compile(r"([^.\[\]]+)|\[([0-9]+)\]")
 
@@ -604,6 +612,54 @@ def _claim_surface_diagnostics(
     return tuple(diagnostics)
 
 
+def _authored_member_count(payload: AuthoringPayloadV1) -> int:
+    """Count the members this intent authors, before anything is lowered."""
+
+    if isinstance(payload, ChangeSetAuthoringPayloadV1):
+        return len(payload.members)
+    return 1
+
+
+def _record_ceiling_diagnostic(
+    *,
+    members: int,
+    limits: ProposalReceiveLimits,
+) -> AuthoringDiagnosticV1:
+    """Refuse a change set the ledger could never record, before compiling it."""
+
+    fits = limits.max_change_set_members
+    projected = limits.projected_change_set_record_bytes(members)
+    return _diagnostic(
+        code=CHANGE_SET_RECORD_TOO_LARGE,
+        stage="change_set_record",
+        offending_element="payload",
+        message=(
+            f"This change set has {members} members. The ledger writes its record of a "
+            f"change set as one blob holding an entry per member, at about "
+            f"{limits.change_set_record_bytes_per_member} bytes each, so this one projects "
+            f"to about {projected} bytes against a ceiling of "
+            f"{limits.max_change_set_record_bytes}. At most {fits} members fit. Refused "
+            "before lowering: compiling it would spend the whole compile on a set that "
+            "cannot activate."
+        ),
+        repairs=(
+            _repair(
+                "split_change_set",
+                (
+                    f"Author this change set as several intents of at most {fits} members "
+                    "each, split so that no entity's members straddle two of them."
+                ),
+                {
+                    "authored_members": members,
+                    "max_change_set_members": fits,
+                    "max_change_set_record_bytes": limits.max_change_set_record_bytes,
+                    "projected_change_set_record_bytes": projected,
+                },
+            ),
+        ),
+    )
+
+
 def compute_preflight(
     instance: PlaybillInstance,
     *,
@@ -635,88 +691,187 @@ def compute_preflight(
     evaluated_tree = current_tree
     resolved_payload: object
 
-    try:
-        lowered = lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
-        if lowered.idempotent:
-            evaluated_tree = current_tree
-            resolved_payload = lowered.resolved_authoring
-        else:
-            proposed_tree = lowered.proposed_tree
-            try:
-                proposed_tree = validate_proposal_tree(
-                    proposed_tree,
-                    limits=service.receive_limits,
-                    base_tree=base_tree,
-                )
-            except ProposalAdmissionError as exc:
-                diagnostics.append(
-                    _diagnostic(
-                        code="playbill.authoring.proposal_receive_refused",
-                        stage="proposal_receive",
-                        offending_element="payload",
-                        message=str(exc),
-                        repairs=(
-                            _repair(
-                                "reduce_authoring",
-                                "Reduce the authored member count or byte size named by this "
-                                "refusal.",
-                            ),
-                        ),
-                    )
-                )
-                blocked.append(
-                    BlockedCheckV1(
-                        check="proposal_evaluation",
-                        blocked_by=("playbill.authoring.proposal_receive_refused",),
-                        reason=(
-                            "The candidate tree must pass bounded receive before semantic laws run."
-                        ),
-                    )
-                )
-            else:
-                evaluation = evaluate_proposal_tree(
-                    base_tree=base_tree,
-                    current_tree=current_tree,
-                    proposed_tree=proposed_tree,
-                    current=current,
-                    bodies=instance.body_store(),
-                    timestamp=intent.canonical_timestamp,
-                    rebased=base.git_oid != current.git_oid,
-                    actor_id=actor.actor_id,
-                    promotion_verifier=service.promotion_verifier,
-                    producer_receipt_resolver=service.producer_receipt_resolver,
-                    query_facts_provider=service.query_facts_provider,
-                )
-                evaluated_tree = evaluation.tree
-                diagnostics.extend(
-                    _compiler_diagnostic(item, member_by_path=lowered.member_by_path)
-                    for item in evaluation.diagnostics
-                )
-            resolved_payload = lowered.resolved_authoring
-    except AuthoringLoweringError as exc:
+    authored_members = _authored_member_count(intent.payload)
+    over_record_ceiling = authored_members > service.receive_limits.max_change_set_members
+    if over_record_ceiling:
+        # BEFORE lowering, on the member count alone. Lowering a set this size
+        # builds the whole candidate tree in memory, which is what took the
+        # daemon out on a machine under memory pressure; and even when it
+        # survives, the record it compiles toward cannot be written. Neither
+        # cost is worth paying to learn a number that is known here.
+        _log.warning(
+            "authoring_change_set_record_too_large",
+            intent_id=intent.intent_id,
+            authored_members=authored_members,
+            max_change_set_members=service.receive_limits.max_change_set_members,
+            max_change_set_record_bytes=service.receive_limits.max_change_set_record_bytes,
+        )
         diagnostics.append(
-            _diagnostic(
-                code=exc.code,
-                stage="lowering",
-                offending_element=exc.offending_element,
-                message=exc.message,
-                repairs=exc.repairs,
+            _record_ceiling_diagnostic(
+                members=authored_members,
+                limits=service.receive_limits,
             )
         )
         blocked.append(
             BlockedCheckV1(
                 check="proposal_evaluation",
-                blocked_by=(exc.code,),
-                reason="Artifact lowering must succeed before semantic laws can evaluate it.",
+                blocked_by=(CHANGE_SET_RECORD_TOO_LARGE,),
+                reason=(
+                    "A change set the ledger cannot record is not compiled: lowering runs "
+                    "only for a set that could be settled."
+                ),
             )
         )
         resolved_payload = {
-            "lowering_refusal": {
-                "code": exc.code,
-                "offending_element": exc.offending_element,
+            "change_set_record_refusal": {
+                "code": CHANGE_SET_RECORD_TOO_LARGE,
+                "authored_members": authored_members,
             },
             "semantic_identity": intent.semantic_identity,
         }
+    if not over_record_ceiling:
+        try:
+            lowered = lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
+            if lowered.idempotent:
+                evaluated_tree = current_tree
+                resolved_payload = lowered.resolved_authoring
+            else:
+                proposed_tree = lowered.proposed_tree
+                try:
+                    proposed_tree = validate_proposal_tree(
+                        proposed_tree,
+                        limits=service.receive_limits,
+                        base_tree=base_tree,
+                    )
+                except ProposalAdmissionError as exc:
+                    diagnostics.append(
+                        _diagnostic(
+                            code="playbill.authoring.proposal_receive_refused",
+                            stage="proposal_receive",
+                            offending_element="payload",
+                            message=str(exc),
+                            repairs=(
+                                _repair(
+                                    "reduce_authoring",
+                                    "Reduce the authored member count or byte size named by this "
+                                    "refusal.",
+                                ),
+                            ),
+                        )
+                    )
+                    blocked.append(
+                        BlockedCheckV1(
+                            check="proposal_evaluation",
+                            blocked_by=("playbill.authoring.proposal_receive_refused",),
+                            reason=(
+                                "The candidate tree must pass bounded receive before "
+                                "semantic laws run."
+                            ),
+                        )
+                    )
+                else:
+                    evaluation = evaluate_proposal_tree(
+                        base_tree=base_tree,
+                        current_tree=current_tree,
+                        proposed_tree=proposed_tree,
+                        current=current,
+                        bodies=instance.body_store(),
+                        timestamp=intent.canonical_timestamp,
+                        rebased=base.git_oid != current.git_oid,
+                        actor_id=actor.actor_id,
+                        promotion_verifier=service.promotion_verifier,
+                        producer_receipt_resolver=service.producer_receipt_resolver,
+                        query_facts_provider=service.query_facts_provider,
+                    )
+                    evaluated_tree = evaluation.tree
+                    diagnostics.extend(
+                        _compiler_diagnostic(item, member_by_path=lowered.member_by_path)
+                        for item in evaluation.diagnostics
+                    )
+                resolved_payload = lowered.resolved_authoring
+        except AuthoringLoweringError as exc:
+            diagnostics.append(
+                _diagnostic(
+                    code=exc.code,
+                    stage="lowering",
+                    offending_element=exc.offending_element,
+                    message=exc.message,
+                    repairs=exc.repairs,
+                )
+            )
+            blocked.append(
+                BlockedCheckV1(
+                    check="proposal_evaluation",
+                    blocked_by=(exc.code,),
+                    reason="Artifact lowering must succeed before semantic laws can evaluate it.",
+                )
+            )
+            resolved_payload = {
+                "lowering_refusal": {
+                    "code": exc.code,
+                    "offending_element": exc.offending_element,
+                },
+                "semantic_identity": intent.semantic_identity,
+            }
+        except MemoryError:
+            # The one exception this path may not let through untyped. A compile
+            # that runs the process out of memory has already cost everything it
+            # was going to cost; letting the allocation failure propagate as a
+            # 500 tells the caller nothing, and the process it happened in hosts
+            # every other instance on this daemon. Log the reason and refuse in
+            # the caller's own vocabulary, so a death that follows anyway is
+            # never the first thing anybody hears about it.
+            _log.error(
+                "authoring_compile_budget_exceeded",
+                intent_id=intent.intent_id,
+                authored_members=authored_members,
+                max_change_set_members=service.receive_limits.max_change_set_members,
+            )
+            diagnostics.append(
+                _diagnostic(
+                    code=COMPILE_BUDGET_EXCEEDED,
+                    stage="lowering",
+                    offending_element="payload",
+                    message=(
+                        f"Compiling this intent's {authored_members} members exhausted the "
+                        "memory available to the daemon. At most "
+                        f"{service.receive_limits.max_change_set_members} members fit under "
+                        "the ledger's change-set record ceiling; a set at or under that "
+                        "bound is the one this daemon compiles."
+                    ),
+                    owner="daemon",
+                    disposition="edit_and_retry",
+                    repairs=(
+                        _repair(
+                            "split_change_set",
+                            (
+                                "Author this change set as several smaller intents and "
+                                "preflight each of them."
+                            ),
+                            {
+                                "authored_members": authored_members,
+                                "max_change_set_members": (
+                                    service.receive_limits.max_change_set_members
+                                ),
+                            },
+                        ),
+                    ),
+                )
+            )
+            blocked.append(
+                BlockedCheckV1(
+                    check="proposal_evaluation",
+                    blocked_by=(COMPILE_BUDGET_EXCEEDED,),
+                    reason="Lowering must complete before semantic laws can evaluate it.",
+                )
+            )
+            resolved_payload = {
+                "compile_refusal": {
+                    "code": COMPILE_BUDGET_EXCEEDED,
+                    "authored_members": authored_members,
+                },
+                "semantic_identity": intent.semantic_identity,
+            }
 
     ordered_diagnostics = _ordered_diagnostics(diagnostics)
     ordered_blocked = tuple(sorted(blocked, key=lambda item: item.check.encode()))

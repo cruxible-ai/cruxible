@@ -3493,6 +3493,19 @@ def evaluate_proposal_tree(
     )
 
 
+#: The receive bounds that name an admission. Frozen: adding an advertised
+#: ceiling to `ProposalReceiveLimits` must not move a single proposal id.
+_PROPOSAL_ID_LIMIT_KEYS = frozenset(
+    {
+        "max_files",
+        "max_changed_members",
+        "max_file_bytes",
+        "max_total_bytes",
+        "max_path_depth",
+    }
+)
+
+
 def _proposal_id_payload(
     *,
     actor_id: str,
@@ -3515,7 +3528,17 @@ def _proposal_id_payload(
                 "claim_type_expansions": [
                     item.model_dump(mode="json") for item in request.claim_type_expansions
                 ],
-                "limits": limits.model_dump(mode="json"),
+                # The RECEIVE bounds only. An admission's identity is what
+                # receive enforced on it, so the advertised change-set record
+                # ceiling -- a preflight bound, enforced before lowering and
+                # never at receive -- is deliberately outside this preimage:
+                # advertising a new number must not restate the identity of
+                # every proposal admitted since.
+                "limits": {
+                    key: value
+                    for key, value in limits.model_dump(mode="json").items()
+                    if key in _PROPOSAL_ID_LIMIT_KEYS
+                },
                 "admitted_at": admitted_at,
             },
         )

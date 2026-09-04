@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **A change set the ledger could not record is refused before it is
+  compiled.** The ledger writes its record OF a change set as one blob holding
+  an entry per member, measured against the per-blob ceiling; a set well inside
+  every advertised receive budget could still exceed it, and only found out at
+  activation, after a ten-minute compile that could not be reused. The admitted
+  limits now advertise that ceiling and its measured per-member cost, and
+  preflight refuses an oversized set typed
+  (`playbill.authoring.change_set_record_too_large`), naming the projected
+  record size, the ceiling and the member count that fits, before lowering runs.
+  Compiling was also the step that could take the daemon out under memory
+  pressure: an allocation failure during lowering is now logged and refused as
+  `playbill.authoring.compile_budget_exceeded` instead of propagating untyped,
+  and the daemon installs a fatal-fault handler so a death it cannot refuse is
+  at least never silent. Chunking the record so a five-thousand-member set can
+  be settled is a later, non-patch change.
+
 - **A daemon discovers its isolated Provider executors from what is
   installed.** At start the daemon iterates the `cruxible.isolated_executors`
   entry-point group and registers every executor it advertises, so the registry
