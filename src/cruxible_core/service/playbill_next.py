@@ -1640,7 +1640,7 @@ def _citation_relation_items(
 
     if not access_profile.permits("instance"):
         return (), frozenset()
-    if not any(path.startswith("claims/") for path in instance.tree_at(coordinate.git_oid)):
+    if not any(path.startswith("claims/") for path in instance.paths_at(coordinate.git_oid)):
         return (), frozenset()
     public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
     retirement_sequences = _claim_retirement_sequences(instance) if door_events else {}
