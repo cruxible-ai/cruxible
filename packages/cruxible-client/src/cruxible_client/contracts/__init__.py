@@ -99,6 +99,7 @@ PlaybillAuthoringExampleName = Literal[
     "procedure-runtime-policy",
     "procedure-mandate",
     "change-set",
+    "claim-type-succession",
 ]
 PlaybillPolicyKind: TypeAlias = Literal[
     "approval_policy",

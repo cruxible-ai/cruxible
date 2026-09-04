@@ -150,6 +150,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ClaimStatement", "effective_until"): "VALIDITY WINDOW",
     ("ClaimTypeDependentDispositionV3", "claim_effective_until"): "VALIDITY WINDOW",
     ("ClaimTypeMigrationDispositionV3", "claim_effective_until"): "VALIDITY WINDOW",
+    ("ClaimTypeSuccessionDependentV1", "claim_effective_until"): "VALIDITY WINDOW",
     ("ClaimVerdictResultV1", "evaluation_time"): "EVALUATION INSTANT",
     ("ClaimVerdictResultV2", "evaluation_time"): "EVALUATION INSTANT",
     ("ConsumptionAggregateV1", "consumption_epoch_generation"): "SETTLEMENT ORDER",
