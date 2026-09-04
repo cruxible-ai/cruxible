@@ -131,6 +131,39 @@ def test_v1_surface_refuses_exact_inventory_drift(
         )
 
 
+# A mutating tool that publishes no facade verb is a hole in the join, and it is
+# a hole that fails OPEN: an overlay deciding per-verb what a tenant may reach
+# over MCP reads `[]` as "reaches nothing" and lets the call through. Three
+# GRAPH_WRITE / GOVERNED_WRITE tools published `[]` because they reach the
+# facade through a local adapter object rather than by naming `playbill_api`
+# themselves. Any future exception is declared HERE, with its reason -- and the
+# only admissible reason is that the tool genuinely touches no facade verb,
+# never that the generator cannot see the road it takes.
+MUTATING_TOOLS_REACHING_NO_FACADE_VERB: dict[str, str] = {}
+
+
+def test_no_mutating_tool_publishes_an_empty_facade_join(
+    live_surface: dict[str, object],
+) -> None:
+    tools = live_surface["mcp_tools"]
+    assert isinstance(tools, list)
+
+    unexplained = sorted(
+        str(tool["name"])
+        for tool in tools
+        if isinstance(tool, dict)
+        and tool["permission"] != "READ_ONLY"
+        and not tool["facade_operations"]
+        and tool["name"] not in MUTATING_TOOLS_REACHING_NO_FACADE_VERB
+    )
+
+    assert unexplained == [], (
+        "these mutating tools publish no facade verb, so a per-verb overlay "
+        "reading the join lets them through unchecked; resolve the road the "
+        "handler takes to the facade, or declare the exception with its reason"
+    )
+
+
 def test_checked_in_v1_surface_is_exact_and_ratified(live_surface: dict[str, object]) -> None:
     snapshot = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
     assert set(snapshot["succession"]) == {

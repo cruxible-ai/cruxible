@@ -129,6 +129,43 @@ def _mcp_facade_operations(path: Path = MCP_HANDLERS) -> list[str]:
     )
 
 
+def _direct_facade_attributes(node: ast.AST) -> set[str]:
+    """Facade verbs named anywhere under `node` as `playbill_api.X` / `host_api.X`.
+
+    References, not only calls: a handler that hands the facade verb to the
+    dispatcher as a callable reaches it exactly as much as one that calls it,
+    and reads as a bare attribute in the tree.
+    """
+
+    return {
+        item.attr
+        for item in ast.walk(node)
+        if isinstance(item, ast.Attribute)
+        and isinstance(item.value, ast.Name)
+        and item.value.id in {"playbill_api", "host_api"}
+    }
+
+
+def _shim_facade_operations(tree: ast.Module) -> dict[str, set[str]]:
+    """Facade verbs each in-module adapter CLASS reaches, by class name.
+
+    `handlers.py` reaches the facade two ways. Most handlers name
+    `playbill_api.<verb>` in their own body. The rest hand a local adapter
+    object -- `_LocalFloorClient`, `_LocalAttestationClient`,
+    `_LocalSourceContextClient` -- to shared client-side code, and the verbs are
+    named inside that class's methods instead. A body-only walk records the
+    second shape as reaching NOTHING, which is the shape three mutating tools
+    take, so the published join failed OPEN exactly where an overlay would rely
+    on it most.
+    """
+
+    return {
+        node.name: _direct_facade_attributes(node)
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+    }
+
+
 def _handler_facade_operations(path: Path = MCP_HANDLERS) -> dict[str, list[str]]:
     """Which facade verbs each MCP handler reaches, by handler name.
 
@@ -138,27 +175,46 @@ def _handler_facade_operations(path: Path = MCP_HANDLERS) -> dict[str, list[str]
     guarantees. An overlay that decides per-verb whether a tenant may reach a
     verb over MCP needs the join to be a fact in the artifact rather than a
     spelling it infers.
+
+    The join is a REACHABILITY closure over the module, not a body-only read.
+    A handler reaches a verb three ways, and all three count the same to an
+    overlay deciding what a tenant may reach: it names `playbill_api.<verb>`
+    itself; it constructs a local adapter class whose methods name the verb
+    (the object is the handler's road to the facade, so naming the class is
+    naming the road); or it delegates to a sibling handler that does either.
+    A body-only walk published `[]` for the second and third shapes, which is
+    the shape three mutating tools take, so the join failed OPEN exactly where
+    an overlay would rely on it most.
     """
 
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    operations: dict[str, list[str]] = {}
+    shims = _shim_facade_operations(tree)
+    direct: dict[str, set[str]] = {}
+    delegates: dict[str, set[str]] = {}
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        # References, not only calls: a handler that hands the facade verb to
-        # the dispatcher as a callable reaches it exactly as much as one that
-        # calls it, and reads as a bare attribute in the tree.
-        called = sorted(
-            {
-                item.attr
-                for item in ast.walk(node)
-                if isinstance(item, ast.Attribute)
-                and isinstance(item.value, ast.Name)
-                and item.value.id in {"playbill_api", "host_api"}
-            }
-        )
-        if called:
-            operations[node.name] = called
+        reached = set(_direct_facade_attributes(node))
+        named = {item.id for item in ast.walk(node) if isinstance(item, ast.Name)}
+        for shim in named & set(shims):
+            reached |= shims[shim]
+        direct[node.name] = reached
+        delegates[node.name] = named - {node.name}
+
+    operations: dict[str, list[str]] = {}
+    for name in direct:
+        reached: set[str] = set()
+        pending = [name]
+        seen: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            reached |= direct.get(current, set())
+            pending.extend(delegates.get(current, set()) & set(direct))
+        if reached:
+            operations[name] = sorted(reached)
     return operations
 
 

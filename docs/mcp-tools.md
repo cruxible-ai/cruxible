@@ -29,8 +29,17 @@ inventory of the whole served surface, and its `surface.mcp_tools` rows carry
 `facade_operations`: the facade verbs each tool reaches, per tool. A deployment
 that decides per-verb what may be reached over MCP reads the join there rather
 than inferring it from the `cruxible_<verb>` / `handle_<verb>` spelling, which
-nothing guarantees. An empty list means the tool reaches no facade verb
-directly; `surface.mcp_facade_operations` still bounds the whole lane.
+nothing guarantees. `surface.mcp_facade_operations` still bounds the whole lane.
+
+The list is a reachability closure, not a read of the handler's own body: it
+covers the verbs the handler names itself, the verbs reached through a local
+adapter object it constructs, and the verbs reached through a sibling handler
+it delegates to. An empty list therefore means the tool reaches no facade verb
+at all -- three tools are in that position today, and all three are
+`READ_ONLY`. A mutating tool may not publish an empty list without a declared
+exception naming its reason
+(`tests/test_guardrails/test_playbill_v1_served_surface.py`), because an
+overlay reading `[]` as "reaches nothing" would fail open.
 
 Every row is covered by the snapshot's `succession.surface_digest`, so a tool
 that starts reaching one more verb moves the pin.
