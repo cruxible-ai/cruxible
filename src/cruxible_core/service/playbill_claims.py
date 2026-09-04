@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -186,6 +187,20 @@ class PlaybillClaimQueryResultV2(_StrictClaimServiceModel):
     selected_claim_identities: tuple[str, ...]
     contender_claim_identities: tuple[str, ...]
     claims: tuple[PlaybillClaimView, ...]
+    verdicts: tuple[ClaimVerdictResultAny, ...]
+
+
+@dataclass(frozen=True)
+class PlaybillClaimGroupResolution:
+    """One resolved (Subject, predicate) slot, carried without its wire envelope."""
+
+    subject: SemanticAddress
+    predicate: str
+    cardinality: Literal["one", "many"]
+    status: Literal["resolved", "unresolved", "refused"]
+    selected_claim_identities: tuple[str, ...]
+    contender_claim_identities: tuple[str, ...]
+    claims: tuple[ClaimArtifactAny, ...]
     verdicts: tuple[ClaimVerdictResultAny, ...]
 
 
@@ -453,6 +468,22 @@ def service_get_playbill_claim(
     )
 
 
+def projected_playbill_claim_views(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+) -> tuple[PlaybillClaimView, ...]:
+    """Materialize every projected Claim view at one accepted coordinate."""
+
+    generation = next(
+        item for item in instance.accepted_history() if item.oid == coordinate.git_oid
+    )
+    if generation.sequence == 0:
+        return ()
+    with instance.bind_accepted_projection(coordinate) as projection:
+        return tuple(_public_claim(item) for item in projection.list_claims())
+
+
 def service_list_playbill_claims(
     instance: PlaybillInstance,
     *,
@@ -462,23 +493,24 @@ def service_list_playbill_claims(
     include_retired: bool = False,
 ) -> PlaybillClaimList:
     coordinate = _resolve_coordinate(instance, at)
-    generation = next(
-        item for item in instance.accepted_history() if item.oid == coordinate.git_oid
-    )
-    if generation.sequence == 0:
-        claims: tuple[PlaybillClaimView, ...] = ()
+    projected = projected_playbill_claim_views(instance, coordinate=coordinate)
+    claims: tuple[PlaybillClaimView, ...]
+    if include_retired and subject is None and predicate is None:
+        claims = projected
     else:
-        with instance.bind_accepted_projection(coordinate) as projection:
-            projected = tuple(_public_claim(item) for item in projection.list_claims())
-        claims = tuple(
-            item
-            for item in projected
-            if (
-                (include_retired or _claim_from_view(item).lifecycle.state == "live")
-                and (subject is None or _claim_from_view(item).statement.subject == subject)
-                and (predicate is None or _claim_from_view(item).statement.predicate == predicate)
-            )
-        )
+        # One reconstruction per row: the filter used to rebuild the whole
+        # ClaimArtifact once per bound predicate in the conjunction.
+        selected: list[PlaybillClaimView] = []
+        for item in projected:
+            parsed = _claim_from_view(item)
+            if not include_retired and parsed.lifecycle.state != "live":
+                continue
+            if subject is not None and parsed.statement.subject != subject:
+                continue
+            if predicate is not None and parsed.statement.predicate != predicate:
+                continue
+            selected.append(item)
+        claims = tuple(selected)
     return PlaybillClaimList(
         coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
         claims=claims,
@@ -639,26 +671,26 @@ def _claim_admission_accounts(
     return tuple(accounts)
 
 
-def service_query_playbill_claims(
+def resolve_playbill_claim_group(
     instance: PlaybillInstance,
     *,
     subject: SemanticAddress,
     predicate: str,
-    at: PlaybillAcceptedCoordinate | None = None,
-    evaluation_time: datetime | None = None,
-) -> PlaybillClaimQueryResult | PlaybillClaimQueryResultV2:
+    coordinate: AcceptedProjectionCoordinate,
+    evaluated_at: datetime,
+    claims: tuple[ClaimArtifactAny, ...],
+) -> PlaybillClaimGroupResolution:
+    """Resolve one already-listed (Subject, predicate) slot without re-listing.
+
+    Callers that fold every slot at a coordinate list the projection once and
+    group in memory; the whole-projection listing used to be repeated inside
+    every group, which made the fold quadratic in Claims.
+    """
+
     from cruxible_core.service.playbill_evidence import (
         service_evaluate_playbill_claim_verdict,
     )
 
-    coordinate = _resolve_coordinate(instance, at)
-    evaluated_at = evaluation_time or datetime.now(UTC)
-    listed = service_list_playbill_claims(
-        instance,
-        at=PlaybillAcceptedCoordinate.from_internal(coordinate),
-        subject=subject,
-        predicate=predicate,
-    )
     tree = instance.tree_at(coordinate.git_oid)
     type_path = claim_type_path(predicate)
     content = tree.get(type_path)
@@ -667,8 +699,7 @@ def service_query_playbill_claims(
     claim_type = parse_claim_type(content, path=type_path)
     contenders: list[ResolutionContenderV1] = []
     verdicts: list[ClaimVerdictResultAny] = []
-    for view in listed.claims:
-        claim = _claim_from_view(view)
+    for claim in claims:
         evaluated = service_evaluate_playbill_claim_verdict(
             instance,
             claim_identity=claim.identity.qualified,
@@ -696,31 +727,69 @@ def service_query_playbill_claims(
         claim_type.resolution_policy,
         tuple(contenders),
     )
-    selected = tuple(f"Claim:{item}" for item in resolution.selected_claim_identities)
-    all_contenders = tuple(f"Claim:{item}" for item in resolution.contender_claim_identities)
-    if any(isinstance(item, ClaimVerdictResultV2) for item in verdicts):
+    return PlaybillClaimGroupResolution(
+        subject=subject,
+        predicate=predicate,
+        cardinality=claim_type.cardinality,
+        status=resolution.status,
+        selected_claim_identities=tuple(
+            f"Claim:{item}" for item in resolution.selected_claim_identities
+        ),
+        contender_claim_identities=tuple(
+            f"Claim:{item}" for item in resolution.contender_claim_identities
+        ),
+        claims=claims,
+        verdicts=tuple(verdicts),
+    )
+
+
+def service_query_playbill_claims(
+    instance: PlaybillInstance,
+    *,
+    subject: SemanticAddress,
+    predicate: str,
+    at: PlaybillAcceptedCoordinate | None = None,
+    evaluation_time: datetime | None = None,
+) -> PlaybillClaimQueryResult | PlaybillClaimQueryResultV2:
+    coordinate = _resolve_coordinate(instance, at)
+    evaluated_at = evaluation_time or datetime.now(UTC)
+    listed = service_list_playbill_claims(
+        instance,
+        at=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        subject=subject,
+        predicate=predicate,
+    )
+    group = resolve_playbill_claim_group(
+        instance,
+        subject=subject,
+        predicate=predicate,
+        coordinate=coordinate,
+        evaluated_at=evaluated_at,
+        claims=tuple(_claim_from_view(view) for view in listed.claims),
+    )
+    if any(isinstance(item, ClaimVerdictResultV2) for item in group.verdicts):
         return PlaybillClaimQueryResultV2(
             coordinate=listed.coordinate,
             evaluation_time=evaluated_at,
             subject=subject,
             predicate=predicate,
-            cardinality=claim_type.cardinality,
-            status=resolution.status,
-            selected_claim_identities=selected,
-            contender_claim_identities=all_contenders,
+            cardinality=group.cardinality,
+            status=group.status,
+            selected_claim_identities=group.selected_claim_identities,
+            contender_claim_identities=group.contender_claim_identities,
             claims=listed.claims,
-            verdicts=tuple(verdicts),
+            verdicts=group.verdicts,
         )
-    v1_verdicts = tuple(item for item in verdicts if isinstance(item, ClaimVerdictResultV1))
+    v1_verdicts = tuple(item for item in group.verdicts if isinstance(item, ClaimVerdictResultV1))
     return PlaybillClaimQueryResult(
         coordinate=listed.coordinate,
         evaluation_time=evaluated_at,
         subject=subject,
         predicate=predicate,
-        cardinality=claim_type.cardinality,
-        status=resolution.status,
-        selected_claim_identities=selected,
-        contender_claim_identities=all_contenders,
+        cardinality=group.cardinality,
+        status=group.status,
+        selected_claim_identities=group.selected_claim_identities,
+        contender_claim_identities=group.contender_claim_identities,
         claims=listed.claims,
         verdicts=v1_verdicts,
     )
@@ -1445,6 +1514,7 @@ __all__ = [
     "PlaybillClaimExplanationV1",
     "PlaybillClaimExplanationV2",
     "PlaybillClaimExplanationV3",
+    "PlaybillClaimGroupResolution",
     "PlaybillClaimHistory",
     "PlaybillClaimHistoryEntry",
     "PlaybillClaimList",
@@ -1452,6 +1522,8 @@ __all__ = [
     "PlaybillClaimQueryResultV2",
     "PlaybillClaimView",
     "PlaybillClaimViewV2",
+    "projected_playbill_claim_views",
+    "resolve_playbill_claim_group",
     "service_expand_playbill_semantic",
     "service_explain_playbill_claim",
     "service_get_playbill_claim",

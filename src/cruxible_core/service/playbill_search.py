@@ -40,11 +40,11 @@ from cruxible_core.playbill.search import (
 )
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.playbill_claims import (
-    PlaybillClaimQueryResult,
-    PlaybillClaimQueryResultV2,
+    PlaybillClaimGroupResolution,
     _claim_from_view,
+    _resolve_coordinate,
+    resolve_playbill_claim_group,
     service_list_playbill_claims,
-    service_query_playbill_claims,
 )
 
 
@@ -94,14 +94,16 @@ def claim_resolution_statuses(
         else:
             live_groups[_resolution_key(claim)].append(claim)
 
+    coordinate = _resolve_coordinate(instance, at)
     for group in live_groups.values():
         first = group[0]
-        result = service_query_playbill_claims(
+        resolution = resolve_playbill_claim_group(
             instance,
             subject=first.statement.subject,
             predicate=first.statement.predicate,
-            at=at,
-            evaluation_time=evaluation_time,
+            coordinate=coordinate,
+            evaluated_at=evaluation_time,
+            claims=tuple(group),
         )
         groups_by_qualifier: dict[str | None, list[ClaimArtifactAny]] = defaultdict(list)
         for claim in group:
@@ -112,22 +114,21 @@ def claim_resolution_statuses(
             for classification in (classify_claim_slot(members),)
             for claim in members
         }
-        _apply_resolution_statuses(result, statuses, slots=slots)
+        _apply_resolution_statuses(resolution, statuses, slots=slots)
     return statuses
 
 
 def _apply_resolution_statuses(
-    result: PlaybillClaimQueryResult | PlaybillClaimQueryResultV2,
+    resolution: PlaybillClaimGroupResolution,
     statuses: dict[str, SearchStatus],
     *,
     slots: Mapping[str, ClaimSlotClassification],
 ) -> None:
-    selected = {item.removeprefix("Claim:") for item in result.selected_claim_identities}
-    for view, verdict in zip(result.claims, result.verdicts, strict=True):
-        claim = _claim_from_view(view)
+    selected = {item.removeprefix("Claim:") for item in resolution.selected_claim_identities}
+    for claim, verdict in zip(resolution.claims, resolution.verdicts, strict=True):
         if verdict.verdict not in {"supported", "uncovered"}:
             status: SearchStatus = "refused"
-        elif result.status == "unresolved":
+        elif resolution.status == "unresolved":
             status = (
                 "conflicted"
                 if slots[claim.identity.name].resolution == "unresolved"
