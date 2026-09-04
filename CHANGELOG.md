@@ -54,9 +54,16 @@
   `unchanged`, `stale` (a held backing moved) or `dirty` (the prose moved away
   from the stamp), both repaired by a repin, and both counting as refusals for
   the exit code so an activation's closing sweep cannot answer clean over a page
-  that has drifted. `--detach` is the one edit left; `--check` is the default
-  behaviour and the flag is accepted as a no-op; `--discard-local` now says a
-  local body is intended rather than discarding it.
+  that has drifted. Two edits remain: `--detach`, and `--accept-local`, which
+  says the prose in the page IS the block and records that by re-stamping the
+  block on it -- the held list and declared coordinate untouched, the marker
+  line rewritten, the declaration re-recorded. It writes because under this
+  model the stamp is the alignment proof: a flag that merely silenced the row
+  would claim an alignment nothing checked, and `next` would go on reporting
+  the same page dirty. `--check` previews it as `would_sync` and writes
+  nothing. `--discard-local` is its deprecated spelling -- it never discarded
+  anything here -- accepted for one release behind the structured deprecation
+  warning and removed in 0.6.0.
 
 - **Every projection block is registered with the instance, whichever road
   declared it.** `block repin` records a declaration through a new served route
@@ -76,14 +83,25 @@
   accepted artifact carries the origin. `projection_backing_stale` stops
   answering `hand_edit` for a change a verb performs: `playbill.block.depublish`
   joins the repair vocabulary and the retired- and overturned-backing rows name
-  it, as does a registered block whose marker has left the page -- whose repair
-  used to be to restore the block a ruling had told the author to delete. The
-  block-sync reasons with no producer left (`block_multi_backing`,
-  `block_query_backing`, `block_not_publication_origin`,
-  `block_successor_body_missing`, `block_successor_body_ambiguous`,
-  `workspace_source_catalog_missing`, `block_publication_registry_unavailable`)
-  are removed, and the repairs that named `block sync --all` for a drifted block
-  name `block repin`, because sync converges nothing now.
+  it -- but only when there is nothing left to hold. A block holds a LIST, so
+  one member of up to 512 retiring is repaired by a repin that drops it, and the
+  registration is released only when every held member has retired or been
+  overturned; the row carries a `backing_state` discriminator so the two are
+  told apart. A registered block whose marker has left the page also names
+  `block depublish`, whose repair used to be to restore the block a ruling had
+  told the author to delete. The block-sync reasons that describe the removed
+  publication road (`block_not_publication_origin`,
+  `block_publication_registry_unavailable`, `block_successor_body_missing`,
+  `block_successor_body_ambiguous`) go with it. Three others do not describe
+  that road: `block_multi_backing` and `block_query_backing` were retired by the
+  held-list rules, and `workspace_source_catalog_missing` never had a producer
+  at all. Those stay in the vocabulary, unproduced, and are removed in a later
+  release -- narrowing a served vocabulary is a wire removal, and
+  deprecate-then-remove governs it. The same reasoning keeps
+  `PlaybillBlockSyncReadResultV1`'s body fields optional rather than forbidden:
+  the daemon never sends one, and a payload minted before this batch still
+  parses. The repairs that named `block sync --all` for a drifted block name
+  `block repin`, because sync converges nothing now.
 
 - **An orient is a read again.** Deriving every Claim's verdict and resolution
   status crossed the client's own three-minute default timeout at a few hundred

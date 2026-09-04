@@ -2404,6 +2404,12 @@ class PlaybillBlockSyncReadResultV1(_StrictAuthoringModel):
     body fields stay in the shape and are never populated -- an older client
     that asks for them gets nothing rather than a rewrite it did not expect --
     and the answer is a currency verdict over EVERY held backing instead of one.
+
+    Unpopulated, not forbidden. Turning a field that was REQUIRED on success
+    into one the model refuses would invert the shape rather than narrow it: a
+    payload minted before this batch would stop parsing against the model that
+    describes it. A body carried in is still bound to its digest, exactly as it
+    always was; the daemon simply never sends one.
     """
 
     tag: Literal["playbill-block-sync-read-result-v1"] = "playbill-block-sync-read-result-v1"
@@ -2447,8 +2453,12 @@ class PlaybillBlockSyncReadResultV1(_StrictAuthoringModel):
         success = self.status in {"current", "successor"}
         if success != (self.coordinate is not None and self.generation is not None):
             raise ValueError("a block currency verdict names the coordinate it was read at")
-        if self.body_content_base64 is not None or self.body_digest is not None:
-            raise ValueError("a block sync read renders no body")
+        if (self.body_content_base64 is None) != (self.body_digest is None):
+            raise ValueError("a block sync read body is named with its digest or not at all")
+        if self.body_content_base64 is not None and self.body_digest is not None:
+            body = base64.b64decode(self.body_content_base64, validate=True)
+            if "sha256:" + hashlib.sha256(body).hexdigest() != self.body_digest:
+                raise ValueError("block sync retained body does not reproduce its digest")
         if success and (self.reason is not None or self.successor_candidates):
             raise ValueError("successful block sync reads cannot carry a refusal")
         if not success and self.reason is None:
@@ -2492,16 +2502,28 @@ PlaybillBlockSyncOutcome: TypeAlias = Literal[
     "refused",
     "unsyncable",
 ]
+# Three members below carry no producer any more, and stay for the same reason
+# `synced` and `would_sync` do: narrowing a served vocabulary is a wire removal,
+# and the deprecate-then-remove policy governs it. They are not consequences of
+# the one sanctioned removal -- the held-list rules retired
+# `block_multi_backing` and `block_query_backing`, and
+# `workspace_source_catalog_missing` never had a producer at all -- so they are
+# deprecated here and removed in a later release, not silently dropped. A caller
+# holding a result minted before this batch still parses it, and the repair each
+# one names is the rule that was in force when it could still be produced.
 PlaybillBlockSyncReason: TypeAlias = Literal[
     "workspace_not_attached",
     "workspace_binding_invalid",
     "workspace_instance_mismatch",
     "workspace_source_catalog_invalid",
+    "workspace_source_catalog_missing",
     "source_path_invalid",
     "source_not_projection_target",
     "block_marker_malformed",
     "block_unstamped",
     "block_locally_modified",
+    "block_multi_backing",
+    "block_query_backing",
     "block_backing_missing",
     "block_backing_changed",
     "block_backing_retired",

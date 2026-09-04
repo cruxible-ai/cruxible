@@ -72,6 +72,12 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "settlement_proposal_id_mismatch": "settle_the_proposal_the_candidate_was_admitted_under",
     "settlement_receipt_mismatch": "reproduce_the_terminal_receipt_before_settling",
     "block_frame_invalid": "restore_the_block_marker_frame_the_stamp_declares",
+    # Deprecated alongside their reasons: nothing produces either code now that
+    # a block holds a LIST of backings and may watch a query. They stay declared
+    # for one release so a caller resolving a result minted before this batch
+    # still reads the change that was asked of it at the time.
+    "block_multi_backing": "stamp_the_block_with_exactly_one_backing",
+    "block_query_backing": "back_the_block_with_a_claim_or_artifact_instead_of_a_query",
     "block_marker_malformed": "repair_the_block_marker_to_the_declared_grammar",
     # A first stamp names the backing the author chose, so no served command can
     # supply it: sync skips the block until the marker carries one.
