@@ -26,6 +26,17 @@ of `.playbill/sources.yaml` when both exist. The global context is only a
 fallback, its remembered instance remains bound to the transport on which it
 was selected, and entering one workspace never retargets another.
 
+Two environment variables bound how long a client waits for a daemon that has
+accepted a request. `CRUXIBLE_CLIENT_TIMEOUT_S` (default 180) is the read budget
+for an ordinary call. `CRUXIBLE_CLIENT_CONNECT_TIMEOUT_S` (default 900) is the
+separate, larger budget for the single orientation an SDK `Playbill.connect()`
+runs when it opens a session: orientation folds the whole accepted world, so its
+cost tracks the size of the instance rather than the size of the call, and a
+large healthy instance must not read as an unreachable server. Raising
+`CRUXIBLE_CLIENT_TIMEOUT_S` above the connect budget raises the connect budget
+with it. A timeout never means the request failed: the daemon may still be
+running it, so verify state before retrying.
+
 ## context
 
 Manage remembered daemon and instance context. `context show` reports the

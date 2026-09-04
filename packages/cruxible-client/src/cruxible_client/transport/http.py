@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from typing import Any, Literal, TypeVar
 
 import httpx
@@ -46,8 +47,43 @@ _CLAIM_RETIRE_RESPONSE: TypeAdapter[contracts.PlaybillClaimRetireResponse] = Typ
 )
 
 
+# The per-request budget an ordinary call is given.
+CLIENT_TIMEOUT_ENV = "CRUXIBLE_CLIENT_TIMEOUT_S"
+DEFAULT_CLIENT_TIMEOUT_S = 180.0
+# Connecting an SDK session orients against the whole accepted world, so its
+# cost tracks the size of the instance rather than the size of the call. It gets
+# its own, larger budget: a healthy instance must not read as an unreachable
+# server just because it holds a lot of Claims. Raising the ordinary budget
+# above this one raises this one too.
+CONNECT_TIMEOUT_ENV = "CRUXIBLE_CLIENT_CONNECT_TIMEOUT_S"
+DEFAULT_CONNECT_TIMEOUT_S = 900.0
+
+
+def _budget(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be a number of seconds") from exc
+    if value <= 0:
+        raise ConfigError(f"{name} must be a positive number of seconds")
+    return value
+
+
 def _default_timeout() -> httpx.Timeout:
-    budget = float(os.environ.get("CRUXIBLE_CLIENT_TIMEOUT_S", "180"))
+    budget = _budget(CLIENT_TIMEOUT_ENV, DEFAULT_CLIENT_TIMEOUT_S)
+    return httpx.Timeout(connect=5.0, read=budget, write=budget, pool=5.0)
+
+
+def connect_orientation_timeout() -> httpx.Timeout:
+    """Return the read budget one connect-time orientation is allowed."""
+
+    budget = max(
+        _budget(CONNECT_TIMEOUT_ENV, DEFAULT_CONNECT_TIMEOUT_S),
+        _budget(CLIENT_TIMEOUT_ENV, DEFAULT_CLIENT_TIMEOUT_S),
+    )
     return httpx.Timeout(connect=5.0, read=budget, write=budget, pool=5.0)
 
 
@@ -55,12 +91,28 @@ class _TransportGuard:
     def __init__(self, client: httpx.Client, target: str) -> None:
         self._client = client
         self._target = target
+        self._override: httpx.Timeout | None = None
+
+    @contextmanager
+    def budget(self, timeout: httpx.Timeout) -> Iterator[None]:
+        previous = self._override
+        self._override = timeout
+        try:
+            yield
+        finally:
+            self._override = previous
 
     def _guard(self, method: str, *args: Any, **kwargs: Any) -> httpx.Response:
+        if self._override is not None:
+            kwargs.setdefault("timeout", self._override)
         try:
             response: httpx.Response = getattr(self._client, method)(*args, **kwargs)
         except (httpx.ReadTimeout, httpx.WriteTimeout) as exc:
-            budget = os.environ.get("CRUXIBLE_CLIENT_TIMEOUT_S", "180")
+            budget = (
+                os.environ.get(CLIENT_TIMEOUT_ENV, str(int(DEFAULT_CLIENT_TIMEOUT_S)))
+                if self._override is None
+                else str(int(self._override.read or DEFAULT_CONNECT_TIMEOUT_S))
+            )
             raise ServerUnreachableError(
                 self._target,
                 (
@@ -114,6 +166,13 @@ class CruxibleClient:
                 timeout=_default_timeout(),
             )
         self._client = _TransportGuard(raw_client, target)
+
+    @contextmanager
+    def connect_orientation_budget(self) -> Iterator[None]:
+        """Give one connect-time orientation its own, larger read budget."""
+
+        with self._client.budget(connect_orientation_timeout()):
+            yield
 
     def close(self) -> None:
         self._client.close()

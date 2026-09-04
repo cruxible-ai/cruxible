@@ -1337,7 +1337,12 @@ class Playbill:
                 ),
                 clock=lambda: datetime.now(UTC),
             )
-            result.refresh()
+            # Orientation walks the whole accepted world, so its cost tracks the
+            # size of the instance, not the size of a call. It gets its own read
+            # budget (CRUXIBLE_CLIENT_CONNECT_TIMEOUT_S) so a healthy but large
+            # instance cannot read as an unreachable server.
+            with client.connect_orientation_budget():
+                result.refresh()
         except BaseException:
             client.close()
             raise
