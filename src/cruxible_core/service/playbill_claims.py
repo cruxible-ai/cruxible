@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import MutableMapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
@@ -679,12 +680,15 @@ def resolve_playbill_claim_group(
     coordinate: AcceptedProjectionCoordinate,
     evaluated_at: datetime,
     claims: tuple[ClaimArtifactAny, ...],
+    verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
 ) -> PlaybillClaimGroupResolution:
     """Resolve one already-listed (Subject, predicate) slot without re-listing.
 
     Callers that fold every slot at a coordinate list the projection once and
     group in memory; the whole-projection listing used to be repeated inside
-    every group, which made the fold quadratic in Claims.
+    every group, which made the fold quadratic in Claims. A caller that
+    evaluates the same Claims elsewhere in the same request may pass a shared
+    verdict map, valid only for this exact coordinate and evaluation time.
     """
 
     from cruxible_core.service.playbill_evidence import (
@@ -698,28 +702,38 @@ def resolve_playbill_claim_group(
     claim_type = parse_claim_type(content, path=type_path)
     contenders: list[ResolutionContenderV1] = []
     verdicts: list[ClaimVerdictResultAny] = []
+    public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
     for claim in claims:
-        evaluated = service_evaluate_playbill_claim_verdict(
-            instance,
-            claim_identity=claim.identity.qualified,
-            evaluation_time=evaluated_at,
-            at=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        shared = (
+            None
+            if verdicts_by_identity is None
+            else verdicts_by_identity.get(claim.identity.qualified)
         )
-        verdicts.append(evaluated.verdict)
+        if shared is None:
+            shared = service_evaluate_playbill_claim_verdict(
+                instance,
+                claim_identity=claim.identity.qualified,
+                evaluation_time=evaluated_at,
+                at=public_coordinate,
+            ).verdict
+            if verdicts_by_identity is not None:
+                verdicts_by_identity[claim.identity.qualified] = shared
+        evaluated_verdict = shared
+        verdicts.append(evaluated_verdict)
         value: object
         if claim.statement.object.kind == "literal":
             value = claim.statement.object.value
         else:
             value = claim.statement.object.model_dump(mode="json")
         contender_verdict: ClaimVerdict = (
-            "stale" if evaluated.verdict.verdict == "stale_evidence" else evaluated.verdict.verdict
+            "stale" if evaluated_verdict.verdict == "stale_evidence" else evaluated_verdict.verdict
         )
         contenders.append(
             ResolutionContenderV1(
                 claim_identity=claim.identity.name,
                 object_value=value,
                 verdict=contender_verdict,
-                basis_kinds=evaluated.verdict.basis_kinds,
+                basis_kinds=evaluated_verdict.basis_kinds,
             )
         )
     resolution = resolve_claim_contenders(

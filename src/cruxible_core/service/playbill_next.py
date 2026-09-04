@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shlex
 from collections import Counter, OrderedDict, defaultdict
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from threading import RLock
@@ -42,6 +42,7 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
 )
 from cruxible_client.contracts.claim_verdicts import (
+    ClaimVerdictResultAny,
     ClaimVerdictResultV2,
 )
 from cruxible_client.contracts.claims import (
@@ -944,6 +945,7 @@ def _claim_items(
     evaluation_time: datetime,
     expiring_within: CanonicalDurationV1,
     door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...] = (),
+    verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
     listed = service_list_playbill_claims(instance, at=coordinate)
     claims = tuple(
@@ -1013,12 +1015,20 @@ def _claim_items(
             )
             continue
         for claim in group:
-            verdict = service_evaluate_playbill_claim_verdict(
-                instance,
-                claim_identity=claim.identity.qualified,
-                evaluation_time=evaluation_time,
-                at=coordinate,
-            ).verdict
+            verdict = (
+                None
+                if verdicts_by_identity is None
+                else verdicts_by_identity.get(claim.identity.qualified)
+            )
+            if verdict is None:
+                verdict = service_evaluate_playbill_claim_verdict(
+                    instance,
+                    claim_identity=claim.identity.qualified,
+                    evaluation_time=evaluation_time,
+                    at=coordinate,
+                ).verdict
+                if verdicts_by_identity is not None:
+                    verdicts_by_identity[claim.identity.qualified] = verdict
             if verdict.verdict == "stale_evidence":
                 expirations = (
                     verdict.freshness_expirations
@@ -2910,6 +2920,7 @@ def _projection_items(
     evaluation_time: datetime,
     access_profile: CoverageAccessProfileV1,
     observation: PlaybillNextWorkspaceObservationV1 | None,
+    verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Evaluate locally declared blocks only after every backing is visible."""
 
@@ -2975,6 +2986,7 @@ def _projection_items(
         claims=tuple(row.accepted.claim for row in facts.claims),
         at=PlaybillAcceptedCoordinate.from_internal(coordinate),
         evaluation_time=evaluation_time,
+        verdicts_by_identity=verdicts_by_identity,
     )
     for source in sources:
         for marker in source.marker_summaries:
@@ -3272,6 +3284,10 @@ def service_playbill_next(
         store = instance.claim_attestation_evidence_store()
         attestation_head = request.at_attestation_head_digest or store.head()
         door_events = store.fold_events(at_head=attestation_head)
+    # One request evaluates a Claim's verdict at exactly one coordinate and one
+    # evaluation time, so the folds that need it share the result instead of
+    # each walking all 740 Claims. The map dies with the request.
+    verdicts_by_identity: dict[str, ClaimVerdictResultAny] = {}
     workspace_domains, workspace_items = _workspace_items(
         instance,
         coordinate=public_coordinate,
@@ -3301,6 +3317,7 @@ def service_playbill_next(
                     evaluation_time=request.evaluation_time,
                     expiring_within=request.expiring_within,
                     door_events=door_events,
+                    verdicts_by_identity=verdicts_by_identity,
                 ),
                 *(
                     _claim_attestation_door_items(
@@ -3318,6 +3335,7 @@ def service_playbill_next(
                     evaluation_time=request.evaluation_time,
                     access_profile=request.access_profile,
                     observation=request.workspace_observation,
+                    verdicts_by_identity=verdicts_by_identity,
                 ),
                 *_procedure_projection_items(
                     instance,

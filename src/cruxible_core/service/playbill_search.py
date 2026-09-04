@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 from datetime import datetime
 from typing import Protocol
 
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultAny
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     claim_path,
@@ -83,8 +84,14 @@ def claim_resolution_statuses(
     claims: tuple[ClaimArtifactAny, ...],
     at: PlaybillAcceptedCoordinate,
     evaluation_time: datetime,
+    verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
 ) -> dict[str, SearchStatus]:
-    """Derive each Claim's resolution status at one accepted coordinate."""
+    """Derive each Claim's resolution status at one accepted coordinate.
+
+    ``verdicts_by_identity`` lets one request share Claim verdicts with another
+    fold over the same coordinate and evaluation time; it must never outlive
+    that pair.
+    """
 
     live_groups: dict[bytes, list[ClaimArtifactAny]] = defaultdict(list)
     statuses: dict[str, SearchStatus] = {}
@@ -104,6 +111,7 @@ def claim_resolution_statuses(
             coordinate=coordinate,
             evaluated_at=evaluation_time,
             claims=tuple(group),
+            verdicts_by_identity=verdicts_by_identity,
         )
         groups_by_qualifier: dict[str | None, list[ClaimArtifactAny]] = defaultdict(list)
         for claim in group:
