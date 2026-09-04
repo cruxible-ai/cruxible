@@ -265,6 +265,29 @@ Do not combine stages. A proposal can be refused. Optional or candidate-required
 approvals may become stale. Activation can lose a compare-and-set race. Handle
 each typed result rather than assuming success.
 
+## Reviewing a proposal
+
+The ledger is Git, so review is Git. The daemon fetches its own refs into the
+attached workspace on every proposal, so a reviewer diffs the candidate against
+accepted state with standard tooling:
+
+~~~text
+git diff playbill/accepted...playbill/proposals/<proposal-id>
+~~~
+
+The candidate commit's message is the change set's own summary -- what it does,
+then one line per member -- and the daemon's records are attached to that commit
+as Git notes: `refs/notes/playbill-eval` carries the admission and the
+evaluation verdict with every diagnostic behind a refusal, and
+`refs/notes/playbill-approval` carries the canonical approval list with each
+signer's own attestation. Nothing parses those messages; every fact an agent
+should act on is in `proposal review --json` or in the notes.
+
+`proposal review` without `--json` prints the pointer and the note refs rather
+than re-rendering the change set. `playbill review open` / `review close`, which
+materialized a detached worktree under `.playbill/review/`, are deprecated in
+favour of the diff above and are removed in 0.6.0.
+
 ## Source alignment
 
 Local files do not enter the event stream automatically. A catalog declares

@@ -36,6 +36,7 @@ from cruxible_client.contracts.semantic_delta import semantic_field_delta
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.closure import parse_dependency_artifact
+from cruxible_core.playbill.git import NOTE_REFS
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.service.documents import service_inspect_playbill_proposal
@@ -609,8 +610,50 @@ def service_prepare_playbill_approval(
     )
 
 
+def render_playbill_proposal_review_pointer(review: PlaybillProposalReview) -> str:
+    """Point a reviewer at the ledger instead of re-rendering the ledger.
+
+    The ledger is Git, so review is Git. A second rendering of a change set --
+    diffs, semantic deltas, member rolls -- is a copy of what `git diff` already
+    shows, and it is the copy that goes stale: it has to learn every artifact
+    kind, and a reviewer who reads it is reasoning about the renderer's opinion
+    of the candidate rather than the bytes settlement will accept.
+
+    What is left here is a pointer and the two note refs, because those are the
+    coordinates a reviewer cannot guess. `--json` remains the structured read
+    for anything that needs fields rather than a diff.
+    """
+
+    key = review.proposal_id.removeprefix("sha256:")
+    return (
+        "\n".join(
+            (
+                f"Proposal: {review.proposal_id}",
+                f"Candidate: {review.candidate_digest}",
+                f"Settlement base OID: {review.base_oid}",
+                "",
+                "Review this proposal in the ledger, in the attached workspace:",
+                f"  git diff playbill/accepted...playbill/proposals/{key}",
+                "",
+                "The daemon's own records are attached to the candidate commit as notes:",
+                f"  git notes --ref={NOTE_REFS['evaluation']} show <candidate commit>",
+                f"  git notes --ref={NOTE_REFS['approval']} show <candidate commit>",
+                "",
+                "For the structured read, add --json.",
+            )
+        )
+        + "\n"
+    )
+
+
 def render_playbill_proposal_review(review: PlaybillProposalReview) -> str:
-    """Small presentation renderer over the complete structured review contract."""
+    """Render the exact candidate a signer is about to attest to.
+
+    This is the approval confirmation, not the review surface: `proposal
+    approve` shows it immediately before asking for a signature, so it stays a
+    full rendering of what the signature will cover. `proposal review` points at
+    the ledger instead.
+    """
 
     lines = [
         f"Proposal: {review.proposal_id}",
@@ -701,6 +744,7 @@ __all__ = [
     "PlaybillReviewedDocument",
     "PlaybillReviewedMember",
     "render_playbill_proposal_review",
+    "render_playbill_proposal_review_pointer",
     "service_prepare_playbill_approval",
     "service_review_playbill_proposal",
 ]

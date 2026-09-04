@@ -1061,8 +1061,8 @@ cruxible playbill proposal approve PROPOSAL_ID
   --signer-id ID --key FILE [--yes]
 cruxible playbill proposal activate PROPOSAL_ID [--workspace-root DIR]
   [--no-sync]
-cruxible playbill review open PROPOSAL_ID [--workspace-root DIR]
-cruxible playbill review close PROPOSAL_ID [--workspace-root DIR]
+cruxible playbill review open PROPOSAL_ID [--workspace-root DIR]    # deprecated
+cruxible playbill review close PROPOSAL_ID [--workspace-root DIR]   # deprecated
 ~~~
 
 `cruxible playbill whoami` names the credential-derived actor, its effective
@@ -1099,13 +1099,40 @@ After an accepted activation, the client runs block sync last unless
 `--no-sync` is explicit. An unattached workspace retains a typed `skipped`
 `workspace_not_attached` row and exits zero; a sync refusal in an attached
 workspace reports the already-accepted truth, names `cruxible playbill block sync
---all`, and exits nonzero. `review open` refreshes the remote refs and creates a
-detached, gitignored worktree at `.playbill/review/<proposal-digest>/`; `review
-close` removes only a clean review worktree. A `review_workspace_not_attached`
-refusal names the local-socket `playbill host create --workspace` command needed
-when creating a host that supports review worktrees. This provides editor/diff
-access without creating a local branch. No review-ref mirror script is needed:
-standard Git tooling already lists the proposal namespace as remote branches.
+--all`, and exits nonzero.
+
+### Reviewing a proposal
+
+The ledger is Git, so review is Git. The daemon fetches its own refs into the
+attached workspace on every proposal, so a reviewer compares the candidate
+against accepted state with standard tooling and no bespoke rendering:
+
+~~~text
+git diff playbill/accepted...playbill/proposals/<proposal-id>
+~~~
+
+The candidate commit carries the change set's own summary as its message: a
+subject naming what the set does, then one line per member as `<disposition>
+<kind> <address> [qualifier]`. It is prose for a reader; nothing parses it. The
+daemon's records travel beside it as Git notes on the candidate commit:
+`refs/notes/playbill-eval` holds the admission and the evaluation verdict with
+every diagnostic behind a refusal, and `refs/notes/playbill-approval` holds the
+canonical approval list, each entry carrying its signer's own attestation. Both
+are byte-identical projections of the proposal evidence store, which stays the
+source of record: activation refuses to settle a candidate whose note disagrees
+with it.
+
+`proposal review` prints that pointer and those ref names; `--json` remains the
+structured read. `proposal approve` still renders the whole candidate before
+asking for a signature, because that rendering is what the signature covers.
+
+`playbill review open` and `playbill review close`, which materialized a
+detached, gitignored worktree at `.playbill/review/<proposal-digest>/`, are
+DEPRECATED and are removed in 0.6.0; both emit the structured deprecation
+warning naming the diff above. They still work for the deprecation window. A
+`review_workspace_not_attached` refusal from `review open` names the
+local-socket `playbill host create --workspace` command needed when creating a
+host that supports review worktrees.
 
 ## playbill principal
 

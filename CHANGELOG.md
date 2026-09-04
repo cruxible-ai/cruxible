@@ -21,6 +21,35 @@
   digest preimages and blocks unrelated authoring. Existing journal bytes and
   commitments remain unchanged; projection-window checks still apply.
 
+- **Review is Git, because the ledger is Git.** A reviewer holding the ledger
+  could see a change set's bytes but not what the daemon made of them, and the
+  commit that carried it said only "Record Playbill proposal". Three things
+  change together. The candidate commit's message is now the change set's own
+  summary -- a subject naming what it does, then one line per member as
+  `<disposition> <kind> <address> [qualifier]`, with the untruncated summary
+  kept in the body when it did not fit 72 columns -- and the settled generation
+  keeps `Accept Playbill generation N` over the same roll. It is prose and only
+  prose: a guardrail states over the whole package that nothing asks Git for a
+  commit message, so no fact can migrate out of the evidence store into an
+  unversioned subject line. The daemon's own records travel beside it as notes
+  on the candidate commit, written through the same call the generation
+  descriptor has always used: `refs/notes/playbill-eval` carries the admission
+  and the evaluation verdict with every diagnostic behind a refusal, and
+  `refs/notes/playbill-approval` carries the canonical approval list with each
+  signer's own Ed25519 attestation. Both are byte-identical projections of the
+  proposal evidence store, which stays the source of record -- activation reads
+  the store for policy and refuses to settle a candidate whose note disagrees
+  with it, while a note that is merely absent is repaired rather than stranding
+  a proposal admitted before the refs existed. `playbill proposal review` now
+  prints that pointer and those ref names instead of a second rendering of the
+  diff; `--json` is unchanged and remains the structured read, and `proposal
+  approve` still renders the whole candidate, because that rendering is what a
+  signature covers. `playbill review open` and `playbill review close`, which
+  materialized a detached worktree under `.playbill/review/`, are DEPRECATED in
+  favour of `git diff playbill/accepted...playbill/proposals/<proposal-id>` in
+  the attached workspace; they still work and now emit the structured
+  deprecation warning, and are removed in 0.6.0.
+
 - **Evidence never comes from a projection block, and the daemon says so.** A
   page is a source: its bytes are captured, its capture is evidence, and a
   passage of it can be cited. A projection block inside that page is not --

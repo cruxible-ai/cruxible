@@ -49,10 +49,34 @@ BLOCK_SYNC_DISCARD_LOCAL_FLAG = DeprecationNotice(
     replacement="`--accept-local`, which re-stamps the block on the body the author wrote",
 )
 
+REVIEW_WORKTREE_REPLACEMENT = (
+    "diff the ledger in the attached workspace: "
+    "`git diff playbill/accepted...playbill/proposals/<proposal-id>`"
+)
+"""The Git review flow the ledger already advertises, named by both notices.
+
+The ledger IS the review artifact: the daemon fetches `refs/remotes/playbill/*`
+into the attached workspace on every proposal, so standard Git already lists the
+proposal namespace and diffs it against accepted. A detached worktree under
+`.playbill/review/` was a second copy of that, with its own open/close lifecycle
+to get wrong.
+"""
+
+REVIEW_OPEN_WORKTREE = DeprecationNotice(
+    surface="playbill review open",
+    replacement=REVIEW_WORKTREE_REPLACEMENT,
+)
+REVIEW_CLOSE_WORKTREE = DeprecationNotice(
+    surface="playbill review close",
+    replacement=REVIEW_WORKTREE_REPLACEMENT,
+)
+
 DEPRECATION_REGISTRY: tuple[DeprecationNotice, ...] = (
     BLOCK_SYNC_DISCARD_LOCAL_FLAG,
     SUBJECT_GET_TWO_ARGUMENT_FORM,
     SUBJECT_HISTORY_TWO_ARGUMENT_FORM,
+    REVIEW_OPEN_WORKTREE,
+    REVIEW_CLOSE_WORKTREE,
 )
 """Every warning-emitting deprecation registered by cruxible-core."""
 

@@ -93,6 +93,8 @@ from cruxible_core.cli.commands._common import (
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.deprecation import (
     BLOCK_SYNC_DISCARD_LOCAL_FLAG,
+    REVIEW_CLOSE_WORKTREE,
+    REVIEW_OPEN_WORKTREE,
     DeprecationNotice,
     emit_cli_deprecation,
 )
@@ -143,6 +145,7 @@ from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.service.review import (
     PlaybillProposalReview,
     render_playbill_proposal_review,
+    render_playbill_proposal_review_pointer,
 )
 from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
 from cruxible_core.playbill.workspace_advertisement import (
@@ -1366,7 +1369,7 @@ def inspect_refusal(proposal_id: str, output_json: bool) -> None:
 
 @playbill_group.group("review")
 def review_group() -> None:
-    """Materialize detached local worktrees for proposal comparison."""
+    """Deprecated: materialize detached local worktrees for proposal comparison."""
 
 
 def _review_workspace_path(workspace_root: str | None) -> Path:
@@ -1386,8 +1389,9 @@ def open_review(
     workspace_root: str | None,
     output_json: bool,
 ) -> None:
-    """Open an advertised proposal tree for comparison, never checkout."""
+    """Deprecated: open an advertised proposal tree for comparison, never checkout."""
 
+    emit_cli_deprecation(REVIEW_OPEN_WORKTREE)
     inspection = _server_call(
         lambda client, instance_id: client.inspect_playbill_proposal(instance_id, proposal_id),
         command_name="playbill review open",
@@ -1440,8 +1444,9 @@ def close_review(
     workspace_root: str | None,
     output_json: bool,
 ) -> None:
-    """Close one clean detached proposal review worktree."""
+    """Deprecated: close one clean detached proposal review worktree."""
 
+    emit_cli_deprecation(REVIEW_CLOSE_WORKTREE)
     try:
         path = close_proposal_review_worktree(
             workspace_path=_review_workspace_path(workspace_root),
@@ -1515,7 +1520,7 @@ def review_proposal(
         _emit_json(result.model_dump(mode="json"))
     else:
         review = PlaybillProposalReview.model_validate(result.model_dump(mode="json"))
-        click.echo(render_playbill_proposal_review(review), nl=False)
+        click.echo(render_playbill_proposal_review_pointer(review), nl=False)
 
 
 @proposal_group.command("approve")

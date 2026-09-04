@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shlex
 from pathlib import Path
 
@@ -183,3 +184,62 @@ def test_review_open_not_attached_url_branch_keeps_a_valid_local_repair(
         "--workspace",
         str(workspace.resolve()),
     ]
+
+
+def test_both_review_worktree_verbs_warn_and_name_the_ledger_diff(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The worktree is a second copy of a diff the ledger already advertises.
+
+    Deprecate-then-remove, so both verbs still do their work for the window and
+    say what replaces them on the transport's own warning channel.
+    """
+
+    class StubClient:
+        def inspect_playbill_proposal(
+            self, instance_id: str, proposal_id: str
+        ) -> contracts.PlaybillProposalInspection:
+            del instance_id, proposal_id
+            return _inspection()
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.open_proposal_review_worktree",
+        lambda *, workspace_path, proposal_id: workspace_path / proposal_id,
+    )
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.close_proposal_review_worktree",
+        lambda *, workspace_path, proposal_id: workspace_path / proposal_id,
+    )
+    common = [
+        "--server-url",
+        "https://review.example.test",
+        "--instance-id",
+        "inst_review",
+        "playbill",
+        "review",
+    ]
+
+    runner = CliRunner()
+    opened = runner.invoke(
+        cli,
+        [*common, "open", PROPOSAL_ID, "--workspace-root", str(tmp_path), "--json"],
+    )
+    closed = runner.invoke(
+        cli,
+        [*common, "close", PROPOSAL_ID, "--workspace-root", str(tmp_path), "--json"],
+    )
+
+    assert opened.exit_code == 0, opened.output
+    assert closed.exit_code == 0, closed.output
+    for result, surface in ((opened, "playbill review open"), (closed, "playbill review close")):
+        warnings = [
+            json.loads(line.removeprefix("Deprecation: "))
+            for line in result.output.splitlines()
+            if line.startswith("Deprecation: ")
+        ]
+        assert len(warnings) == 1
+        assert warnings[0]["surface"] == surface
+        assert warnings[0]["removal_version"] == "0.6.0"
+        assert "git diff playbill/accepted...playbill/proposals/" in warnings[0]["replacement"]
