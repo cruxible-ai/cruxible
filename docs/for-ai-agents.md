@@ -117,7 +117,7 @@ draft.claim(
     rationale="The advisory names this package.",
     self_source="affects: click\n",
     supported_by=None, copied_from=None, qualifier=None,
-    effective_period=None, revises=None, dispositions={}, publish_to=None,
+    effective_period=None, revises=None, dispositions={},
     subject_definition=None, claim_type_definition=None,
 )
 intent = draft.prepare()
@@ -136,9 +136,12 @@ two decisions or split the set rather than to add a disposition. There is no
 member ceiling in the model; how many changed members one daemon receives in a
 single submission is that operator's admission bound.
 
-An intent that publishes more than one Claim owns one publication expectation
-per publishing member: read them from `Intent.publications` and apply each in
-turn, each preparing against the source as it stands after the last.
+No member of a set publishes itself into a page. Writing a Claim's own body back
+into the source it was authored from is the overlap the two-block-kinds law
+refuses, and the `publish_to` option that did it is gone; a passage that states a
+Claim is a source block (write the prose, capture the page, cite the span), and a
+passage that reflects several accepted Claims is a projection block declared with
+`playbill block repin`.
 
 ### Evolving vocabulary in one generation
 
@@ -231,7 +234,7 @@ for work_item, claim in affected:                      # each existing Claim
         revises=claim,                                 # keeps the identity
         self_source=advisory_line,
         supported_by=None, copied_from=None, qualifier=None,
-        effective_period=None, dispositions={}, publish_to=None,
+        effective_period=None, dispositions={},
         subject_definition=None, claim_type_definition=None,
     )
 edges.succeed_claim_type(

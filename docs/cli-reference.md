@@ -195,19 +195,30 @@ shape refuses loudly rather than silently restoring the default bound.
 
 The admitted limits a caller reads back carry two further numbers, which are
 ADVERTISEMENTS rather than receive gates: `max_change_set_record_bytes`
-(`4194304`, the per-blob ceiling the ledger's own record of a change set is
+(`67108864`, the per-blob ceiling the ledger's own record of a change set is
 written under) and `change_set_record_bytes_per_member` (`11264`, the largest
 measured cost of one ENTRY in that record, over every member kind). Their
-quotient -- 372 record entries at the defaults -- is the largest change set that
-can be settled, far below `max_changed_members`, because the two bound different
-things: one is what receive accepts, the other is what the ledger can record.
+quotient -- 5,957 record entries at the defaults -- is the largest change set
+that can be settled, and `max_changed_members` is 5,000, so the member budget a
+caller is told is the member budget that settles: 5,000 entries project to
+56,320,000 bytes, about 53.7 MiB, under the ceiling. They were two different
+numbers until the ledger's per-blob read ceiling rose from 4 MiB to 64 MiB, and
+the disagreement arrived at activation, after the compile had been paid for.
+
+The same raise lifts a ceiling on evidence: receive admits a single member of up
+to 8 MiB, and a captured source over 4 MiB used to be admissible and then
+unreadable, so a source that size may now back a Claim. Operators who mirror a
+ledger to GitHub should note that GitHub warns on any pushed file over 50 MB and
+rejects one over 100 MB, so a change-set record approaching the new ceiling can
+trip that warning on a mirrored remote even though the daemon accepts it. That
+is a deployment concern rather than a second product ceiling.
 
 The record holds one entry per changed PATH, not one per authored member, and
 two member kinds lower to more than one: a ClaimType succession writes the
 successor plus an entry per dependent it dispositions, and a Claim retirement
-writes the retired Claim plus its live closure. So 372 is the largest set of
-1:1 members that settles, and a set carrying either of those kinds settles at
-however many entries it lowers to. An intent over the bound is refused at
+writes the retired Claim plus its live closure. So 5,957 is the largest set of
+1:1 members the record can hold, `max_changed_members` sits under it, and a set
+carrying either of those kinds settles at however many entries it lowers to. An intent over the bound is refused at
 preflight, typed `playbill.authoring.change_set_record_too_large`, naming the
 entry count that fits: on the projected count before anything is lowered when
 that already exceeds the bound, and on the exact lowered count -- still before
@@ -486,10 +497,6 @@ cruxible playbill authoring preflight INTENT_ID
 cruxible playbill authoring rebase INTENT_ID
 cruxible playbill authoring submit INTENT_ID
 cruxible playbill authoring status INTENT_ID
-cruxible playbill authoring prepare-publication INTENT_ID OBSERVATION
-  [--expectation-id ID]
-cruxible playbill authoring confirm-insertion INTENT_ID OBSERVATION
-  [--expectation-id ID]
 cruxible playbill authoring abandon-insertion INTENT_ID [--expectation-id ID]
 ~~~
 
@@ -536,10 +543,13 @@ changed members one daemon will receive in a single submission is the operator's
 set additionally requires it to fit under the advertised change-set record
 ceiling described there, which preflight checks before lowering anything.
 
-An intent that publishes more than one Claim owns one publication expectation
-per publishing member, so `prepare-publication`, `confirm-insertion` and
-`abandon-insertion` take an `expectation_id` naming the one they are about. A
-singular Claim intent owns exactly one and may omit it.
+No intent publishes a Claim into a page any more, and none mints a publication
+expectation. `abandon-insertion` releases one an instance already holds, and
+because a change set that published several Claims owns one expectation per
+publishing member it takes an `expectation_id` naming the one it is about; a
+singular Claim intent owns exactly one and may omit it. `playbill block
+depublish SOURCE_ID BLOCK_ID` is the same release addressed the way a page names
+it, and is the verb to reach for.
 
 The authoring coordinator owns stable identities, timestamps, bases, and proposal
 references. `compile` creates or updates an intent and performs a binding preflight;
@@ -553,40 +563,11 @@ are therefore truthful input metadata, not an unresolved selection.
 Use `--example claim-subject-relation` for a subject-valued Claim such as
 `sec.vulnerability/<cve> → sec.vuln.affects_package → sec.package/<package>`.
 Both endpoint Subjects must already be accepted and admitted by the ClaimType.
-V2 publication preparation commits a deterministic Claim-backed block against fresh
-whole-source bytes before the client applies it. A successful response includes
-`inserted_block_base64`: standard RFC 4648 base64 for the exact UTF-8 bytes to
-insert. (The canonical stamp token inside the opening marker uses URL-safe base64;
-these are deliberately different layers.) Decode with validation, then apply the
-preparation without inventing an offset: for `replace_window`, replace
-`rebased_selector.start_byte:end_byte`; otherwise splice the decoded block at
-`rebased_selector.insertion_offset`. In Python, the complete byte operation is:
-
-~~~python
-block = base64.b64decode(preparation["inserted_block_base64"], validate=True)
-selector = preparation["rebased_selector"]
-if preparation["operation"] == "replace_window":
-    postimage = preimage[: selector["start_byte"]] + block + preimage[selector["end_byte"] :]
-else:
-    offset = selector["insertion_offset"]
-    postimage = preimage[:offset] + block + preimage[offset:]
-~~~
-
-The decoded block is one LF-only opening marker line, the accepted body (ending
-in LF), and one LF-only closing marker line:
-
-~~~text
-<!-- playbill:block:BLOCK_ID:BASE64URL_CANONICAL_STAMP -->
-BODY
-<!-- /playbill:block:BLOCK_ID -->
-~~~
-
-The marker must start in column zero; blocks cannot overlap, nest, or repeat an ID,
-and marker-looking text inside a Markdown fence is not a declaration. Clients should
-insert the returned bytes verbatim rather than synthesize this grammar. Insertion
-confirmation verifies the exact client observation; legacy v1 opens an ordinary
-backing-only successor candidate, while v2 binds the stamped block without a copy
-citation. Abandon closes only an unprepared publication expectation.
+A projection block's marker grammar is a page-level shape rather than an
+authoring one, and it is documented under `playbill block`. Nothing composes it
+for a caller any more: the marker must start in column zero, blocks cannot
+overlap, nest, or repeat an id, and marker-looking text inside a Markdown fence
+is not a declaration.
 
 ## playbill policy
 
@@ -663,64 +644,113 @@ cruxible playbill block sync [PATH]... [--all] [--check]
 cruxible playbill block depublish SOURCE_ID BLOCK_ID [--json]
 ~~~
 
+### The two roads a governed passage takes
+
+A page is a **source**. Its bytes are captured, its capture is evidence, and a
+passage of it can be cited like any other evidence. What a page holds is one of
+exactly two kinds of governed block, and they never overlap.
+
+A **source block** is ordinary prose the author wrote, made governed by a Claim
+that cites its span. There is no marker: write the passage, capture the page
+through `playbill sources compile` / `propose`, and author the Claim citing the
+span it states -- `copied_from` when the passage states the value verbatim,
+`supported_by` when it rests on the passage as evidence. This is the road for
+"the page says this, and here is the Claim that stands behind it".
+
+A **projection block** is agent-authored prose HELD TO an explicit list of
+accepted Claims and artifacts, marked in the file by a marker pair and declared
+with `block repin`. **Nothing renders it.** The body is git-tracked text the
+agent writes; what the marker commits to is which accepted state the passage is
+accountable for, and `playbill next` and `block sync` prove that state has not
+moved under it. This is the road for "this table reflects these Claims".
+
+Evidence never comes from a projection window. A citation of any role and any
+origin whose span lies inside a stamped block refuses --
+`playbill.projection.evidence_from_projection`, at the daemon, not only in the
+SDK -- because a block that was both kinds would let a page attest itself into
+concrete. Prose outside every window is the author's own and stays citable.
+
 ### Declaring a projection block
 
 `block repin --claim ID --claim ID ...` is how a projection block is created.
 Write the marker pair by hand around the prose you want governed, then repin it
 naming every backing: the daemon re-reads and re-proves each Claim at the
-accepted coordinate and stamps the marker. Up to 64 backings fit in one block
-(`MAX_PROJECTION_BACKINGS_PER_BLOCK`), and a block that would need more refuses
-rather than truncating. **`repin` mints no Claim.** It declares that this
-passage reflects Claims that already exist, which is exactly what a projection
-block is.
+accepted coordinate, stamps the marker, and registers the block with the
+instance. Up to 512 backings fit in one block
+(`MAX_PROJECTION_BACKINGS_PER_BLOCK`, inside a 128 KiB stamp), and a block that
+would need more refuses rather than truncating. **`repin` mints no Claim.** It
+declares that this passage reflects Claims that already exist, which is exactly
+what a projection block is.
+
+A stamp may carry a **held list** and a **watched query** together: any number
+of Claim and artifact backings, plus at most one `--query`. The held list is
+what the block is accountable for -- a revision, retirement or overturn of any
+member is `projection_backing_stale`. The watched query surfaces CANDIDATES for
+that list: when its semantic result digest moves, `playbill next` emits
+`projection_candidates_changed` (a warning) naming the rows that entered and
+left, with one repair spelled two ways. `block repin --claim <entered>` holds
+the new rows; `block repin` alone re-stamps the new digest, which is the agent
+saying no to them on the record.
 
 The first declaration of a block requires explicit `--claim`/`--query` backings.
 Omitting them on an already-stamped block preserves its existing backing
 identities and resolved query parameters. The client validates accepted state
 and atomically replaces the marker only when the complete local source still
 matches its observed bytes. It never renders prose, edits the body, or mutates
-governed state. Evidence anchors inside declared blocks are refused client-side;
-an explicit copy citation remains available.
+governed state.
 
-The SDK's `draft.claim(publish_to=...)` is the OTHER road, and it is not this
-one. It authors a Claim and projects that same Claim as its own text, so it is
-legal only for a `self_source` Claim and mints exactly one backing -- the
-publishing Claim itself. That is a **source block** published as a projection of
-itself. Use it only where a single self-source Claim really is what the passage
-says; for a passage that reflects accepted Claims, declare the block with
-`repin`.
+There is no SDK option that publishes a Claim as its own page text. `publish_to`
+was that road and it is gone: it minted a block whose one backing was the
+publishing Claim itself, which is a source block projected as its own
+projection -- the overlap the two-block-kinds law refuses. An intent carrying
+`insertion_target` refuses typed as
+`playbill.authoring.insertion_target_removed`, naming both roads above as the
+repair.
 
-### Converging and detaching
+### Checking and detaching
 
-`block sync` converges only publication-origin blocks backed by one live Claim
-whose retained coordinator self-source carries the accepted body. It follows
-accepted Claim successors, updates the marker and body with one whole-file
-compare-and-swap, and proves the bytes outside every marker by digest before and
-after the atomic temp-file rename. `--check` writes nothing and exits nonzero
-when a change is needed.
+`block sync` **reports and never converges.** Nothing renders a block, so there
+is no accepted body to write back; each declared block is reported as:
 
-`--detach PATH` strips markers while preserving the current body. It covers two
-cases: a block whose backing is retired with no live successor, and a block this
-instance does not own -- markers left behind by the host a worktree was
-previously attached to. Detaching a foreign block reads nothing from that host
-and asserts nothing about it; the row names the coordinate the marker was
-published at.
+| outcome | meaning | repair |
+|---|---|---|
+| `unchanged` | every held backing still reads as the stamp says | -- |
+| `stale` | a held backing moved under the block | `block repin` |
+| `dirty` | the prose moved away from the body digest the stamp committed | `block repin` |
 
-A block body is overwritten only when it still matches the last-synced body
-digest in its stamp. A local edit is preserved and refused as
-`block_locally_modified`; revise it through governed authoring, or explicitly
-discard it with `--discard-local PATH`. Retired backings with no live successor
-refuse until `--detach PATH` is explicit; two live terminal successors refuse
-as ambiguous. The stale-block row from `playbill next` repairs with
-`cruxible playbill block sync`.
+`--check` is therefore the behaviour by default and the flag is accepted as a
+no-op for the reporting path; it still suppresses the one write left, `--detach`.
+A `stale` or `dirty` block counts as a refusal for the exit code, so the sync an
+activation runs as its closing step does not answer clean over a page that has
+drifted from the state it declares.
+
+`--detach PATH` strips markers while preserving the current body, and is the
+only edit this command makes. It covers two cases: a block whose backing is
+retired with no live successor, and a block this instance does not own --
+markers left behind by the host a worktree was previously attached to.
+Detaching a foreign block reads nothing from that host and asserts nothing about
+it; the row names the coordinate the marker was published at. The write is one
+whole-file compare-and-swap and proves the bytes outside every marker by digest
+before and after.
+
+`--discard-local PATH` no longer discards anything, because nothing overwrites a
+body: it says the local body in that path is intended, and suppresses the
+`dirty` row for it.
 
 ### Depublishing
 
-`block depublish SOURCE_ID BLOCK_ID` releases the publication registration that
-demands a block's frame. A publication is registered when its insertion is
-confirmed, and `playbill next` reports a registered block whose marker is no
-longer in the file as blocking -- correctly, until the block is meant to be
-gone. Depublishing is what says so.
+`block depublish SOURCE_ID BLOCK_ID` releases the registration that demands a
+block's frame, whichever road declared it. Every projection block is registered
+with the instance -- a `block repin` records a declaration, and an instance that
+published under the retired road folds its bound publications -- and `playbill
+next` reports a registered block whose marker is no longer in the file as
+blocking, correctly, until the block is meant to be gone. Depublishing is what
+says so, and the blocking row names this verb.
+
+The registration is protocol state and says nothing about what a block CONTAINS:
+it records that this instance stands behind this marker. It is also the identity
+`workspace detach` refuses on, so a worktree cannot move out from under markers
+a host still owns.
 
 It edits no page and retires no Claim. Strip the markers (`block sync --detach`,
 or by hand), retire the backing Claim through the ordinary retirement road if

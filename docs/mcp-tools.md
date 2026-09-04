@@ -148,10 +148,9 @@ from accepted law evidence, never carried forward from acceptance.
 | `cruxible_playbill_authoring_preflight` | Produce a binding certificate and repair frontier | `GOVERNED_WRITE` |
 | `cruxible_playbill_authoring_submit` | Idempotently submit a passing intent | `GOVERNED_WRITE` |
 | `cruxible_playbill_authoring_status` | Read the causal path to acceptance | `READ_ONLY` |
-| `cruxible_playbill_authoring_prepare_publication` | Commit a deterministic Claim-backed block against fresh source bytes | `GOVERNED_WRITE` |
-| `cruxible_playbill_authoring_confirm_insertion` | Confirm an exact client-applied insertion or stamped publication | `GOVERNED_WRITE` |
-| `cruxible_playbill_authoring_abandon_insertion` | Abandon an unprepared publication expectation | `GOVERNED_WRITE` |
-| `cruxible_playbill_block_depublish` | Release a bound publication registration for one page block | `GOVERNED_WRITE` |
+| `cruxible_playbill_authoring_abandon_insertion` | Release a publication expectation an instance already holds | `GOVERNED_WRITE` |
+| `cruxible_playbill_block_declare` | Register one projection block a workspace just stamped into its page | `GOVERNED_WRITE` |
+| `cruxible_playbill_block_depublish` | Release the registration that demands one page block, whichever road declared it | `GOVERNED_WRITE` |
 
 The coordinator mints every identity, digest, base, timestamp, and proposal reference.
 It reports approval conditions but never obtains or impersonates an approval.

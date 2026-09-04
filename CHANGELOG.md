@@ -2,6 +2,115 @@
 
 ## Unreleased
 
+- **Evidence never comes from a projection block, and the daemon says so.** A
+  page is a source: its bytes are captured, its capture is evidence, and a
+  passage of it can be cited. A projection block inside that page is not --
+  it is prose held to accepted Claims, and a Claim citing it would be a page
+  attesting itself into concrete. That law was a client convention: a guard in
+  the SDK, gated on the evidence role, that a copy citation, any other Claim,
+  and any raw wire caller walked past. It is now enforced at the daemon, at
+  both doors. Lowering resolves each citation's span against the cited source's
+  own bytes and refuses `playbill.projection.evidence_from_projection` when it
+  touches a stamped block, whatever the role or origin; the citation gate every
+  proposal evaluation runs does the same over the capture's bytes, so a
+  hand-built candidate tree is refused too. A page that declares a block is
+  handed over with the observation (additive, optional `source_content_base64`,
+  digest-checked) and kept, so the capture is the manifest of its own windows. A
+  span that cannot be proved outside the windows of a source the instance
+  registers blocks in refuses `playbill.projection.window_unverifiable` rather
+  than passing. Overlap with the author's own prose outside every window stays
+  allowed: that is what a source block IS.
+
+- **`publish_to` is deleted.** The SDK option that authored a Claim and wrote
+  that same Claim's body back into its own page minted a block whose single
+  backing was the publishing Claim itself -- a source block projected as its own
+  projection, which is precisely the overlap the two-block-kinds law refuses. It
+  was also the only discoverable way to get a governed block into a page, so the
+  discoverable road was the forbidden one. It is removed rather than deprecated,
+  because a deprecation window on this shape is a window in which a page can
+  still attest itself. An intent carrying `insertion_target` refuses typed as
+  `playbill.authoring.insertion_target_removed`, naming the two roads that
+  remain: a source block (write the prose, capture the page, cite the span it
+  states) and a projection block (`playbill block repin` over accepted Claims).
+  The mint, the preparation, the confirmation and their served verbs
+  (`playbill authoring prepare-publication`, `playbill authoring
+  confirm-insertion`, and the two HTTP routes and MCP tools behind them) go with
+  it. Registrations an instance already holds stay readable, foldable and
+  depublishable: `playbill authoring abandon-insertion` and `playbill block
+  depublish` are unchanged.
+
+- **A projection block is a held list and a watched query, and `block sync`
+  reports instead of converging.** A stamp may now carry any number of Claim and
+  artifact backings together with at most one query backing. The held list is
+  what the block is accountable for; the watched query surfaces candidates for
+  it, and when its semantic result digest moves `playbill next` emits the new
+  `projection_candidates_changed` warning naming the rows that entered and left,
+  repaired by `block repin --claim <entered>` to hold them or by `block repin`
+  alone to re-stamp, which is the agent's explicit no. The ceilings that made
+  the marker a layout constraint rise with it: 512 backings per block (from 64)
+  inside a 128 KiB stamp (from 16 KiB), so a table of governed rows is not cut
+  in two at a row number that means nothing to a reader. Because nothing renders
+  a block, `block sync` no longer converges one: every block reports
+  `unchanged`, `stale` (a held backing moved) or `dirty` (the prose moved away
+  from the stamp), both repaired by a repin, and both counting as refusals for
+  the exit code so an activation's closing sweep cannot answer clean over a page
+  that has drifted. `--detach` is the one edit left; `--check` is the default
+  behaviour and the flag is accepted as a no-op; `--discard-local` now says a
+  local body is intended rather than discarding it.
+
+- **Every projection block is registered with the instance, whichever road
+  declared it.** `block repin` records a declaration through a new served route
+  (`POST /api/v1/{instance_id}/playbill/blocks/declare`), and the registration
+  fold unions that with the bound publications an instance already holds, keyed
+  on the pair the page itself names. `unregistered_projection_block` and the
+  `workspace detach` refusal key on that fold instead of on whether a block id
+  happens to begin `pub-`, which was a spelling the retired publication road
+  minted and left every agent-declared block unchecked. `block depublish`
+  releases either kind. The declaration is protocol state and commits nothing
+  about what a block says.
+
+- **Vocabulary that no producer could reach is gone.** The `self_published`
+  citation origin had no writer anywhere in the product, so the
+  `self_published_source_stale` row it fed could never fire and the coverage
+  renderer's "published copy" line could never print; both are removed, and no
+  accepted artifact carries the origin. `projection_backing_stale` stops
+  answering `hand_edit` for a change a verb performs: `playbill.block.depublish`
+  joins the repair vocabulary and the retired- and overturned-backing rows name
+  it, as does a registered block whose marker has left the page -- whose repair
+  used to be to restore the block a ruling had told the author to delete. The
+  block-sync reasons with no producer left (`block_multi_backing`,
+  `block_query_backing`, `block_not_publication_origin`,
+  `block_successor_body_missing`, `block_successor_body_ambiguous`,
+  `workspace_source_catalog_missing`, `block_publication_registry_unavailable`)
+  are removed, and the repairs that named `block sync --all` for a drifted block
+  name `block repin`, because sync converges nothing now.
+
+- **An orient is a read again.** Deriving every Claim's verdict and resolution
+  status crossed the client's own three-minute default timeout at a few hundred
+  Claims, so `Playbill.connect()` could fail against a healthy instance. That
+  derivation is memoized per process on the accepted coordinate, the evaluation
+  instant, the exact Claim set, and a fingerprint of the two stores a verdict
+  reads besides the accepted tree -- the content-addressed body store and the
+  attestation ledger -- so a second read of the same state evaluates no verdicts
+  at all. It is a cache and nothing else: bounded, cold after a restart, cleared
+  on activation, and not a projection table. The registration fold is likewise
+  read once per `next` rather than three times plus once per block.
+
+- **The ledger's per-blob ceiling rises to 64 MiB, and the two member budgets
+  become one number.** A change set's own ledger record costs up to 11,264 bytes
+  per lowered entry, so a 4 MiB blob ceiling settled at most 372 entries while
+  proposal admission advertised 5,000 -- and the disagreement arrived at
+  activation, after the compile had been paid for. `max_change_set_record_bytes`
+  rises with the read ceiling (a guardrail holds them equal), 5,000 entries
+  project to about 53.7 MiB, and the budget a caller is told is the budget that
+  settles. It also lifts a ceiling on evidence: a captured source over 4 MiB was
+  admissible and then unreadable, and a source that size may now back a Claim.
+  Raising a read limit is backward compatible in the only direction that
+  matters -- every blob already accepted was written under the narrower ceiling.
+  Operators mirroring a ledger to GitHub should note that GitHub warns over
+  50 MB and rejects over 100 MB, which is a deployment concern rather than a
+  second product ceiling.
+
 - **An authoring anchor may quote a URL, and a lowering refusal is never a
   bare 500.** Every security feed interleaves reference URLs with the fields a
   Claim rests on, and the locator rule on source selectors -- right for every
