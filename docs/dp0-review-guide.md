@@ -116,6 +116,7 @@ playbill subject list
 playbill subject propose
 playbill whoami
 playbill workspace attach
+playbill world stub
 server info
 server install-service
 server restart

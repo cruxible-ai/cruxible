@@ -409,7 +409,7 @@ def test_a_kind_loads_its_subjects_only_when_one_is_first_asked_for(
         world.dev.batch["retired_batch"]
 
 
-def test_a_world_refuses_every_read_once_the_orientation_moves(
+def test_the_facade_stops_answering_once_the_orientation_moves(
     connection: tuple[Playbill, _WorldClient],
 ) -> None:
     """A name that resolved at one coordinate may name something else at the next."""
