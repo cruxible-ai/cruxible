@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-06:p2-b6-1-on-ops-hotfix-1",
-    "surface_digest": "sha256:c4e382a0bc731cedd4bbe717519df34f8771d2e9f5304972e894e4afc24847c1"
+    "register_entry": "2026-09-07:sdk-world",
+    "surface_digest": "sha256:9a7f6c73ff6ca4b4a10f20ed675f6f1dfde68e16687f71691a9f6a3724946b85"
   },
   "surface": {
     "cli_leaves": [
@@ -674,6 +674,11 @@
         ],
         "command": "playbill workspace attach",
         "delegate": "cruxible_core.cli.commands.playbill.attach_workspace"
+      },
+      {
+        "client_operations": [],
+        "command": "playbill world stub",
+        "delegate": "cruxible_core.cli.commands.playbill.world_stub"
       },
       {
         "client_operations": [
