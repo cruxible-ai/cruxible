@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any, Literal, TypeVar, cast
 
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from cruxible_client import (
     CruxibleClient,
@@ -79,6 +79,32 @@ from cruxible_core.playbill.search import (
 )
 from cruxible_core.runtime import host_api, playbill_api
 from cruxible_core.server.config import get_runtime_bearer_token, resolve_server_settings
+from cruxible_core.server.playbill_request_models import (
+    PlaybillApprovalRequest,
+    PlaybillAuthoringInputCompileRequest,
+    PlaybillAuthoringInputCreateRequest,
+    PlaybillAuthoringPreflightRequest,
+    PlaybillAuthoringSubmitRequest,
+    PlaybillBlockDepublishRequest,
+    PlaybillCurationAcceptFixedRequest,
+    PlaybillCurationOverruleRequest,
+    PlaybillCurationSuppressRequest,
+    PlaybillInitRequest,
+    PlaybillInsertionAbandonRequest,
+    PlaybillInsertionConfirmRequest,
+    PlaybillInsertionPrepareRequest,
+    PlaybillInstanceDecommissionRequest,
+    PlaybillProposalReadmitRequest,
+    PlaybillProposalWithdrawRequest,
+    PlaybillProposeClaimTypeInputRequest,
+    PlaybillProposeDocumentRequest,
+    PlaybillProposePrincipalRequest,
+    PlaybillProposeQueryDefinitionRequest,
+    PlaybillProposeSubjectRequest,
+    PlaybillSourceProposeRequest,
+    PlaybillStoreBodyRequest,
+)
+from cruxible_core.server.request_models import PlaybillHostCreateRequest
 from cruxible_core.service.playbill_procedure_runs import (
     LineRunRequestV1,
     ProcedureBindRequestV1,
@@ -217,12 +243,79 @@ def _get_client() -> CruxibleClient | None:
         return _client_cache
 
 
+#: The served request model each mutating MCP operation is validated through
+#: when it runs in process. An MCP client with no daemon reaches the facade
+#: directly, which used to mean it skipped whatever the HTTP route's request
+#: model checks beyond the facade's own signature -- a control character in a
+#: decommission reason passed the MCP door and then raised the raw pydantic
+#: error from inside the write, where it renders as an untyped failure rather
+#: than a refusal the caller can read. One seam, so the local door and the
+#: served door decide with the same model.
+#:
+#: `None` is a declaration, not an omission: that route carries no request body,
+#: so there is no second model to agree with. The guardrail in
+#: `tests/test_architecture/test_mcp_validation_seam.py` requires every mutating
+#: operation to appear here and every entry with a model to be given a payload.
+MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
+    "cruxible_playbill_activate": None,  # path only
+    "cruxible_playbill_authoring_abandon_insertion": TypeAdapter(PlaybillInsertionAbandonRequest),
+    "cruxible_playbill_authoring_bind": TypeAdapter(PlaybillAuthoringInputCompileRequest),
+    "cruxible_playbill_authoring_compile": TypeAdapter(PlaybillAuthoringInputCompileRequest),
+    "cruxible_playbill_authoring_confirm_insertion": TypeAdapter(PlaybillInsertionConfirmRequest),
+    "cruxible_playbill_authoring_create": TypeAdapter(PlaybillAuthoringInputCreateRequest),
+    "cruxible_playbill_authoring_preflight": TypeAdapter(PlaybillAuthoringPreflightRequest),
+    "cruxible_playbill_authoring_prepare_publication": TypeAdapter(PlaybillInsertionPrepareRequest),
+    "cruxible_playbill_authoring_submit": TypeAdapter(PlaybillAuthoringSubmitRequest),
+    "cruxible_playbill_block_depublish": TypeAdapter(PlaybillBlockDepublishRequest),
+    "cruxible_playbill_claim_attest": None,  # shared preparation helper builds the body
+    "cruxible_playbill_claim_attest_new_capture": None,  # same shared helper
+    "cruxible_playbill_claim_retire": TypeAdapter(ClaimRetireRequestV1),
+    "cruxible_playbill_claim_type_migrate": TypeAdapter(ClaimTypeMigrationRequest),
+    "cruxible_playbill_curation_accept_fixed": TypeAdapter(PlaybillCurationAcceptFixedRequest),
+    "cruxible_playbill_curation_overrule": TypeAdapter(PlaybillCurationOverruleRequest),
+    "cruxible_playbill_curation_suppress": TypeAdapter(PlaybillCurationSuppressRequest),
+    "cruxible_playbill_dereference": None,  # path and query only
+    "cruxible_playbill_host_create": TypeAdapter(PlaybillHostCreateRequest),
+    "cruxible_playbill_host_workspace_detach": None,  # path only
+    "cruxible_playbill_init": TypeAdapter(PlaybillInitRequest),
+    "cruxible_playbill_instance_decommission": TypeAdapter(PlaybillInstanceDecommissionRequest),
+    "cruxible_playbill_predict": TypeAdapter(contracts.PlaybillPredictRequestV1),
+    "cruxible_playbill_procedure_bind": TypeAdapter(ProcedureBindRequestV1),
+    "cruxible_playbill_proposal_readmit": TypeAdapter(PlaybillProposalReadmitRequest),
+    "cruxible_playbill_proposal_withdraw": TypeAdapter(PlaybillProposalWithdrawRequest),
+    "cruxible_playbill_propose_claim_type": TypeAdapter(PlaybillProposeClaimTypeInputRequest),
+    "cruxible_playbill_propose_document": TypeAdapter(PlaybillProposeDocumentRequest),
+    "cruxible_playbill_propose_principal_change": TypeAdapter(PlaybillProposePrincipalRequest),
+    "cruxible_playbill_propose_query_definition": TypeAdapter(
+        PlaybillProposeQueryDefinitionRequest
+    ),
+    "cruxible_playbill_propose_source_bundle": TypeAdapter(PlaybillSourceProposeRequest),
+    "cruxible_playbill_propose_subject": TypeAdapter(PlaybillProposeSubjectRequest),
+    "cruxible_playbill_settle": TypeAdapter(contracts.PlaybillSettleRequestV1),
+    "cruxible_playbill_store_body": TypeAdapter(PlaybillStoreBodyRequest),
+    "cruxible_playbill_submit_approval": TypeAdapter(PlaybillApprovalRequest),
+}
+
+
+def _validate_local_request(operation_name: str, payload: Mapping[str, Any]) -> None:
+    """Refuse locally exactly what the served route's request model refuses."""
+
+    model = MCP_LOCAL_REQUEST_MODELS.get(operation_name)
+    if model is None:
+        return
+    try:
+        model.validate_python(dict(payload))
+    except ValidationError as exc:
+        raise DataValidationError(f"{operation_name}: {exc}") from exc
+
+
 def _dispatch_remote_or_local(
     remote_call: Callable[[CruxibleClient], ResultT],
     local_call: Callable[[], ResultT],
     *,
     allow_local: bool = True,
     operation_name: str,
+    local_payload: Mapping[str, Any] | None = None,
 ) -> ResultT:
     try:
         client = _get_client()
@@ -241,6 +334,8 @@ def _dispatch_remote_or_local(
             ) from exc
     if not allow_local:
         raise ConfigError(f"Local execution disabled for {operation_name}; configure a daemon.")
+    if local_payload is not None:
+        _validate_local_request(operation_name, local_payload)
     return local_call()
 
 
@@ -257,6 +352,7 @@ def handle_playbill_host_create(instance_id: str | None) -> contracts.PlaybillHo
         lambda client: client.create_playbill_host(instance_id=instance_id),
         lambda: host_api.create_playbill_host(instance_id=instance_id),
         operation_name="cruxible_playbill_host_create",
+        local_payload={"instance_id": instance_id},
     )
 
 
@@ -298,6 +394,13 @@ def handle_playbill_init(
             git_object_format=cast(Any, git_object_format),
         ),
         operation_name="cruxible_playbill_init",
+        local_payload={
+            "principals": [item.model_dump(mode="json") for item in records],
+            "operating_profile": operating_profile,
+            "require_independent_approval": require_independent_approval,
+            "seed": seed,
+            "git_object_format": git_object_format,
+        },
     )
 
 
@@ -308,6 +411,7 @@ def handle_playbill_instance_decommission(
         lambda client: client.decommission_playbill_instance(instance_id, reason=reason),
         lambda: playbill_api.playbill_instance_decommission(instance_id, reason=reason),
         operation_name="cruxible_playbill_instance_decommission",
+        local_payload={"reason": reason},
     )
 
 
@@ -322,6 +426,7 @@ def handle_playbill_store_body(
         lambda client: client.store_playbill_body(instance_id, content),
         lambda: playbill_api.playbill_store_body(instance_id, content_base64=content_base64),
         operation_name="cruxible_playbill_store_body",
+        local_payload={"content_base64": content_base64},
     )
 
 
@@ -346,6 +451,11 @@ def handle_playbill_propose_document(
             source_compilation_digest=source_compilation_digest,
         ),
         operation_name="cruxible_playbill_propose_document",
+        local_payload={
+            "shell": document.model_dump(mode="json"),
+            "proposal_name": proposal_name,
+            "source_compilation_digest": source_compilation_digest,
+        },
     )
 
 
@@ -428,6 +538,7 @@ def handle_playbill_submit_approval(
             attestation=public_attestation,
         ),
         operation_name="cruxible_playbill_submit_approval",
+        local_payload={"attestation": public_attestation.model_dump(mode="json")},
     )
 
 
@@ -474,6 +585,7 @@ def handle_playbill_readmit_proposal(
         lambda client: client.readmit_playbill_proposal(instance_id, proposal_id),
         lambda: playbill_api.playbill_readmit_proposal(instance_id, proposal_id),
         operation_name="cruxible_playbill_proposal_readmit",
+        local_payload={},
     )
 
 
@@ -490,6 +602,7 @@ def handle_playbill_withdraw_proposal(
         ),
         lambda: playbill_api.playbill_withdraw_proposal(instance_id, proposal_id, reason),
         operation_name="cruxible_playbill_proposal_withdraw",
+        local_payload={"reason": reason},
     )
 
 
@@ -597,6 +710,11 @@ def handle_playbill_propose_source_bundle(
             proposal_name=proposal_name,
         ),
         operation_name="cruxible_playbill_propose_source_bundle",
+        local_payload={
+            "bundle": frozen.model_dump(mode="json"),
+            "source_name": source_name,
+            "proposal_name": proposal_name,
+        },
     )
 
 
@@ -626,6 +744,10 @@ def handle_playbill_propose_principal_change(
             proposal_name=proposal_name,
         ),
         operation_name="cruxible_playbill_propose_principal_change",
+        local_payload={
+            "principal": record.model_dump(mode="json"),
+            "proposal_name": proposal_name,
+        },
     )
 
 
@@ -647,6 +769,10 @@ def handle_playbill_propose_subject(
             proposal_name=proposal_name,
         ),
         operation_name="cruxible_playbill_propose_subject",
+        local_payload={
+            "shell": subject.model_dump(mode="json"),
+            "proposal_name": proposal_name,
+        },
     )
 
 
@@ -700,6 +826,10 @@ def handle_playbill_propose_claim_type(
             proposal_name=proposal_name,
         ),
         operation_name="cruxible_playbill_propose_claim_type",
+        local_payload={
+            "input": request.model_dump(mode="json"),
+            "proposal_name": proposal_name,
+        },
     )
 
 
@@ -715,6 +845,7 @@ def handle_playbill_migrate_claim_type(
         ),
         lambda: playbill_api.playbill_migrate_claim_type(instance_id, request=migration),
         operation_name="cruxible_playbill_claim_type_migrate",
+        local_payload=migration.model_dump(mode="json"),
     )
 
 
@@ -754,6 +885,7 @@ def handle_playbill_retire_claim(
             request=retirement,
         ),
         operation_name="cruxible_playbill_claim_retire",
+        local_payload=retirement.model_dump(mode="json"),
     )
 
 
@@ -819,6 +951,7 @@ def handle_playbill_authoring_create(
         ),
         lambda: playbill_api.playbill_authoring_create_input(instance_id, input=request),
         operation_name="cruxible_playbill_authoring_create",
+        local_payload={"input": request.model_dump(mode="json")},
     )
 
 
@@ -887,6 +1020,7 @@ def handle_playbill_authoring_compile(
             intent_id=intent_id,
         ),
         operation_name="cruxible_playbill_authoring_compile",
+        local_payload={"input": request.model_dump(mode="json"), "intent_id": intent_id},
     )
 
 
@@ -921,6 +1055,7 @@ def handle_playbill_authoring_bind(
             intent_id=None,
         ),
         operation_name="cruxible_playbill_authoring_bind",
+        local_payload={"input": bound.model_dump(mode="json"), "intent_id": None},
     )
 
 
@@ -932,6 +1067,7 @@ def handle_playbill_authoring_preflight(
         lambda client: client.preflight_playbill_authoring_intent(instance_id, intent_id),
         lambda: playbill_api.playbill_authoring_preflight(instance_id, intent_id),
         operation_name="cruxible_playbill_authoring_preflight",
+        local_payload={},
     )
 
 
@@ -943,6 +1079,7 @@ def handle_playbill_authoring_submit(
         lambda client: client.submit_playbill_authoring_intent(instance_id, intent_id),
         lambda: playbill_api.playbill_authoring_submit(instance_id, intent_id),
         operation_name="cruxible_playbill_authoring_submit",
+        local_payload={},
     )
 
 
@@ -978,6 +1115,10 @@ def handle_playbill_authoring_confirm_insertion(
             expectation_id=expectation_id,
         ),
         operation_name="cruxible_playbill_authoring_confirm_insertion",
+        local_payload={
+            "observation": request.model_dump(mode="json"),
+            "expectation_id": expectation_id,
+        },
     )
 
 
@@ -1002,6 +1143,10 @@ def handle_playbill_authoring_prepare_publication(
             expectation_id=expectation_id,
         ),
         operation_name="cruxible_playbill_authoring_prepare_publication",
+        local_payload={
+            "observation": request.model_dump(mode="json"),
+            "expectation_id": expectation_id,
+        },
     )
 
 
@@ -1022,6 +1167,7 @@ def handle_playbill_authoring_abandon_insertion(
             expectation_id=expectation_id,
         ),
         operation_name="cruxible_playbill_authoring_abandon_insertion",
+        local_payload={"expectation_id": expectation_id},
     )
 
 
@@ -1034,6 +1180,7 @@ def handle_playbill_block_depublish(
         lambda client: client.depublish_playbill_block(instance_id, source_id, block_id),
         lambda: playbill_api.playbill_block_depublish(instance_id, source_id, block_id),
         operation_name="cruxible_playbill_block_depublish",
+        local_payload={"source_id": source_id, "block_id": block_id},
     )
 
 
@@ -1134,6 +1281,10 @@ def handle_playbill_propose_query_definition(
             proposal_name=proposal_name,
         ),
         operation_name="cruxible_playbill_propose_query_definition",
+        local_payload={
+            "query": definition.model_dump(mode="json"),
+            "proposal_name": proposal_name,
+        },
     )
 
 
@@ -1235,6 +1386,7 @@ def handle_playbill_procedure_bind(
         ),
         lambda: playbill_api.playbill_procedure_bind(instance_id, name, request=request),
         operation_name="cruxible_playbill_procedure_bind",
+        local_payload=request.model_dump(mode="json"),
     )
 
 
@@ -1318,6 +1470,7 @@ def handle_playbill_predict(
         lambda client: client.predict_playbill(instance_id, request=request),
         lambda: playbill_api.playbill_predict(instance_id, request=request),
         operation_name="cruxible_playbill_predict",
+        local_payload=request.model_dump(mode="json"),
     )
 
 
@@ -1338,6 +1491,7 @@ def handle_playbill_settle_prediction(
             request=request,
         ),
         operation_name="cruxible_playbill_settle",
+        local_payload=request.model_dump(mode="json"),
     )
 
 
@@ -1578,6 +1732,12 @@ def handle_playbill_curation_overrule(
             },
         ),
         operation_name="cruxible_playbill_curation_overrule",
+        local_payload={
+            "item_id": item_id,
+            "expected_latest_event_digest": expected_latest_event_digest,
+            "reason": reason,
+            "attribution_refs": attribution_refs,
+        },
     )
 
 
@@ -1614,6 +1774,14 @@ def handle_playbill_curation_accept_fixed(
             },
         ),
         operation_name="cruxible_playbill_curation_accept_fixed",
+        local_payload={
+            "item_id": item_id,
+            "expected_latest_event_digest": expected_latest_event_digest,
+            "reason": reason,
+            "accepted_proposal_id": accepted_proposal_id,
+            "accepted_changeset_digest": accepted_changeset_digest,
+            "attribution_refs": attribution_refs,
+        },
     )
 
 
@@ -1650,6 +1818,14 @@ def handle_playbill_curation_suppress(
             },
         ),
         operation_name="cruxible_playbill_curation_suppress",
+        local_payload={
+            "item_id": item_id,
+            "expected_latest_event_digest": expected_latest_event_digest,
+            "reason": reason,
+            "scope": scope,
+            "until_generation": until_generation,
+            "attribution_refs": attribution_refs,
+        },
     )
 
 

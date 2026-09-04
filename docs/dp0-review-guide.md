@@ -42,6 +42,7 @@ playbill policy list
 playbill authoring status
 playbill authoring submit
 playbill audit
+playbill block depublish
 playbill block repin
 playbill block sync
 playbill body store
@@ -117,6 +118,7 @@ playbill subject list
 playbill subject propose
 playbill whoami
 playbill workspace attach
+playbill workspace detach
 playbill world stub
 server info
 server install-service
@@ -162,6 +164,8 @@ POST /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/submit
 POST /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/prepare
 POST /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/confirm
 POST /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/abandon
+POST /api/v1/{instance_id}/playbill/blocks/depublish
+POST /api/v1/{instance_id}/playbill/workspace-detach
 GET  /api/v1/{instance_id}/playbill/documents
 POST /api/v1/{instance_id}/playbill/documents/proposals
 GET  /api/v1/{instance_id}/playbill/documents/{identity}
@@ -237,6 +241,7 @@ The registered MCP tools are exactly:
 cruxible_version
 cruxible_server_info
 cruxible_playbill_host_create
+cruxible_playbill_host_workspace_detach
 cruxible_playbill_init
 cruxible_playbill_instance_decommission
 cruxible_playbill_store_body
@@ -249,6 +254,7 @@ cruxible_playbill_policies_in_force
 cruxible_playbill_submit_approval
 cruxible_playbill_activate
 cruxible_playbill_authoring_abandon_insertion
+cruxible_playbill_block_depublish
 cruxible_playbill_authoring_bind
 cruxible_playbill_authoring_compile
 cruxible_playbill_authoring_confirm_insertion

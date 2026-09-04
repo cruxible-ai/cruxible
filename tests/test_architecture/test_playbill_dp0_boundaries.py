@@ -352,6 +352,8 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "create_playbill_host",
         "show_playbill_host",
         "playbill_host_workspace_registration",
+        "playbill_host_workspace_detach",
+        "depublish_playbill_block",
         "claim_runtime_bootstrap",
         "create_runtime_credential",
         "list_runtime_credentials",
