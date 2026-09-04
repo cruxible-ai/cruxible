@@ -90,9 +90,17 @@ def test_pre_pcg_bounded_limits_admit_the_gated_scale() -> None:
     receive = ProposalReceiveLimits()
     assert read.max_files >= 250_000
     assert read.max_total_bytes >= 512 * 1024 * 1024
-    assert read.max_blob_bytes == 4 * 1024 * 1024
+    assert read.max_blob_bytes == 64 * 1024 * 1024
     assert receive.max_files >= TIER_1.expected_members
     assert receive.max_changed_members >= TIER_1.claims_per_generation
+    # The advertised member budget and the settleable one are the same number:
+    # a submission of `max_changed_members` entries projects to a change-set
+    # record that fits under the per-blob ceiling it is written against.
+    assert receive.max_change_set_record_bytes == read.max_blob_bytes
+    assert (
+        receive.projected_change_set_record_bytes(receive.max_changed_members)
+        <= read.max_blob_bytes
+    )
     assert receive.max_path_depth >= 3
     # The changed-member bound is an operator admission knob whose default is
     # exactly this ratified one; the daemon file moves the ceiling, not the

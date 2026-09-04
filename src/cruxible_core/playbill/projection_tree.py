@@ -26,18 +26,34 @@ class TreeReadLimits(BaseModel):
     posture: sharded Claim vocabularies reach six figures of members, so a
     10,000-file ceiling would refuse a real instance rather than a hostile one.
     Raising the count does not weaken any other gate -- path canonicality,
-    registered-kind resolution, mode/symlink/submodule refusal, declared size,
-    LFS-pointer refusal, and the per-blob ceiling all stay exactly as they were,
-    and the per-blob ceiling deliberately does not move: it is the bound that
-    keeps a single member from exhausting memory. Operators may configure lower
-    soft limits; the serialized hard ceiling stays bounded either way.
+    registered-kind resolution, mode/symlink/submodule refusal, declared size
+    and LFS-pointer refusal all stay exactly as they were.
+
+    The per-blob ceiling is 64 MiB, raised from 4 MiB because 4 MiB was two
+    budgets for one thing. The ledger writes its own record of a change set as
+    a single blob costing up to 11,264 bytes per lowered entry, so a 4 MiB
+    ceiling settled at most 372 entries while proposal admission advertised
+    `max_changed_members: 5000` -- one number for what a submission may carry,
+    a different one for what could then be recorded. At 64 MiB they are ONE
+    number: 5,000 entries project to 56,320,000 bytes, about 53.7 MiB, which
+    fits under the ceiling with room left. It closes a second gap in passing:
+    receive admits a single member of up to 8 MiB against a read ceiling of 4,
+    so a captured source over 4 MiB was admissible and then unreadable. Such a
+    source may now back a Claim.
+
+    Raising a READ limit is backward compatible: every blob already accepted was
+    written under the 4 MiB ceiling and is therefore still under this one, so no
+    accepted tree changes meaning and no accepted artifact changes bytes. It is
+    still a bound -- it is what keeps a single member from exhausting memory --
+    and operators may configure lower soft limits; the serialized hard ceiling
+    stays bounded either way.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     max_files: int = Field(default=250_000, ge=1, le=1_000_000)
     max_total_bytes: int = Field(default=512 * 1024 * 1024, ge=1, le=2**44)
-    max_blob_bytes: int = Field(default=4 * 1024 * 1024, ge=1)
+    max_blob_bytes: int = Field(default=64 * 1024 * 1024, ge=1)
 
 
 @dataclass(frozen=True)

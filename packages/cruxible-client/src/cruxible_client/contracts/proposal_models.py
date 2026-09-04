@@ -157,12 +157,19 @@ class ProposalReceiveLimits(_StrictProposalModel):
     because this is the object a caller reads to learn what a submission may
     carry. The ledger writes its record OF a change set as one blob, measured
     against the per-blob ceiling; a set that satisfies every receive bound above
-    can still exceed it, which used to be discovered only at activation, after
+    could once still exceed it, which was discovered only at activation, after
     the compile. Advertising the ceiling and the per-entry cost next to the
     member budget lets a caller compute the member count that fits before
-    authoring anything -- and the fact that it is far below `max_changed_members`
-    is the point, not a contradiction: one is what receive accepts, the other is
-    what the ledger can record.
+    authoring anything.
+
+    They are no longer a SECOND budget. At the 4 MiB ceiling this shipped with,
+    only 372 entries fit -- far below `max_changed_members` -- so the two numbers
+    stood side by side bounding different things, one what receive accepts and
+    one what the ledger can record. The per-blob ceiling is now 64 MiB and they
+    are ONE number: 5,000 entries at 11,264 bytes each project to 56,320,000
+    bytes, about 53.7 MiB, so the advertised member budget fits under the record
+    ceiling with room left, and `max_change_set_members` (5,957 at the defaults)
+    is a derived reading of the same budget rather than a competing one.
 
     What both bound is RECORD ENTRIES, not authored members: the record holds one
     entry per path the set lowers to, and a member may lower to several -- a
@@ -177,7 +184,11 @@ class ProposalReceiveLimits(_StrictProposalModel):
     max_file_bytes: int = Field(default=8 * 1024 * 1024, ge=1, le=2**40)
     max_total_bytes: int = Field(default=512 * 1024 * 1024, ge=1, le=2**44)
     max_path_depth: int = Field(default=8, ge=1, le=64)
-    max_change_set_record_bytes: int = Field(default=4 * 1024 * 1024, ge=1, le=2**40)
+    # Equal to `TreeReadLimits.max_blob_bytes` by hand -- the client package
+    # cannot import core -- and held equal by `test_ledger_record_bounds`.
+    # Raising it is backward compatible: it widens a READ limit, and every
+    # record already accepted was written under the narrower 4 MiB ceiling.
+    max_change_set_record_bytes: int = Field(default=64 * 1024 * 1024, ge=1, le=2**40)
     change_set_record_bytes_per_member: int = Field(
         default=CHANGE_SET_RECORD_BYTES_PER_MEMBER,
         ge=1,
