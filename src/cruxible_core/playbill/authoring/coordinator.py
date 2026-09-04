@@ -94,6 +94,7 @@ from cruxible_core.playbill.authoring.insertions import (
     mint_insertion_expectation_v2,
     publication_confirmation_from_source,
     publication_confirmation_matches,
+    refuse_claim_projected_as_itself,
 )
 from cruxible_core.playbill.authoring.preflight import ComputedPreflight, compute_preflight
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
@@ -1199,6 +1200,15 @@ class AuthoringIntentCoordinator:
         if current_claim is None:
             raise InsertionProtocolError("accepted publication Claim is missing")
         body = self._publication_body(current, current_claim, expectation=expectation)
+        refuse_claim_projected_as_itself(
+            claim_identity=expectation.claim_identity,
+            source_id=observation.source_id,
+            overlapping_citation_ids=self._own_source_overlap_citations(
+                current_claim,
+                source_id=observation.source_id,
+                body=body,
+            ),
+        )
         coordinate = expectation.accepted_claim_coordinate
         if coordinate is None:  # pragma: no cover - expectation invariant
             raise RuntimeError("accepted publication omitted its Claim coordinate")
@@ -1709,6 +1719,36 @@ class AuthoringIntentCoordinator:
         if any(body != bodies[0] for body in bodies[1:]):  # pragma: no cover - digest invariant
             raise RuntimeError("one retained publication digest resolved to different bytes")
         return bodies[0]
+
+    def _own_source_overlap_citations(
+        self,
+        claim: ClaimArtifactAny,
+        *,
+        source_id: str,
+        body: bytes,
+    ) -> tuple[str, ...]:
+        """Name this Claim's own citations of bytes inside the body being framed."""
+
+        store = self.instance.body_store()
+        access = BodyAccessContext(principal_id="playbill-publication", can_read_body=True)
+        found: set[str] = set()
+        for citation in claim_citation_references(claim):
+            try:
+                envelope = parse_capture_envelope(
+                    store.read(citation.capture_digest, access=access)
+                )
+                if (
+                    not isinstance(envelope.source, ExternalSourceReferenceV1)
+                    or envelope.source.source_identity != source_id
+                    or envelope.commitment.materialization != "cas"
+                ):
+                    continue
+                commitment = store.read(envelope.commitment.digest, access=access)
+            except PlaybillError:
+                continue
+            if commitment and commitment in body:
+                found.add(citation.citation_id)
+        return tuple(sorted(found, key=lambda item: item.encode("ascii")))
 
     def _publication_prepare_warnings(
         self,

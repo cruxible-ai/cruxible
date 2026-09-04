@@ -1075,6 +1075,39 @@ def _capture_is_explicitly_eligible(
     return any(item.role == "evidence" and item.origin == "independent" for item in associations)
 
 
+def _self_source_capture_admitted_by_rule(
+    claim: ClaimArtifactAny,
+    *,
+    claim_type: ClaimType,
+    capture_contract: AcceptedCaptureContract,
+    capture_digest: str,
+) -> bool:
+    """Let a ClaimType's admission policy decide a coordinator self-source citation.
+
+    Text authored inside a governed page is captured bytes like any other
+    source. A prose ClaimType may name the coordinator self-source contract in
+    its evidence-admission policy and so cover a Claim over its own authored
+    body; a domain ClaimType that does not name that contract still reads such
+    a Claim as uncovered, because the citation is skipped exactly as before.
+    The rule decides, not the citation's shape.
+    """
+
+    if isinstance(claim.backing, ClaimBacking):
+        return False
+    if capture_contract.contract != COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT:
+        return False
+    associations = tuple(
+        item for item in claim.backing.citations if item.capture_digest == capture_digest
+    )
+    if not associations or any(item.origin != "self_source" for item in associations):
+        return False
+    return any(
+        claim.statement.role in rule.claim_roles
+        and capture_contract.artifact_digest in rule.capture_contract_digests
+        for rule in claim_type.evidence_admission_policy.rules
+    )
+
+
 @dataclass(frozen=True)
 class CaptureEvidenceKindAdmission:
     evidence_kind: str
@@ -1843,6 +1876,11 @@ def evaluate_claim_law(
                 )
         if not _capture_is_explicitly_eligible(
             claim,
+            capture_digest=capture_digest_value,
+        ) and not _self_source_capture_admitted_by_rule(
+            claim,
+            claim_type=contract,
+            capture_contract=resolved_contract,
             capture_digest=capture_digest_value,
         ):
             continue

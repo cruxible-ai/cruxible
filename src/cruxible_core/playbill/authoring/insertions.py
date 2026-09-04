@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import NoReturn, overload
 
@@ -89,8 +90,37 @@ class PublicationTerminalStateRefused(InsertionProtocolError):
     code = "playbill.authoring.publication_terminal_state"
 
 
+class PublicationClaimProjectedAsItself(InsertionProtocolError):
+    code = "playbill.authoring.publication_claim_projected_as_itself"
+
+
 def _raise(error: type[InsertionProtocolError], message: str) -> NoReturn:
     raise error(f"{error.code}: {message}")
+
+
+def refuse_claim_projected_as_itself(
+    *,
+    claim_identity: str,
+    source_id: str,
+    overlapping_citation_ids: Sequence[str],
+) -> NoReturn | None:
+    """Refuse a projection block that renders its own backing Claim's source.
+
+    A governed block is either a SOURCE block - authored text captured as
+    evidence, flowing into state - or a PROJECTION block rendered from accepted
+    Claims, which is never evidence. They never overlap. A publication whose
+    backing Claim cites bytes of this same source inside the body being framed
+    would make one block both, so the Claim would stand as evidence for itself.
+    """
+
+    if not overlapping_citation_ids:
+        return None
+    named = ", ".join(sorted(set(overlapping_citation_ids), key=lambda item: item.encode("ascii")))
+    _raise(
+        PublicationClaimProjectedAsItself,
+        f"Claim {claim_identity} cites {source_id} as its own source inside this publication "
+        f"body ({named}); a source block and a projection block are never the same block",
+    )
 
 
 def _raise_marker_refusal(exc: ProjectionMarkerError) -> NoReturn:
