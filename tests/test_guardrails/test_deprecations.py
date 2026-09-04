@@ -83,6 +83,23 @@ def test_emitters_use_existing_warning_envelopes_without_renaming_them() -> None
     }
 
 
+def test_the_client_sdk_emits_the_registry_spelling_of_its_one_notice() -> None:
+    """The client cannot import the core registry, so the two are pinned equal.
+
+    `Blocks.sync(discard_local=...)` warns from inside `cruxible-client`, which
+    has no dependency on `cruxible_core.deprecation`. A hand-copied body would
+    drift from the registry silently, and the registry is what DEPRECATIONS.md
+    and every other transport are checked against.
+    """
+
+    from cruxible_client.authoring.sdk import _BLOCK_SYNC_DISCARD_LOCAL_DEPRECATION
+    from cruxible_core.deprecation import BLOCK_SYNC_DISCARD_LOCAL_FLAG, serialize_deprecation
+
+    assert _BLOCK_SYNC_DISCARD_LOCAL_DEPRECATION == serialize_deprecation(
+        BLOCK_SYNC_DISCARD_LOCAL_FLAG
+    )
+
+
 def test_registry_surfaces_are_unique() -> None:
     surfaces = [notice.surface for notice in DEPRECATION_REGISTRY]
     assert len(surfaces) == len(set(surfaces))

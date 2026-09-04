@@ -497,6 +497,75 @@ def _sync_item_from_read_refusal(
     )
 
 
+def _apply_projection_restamps(
+    client: CruxibleClient,
+    instance_id: str,
+    *,
+    items: list[PlaybillBlockSyncItemV1],
+    path: Path,
+    relative: str,
+    source_id: str,
+    content: bytes,
+    restamps: Sequence[tuple["ParsedProjectionBlock", ProjectionBlockStampV1, int]],
+    check: bool,
+) -> None:
+    """Re-stamp accepted blocks in one page, replacing opening lines and nothing else.
+
+    Every byte outside the opening markers is proved untouched, exactly as the
+    detach path proves it, and each stamp is declared to the instance after the
+    write -- a registration for a marker that never landed would be a lie in
+    the other direction.
+    """
+
+    replacement = content
+    for block, stamp, _index in sorted(
+        restamps, key=lambda item: item[0].opening_start, reverse=True
+    ):
+        replacement = (
+            replacement[: block.opening_start]
+            + render_projection_opening(stamp)
+            + replacement[block.opening_end :]
+        )
+    try:
+        for _block, stamp, _index in restamps:
+            assert_projection_block_frame(
+                replacement,
+                source_id=source_id,
+                block_id=stamp.block_id,
+                stamp=stamp,
+                body_digest=stamp.body_digest,
+                allow_bootstrap=True,
+            )
+    except ProjectionMarkerError as exc:
+        for _block, _stamp, index in restamps:
+            items[index] = PlaybillBlockSyncItemV1(
+                path=relative,
+                source_id=source_id,
+                block_id=items[index].block_id,
+                outcome="refused",
+                reason="block_frame_invalid",
+                detail={"message": str(exc)},
+            )
+        return
+    if check:
+        return
+    try:
+        replace_publication_file(path, expected=content, replacement=replacement)
+    except PlaybillInsertionApplyError as exc:
+        for _block, _stamp, index in restamps:
+            items[index] = PlaybillBlockSyncItemV1(
+                path=relative,
+                source_id=source_id,
+                block_id=items[index].block_id,
+                outcome="refused",
+                reason="block_concurrent_edit",
+                detail={"message": str(exc)},
+            )
+        return
+    for _block, stamp, _index in restamps:
+        client.declare_playbill_block(instance_id, stamp.model_dump(mode="json"))
+
+
 def sync_projection_blocks(
     client: CruxibleClient,
     instance_id: str,
@@ -506,17 +575,26 @@ def sync_projection_blocks(
     all_sources: bool = False,
     check: bool = False,
     detach_paths: Sequence[str | Path] = (),
-    discard_local_paths: Sequence[str | Path] = (),
+    accept_local_paths: Sequence[str | Path] = (),
 ) -> PlaybillBlockSyncResultV1:
     """Report whether each declared block still reads as its stamp says.
 
     This verb used to converge a single-Claim block to the accepted body it was
-    published from. Nothing renders now, so it writes nothing: every block is
+    published from. Nothing renders now, so it converges nothing: every block is
     reported `unchanged`, `stale` (a held backing moved) or `dirty` (the prose
     moved away from the stamp), and refusals are unchanged. `--check` is
-    therefore the behaviour by default and the flag changes only `--detach`,
-    which is the one edit left -- stripping the marker pair of a block whose
-    backing is retired or whose host this worktree has left.
+    therefore the behaviour by default and the flag changes only the two edits
+    left -- `--detach`, which strips the marker pair of a block whose backing is
+    retired or whose host this worktree has left, and `--accept-local`, which
+    says the prose in the page is the block and re-stamps the block on it.
+
+    `--accept-local` writes, and has to: under this model the stamp is the
+    alignment proof, so silencing a `dirty` row without re-stamping would assert
+    an alignment nobody recorded -- and `next` would go on reporting
+    `projection_dirty` over the same state. The re-stamp keeps the held list and
+    the declared coordinate exactly as they were and moves only the body digest,
+    then records the declaration, because the only thing being accepted is the
+    prose.
     """
 
     root = Path(workspace).expanduser().resolve()
@@ -630,9 +708,9 @@ def sync_projection_blocks(
                     )
                     continue
                 selected[source.path] = source.source_id
-    discard = {
+    accept_local = {
         (Path(path) if Path(path).is_absolute() else root / path).expanduser().resolve()
-        for path in discard_local_paths
+        for path in accept_local_paths
     }
     detach = bool(detach_paths)
     for path, source_id in sorted(selected.items(), key=lambda item: item[1].encode("utf-8")):
@@ -675,6 +753,7 @@ def sync_projection_blocks(
         replacements: dict[str, bytes] = {}
         changed_item_indexes: list[int] = []
         original_spans: list[tuple[int, int]] = []
+        restamps: list[tuple[ParsedProjectionBlock, ProjectionBlockStampV1, int]] = []
         for block in blocks:
             stamp = block.stamp
             if stamp is None:
@@ -699,15 +778,25 @@ def sync_projection_blocks(
                 # renders a block, so there is no accepted body to put back:
                 # this is a finding about the page, and the repair is to read
                 # the block against its backings and re-stamp what it now says.
-                # `--discard-local` no longer discards anything -- it says the
-                # local body is intended, and suppresses the row for that path.
-                if path in discard:
+                # `--accept-local` discards nothing -- it says the local body
+                # IS the block, and records that by re-stamping the block on it.
+                # Reporting `unchanged` without writing would claim an
+                # alignment nothing proved, while `next` went on reporting the
+                # same page dirty.
+                if path in accept_local:
+                    restamps.append(
+                        (
+                            block,
+                            stamp.model_copy(update={"body_digest": block.body_digest}),
+                            len(items),
+                        )
+                    )
                     items.append(
                         PlaybillBlockSyncItemV1(
                             path=relative,
                             source_id=source_id,
                             block_id=block.block_id,
-                            outcome="unchanged",
+                            outcome="would_sync" if check else "synced",
                             detail={
                                 "local_body_accepted": True,
                                 "stamped_body_digest": stamp.body_digest,
@@ -837,6 +926,26 @@ def sync_projection_blocks(
                     },
                 )
             )
+        if restamps:
+            _apply_projection_restamps(
+                client,
+                instance_id,
+                items=items,
+                path=path,
+                relative=relative,
+                source_id=source_id,
+                content=content,
+                restamps=restamps,
+                check=check,
+            )
+            if not check:
+                try:
+                    content = path.read_bytes()
+                    blocks = parse_projection_blocks(
+                        content, source_id=source_id, allow_bootstrap=True
+                    )
+                except (OSError, ProjectionMarkerError):
+                    replacements.clear()
         if not replacements:
             continue
         replacement = content

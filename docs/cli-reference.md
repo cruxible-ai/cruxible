@@ -640,7 +640,7 @@ cruxible playbill block repin SOURCE_ID BLOCK_ID [--claim ID]... [--query ID]...
   [--backing SHA256] [--params CANONICAL_JSON]... [--workspace-root DIR]
   [--evaluation-time TS]
 cruxible playbill block sync [PATH]... [--all] [--check]
-  [--detach PATH]... [--discard-local PATH]... [--workspace-root DIR]
+  [--detach PATH]... [--accept-local PATH]... [--workspace-root DIR]
 cruxible playbill block depublish SOURCE_ID BLOCK_ID [--json]
 ~~~
 
@@ -718,9 +718,12 @@ is no accepted body to write back; each declared block is reported as:
 | `stale` | a held backing moved under the block | `block repin` |
 | `dirty` | the prose moved away from the body digest the stamp committed | `block repin` |
 
-`--check` is therefore the behaviour by default and the flag is accepted as a
-no-op for the reporting path; it still suppresses the one write left, `--detach`.
-A `stale` or `dirty` block counts as a refusal for the exit code, so the sync an
+| `synced` | `--accept-local` re-stamped the block on the body in the page | -- |
+| `would_sync` | the same, previewed under `--check` | -- |
+
+`--check` is therefore the behaviour by default for the reporting path, and the
+flag suppresses the two writes left, `--detach` and `--accept-local`. A `stale`
+or `dirty` block counts as a refusal for the exit code, so the sync an
 activation runs as its closing step does not answer clean over a page that has
 drifted from the state it declares.
 
@@ -733,9 +736,18 @@ it; the row names the coordinate the marker was published at. The write is one
 whole-file compare-and-swap and proves the bytes outside every marker by digest
 before and after.
 
-`--discard-local PATH` no longer discards anything, because nothing overwrites a
-body: it says the local body in that path is intended, and suppresses the
-`dirty` row for it.
+`--accept-local PATH` says the prose now in that path IS the block, and records
+that by re-stamping the block on it: the opening marker is rewritten with the
+observed body digest, the held list and declared coordinate untouched, and the
+declaration is re-recorded with the instance. It writes, and it has to. Under
+this model the stamp is the alignment proof, so a flag that only silenced the
+`dirty` row would assert an alignment nobody checked -- and `playbill next`
+would go on reporting the same page dirty from the same bytes. The prose itself
+is never touched; only the marker line moves.
+
+`--discard-local PATH` is the deprecated spelling of `--accept-local`. It never
+discarded anything under this model. It is accepted for one release, emits the
+structured deprecation warning on stderr, and is removed in 0.6.0.
 
 ### Depublishing
 

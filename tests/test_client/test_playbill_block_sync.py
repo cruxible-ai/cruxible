@@ -541,7 +541,7 @@ def test_source_catalog_is_optional_for_stamped_marker_discovery(
     assert source.read_bytes() == before
 
 
-def test_a_local_edit_is_dirty_and_discard_local_accepts_it_rather_than_discarding(
+def test_a_local_edit_is_dirty_and_accept_local_restamps_the_block_on_it(
     tmp_path: Path,
 ) -> None:
     """Converted: `--discard-local` used to overwrite the hand-edited body.
@@ -549,10 +549,10 @@ def test_a_local_edit_is_dirty_and_discard_local_accepts_it_rather_than_discardi
     A body that no longer matches its stamp is decided from the page alone --
     the daemon is never asked, because no answer it could give would change the
     finding -- and it is reported `dirty`, with the repin that re-stamps what
-    the block now says. `--discard-local` has nothing left to discard: there is
-    no accepted body to put back, so naming a path says the local prose is
-    intended, which suppresses the row and leaves the edit exactly where the
-    author left it.
+    the block now says. There is no accepted body to put back, so the flag is
+    renamed to what it now means: `--accept-local` says the local prose IS the
+    block, and records that by moving the stamp onto it and declaring it. The
+    prose is left exactly where the author left it.
     """
 
     source = _workspace(tmp_path)
@@ -586,17 +586,41 @@ def test_a_local_edit_is_dirty_and_discard_local_accepts_it_rather_than_discardi
         INSTANCE_ID,
         workspace=tmp_path,
         paths=(source,),
-        discard_local_paths=(source,),
+        accept_local_paths=(source,),
     )
 
     (row,) = accepted.items
-    assert row.outcome == "unchanged"
+    assert row.outcome == "synced"
     assert row.reason is None
     assert row.detail["local_body_accepted"] is True
     assert row.detail["stamped_body_digest"] == _digest(OLD_BODY)
     assert row.detail["observed_body_digest"] == _digest(EDITED_BODY)
     assert accepted.has_refusals is False
     assert client.requests == []
+
+    # The stamp moved onto the prose, the prose did not move, and the instance
+    # holds the declaration that records the alignment.
+    restamped = source.read_bytes()
+    (block,) = parse_projection_blocks(restamped, source_id="corpus.runbook")
+    assert block.stamp is not None
+    assert block.stamp.body_digest == _digest(EDITED_BODY)
+    assert restamped[block.body_start : block.body_end] == EDITED_BODY
+    assert [item["body_digest"] for item in client.declared] == [_digest(EDITED_BODY)]
+
+    # `--check` proves the same alignment without writing.
+    source.write_bytes(edited)
+    client.declared.clear()
+    previewed = sync_projection_blocks(
+        client,  # type: ignore[arg-type]
+        INSTANCE_ID,
+        workspace=tmp_path,
+        paths=(source,),
+        accept_local_paths=(source,),
+        check=True,
+    )
+    (preview,) = previewed.items
+    assert preview.outcome == "would_sync"
+    assert client.declared == []
     assert source.read_bytes() == edited
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.cli.main import cli
+from cruxible_core.deprecation import BLOCK_SYNC_DISCARD_LOCAL_FLAG
 
 
 def _stamp() -> ProjectionBlockStampV1:
@@ -165,6 +167,57 @@ def test_cli_sync_passes_local_edit_and_path_controls(
             "block",
             "sync",
             "corpus/runbook.md",
+            "--accept-local",
+            "corpus/runbook.md",
+            "--workspace-root",
+            str(tmp_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [
+        {
+            "workspace": str(tmp_path),
+            "paths": ("corpus/runbook.md",),
+            "all_sources": False,
+            "check": False,
+            "detach_paths": (),
+            "accept_local_paths": ("corpus/runbook.md",),
+        }
+    ]
+
+
+def test_cli_sync_accepts_the_deprecated_discard_local_spelling_with_a_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The flag is renamed, not removed: one release of structured warning."""
+
+    calls: list[dict[str, Any]] = []
+
+    def sync(client: object, instance_id: str, **values: Any) -> PlaybillBlockSyncResultV1:
+        calls.append(values)
+        return PlaybillBlockSyncResultV1(
+            items=(),
+            changed_file_count=0,
+            would_change=False,
+            has_refusals=False,
+        )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: object())
+    monkeypatch.setattr("cruxible_core.cli.commands.playbill.sync_projection_blocks", sync)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://projection.example.test",
+            "--instance-id",
+            "inst_projection",
+            "playbill",
+            "block",
+            "sync",
+            "corpus/runbook.md",
             "--discard-local",
             "corpus/runbook.md",
             "--workspace-root",
@@ -181,9 +234,17 @@ def test_cli_sync_passes_local_edit_and_path_controls(
             "all_sources": False,
             "check": False,
             "detach_paths": (),
-            "discard_local_paths": ("corpus/runbook.md",),
+            "accept_local_paths": ("corpus/runbook.md",),
         }
     ]
+    assert (
+        json.loads(
+            next(
+                line for line in result.output.splitlines() if line.startswith("Deprecation: ")
+            ).removeprefix("Deprecation: ")
+        )
+        == BLOCK_SYNC_DISCARD_LOCAL_FLAG.as_dict()
+    )
 
 
 def test_cli_sync_check_exits_nonzero_when_safe_bytes_would_change(

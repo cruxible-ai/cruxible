@@ -7,6 +7,7 @@ import json
 import os
 import re
 import time
+import warnings
 from collections import OrderedDict
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -186,6 +187,19 @@ _PREDICTION_RULE_ADAPTER: TypeAdapter[PredictionRuleV1] = TypeAdapter(Prediction
 _RETIRE_CLOSURE_MISMATCH_CODE = "playbill.claim.retire_closure_mismatch"
 _CLAIM_RETIRE_OPERATION_DOMAIN = "playbill-claim-retire-operation-v1"
 _RETIREMENT_SUBMISSION_CACHE_LIMIT = 128
+# The one deprecation notice this package emits, in the shape
+# `cruxible_core.deprecation` serializes -- {surface, replacement,
+# removal_version}, compact and key-sorted. The client cannot import the core
+# registry, so a guardrail pins the two spellings equal.
+_BLOCK_SYNC_DISCARD_LOCAL_DEPRECATION = json.dumps(
+    {
+        "removal_version": "0.6.0",
+        "replacement": "`--accept-local`, which re-stamps the block on the body the author wrote",
+        "surface": "playbill block sync --discard-local",
+    },
+    separators=(",", ":"),
+    sort_keys=True,
+)
 
 
 def _coordinate(value: api.PlaybillAcceptedCoordinate | Mapping[str, object]) -> AcceptedCoordinate:
@@ -2768,8 +2782,23 @@ class ProjectionBlocks:
         all: bool = False,
         check: bool = False,
         detach: Sequence[str | Path] = (),
-        discard_local: Sequence[str | Path] = (),
+        accept_local: Sequence[str | Path] = (),
+        discard_local: Sequence[str | Path] | None = None,
     ) -> api.PlaybillBlockSyncResultV1:
+        """Report every declared block; `accept_local` re-stamps one on its local prose.
+
+        `discard_local` is the deprecated spelling of `accept_local`. It never
+        discarded anything under the held-list model, and it is accepted for one
+        release behind a `DeprecationWarning`.
+        """
+
+        if discard_local is not None:
+            warnings.warn(
+                _BLOCK_SYNC_DISCARD_LOCAL_DEPRECATION,
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            accept_local = tuple(accept_local) + tuple(discard_local)
         return sync_projection_blocks(
             self._playbill._client,
             self._playbill._instance_id,
@@ -2778,7 +2807,7 @@ class ProjectionBlocks:
             all_sources=all,
             check=check,
             detach_paths=detach,
-            discard_local_paths=discard_local,
+            accept_local_paths=accept_local,
         )
 
 

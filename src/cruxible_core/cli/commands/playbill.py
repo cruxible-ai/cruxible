@@ -91,7 +91,11 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.deprecation import DeprecationNotice, emit_cli_deprecation
+from cruxible_core.deprecation import (
+    BLOCK_SYNC_DISCARD_LOCAL_FLAG,
+    DeprecationNotice,
+    emit_cli_deprecation,
+)
 from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1, claim_type_input_template
 from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.playbill.coverage.adapter import (
@@ -3212,11 +3216,18 @@ def repin_projection(
     help="Strip markers from retired blocks while preserving their current body.",
 )
 @click.option(
+    "--accept-local",
+    "accept_local_paths",
+    multiple=True,
+    type=click.Path(dir_okay=False),
+    help="Accept the block body written in this path and re-stamp the block on it.",
+)
+@click.option(
     "--discard-local",
     "discard_local_paths",
     multiple=True,
     type=click.Path(dir_okay=False),
-    help="Treat a locally edited block body in this path as intended, not as drift.",
+    help="Deprecated spelling of --accept-local; removed in 0.6.0.",
 )
 @click.option("--workspace-root", default=".", show_default=True, type=click.Path(file_okay=False))
 @json_option
@@ -3226,6 +3237,7 @@ def sync_projection(
     all_sources: bool,
     check: bool,
     detach_paths: tuple[str, ...],
+    accept_local_paths: tuple[str, ...],
     discard_local_paths: tuple[str, ...],
     workspace_root: str,
     output_json: bool,
@@ -3235,11 +3247,16 @@ def sync_projection(
     Nothing renders a block, so nothing is converged: each block is reported
     `unchanged`, `stale` when a held backing moved under it, or `dirty` when
     its prose moved away from the stamp, and the repair for both is a repin.
-    The one edit this command still makes is `--detach`, which strips the
-    marker pair of a block whose backing is retired or whose host this
-    worktree has left, keeping the prose between the markers.
+    Two edits remain. `--detach` strips the marker pair of a block whose
+    backing is retired or whose host this worktree has left, keeping the prose
+    between the markers. `--accept-local` says the prose in the page IS the
+    block and re-stamps the block on it -- the stamp is the alignment record,
+    so a flag that only silenced the row would leave `next` reporting the same
+    page dirty. `--discard-local` is its deprecated spelling.
     """
 
+    if discard_local_paths:
+        emit_cli_deprecation(BLOCK_SYNC_DISCARD_LOCAL_FLAG)
     result = _server_call(
         lambda client, instance_id: sync_projection_blocks(
             client,
@@ -3248,8 +3265,8 @@ def sync_projection(
             paths=paths,
             all_sources=all_sources,
             check=check,
-            detach_paths=detach_paths,
-            discard_local_paths=discard_local_paths,
+            detach_paths=(*detach_paths,),
+            accept_local_paths=(*accept_local_paths, *discard_local_paths),
         ),
         command_name="playbill block sync",
     )

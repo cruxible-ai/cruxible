@@ -72,6 +72,7 @@ from cruxible_core.service.playbill_projection_sync import (
     _terminal_node,
     service_read_playbill_block_sync_backing,
 )
+from cruxible_core.service.playbill_publications import service_declare_playbill_block
 from tests.test_playbill.test_authoring_insertions_v2 import (
     _activate,
     _registered_publication,
@@ -94,6 +95,15 @@ class _ServiceClient:
     def read_playbill_block_sync_backing(self, instance_id, *, request):  # type: ignore[no-untyped-def]
         assert instance_id == self.instance.descriptor.instance_id
         return service_read_playbill_block_sync_backing(self.instance, request=request)
+
+    def declare_playbill_block(self, instance_id, stamp):  # type: ignore[no-untyped-def]
+        assert instance_id == self.instance.descriptor.instance_id
+        return service_declare_playbill_block(
+            self.instance,
+            actor_id="owner",
+            stamp=ProjectionBlockStampV1.model_validate(stamp),
+            declared_at="2026-09-10T12:00:00.000000Z",
+        )
 
     def resolve_playbill_coverage(  # type: ignore[no-untyped-def]
         self,
@@ -683,14 +693,16 @@ def test_a_block_holding_three_claims_reports_one_ordinary_outcome(tmp_path: Pat
     assert source.read_bytes() == page_before
 
 
-def test_a_hand_edited_body_is_dirty_until_discard_local_accepts_it(tmp_path: Path) -> None:
+def test_a_hand_edited_body_is_dirty_until_accept_local_restamps_it(tmp_path: Path) -> None:
     """A body that moved away from its stamp is a finding, never an overwrite.
 
     `--discard-local` used to name the losing side of a convergence: the local
     prose was thrown away and the accepted body written over it. There is no
-    accepted body, so the flag now says the opposite thing with the same words
-    -- the local body is what the author meant -- and the only effect it has is
-    to stop reporting the block. Neither spelling touches the file.
+    accepted body to write, so the flag is renamed to what it now does --
+    `--accept-local` says the local prose IS the block -- and it records that by
+    re-stamping the block on it. Silencing the row without a re-stamp would
+    claim an alignment nothing proved, and `next` would go on reporting the
+    same page dirty. The prose itself is never touched.
     """
 
     daemon_root = tmp_path / "daemon"
@@ -732,19 +744,50 @@ def test_a_hand_edited_body_is_dirty_until_discard_local_accepts_it(tmp_path: Pa
     assert dirty_item.detail["last_synced_body_digest"] == stamp.body_digest
     assert dirty.has_refusals is True
     assert source.read_bytes() == edited
+    dirty_observation, _dirty_coordinate = _observe(instance, workspace_root)
+    assert any(
+        item.reason == "projection_dirty" for item in _next(instance, dirty_observation).items
+    )
 
     accepted = sync_projection_blocks(
         _ServiceClient(instance),  # type: ignore[arg-type]
         instance.descriptor.instance_id,
         workspace=workspace_root,
         paths=(source,),
-        discard_local_paths=(source,),
+        accept_local_paths=(source,),
     )
 
     (accepted_item,) = accepted.items
-    assert accepted_item.outcome == "unchanged"
+    assert accepted_item.outcome == "synced"
     assert accepted_item.reason is None
     assert accepted_item.detail["local_body_accepted"] is True
     assert accepted_item.detail["stamped_body_digest"] == stamp.body_digest
     assert accepted.has_refusals is False
-    assert source.read_bytes() == edited
+
+    # The prose is untouched; the stamp moved onto it, and the instance holds
+    # the declaration that records the alignment.
+    restamped = source.read_bytes()
+    (block,) = parse_projection_blocks(restamped, source_id="repo.work-items", allow_bootstrap=True)
+    assert block.stamp is not None
+    assert block.stamp.body_digest == block.body_digest
+    assert block.stamp.backing == stamp.backing
+    assert (
+        b"A maintainer rewrote this paragraph by hand."
+        in (restamped[block.body_start : block.body_end])
+    )
+
+    # A second pass reports it clean, and nothing is left dirty.
+    settled = sync_projection_blocks(
+        _ServiceClient(instance),  # type: ignore[arg-type]
+        instance.descriptor.instance_id,
+        workspace=workspace_root,
+        paths=(source,),
+    )
+    (settled_item,) = settled.items
+    assert settled_item.outcome == "unchanged"
+    assert settled.has_refusals is False
+
+    # The two surfaces agree, which is the point: `next` stopped reporting the
+    # page dirty because the alignment was recorded, not because a flag hid it.
+    observation, _coordinate = _observe(instance, workspace_root)
+    assert all(item.reason != "projection_dirty" for item in _next(instance, observation).items)
