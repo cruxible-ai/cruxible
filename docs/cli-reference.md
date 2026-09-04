@@ -728,6 +728,16 @@ the statement is also being withdrawn, and depublish when the block itself is
 not coming back. A registration whose backing Claim is already retired no longer
 demands its frame, so a retirement alone clears the row without this verb.
 
+**Depublishing is one of two steps: the marker still has to leave the page.**
+The verb touches the registration and nothing in the workspace. There is no
+`--strip` -- removing bytes from a file is the operator's explicit act, not a
+side effect of a ledger release -- so between the two steps `playbill next`
+reports the marker as `unregistered_projection_block` with the repair
+`remove_or_register_projection_block`. That is a warning rather than a blocking
+row, and it is the opposite instruction to the row it replaces, which asked for
+the frame to be restored. Remove the marker pair with `block sync --detach PATH`
+or by hand and it clears.
+
 ## playbill next
 
 ~~~text

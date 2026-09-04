@@ -1863,3 +1863,99 @@ def test_a_retired_backing_releases_the_marker_it_backed(tmp_path: Path) -> None
         for item in service_playbill_next(instance, request=request).items
         if item.reason == "projection_marker_invalid"
     ]
+
+
+def test_depublishing_releases_the_registration_and_leaves_the_marker_to_remove(
+    tmp_path: Path,
+) -> None:
+    """Card 113's second step, which only a later `next` revealed.
+
+    `block depublish` touches the REGISTRATION and nothing in the workspace, so
+    immediately afterwards the page still carries the marker the registration
+    used to own. That is not an error and not a hole -- it is the operator's
+    separate edit -- but nothing said so, and nothing pinned what `next` answers
+    in between. It answers `unregistered_projection_block`, repair
+    `remove_or_register_projection_block`, which is the right instruction and
+    the opposite of the row it replaces: the old one asked for the block back.
+    """
+
+    instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    assert prepared.preparation is not None
+    preparation = prepared.preparation
+    framed = frame_projection_block(stamp=preparation.stamp, body=b"status: ready\n")
+    offset = preparation.rebased_selector.insertion_offset
+    final = preimage[:offset] + framed + preimage[offset:]
+    exact = publication_confirmation_from_source(
+        intent_id=intent_id,
+        expectation=prepared.expectation,
+        observation=_observation(final),
+    )
+    assert exact is not None
+    assert coordinator.confirm_insertion(intent_id, actor=actor, observation=exact).outcome == (
+        "bound"
+    )
+
+    marker_summaries, marker_notes = _projection_marker_observation(preparation.source_id, final)
+    assert [summary["stamp"]["block_id"] for summary in marker_summaries] == [preparation.block_id]
+
+    def _next_items():  # type: ignore[no-untyped-def]
+        request = PlaybillNextRequestV1(
+            at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            evaluation_time=datetime(2026, 8, 23, 12, tzinfo=UTC),
+            access_profile=CoverageAccessProfileV1(
+                profile_id="depublication-sequence-test",
+                permitted_access_classes=("instance", "public"),
+            ),
+            workspace_observation=PlaybillNextWorkspaceObservationV1(
+                source_observations=(
+                    PlaybillNextSourceObservationV3(
+                        tag="playbill-next-source-observation-v3",
+                        source_id=preparation.source_id,
+                        observed_source_digest=_digest(final),
+                        byte_length=len(final),
+                        marker_summaries=tuple(marker_summaries),
+                        occurrences=(),
+                        scanned_commitment_digests=(),
+                        scan_complete=True,
+                        scan_notes=(),
+                        marker_notes=marker_notes,
+                    ),
+                )
+            ),
+        )
+        return service_playbill_next(instance, request=request).items
+
+    # While the registration stands, the marker on the page is exactly what the
+    # host expects to find and no row names it.
+    assert not [item for item in _next_items() if item.reason == "unregistered_projection_block"]
+
+    service_depublish_playbill_block(
+        instance,
+        coordinator=coordinator,
+        actor=actor,
+        source_id=preparation.source_id,
+        block_id=preparation.block_id,
+    )
+
+    after = _next_items()
+    unregistered = [item for item in after if item.reason == "unregistered_projection_block"]
+    assert len(unregistered) == 1
+    row = unregistered[0]
+    assert row.severity == "warning"
+    assert row.subject_identity == f"{preparation.source_id}#{preparation.block_id}"
+    assert row.repair is not None
+    assert row.repair.required_change == "remove_or_register_projection_block"
+    assert row.repair.arguments == {
+        "source_id": preparation.source_id,
+        "block_id": preparation.block_id,
+    }
+    # And the released registration demands nothing back: the block that left
+    # the ledger does not become a missing marker.
+    assert not [item for item in after if item.reason == "registered_marker_missing"]
