@@ -89,6 +89,7 @@ PlaybillAuthoringExampleName = Literal[
     "claim-flow-a",
     "claim-self-source",
     "claim-subject-relation",
+    "claim-exact-content",
     "procedure",
     "claim-adjudicate-contradicting-evidence",
     "claim-cite-supporting-evidence",
