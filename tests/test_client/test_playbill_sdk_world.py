@@ -1184,3 +1184,43 @@ def _mypy(project: Path, target: str) -> str:
         check=False,
     )
     return completed.stdout + completed.stderr
+
+
+class _UnderscoreSegmentClient(_WorldClient):
+    """A world naming both `sec.package` and the single segment `sec__package`."""
+
+    def list_playbill_claim_types(
+        self, _instance_id: str, *, at: Any = None
+    ) -> api.PlaybillClaimTypeList:
+        self.claim_type_list_calls += 1
+        return api.PlaybillClaimTypeList(
+            coordinate=self.coordinate,
+            claim_types=[
+                _claim_type(SEVERITY, allowed_subject_kinds=("sec.package", "sec__package")),
+            ],
+        )
+
+
+def test_a_segment_spelling_the_separator_does_not_claim_another_names_class(
+    tmp_path: Path,
+) -> None:
+    """`a.b` and `a__b` are both accepted names; one class cannot serve both."""
+
+    client = _UnderscoreSegmentClient()
+    _workspace(tmp_path)
+    playbill = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    world = playbill.world()
+
+    assert world.kinds == ("sec.package", "sec__package")
+
+    rendered = world.stub()
+    module = ast.parse(rendered)
+    declared = [node.name for node in module.body if isinstance(node, ast.ClassDef)]
+    assert len(declared) == len(set(declared)), declared
+    assert "class _W_sec__package:" in rendered
+    assert "class _W_sec__package_" in rendered

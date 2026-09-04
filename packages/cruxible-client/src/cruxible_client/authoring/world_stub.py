@@ -19,6 +19,7 @@ activation shows the vocabulary movement as an ordinary diff.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -67,26 +68,39 @@ _STUB_IMPORTS = (
 )
 
 
-def _class_name(path: str) -> str:
-    """Return a collision-free class name for one dotted world path.
+def _encoded(path: str) -> str:
+    """Return one dotted world path as an injective class-name suffix.
 
-    A dot becomes a double underscore, which no segment can contain, so
-    `sec.vuln` and `sec_vuln` never claim the same name.
+    A dot becomes a double underscore, which reads well -- but a segment may
+    carry a double underscore of its own, and the accepted grammar admits both
+    `a.b` and `a__b`, which would then claim the same class name and make the
+    whole `.pyi` invalid. A path already spelling the separator is stamped with
+    a digest of itself, so the readable form survives for every ordinary name
+    and no two paths ever collide.
     """
 
-    return "_W_" + path.replace(".", "__")
+    body = path.replace(".", "__")
+    if "__" in path:
+        body += "_" + hashlib.sha256(path.encode("utf-8")).hexdigest()[:8]
+    return body
+
+
+def _class_name(path: str) -> str:
+    """Return the class one dotted world path resolves to as an attribute."""
+
+    return "_W_" + _encoded(path)
 
 
 def _kind_class_name(path: str) -> str:
     """Return the namespace class for a name that is also an accepted predicate."""
 
-    return "_K_" + path.replace(".", "__")
+    return "_K_" + _encoded(path)
 
 
 def _subject_class_name(path: str) -> str:
     """Return the class the Subjects of one accepted kind are typed as."""
 
-    return "_S_" + path.replace(".", "__")
+    return "_S_" + _encoded(path)
 
 
 def _sorted(values: Iterable[str]) -> list[str]:
