@@ -2,6 +2,104 @@
 
 ## Unreleased
 
+- **A published block has a way out, and a worktree has a way to move.** Two
+  verbs the lifecycle was missing. `cruxible playbill block depublish SOURCE_ID
+  BLOCK_ID` releases the publication registration that demands a block's frame:
+  `bound` was terminal, so a page that had been published once carried that
+  block, with that id, forever, and removing the marker made `playbill next`
+  emit a blocking row whose repair was to restore the block a later ruling had
+  told the author to delete. Retiring a backing Claim now releases the markers
+  it backs for the same reason. Depublishing is the FIRST of two steps -- it
+  touches the registration and edits no page -- so until the marker leaves the
+  file `next` reports it as `unregistered_projection_block` with the repair
+  `remove_or_register_projection_block`, a warning rather than a blocking row.
+  `cruxible playbill workspace detach --instance-id ID` releases a governed
+  host from the Git worktree it is attached to. A worktree belongs to exactly
+  one host, and re-binding it named two repairs: "archive and rebuild that
+  host", which was not a verb, and "choose another Git worktree", which splits
+  a repository in two. Detaching changes no governed state and deletes nothing;
+  it is local-socket callers only, for the same reason attaching is, and it
+  refuses while the host still registers published blocks in that worktree,
+  naming them and the `block depublish` repair, because detaching under them
+  would leave a page carrying markers no host owns. Both verbs are served
+  (`POST /api/v1/{instance_id}/playbill/blocks/depublish`,
+  `POST /api/v1/{instance_id}/playbill/workspace-detach`) and both reach MCP
+  (`cruxible_playbill_block_depublish`,
+  `cruxible_playbill_host_workspace_detach`). `block sync --detach` also now
+  strips the markers of a host this worktree has left, instead of refusing with
+  a repair that re-attaches it.
+
+- **A Claim can be retired as `superseded`.** `ClaimRetirementReason` gains a
+  third member beside `was-rescinded` and `was-wrong`. The two roads to one
+  succession have to give one answer: a shape withdrawn in favour of a
+  successor was neither rescinded nor wrong, and saying either of those about
+  it put a false reason in the ledger. It is accepted anywhere a retirement
+  reason is (CLI, SDK, MCP and the served retire and ClaimType-migration
+  routes), and is an enum widening on input only: nothing that was accepted
+  before is refused now.
+
+- **The SDK carries exact content as itself.** `pb.claim(value=ExactContent(
+  ...))` builds the exact-content object the wire already carried, keeping the
+  bytes rather than a rendering of them, and refuses before the wire when the
+  ClaimType is not an exact-content type
+  (`playbill.sdk.exact_content_claim_type_mismatch`). The
+  `claim-exact-content` example is on the served example vocabulary. The
+  tagless CLI and MCP input gains an optional `content_base64` beside `text`,
+  exactly one of which must be given -- so `text` is no longer a required
+  field of that object, which is a request-side widening.
+
+- **BEHAVIOUR CHANGE: an ordinary revision may not move a Claim's subject or
+  its predicate.** `revises=` produced a successor that could point at a
+  different Subject or assert a different predicate while claiming to be the
+  same Claim's next version, which makes a lineage a Claim's history of
+  something else. Both now refuse typed at preflight
+  (`playbill.claim.revision_subject_moved`,
+  `playbill.claim.revision_predicate_moved`), at the single evaluation
+  chokepoint every authoring road reaches, and the refusal names the accepted
+  subject or predicate and the written one, with the repair: put the accepted
+  one back, or retire this Claim and author a new lineage about the Subject you
+  mean. Machine-generated successions -- a ClaimType re-derivation, an
+  attributed retirement -- move neither axis and are unaffected.
+
+- **BEHAVIOUR CHANGE: a Provider egress receipt's `observer_backend` must be a
+  namespaced lowercase token.** The field was a free string on a receipt a
+  deployment reads to decide which observer's word it is taking, so
+  `Cloud Proxy` and `cloud proxy` were two different observers with one
+  meaning. It now matches `^[a-z0-9]+(?:[.\-][a-z0-9]+)*$`, which admits
+  `cloud.netns-proxy` and refuses whitespace, empty segments and a trailing
+  newline. Nothing in the tree produced a value this refuses; core is the only
+  writer, and no persisted or pinned artifact carries the field. On the same
+  lane, the provider-lane status gains a `not_applicable` member so a build
+  that cannot run Provider code says so instead of reporting `unavailable`
+  with a reason code that means something else.
+
+- **An MCP client with no daemon is validated through the served request
+  model.** The in-process door reached the facade directly, so a payload the
+  HTTP route's request model refuses -- a control character in a decommission
+  reason, say -- passed the MCP door and raised a raw pydantic error from
+  inside the write. Both doors now decide through the same model object. The
+  decision is identical; the rendering is not, and cannot be: in process there
+  is no HTTP response to put a 422 in, so the local door raises a typed
+  refusal naming the operation. The maintainer's call was the smaller change:
+  `allow_local` is RETAINED for mutating verbs, because MCP-first clients with
+  no daemon write through it today and taking it away is a capability removal.
+  Retiring it for mutating verbs is still owed, and when it happens it goes
+  through the structured-warning deprecation policy -- a warned release, then
+  removal -- rather than breaking in place.
+
+- **The frozen-surface pin now digests the request and response SCHEMA.** The
+  served-surface inventory hashed FastAPI's `{"$ref": ...}`, which is a
+  component NAME, so adding, renaming, retyping or removing a field inside a
+  served request model moved no pin at all, and two routes carrying one model
+  shared one digest. It now digests the resolved schema. Consumers pinning this
+  artifact should expect request-body digests to move on a release that adds no
+  route, verb or tool: that movement is the freeze working rather than noise.
+  Per-tool `facade_operations` rows are a reachability closure too -- the verbs
+  a handler names itself, the verbs its local adapter objects reach, and the
+  verbs its sibling handlers reach -- so a deployment deciding per-verb what
+  may be reached over MCP no longer reads an empty list for a tool that reaches
+  the facade through an adapter.
+
 - **A daemon can allocate more than one Playbill host per bootstrap secret.**
   Host creation was authorized only while the runtime bootstrap secret was
   UNCLAIMED, and every other credential a daemon holds is instance-scoped, so
