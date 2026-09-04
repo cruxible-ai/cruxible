@@ -22773,7 +22773,8 @@
                     "enum": [
                       "accepted",
                       "refused",
-                      "stale"
+                      "stale",
+                      "withdrawn"
                     ],
                     "type": "string"
                   },
@@ -22955,7 +22956,8 @@
                 "enum": [
                   "accepted",
                   "refused",
-                  "stale"
+                  "stale",
+                  "withdrawn"
                 ],
                 "type": "string"
               },
@@ -23033,7 +23035,8 @@
                 "enum": [
                   "accepted",
                   "refused",
-                  "stale"
+                  "stale",
+                  "withdrawn"
                 ],
                 "type": "string"
               },
@@ -24056,6 +24059,123 @@
       "required_fields": [
         "proposal_id",
         "selector"
+      ]
+    },
+    "PlaybillProposalWithdrawResult": {
+      "fields": {
+        "actor_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "actor_id",
+          "required": true,
+          "schema": {
+            "title": "Actor Id",
+            "type": "string"
+          }
+        },
+        "already_withdrawn": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "already_withdrawn",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Already Withdrawn",
+            "type": "boolean"
+          }
+        },
+        "proposal_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": true,
+          "schema": {
+            "title": "Proposal Id",
+            "type": "string"
+          }
+        },
+        "reason": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": true,
+          "schema": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-proposal-withdraw-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-proposal-withdraw-result-v1",
+            "default": "playbill-proposal-withdraw-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "withdrawn_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "withdrawn_at",
+          "required": true,
+          "schema": {
+            "title": "Withdrawn At",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "already_withdrawn": {
+            "default": false,
+            "title": "Already Withdrawn",
+            "type": "boolean"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-proposal-withdraw-result-v1",
+            "default": "playbill-proposal-withdraw-result-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "withdrawn_at": {
+            "title": "Withdrawn At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "actor_id",
+          "reason",
+          "withdrawn_at"
+        ],
+        "title": "PlaybillProposalWithdrawResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "actor_id",
+        "proposal_id",
+        "reason",
+        "withdrawn_at"
       ]
     },
     "PlaybillProviderInterfaceEntry": {
@@ -28549,6 +28669,7 @@
                       "workspace_source_catalog_missing",
                       "workspace_source_catalog_invalid",
                       "source_path_invalid",
+                      "source_not_projection_target",
                       "block_marker_malformed",
                       "block_unstamped",
                       "block_multi_backing",
@@ -29594,6 +29715,22 @@
             "title": "Detail"
           }
         },
+        "isolated_executors": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "isolated_executors",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Isolated Executors",
+            "type": "array"
+          }
+        },
         "state": {
           "has_default": false,
           "has_default_factory": false,
@@ -29655,6 +29792,14 @@
               }
             ],
             "title": "Detail"
+          },
+          "isolated_executors": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Isolated Executors",
+            "type": "array"
           },
           "state": {
             "enum": [
@@ -30448,6 +30593,14 @@
                   }
                 ],
                 "title": "Detail"
+              },
+              "isolated_executors": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Isolated Executors",
+                "type": "array"
               },
               "state": {
                 "enum": [

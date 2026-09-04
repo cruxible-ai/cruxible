@@ -198,6 +198,9 @@
   "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/review": {
     "POST": "PlaybillProposalReview"
   },
+  "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/withdraw": {
+    "POST": "PlaybillProposalWithdrawResult"
+  },
   "/api/v1/{instance_id}/playbill/providers/seed": {
     "POST": "PlaybillProviderSeedResultV1"
   },
