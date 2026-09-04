@@ -1776,3 +1776,78 @@ def test_a_compile_that_exhausts_memory_refuses_typed_instead_of_propagating(
     )
     assert diagnostic.owner == "daemon"
     assert str(ProposalReceiveLimits().max_change_set_members) in diagnostic.message
+
+
+def test_a_revision_that_moves_the_subject_refuses_by_name(tmp_path: Path) -> None:
+    """Card 93: a revision is one Claim said again, not a Claim about something else.
+
+    The lineage is bound by artifact path and predecessor digest alone, so a
+    revision could quietly restate the Claim about another Subject, keep its
+    identity, its history and its slot in every projection, and accept clean.
+    """
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    accepted_claim_id = _accept_one_claim(instance, owner, coordinator, actor)
+
+    moved = coordinator.create(
+        actor=actor,
+        payload=_change_set(
+            SubjectAuthoringPayloadV1(subject=_shell("wi-9")),
+            _claim(
+                claim_ref=accepted_claim_id,
+                subject_id="wi-9",
+                value="done",
+                rationale="Revise the status, about a different work item.",
+            ),
+        ),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    result = coordinator.preflight(moved.intent_id, actor=actor)
+
+    assert result.verdict == "refused"
+    diagnostic = next(
+        item
+        for item in result.frontier.diagnostics
+        if item.code == "playbill.claim.revision_subject_moved"
+    )
+    assert "wi-42" in diagnostic.message, diagnostic.message
+    assert "wi-9" in diagnostic.message, diagnostic.message
+
+
+def test_a_revision_that_moves_the_predicate_refuses_by_name(tmp_path: Path) -> None:
+    """The other axis of the same slot, and the one the succession road never moves."""
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    accepted_claim_id = _accept_one_claim(instance, owner, coordinator, actor)
+
+    moved = coordinator.create(
+        actor=actor,
+        payload=_change_set(
+            ClaimTypeAuthoringPayloadV1(claim_type=_predicate_type("project.work_item.owner")),
+            _claim(
+                claim_ref=accepted_claim_id,
+                predicate="project.work_item.owner",
+                value="done",
+                rationale="Revise the status into an owner.",
+            ),
+        ),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    result = coordinator.preflight(moved.intent_id, actor=actor)
+
+    assert result.verdict == "refused"
+    diagnostic = next(
+        item
+        for item in result.frontier.diagnostics
+        if item.code == "playbill.claim.revision_predicate_moved"
+    )
+    assert "project.work_item.status" in diagnostic.message, diagnostic.message
+    assert "project.work_item.owner" in diagnostic.message, diagnostic.message

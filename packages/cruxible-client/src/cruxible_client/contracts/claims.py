@@ -1688,6 +1688,40 @@ def evaluate_claim_law(
                 "The Claim successor does not name the exact live predecessor.",
                 path=path,
             )
+        # A revision is one Claim said again, so the one thing it may not do is
+        # become a Claim about something else. Nothing above checks that: the
+        # lineage is bound by artifact path and predecessor digest alone, so a
+        # revision could state a different Subject under a different predicate,
+        # keep the identity, the history and the slot in every projection, and
+        # lower, preflight and accept clean. The succession road already refuses
+        # the same move for a re-authored dependent; the general road did not.
+        #
+        # The predicate is checked with the Subject because the statement's own
+        # invariant ties it to the ClaimType identity, and a succession cannot
+        # change that identity -- so a moved predicate is never the machinery
+        # working, it is always a different Claim wearing this one's lineage.
+        # The machine deltas below are unaffected: each of them reproduces the
+        # predecessor's statement modulo one named field, and neither field is
+        # one of these.
+        if claim.statement.subject != predecessor.claim.statement.subject:
+            return _diagnostic(
+                "playbill.claim.revision_subject_moved",
+                "A Claim revision keeps the Subject it revises. The accepted Claim is about "
+                f"{predecessor.claim.statement.subject.artifact_path!r} and this revision "
+                f"states {claim.statement.subject.artifact_path!r}. Replace the subject with "
+                "the accepted one, or retire this Claim and author a new lineage about the "
+                "Subject you mean.",
+                path=path,
+            )
+        if claim.statement.predicate != predecessor.claim.statement.predicate:
+            return _diagnostic(
+                "playbill.claim.revision_predicate_moved",
+                "A Claim revision keeps the predicate it revises. The accepted Claim states "
+                f"{predecessor.claim.statement.predicate!r} and this revision states "
+                f"{claim.statement.predicate!r}. Replace the predicate with the accepted one, "
+                "or retire this Claim and author a new lineage under the predicate you mean.",
+                path=path,
+            )
         claim_type_rederivation = _is_claim_type_rederivation(
             claim,
             predecessor=predecessor.claim,
