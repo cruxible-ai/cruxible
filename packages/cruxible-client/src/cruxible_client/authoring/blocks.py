@@ -273,8 +273,45 @@ def _marker_error_item(
     )
 
 
+def _not_a_projection_target_item(
+    *,
+    root: Path,
+    path: Path,
+    content: bytes,
+    error: Exception,
+    source_id: str | None = None,
+) -> PlaybillBlockSyncItemV1:
+    """Note a discovered file that does not declare a projection block.
+
+    Nothing in a workspace announces which files are projection pages, so a
+    workspace-wide sync infers them from the marker bytes -- and captured prose
+    ABOUT the marker grammar carries those bytes verbatim. Parsing such a file
+    produced a refusal whose only repair was to hand-edit it, which is exactly
+    the repair a capture of accepted bytes cannot take, and the refusal then
+    turned every lawful activation that runs the same walk into a non-zero exit.
+    A file with no well-formed declaration is not a projection target, so the
+    inferred walk notes it and moves on.
+    """
+
+    relative = _relative_path(root, path)
+    return PlaybillBlockSyncItemV1(
+        path=relative,
+        source_id=source_id,
+        outcome="skipped",
+        reason="source_not_projection_target",
+        detail={
+            "message": str(error),
+            "target": f"{relative}:{_marker_line(content)}",
+            "required_change": "name_the_path_explicitly_if_it_declares_a_projection_block",
+        },
+    )
+
+
 def _discover_source(
-    *, root: Path, path: Path
+    *,
+    root: Path,
+    path: Path,
+    inferred: bool = False,
 ) -> tuple[str | None, PlaybillBlockSyncItemV1 | None]:
     content = b""
     try:
@@ -292,12 +329,27 @@ def _discover_source(
         )
     try:
         content = resolved.read_bytes()
+    except OSError as exc:
+        return None, _marker_error_item(
+            root=root,
+            path=resolved,
+            content=content,
+            error=exc,
+        )
+    try:
         blocks = discover_projection_blocks(content)
         source_ids = {block.source_id for block in blocks}
         if len(source_ids) != 1:
             raise ProjectionMarkerError("projection markers disagree on logical source")
         return next(iter(source_ids)), None
-    except (OSError, ProjectionMarkerError) as exc:
+    except ProjectionMarkerError as exc:
+        if inferred:
+            return None, _not_a_projection_target_item(
+                root=root,
+                path=resolved,
+                content=content,
+                error=exc,
+            )
         return None, _marker_error_item(
             root=root,
             path=resolved,
@@ -345,7 +397,7 @@ def _discover_workspace_sources(
             continue
         if b"playbill:block:" not in content:
             continue
-        source_id, error = _discover_source(root=root, path=path)
+        source_id, error = _discover_source(root=root, path=path, inferred=True)
         if error is not None:
             items.append(error)
         else:
@@ -555,8 +607,30 @@ def sync_projection_blocks(
         content = b""
         try:
             content = path.read_bytes()
+        except OSError as exc:
+            items.append(_marker_error_item(root=root, path=path, content=content, error=exc))
+            continue
+        try:
             blocks = parse_projection_blocks(content, source_id=source_id, allow_bootstrap=True)
-        except (OSError, ProjectionMarkerError) as exc:
+        except ProjectionMarkerError as exc:
+            # `--all` walks the whole catalog, and a catalogued source is a
+            # source, not necessarily a projection page: a captured report ABOUT
+            # the marker grammar carries the marker bytes verbatim and is exact
+            # accepted bytes, so "hand edit it" is the one repair it cannot
+            # take. An inferred selection notes it and moves on; a path the
+            # caller named still refuses, because there the caller asserted that
+            # this file declares a block.
+            if all_sources:
+                items.append(
+                    _not_a_projection_target_item(
+                        root=root,
+                        path=path,
+                        content=content,
+                        error=exc,
+                        source_id=source_id,
+                    )
+                )
+                continue
             items.append(_marker_error_item(root=root, path=path, content=content, error=exc))
             continue
         replacements: dict[str, bytes] = {}

@@ -519,3 +519,114 @@ def test_whole_file_cas_preserves_a_concurrent_edit(
     assert result.items[0].reason == "block_concurrent_edit"
     assert source.read_bytes() == concurrent
     assert os.path.isfile(source)
+
+
+_QUOTING_CAPTURE = (
+    b"# Agent reports\n"
+    b"\n"
+    b"The proposed grammar was `<!-- playbill:block:draft-note -->`, quoted here\n"
+    b"<!-- playbill:block:draft-note -->\n"
+    b"so a reader can see the exact bytes under discussion.\n"
+)
+
+
+def _catalog_a_second_source(root: Path, *, name: str, locator: str) -> None:
+    catalog = root / ".playbill" / "sources.yaml"
+    catalog.write_text(
+        catalog.read_text(encoding="utf-8")
+        + f"""\
+  - name: {name}
+    locator: {locator}
+    document_id: {name.split(".")[-1]}
+    document_kind: report
+    title: Reports
+    media_type: text/markdown
+    compiler_profile: document-v1
+    required_tier: governed_write
+    governance_scope: [Document:{name.split(".")[-1]}]
+""",
+        encoding="utf-8",
+    )
+
+
+def test_a_capture_that_quotes_marker_bytes_is_skipped_by_the_catalog_walk(
+    tmp_path: Path,
+) -> None:
+    """Card 101: a source ABOUT markers is not a projection target.
+
+    The whole point of the capture is that it is exact accepted bytes, so the
+    `block_marker_malformed` repair -- hand-edit the file -- is the one repair
+    unavailable here, and the refusal it produced turned every activation that
+    runs this same walk into a non-zero exit.
+    """
+
+    source = _workspace(tmp_path)
+    capture = tmp_path / "history" / "agent-reports.md"
+    capture.parent.mkdir()
+    capture.write_bytes(_QUOTING_CAPTURE)
+    _catalog_a_second_source(tmp_path, name="repo.reports", locator="history/agent-reports.md")
+
+    result = sync_projection_blocks(
+        _SyncClient(),  # type: ignore[arg-type]
+        INSTANCE_ID,
+        workspace=tmp_path,
+        all_sources=True,
+    )
+
+    rows = {item.source_id: item for item in result.items}
+    assert rows["repo.reports"].outcome == "skipped"
+    assert rows["repo.reports"].reason == "source_not_projection_target"
+    assert rows["repo.reports"].path == "history/agent-reports.md"
+    # The lawful sources in the same walk still converge, and the walk as a
+    # whole reports no refusal -- which is what an activation's exit code reads.
+    assert rows["corpus.runbook"].outcome == "synced"
+    assert result.has_refusals is False
+    assert NEW_BODY in source.read_bytes()
+    assert capture.read_bytes() == _QUOTING_CAPTURE
+
+
+def test_naming_the_quoting_path_explicitly_still_refuses(tmp_path: Path) -> None:
+    """An explicit path asserts the file declares a block, so it is parsed."""
+
+    _workspace(tmp_path)
+    capture = tmp_path / "history" / "agent-reports.md"
+    capture.parent.mkdir()
+    capture.write_bytes(_QUOTING_CAPTURE)
+    _catalog_a_second_source(tmp_path, name="repo.reports", locator="history/agent-reports.md")
+
+    result = sync_projection_blocks(
+        _SyncClient(),  # type: ignore[arg-type]
+        INSTANCE_ID,
+        workspace=tmp_path,
+        paths=("history/agent-reports.md",),
+    )
+
+    assert result.items[0].outcome == "refused"
+    assert result.items[0].reason == "block_marker_malformed"
+    assert result.has_refusals is True
+
+
+def test_the_catalog_free_workspace_walk_also_skips_a_quoting_capture(
+    tmp_path: Path,
+) -> None:
+    """The inferred walk that has no catalog reaches the same conclusion."""
+
+    source = _workspace(tmp_path)
+    (tmp_path / ".playbill" / "sources.yaml").unlink()
+    capture = tmp_path / "history" / "agent-reports.md"
+    capture.parent.mkdir()
+    capture.write_bytes(_QUOTING_CAPTURE)
+
+    result = sync_projection_blocks(
+        _SyncClient(),  # type: ignore[arg-type]
+        INSTANCE_ID,
+        workspace=tmp_path,
+        all_sources=True,
+    )
+
+    rows = {item.path: item for item in result.items}
+    assert rows["history/agent-reports.md"].outcome == "skipped"
+    assert rows["history/agent-reports.md"].reason == "source_not_projection_target"
+    assert rows["corpus/runbook.md"].outcome == "synced"
+    assert result.has_refusals is False
+    assert NEW_BODY in source.read_bytes()

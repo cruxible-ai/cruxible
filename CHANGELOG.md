@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **A workspace-wide block sync no longer refuses on a source that merely
+  quotes marker bytes.** `block sync --all` -- and the sync `proposal activate`
+  runs as its last step -- inferred its targets from every catalogued source,
+  so a captured report ABOUT the marker grammar was parsed as a projection page
+  and refused `block_marker_malformed`, whose repair is to hand-edit a file that
+  is exact accepted bytes. An inferred walk now notes such a source
+  `skipped: source_not_projection_target` and moves on, so a lawful activation
+  stops exiting non-zero over it. A path the caller names explicitly still
+  refuses: there the caller asserted the file declares a block.
+
 - **A change set the ledger could not record is refused before it is
   compiled.** The ledger writes its record OF a change set as one blob holding
   an entry per member, measured against the per-blob ceiling; a set well inside

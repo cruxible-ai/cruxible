@@ -83,6 +83,11 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     # supply it: sync skips the block until the marker carries one.
     "block_unstamped": "stamp_the_block_with_an_explicit_claim_or_query_backing",
     "source_path_invalid": "name_a_workspace_source_path_the_catalog_resolves",
+    # A workspace-wide sync infers its targets, and prose that QUOTES the marker
+    # grammar looks exactly like a page that declares a block badly. Inference
+    # skips it; an operator who believes it is a projection page says so by
+    # naming the path, and gets the marker refusal that path deserves.
+    "source_not_projection_target": "name_this_path_explicitly_if_it_declares_a_projection_block",
     "workspace_source_catalog_invalid": "repair_the_workspace_source_catalog",
 }
 
