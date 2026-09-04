@@ -871,13 +871,18 @@ class PlaybillInstance:
         return dict(cached)
 
     def paths_at(self, oid: str) -> tuple[str, ...]:
-        """List accepted paths without reading a single blob payload."""
+        """List accepted paths without reading a single blob payload.
+
+        The listing carries the same whole-generation blob proof ``tree_at``
+        applies, so a generation a read would refuse is refused here too and a
+        warm memo and a cold listing answer identically.
+        """
 
         self.coordinate_for_oid(oid)
         cached = memo_get(self._tree_memo, oid)
         if cached is not None:
             return tuple(cached)
-        return tuple(entry.path for entry in self._ledger.list_tree(oid))
+        return self._ledger.paths_at(oid)
 
     def blob_at(self, oid: str, path: str) -> bytes | None:
         """Read one accepted path without materializing its whole generation."""

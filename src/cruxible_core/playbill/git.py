@@ -72,6 +72,22 @@ class GitTreeChange:
 _PATHSPEC_BATCH = 256
 
 
+def _proven_blob_entries(entries: tuple[GitTreeEntry, ...]) -> tuple[GitTreeEntry, ...]:
+    """Refuse a tree member that is anything but a plain committed file.
+
+    A symlink, a submodule or an executable bit reaches a reader as something
+    other than the bytes the ledger claims to carry, so every path Playbill
+    hands out — read, listed, or fetched by name — passes this one proof.
+    """
+
+    for entry in entries:
+        if entry.object_type != "blob" or entry.mode != "100644":
+            raise PlaybillGitError(
+                f"ledger tree contains unsupported {entry.mode} {entry.object_type}: {entry.path}"
+            )
+    return entries
+
+
 class GitLedger:
     """A daemon-owned bare repository accessed only through system Git."""
 
@@ -632,16 +648,22 @@ class GitLedger:
         raise PlaybillGitError("Playbill refuses merge commits on main")
 
     def read_tree(self, oid: str) -> dict[str, bytes]:
-        entries = self.list_tree(oid)
-        for entry in entries:
-            if entry.object_type != "blob" or entry.mode != "100644":
-                raise PlaybillGitError(
-                    f"ledger tree contains unsupported {entry.mode} "
-                    f"{entry.object_type}: {entry.path}"
-                )
+        entries = _proven_blob_entries(self.list_tree(oid))
         # One batched read keeps whole-tree cost independent of the artifact count.
         blobs = self.read_blobs(tuple(entry.oid for entry in entries))
         return {entry.path: blobs[entry.oid] for entry in entries}
+
+    def paths_at(self, oid: str) -> tuple[str, ...]:
+        """List one commit's paths under the same proof ``read_tree`` applies.
+
+        A name-only listing has to refuse exactly the generations a whole-tree
+        read refuses. Otherwise a caller that lists is answered where a caller
+        that reads is refused, and — because a listing may be served from a
+        memo filled by ``read_tree`` — the answer would depend on whether that
+        memo happened to be warm.
+        """
+
+        return tuple(entry.path for entry in _proven_blob_entries(self.list_tree(oid)))
 
     def blob_at(self, oid: str, path: str) -> bytes | None:
         """Read one exact committed blob without materializing its whole tree."""
@@ -668,15 +690,15 @@ class GitLedger:
         selected: list[GitTreeEntry] = []
         for start in range(0, len(ordered), _PATHSPEC_BATCH):
             batch = ordered[start : start + _PATHSPEC_BATCH]
-            for entry in self._list_tree(oid, with_sizes=False, paths=batch):
-                if entry.path not in wanted:
-                    continue
-                if entry.object_type != "blob" or entry.mode != "100644":
-                    raise PlaybillGitError(
-                        f"ledger tree contains unsupported {entry.mode} "
-                        f"{entry.object_type}: {entry.path}"
+            selected.extend(
+                _proven_blob_entries(
+                    tuple(
+                        entry
+                        for entry in self._list_tree(oid, with_sizes=False, paths=batch)
+                        if entry.path in wanted
                     )
-                selected.append(entry)
+                )
+            )
         blobs = self.read_blobs(tuple(entry.oid for entry in selected))
         return {entry.path: blobs[entry.oid] for entry in selected}
 

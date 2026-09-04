@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import threading
 from collections import Counter, OrderedDict
 from datetime import UTC, datetime
@@ -20,7 +21,7 @@ from cruxible_client.contracts.claims import (
     _self_source_capture_admitted_by_rule,
     new_claim_id,
 )
-from cruxible_client.contracts.errors import ProjectionIntegrityError
+from cruxible_client.contracts.errors import PlaybillGitError, ProjectionIntegrityError
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
@@ -193,6 +194,49 @@ def test_blob_and_path_reads_agree_with_the_whole_tree(tmp_path: Path) -> None:
     assert instance.blobs_at(oid, sample) == {path: tree[path] for path in sample}
     assert instance.blob_at(oid, sample[0]) == tree[sample[0]]
     assert instance.blob_at(oid, "claims/absent-from-this-generation.json") is None
+
+
+def _commit_carrying_a_symlink(ledger_path: Path) -> str:
+    """Commit one tree whose single member is a symlink, not a plain file."""
+
+    def git(arguments: list[str], stdin: bytes = b"") -> bytes:
+        return subprocess.run(
+            ["git", f"--git-dir={ledger_path}", *arguments],
+            input=stdin,
+            capture_output=True,
+            check=True,
+        ).stdout
+
+    blob = git(["hash-object", "-w", "--stdin"], b"../elsewhere").decode().strip()
+    tree = git(["mktree"], f"120000 blob {blob}\tlink.json\n".encode()).decode().strip()
+    return git(["commit-tree", tree, "-m", "poisoned"]).decode().strip()
+
+
+def test_listing_accepted_paths_refuses_what_reading_them_refuses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    poisoned = _commit_carrying_a_symlink(instance._ledger.path)
+    # The listing is only reachable behind the acceptance proof, so stand in for
+    # a generation the ledger accepted and then ask what each reader answers.
+    monkeypatch.setattr(type(instance), "coordinate_for_oid", lambda self, oid: None)
+
+    with pytest.raises(PlaybillGitError, match="unsupported 120000"):
+        instance._ledger.read_tree(poisoned)
+
+    # Cold: nothing memoized, the listing goes to Git and must refuse there.
+    instance._tree_memo.clear()
+    with pytest.raises(PlaybillGitError, match="unsupported 120000"):
+        instance.paths_at(poisoned)
+
+    # Warm: the only way to fill the memo is a read, which refuses first, so no
+    # memo state can turn the refusal into an answer.
+    with pytest.raises(PlaybillGitError, match="unsupported 120000"):
+        instance.tree_at(poisoned)
+    assert poisoned not in instance._tree_memo
+    with pytest.raises(PlaybillGitError, match="unsupported 120000"):
+        instance.paths_at(poisoned)
 
 
 def test_a_serving_piece_is_verified_once_and_a_tampered_piece_is_refused(
