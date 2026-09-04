@@ -88,6 +88,16 @@ SELF_ATTACKS: tuple[tuple[str, Callable[[dict[str, object]], None]], ...] = (
     ("http-request-model", lambda surface: _mutate_http(surface, "request_model", "Hidden")),
     ("http-response-model", lambda surface: _mutate_http(surface, "response_model", "Hidden")),
     ("http-delegate", lambda surface: _mutate_http(surface, "delegate", "hidden.delegate")),
+    # The MCP lane had a schema attack and the HTTP lane did not, because the
+    # HTTP digest was over a component NAME and no field change could move it.
+    (
+        "http-request-schema",
+        lambda surface: _mutate_http(surface, "request_schema_digest", "sha256:" + "0" * 64),
+    ),
+    (
+        "http-response-schema",
+        lambda surface: _mutate_http(surface, "response_schema_digest", "sha256:" + "0" * 64),
+    ),
     ("mcp-same-count-swap", _same_count_mcp_swap),
     ("mcp-permission", lambda surface: _mutate_mcp(surface, "permission", "ADMIN")),
     (

@@ -96,14 +96,35 @@ def compare_contract_manifests(
 
 
 def _public_models() -> dict[str, Any]:
+    """Every model the `contracts` namespace publishes, wherever it is defined.
+
+    The filter used to be `__module__ == contracts.__name__`, which covered
+    exactly the models written inside `contracts/__init__.py` and silently
+    dropped every one imported into it -- including the twenty-seven exported
+    deliberately with the `X as X` idiom, which is the ONLY thing that defines
+    this package's export surface, since there is no `__all__`. So the snapshot
+    said nothing about `SourceReadReceiptV1.requested_path`,
+    `PlaybillDescriptor.decommissioned` or `PlaybillSearchOrientationV1.
+    decommissioned`: fields real clients see, moving no pin.
+
+    The namespace is now the law. A model reachable only by importing a
+    submodule is reachable but not published, and stays where the authoring and
+    claim-attestation wire catalogs pin it.
+    """
+
     models: dict[str, Any] = {}
     for name, value in sorted(vars(contracts).items()):
         if name.startswith("_"):
             continue
         if not inspect.isclass(value):
             continue
-        if not issubclass(value, BaseModel) or value.__module__ != contracts.__name__:
+        if not issubclass(value, BaseModel):
             continue
+        if not value.__module__.startswith(f"{contracts.__name__}."):
+            if value.__module__ != contracts.__name__:
+                # `pydantic.BaseModel` itself reaches the namespace as an import
+                # artifact; it is pydantic's contract, not this package's.
+                continue
         value.model_rebuild()
         schema = _json_roundtrip(value.model_json_schema(ref_template="#/$defs/{model}"))
         required_fields = [

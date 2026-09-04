@@ -1,4 +1,19 @@
-"""Regenerate the ratified Playbill v1 served-surface inventory."""
+"""Regenerate the ratified Playbill v1 served-surface inventory.
+
+What the pin covers, and what it did not until 2026-09-09. Each HTTP route's
+request and response digest is taken over the RESOLVED JSON schema, so a field
+added, renamed, retyped or removed inside a request body moves the pin. Before
+that the digest was taken over FastAPI's `{"$ref": ...}`, which hashed a
+component name: adding `git_object_format` to the init request moved nothing,
+and 78 routes shared 49 request digests because the digest space was model
+names rather than schemas. A model that refers to itself is inlined until it
+repeats and then left as a stable marker, so a recursive body still digests
+deterministically.
+
+Reviewers should expect request-body deltas to appear here now. A patch that
+touches a served request model moves this snapshot even when no route, verb or
+tool was added, and that movement is the freeze working rather than noise.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +32,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 FACADE = REPO_ROOT / "src/cruxible_core/runtime/playbill_api.py"
 MCP_HANDLERS = REPO_ROOT / "src/cruxible_core/mcp/handlers.py"
 SNAPSHOT = REPO_ROOT / "tests/goldens/playbill/served-surface-dp0b-v1.json"
+_COMPONENT_PREFIX = "#/components/schemas/"
+
 FORMAT = "playbill-served-surface-v1"
 # Attribution is by role: a public artifact never carries a person's name.
 RATIFIED_BY = "maintainer"
@@ -32,10 +49,52 @@ def surface_digest(surface: Mapping[str, object]) -> str:
     return "sha256:" + hashlib.sha256(_canonical_json(surface).encode()).hexdigest()
 
 
-def _schema_digest(schema: object) -> str | None:
+def _resolve_schema(
+    schema: object,
+    components: Mapping[str, object],
+    seen: tuple[str, ...] = (),
+) -> object:
+    """Inline every `$ref` so the digest is over the SCHEMA, not the model name.
+
+    FastAPI puts `{"$ref": "#/components/schemas/Foo"}` where a request or
+    response body goes, and digesting that hashed a component NAME. Renaming,
+    adding, retyping or removing any field inside a request model moved no pin
+    at all: 78 pinned routes shared 49 distinct request digests, because the
+    digest space was model names. The MCP lane was pinned properly the whole
+    time -- its tool schemas are inlined already -- so the same artifact was
+    honest about one transport and silent about the other.
+
+    A model that refers to itself is inlined until it repeats, then left as a
+    marker naming the cycle: the marker is stable, so a recursive model still
+    digests deterministically and still moves when anything inside it moves.
+    """
+
+    if isinstance(schema, list):
+        return [_resolve_schema(item, components, seen) for item in schema]
+    if not isinstance(schema, Mapping):
+        return schema
+    reference = schema.get("$ref")
+    if isinstance(reference, str) and reference.startswith(_COMPONENT_PREFIX):
+        name = reference[len(_COMPONENT_PREFIX) :]
+        if name in seen:
+            return {"$recursive_ref": name}
+        target = components.get(name)
+        if target is None:
+            return dict(schema)
+        resolved = _resolve_schema(target, components, (*seen, name))
+        siblings = {key: value for key, value in schema.items() if key != "$ref"}
+        if not siblings or not isinstance(resolved, dict):
+            return resolved
+        inlined = {key: _resolve_schema(value, components, seen) for key, value in siblings.items()}
+        return {**resolved, **inlined}
+    return {key: _resolve_schema(value, components, seen) for key, value in schema.items()}
+
+
+def _schema_digest(schema: object, components: Mapping[str, object] | None = None) -> str | None:
     if schema is None:
         return None
-    return "sha256:" + hashlib.sha256(_canonical_json(schema).encode()).hexdigest()
+    resolved = schema if components is None else _resolve_schema(schema, components)
+    return "sha256:" + hashlib.sha256(_canonical_json(resolved).encode()).hexdigest()
 
 
 def _facade_operations(path: Path = FACADE) -> list[str]:
@@ -143,6 +202,7 @@ def _http_surface() -> list[dict[str, object]]:
 
     app = create_app()
     openapi = app.openapi()
+    components = openapi.get("components", {}).get("schemas", {})
     result: list[dict[str, object]] = []
     for route in app.routes:
         if not isinstance(route, APIRoute):
@@ -172,9 +232,9 @@ def _http_surface() -> list[dict[str, object]]:
                     "method": method,
                     "path": route.path,
                     "request_model": _type_name(request_annotation),
-                    "request_schema_digest": _schema_digest(request_schema),
+                    "request_schema_digest": _schema_digest(request_schema, components),
                     "response_model": _type_name(route.response_model),
-                    "response_schema_digest": _schema_digest(response_schema),
+                    "response_schema_digest": _schema_digest(response_schema, components),
                     "delegate": f"{endpoint.__module__}.{endpoint.__qualname__}",
                     "facade_operations": _called_attributes(endpoint, "playbill_api"),
                 }

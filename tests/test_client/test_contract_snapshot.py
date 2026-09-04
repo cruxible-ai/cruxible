@@ -362,3 +362,36 @@ def test_contract_compatibility_allows_additive_changes() -> None:
     assert "Added optional field Result.detail" in report.compatible
     assert any("Added Literal value(s) to Mode" in item for item in report.compatible)
     assert any("Added enum value(s) to Result.mode" in item for item in report.compatible)
+
+
+def test_no_model_the_contracts_namespace_publishes_is_undeclared() -> None:
+    """Card 83: the snapshot covered only models WRITTEN in `contracts/__init__.py`.
+
+    The package has no `__all__`; its export surface is the `X as X` import
+    idiom, and the old `__module__ == contracts.__name__` filter dropped every
+    model that reached the namespace that way. Twenty-seven models exported on
+    purpose therefore moved no pin, and fields real clients see -- a receipt's
+    requested path among them -- changed under a frozen surface without the
+    freeze noticing. The namespace is the declaration; anything in it is
+    covered, and adding a name to it is a pin movement.
+    """
+
+    import inspect
+
+    from pydantic import BaseModel
+
+    from cruxible_client import contracts
+
+    published = {
+        name
+        for name, value in vars(contracts).items()
+        if not name.startswith("_")
+        and inspect.isclass(value)
+        and issubclass(value, BaseModel)
+        and value.__module__.startswith("cruxible_client.contracts")
+    }
+    covered = set(generate_contract_manifest()["models"])
+
+    assert published - covered == set(), (
+        "these models are published from cruxible_client.contracts and pinned nowhere"
+    )
