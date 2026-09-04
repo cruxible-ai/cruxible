@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+- **Reads no longer re-read what an accepted generation already proved.** An
+  accepted tree, a serving projection piece's verification, the Claim read
+  history index and the durable publication fold are each done once and reused
+  behind the same proofs they always ran; the resolution fold lists the
+  projection once instead of once per slot, and every read that wanted one path
+  asks for that path rather than the whole generation. On a 740-Claim instance
+  `orient` goes from 868 s to under 9 s (3 s warm), `list` and `search` from
+  ~900 s to 3 s, `next` from 29 min to 44 s, and `block sync --check` over 26
+  blocks from 15 min to 6 s. No read answers differently: a tampered projection
+  piece is still refused, and replay drops every memo.
+
+- **BEHAVIOUR CHANGE: "overturned" now means a Claim lost a slot, not that it
+  failed its own admission.** A many-cardinality slot selects every eligible
+  contender, so a Claim that is not selected there lost to nothing; it reads
+  `refused`. `overturned` is kept for a single-valued slot the Claim did not
+  take. A governed block whose backing Claim was merely uncovered therefore
+  stops reporting `projection_backing_stale`. The two depublication rows also
+  carry the `hand_edit` operation their required change always described, since
+  no verb republishes a retired or overturned backing.
+
+- **BEHAVIOUR CHANGE: a source block and a projection block are never the same
+  block.** Publishing a projection block whose backing Claim cites bytes of that
+  same source inside the body being framed is refused, typed
+  (`playbill.authoring.publication_claim_projected_as_itself`), naming the
+  overlapping citations. Separately, a coordinator self-source citation is no
+  longer skipped ahead of admission: a ClaimType whose evidence-admission policy
+  names that contract for the Claim's role covers text authored in a governed
+  page, and a ClaimType that does not name it still reads such a Claim as
+  uncovered.
+
+- **A clipped coverage scan reports once per source.** A per-source count cap on
+  cards, commitment proofs or citation windows discards that source's whole
+  coverage evidence at once, so `next` now emits one `citation_source_unobserved`
+  row for it, carrying `clipped_scan_notes` and `collapsed_citation_count`,
+  instead of one look-alike row per citation. Sources under the cap are
+  unchanged.
+
+- **`CRUXIBLE_CLIENT_CONNECT_TIMEOUT_S`** (default 900 s) gives the single
+  orientation an SDK `Playbill.connect()` runs its own read budget, separate
+  from `CRUXIBLE_CLIENT_TIMEOUT_S` (default 180 s) and never below it, so a
+  healthy but large instance cannot read as an unreachable server. Both knobs
+  are documented in the CLI reference.
+
 - **The accepted world is typed Python, not strings.** `pb.world()` reads the
   accepted ClaimType vocabulary once and hands it back as objects: dotted kinds
   nest (`w.sec.package`, `w.dev.batch`), a Subject answers by attribute or by
