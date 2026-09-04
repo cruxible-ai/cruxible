@@ -152,6 +152,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_playbill_claim_attest": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_claim_attest_new_capture": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_proposal_readmit": PermissionMode.GOVERNED_WRITE,
+    "cruxible_playbill_proposal_withdraw": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_dereference": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_submit_approval": PermissionMode.GRAPH_WRITE,
     "cruxible_playbill_activate": PermissionMode.GRAPH_WRITE,

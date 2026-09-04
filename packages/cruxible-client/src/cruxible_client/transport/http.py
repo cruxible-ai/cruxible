@@ -486,6 +486,19 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillProposalReadmitResult)
 
+    def withdraw_playbill_proposal(
+        self,
+        instance_id: str,
+        proposal_id: str,
+        *,
+        reason: str,
+    ) -> contracts.PlaybillProposalWithdrawResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/withdraw",
+            json={"tag": "playbill-proposal-withdraw-request-v1", "reason": reason},
+        )
+        return self._parse_model(response, contracts.PlaybillProposalWithdrawResult)
+
     def inspect_playbill_proposal(
         self, instance_id: str, proposal_id: str
     ) -> contracts.PlaybillProposalInspection:

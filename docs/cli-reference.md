@@ -899,6 +899,7 @@ covers all four tool kinds, including same-turn edit drift.
 cruxible playbill proposal inspect PROPOSAL_ID
 cruxible playbill proposal list [--status open|settled]
 cruxible playbill proposal readmit PROPOSAL_ID
+cruxible playbill proposal withdraw PROPOSAL_ID --reason TEXT
 cruxible playbill proposal refusal PROPOSAL_ID
 cruxible playbill proposal review PROPOSAL_ID [--include-body|--redacted]
   [--workspace-root DIR]
@@ -923,6 +924,16 @@ governed rebase and returns a fresh, idempotent proposal without changing the ol
 proposal evidence. A stale generated ClaimType dependency-closure migration is not
 byte-rebased because its dependent inventory may have changed; rerun ClaimType
 migration preflight and submit at the current head instead.
+
+`proposal withdraw` is the terminal statement for the opposite case: an open (or
+stale) proposal that will never be activated, because a hard limit refuses its
+activation or its author changed their mind. It writes one immutable withdrawal
+record beside the admission, touches no accepted state, leaves every byte of the
+candidate readable, and moves the proposal out of `proposal list --status open`
+with terminal reason `withdrawn`. Only the actor who submitted a proposal may
+withdraw it; withdrawing an already-withdrawn proposal repeats the first answer
+rather than rewriting its reason, and a settled proposal refuses, because its
+outcome is not an intention to overwrite.
 
 approve signs locally. The private-key path is not sent to the daemon.
 When `.playbill/coverage.json` at `--workspace-root` declares `floor_output`,

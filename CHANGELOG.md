@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **An open proposal that can never activate can be withdrawn.** A proposal
+  refused at activation by a hard limit was admitted, evaluated, permanently
+  unactivatable and permanently open, so `proposal list` accumulated tombstones
+  with no verb to retire them. `cruxible playbill proposal withdraw PROPOSAL_ID
+  --reason TEXT` (served, and `cruxible_playbill_proposal_withdraw` over MCP)
+  writes one immutable withdrawal record beside the admission and reports the
+  proposal `settled` with terminal reason `withdrawn`. It touches no accepted
+  state and leaves every byte of the candidate readable. Only the submitting
+  actor may withdraw; an open or stale proposal may be withdrawn, a settled one
+  may not, and a second withdrawal repeats the first answer rather than
+  rewriting its reason.
+
 - **A workspace-wide block sync no longer refuses on a source that merely
   quotes marker bytes.** `block sync --all` -- and the sync `proposal activate`
   runs as its last step -- inferred its targets from every catalogued source,

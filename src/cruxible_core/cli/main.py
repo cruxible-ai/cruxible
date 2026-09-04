@@ -62,6 +62,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "proposal", "approve"): "active",
     ("playbill", "proposal", "activate"): "active",
     ("playbill", "proposal", "readmit"): "active",
+    ("playbill", "proposal", "withdraw"): "active",
     ("playbill", "sources", "propose"): "active",
     ("playbill", "principal", "add"): "active",
     ("playbill", "principal", "rotate"): "active",
@@ -442,6 +443,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                         "playbill",
                         "readmit_proposal",
                         "Re-admit one stale proposal at the current head.",
+                    ),
+                    "withdraw": _command(
+                        "playbill",
+                        "withdraw_proposal",
+                        "Retire an open proposal that will never activate.",
                     ),
                     "inspect": _command(
                         "playbill", "inspect_proposal", "Inspect immutable proposal evidence."

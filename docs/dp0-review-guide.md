@@ -91,6 +91,7 @@ playbill proposal approve
 playbill proposal inspect
 playbill proposal list
 playbill proposal readmit
+playbill proposal withdraw
 playbill proposal refusal
 playbill proposal review
 playbill review close
@@ -180,6 +181,7 @@ POST /api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge
 POST /api/v1/{instance_id}/playbill/proposals/{proposal_id}/approvals
 POST /api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate
 POST /api/v1/{instance_id}/playbill/proposals/{proposal_id}/readmit
+POST /api/v1/{instance_id}/playbill/proposals/{proposal_id}/withdraw
 GET  /api/v1/{instance_id}/playbill/sources/context
 POST /api/v1/{instance_id}/playbill/sources/check
 POST /api/v1/{instance_id}/playbill/sources/proposals
@@ -306,6 +308,7 @@ cruxible_playbill_workspace_source_check
 cruxible_playbill_workspace_source_compile
 cruxible_playbill_proposal_list
 cruxible_playbill_proposal_readmit
+cruxible_playbill_proposal_withdraw
 cruxible_playbill_claim_type_migrate
 cruxible_playbill_seed_plan
 cruxible_playbill_search

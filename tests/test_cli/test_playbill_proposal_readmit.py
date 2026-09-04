@@ -170,3 +170,120 @@ def test_proposal_list_rows_match_the_labelled_columns(
     assert lines[0] == "STATUS  TERMINAL_REASON  PROPOSAL_ID  TARGET_REF  COORDINATE_TIME"
     assert lines[1].startswith(f"open  -  {SOURCE_ID}  ")
     assert lines[2].startswith(f"settled  refused  {NEW_ID}  ")
+
+
+def _withdraw_result(*, already: bool = False) -> contracts.PlaybillProposalWithdrawResult:
+    return contracts.PlaybillProposalWithdrawResult(
+        proposal_id=SOURCE_ID,
+        actor_id="operator",
+        reason="its change-set record exceeds the ledger blob ceiling",
+        withdrawn_at="2026-09-08T09:00:00.000000Z",
+        already_withdrawn=already,
+    )
+
+
+def test_withdraw_client_sends_the_reason_it_records() -> None:
+    calls: list[tuple[str, object]] = []
+
+    class StubTransport:
+        def post(self, path, *, json):
+            calls.append((path, json))
+            return httpx.Response(200, json=_withdraw_result().model_dump(mode="json"))
+
+    client = CruxibleClient(base_url="https://playbill.invalid")
+    client._client = StubTransport()  # type: ignore[assignment]
+
+    assert (
+        client.withdraw_playbill_proposal(
+            "inst_test",
+            SOURCE_ID,
+            reason="its change-set record exceeds the ledger blob ceiling",
+        )
+        == _withdraw_result()
+    )
+    assert calls == [
+        (
+            f"/api/v1/inst_test/playbill/proposals/{SOURCE_ID}/withdraw",
+            {
+                "tag": "playbill-proposal-withdraw-request-v1",
+                "reason": "its change-set record exceeds the ledger blob ceiling",
+            },
+        )
+    ]
+
+
+def test_withdraw_cli_resolves_the_selector_and_reports_the_recorded_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubClient:
+        def resolve_playbill_proposal_selector(self, instance_id, selector):
+            assert (instance_id, selector) == ("inst_test", "sha256:11111111")
+            return contracts.PlaybillProposalSelectorResultV1(
+                selector=selector, proposal_id=SOURCE_ID
+            )
+
+        def withdraw_playbill_proposal(self, instance_id, proposal_id, *, reason):
+            assert (instance_id, proposal_id) == ("inst_test", SOURCE_ID)
+            assert reason == "its change-set record exceeds the ledger blob ceiling"
+            return _withdraw_result()
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_test",
+            "playbill",
+            "proposal",
+            "withdraw",
+            "sha256:11111111",
+            "--reason",
+            "its change-set record exceeds the ledger blob ceiling",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines() == [
+        "target: inst_test @ https://playbill.invalid (explicit)",
+        f"withdrawn  {SOURCE_ID}  2026-09-08T09:00:00.000000Z",
+        "Reason: its change-set record exceeds the ledger blob ceiling",
+    ]
+
+
+def test_withdraw_cli_says_when_the_answer_is_the_earlier_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubClient:
+        def resolve_playbill_proposal_selector(self, _instance_id, selector):
+            return contracts.PlaybillProposalSelectorResultV1(
+                selector=selector, proposal_id=SOURCE_ID
+            )
+
+        def withdraw_playbill_proposal(self, _instance_id, _proposal_id, *, reason):
+            assert reason == "second thoughts"
+            return _withdraw_result(already=True)
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_test",
+            "playbill",
+            "proposal",
+            "withdraw",
+            SOURCE_ID,
+            "--reason",
+            "second thoughts",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "(already withdrawn)" in result.output
+    assert "Reason: its change-set record exceeds the ledger blob ceiling" in result.output

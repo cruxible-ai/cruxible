@@ -51,6 +51,7 @@ configured filesystem boundary.
 | `cruxible_playbill_activate` | Activate by compare-and-set and refresh any configured workspace floor | `GRAPH_WRITE` |
 | `cruxible_playbill_proposal_list` | List open and terminal proposal evidence | `READ_ONLY` |
 | `cruxible_playbill_proposal_readmit` | Re-admit a stale proposal at the current head | `GOVERNED_WRITE` |
+| `cruxible_playbill_proposal_withdraw` | Retire an open proposal that will never activate | `GOVERNED_WRITE` |
 | `cruxible_playbill_whoami` | Explain credential-derived actor identity and registration | `READ_ONLY` |
 
 MCP never accepts a client private key. Signing occurs outside the server and

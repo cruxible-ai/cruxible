@@ -467,6 +467,22 @@ def handle_playbill_readmit_proposal(
     )
 
 
+def handle_playbill_withdraw_proposal(
+    instance_id: str,
+    proposal_id: str,
+    reason: str,
+) -> contracts.PlaybillProposalWithdrawResult:
+    return _dispatch_remote_or_local(
+        lambda client: client.withdraw_playbill_proposal(
+            instance_id,
+            proposal_id,
+            reason=reason,
+        ),
+        lambda: playbill_api.playbill_withdraw_proposal(instance_id, proposal_id, reason),
+        operation_name="cruxible_playbill_proposal_withdraw",
+    )
+
+
 def handle_playbill_list_documents(instance_id: str) -> contracts.PlaybillDocumentList:
     return _dispatch_remote_or_local(
         lambda client: client.list_playbill_documents(instance_id),

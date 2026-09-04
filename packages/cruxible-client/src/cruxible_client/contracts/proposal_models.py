@@ -200,6 +200,40 @@ class ProposalAdmissionRequest(_StrictProposalModel):
         return value
 
 
+class ProposalWithdrawalRecordV1(_StrictProposalModel):
+    """One actor's durable statement that an open proposal will never be settled.
+
+    Out-of-band evidence, exactly like the admission and evaluation records it
+    sits beside: nothing about accepted state changes, and the candidate stays
+    readable forever. What changes is the inventory -- a proposal that cannot
+    activate stops being reported open, so `proposal list` is a list of work and
+    not a graveyard. Immutable and one per proposal: withdrawal is a terminal
+    statement, so a second one over the same proposal is refused rather than
+    silently restating the first with a new reason.
+    """
+
+    tag: Literal["playbill-proposal-withdrawal-v1"] = "playbill-proposal-withdrawal-v1"
+    proposal_id: str
+    actor_id: str
+    reason: str = Field(min_length=1, max_length=1_000)
+    withdrawn_at: str
+
+    @field_validator("proposal_id")
+    @classmethod
+    def _proposal_id(cls, value: str) -> str:
+        ProposalDigest.from_tagged(value)
+        return value
+
+    @field_validator("reason")
+    @classmethod
+    def _reason(cls, value: str) -> str:
+        if value.strip() != value or not value.strip():
+            raise ValueError("withdrawal reason must be nonblank and normalized")
+        if any(character in value for character in "\r\n"):
+            raise ValueError("withdrawal reason must be a single line")
+        return value
+
+
 class ProposalAdmissionRecord(_StrictProposalModel):
     tag: Literal["playbill-proposal-admission-v1"] = "playbill-proposal-admission-v1"
     proposal_id: str
@@ -366,6 +400,7 @@ __all__ = [
     "ProposalEvaluationRecord",
     "CHANGE_SET_RECORD_BYTES_PER_MEMBER",
     "ProposalReceiveLimits",
+    "ProposalWithdrawalRecordV1",
     "ProposalResult",
     "ProposalTransportProtocol",
     "claim_admission_account_order_key",

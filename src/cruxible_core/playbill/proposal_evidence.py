@@ -30,6 +30,7 @@ from cruxible_core.playbill.id_prefixes import resolve_id_prefix
 from cruxible_core.playbill.proposals import (
     ProposalAdmissionRecord,
     ProposalEvaluationRecord,
+    ProposalWithdrawalRecordV1,
 )
 
 _EvidenceModelT = TypeVar("_EvidenceModelT", bound=BaseModel)
@@ -78,6 +79,7 @@ class ProposalEvidenceStore:
         self.candidates = self._directory("candidates")
         self.approvals = self._directory("approvals")
         self.source_compilations = self._directory("source-compilations")
+        self.withdrawals = self._directory("withdrawals")
 
     def _directory(self, name: str) -> Path:
         path = self.root / name
@@ -105,6 +107,43 @@ class ProposalEvidenceStore:
         path = self.candidates / f"{record.candidate_digest.removeprefix('sha256:')}.json"
         _exclusive_canonical_write(path, render_candidate_record(record))
         return path
+
+    def write_withdrawal(self, record: ProposalWithdrawalRecordV1) -> Path:
+        """Persist one terminal withdrawal beside the admission it retires.
+
+        Immutable like every other record here: the exclusive write makes a
+        second withdrawal of the same proposal either a no-op, when the bytes
+        are identical, or a refusal, so a withdrawal's reason cannot be rewritten
+        after the fact.
+        """
+
+        path = self.withdrawals / f"{record.proposal_id.removeprefix('sha256:')}.json"
+        _exclusive_canonical_write(path, canonical_bytes(record.model_dump(mode="json")) + b"\n")
+        return path
+
+    def read_withdrawal(self, proposal_id: str) -> ProposalWithdrawalRecordV1 | None:
+        """Return this proposal's withdrawal, or None when it has not been withdrawn."""
+
+        ProposalDigest.from_tagged(proposal_id)
+        path = self.withdrawals / f"{proposal_id.removeprefix('sha256:')}.json"
+        if not path.exists():
+            return None
+        record = self._read_model(path, ProposalWithdrawalRecordV1, label="proposal withdrawal")
+        if record.proposal_id != proposal_id:
+            raise ProposalIntegrityError("withdrawal evidence names another proposal")
+        return record
+
+    def withdrawn_proposal_ids(self) -> frozenset[str]:
+        """Return every withdrawn proposal id, read from its own evidence."""
+
+        return frozenset(
+            self._read_model(
+                path,
+                ProposalWithdrawalRecordV1,
+                label="proposal withdrawal",
+            ).proposal_id
+            for path in sorted(self.withdrawals.glob("*.json"), key=lambda item: item.name)
+        )
 
     def write_source_compilation(self, manifest: SourceCompilationManifest) -> Path:
         """Persist a path-free immutable compile receipt beside proposal exhaust."""

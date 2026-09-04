@@ -195,6 +195,15 @@ def register_tools(
         return handlers.handle_playbill_readmit_proposal(instance_id, proposal_id)
 
     @_tool
+    def cruxible_playbill_proposal_withdraw(
+        instance_id: str,
+        proposal_id: str,
+        reason: str,
+    ) -> contracts.PlaybillProposalWithdrawResult:
+        """Retire one open proposal that will never be activated."""
+        return handlers.handle_playbill_withdraw_proposal(instance_id, proposal_id, reason)
+
+    @_tool
     def cruxible_playbill_list_documents(
         instance_id: str,
     ) -> contracts.PlaybillDocumentList:

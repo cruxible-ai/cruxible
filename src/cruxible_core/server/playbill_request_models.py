@@ -223,6 +223,11 @@ class PlaybillProposalReadmitRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-proposal-readmit-request-v1"] = "playbill-proposal-readmit-request-v1"
 
 
+class PlaybillProposalWithdrawRequest(_StrictPlaybillRequest):
+    tag: Literal["playbill-proposal-withdraw-request-v1"] = "playbill-proposal-withdraw-request-v1"
+    reason: str = Field(min_length=1, max_length=1_000)
+
+
 class PlaybillRunQueryRequest(_StrictPlaybillRequest):
     at: AcceptedCoordinate | None = None
     evaluation_time: datetime | None = None

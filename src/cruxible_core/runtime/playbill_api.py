@@ -223,6 +223,7 @@ from cruxible_core.service.playbill_proposals import (
     service_playbill_whoami,
     service_readmit_playbill_proposal,
     service_resolve_playbill_proposal_selector,
+    service_withdraw_playbill_proposal,
 )
 from cruxible_core.service.playbill_query import service_run_playbill_query
 from cruxible_core.service.playbill_search import service_search_playbill
@@ -632,6 +633,22 @@ def playbill_readmit_proposal(
         actor_id=_actor_id(),
     )
     return contracts.PlaybillProposalReadmitResult.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_withdraw_proposal(
+    instance_id: str,
+    proposal_id: str,
+    reason: str,
+) -> contracts.PlaybillProposalWithdrawResult:
+    check_permission("cruxible_playbill_propose", instance_id=instance_id)
+    result = service_withdraw_playbill_proposal(
+        get_playbill_manager().get(instance_id),
+        proposal_id=proposal_id,
+        actor_id=_actor_id(),
+        reason=reason,
+        withdrawn_at=canonical_candidate_timestamp(utc_now()),
+    )
+    return contracts.PlaybillProposalWithdrawResult.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_whoami(instance_id: str) -> contracts.PlaybillWhoAmI:

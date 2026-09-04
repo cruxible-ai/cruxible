@@ -203,6 +203,7 @@ from cruxible_client.contracts.proposal_models import (
     ProposalReceiveLimits,
     ProposalResult,
     ProposalTransportProtocol,
+    ProposalWithdrawalRecordV1,
     _StrictProposalModel,
     claim_admission_account_order_key,
 )
@@ -3750,6 +3751,7 @@ __all__ = [
     "ProposalEvaluationRecord",
     "ProposalEvidenceProtocol",
     "ProposalReceiveLimits",
+    "ProposalWithdrawalRecordV1",
     "ProposalResult",
     "ProposalService",
     "ProposalTransportProtocol",

@@ -20,6 +20,7 @@ from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
     ProposalResult,
+    ProposalWithdrawalRecordV1,
 )
 from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,
@@ -28,7 +29,7 @@ from cruxible_core.playbill.service.documents import (
 from cruxible_core.runtime.permissions import PermissionMode
 
 ProposalInventoryStatus = Literal["open", "settled"]
-ProposalTerminalReason = Literal["accepted", "refused", "stale"]
+ProposalTerminalReason = Literal["accepted", "refused", "stale", "withdrawn"]
 WhoAmIActorIdSource = Literal["runtime_credential_label", "local_operator"]
 PrincipalRegistrationStatus = Literal["active", "revoked", "absent"]
 CredentialPermissionMode = Literal["read_only", "governed_write", "graph_write", "admin"]
@@ -72,6 +73,15 @@ class PlaybillProposalReadmitResultV1(_StrictOperationalReadModel):
     proposal: PlaybillProposalInspection
 
 
+class PlaybillProposalWithdrawResultV1(_StrictOperationalReadModel):
+    tag: Literal["playbill-proposal-withdraw-result-v1"] = "playbill-proposal-withdraw-result-v1"
+    proposal_id: str
+    actor_id: str
+    reason: str
+    withdrawn_at: str
+    already_withdrawn: bool = False
+
+
 class PlaybillProposalSelectorResultV1(_StrictOperationalReadModel):
     tag: Literal["playbill-proposal-selector-result-v1"] = "playbill-proposal-selector-result-v1"
     selector: str
@@ -113,6 +123,7 @@ def service_list_playbill_proposals(
         if generation.record is not None
     }
     entries: list[PlaybillProposalListEntryV1] = []
+    withdrawn = evidence.withdrawn_proposal_ids()
     for admission in evidence.list_admissions():
         evaluation = evidence.read_evaluation(admission.proposal_id)
         candidate_digest = evaluation.candidate_digest
@@ -125,7 +136,13 @@ def service_list_playbill_proposals(
         else:
             assert candidate_digest is not None
             candidate = evidence.read_candidate(candidate_digest)
-            if candidate.candidate.parent_semantic_root == coordinate.semantic_root:
+            if admission.proposal_id in withdrawn:
+                # A withdrawal outranks staleness: an actor who said this
+                # proposal will never be settled has answered the question
+                # `readmit` would otherwise keep open.
+                entry_status = "settled"
+                terminal_reason = "withdrawn"
+            elif candidate.candidate.parent_semantic_root == coordinate.semantic_root:
                 entry_status = "open"
                 terminal_reason = None
             else:
@@ -292,6 +309,70 @@ def service_readmit_playbill_proposal(
     )
 
 
+def service_withdraw_playbill_proposal(
+    instance: PlaybillInstance,
+    *,
+    proposal_id: str,
+    actor_id: str,
+    reason: str,
+    withdrawn_at: str,
+) -> PlaybillProposalWithdrawResultV1:
+    """Record one actor's terminal statement that a proposal will not be settled.
+
+    A proposal whose activation a hard limit refuses -- the ledger's change-set
+    record ceiling is the case this exists for -- is admitted, evaluated and
+    permanently unactivatable, and nothing removed it from the open inventory.
+    Withdrawal is the missing terminal transition: it touches no accepted state
+    and leaves every byte of the candidate readable, and it moves the proposal
+    out of `proposal list --status open`, where an actor reads their work.
+
+    Only an OPEN proposal is withdrawable. A settled one already has its terminal
+    reason -- accepted, refused, or stale -- and overwriting that with a
+    statement of intent would lose the outcome; a stale proposal that should not
+    be readmitted is the one exception, since staleness is not an ending.
+    """
+
+    admission = instance.proposal_evidence().read_admission(proposal_id)
+    if admission.actor_id != actor_id:
+        raise ProposalAdmissionError("only the source proposal actor may withdraw it")
+    existing = instance.proposal_evidence().read_withdrawal(admission.proposal_id)
+    if existing is not None:
+        return PlaybillProposalWithdrawResultV1(
+            proposal_id=existing.proposal_id,
+            actor_id=existing.actor_id,
+            reason=existing.reason,
+            withdrawn_at=existing.withdrawn_at,
+            already_withdrawn=True,
+        )
+    entry = next(
+        (
+            item
+            for item in service_list_playbill_proposals(instance).entries
+            if item.proposal_id == admission.proposal_id
+        ),
+        None,
+    )
+    if entry is None:  # pragma: no cover - a read admission always lists
+        raise ProposalNotFoundError(proposal_id)
+    if entry.status != "open" and entry.terminal_reason != "stale":
+        raise ProposalAdmissionError(
+            f"only an open or stale proposal may be withdrawn; this one is {entry.terminal_reason}"
+        )
+    record = ProposalWithdrawalRecordV1(
+        proposal_id=admission.proposal_id,
+        actor_id=actor_id,
+        reason=reason,
+        withdrawn_at=withdrawn_at,
+    )
+    instance.proposal_evidence().write_withdrawal(record)
+    return PlaybillProposalWithdrawResultV1(
+        proposal_id=record.proposal_id,
+        actor_id=record.actor_id,
+        reason=record.reason,
+        withdrawn_at=record.withdrawn_at,
+    )
+
+
 def service_playbill_whoami(
     instance: PlaybillInstance,
     *,
@@ -327,6 +408,7 @@ __all__ = [
     "PlaybillProposalListEntryV1",
     "PlaybillProposalListV1",
     "PlaybillProposalReadmitResultV1",
+    "PlaybillProposalWithdrawResultV1",
     "PlaybillWhoAmIV1",
     "CredentialPermissionMode",
     "PrincipalRegistrationStatus",
@@ -335,5 +417,6 @@ __all__ = [
     "WhoAmIActorIdSource",
     "service_list_playbill_proposals",
     "service_readmit_playbill_proposal",
+    "service_withdraw_playbill_proposal",
     "service_playbill_whoami",
 ]

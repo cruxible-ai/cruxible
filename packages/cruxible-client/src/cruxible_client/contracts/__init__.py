@@ -443,7 +443,7 @@ class PlaybillProposalListEntry(BaseModel):
     verdict: Literal["candidate", "refused"]
     candidate_digest: str | None = None
     status: Literal["open", "settled"]
-    terminal_reason: Literal["accepted", "refused", "stale"] | None = None
+    terminal_reason: Literal["accepted", "refused", "stale", "withdrawn"] | None = None
 
 
 class PlaybillProposalList(BaseModel):
@@ -470,6 +470,17 @@ class PlaybillProposalReadmitResult(BaseModel):
     source_proposal_id: str
     operation_digest: str
     proposal: PlaybillProposalInspection
+
+
+class PlaybillProposalWithdrawResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-proposal-withdraw-result-v1"] = "playbill-proposal-withdraw-result-v1"
+    proposal_id: str
+    actor_id: str
+    reason: str
+    withdrawn_at: str
+    already_withdrawn: bool = False
 
 
 class PlaybillWhoAmI(BaseModel):

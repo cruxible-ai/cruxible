@@ -51,6 +51,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillNextRequest,
     PlaybillNextRequestV2,
     PlaybillProposalReadmitRequest,
+    PlaybillProposalWithdrawRequest,
     PlaybillProposeClaimTypeInputRequest,
     PlaybillProposeClaimTypeRequest,
     PlaybillProposeDocumentRequest,
@@ -273,6 +274,22 @@ def readmit_proposal(
     return playbill_api.playbill_readmit_proposal(
         resolve_server_instance_id(instance_id),
         proposal_id,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/proposals/{proposal_id}/withdraw",
+    response_model=contracts.PlaybillProposalWithdrawResult,
+)
+def withdraw_proposal(
+    instance_id: str,
+    proposal_id: str,
+    req: PlaybillProposalWithdrawRequest,
+) -> contracts.PlaybillProposalWithdrawResult:
+    return playbill_api.playbill_withdraw_proposal(
+        resolve_server_instance_id(instance_id),
+        proposal_id,
+        req.reason,
     )
 
 

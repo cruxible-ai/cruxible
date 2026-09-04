@@ -61,6 +61,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_proposal_readmit": (
         "Use when a stale proposal should be re-admitted against the current coordinate."
     ),
+    "cruxible_playbill_proposal_withdraw": (
+        "Use when an open proposal can never be activated and should leave the open inventory."
+    ),
     "cruxible_playbill_list_documents": (
         "Use when you need accepted Documents and their exact coordinate."
     ),

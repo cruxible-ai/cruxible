@@ -1268,6 +1268,34 @@ def readmit_proposal(proposal_id: str, output_json: bool) -> None:
     )
 
 
+@proposal_group.command("withdraw")
+@click.argument("proposal_id")
+@click.option(
+    "--reason",
+    required=True,
+    help="Why this proposal will never be settled. Recorded verbatim.",
+)
+@json_option
+@handle_errors
+def withdraw_proposal(proposal_id: str, reason: str, output_json: bool) -> None:
+    """Retire an open proposal that will never be activated."""
+
+    result = _server_call(
+        lambda client, instance_id: client.withdraw_playbill_proposal(
+            instance_id,
+            client.resolve_playbill_proposal_selector(instance_id, proposal_id).proposal_id,
+            reason=reason,
+        ),
+        command_name="playbill proposal withdraw",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    already = " (already withdrawn)" if result.already_withdrawn else ""
+    click.echo(f"withdrawn  {result.proposal_id}  {result.withdrawn_at}{already}")
+    click.echo(f"Reason: {result.reason}")
+
+
 @proposal_group.command("inspect")
 @click.argument("proposal_id")
 @json_option
