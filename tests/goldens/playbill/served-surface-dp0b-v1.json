@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-05:ops-hotfix-1-on-b6",
-    "surface_digest": "sha256:da3d46fe40a43acdc4c7212e4e2b57399a45fb8bd742f1d4e35e6354047b2fc9"
+    "register_entry": "2026-09-06:p2-b6-1-on-ops-hotfix-1",
+    "surface_digest": "sha256:c4e382a0bc731cedd4bbe717519df34f8771d2e9f5304972e894e4afc24847c1"
   },
   "surface": {
     "cli_leaves": [
@@ -1831,7 +1831,7 @@
       },
       {
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_compile",
-        "input_schema_digest": "sha256:a1f507f7027ba370b5c901550418a3a9441612243fa36f92294b42b31cd26097",
+        "input_schema_digest": "sha256:9fefb346c7ed0d35fe6b7e815114809a48430e17dc90698846bcf20cbf184b28",
         "name": "cruxible_playbill_authoring_compile",
         "output_schema_digest": "sha256:6f61a0f07462d83d0b3cc433dfd7094642914fffb8bcfa10bb75cd233724dc66",
         "permission": "GOVERNED_WRITE"
@@ -1845,16 +1845,16 @@
       },
       {
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_create",
-        "input_schema_digest": "sha256:5a489a2d22658ca0aebf889722b196c782515c8ba294ecb0d9d2cf28fbf0f29f",
+        "input_schema_digest": "sha256:58b43aba01dfb2d071eb7c5f13b26d27448ee956444708ec418173a99d4bc3be",
         "name": "cruxible_playbill_authoring_create",
         "output_schema_digest": "sha256:b98e5e1e66a92716bb3a2fb66e34d8bbdc88f87a7ad1725e122f63317691888f",
         "permission": "GOVERNED_WRITE"
       },
       {
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_example",
-        "input_schema_digest": "sha256:25f236f4ed444ab106d17b335a9b7d70d286f26604479069a3863b97bc6bc4e0",
+        "input_schema_digest": "sha256:4243ddb6ed25469115aab594d9b9de825d9ff8c5ada9268adde152d71788b8aa",
         "name": "cruxible_playbill_authoring_example",
-        "output_schema_digest": "sha256:791de0113fb89ce2e3766784d3e50f9e5b1189ba8a3504bdf5937084a9112187",
+        "output_schema_digest": "sha256:33b49c9d7dd7b81950b680927c99e951c4107454aad1235544ba0eb0a6c3becf",
         "permission": "READ_ONLY"
       },
       {

@@ -21,7 +21,8 @@
         "approval-policy",
         "procedure-runtime-policy",
         "procedure-mandate",
-        "change-set"
+        "change-set",
+        "claim-type-succession"
       ]
     },
     "PlaybillHandEditNextReason": {
@@ -3280,7 +3281,8 @@
               "approval-policy",
               "procedure-runtime-policy",
               "procedure-mandate",
-              "change-set"
+              "change-set",
+              "claim-type-succession"
             ],
             "title": "Name",
             "type": "string"
@@ -3541,6 +3543,7 @@
                       "claim": "#/$defs/ClaimInput",
                       "claim_retirement": "#/$defs/ClaimRetirementInput",
                       "claim_type": "#/$defs/ClaimTypeInput",
+                      "claim_type_succession": "#/$defs/ClaimTypeSuccessionInput",
                       "procedure": "#/$defs/ProcedureInput",
                       "procedure_mandate": "#/$defs/ProcedureMandateInputV1",
                       "procedure_runtime_policy": "#/$defs/ProcedureRuntimePolicyInput",
@@ -3555,6 +3558,9 @@
                     },
                     {
                       "$ref": "#/$defs/ClaimTypeInput"
+                    },
+                    {
+                      "$ref": "#/$defs/ClaimTypeSuccessionInput"
                     },
                     {
                       "$ref": "#/$defs/ClaimRetirementInput"
@@ -4367,6 +4373,106 @@
               "claim_type"
             ],
             "title": "ClaimTypeInput",
+            "type": "object"
+          },
+          "ClaimTypeSuccessionDependentV1": {
+            "additionalProperties": false,
+            "description": "What one member of a succession's closure becomes in the same generation.\n\nThe vocabulary is the standalone migration route's own, so an author who\nknows one road knows the other: `successor` carries the dependent to the\nsuccessor type by re-pinning it, `retire` tombstones it -- with\n`claim_retirement_reason` `was-rescinded` that is a rescission, with any\nother reason and an optional `claim_effective_until` it is an ordinary\nattributed retirement.\n\n`re_author` is the disposition only a change set can offer: the dependent's\nsuccessor is a sibling Claim member of the same intent, named by\n`successor_claim_id` -- the Claim ID that member revises, which is this\ndependent's own. That sibling is lowered under the successor type, so it may\nsay under the new vocabulary what the predecessor could not say -- and it\nkeeps the dependent's identity, its subject and its predicate, and its exact\npredecessor digest, which is what makes it a re-authoring of that Claim\nrather than a new one. There is no second spelling by member index: an index\ncould only ever name the member this Claim ID already names.\n\n`invalidation` parses and always refuses. It is the standalone route's\ndeprecated spelling of `retire`, answered there with a\n`playbill.claim_type.invalidation_deprecated` warning; change-set lowering\nhas no warning channel, so admitting it would coerce a deprecated word\nsilently. The word is carried here only so an author who knows the\nstandalone vocabulary gets a typed refusal naming the operator route\ninstead of an untyped parse failure. It emits no deprecation notice: this\nsurface never accepted it, so there is nothing to schedule for removal.",
+            "properties": {
+              "claim_effective_until": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Claim Effective Until"
+              },
+              "claim_retirement_reason": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "was-rescinded",
+                      "was-wrong"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Claim Retirement Reason"
+              },
+              "disposition": {
+                "enum": [
+                  "successor",
+                  "retire",
+                  "invalidation",
+                  "re_author"
+                ],
+                "title": "Disposition",
+                "type": "string"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "successor_claim_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Successor Claim Id"
+              },
+              "tag": {
+                "const": "playbill-claim-type-succession-dependent-v1",
+                "default": "playbill-claim-type-succession-dependent-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "disposition"
+            ],
+            "title": "ClaimTypeSuccessionDependentV1",
+            "type": "object"
+          },
+          "ClaimTypeSuccessionInput": {
+            "additionalProperties": false,
+            "description": "Succeed one accepted ClaimType, and disposition its closure, in this set.",
+            "properties": {
+              "dependents": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ClaimTypeSuccessionDependentV1"
+                },
+                "title": "Dependents",
+                "type": "array"
+              },
+              "kind": {
+                "const": "claim_type_succession",
+                "title": "Kind",
+                "type": "string"
+              },
+              "successor": {
+                "$ref": "#/$defs/ClaimType"
+              }
+            },
+            "required": [
+              "kind",
+              "successor"
+            ],
+            "title": "ClaimTypeSuccessionInput",
             "type": "object"
           },
           "CorroborationRequirementV1": {
@@ -6304,7 +6410,8 @@
               "approval-policy",
               "procedure-runtime-policy",
               "procedure-mandate",
-              "change-set"
+              "change-set",
+              "claim-type-succession"
             ],
             "title": "Name",
             "type": "string"
