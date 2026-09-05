@@ -98,6 +98,7 @@ from cruxible_core.playbill.coverage.indexes import (
     WorkingOccurrenceV1,
 )
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.ledger_mirror import read_mirror_state
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.query.backends import claim_row_visibility
 from cruxible_core.playbill.query.engine import evaluate_claim_query
@@ -2689,6 +2690,56 @@ def _workspace_items(
     return tuple(domains), tuple(items)
 
 
+def _ledger_mirror_items(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Advise when this instance publishes its ledger somewhere that is not current.
+
+    A warning and never a blocking row, because nothing about accepted state is
+    wrong: the ledger on disk is the record, every write landed, and what is
+    stale is a copy. What the row buys is that the staleness is VISIBLE. Without
+    it a failed push is silent, and a reviewer cloning the mirror reads an
+    accepted coordinate the daemon left behind hours ago with no way to tell.
+
+    Three shapes of behind, one row. The push failed and said why; the recorded
+    publication names a different remote than the one now configured; or nothing
+    was ever published to this remote at all. The last is the case a fresh
+    `ledger set-mirror` would leave if its own publication failed.
+    """
+
+    url = instance.ledger_mirror_url()
+    if url is None:
+        return ()
+    state = read_mirror_state(instance.root)
+    if state is not None and state.url == url and state.status == "current":
+        if state.published_main_oid == coordinate.git_oid:
+            return ()
+        lag: object = {
+            "published_main_oid": state.published_main_oid,
+            "accepted_git_oid": coordinate.git_oid,
+            "message": "the mirror carries an earlier accepted coordinate",
+        }
+    elif state is None or state.url != url:
+        lag = {"message": "nothing has been published to this remote yet"}
+    else:
+        lag = {"attempted_at": state.attempted_at, "message": state.detail}
+    return (
+        _item(
+            severity="warning",
+            reason="ledger_mirror_behind",
+            subject_identity="ledger-mirror",
+            detail={"mirror_url": url, **cast(Mapping[str, object], lag)},
+            repair=PlaybillNextRepairV1(
+                operation="hand_edit",
+                target=url,
+                required_change="restore_the_ledger_mirror_remote_or_its_credential",
+            ),
+        ),
+    )
+
+
 def _procedure_projection_items(
     instance: PlaybillInstance,
     *,
@@ -3453,6 +3504,7 @@ def service_playbill_next(
                     if (terminal := instance.descriptor.decommissioned) is not None
                     else ()
                 ),
+                *_ledger_mirror_items(instance, coordinate=coordinate),
                 *(
                     (
                         _item(

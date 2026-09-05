@@ -143,14 +143,25 @@ PlaybillNextReason: TypeAlias = Literal[
     "provider_lane_unavailable",
     "procedure_projection_missing",
     "instance_decommissioned",
+    "ledger_mirror_behind",
 ]
 PlaybillHandEditNextReason: TypeAlias = Literal[
     "procedure_projection_missing",
     "provider_lane_unavailable",
     "instance_decommissioned",
+    # The daemon has already retried by construction: it pushes after every
+    # write, so a mirror that is still behind is behind for a reason no verb
+    # can clear -- a remote that moved, a credential that expired, a network
+    # that is down. What repairs it is off this host.
+    "ledger_mirror_behind",
 ]
 PLAYBILL_HAND_EDIT_NEXT_REASONS: frozenset[PlaybillHandEditNextReason] = frozenset(
-    {"procedure_projection_missing", "provider_lane_unavailable", "instance_decommissioned"}
+    {
+        "procedure_projection_missing",
+        "provider_lane_unavailable",
+        "instance_decommissioned",
+        "ledger_mirror_behind",
+    }
 )
 
 ProviderLaneUnavailableCodeV1: TypeAlias = Literal[

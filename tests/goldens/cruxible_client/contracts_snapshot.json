@@ -30,7 +30,8 @@
       "values": [
         "procedure_projection_missing",
         "provider_lane_unavailable",
-        "instance_decommissioned"
+        "instance_decommissioned",
+        "ledger_mirror_behind"
       ]
     },
     "PlaybillHostCompatibilityReasonCodeV1": {
@@ -86,7 +87,8 @@
         "projection_marker_invalid",
         "provider_lane_unavailable",
         "procedure_projection_missing",
-        "instance_decommissioned"
+        "instance_decommissioned",
+        "ledger_mirror_behind"
       ]
     },
     "PlaybillPolicyKind": {
