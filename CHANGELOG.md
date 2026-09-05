@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+- **A Procedure can read.** The served run lanes gain one node kind, `source`,
+  on a graph-v4 definition: a Procedure may READ an external source through an
+  accepted Provider, under accepted authority, and retain what it read. Graph-v4
+  Procedures now author through the ordinary SDK path -- the accepted envelope
+  always carried either graph generation, and its definition digest already
+  dispatched on the declared format, so nothing about accepted bytes moved.
+  Effectful terminals (`emit_capture`, `post_inbox`, `propose_change_set`,
+  `mandate_settlement`) stay dark, and a graph-v3 Source keeps its existing
+  refusal because it names no interface or implementation for anything to plan.
+
+  A Source run is authorized by accepted state, not by the request: exactly one
+  live SourceAcquisitionPolicy whose declared inputs are exactly the Procedure's
+  Source aliases, the CaptureContract each node pins resolved from the accepted
+  tree by digest, and the Provider closure the graph names. Both run lanes plan
+  their Provider occurrences through ONE planner and now EVALUATE that policy
+  per declared input; the Line lane previously recorded a blanket
+  `verdict="selected"` with no decisions at all. Missing or ambiguous policy is
+  `source_acquisition_policy_required`, a rule that denies a declared input is
+  `source_acquisition_refused`, and a read outside an authorized workspace root,
+  over the contract's selection budget, or with no daemon-local reader is
+  `workspace_file_read_refused` with its path class. None of them leave partial
+  run history behind. The Line run route also gains the workspace reader the
+  direct route already had.
+
+  What the run retains is the point: per Source occurrence the run state and
+  `procedure run status` now carry the `SourceReadReceiptV1` the daemon minted
+  for the exact bytes it read -- real on-disk path, byte length, SHA-256 -- and
+  the digest of the Capture those bytes became (additive, optional). A direct
+  Source run is identified by its evaluation instant, so re-running at the same
+  instant replays the retained observation rather than minting a second reading
+  of a world that moved; reading a changed source means running at a later one.
+  Full lineage from a Claim back to its producing run remains a later contract.
+
 - **Authoring reads reuse validated history and request narrower state.**
   Unchanged event bytes reuse their parsed validation across store instances;
   appended or altered events retain canonical, chain, and operation checks.
