@@ -319,6 +319,35 @@ submits that exact bundle.
 CI may run check/compile as a lint, but acceptance still requires an explicit
 proposal and activation, plus any candidate-committed approval requirements.
 
+## Procedures
+
+A Procedure is the governed way to compute over accepted state and, now, to
+READ. The served run lanes admit `state_tap`, `transform`, `project`, `guard`,
+`repeat` and `halt`, plus `source` on a graph-v4 definition. Effectful terminals
+-- emitting a Capture, posting to an inbox, proposing a change set, settling a
+mandate -- are NOT served: `readiness` lists them as unsupported nodes, and a
+run of a Procedure containing one is refused before any journal exists. Read
+readiness before writing a graph; a node being legal in the schema is not the
+same as a lane being able to execute it.
+
+A `source` node reads through an accepted Provider under accepted authority,
+not through ambient filesystem access. Before it can run, accepted state must
+hold the Provider and its interface registration, the CaptureContract the node
+pins, and exactly one live SourceAcquisitionPolicy whose declared inputs are
+exactly the Procedure's Source aliases. Missing or ambiguous policy is the typed
+refusal `source_acquisition_policy_required`; a rule that denies a declared
+input is `source_acquisition_refused`; a path outside an authorized workspace
+root, one over the CaptureContract's selection budget, or a daemon with no
+local reader is `workspace_file_read_refused` with its path class. None of these
+leave partial run history.
+
+What a completed run retains is the point. Each Source occurrence reports a
+`SourceReadReceiptV1` -- the real on-disk path, the byte length, and the SHA-256
+of the exact bytes read -- and the digest of the Capture those bytes became.
+Cite those, not your own reading of the file. A direct Source run is identified
+by its evaluation instant: re-running at the same instant replays the retained
+observation, and reading a changed source means running at a later one.
+
 ## MCP and CLI
 
 The MCP tool set is Playbill-only and mirrors the same service core as CLI and

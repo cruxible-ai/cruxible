@@ -177,7 +177,7 @@ exactly one may omit it.
 |---|---|---|
 | `cruxible_playbill_procedure_readiness` | Report exact binding requirements or query-only readiness | `READ_ONLY` |
 | `cruxible_playbill_procedure_bind` | Attach accepted input-plane bindings through a same-identity successor | `GOVERNED_WRITE` |
-| `cruxible_playbill_procedure_run` | Execute a ready query-only Procedure at an explicit coordinate and time | `READ_ONLY` |
+| `cruxible_playbill_procedure_run` | Execute a ready Procedure -- accepted-state reads, deterministic computation, and graph-v4 `source` reads through an accepted Provider -- at an explicit coordinate and time | `READ_ONLY` |
 | `cruxible_playbill_procedure_run_status` | Read one finalized Procedure run and its receipt | `READ_ONLY` |
 | `cruxible_playbill_line_run` | Trigger one due accepted Line occurrence under its governed mandate | `READ_ONLY` |
 
