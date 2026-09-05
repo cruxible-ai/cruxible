@@ -1,11 +1,23 @@
 # Validated authoring history and current-state reads
 
 This follows the first performance pass at `b7e40170`. Implementation and
-independent review are complete. The earlier fixes are landed locally; this
-batch is ready for local integration. Daemon rollout requires explicit operator
-credential authorization after automatic approval review rejected that access.
+independent review are complete. Build `17b05d297a166e01d1fc60763c1c96eaa5c8c206`
+is landed locally and deployed after explicit operator-credential authorization.
+The daemon serves all three registered instances; the program accepted coordinate
+and sampled Claim value remain unchanged. Repeated reads of the existing
+162-Claim authoring intent took 0.216 s and 0.033 s, returning the same payload
+digest. These are health checks, not a full production write benchmark.
 Nothing has been pushed. This report is engineering evidence, not a governed
 projection or an accepted roadmap update.
+
+Deployment exposed a restart defect: the endpoint acknowledged restart, then
+the CLI exited with `environment target cannot select both server URL and server
+socket`. The normal server-start command restored service after conflicting
+client-target variables were cleared, using the existing state root, socket,
+credentials, and capability ceiling. PID 11247 was the sole socket listener at
+verification. Follow-up: make restart preserve an unambiguous daemon launch
+target when both URL and socket environment values are present.
+Operational receipt: `docs/world-model/performance-deployment-2026-09-05.json`.
 
 ## Consumer contracts
 
