@@ -801,6 +801,26 @@ class PlaybillInstanceDecommissionResultV1(BaseModel):
     coordinate: PlaybillAcceptedCoordinate
 
 
+class PlaybillLedgerMirrorV1(BaseModel):
+    """Where one instance publishes its ledger, and whether that copy is current.
+
+    One model for both doors: `ledger set-mirror` binds a remote and publishes
+    to it at once, and `ledger clone-url` reads back what a reviewer clones. The
+    URL carries no credential -- one that could is refused before it is stored --
+    so this model is safe to print, log and hand to anyone who may read the
+    instance at all.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-ledger-mirror-v1"] = "playbill-ledger-mirror-v1"
+    instance_id: str
+    mirror_url: str
+    status: Literal["current", "behind"]
+    attempted_at: str | None = None
+    detail: str | None = None
+
+
 class PlaybillSubjectIncomingClaimV1(BaseModel):
     """One live Claim whose subject-valued object is the profiled Subject."""
 

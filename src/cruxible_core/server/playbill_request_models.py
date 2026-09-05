@@ -26,6 +26,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.ledger_mirror import MIRROR_URL_MAX_LENGTH
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -81,10 +82,20 @@ class PlaybillInitRequest(_StrictPlaybillRequest):
     # explicit value that contradicts the workspace refuses before any state is
     # written.
     git_object_format: GitObjectFormat | None = None
+    # Optional at bootstrap for exactly the reason `--no-seed` is: an instance
+    # that publishes nowhere is a complete instance, and `ledger set-mirror`
+    # binds one later without rebuilding anything.
+    mirror_url: str | None = Field(default=None, max_length=MIRROR_URL_MAX_LENGTH)
 
 
 class PlaybillProviderSeedRequest(_StrictPlaybillRequest):
     pass
+
+
+class PlaybillLedgerMirrorRequest(_StrictPlaybillRequest):
+    """The remote this ledger publishes to. Never a URL carrying a credential."""
+
+    url: str = Field(min_length=1, max_length=MIRROR_URL_MAX_LENGTH)
 
 
 class PlaybillInstanceDecommissionRequest(_StrictPlaybillRequest):

@@ -287,6 +287,7 @@ cruxible playbill init --key-dir DIR
   [--workspace DIR] [--replace]
   [--no-seed]
   [--object-format sha1|sha256]
+  [--mirror-url URL]
 ~~~
 
 Generates a client-held ordinary key outside the workspace and bootstraps the
@@ -329,6 +330,13 @@ already initialized keep their pinned format forever. The
 equivalent request field is `git_object_format` on the HTTP/SDK init body and on
 MCP `cruxible_playbill_init`.
 
+`--mirror-url` binds the ledger mirror during bootstrap, validated before any
+state is written and bound before the seed proposal, so the seed's own
+publication carries it. It is optional for the reason `--no-seed` is: an
+instance that publishes nowhere is a complete instance, and `playbill ledger
+set-mirror` binds one later without rebuilding anything. See
+[playbill ledger](#playbill-ledger) for the URL grammar and the credential.
+
 Initialization seeds the compiler-owned `workspace.file` Provider by default and
 refuses when its `seed_materializations` entry is absent, so a host is never
 seeded from an unchecked checkout. `--no-seed` is the explicit opt-out, never a
@@ -367,6 +375,60 @@ Nothing is deleted. Every accepted generation, receipt, and body stays exactly
 where it is, and archiving or erasing the directory afterwards is the operator's
 own step — no verb performs it, and the state cannot be reversed, so `--yes` is
 required.
+
+## playbill ledger
+
+~~~text
+cruxible playbill ledger set-mirror URL
+cruxible playbill ledger clone-url
+~~~
+
+The ledger is Git, so review is Git — but only for a reviewer who can reach the
+ledger, and the daemon's copy is a bare repository under the instance root that
+nobody else can open. A mirror is how the review flow leaves the host. Bind one
+and the daemon pushes to it after every ledger write: proposal submission and
+its evaluation note, an approval note, an activation, a withdrawal.
+
+What travels: `refs/heads/main`, whichever of `refs/notes/playbill-gen`,
+`refs/notes/playbill-eval` and `refs/notes/playbill-approval` exist, one branch
+per OPEN proposal under `refs/heads/proposals/`, and the settled archive under
+`refs/settled/`. The mirror's branch list is therefore the open inventory and
+nothing else. A settled proposal — activated, withdrawn, or stale — loses its
+branch and keeps its commit under `refs/settled/<proposal-digest>`, on the
+mirror and locally, so a link to a settled candidate still resolves.
+
+`main` is pushed without force; everything else is forced and pruned. Accepted
+history only extends, so a rejected fast-forward on `main` means the remote
+holds something this ledger does not, and that is reported rather than
+overwritten. The other refs are projections the daemon rebuilds.
+
+A push that fails never refuses the write that preceded it. The ledger on disk
+is the record and the remote is a copy, so a network that is down, a credential
+that expired or a remote that was deleted becomes the `ledger_mirror_behind`
+warning row in `playbill next`, carrying the URL and Git's own reason.
+
+The URL never carries a credential. `https://user:token@host/...` is refused,
+as is plain `http://`, `ext::` and anything beginning with a dash; the four
+accepted shapes are `https://`, `ssh://`, `user@host:path` and an absolute local
+path (or its `file:///` spelling). The daemon reads its own token from
+`CRUXIBLE_PLAYBILL_MIRROR_TOKEN` in its environment and sends it as an HTTP
+Basic `Authorization` header built through Git's environment-config protocol, so
+it appears in no command line, no config file and no error message. SSH and
+local remotes use no token at all: SSH authenticates as the daemon itself.
+
+Create the remote in the ledger's own object format — `git init --bare
+--object-format=sha1` or `sha256`, matching `playbill init --object-format` —
+because Git refuses a push between repositories with different hash algorithms.
+
+`set-mirror` publishes immediately, so a wrong credential or an unreachable host
+is reported at once rather than at the next governed write. It stays bound
+either way: a remote that is temporarily unreachable is not a wrong remote.
+`clone-url` prints the URL a reviewer clones and refuses with the typed
+`playbill.ledger.mirror_unset` when the instance publishes nowhere; the same
+value rides `playbill orient --json` as `orientation.mirror_url`, so an agent
+that has just oriented already has it. The equivalent surfaces are
+`POST`/`GET /{instance}/playbill/ledger/mirror` and the `mirror_url` field on
+the init body.
 
 ## playbill provider
 

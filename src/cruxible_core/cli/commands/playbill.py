@@ -953,6 +953,15 @@ def create_host(
         "A value that contradicts the attached workspace is refused."
     ),
 )
+@click.option(
+    "--mirror-url",
+    "mirror_url",
+    default=None,
+    help=(
+        "Remote this ledger publishes to after every write. Never a URL carrying a "
+        "credential; bind one later with 'playbill ledger set-mirror'."
+    ),
+)
 @json_option
 @handle_errors
 def init_playbill(
@@ -967,6 +976,7 @@ def init_playbill(
     replace: bool,
     no_seed: bool,
     object_format: str | None,
+    mirror_url: str | None,
     output_json: bool,
 ) -> None:
     """Create client custody and bootstrap the governed approval policy."""
@@ -1020,6 +1030,7 @@ def init_playbill(
             require_independent_approval=require_independent_approval,
             seed=not no_seed,
             git_object_format=cast(Any, object_format),
+            mirror_url=mirror_url,
             **(
                 {"workspace_root": str(git_workspace)}
                 if git_workspace is not None and _root_ctx_obj().get("server_socket")
@@ -1124,6 +1135,52 @@ def decommission_instance(reason: str, confirmed: bool, output_json: bool) -> No
     click.echo(f"By: {printable(result.decommissioned_by)}")
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
     click.echo("Reads keep serving; nothing was deleted. Archive the directory yourself.")
+
+
+@playbill_group.group("ledger")
+def ledger_group() -> None:
+    """Publish this instance's ledger, and read where it publishes to."""
+
+
+@ledger_group.command("set-mirror")
+@click.argument("url")
+@json_option
+@handle_errors
+def set_ledger_mirror(url: str, output_json: bool) -> None:
+    """Bind the remote this ledger publishes to, and publish to it now.
+
+    The URL must carry no credential: the daemon reads its token from its own
+    environment, and this string is printed back by `ledger clone-url` to
+    anyone who may read the instance at all.
+    """
+
+    result = _server_call(
+        lambda client, instance_id: client.set_playbill_ledger_mirror(instance_id, url=url),
+        command_name="playbill ledger set-mirror",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(f"Ledger mirror: {result.mirror_url}")
+    click.echo(f"Publication: {result.status}")
+    if result.detail is not None:
+        click.echo(f"Detail: {printable(result.detail)}")
+
+
+@ledger_group.command("clone-url")
+@json_option
+@handle_errors
+def ledger_clone_url(output_json: bool) -> None:
+    """Print the ledger mirror a reviewer clones to read this instance's proposals."""
+
+    result = _server_call(
+        lambda client, instance_id: client.get_playbill_ledger_mirror(instance_id),
+        command_name="playbill ledger clone-url",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(result.mirror_url)
 
 
 @playbill_group.group("provider")

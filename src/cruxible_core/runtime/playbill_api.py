@@ -48,6 +48,10 @@ from cruxible_client.contracts.errors import (
     PlaybillBootstrapError,
     PlaybillDeprecatedWriteError,
 )
+from cruxible_client.contracts.ledger_mirror import (
+    PlaybillLedgerMirrorUnset,
+    validate_mirror_url,
+)
 from cruxible_client.contracts.predictions import (
     PlaybillPredictRequestV1,
     PlaybillPredictResultV1,
@@ -91,6 +95,7 @@ from cruxible_core.playbill.consumption import (
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
 from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
+from cruxible_core.playbill.ledger_mirror import LedgerMirrorStateV1
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.provider_classifiers import PROVIDER_BUCKET_CLASSIFIER_REGISTRY
@@ -366,8 +371,14 @@ def playbill_init(
     workspace_attachment_authorized: bool = False,
     seed: bool = True,
     git_object_format: GitObjectFormat | None = None,
+    mirror_url: str | None = None,
 ) -> contracts.PlaybillInitResult:
     check_permission("cruxible_playbill_init", instance_id=instance_id)
+    if mirror_url is not None:
+        # Validated before any state exists. A malformed remote is the operator's
+        # typo, and finding it after bootstrap would leave a live instance whose
+        # only repair is a verb they have not been told about yet.
+        validate_mirror_url(mirror_url)
     actor_id = _actor_id()
     if not principals:
         raise PlaybillBootstrapError("bootstrap requires at least one client principal")
@@ -418,6 +429,10 @@ def playbill_init(
                 expected_workspace_root=workspace_root,
             )
         raise
+    if mirror_url is not None:
+        # After bootstrap and before the seed: the seed is a governed write, and
+        # binding the mirror first means its own publication carries it.
+        instance.set_ledger_mirror(mirror_url)
     if seed:
         operator = get_playbill_manager().provider_runtime_operator()
         configured_seed = next(
@@ -506,6 +521,59 @@ def playbill_instance_decommission(
             AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump(mode="json")
         ),
     )
+
+
+def _mirror_receipt(
+    instance_id: str,
+    *,
+    url: str,
+    state: LedgerMirrorStateV1 | None,
+) -> contracts.PlaybillLedgerMirrorV1:
+    """Render the mirror as a reader sees it, with no attempt read as behind."""
+
+    if state is None or state.url != url:
+        return contracts.PlaybillLedgerMirrorV1(
+            instance_id=instance_id,
+            mirror_url=url,
+            status="behind",
+            detail="nothing has been published to this remote yet",
+        )
+    return contracts.PlaybillLedgerMirrorV1(
+        instance_id=instance_id,
+        mirror_url=url,
+        status=state.status,
+        attempted_at=state.attempted_at,
+        detail=state.detail,
+    )
+
+
+def playbill_ledger_set_mirror(
+    instance_id: str,
+    *,
+    url: str,
+) -> contracts.PlaybillLedgerMirrorV1:
+    """Bind the remote this ledger publishes to, and publish to it now.
+
+    Operational configuration rather than a governed change: it proposes
+    nothing, accepts nothing, and moves no coordinate. It is an ADMIN lever all
+    the same, because it names where a copy of every accepted byte is sent.
+    """
+
+    check_permission("cruxible_playbill_ledger_set_mirror", instance_id=instance_id)
+    instance = get_playbill_manager().get(instance_id)
+    state = instance.set_ledger_mirror(url)
+    return _mirror_receipt(instance_id, url=instance.ledger_mirror_url() or url, state=state)
+
+
+def playbill_ledger_clone_url(instance_id: str) -> contracts.PlaybillLedgerMirrorV1:
+    """Print the URL a reviewer clones, or refuse typed when there is none."""
+
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    instance = get_playbill_manager().get(instance_id)
+    url = instance.ledger_mirror_url()
+    if url is None:
+        raise PlaybillLedgerMirrorUnset()
+    return _mirror_receipt(instance_id, url=url, state=instance.ledger_mirror_state())
 
 
 def playbill_provider_seed(instance_id: str) -> contracts.PlaybillProviderSeedResultV1:

@@ -179,6 +179,12 @@ class PlaybillSearchOrientationV1(_StrictSearchModel):
     # agent makes, so a decommissioned instance must say so there rather than
     # let the agent discover it by having a write refused.
     decommissioned: bool = False
+    # Where this ledger publishes itself, for the same reason: an agent that has
+    # just oriented is the one about to propose, and the URL is what it hands a
+    # reviewer. `ledger clone-url` is the verb for asking on its own; this is the
+    # answer arriving without a second round trip. Absent means: publishes
+    # nowhere.
+    mirror_url: str | None = None
 
 
 class PlaybillSearchResultV1(_StrictSearchModel):
