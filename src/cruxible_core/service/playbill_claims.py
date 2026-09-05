@@ -523,7 +523,10 @@ def _claim_law_evidence(
     path: str,
     at: AcceptedProjectionCoordinate,
 ) -> ClaimLawEvidenceAny:
-    found = _claim_law_evidence_index(instance, at=at).get(path)
+    from cruxible_core.service.playbill_evidence import _claim_read_history_index
+
+    # A one-Claim read needs one account, not a copy of the whole index.
+    found = _claim_read_history_index(instance, coordinate=at).law_evidence.get(path)
     if found is None:
         raise ProposalIntegrityError("accepted Claim has no reproducible Claim law evidence")
     return found
@@ -534,25 +537,16 @@ def _claim_law_evidence_index(
     *,
     at: AcceptedProjectionCoordinate,
 ) -> dict[str, ClaimLawEvidenceAny]:
-    """Index the latest accepted Claim evidence with one history traversal."""
+    """Return an owned mapping over the shared immutable accepted-history fold."""
 
-    found: dict[str, ClaimLawEvidenceAny] = {}
-    target_sequence = next(
-        item.sequence for item in instance.accepted_history() if item.oid == at.git_oid
-    )
-    for generation in instance.accepted_history()[1:]:
-        if generation.sequence > target_sequence:
-            break
-        record = generation.record
-        # The v1 receipt predates structured member law evidence; every later
-        # receipt version carries it in the same shape.
-        if record is None or isinstance(record, ChangeSetRecord):
-            continue
-        for evidence in record.law_evidence:
-            raw = evidence.result.get("claim_evidence")
-            if raw is not None:
-                found[evidence.path] = parse_claim_law_evidence(raw)
-    return found
+    from cruxible_core.service.playbill_evidence import _claim_read_history_index
+
+    # Individual Claim reads and bulk verdict reads need the same latest law
+    # evidence. Reuse its bounded coordinate memo, but preserve this helper's
+    # caller-owned mapping rather than exposing the memo's mutable dictionary.
+    # Admission accounts and source-dependent verdicts are still rebuilt by
+    # their readers; neither belongs in an accepted-history cache.
+    return dict(_claim_read_history_index(instance, coordinate=at).law_evidence)
 
 
 def _claim_law_evidence_by_artifact_index(
