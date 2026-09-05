@@ -15,7 +15,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypeAlias, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from cruxible_client.contracts.authoring.models import (
     AuthoringIntentV1,
@@ -25,8 +33,14 @@ from cruxible_client.contracts.authoring.models import (
     InsertionExpectationV2,
     authoring_program_stamp_operation_key,
 )
-from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.canonical import (
+    Sha256Value,
+    canonical_bytes,
+    normalize_canonical,
+    typed_digest,
+)
 from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.primitives import canonical_json
 from cruxible_core.playbill.id_prefixes import resolve_id_prefix
 
 AUTHORING_INTENT_EVENT_DIGEST_DOMAIN = "playbill-authoring-intent-event-v1"
@@ -69,9 +83,8 @@ class AuthoringIntentEventV1(_StrictStoreModel):
         return value
 
     @model_validator(mode="after")
-    def _reproduces(self) -> "AuthoringIntentEventV1":
-        if self.event_digest != authoring_intent_event_digest(self):
-            raise ValueError("AuthoringIntent event digest does not reproduce")
+    def _reproduces(self, info: ValidationInfo) -> "AuthoringIntentEventV1":
+        _verify_authoring_event_digest(self, info.context)
         return self
 
 
@@ -91,9 +104,8 @@ class AuthoringIntentEventV2(_StrictStoreModel):
         return value
 
     @model_validator(mode="after")
-    def _reproduces(self) -> "AuthoringIntentEventV2":
-        if self.event_digest != authoring_intent_event_digest(self):
-            raise ValueError("AuthoringIntent event digest does not reproduce")
+    def _reproduces(self, info: ValidationInfo) -> "AuthoringIntentEventV2":
+        _verify_authoring_event_digest(self, info.context)
         return self
 
 
@@ -114,15 +126,51 @@ class AuthoringIntentEventV3(_StrictStoreModel):
         return value
 
     @model_validator(mode="after")
-    def _reproduces(self) -> "AuthoringIntentEventV3":
-        if self.event_digest != authoring_intent_event_digest(self):
-            raise ValueError("AuthoringIntent event digest does not reproduce")
+    def _reproduces(self, info: ValidationInfo) -> "AuthoringIntentEventV3":
+        _verify_authoring_event_digest(self, info.context)
         return self
 
 
 AuthoringIntentEventAny: TypeAlias = (
     AuthoringIntentEventV1 | AuthoringIntentEventV2 | AuthoringIntentEventV3
 )
+
+
+@dataclass
+class _EventDecodeContext:
+    """One decoder's output slot, never populated from the wire or retained."""
+
+    rendered: bytes | None = None
+
+
+def _verify_authoring_event_digest(event: AuthoringIntentEventAny, context: object) -> None:
+    if type(context) is not _EventDecodeContext:
+        if event.event_digest != authoring_intent_event_digest(event):
+            raise ValueError("AuthoringIntent event digest does not reproduce")
+        return
+    # Nested models have completed their full validation. Their own serializers
+    # select the frozen source-presence and preflight-certificate wire shapes.
+    context.rendered = None
+    normalized = normalize_canonical(event.model_dump(mode="json"))
+    assert isinstance(normalized, dict)
+    preimage = dict(normalized)
+    preimage.pop("tag")
+    preimage.pop("event_digest")
+    # Every runtime value was normalized above; the selected domain is frozen
+    # ASCII. This is the public digest preimage with no second normalization.
+    expected = (
+        "sha256:"
+        + hashlib.sha256(
+            canonical_json({"tag": _authoring_event_digest_domain(event), **preimage}).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+    )
+    if event.event_digest != expected:
+        raise ValueError("AuthoringIntent event digest does not reproduce")
+    # Publish only after digest reproduction; a caller still has to compare the
+    # supplied raw bytes before treating this representation as canonical.
+    context.rendered = canonical_json(normalized).encode("utf-8") + b"\n"
 
 
 _StateT = TypeVar("_StateT")
@@ -190,17 +238,17 @@ def authoring_intent_event_digest(event: AuthoringIntentEventAny) -> str:
     payload.pop("event_digest")
     return typed_digest(
         Sha256Value,
-        (
-            AUTHORING_INTENT_EVENT_V3_DIGEST_DOMAIN
-            if isinstance(event, AuthoringIntentEventV3)
-            else (
-                AUTHORING_INTENT_EVENT_V2_DIGEST_DOMAIN
-                if isinstance(event, AuthoringIntentEventV2)
-                else AUTHORING_INTENT_EVENT_DIGEST_DOMAIN
-            )
-        ),
+        _authoring_event_digest_domain(event),
         payload,
     ).tagged
+
+
+def _authoring_event_digest_domain(event: AuthoringIntentEventAny) -> str:
+    if isinstance(event, AuthoringIntentEventV3):
+        return AUTHORING_INTENT_EVENT_V3_DIGEST_DOMAIN
+    if isinstance(event, AuthoringIntentEventV2):
+        return AUTHORING_INTENT_EVENT_V2_DIGEST_DOMAIN
+    return AUTHORING_INTENT_EVENT_DIGEST_DOMAIN
 
 
 def build_authoring_intent_event(
@@ -265,15 +313,32 @@ def build_authoring_intent_event(
     )
 
 
-def _parse_authoring_intent_event(raw: bytes) -> AuthoringIntentEventAny:
+def _authoring_event_input(
+    raw: bytes,
+) -> tuple[type[AuthoringIntentEventAny], dict[str, object]]:
     payload = json.loads(raw)
     if not isinstance(payload, dict):
         raise ValueError("AuthoringIntent event must be an object")
     if payload.get("tag") == "playbill-authoring-intent-event-v2":
-        return AuthoringIntentEventV2.model_validate(payload)
+        return AuthoringIntentEventV2, payload
     if payload.get("tag") == "playbill-authoring-intent-event-v3":
-        return AuthoringIntentEventV3.model_validate(payload)
-    return AuthoringIntentEventV1.model_validate(payload)
+        return AuthoringIntentEventV3, payload
+    return AuthoringIntentEventV1, payload
+
+
+def _parse_authoring_intent_event(raw: bytes) -> AuthoringIntentEventAny:
+    model, payload = _authoring_event_input(raw)
+    return model.model_validate(payload)
+
+
+def _decode_authoring_intent_event(raw: bytes) -> tuple[AuthoringIntentEventAny, bytes]:
+    """Fully validate a fresh event and return its model-derived canonical bytes."""
+
+    model, payload = _authoring_event_input(raw)
+    context = _EventDecodeContext()
+    event = model.model_validate(payload, context=context)
+    assert context.rendered is not None
+    return event, context.rendered
 
 
 def _fsync_directory(path: Path) -> None:
@@ -661,8 +726,8 @@ class AuthoringIntentStore:
                 if old is not None and old.raw_size == len(raw) and old.raw_digest == raw_digest:
                     validated_event = old
                 else:
-                    event = _parse_authoring_intent_event(raw)
-                    if raw != self._render_event(event):
+                    event, rendered = _decode_authoring_intent_event(raw)
+                    if raw != rendered:
                         raise AuthoringIntentStoreError("AuthoringIntent event is not canonical")
                     key = (type(event.intent.payload), event.intent.payload_digest)
                     payload = payloads.setdefault(key, event.intent.payload)

@@ -43,13 +43,13 @@ def _clear_history_memo():
 @pytest.fixture
 def parsed(monkeypatch: pytest.MonkeyPatch) -> list[bytes]:
     calls: list[bytes] = []
-    original = store_module._parse_authoring_intent_event
+    original = store_module._decode_authoring_intent_event
 
-    def count(raw: bytes) -> AuthoringIntentEventAny:
+    def count(raw: bytes) -> tuple[AuthoringIntentEventAny, bytes]:
         calls.append(raw)
         return original(raw)
 
-    monkeypatch.setattr(store_module, "_parse_authoring_intent_event", count)
+    monkeypatch.setattr(store_module, "_decode_authoring_intent_event", count)
     return calls
 
 
