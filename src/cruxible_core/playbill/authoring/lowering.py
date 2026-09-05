@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import NoReturn, TypeAlias
@@ -431,6 +431,54 @@ def _same_slot_claims(
     return tuple(claims)
 
 
+class _ClaimPredicateIndex:
+    """Live contenders in one staged tree; never shared between candidates.
+
+    Build at the first contender lookup, after the ordinary referent checks.
+    Every subsequent staged member supplies its changed paths, including the
+    closure paths written by retirements and ClaimType successions.
+    """
+
+    def __init__(self, tree: dict[str, bytes]) -> None:
+        self._tree = tree
+        self._claims: dict[tuple[SemanticAddress, str], dict[str, ClaimArtifactAny]] | None = None
+        self._keys: dict[str, tuple[SemanticAddress, str]] = {}
+
+    def _replace(self, path: str) -> None:
+        if not path.startswith("claims/"):
+            return
+        assert self._claims is not None
+        previous = self._keys.pop(path, None)
+        if previous is not None:
+            group = self._claims[previous]
+            del group[path]
+            if not group:
+                del self._claims[previous]
+        content = self._tree.get(path)
+        if content is None:
+            return
+        claim = parse_claim(content, path=path)
+        if claim.lifecycle.state != "live":
+            return
+        key = (claim.statement.subject, claim.statement.predicate)
+        self._keys[path] = key
+        self._claims.setdefault(key, {})[path] = claim
+
+    def advance(self, tree: dict[str, bytes], changed_paths: Iterable[str]) -> None:
+        self._tree = tree
+        if self._claims is not None:
+            for path in sorted(set(changed_paths), key=lambda item: item.encode("utf-8")):
+                self._replace(path)
+
+    def claims_for(self, statement: ClaimStatement) -> tuple[ClaimArtifactAny, ...]:
+        if self._claims is None:
+            self._claims = {}
+            for path in sorted(self._tree, key=lambda item: item.encode("utf-8")):
+                self._replace(path)
+        claims = self._claims.get((statement.subject, statement.predicate), {})
+        return tuple(claims[path] for path in sorted(claims, key=lambda item: item.encode("utf-8")))
+
+
 def _merge_pins(*groups: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
     by_key: dict[tuple[str, str], ArtifactPin] = {}
     for pin in (item for group in groups for item in group):
@@ -686,6 +734,7 @@ def _lower_claim(
     base_tree: dict[str, bytes],
     payload: ClaimAuthoringPayloadV1 | None = None,
     claim_identity: str | None = None,
+    claim_index: _ClaimPredicateIndex | None = None,
 ) -> LoweredAuthoring:
     """Lower one authored Claim against the tree it is being written onto.
 
@@ -805,8 +854,14 @@ def _lower_claim(
     # Demanded: the claims contending for this exact slot. Accepted-if-offered:
     # every live claim on the same (subject, predicate), so an author may still
     # take a position on a sibling in another qualifier's slot voluntarily.
-    slot_claims = _same_slot_claims(candidate_base_tree, statement)
-    existing = _same_predicate_claims(candidate_base_tree, statement)
+    existing = (
+        _same_predicate_claims(candidate_base_tree, statement)
+        if claim_index is None
+        else claim_index.claims_for(statement)
+    )
+    slot_claims = tuple(
+        claim for claim in existing if claim.statement.qualifier == statement.qualifier
+    )
     expected = {item.identity.name for item in slot_claims}
     dispositionable = {item.identity.name for item in existing}
     supplied = {item.claim_id for item in payload.existing_claim_dispositions}
@@ -1950,6 +2005,7 @@ def _lower_change_set(
     sibling_resolved: dict[int, dict[str, object]] = {}
 
     staged_tree = dict(base_tree)
+    claim_index = _ClaimPredicateIndex(staged_tree)
     member_paths: set[str] = set()
     installed_by: dict[str, set[int]] = {}
     resolved: list[dict[str, object]] = []
@@ -1984,6 +2040,7 @@ def _lower_change_set(
                         base=base,
                         base_tree=base_tree,
                         staged_tree=staged_tree,
+                        claim_index=claim_index,
                         path=path,
                         members=payload.members,
                         claim_identities=claim_identities,
@@ -2005,6 +2062,7 @@ def _lower_change_set(
                         members=payload.members,
                     )
                 sibling_resolved.update(staged_siblings)
+                claim_index.advance(staged_tree, {path, *extra_paths})
                 member_paths.update(extra_paths)
                 for extra_path in extra_paths:
                     installed_by.setdefault(extra_path, set()).add(index)
@@ -2057,6 +2115,7 @@ def _stage_change_set_member(
     base: AcceptedProjectionCoordinate,
     base_tree: dict[str, bytes],
     staged_tree: dict[str, bytes],
+    claim_index: _ClaimPredicateIndex,
     path: str,
     members: tuple[AuthoringChangeSetMemberV1, ...],
     claim_identities: Mapping[str, str],
@@ -2075,6 +2134,7 @@ def _stage_change_set_member(
             base_tree=staged_tree,
             payload=member,
             claim_identity=claim_id,
+            claim_index=claim_index,
         )
         member_resolved = dict(lowered.resolved_authoring)
         member_resolved["claim_id"] = claim_id

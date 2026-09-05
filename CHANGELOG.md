@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Batch Claim authoring reuses a staged contender index.** Lowering parses the
+  initial Claim population once and updates changed paths as members are staged,
+  preserving sibling dispositions, retirements, and ClaimType succession output.
+  Single-Claim reads also reuse accepted-history law evidence without caching
+  fresh admission accounts or source-dependent evaluations.
+
 - **Historical authoring events remain readable.** Working source observations
   preserve whether `source_content_base64` was absent, explicitly null, or
   populated. Reading older events no longer inserts a default null into their
