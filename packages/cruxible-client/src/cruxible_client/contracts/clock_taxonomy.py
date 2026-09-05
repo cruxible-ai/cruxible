@@ -245,6 +245,11 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillPredictionDeclarationV1", "declared_at"): "EVALUATION INSTANT",
     ("PlaybillProcedureReadiness", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillProcedureRunState", "evaluation_time"): "EVALUATION INSTANT",
+    # When the daemon last tried to push. An assertion about an attempt, not a
+    # coordinate: the mirror is a copy of accepted state and its timing orders
+    # nothing.
+    ("PlaybillLedgerMirrorV1", "attempted_at"): "ASSERTION TIME",
+    ("LedgerMirrorStateV1", "attempted_at"): "ASSERTION TIME",
     ("PlaybillProposalListEntry", "admitted_at"): "ASSERTION TIME",
     ("PlaybillProposalListEntryV1", "admitted_at"): "ASSERTION TIME",
     ("PlaybillReviewOperationalEventV1", "accepted_generation"): "SETTLEMENT ORDER",

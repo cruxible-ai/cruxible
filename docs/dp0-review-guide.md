@@ -71,6 +71,8 @@ playbill host create
 playbill host show
 playbill init
 playbill instance decommission
+playbill ledger clone-url
+playbill ledger set-mirror
 playbill list
 playbill line run
 playbill next
@@ -172,6 +174,8 @@ POST /api/v1/{instance_id}/playbill/explain
 GET  /api/v1/{instance_id}/playbill/principals
 POST /api/v1/{instance_id}/playbill/principals/proposals
 POST /api/v1/{instance_id}/playbill/instance/decommission
+POST /api/v1/{instance_id}/playbill/ledger/mirror
+GET  /api/v1/{instance_id}/playbill/ledger/mirror
 POST /api/v1/{instance_id}/playbill/providers/seed
 GET  /api/v1/{instance_id}/playbill/proposals/{proposal_id}
 GET  /api/v1/{instance_id}/playbill/proposals
