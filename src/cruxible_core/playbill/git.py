@@ -19,7 +19,7 @@ from typing import Final, cast
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from cruxible_client.contracts.canonical import normalize_manifest_paths
+from cruxible_client.contracts.canonical import CandidateDigest, normalize_manifest_paths
 from cruxible_client.contracts.errors import PlaybillGitError
 from cruxible_client.contracts.types import GitObjectFormat
 from cruxible_core.playbill.keys import raw_public_key_hex_from_openssh
@@ -670,6 +670,35 @@ class GitLedger:
         """Serialize activation/publication and targeted loser collection across processes."""
 
         with self._exclusive_lock("playbill-activation.lock"):
+            yield
+
+    @contextmanager
+    def approval_note_lock(self, candidate_digest: str) -> Iterator[None]:
+        """Serialize one candidate's approval read-modify-write across processes.
+
+        The approval note is not a copy of any one file: the store keeps one
+        file per signer and the note is a re-render of the whole canonical list,
+        which is the only shape Git's one-note-per-object rule allows. That
+        makes it a read-modify-write, and `_note_lock` covers only the Git call
+        at the end of it. Two approvers on one candidate could therefore have A
+        render `[A]`, B render `[A, B]` and write, then A force-write `[A]` --
+        leaving the store holding two approvals and Git holding one, and
+        activation refusing `note_disagrees_with_evidence` on a proposal nobody
+        tampered with, repairable only by re-submitting an approval that already
+        exists.
+
+        Per candidate rather than global: two candidates' approvals contend for
+        nothing but the note REF, which `_note_lock` already serializes, and a
+        single approval lock would make every signer on the instance queue
+        behind every other. Deliberately not `_note_lock` itself, which this is
+        nested inside: `flock` is per-open-file-description, so re-acquiring the
+        same lock file in one process deadlocks.
+        """
+
+        CandidateDigest.from_tagged(candidate_digest)
+        with self._exclusive_lock(
+            f"playbill-approval-{candidate_digest.removeprefix('sha256:')}.lock"
+        ):
             yield
 
     @contextmanager

@@ -23,11 +23,22 @@ Named rather than discovered. It is used as the HTTP Basic password under the
 scoped token, and it is never written to configuration of any kind.
 """
 
-_HTTPS_RE: Final = re.compile(r"^https://[A-Za-z0-9._~@-]+(?::[0-9]{1,5})?(?:/[^\s]*)?$")
-_SSH_RE: Final = re.compile(
-    r"^ssh://(?:[A-Za-z0-9._~+-]+@)?[A-Za-z0-9._~-]+(?::[0-9]{1,5})?(?:/[^\s]*)?$"
+# Every host and userinfo class forbids a LEADING dash, not just the whole
+# string: `ssh://-oProxyCommand@host/x` puts the dash where the transport reads
+# its own arguments, and a check on the string's first character never sees it.
+# Git blocks such a hostname itself, so this is defence in depth -- but the
+# allowlist promises that a dash never reaches an argument slot, and a promise a
+# reader relies on has to be the one the code keeps.
+_HTTPS_RE: Final = re.compile(
+    r"^https://[A-Za-z0-9._~@][A-Za-z0-9._~@-]*(?::[0-9]{1,5})?(?:/[^\s]*)?$"
 )
-_SCP_RE: Final = re.compile(r"^[A-Za-z0-9._~+-]+@[A-Za-z0-9._~-]+:[^\s]+$")
+_SSH_RE: Final = re.compile(
+    r"^ssh://(?:[A-Za-z0-9._~+][A-Za-z0-9._~+-]*@)?[A-Za-z0-9._~][A-Za-z0-9._~-]*"
+    r"(?::[0-9]{1,5})?(?:/[^\s]*)?$"
+)
+_SCP_RE: Final = re.compile(
+    r"^[A-Za-z0-9._~+][A-Za-z0-9._~+-]*@[A-Za-z0-9._~][A-Za-z0-9._~-]*:[^\s]+$"
+)
 _FILE_RE: Final = re.compile(r"^file:///[^\s]*$")
 _ABSOLUTE_PATH_RE: Final = re.compile(r"^/[^\s:]*$")
 
@@ -95,8 +106,12 @@ def validate_mirror_url(value: str) -> str:
             )
         return value
     if _SSH_RE.fullmatch(value) is not None or _SCP_RE.fullmatch(value) is not None:
+        # Only the USERINFO may not carry a colon. Splitting the whole authority
+        # on it would read the port in `ssh://host:22/x` as a password and
+        # refuse a remote that carries no credential at all.
         authority = value.removeprefix("ssh://").split("/")[0]
-        if authority.count("@") > 1 or ":" in authority.split("@")[0]:
+        userinfo, separator, _host = authority.rpartition("@")
+        if authority.count("@") > 1 or (separator and ":" in userinfo):
             raise PlaybillLedgerMirrorUrlInvalid(
                 "mirror URL must not embed credentials; SSH authenticates as the daemon itself"
             )

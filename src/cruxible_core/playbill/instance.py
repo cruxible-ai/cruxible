@@ -8,7 +8,8 @@ import secrets
 import shutil
 import stat
 from collections import OrderedDict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -928,6 +929,13 @@ class PlaybillInstance:
         """Read one proposal transport ref without exposing ledger mutation."""
 
         return self._ledger.read_proposal_ref(target_ref)
+
+    @contextmanager
+    def approval_note_lock(self, candidate_digest: str) -> Iterator[None]:
+        """Hold one candidate's approval read-modify-write, store through Git."""
+
+        with self._ledger.approval_note_lock(candidate_digest):
+            yield
 
     def write_proposal_note(self, kind: str, oid: str, content: bytes) -> None:
         """Project one proposal record onto its own candidate commit."""

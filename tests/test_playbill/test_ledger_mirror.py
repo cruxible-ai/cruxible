@@ -68,6 +68,7 @@ def test_a_mirror_url_must_be_a_plain_credential_free_remote() -> None:
         "https://forge.invalid/team/ledger.git",
         "ssh://git@forge.invalid/team/ledger.git",
         "git@forge.invalid:team/ledger.git",
+        "ssh://forge.invalid:22/team/ledger.git",
         "file:///srv/ledger.git",
         "/srv/ledger.git",
     ):
@@ -80,6 +81,13 @@ def test_a_mirror_url_must_be_a_plain_credential_free_remote() -> None:
         "ssh://user:secret@forge.invalid/ledger.git",
         "/srv/../etc/ledger.git",
         "",
+        # A dash where the transport reads its own arguments. Git blocks these
+        # hostnames itself; the allowlist promises they never get that far.
+        "ssh://-oProxyCommand@forge.invalid/ledger.git",
+        "ssh://-oProxyCommandfoo/ledger.git",
+        "-oProxyCommand@forge.invalid:ledger.git",
+        "git@-oProxyCommand:ledger.git",
+        "https://-evil.invalid/ledger.git",
     ):
         with pytest.raises(PlaybillLedgerMirrorUrlInvalid):
             validate_mirror_url(refused)

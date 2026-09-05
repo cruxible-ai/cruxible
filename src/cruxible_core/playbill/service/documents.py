@@ -345,15 +345,25 @@ def service_submit_playbill_approval(
         purpose="principal-lifecycle" if principal_lifecycle else "ordinary-artifact",
     )
     evidence = instance.proposal_evidence()
-    evidence.write_approval(candidate.candidate_digest, submission)
-    # The store is durable before Git hears about it, and the note restates the
-    # WHOLE canonical list rather than appending one signer, so a second
-    # approver's note and a re-read of the store are the same bytes.
-    instance.write_proposal_note(
-        "approval",
-        proposal.admission.candidate_commit_oid,
-        evidence.approval_note(candidate.candidate_digest),
-    )
+    # One lock, held from the store write through the note's own read-back. The
+    # note restates the WHOLE canonical list rather than appending one signer,
+    # so rendering it is a read-modify-write over the store: two approvers who
+    # rendered concurrently could leave the store holding both signatures and
+    # Git holding one, and activation would then refuse a proposal nobody
+    # tampered with. Nothing else about approval is serialized -- each signer's
+    # own file is an exclusive create -- and nothing else needs to be.
+    with instance.approval_note_lock(candidate.candidate_digest):
+        evidence.write_approval(candidate.candidate_digest, submission)
+        instance.write_proposal_note(
+            "approval",
+            proposal.admission.candidate_commit_oid,
+            evidence.approval_note(candidate.candidate_digest),
+        )
+    # Publication is deliberately OUTSIDE the lock: it rebuilds the advisory
+    # branch and its notes from the store, takes no candidate lock of its own,
+    # and would deadlock on this one. An approval is also what a second reviewer
+    # is waiting to see, so both lanes are refreshed rather than only the mirror.
+    instance.advertise_workspace()
     instance.publish_ledger_mirror()
     return _approval_receipt(proposal_id, candidate, verified)
 
@@ -396,29 +406,36 @@ def _reconcile_proposal_notes(
     A candidate with no approvals is left with no approval note: an empty list
     projects nothing, and writing one on every unapproved activation would add
     a Git write to the settlement path to say so.
+
+    Under the same per-candidate lock the approval door holds, so this reads one
+    consistent pair. Without it a signature landing between the store read and
+    the note read would present the difference the approval door was in the
+    middle of closing, and settlement would refuse a tamper that was really a
+    second approver arriving on time.
     """
 
     evidence = instance.proposal_evidence()
     oid = proposal.admission.candidate_commit_oid
-    approvals = evidence.read_approvals(candidate.candidate_digest)
-    projections = (
-        ("evaluation", evidence.evaluation_note(proposal.admission.proposal_id)),
-        ("approval", proposal_approval_note(approvals)),
-    )
-    for kind, expected in projections:
-        stored = instance.read_proposal_note(kind, oid)
-        if stored == expected:
-            continue
-        if stored is not None:
-            raise ProposalIntegrityError(
-                f"playbill.proposal.note_disagrees_with_evidence: the {kind} note on this "
-                "candidate commit differs from the proposal evidence the daemon persisted; "
-                "re-read the proposal with `playbill proposal review --json` and settle from "
-                "that, or restore the ledger from its own evidence before activating"
-            )
-        if kind == "approval" and not approvals:
-            continue
-        instance.write_proposal_note(kind, oid, expected)
+    with instance.approval_note_lock(candidate.candidate_digest):
+        approvals = evidence.read_approvals(candidate.candidate_digest)
+        projections = (
+            ("evaluation", evidence.evaluation_note(proposal.admission.proposal_id)),
+            ("approval", proposal_approval_note(approvals)),
+        )
+        for kind, expected in projections:
+            stored = instance.read_proposal_note(kind, oid)
+            if stored == expected:
+                continue
+            if stored is not None:
+                raise ProposalIntegrityError(
+                    f"playbill.proposal.note_disagrees_with_evidence: the {kind} note on this "
+                    "candidate commit differs from the proposal evidence the daemon persisted; "
+                    "re-read the proposal with `playbill proposal review --json` and settle "
+                    "from that, or restore the ledger from its own evidence before activating"
+                )
+            if kind == "approval" and not approvals:
+                continue
+            instance.write_proposal_note(kind, oid, expected)
 
 
 def service_activate_playbill_proposal(

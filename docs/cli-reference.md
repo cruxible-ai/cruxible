@@ -431,7 +431,9 @@ the attempt is recorded as behind like any other failure. Availability is a
 condition too, and the copy may not hold the record hostage.
 
 The URL never carries a credential. `https://user:token@host/...` is refused,
-as is plain `http://`, `ext::` and anything beginning with a dash; the four
+as is plain `http://`, `ext::` and anything whose host or user begins with a
+dash (`ssh://-oProxyCommand@host/x` puts it where the transport reads its own
+arguments); the four
 accepted shapes are `https://`, `ssh://`, `user@host:path` and an absolute local
 path (or its `file:///` spelling). The daemon reads its own token from
 `CRUXIBLE_PLAYBILL_MIRROR_TOKEN` in its environment and sends it as an HTTP
