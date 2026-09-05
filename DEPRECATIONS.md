@@ -24,6 +24,9 @@ together.
 | `StateHealthGroupsSection.auto_resolved_count` | `withdrawn_count` | 0.3.0 | 0.4.0 |
 | `ProcedureTransitionResult.warnings string list` | `ProcedureTransitionResult.typed_warnings` | 0.4.0 | 0.5.0 |
 | `playbill.claim.propose.legacy_wire_deprecated` | `playbill authoring create/compile; direct propose mints legacy-wire Claims that are invisible to the citation model` | 0.4.0 | 0.5.0 |
+| `PlaybillBlockSyncReason 'block_multi_backing' read-only member` | none; a block holds a LIST of backings, so nothing refuses one for holding several | 0.5.1 | 0.6.0 |
+| `PlaybillBlockSyncReason 'block_query_backing' read-only member` | none; a block may watch one query backing, so nothing refuses one for carrying it | 0.5.1 | 0.6.0 |
+| `PlaybillBlockSyncReason 'workspace_source_catalog_missing' read-only member` | `workspace_source_catalog_invalid` | 0.5.1 | 0.6.0 |
 | `playbill block sync --discard-local` | `--accept-local`, which re-stamps the block on the body the author wrote | 0.5.1 | 0.6.0 |
 | `playbill subject get KIND ID two-argument form` | one `kind/name` Subject address argument | 0.5.1 | 0.6.0 |
 | `playbill subject history KIND ID two-argument form` | one `kind/name` Subject address argument | 0.5.1 | 0.6.0 |

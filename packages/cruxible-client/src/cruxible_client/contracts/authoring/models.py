@@ -2511,9 +2511,17 @@ PlaybillBlockSyncOutcome: TypeAlias = Literal[
 # the one sanctioned removal -- the held-list rules retired
 # `block_multi_backing` and `block_query_backing`, and
 # `workspace_source_catalog_missing` never had a producer at all -- so they are
-# deprecated here and removed in a later release, not silently dropped. A caller
-# holding a result minted before this batch still parses it, and the repair each
-# one names is the rule that was in force when it could still be produced.
+# deprecated rather than silently dropped. A caller holding a result minted
+# before this batch still parses it, and the repair each one names is the rule
+# that was in force when it could still be produced.
+#
+# The removal is a COMMITMENT, not a sentiment: all three carry a
+# `DEPRECATIONS.md` row in the read-only-member form, deprecated in 0.5.1 and
+# removed in 0.6.0. No `DEPRECATION_REGISTRY` entry, and deliberately so -- the
+# registry exists to emit a structured warning on a transport, and nothing can
+# emit one for an enum member no producer ever writes. The schedule row is the
+# whole of the commitment, exactly as it is for `GroupStatus 'auto_resolved'`
+# and `OperationType 'group_clear'`.
 PlaybillBlockSyncReason: TypeAlias = Literal[
     "workspace_not_attached",
     "workspace_binding_invalid",

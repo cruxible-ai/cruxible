@@ -74,8 +74,10 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "block_frame_invalid": "restore_the_block_marker_frame_the_stamp_declares",
     # Deprecated alongside their reasons: nothing produces either code now that
     # a block holds a LIST of backings and may watch a query. They stay declared
-    # for one release so a caller resolving a result minted before this batch
-    # still reads the change that was asked of it at the time.
+    # so a caller resolving a result minted before this batch still reads the
+    # change that was asked of it at the time, and they go when the reasons go
+    # -- the `DEPRECATIONS.md` rows for the two read-only members schedule both
+    # for removal in 0.6.0.
     "block_multi_backing": "stamp_the_block_with_exactly_one_backing",
     "block_query_backing": "back_the_block_with_a_claim_or_artifact_instead_of_a_query",
     "block_marker_malformed": "repair_the_block_marker_to_the_declared_grammar",
