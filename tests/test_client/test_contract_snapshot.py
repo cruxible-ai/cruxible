@@ -227,6 +227,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "ProcedureRunReceiptV4",
         "ProcedureRunReceiptV5",
         "ProcedureRunReceiptV6",
+        "ProcedureSourceObservationV1",
         "ProviderLaneStatusV1",
         "RuntimeCredentialBootstrapResult",
         "RuntimeCredentialListResult",

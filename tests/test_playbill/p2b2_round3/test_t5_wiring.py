@@ -11,6 +11,7 @@ from typing import get_args
 import cruxible_core.playbill.provider_local_runtime as runtime_module
 import cruxible_core.playbill.provider_process_leases as lease_module
 from cruxible_core.playbill.procedures.execution import (
+    ProcedureExecutor,
     ProcedureRunAdmissionV3,
     ProcedureRunAdmissionV5,
 )
@@ -51,10 +52,23 @@ def test_k8_operational_config_reaches_the_daemon_lease_store(short_root: Path) 
 
 
 def test_c2_a_line_admission_is_the_only_effect_intent_origin() -> None:
-    assert get_args(ProcedureRunAdmissionV3.model_fields["invocation_origin"].annotation) == (
+    """An acquisition carrier may be direct; an EFFECT intent may not.
+
+    The V3 carrier now admits an actor origin, because a direct run that reads
+    an external source binds a real acquisition plan. What still binds a Line
+    alone is the authority to cause an effect: an effective rung is checked
+    against Line-only coordinates and refused outright on an actor invocation,
+    so no direct run can reach a terminal.
+    """
+
+    assert set(get_args(ProcedureRunAdmissionV3.model_fields["invocation_origin"].annotation)) == {
+        "actor",
         "line",
-    )
+    }
     assert issubclass(ProcedureRunAdmissionV5, ProcedureRunAdmissionV3)
+    rung_check = inspect.getsource(ProcedureExecutor._verify_effective_rung)  # noqa: SLF001
+    assert 'admission.invocation_origin != "line"' in rung_check
+    assert "never a direct actor invocation" in rung_check
 
 
 def test_f5_no_bare_timeout_literal_remains_on_the_fence_path() -> None:

@@ -150,6 +150,7 @@ def test_node_refusal_vocabulary_covers_every_executor_code() -> None:
         "terminal_rung_capped_by_calibration",
         "provider_acquisition_plan_required",
         "provider_acquisition_plan_mismatch",
+        "workspace_file_read_refused",
         "provider_effect_declaration_mismatch",
         "classifier_not_installed",
         "classifier_digest_mismatch",
