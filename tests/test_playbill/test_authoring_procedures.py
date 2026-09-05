@@ -1128,8 +1128,7 @@ def test_graph_v4_authoring_lowers_into_the_accepted_procedure_shape(tmp_path: P
     )
     assert isinstance(parsed.definition, ProcedureDefinitionV4)
     assert (
-        parsed.definition_digest
-        == compute_procedure_definition_digest_v4(parsed.definition).tagged
+        parsed.definition_digest == compute_procedure_definition_digest_v4(parsed.definition).tagged
     )
 
 
