@@ -73,9 +73,21 @@ def member_line(member: CandidateMember) -> str:
     return line
 
 
-def change_set_summary(members: Sequence[CandidateMember]) -> str:
-    """State what this change set does in one line, before any truncation."""
+def change_set_summary(
+    members: Sequence[CandidateMember],
+    *,
+    rationale: str | None = None,
+) -> str:
+    """State what this change set does in one line, before any truncation.
 
+    The author's own words win when there are any. A derived subject -- the
+    member line, or the kind tally -- says WHAT changed, which is the one thing
+    the roll below it already says; a rationale says why, which nothing else in
+    the ledger records. When no door carried one, the derived subject stands.
+    """
+
+    if rationale is not None:
+        return rationale
     if not members:
         return "Record Playbill proposal"
     if len(members) == 1:
@@ -86,13 +98,20 @@ def change_set_summary(members: Sequence[CandidateMember]) -> str:
 def _message(subject_source: str, members: Sequence[CandidateMember]) -> str:
     """Assemble subject, the untruncated summary when it did not fit, then the roll.
 
+    The subject is the first LINE of the summary, truncated to Git's
+    conventional width -- an author's rationale may be a paragraph, and a
+    subject that swallowed its second sentence would read as one run-on line in
+    every log. Whenever the subject is not the whole summary, for either reason,
+    the untruncated text follows in the body, so nothing the author wrote is
+    lost to the rendering.
+
     The per-member roll is dropped when it would only repeat the subject, which
     is exactly the one-member proposal whose summary IS its member line. A
     reviewer reading `git log --oneline` sees the same sentence either way; a
     message that said it twice would just be noise on the commonest proposal.
     """
 
-    subject = _truncate_subject(subject_source)
+    subject = _truncate_subject(subject_source.partition("\n")[0])
     paragraphs = [subject]
     if subject != subject_source:
         paragraphs.append(subject_source)
@@ -103,10 +122,14 @@ def _message(subject_source: str, members: Sequence[CandidateMember]) -> str:
     return "\n\n".join(paragraphs) + "\n"
 
 
-def proposal_commit_message(members: Sequence[CandidateMember]) -> str:
+def proposal_commit_message(
+    members: Sequence[CandidateMember],
+    *,
+    rationale: str | None = None,
+) -> str:
     """Render the candidate commit's message: a summary line, then one line per member."""
 
-    return _message(change_set_summary(members), members)
+    return _message(change_set_summary(members, rationale=rationale), members)
 
 
 def generation_commit_message(

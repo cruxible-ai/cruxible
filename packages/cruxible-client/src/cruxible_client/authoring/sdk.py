@@ -846,7 +846,12 @@ class ChangeSetDraft:
                     (member.payload for member in self._members),
                     key=lambda item: authoring_member_identity(item).encode("utf-8"),
                 )
-            )
+            ),
+            # The prose travels now, instead of only being hashed into the
+            # program digest: the daemon writes it as the candidate commit's
+            # subject, which is the one place a reviewer reading Git looks for
+            # why a change set exists.
+            rationale=self.rationale,
         )
         index_by_identity = {
             authoring_member_identity(member): index for index, member in enumerate(payload.members)

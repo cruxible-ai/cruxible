@@ -3524,6 +3524,14 @@ def _proposal_id_payload(
                 "candidate_commit_oid": candidate_commit_oid,
                 "candidate_tree_oid": candidate_tree_oid,
                 "source_compilation_digest": request.source_compilation_digest,
+                # `rationale` is deliberately not a field of its own here. It
+                # still reaches this digest, through `candidate_commit_oid`,
+                # because the message is part of the commit object -- two
+                # submissions of one tree under different prose ARE two
+                # commits, and an admission that claimed otherwise would name a
+                # commit no selector could resolve back. What naming it
+                # separately would add is a second path by which the same fact
+                # enters one identity.
                 "claim_type_expansions": [
                     item.model_dump(mode="json") for item in request.claim_type_expansions
                 ],
@@ -3653,9 +3661,11 @@ class ProposalService:
             query_facts_provider=self.query_facts_provider,
         )
         # A refused proposal has no members to summarize, so it keeps the bare
-        # subject the ledger has always written for it.
+        # subject the ledger has always written for it -- unless the author said
+        # why they proposed it, which is still true of a set that did not pass.
         message = proposal_commit_message(
-            outcome.candidate.members if outcome.candidate is not None else ()
+            outcome.candidate.members if outcome.candidate is not None else (),
+            rationale=request.rationale,
         )
 
         existing = self.transport.read_proposal_ref(request.target_ref)
@@ -3715,6 +3725,7 @@ class ProposalService:
             claim_type_expansions=request.claim_type_expansions,
             limits=self.receive_limits,
             admitted_at=timestamp,
+            rationale=request.rationale,
         )
         self.evidence.write_admission(admission)
         candidate_value = outcome.candidate.candidate_digest if outcome.candidate else None

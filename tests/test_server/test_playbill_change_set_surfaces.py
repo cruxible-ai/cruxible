@@ -162,6 +162,10 @@ def test_one_changeset_has_one_intent_identity_across_sdk_cli_and_mcp(
             SubjectInput(kind="subject", subject=_shell()),
             ClaimTypeInput(kind="claim_type", claim_type=_claim_type()),
         ),
+        # The author's own summary crosses all three surfaces, and the payload
+        # identity ignores it on all three: describing a set is not a different
+        # set.
+        rationale="Define the parity Subject and its ClaimType.",
     )
     # A CLI payload file is read back off disk before it is sent.
     payload_file = tmp_path / "change-set.json"
@@ -207,6 +211,7 @@ def test_one_changeset_has_one_intent_identity_across_sdk_cli_and_mcp(
     with_claim = ChangeSetInput(
         kind="change_set",
         members=(*tagless.members, _claim_input()),
+        rationale="Open the parity slot and state its first value.",
     )
     cli_claim_intent = transport.create_playbill_authoring_input(
         instance_id,
@@ -402,6 +407,7 @@ def test_one_claim_type_succession_has_one_identity_across_sdk_cli_and_mcp(
             ),
             SubjectInput(kind="subject", subject=_shell()),
         ),
+        rationale="Narrow the parity vocabulary and settle its closure.",
     )
     payload_file = tmp_path / "succession.json"
     payload_file.write_text(json.dumps(tagless.model_dump(mode="json")), encoding="utf-8")

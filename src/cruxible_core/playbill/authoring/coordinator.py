@@ -822,6 +822,15 @@ class AuthoringIntentCoordinator:
             request=ProposalAdmissionRequest(
                 target_ref=certificate.proposal_ref,
                 proposed_base_oid=certificate.accepted_coordinate.git_oid,
+                # The one door that carries prose today. Every other submit call
+                # site authors on the author's behalf -- a migration, a seed, a
+                # retirement -- and has no sentence of theirs to pass on, so it
+                # keeps the derived subject.
+                rationale=(
+                    preflighted.payload.rationale
+                    if isinstance(preflighted.payload, ChangeSetAuthoringPayloadV1)
+                    else None
+                ),
             ),
             candidate_tree={
                 path: content

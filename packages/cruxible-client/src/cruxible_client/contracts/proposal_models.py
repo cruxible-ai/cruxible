@@ -66,6 +66,28 @@ def canonical_proposal_ref_name(display_name: str) -> str:
     return slug
 
 
+CHANGE_SET_RATIONALE_MAX_LENGTH = 4096
+"""A commit body, not an essay: long enough for a paragraph, bounded like one."""
+
+
+def validate_change_set_rationale(value: str | None) -> str | None:
+    """Refuse prose a commit message could not carry honestly.
+
+    The rationale becomes a Git commit message, where a NUL truncates the rest
+    of the text silently and a leading or trailing blank renders as a subject
+    that is not what the author typed. Interior newlines are allowed: a
+    rationale may be a paragraph, and only its first line becomes the subject.
+    """
+
+    if value is None:
+        return None
+    if value != value.strip() or not value:
+        raise ValueError("change-set rationale must be nonblank and already normalized")
+    if "\x00" in value:
+        raise ValueError("change-set rationale must not contain a NUL byte")
+    return value
+
+
 class _StrictProposalModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -234,6 +256,20 @@ class ProposalAdmissionRequest(_StrictProposalModel):
     proposed_base_oid: str
     source_compilation_digest: str | None = None
     claim_type_expansions: tuple[ClaimTypeExpansionEvidenceV1, ...] = ()
+    # The author's own summary of the change set, if this door had one to pass
+    # on. It becomes the candidate commit's subject and nothing else: it is
+    # deliberately OUTSIDE the proposal-id preimage, for the same reason the
+    # advertised change-set ceiling is -- prose is not identity, and a proposal
+    # would otherwise have a different id for having been described.
+    rationale: str | None = Field(
+        default=None,
+        max_length=CHANGE_SET_RATIONALE_MAX_LENGTH,
+    )
+
+    @field_validator("rationale")
+    @classmethod
+    def _rationale(cls, value: str | None) -> str | None:
+        return validate_change_set_rationale(value)
 
     @field_validator("target_ref")
     @classmethod
@@ -317,6 +353,16 @@ class ProposalAdmissionRecord(_StrictProposalModel):
     claim_type_expansions: tuple[ClaimTypeExpansionEvidenceV1, ...] = ()
     limits: ProposalReceiveLimits
     admitted_at: str
+    # Persisted so the advisory review-ref projection, which rebuilds the commit
+    # message from stored evidence alone, writes the same bytes the submission
+    # did. Absent from the canonical record when unset, so every admission
+    # already on disk re-renders and stays readable.
+    rationale: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @field_validator("rationale")
+    @classmethod
+    def _rationale(cls, value: str | None) -> str | None:
+        return validate_change_set_rationale(value)
 
     @field_validator("proposal_id")
     @classmethod

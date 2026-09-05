@@ -852,10 +852,15 @@ class PlaybillInstance:
                     actor_id=admission.actor_id,
                     timestamp=admission.admitted_at,
                     # The projection is rebuilt from stored evidence, and the
-                    # summary is a pure function of the candidate's members, so
-                    # this branch carries byte-identical prose to the proposal
-                    # commit the submission itself created.
-                    message=proposal_commit_message(candidate.members),
+                    # summary is a pure function of the candidate's members and
+                    # the admission's own rationale, so this branch carries
+                    # byte-identical prose to the proposal commit the submission
+                    # itself created. That is why the rationale is PERSISTED on
+                    # the admission rather than read off a request that is gone.
+                    message=proposal_commit_message(
+                        candidate.members,
+                        rationale=admission.rationale,
+                    ),
                 )
             )
         self._ledger.replace_proposal_review_refs(refs)

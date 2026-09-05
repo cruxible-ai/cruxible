@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
@@ -233,3 +234,147 @@ def test_the_ledger_refuses_a_blank_commit_message(tmp_path: Path) -> None:
             expected_ref_oid=None,
             message="   \n",
         )
+
+
+def test_the_authors_rationale_becomes_the_subject_and_the_roll_stays(
+    tmp_path: Path,
+) -> None:
+    from tests.test_playbill.test_proposals import _proposal_tree, _shell
+
+    instance, _owner = initialize_local(tmp_path)
+    body = instance.store_document_body(b"# Design\n")
+    rationale = "Record the design the retirement window was argued from"
+
+    result = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/document",
+            proposed_base_oid=instance.inspect().head_oid,
+            rationale=rationale,
+        ),
+        candidate_tree=_proposal_tree(instance, _shell(body.digest)),
+        timestamp=TIMESTAMP,
+    )
+
+    assert result.candidate is not None
+    message = _message(instance._ledger.path, "refs/proposals/owner/document")
+    assert message.splitlines() == [rationale, "", f"create document {DOCUMENT_PATH}"]
+    assert result.admission.rationale == rationale
+
+
+def test_a_rationale_longer_than_a_subject_keeps_its_whole_text_in_the_body() -> None:
+    members = (_law_member(DOCUMENT_PATH),)
+    rationale = (
+        "Record the design the retirement window was argued from, before the "
+        "argument stops being reconstructible"
+    )
+
+    lines = proposal_commit_message(members, rationale=rationale).splitlines()
+
+    assert len(lines[0]) <= SUBJECT_LIMIT
+    assert lines[0] != rationale
+    assert lines[2] == rationale
+    assert lines[4] == f"create document {DOCUMENT_PATH}"
+
+
+def test_the_advisory_review_branch_rebuilds_the_rationale_from_evidence(
+    tmp_path: Path,
+) -> None:
+    """The projection reads stored evidence only, so the prose has to be stored."""
+
+    from tests.test_playbill.test_proposals import _proposal_tree, _shell
+
+    instance, _owner = initialize_local(tmp_path)
+    body = instance.store_document_body(b"# Design\n")
+    rationale = "State why this document is proposed at all"
+    result = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/document",
+            proposed_base_oid=instance.inspect().head_oid,
+            rationale=rationale,
+        ),
+        candidate_tree=_proposal_tree(instance, _shell(body.digest)),
+        timestamp=TIMESTAMP,
+    )
+    instance._reconcile_proposal_review_refs()
+
+    key = result.admission.proposal_id.removeprefix("sha256:")
+    branch = _message(instance._ledger.path, f"refs/heads/proposals/{key}")
+    assert branch == _message(instance._ledger.path, "refs/proposals/owner/document")
+    assert branch.splitlines()[0] == rationale
+
+
+def test_an_old_client_that_sends_no_rationale_keeps_the_derived_subject(
+    tmp_path: Path,
+) -> None:
+    from tests.test_playbill.test_proposals import _proposal_tree, _shell
+
+    instance, _owner = initialize_local(tmp_path)
+    body = instance.store_document_body(b"# Design\n")
+
+    result = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/document",
+            proposed_base_oid=instance.inspect().head_oid,
+        ),
+        candidate_tree=_proposal_tree(instance, _shell(body.digest)),
+        timestamp=TIMESTAMP,
+    )
+
+    assert result.admission.rationale is None
+    # An admission with no rationale renders the bytes it always did, so every
+    # record already on disk stays readable.
+    assert "rationale" not in result.admission.model_dump(mode="json")
+    assert _message(instance._ledger.path, "refs/proposals/owner/document").splitlines()[0] == (
+        f"create document {DOCUMENT_PATH}"
+    )
+
+
+def test_a_described_set_is_its_own_commit_and_says_so_in_its_identity(
+    tmp_path: Path,
+) -> None:
+    """The message is part of the commit, so the prose reaches the proposal id.
+
+    Not through a preimage field -- the admission digest names no rationale --
+    but through `candidate_commit_oid`, which is what the ref actually holds.
+    Two submissions of one tree under different prose are two commits, and an
+    admission claiming a single identity for both would name a commit no
+    selector could resolve back to its ref.
+    """
+
+    from tests.test_playbill.test_proposals import _proposal_tree, _shell
+
+    identities = []
+    for name, rationale in (("described", "Why this exists"), ("bare", None)):
+        root = tmp_path / name
+        root.mkdir()
+        instance, _owner = initialize_local(root)
+        body = instance.store_document_body(b"# Design\n")
+        result = instance.proposal_service().submit(
+            actor=AuthenticatedActor(actor_id="owner"),
+            request=ProposalAdmissionRequest(
+                target_ref="refs/proposals/owner/document",
+                proposed_base_oid=instance.inspect().head_oid,
+                rationale=rationale,
+            ),
+            candidate_tree=_proposal_tree(instance, _shell(body.digest)),
+            timestamp=TIMESTAMP,
+        )
+        assert instance.proposal_ref_target("refs/proposals/owner/document") == (
+            result.admission.candidate_commit_oid
+        )
+        identities.append(result.admission.proposal_id)
+
+    assert identities[0] != identities[1]
+
+
+def test_a_rationale_a_commit_message_could_not_carry_is_refused() -> None:
+    for refused in ("", " leading", "trailing ", "with a \x00 byte"):
+        with pytest.raises(ValidationError):
+            ProposalAdmissionRequest(
+                target_ref="refs/proposals/owner/document",
+                proposed_base_oid="a" * 64,
+                rationale=refused,
+            )
