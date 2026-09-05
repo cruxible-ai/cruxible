@@ -33,6 +33,10 @@ P2_B0_ARTIFACT_CODEC = ArtifactCodec.P2_B0_COMPACT_JSON
 
 
 def _normalize_string(value: str) -> str:
+    # Exact ASCII strings are already NFC and cannot contain a surrogate.
+    # Keep subclass handling on the original path (including its encoding hook).
+    if type(value) is str and value.isascii():
+        return value
     normalized = unicodedata.normalize("NFC", value)
     try:
         normalized.encode("utf-8")
@@ -49,6 +53,10 @@ def normalize_canonical(value: object, *, location: str = "$") -> CanonicalValue
     normalization collisions before serialization.
     """
 
+    # Most values in serialized contracts are exact strings. Handle those
+    # before the scalar rejection checks; subclasses retain the original path.
+    if type(value) is str:
+        return _normalize_string(value)
     if value is None or isinstance(value, bool):
         return value
     if isinstance(value, int):
