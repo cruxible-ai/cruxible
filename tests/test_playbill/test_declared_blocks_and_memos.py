@@ -736,12 +736,12 @@ def test_one_next_folds_the_durable_registration_stream_exactly_once(
     )
 
     folds = 0
-    original_events = AuthoringIntentStore.events
+    original_latest = AuthoringIntentStore.publication_states
 
-    def counting_events(self: AuthoringIntentStore) -> Any:
+    def counting_latest(self: AuthoringIntentStore) -> Any:
         nonlocal folds
         folds += 1
-        return original_events(self)
+        return original_latest(self)
 
     reads = 0
     original_fold = next_service._registered_publication_blocks
@@ -751,7 +751,7 @@ def test_one_next_folds_the_durable_registration_stream_exactly_once(
         reads += 1
         return original_fold(instance_)
 
-    monkeypatch.setattr(AuthoringIntentStore, "events", counting_events)
+    monkeypatch.setattr(AuthoringIntentStore, "publication_states", counting_latest)
     monkeypatch.setattr(next_service, "_registered_publication_blocks", counting_fold)
 
     service_playbill_next(

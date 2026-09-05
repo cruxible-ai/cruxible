@@ -229,13 +229,10 @@ def _released_publication_expectation(
 
     exhaust_root = instance.root / instance.descriptor.storage.exhaust
     try:
-        latest = {
-            event.intent.intent_id: event.intent
-            for event in AuthoringIntentStore(exhaust_root, read_only=True).events()
-        }
+        latest = AuthoringIntentStore(exhaust_root, read_only=True).publication_states()
     except (OSError, PlaybillError):
         return None
-    for intent in latest.values():
+    for intent in latest:
         for expectation in intent.insertion_expectations:
             preparation = expectation.preparation
             if preparation is None:

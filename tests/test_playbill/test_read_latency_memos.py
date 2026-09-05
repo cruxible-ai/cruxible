@@ -409,14 +409,14 @@ def test_the_publication_intent_fold_runs_once_per_durable_stream(
     reset_bound_publication_registration_memo()
 
     folds = 0
-    original = AuthoringIntentStore.events
+    original = AuthoringIntentStore.publication_states
 
     def counting(self: AuthoringIntentStore) -> Any:
         nonlocal folds
         folds += 1
         return original(self)
 
-    monkeypatch.setattr(AuthoringIntentStore, "events", counting)
+    monkeypatch.setattr(AuthoringIntentStore, "publication_states", counting)
     first = bound_publication_registrations(instance)
     for _ in range(5):
         assert bound_publication_registrations(instance) == first

@@ -37,9 +37,9 @@ class BoundPublicationRegistration:
     preparation: PublicationPreparationV2
 
 
-# The fold reads and parses every durable event file. On a worked instance that
-# is hundreds of megabytes, and one `block sync --check` asks the same question
-# once per block. The identity below names the exact stream that was folded:
+# The fold consumes validated current publication states. One `block sync --check` can
+# ask the same question once per block, so its result is memoized separately
+# from the store's event validation. The identity names the exact stream folded:
 # every event file's directory, name, inode, size and both timestamps. Any
 # append or rewrite moves it, so a changed stream is folded again.
 _SAFE_SEGMENT = re.compile(r"[a-z][a-z0-9_.-]{0,127}")
@@ -98,10 +98,7 @@ def bound_publication_registrations(
         if memoized is not None:
             return memoized
     try:
-        latest = {
-            event.intent.intent_id: event.intent
-            for event in AuthoringIntentStore(exhaust_root, read_only=True).events()
-        }
+        latest = AuthoringIntentStore(exhaust_root, read_only=True).publication_states()
     except (OSError, PlaybillError):
         return None
     # Every expectation the intent owns, not just the singular mirror: one intent
@@ -114,7 +111,7 @@ def bound_publication_registrations(
             claim_statement_digest=expectation.claim_statement_digest,
             preparation=expectation.preparation,
         )
-        for intent in latest.values()
+        for intent in latest
         for expectation in intent.insertion_expectations
         if expectation.state == "bound" and expectation.preparation is not None
     ]
