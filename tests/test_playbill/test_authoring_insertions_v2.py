@@ -49,6 +49,10 @@ from cruxible_client.contracts.declared_blocks import parse_projection_blocks
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.playbill.authoring.insertions import (
+    PublicationTerminalStateRefused,
+    mark_publication_terminal,
+)
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.coverage.adapter import observe_working_source
 from cruxible_core.playbill.coverage.contracts import (
@@ -858,6 +862,49 @@ def test_abandon_is_idempotent_and_retains_one_terminal_tombstone(
     assert retry.model_dump(exclude=excluded) == abandoned.model_dump(exclude=excluded)
     resumed = coordinator.resume(intent_id, actor=actor).intent
     assert resumed.insertion_expectation == abandoned.expectation
+
+
+def test_a_terminal_publication_refuses_every_transition_but_its_one_exit(
+    tmp_path: Path,
+) -> None:
+    """Re-pinned: the base suite asserted this through a verb that is now gone.
+
+    `test_pending_abandon_is_idempotent_and_retains_one_terminal_tombstone`
+    ended by driving `prepare_publication` at an abandoned expectation and
+    proving it refused. That verb went with the publication road, so the
+    assertion went with it -- but the LAW did not. `mark_publication_terminal`
+    is the guard both remaining transitions run through, and after this batch
+    nothing asserted it behaviourally at all, while a `bound` expectation
+    gained an exit for the first time. Which makes it exactly the moment to say
+    what that exit is and is not: abandonment is the ONE way out of `bound`,
+    and every other transition off a terminal state still refuses.
+    """
+
+    instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+    bound, _landed = _registered_publication(instance, coordinator, actor, intent_id, preimage)
+    stored = coordinator.store.get(intent_id, actor_id=actor.actor_id)
+    finalized_at = datetime(2026, 8, 30, 12, tzinfo=UTC)
+
+    # `bound` is terminal for everything except being taken down.
+    with pytest.raises(PublicationTerminalStateRefused):
+        mark_publication_terminal(stored, bound, state="expired", finalized_at=finalized_at)
+    with pytest.raises(PublicationTerminalStateRefused):
+        mark_publication_terminal(
+            stored, bound, state="claim_currency_changed", finalized_at=finalized_at
+        )
+
+    abandoned = coordinator.abandon_insertion(intent_id, actor=actor).expectation
+    assert abandoned.state == "abandoned"
+
+    # And once it is out, it is out: nothing transitions off an abandoned
+    # expectation, which is what the deleted assertion proved through
+    # `prepare_publication`.
+    resumed = coordinator.resume(intent_id, actor=actor).intent
+    for state in ("expired", "claim_currency_changed", "bound"):
+        with pytest.raises(PublicationTerminalStateRefused):
+            mark_publication_terminal(resumed, abandoned, state=state, finalized_at=finalized_at)
 
 
 def test_a_bound_publication_can_be_depublished_and_the_registration_released(
