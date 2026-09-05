@@ -112,8 +112,12 @@ def test_review_and_signing_keep_private_key_outside_wire_contract(tmp_path: Pat
     pointer = render_playbill_proposal_review_pointer(review)
     key = review.proposal_id.removeprefix("sha256:")
     assert f"git diff playbill/accepted...playbill/proposals/{key}" in pointer
-    assert "refs/notes/playbill-eval" in pointer
-    assert "refs/notes/playbill-approval" in pointer
+    # The note reads name the branch a reviewer actually holds, not a
+    # placeholder they would have to resolve: the notes are attached to the
+    # projected review commit, which is what the mirror and the workspace carry.
+    assert f"git notes --ref=refs/notes/playbill-eval show playbill/proposals/{key}" in pointer
+    assert f"git notes --ref=refs/notes/playbill-approval show playbill/proposals/{key}" in pointer
+    assert "git fetch origin '+refs/notes/*:refs/notes/*'" in pointer
     assert "--json" in pointer
     # Nothing of the second rendering survives in it.
     assert "Semantic delta" not in pointer

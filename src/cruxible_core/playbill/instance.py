@@ -817,7 +817,28 @@ class PlaybillInstance:
             )
 
     def _reconcile_proposal_review_refs(self) -> None:
-        """Project exactly the open proposal trees into standard ledger branch refs."""
+        """Project exactly the open proposal trees into standard ledger branch refs.
+
+        The notes travel with the branch. They were attached only to
+        `admission.candidate_commit_oid` -- the tip of `refs/proposals/<actor>/<name>`,
+        which is neither mirrored nor fetched into a workspace -- while the
+        commit a reviewer actually receives is the one rebuilt here. The two are
+        different objects whenever evaluation derives cards or rebases, which is
+        the ordinary case, so `git notes --ref=refs/notes/playbill-eval show
+        <commit>` (the command `proposal review` prints and both docs pages
+        promise) found nothing for anyone but the daemon. Attaching the same
+        bytes to the projected commit is what makes the published note readable
+        by the reviewer it is published for.
+
+        Both note kinds are re-read before being written, so a steady state
+        costs one Git read per open proposal rather than a write. The approval
+        note is written here WITHOUT the per-candidate lock the approval door
+        holds: this is a rebuild from the store, so an interleave with a
+        concurrent approver can leave one publication carrying the older render,
+        and the next publication -- or activation, which reconciles against the
+        store -- restates it. The lock is where it has to be, on the note
+        activation actually checks.
+        """
 
         coordinate = self.accepted_coordinate()
         accepted_candidates = {
@@ -827,6 +848,7 @@ class PlaybillInstance:
         }
         evidence = self.proposal_evidence()
         refs: dict[str, str] = {}
+        published: list[tuple[str, str, str]] = []
         for admission in evidence.list_admissions():
             evaluation = evidence.read_evaluation(admission.proposal_id)
             candidate_digest = evaluation.candidate_digest
@@ -845,25 +867,56 @@ class PlaybillInstance:
             candidate = evidence.read_candidate(candidate_digest)
             if candidate.candidate.parent_semantic_root != coordinate.semantic_root:
                 continue
-            refs[admission.proposal_id.removeprefix("sha256:")] = (
-                self._ledger.proposal_review_commit(
-                    tree_oid=evaluation.evaluated_tree_oid,
-                    base_oid=evaluation.evaluated_base_oid,
-                    actor_id=admission.actor_id,
-                    timestamp=admission.admitted_at,
-                    # The projection is rebuilt from stored evidence, and the
-                    # summary is a pure function of the candidate's members and
-                    # the admission's own rationale, so this branch carries
-                    # byte-identical prose to the proposal commit the submission
-                    # itself created. That is why the rationale is PERSISTED on
-                    # the admission rather than read off a request that is gone.
-                    message=proposal_commit_message(
-                        candidate.members,
-                        rationale=admission.rationale,
-                    ),
-                )
+            review_oid = self._ledger.proposal_review_commit(
+                tree_oid=evaluation.evaluated_tree_oid,
+                base_oid=evaluation.evaluated_base_oid,
+                actor_id=admission.actor_id,
+                timestamp=admission.admitted_at,
+                # The projection is rebuilt from stored evidence, and the
+                # summary is a pure function of the candidate's members and
+                # the admission's own rationale, so this branch carries
+                # byte-identical prose to the proposal commit the submission
+                # itself created. That is why the rationale is PERSISTED on
+                # the admission rather than read off a request that is gone.
+                message=proposal_commit_message(
+                    candidate.members,
+                    rationale=admission.rationale,
+                ),
             )
+            refs[admission.proposal_id.removeprefix("sha256:")] = review_oid
+            published.append((review_oid, admission.proposal_id, candidate_digest))
         self._ledger.replace_proposal_review_refs(refs)
+        # After the refs, so every annotated commit is already reachable from
+        # one: a note on an unreferenced object is a note a `gc` may collect.
+        for review_oid, proposal_id, candidate_digest in published:
+            self._publish_review_commit_notes(
+                evidence,
+                review_oid=review_oid,
+                proposal_id=proposal_id,
+                candidate_digest=candidate_digest,
+            )
+
+    def _publish_review_commit_notes(
+        self,
+        evidence: ProposalEvidenceStore,
+        *,
+        review_oid: str,
+        proposal_id: str,
+        candidate_digest: str,
+    ) -> None:
+        """Restate one proposal's evidence onto the commit a reviewer receives."""
+
+        evaluation_note = evidence.evaluation_note(proposal_id)
+        if self._ledger.read_proposal_note("evaluation", review_oid) != evaluation_note:
+            self._ledger.write_proposal_note("evaluation", review_oid, evaluation_note)
+        # An empty approval list projects nothing, exactly as it does on the
+        # candidate commit: writing a note to say "nobody has signed" would put
+        # a Git write on every publication of every unapproved proposal.
+        if not evidence.read_approvals(candidate_digest):
+            return
+        approval_note = evidence.approval_note(candidate_digest)
+        if self._ledger.read_proposal_note("approval", review_oid) != approval_note:
+            self._ledger.write_proposal_note("approval", review_oid, approval_note)
 
     def proposal_evidence(self) -> ProposalEvidenceStore:
         """Return the immutable non-authoritative proposal/approval evidence store."""

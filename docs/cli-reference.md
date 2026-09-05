@@ -1190,10 +1190,20 @@ against accepted state with standard tooling and no bespoke rendering:
 git diff playbill/accepted...playbill/proposals/<proposal-id>
 ~~~
 
+The daemon's records are notes on that same projected commit, fetched into the
+workspace under their own names (`git notes --ref=` prefixes anything that is
+not already under `refs/notes/`, so a note parked elsewhere reads back as "no
+note found"). From a clone of the ledger mirror, fetch them once:
+
+~~~text
+git fetch origin '+refs/notes/*:refs/notes/*'
+git notes --ref=refs/notes/playbill-eval show origin/proposals/<proposal-id>
+~~~
+
 The candidate commit carries the change set's own summary as its message: a
 subject naming what the set does, then one line per member as `<disposition>
 <kind> <address> [qualifier]`. It is prose for a reader; nothing parses it. The
-daemon's records travel beside it as Git notes on the candidate commit:
+daemon's records travel beside it as Git notes on that commit:
 `refs/notes/playbill-eval` holds the admission and the evaluation verdict with
 every diagnostic behind a refusal, and `refs/notes/playbill-approval` holds the
 canonical approval list, each entry carrying its signer's own attestation. Both

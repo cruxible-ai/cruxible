@@ -223,3 +223,97 @@ def test_a_repaired_remote_publishes_again_without_a_new_write(tmp_path: Path) -
     assert republished.status == "current"
     assert republished.published_main_oid == instance._ledger.read_main()
     assert "refs/heads/main" in _remote_refs(remote)
+
+
+def _clone(remote: Path, into: Path) -> Path:
+    """Clone the mirror the way a reviewer would, then fetch the notes once."""
+
+    subprocess.run(["git", "clone", "-q", str(remote), str(into)], check=True)
+    subprocess.run(
+        ["git", "-C", str(into), "fetch", "-q", "origin", "+refs/notes/*:refs/notes/*"],
+        check=True,
+    )
+    return into
+
+
+def _note_in_clone(clone: Path, ref: str, revision: str) -> bytes:
+    return subprocess.run(
+        ["git", "-C", str(clone), "notes", f"--ref={ref}", "show", revision],
+        capture_output=True,
+        check=True,
+    ).stdout
+
+
+def test_a_reviewer_cloning_the_mirror_can_read_the_evaluation_note(
+    tmp_path: Path,
+) -> None:
+    """The command `proposal review` prints has to run for its reader.
+
+    Read out of a CLONE, never out of `instance._ledger.path`: the daemon's own
+    bare repository is exactly the reader this batch exists to stop privileging,
+    and a note keyed to an object the mirror does not carry passes every test
+    that asks the daemon and none that asks a reviewer.
+    """
+
+    instance, remote = _mirrored(tmp_path)
+    result = _submit(instance)
+    digest = result.admission.proposal_id.removeprefix("sha256:")
+
+    clone = _clone(remote, tmp_path / "reviewer")
+
+    branch = f"origin/proposals/{digest}"
+    note = _note_in_clone(clone, NOTE_REFS["evaluation"], branch)
+    assert note == instance.proposal_evidence().evaluation_note(result.admission.proposal_id)
+    # The candidate commit the note used to hang on is not in the clone at all,
+    # which is why attaching it there alone made the published note unreadable.
+    absent = subprocess.run(
+        ["git", "-C", str(clone), "cat-file", "-e", result.admission.candidate_commit_oid],
+        capture_output=True,
+    )
+    assert absent.returncode != 0
+
+
+def test_a_reviewer_cloning_the_mirror_can_read_the_approval_note(tmp_path: Path) -> None:
+    instance, remote = _mirrored(tmp_path)
+    result = _submit(instance)
+    assert result.candidate is not None
+    digest = result.admission.proposal_id.removeprefix("sha256:")
+    submission = _sign(
+        instance._owner_material,  # type: ignore[attr-defined]
+        result.candidate.candidate_digest,
+        result.candidate.candidate.parent_semantic_root,
+    )
+
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=result.admission.proposal_id,
+        attestation=submission.attestation,
+        authenticated_submitter="approval-relay",
+    )
+
+    clone = _clone(remote, tmp_path / "reviewer")
+    note = _note_in_clone(clone, NOTE_REFS["approval"], f"origin/proposals/{digest}")
+    assert note == instance.proposal_evidence().approval_note(result.candidate.candidate_digest)
+    assert b"owner" in note
+
+
+def test_an_unapproved_proposal_publishes_no_approval_note(tmp_path: Path) -> None:
+    instance, remote = _mirrored(tmp_path)
+    result = _submit(instance)
+    digest = result.admission.proposal_id.removeprefix("sha256:")
+
+    clone = _clone(remote, tmp_path / "reviewer")
+
+    missing = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(clone),
+            "notes",
+            f"--ref={NOTE_REFS['approval']}",
+            "show",
+            f"origin/proposals/{digest}",
+        ],
+        capture_output=True,
+    )
+    assert missing.returncode != 0

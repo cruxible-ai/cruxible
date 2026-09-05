@@ -276,8 +276,10 @@ git diff playbill/accepted...playbill/proposals/<proposal-id>
 ~~~
 
 The candidate commit's message is the change set's own summary -- what it does,
-then one line per member -- and the daemon's records are attached to that commit
-as Git notes: `refs/notes/playbill-eval` carries the admission and the
+then one line per member -- and the daemon's records are attached to the SAME
+commit the branch points at, as Git notes read by name (`git notes
+--ref=refs/notes/playbill-eval show playbill/proposals/<proposal-id>`; from a
+clone of the mirror, `git fetch origin '+refs/notes/*:refs/notes/*'` first): `refs/notes/playbill-eval` carries the admission and the
 evaluation verdict with every diagnostic behind a refusal, and
 `refs/notes/playbill-approval` carries the canonical approval list with each
 signer's own attestation. Nothing parses those messages; every fact an agent
