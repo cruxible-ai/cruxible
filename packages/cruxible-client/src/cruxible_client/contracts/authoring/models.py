@@ -26,6 +26,7 @@ from cruxible_client.contracts.approval_policy import (
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.candidates import validate_candidate_timestamp
 from cruxible_client.contracts.canonical import (
+    CanonicalValue,
     Sha256Value,
     canonical_bytes,
     normalize_canonical,
@@ -45,6 +46,7 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
     ProjectionMarkerSummaryV1,
 )
+from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_IDENTITY,
     ProcedureRuntimePolicyV1,
@@ -1277,6 +1279,22 @@ def authoring_create_fingerprint(
     ).tagged
 
 
+def _normalized_authoring_digest(domain: str, preimage: dict[str, CanonicalValue]) -> str:
+    """Hash an internal normalized snapshot with a frozen ASCII domain tag.
+
+    Every runtime value must already have passed ``normalize_canonical``.
+    This skips only its repeated traversal, retaining the same canonical JSON
+    encoder and domain-separated bytes as ``typed_digest``. Never use this
+    helper with raw values or retain its input across validation calls.
+    """
+
+    assert "tag" not in preimage
+    return (
+        "sha256:"
+        + hashlib.sha256(canonical_json({"tag": domain, **preimage}).encode("utf-8")).hexdigest()
+    )
+
+
 class RepairAlternativeV1(_StrictAuthoringModel):
     kind: str
     description: str
@@ -1991,12 +2009,26 @@ class AuthoringIntentV1(_StrictAuthoringModel):
 
     @model_validator(mode="after")
     def _binding(self) -> "AuthoringIntentV1":
-        if self.payload_digest != authoring_payload_digest(self.payload):
+        # One ephemeral normalized snapshot feeds both frozen preimages. Never
+        # cache it on the model: frozen payloads contain mutable nested values.
+        payload_dump = self.payload.model_dump(mode="json")
+        payload_tag = payload_dump.pop("tag")
+        normalized_payload = normalize_canonical(payload_dump)
+        assert isinstance(normalized_payload, dict)
+        if self.payload_digest != _normalized_authoring_digest(
+            AUTHORING_PAYLOAD_DIGEST_DOMAIN, normalized_payload
+        ):
             raise ValueError("AuthoringIntent payload digest does not reproduce")
-        expected_fingerprint = authoring_create_fingerprint(
-            instance_id=self.instance_id,
-            actor_id=self.actor_id,
-            payload=self.payload,
+        # Preserve fingerprint traversal/refusal order after the payload check.
+        instance_id = normalize_canonical(self.instance_id, location="$.instance_id")
+        actor_id = normalize_canonical(self.actor_id, location="$.actor_id")
+        tagged_payload = {
+            "tag": normalize_canonical(payload_tag, location="$.payload.tag"),
+            **normalized_payload,
+        }
+        expected_fingerprint = _normalized_authoring_digest(
+            AUTHORING_CREATE_FINGERPRINT_DOMAIN,
+            {"instance_id": instance_id, "actor_id": actor_id, "payload": tagged_payload},
         )
         if self.create_fingerprint != expected_fingerprint:
             raise ValueError("AuthoringIntent create fingerprint does not reproduce")
@@ -2047,13 +2079,21 @@ class AuthoringIntentV1(_StrictAuthoringModel):
                 if self.change_set_claim_identities:
                     raise ValueError("only a change set owns per-member Claim identities")
             else:
-                self._bind_change_set_members(self.payload)
+                self._bind_change_set_members(
+                    self.payload,
+                    member_identities=tuple(identity for _kind, identity in membership),
+                )
         return self
 
-    def _bind_change_set_members(self, payload: "ChangeSetAuthoringPayloadV1") -> None:
+    def _bind_change_set_members(
+        self,
+        payload: "ChangeSetAuthoringPayloadV1",
+        *,
+        member_identities: tuple[str, ...],
+    ) -> None:
         claim_members = {
-            authoring_member_identity(member): member
-            for member in payload.members
+            identity: member
+            for identity, member in zip(member_identities, payload.members, strict=True)
             if isinstance(member, ClaimAuthoringPayloadV1)
         }
         minted = self.change_set_claim_identities
