@@ -21,6 +21,63 @@
   digest preimages and blocks unrelated authoring. Existing journal bytes and
   commitments remain unchanged; projection-window checks still apply.
 
+- **The ledger publishes itself, so review is reachable and not just Git.** A
+  reviewer holding a link to a candidate commit could not clone the thing the
+  link pointed into: the ledger is a bare repository under the instance root
+  that the daemon alone can open, so every ref the review flow projects was
+  invisible to the person it exists for. An instance may now carry a
+  `mirror_url` -- `cruxible playbill ledger set-mirror URL`, or `playbill init
+  --mirror-url` -- and after every ledger write (a proposal submission and its
+  evaluation note, an approval note, an activation, a withdrawal) the daemon
+  pushes `refs/heads/main`, whichever of the three note refs exist, one branch
+  per OPEN proposal, and the settled archive. `main` is pushed without force,
+  because accepted history only extends and a rejected fast-forward means the
+  remote holds something this ledger does not; the projections are forced and
+  pruned, so the mirror's branch list IS the open inventory. Settlement now
+  MOVES a branch rather than deleting it: every departing ref is archived to
+  `refs/settled/<proposal-digest>` in the same transaction, on both sides, so a
+  link to a settled candidate still resolves instead of pointing at an
+  unreachable commit. A withdrawn proposal leaves that projection too, which it
+  always should have -- the projection's own contract is "exactly the open
+  proposal trees", and a withdrawal is the actor saying this tree will never
+  settle. The publication is never a condition of the write that preceded it: a
+  failed push is the new `ledger_mirror_behind` WARNING row in `playbill next`,
+  carrying the URL and Git's own reason, because the ledger on disk is the
+  record and the remote is a copy. The URL never carries a credential -- a
+  userinfo URL, plain `http://`, `ext::` and a leading dash are all refused,
+  since `ext::` hands Git a shell command to run -- and the daemon reads its
+  own token from `CRUXIBLE_PLAYBILL_MIRROR_TOKEN` and passes it through Git's
+  environment-config protocol, so it never enters an argument vector, a config
+  file or an error message. `cruxible playbill ledger clone-url` prints what to
+  clone, refusing typed when there is nothing to print, and the same URL rides
+  `orient --json` as `orientation.mirror_url` so an agent that has just oriented
+  needs no second round trip.
+
+- **A change set can say why it exists, and the commit says it.**
+  `pb.changes(rationale=...)` took a sentence and hashed it: the prose was
+  folded into the SDK program digest and discarded, so the daemon could prove an
+  author had written something and could never read it, and the candidate commit
+  fell back to a mechanical subject naming what changed -- the one thing the
+  member roll underneath already said. The rationale now travels as an optional
+  field on the change-set payload (the SDK and the tagless CLI/MCP input alike,
+  because "say why" may not be an SDK-only capability) and on the proposal
+  admission request. The candidate commit's subject becomes the author's first
+  line, truncated at 72 columns with the untruncated text in the body, and the
+  roll stays underneath; a submission carrying none keeps the subject it always
+  had. It is persisted on the admission record rather than merely passed
+  through, because the advisory review branch rebuilds its message from stored
+  evidence alone and prose that lived only on the request would have made the
+  two lanes disagree. Two identity rulings go with it: the set-level rationale
+  is outside the authoring payload digest, because a set's identity is a
+  property of its members alone and describing a set is not a different set (a
+  Claim's own rationale is untouched -- that one is part of what the author
+  asserted and travels into the capture as evidence); and it is not a field of
+  the proposal-id preimage, though it still reaches that id through the
+  candidate commit OID, because the message is part of the commit object. Old
+  records re-render byte-identically, so nothing already on disk becomes
+  unreadable. Nothing parses a commit message; the rationale travels as a wire
+  field precisely so nothing ever has to.
+
 - **Review is Git, because the ledger is Git.** A reviewer holding the ledger
   could see a change set's bytes but not what the daemon made of them, and the
   commit that carried it said only "Record Playbill proposal". Three things

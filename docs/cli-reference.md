@@ -397,6 +397,23 @@ nothing else. A settled proposal — activated, withdrawn, or stale — loses it
 branch and keeps its commit under `refs/settled/<proposal-digest>`, on the
 mirror and locally, so a link to a settled candidate still resolves.
 
+**The mirror branch is named by the PROPOSAL DIGEST, not by actor and name.**
+Two ref namespaces exist and they are keyed differently on purpose. The
+daemon's own transport ref is `refs/proposals/<actor>/<name>` — an actor writes
+to a ref they own, and resubmitting extends that ref's lineage. The branch a
+reviewer sees, locally as `playbill/proposals/<proposal-digest>` and on the
+mirror as `refs/heads/proposals/<proposal-digest>`, is the projection of ONE
+evaluated candidate, which is what a digest names and what a name does not: the
+same `<actor>/<name>` ref carries a different candidate after every
+resubmission. So `git diff playbill/accepted...playbill/proposals/<proposal-id>`
+takes the digest that `proposal list` and `proposal review` print.
+
+Re-keying that branch to `<actor>/<name>` is a deprecate-then-remove candidate,
+not a rename: `review open` resolves those ref names and the workspace
+advertisement fetches that refspec, so both are shipped surfaces. It would also
+have to answer what a resubmitted proposal's branch means, which the digest
+answers by construction. Nothing schedules it today.
+
 `main` is pushed without force; everything else is forced and pruned. Accepted
 history only extends, so a rejected fast-forward on `main` means the remote
 holds something this ledger does not, and that is reported rather than
@@ -1187,6 +1204,10 @@ with it.
 `proposal review` prints that pointer and those ref names; `--json` remains the
 structured read. `proposal approve` still renders the whole candidate before
 asking for a signature, because that rendering is what the signature covers.
+
+A reviewer without a workspace attachment clones the ledger mirror instead and
+runs the same diff against `origin/main`; see [playbill
+ledger](#playbill-ledger) for what the mirror carries and how to get its URL.
 
 `playbill review open` and `playbill review close`, which materialized a
 detached, gitignored worktree at `.playbill/review/<proposal-digest>/`, are
