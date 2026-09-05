@@ -24422,6 +24422,19 @@
             "title": "Semantic Result Digest"
           }
         },
+        "source_observations": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "source_observations",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/ProcedureSourceObservationV1"
+            },
+            "title": "Source Observations",
+            "type": "array"
+          }
+        },
         "status": {
           "has_default": false,
           "has_default_factory": false,
@@ -24885,6 +24898,8 @@
                   "provider_explicit_implementation_required",
                   "provider_replay_receipt_required",
                   "exhaust_binding_carrier_required",
+                  "source_acquisition_policy_required",
+                  "source_acquisition_refused",
                   "evaluation_instant_skewed",
                   "line_identity_mismatch",
                   "line_not_accepted",
@@ -25480,6 +25495,7 @@
                   "terminal_rung_capped_by_calibration",
                   "provider_acquisition_plan_required",
                   "provider_acquisition_plan_mismatch",
+                  "workspace_file_read_refused",
                   "provider_effect_declaration_mismatch",
                   "classifier_not_installed",
                   "classifier_digest_mismatch",
@@ -27533,6 +27549,98 @@
             "title": "ProcedureSourceCaptureAssociationV1",
             "type": "object"
           },
+          "ProcedureSourceObservationV1": {
+            "additionalProperties": false,
+            "description": "What one admitted Source occurrence really observed, per run.\n\nAdditive and optional: a run with no Source occurrence carries none. The\nread receipt is the daemon's attestation of the exact bytes it read; the\ncapture digest names the Capture those bytes became. Full lineage from a\nClaim back to this run is a later contract, not this field.",
+            "properties": {
+              "capture_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Capture Digest"
+              },
+              "input_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Input Name"
+              },
+              "invocation_receipt_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Invocation Receipt Digest"
+              },
+              "node_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Node Id"
+              },
+              "occurrence_path": {
+                "title": "Occurrence Path",
+                "type": "string"
+              },
+              "source_read_receipt": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/SourceReadReceiptV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "source_read_receipt_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Read Receipt Digest"
+              },
+              "tag": {
+                "const": "playbill-procedure-source-observation-v1",
+                "default": "playbill-procedure-source-observation-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "occurrence_path"
+            ],
+            "title": "ProcedureSourceObservationV1",
+            "type": "object"
+          },
           "ProviderBucketClassificationPlanV1": {
             "additionalProperties": false,
             "description": "Accepted, measured-bucket-free classifier plan for one occurrence.",
@@ -27600,6 +27708,104 @@
               "operation"
             ],
             "title": "RepairOperationV1",
+            "type": "object"
+          },
+          "SourceReadReceiptV1": {
+            "additionalProperties": false,
+            "description": "Daemon receipt independently attesting one bounded authorized file read.",
+            "properties": {
+              "admission_binding_digest": {
+                "title": "Admission Binding Digest",
+                "type": "string"
+              },
+              "byte_length": {
+                "minimum": 0,
+                "title": "Byte Length",
+                "type": "integer"
+              },
+              "bytes_digest": {
+                "title": "Bytes Digest",
+                "type": "string"
+              },
+              "derived_request_digest": {
+                "title": "Derived Request Digest",
+                "type": "string"
+              },
+              "logical_source": {
+                "title": "Logical Source",
+                "type": "string"
+              },
+              "occurrence_path": {
+                "title": "Occurrence Path",
+                "type": "string"
+              },
+              "policy_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "provider_input_digest": {
+                "title": "Provider Input Digest",
+                "type": "string"
+              },
+              "read_at": {
+                "description": "Reads EVALUATION INSTANT.",
+                "format": "date-time",
+                "title": "Read At",
+                "type": "string"
+              },
+              "relative_path": {
+                "description": "The REAL on-disk component names the daemon read, kernel-confirmed.",
+                "title": "Relative Path",
+                "type": "string"
+              },
+              "requested_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The spelling the derived Source request asked for, when the daemon recorded one. Absent on receipts written before the real-name law; never a lookup key.",
+                "title": "Requested Path"
+              },
+              "resolved_max_bytes": {
+                "minimum": 1,
+                "title": "Resolved Max Bytes",
+                "type": "integer"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-source-read-receipt-v1",
+                "default": "playbill-source-read-receipt-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "workspace_binding_digest": {
+                "title": "Workspace Binding Digest",
+                "type": "string"
+              }
+            },
+            "required": [
+              "run_id",
+              "admission_binding_digest",
+              "occurrence_path",
+              "logical_source",
+              "workspace_binding_digest",
+              "relative_path",
+              "bytes_digest",
+              "byte_length",
+              "policy_coordinate",
+              "resolved_max_bytes",
+              "derived_request_digest",
+              "provider_input_digest",
+              "read_at"
+            ],
+            "title": "SourceReadReceiptV1",
             "type": "object"
           }
         },
@@ -27737,6 +27943,13 @@
             ],
             "default": null,
             "title": "Semantic Result Digest"
+          },
+          "source_observations": {
+            "items": {
+              "$ref": "#/$defs/ProcedureSourceObservationV1"
+            },
+            "title": "Source Observations",
+            "type": "array"
           },
           "status": {
             "enum": [
@@ -37527,6 +37740,8 @@
                   "provider_explicit_implementation_required",
                   "provider_replay_receipt_required",
                   "exhaust_binding_carrier_required",
+                  "source_acquisition_policy_required",
+                  "source_acquisition_refused",
                   "evaluation_instant_skewed",
                   "line_identity_mismatch",
                   "line_not_accepted",
@@ -38122,6 +38337,7 @@
                   "terminal_rung_capped_by_calibration",
                   "provider_acquisition_plan_required",
                   "provider_acquisition_plan_mismatch",
+                  "workspace_file_read_refused",
                   "provider_effect_declaration_mismatch",
                   "classifier_not_installed",
                   "classifier_digest_mismatch",
@@ -39648,6 +39864,8 @@
                   "provider_explicit_implementation_required",
                   "provider_replay_receipt_required",
                   "exhaust_binding_carrier_required",
+                  "source_acquisition_policy_required",
+                  "source_acquisition_refused",
                   "evaluation_instant_skewed",
                   "line_identity_mismatch",
                   "line_not_accepted",
@@ -40243,6 +40461,7 @@
                   "terminal_rung_capped_by_calibration",
                   "provider_acquisition_plan_required",
                   "provider_acquisition_plan_mismatch",
+                  "workspace_file_read_refused",
                   "provider_effect_declaration_mismatch",
                   "classifier_not_installed",
                   "classifier_digest_mismatch",
@@ -42106,6 +42325,8 @@
                   "provider_explicit_implementation_required",
                   "provider_replay_receipt_required",
                   "exhaust_binding_carrier_required",
+                  "source_acquisition_policy_required",
+                  "source_acquisition_refused",
                   "evaluation_instant_skewed",
                   "line_identity_mismatch",
                   "line_not_accepted",
@@ -42701,6 +42922,7 @@
                   "terminal_rung_capped_by_calibration",
                   "provider_acquisition_plan_required",
                   "provider_acquisition_plan_mismatch",
+                  "workspace_file_read_refused",
                   "provider_effect_declaration_mismatch",
                   "classifier_not_installed",
                   "classifier_digest_mismatch",
@@ -44668,6 +44890,8 @@
                   "provider_explicit_implementation_required",
                   "provider_replay_receipt_required",
                   "exhaust_binding_carrier_required",
+                  "source_acquisition_policy_required",
+                  "source_acquisition_refused",
                   "evaluation_instant_skewed",
                   "line_identity_mismatch",
                   "line_not_accepted",
@@ -45263,6 +45487,7 @@
                   "terminal_rung_capped_by_calibration",
                   "provider_acquisition_plan_required",
                   "provider_acquisition_plan_mismatch",
+                  "workspace_file_read_refused",
                   "provider_effect_declaration_mismatch",
                   "classifier_not_installed",
                   "classifier_digest_mismatch",
@@ -46359,6 +46584,384 @@
         "taint_labels",
         "terminal",
         "validated_pins"
+      ]
+    },
+    "ProcedureSourceObservationV1": {
+      "fields": {
+        "capture_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "capture_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Capture Digest"
+          }
+        },
+        "input_name": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "input_name",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Input Name"
+          }
+        },
+        "invocation_receipt_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "invocation_receipt_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Invocation Receipt Digest"
+          }
+        },
+        "node_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "node_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Node Id"
+          }
+        },
+        "occurrence_path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "occurrence_path",
+          "required": true,
+          "schema": {
+            "title": "Occurrence Path",
+            "type": "string"
+          }
+        },
+        "source_read_receipt": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "source_read_receipt",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SourceReadReceiptV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "source_read_receipt_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "source_read_receipt_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Read Receipt Digest"
+          }
+        },
+        "tag": {
+          "default": "playbill-procedure-source-observation-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-procedure-source-observation-v1",
+            "default": "playbill-procedure-source-observation-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "SourceReadReceiptV1": {
+            "additionalProperties": false,
+            "description": "Daemon receipt independently attesting one bounded authorized file read.",
+            "properties": {
+              "admission_binding_digest": {
+                "title": "Admission Binding Digest",
+                "type": "string"
+              },
+              "byte_length": {
+                "minimum": 0,
+                "title": "Byte Length",
+                "type": "integer"
+              },
+              "bytes_digest": {
+                "title": "Bytes Digest",
+                "type": "string"
+              },
+              "derived_request_digest": {
+                "title": "Derived Request Digest",
+                "type": "string"
+              },
+              "logical_source": {
+                "title": "Logical Source",
+                "type": "string"
+              },
+              "occurrence_path": {
+                "title": "Occurrence Path",
+                "type": "string"
+              },
+              "policy_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "provider_input_digest": {
+                "title": "Provider Input Digest",
+                "type": "string"
+              },
+              "read_at": {
+                "description": "Reads EVALUATION INSTANT.",
+                "format": "date-time",
+                "title": "Read At",
+                "type": "string"
+              },
+              "relative_path": {
+                "description": "The REAL on-disk component names the daemon read, kernel-confirmed.",
+                "title": "Relative Path",
+                "type": "string"
+              },
+              "requested_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The spelling the derived Source request asked for, when the daemon recorded one. Absent on receipts written before the real-name law; never a lookup key.",
+                "title": "Requested Path"
+              },
+              "resolved_max_bytes": {
+                "minimum": 1,
+                "title": "Resolved Max Bytes",
+                "type": "integer"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-source-read-receipt-v1",
+                "default": "playbill-source-read-receipt-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "workspace_binding_digest": {
+                "title": "Workspace Binding Digest",
+                "type": "string"
+              }
+            },
+            "required": [
+              "run_id",
+              "admission_binding_digest",
+              "occurrence_path",
+              "logical_source",
+              "workspace_binding_digest",
+              "relative_path",
+              "bytes_digest",
+              "byte_length",
+              "policy_coordinate",
+              "resolved_max_bytes",
+              "derived_request_digest",
+              "provider_input_digest",
+              "read_at"
+            ],
+            "title": "SourceReadReceiptV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "What one admitted Source occurrence really observed, per run.\n\nAdditive and optional: a run with no Source occurrence carries none. The\nread receipt is the daemon's attestation of the exact bytes it read; the\ncapture digest names the Capture those bytes became. Full lineage from a\nClaim back to this run is a later contract, not this field.",
+        "properties": {
+          "capture_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Capture Digest"
+          },
+          "input_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Input Name"
+          },
+          "invocation_receipt_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Invocation Receipt Digest"
+          },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Node Id"
+          },
+          "occurrence_path": {
+            "title": "Occurrence Path",
+            "type": "string"
+          },
+          "source_read_receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SourceReadReceiptV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "source_read_receipt_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Read Receipt Digest"
+          },
+          "tag": {
+            "const": "playbill-procedure-source-observation-v1",
+            "default": "playbill-procedure-source-observation-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_path"
+        ],
+        "title": "ProcedureSourceObservationV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "occurrence_path"
       ]
     },
     "ProviderLaneStatusV1": {
