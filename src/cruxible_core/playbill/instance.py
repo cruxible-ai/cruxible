@@ -29,6 +29,7 @@ from cruxible_client.contracts.errors import (
     PlaybillInstanceDecommissioned,
     PlaybillKeyError,
 )
+from cruxible_client.contracts.ledger_mirror import validate_mirror_url
 from cruxible_client.contracts.temporal import format_datetime, utc_now
 from cruxible_client.contracts.types import (
     GenesisCoordinate,
@@ -73,6 +74,12 @@ from cruxible_core.playbill.keys import (
     generate_daemon_key,
     public_key_hex_from_private_file,
     raw_public_key_hex_from_openssh,
+)
+from cruxible_core.playbill.ledger_mirror import (
+    LedgerMirrorStateV1,
+    mirror_credential_environment,
+    read_mirror_state,
+    write_mirror_state,
 )
 from cruxible_core.playbill.memo import memo_get, memo_put
 from cruxible_core.playbill.producer_receipts import local_producer_receipt_resolver
@@ -616,20 +623,40 @@ class PlaybillInstance:
             decommissioned_at=terminal.decommissioned_at,
         )
 
-    def _persisted_decommission(self) -> PlaybillDecommissionV1 | None:
-        """Read the terminal record from disk rather than from this handle."""
+    def _persisted_descriptor(self) -> PlaybillDescriptor:
+        """Read the descriptor from disk rather than from this handle.
+
+        Two handles can be open over one directory, and the two operational
+        fields a descriptor carries -- the terminal decommission record and the
+        mirror URL -- are written by different verbs. Merging an update into
+        THIS handle's in-memory copy would silently drop whatever the other
+        handle wrote, so every write starts from the bytes on disk.
+        """
 
         try:
             payload = json.loads((self.root / DESCRIPTOR_FILE).read_bytes())
         except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise PlaybillFormatError("Playbill descriptor is missing or malformed") from exc
-        record = payload.get("decommissioned") if isinstance(payload, dict) else None
-        if record is None:
-            return None
         try:
-            return PlaybillDecommissionV1.model_validate(record)
+            return PlaybillDescriptor.model_validate(payload)
         except ValidationError as exc:
             raise PlaybillFormatError("Playbill descriptor failed strict validation") from exc
+
+    def _rewrite_descriptor(self, **updates: object) -> PlaybillDescriptor:
+        """Persist one operational descriptor change over the bytes on disk."""
+
+        updated = self._persisted_descriptor().model_copy(update=updates)
+        _atomic_replace(
+            self.root / DESCRIPTOR_FILE,
+            canonical_bytes(updated.model_dump(mode="json")) + b"\n",
+        )
+        self.descriptor = updated
+        return updated
+
+    def _persisted_decommission(self) -> PlaybillDecommissionV1 | None:
+        """Read the terminal record from disk rather than from this handle."""
+
+        return self._persisted_descriptor().decommissioned
 
     def decommission(self, *, reason: str, decommissioned_by: str) -> PlaybillDecommissionV1:
         """Stamp the terminal lifecycle state on the descriptor, deleting nothing.
@@ -654,13 +681,77 @@ class PlaybillInstance:
             decommissioned_at=format_datetime(utc_now()) or "",
             decommissioned_by=decommissioned_by,
         )
-        updated = self.descriptor.model_copy(update={"decommissioned": record})
-        _atomic_replace(
-            self.root / DESCRIPTOR_FILE,
-            canonical_bytes(updated.model_dump(mode="json")) + b"\n",
-        )
-        self.descriptor = updated
+        self._rewrite_descriptor(decommissioned=record)
         return record
+
+    def ledger_mirror_url(self) -> str | None:
+        """Return where this ledger publishes itself, or None if it publishes nowhere."""
+
+        return self.descriptor.mirror_url
+
+    def set_ledger_mirror(self, url: str) -> LedgerMirrorStateV1 | None:
+        """Bind a remote and publish to it at once, so a bad one is found now.
+
+        Setting a mirror without pushing to it would leave the operator holding
+        a URL whose credential, reachability and permissions are all unverified
+        until the next governed write happens to exercise them. Publishing here
+        makes the answer immediate, and it is still only a publication: a push
+        that fails records the reason and leaves the mirror bound, because a
+        remote that is temporarily unreachable is not a wrong remote.
+        """
+
+        self.require_writable()
+        self._rewrite_descriptor(mirror_url=validate_mirror_url(url))
+        return self.publish_ledger_mirror()
+
+    def ledger_mirror_state(self) -> LedgerMirrorStateV1 | None:
+        """Return the last recorded publication attempt, if this instance made one."""
+
+        return read_mirror_state(self.root)
+
+    def publish_ledger_mirror(self) -> LedgerMirrorStateV1 | None:
+        """Push the ledger to its mirror, and never let that failure become a refusal.
+
+        Every exception is caught. The mirror is a copy of state that is already
+        durable on disk, so an operator's remote may not become a condition of
+        governance: whatever went wrong is recorded and reported by `playbill
+        next` as `ledger_mirror_behind`, and the write that called this has
+        already landed.
+
+        The open-proposal branches are reconciled here rather than left to
+        `advertise_workspace`, which does nothing on an instance with no
+        attached worktree. A mirror is exactly the case where there is no local
+        worktree to advertise into, so the projection has to be built on the
+        publication path or the remote would carry `main` and no proposals.
+        """
+
+        url = self.descriptor.mirror_url
+        if url is None:
+            return None
+        detail: str | None
+        published: str | None = None
+        try:
+            self._reconcile_proposal_review_refs()
+            detail = self._ledger.push_mirror(
+                url,
+                environment=mirror_credential_environment(url),
+            )
+            if detail is None:
+                published = self._ledger.read_main()
+        except Exception as exc:  # noqa: BLE001 - a publication never refuses a write
+            detail = f"{type(exc).__name__}: {exc}"[:500]
+        state = LedgerMirrorStateV1(
+            url=url,
+            status="current" if detail is None else "behind",
+            attempted_at=format_datetime(utc_now()) or "",
+            published_main_oid=published,
+            detail=detail,
+        )
+        try:
+            write_mirror_state(self.root, state)
+        except OSError:  # pragma: no cover - a full or read-only state root
+            pass
+        return state
 
     def store_document_body(self, content: bytes) -> CasObjectMetadata:
         """Persist inert bytes without proposing or changing accepted state."""
@@ -689,6 +780,7 @@ class PlaybillInstance:
             workspace_advertiser=self.advertise_workspace,
             receive_limits=self._receive_limits,
             require_writable=self.require_writable,
+            ledger_publisher=self.publish_ledger_mirror,
         )
 
     def bind_receive_limits(self, limits: ProposalReceiveLimits) -> None:
@@ -742,6 +834,12 @@ class PlaybillInstance:
                 candidate_digest is None
                 or candidate_digest in accepted_candidates
                 or evaluation.evaluated_tree_oid is None
+                # A withdrawal is a settlement: the actor has said this tree will
+                # never activate, and every settlement door already refuses it.
+                # It kept its advisory branch only because this projection was
+                # written before withdrawal existed, which left the branch list
+                # claiming open work that no longer was.
+                or evidence.read_withdrawal(admission.proposal_id) is not None
             ):
                 continue
             candidate = evidence.read_candidate(candidate_digest)

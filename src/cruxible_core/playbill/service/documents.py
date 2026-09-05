@@ -354,6 +354,7 @@ def service_submit_playbill_approval(
         proposal.admission.candidate_commit_oid,
         evidence.approval_note(candidate.candidate_digest),
     )
+    instance.publish_ledger_mirror()
     return _approval_receipt(proposal_id, candidate, verified)
 
 
@@ -472,6 +473,10 @@ def service_activate_playbill_proposal(
     reset_claim_resolution_memo()
     instance.refresh()
     advertisement = instance.advertise_workspace()
+    # Main moved and the settled candidate's branch has just been archived, so
+    # the mirror is republished last: a reviewer following the old branch finds
+    # it under `refs/settled/` rather than finding nothing.
+    instance.publish_ledger_mirror()
     return PlaybillActivationReceipt(
         proposal_id=proposal_id,
         activated_by=activated_by,

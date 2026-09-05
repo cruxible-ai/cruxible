@@ -26,6 +26,20 @@ from cruxible_core.playbill.keys import raw_public_key_hex_from_openssh
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _PROPOSAL_REF_RE = re.compile(r"^refs/proposals/[a-z][a-z0-9_.-]{0,127}/[a-z][a-z0-9_.-]{0,127}$")
 _PROPOSAL_REVIEW_REF_RE = re.compile(r"^refs/heads/proposals/[0-9a-f]{64}$")
+_SETTLED_REF_PREFIX: Final = "refs/settled/"
+
+# What a mirror carries, and in which direction each ref is allowed to move.
+# `main` is pushed WITHOUT force: accepted history only ever extends, so a
+# rejected fast-forward means the remote holds something this ledger does not,
+# and silently overwriting it would erase the evidence of that. Everything else
+# is a projection this daemon rebuilds -- a note restated by a second approver,
+# a review branch recomputed on reconcile -- so each is forced onto the mirror
+# and pruned when it stops existing here.
+_MIRROR_MAIN_REFSPEC: Final = "refs/heads/main:refs/heads/main"
+_MIRROR_WILDCARD_REFSPECS: Final = (
+    "+refs/heads/proposals/*:refs/heads/proposals/*",
+    "+refs/settled/*:refs/settled/*",
+)
 
 # Every Playbill note ref, in one table. The generation descriptor was the
 # first; the proposal evaluation and the approval list are projections of the
@@ -46,6 +60,18 @@ _COMMAND_ENVIRONMENT = frozenset(
         "GIT_COMMITTER_EMAIL",
         "GIT_AUTHOR_DATE",
         "GIT_COMMITTER_DATE",
+        # Publication only. A push is the one ledger operation that talks to a
+        # host outside this daemon, so it is also the only one that needs a
+        # credential: `HOME`/`SSH_AUTH_SOCK`/`GIT_SSH_COMMAND` let the daemon's
+        # own SSH identity answer, and the three `GIT_CONFIG_*` names are Git's
+        # environment-config protocol, which carries an HTTPS token without ever
+        # putting it in an argument vector every process on the host can read.
+        "HOME",
+        "SSH_AUTH_SOCK",
+        "GIT_SSH_COMMAND",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_KEY_0",
+        "GIT_CONFIG_VALUE_0",
     }
 )
 
@@ -431,7 +457,20 @@ class GitLedger:
         return oid
 
     def replace_proposal_review_refs(self, refs: Mapping[str, str]) -> None:
-        """Atomically replace the standard-Git projection of open proposal refs."""
+        """Atomically replace the open-proposal branches, archiving what settled.
+
+        A branch leaves this projection for exactly one reason: the proposal it
+        showed is no longer open -- activated, withdrawn, or gone stale against a
+        moved head. Deleting it outright was fine while the only reader was a
+        local worktree that could still resolve the commit by OID; on a mirror it
+        is not, because the commit becomes unreachable there and a reviewer
+        following a link to a settled proposal gets nothing. So the departing ref
+        is MOVED, in the same transaction that removes it, to
+        `refs/settled/<digest>`: the branch list stays the open inventory, and
+        every settled candidate stays reachable under a namespace that says what
+        it is. Re-settlement restates the same archive rather than failing, so
+        the reconcile is idempotent.
+        """
 
         normalized: dict[str, str] = {}
         for proposal_id, oid in refs.items():
@@ -440,22 +479,94 @@ class GitLedger:
                 raise PlaybillGitError("proposal review ref name is malformed")
             self._validate_oid(oid)
             normalized[ref] = oid
-        current = {
-            line
-            for line in self._git(["for-each-ref", "--format=%(refname)", "refs/heads/proposals"])
+        current: dict[str, str] = {}
+        for line in (
+            self._git(["for-each-ref", "--format=%(objectname) %(refname)", "refs/heads/proposals"])
             .decode("utf-8")
             .splitlines()
-            if line
-        }
+        ):
+            if not line:
+                continue
+            oid, _, ref = line.partition(" ")
+            self._validate_oid(oid)
+            current[ref] = oid
+        departing = sorted(set(current) - set(normalized), key=str.encode)
         commands = ["start"]
         commands.extend(
             f"update {ref} {normalized[ref]}" for ref in sorted(normalized, key=str.encode)
         )
-        commands.extend(
-            f"delete {ref}" for ref in sorted(current - set(normalized), key=str.encode)
-        )
+        for ref in departing:
+            settled = _SETTLED_REF_PREFIX + ref.removeprefix("refs/heads/proposals/")
+            commands.append(f"update {settled} {current[ref]}")
+            commands.append(f"delete {ref}")
         commands.extend(("prepare", "commit"))
         self._git(["update-ref", "--stdin"], input_bytes=("\n".join(commands) + "\n").encode())
+
+    def settled_proposal_refs(self) -> tuple[str, ...]:
+        """List the archived settled-proposal refs, for inspection and tests."""
+
+        return tuple(
+            line
+            for line in self._git(
+                ["for-each-ref", "--format=%(refname)", _SETTLED_REF_PREFIX.rstrip("/")]
+            )
+            .decode("utf-8")
+            .splitlines()
+            if line
+        )
+
+    def push_mirror(self, url: str, *, environment: Mapping[str, str] | None = None) -> str | None:
+        """Publish this ledger to its remote; return None, or why it did not.
+
+        Deliberately NOT a raising operation. The mirror is a copy of state that
+        is already accepted and already durable on disk, so a network that is
+        down, a credential that expired, or a remote that was deleted must not
+        turn into a refusal of the write that preceded the push -- that would
+        make an operator's remote a condition of governance. The caller records
+        the returned detail and `playbill next` reports it.
+
+        Git's stderr is passed back, truncated, because an operator repairing a
+        mirror needs to know WHICH failure it was; the credential cannot appear
+        in it, since it never enters the command line and Git does not echo the
+        header it sends.
+        """
+
+        refspecs = [_MIRROR_MAIN_REFSPEC]
+        refspecs.extend(
+            f"+{ref}:{ref}"
+            for ref in sorted(NOTE_REFS.values(), key=str.encode)
+            if self._ref_exists(ref)
+        )
+        refspecs.extend(_MIRROR_WILDCARD_REFSPECS)
+        result = _command(
+            [
+                "git",
+                f"--git-dir={self.path}",
+                "push",
+                "--prune",
+                "--porcelain",
+                "--",
+                url,
+                *refspecs,
+            ],
+            environment=environment,
+            check=False,
+        )
+        if result.returncode == 0:
+            return None
+        detail = result.stderr.decode("utf-8", errors="replace").strip()
+        if not detail:
+            detail = f"git push exited {result.returncode}"
+        return detail[:500]
+
+    def _ref_exists(self, ref: str) -> bool:
+        return (
+            _command(
+                ["git", f"--git-dir={self.path}", "rev-parse", "--verify", "--quiet", ref],
+                check=False,
+            ).returncode
+            == 0
+        )
 
     def proposal_review_commit(
         self,

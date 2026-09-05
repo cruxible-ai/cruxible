@@ -389,6 +389,9 @@ def service_withdraw_playbill_proposal(
         withdrawn_at=withdrawn_at,
     )
     instance.proposal_evidence().write_withdrawal(record)
+    # A withdrawal settles the proposal, so the mirror loses its branch and
+    # gains the archived ref in the same publication.
+    instance.publish_ledger_mirror()
     return PlaybillProposalWithdrawResultV1(
         proposal_id=record.proposal_id,
         actor_id=record.actor_id,

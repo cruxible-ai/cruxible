@@ -3561,6 +3561,7 @@ class ProposalService:
         query_facts_provider: ClaimQueryFactsProvider | None = None,
         workspace_advertiser: Callable[[], PlaybillWorkspaceAdvertisement] | None = None,
         require_writable: Callable[[], None] | None = None,
+        ledger_publisher: Callable[[], object] | None = None,
     ) -> None:
         self.transport = transport
         self.accepted = accepted
@@ -3576,6 +3577,9 @@ class ProposalService:
         # its limits and verifiers), so the terminal state is checked where the
         # write happens, not where the service is constructed.
         self._require_writable = require_writable or (lambda: None)
+        # Publication, not persistence: called after the last ledger write of a
+        # submission, and by contract it never raises.
+        self._ledger_publisher = ledger_publisher or (lambda: None)
 
     def submit(
         self,
@@ -3744,6 +3748,10 @@ class ProposalService:
         )
         if self.transport.read_main() != current.git_oid:
             raise ProposalIntegrityError("proposal evaluation changed or raced accepted main")
+        # Every byte this submission writes is durable, and the integrity proof
+        # above has passed. Publishing here rather than earlier means the mirror
+        # is only ever asked to carry a proposal the daemon has already kept.
+        self._ledger_publisher()
         if self.workspace_advertiser is None:
             advertisement = NOT_ATTACHED_ADVERTISEMENT
         else:
