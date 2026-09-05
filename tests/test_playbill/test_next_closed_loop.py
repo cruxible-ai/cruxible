@@ -1150,7 +1150,7 @@ def _claim_dependency_stale(root: Path, monkeypatch: pytest.MonkeyPatch) -> None
             frozenset(),
         )
 
-    monkeypatch.setattr("cruxible_core.service.playbill_next.build_accepted_query_facts", facts)
+    monkeypatch.setattr("cruxible_core.service.playbill_next._AcceptedQueryFactsRead.build", facts)
     monkeypatch.setattr("cruxible_core.service.playbill_next._bounded_claim_lineages", lineages)
     row = _row(instance, "claim_dependency_stale", _request(instance))
     assert row.repair.operation == EXPECTED_OPERATIONS["claim_dependency_stale"]

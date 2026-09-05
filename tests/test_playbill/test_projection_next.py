@@ -59,7 +59,10 @@ from cruxible_core.service.playbill_next import (
     _procedure_projection_items,
     service_playbill_next,
 )
-from cruxible_core.service.playbill_query import build_accepted_query_facts
+from cruxible_core.service.playbill_query import (
+    _AcceptedQueryFactsRead,
+    build_accepted_query_facts,
+)
 from tests.test_playbill._candidate_support import submit_query_definition_candidate
 from tests.test_playbill._claim_authoring_support import (
     DirectClaimAuthoringV1,
@@ -785,20 +788,20 @@ def test_subject_gated_claim_backing_omits_its_marker_under_instance_access(
     accepted_world: PlaybillInstance,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original = build_accepted_query_facts
-
-    def without_visible_subjects(*args: object, **kwargs: object):  # type: ignore[no-untyped-def]
-        return original(*args, **kwargs).model_copy(update={"subjects": ()})  # type: ignore[arg-type]
-
-    monkeypatch.setattr(
-        "cruxible_core.service.playbill_next.build_accepted_query_facts",
-        without_visible_subjects,
-    )
     request = _request(
         accepted_world,
         backing=(_claim_backing(accepted_world),),
         dirty=True,
         permitted=("instance",),
+    )
+    original = _AcceptedQueryFactsRead.build
+
+    def without_visible_subjects(*args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        return original(*args, **kwargs).model_copy(update={"subjects": ()})  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_next._AcceptedQueryFactsRead.build",
+        without_visible_subjects,
     )
 
     assert _projection_rows(accepted_world, request) == ()

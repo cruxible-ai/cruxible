@@ -126,7 +126,10 @@ from cruxible_core.service.playbill_publications import (
     ProjectionBlockRegistration,
     registered_projection_blocks,
 )
-from cruxible_core.service.playbill_query import build_accepted_query_facts
+from cruxible_core.service.playbill_query import (
+    _AcceptedQueryFactsRead,
+    build_accepted_query_facts,
+)
 from cruxible_core.service.playbill_search import claim_resolution_statuses
 
 NEXT_ITEM_ID_DOMAIN = "playbill-next-item-v1"
@@ -990,13 +993,12 @@ def _claim_items(
     expiring_within: CanonicalDurationV1,
     door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...] = (),
     verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
+    claims: tuple[ClaimArtifactAny, ...] | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
-    listed = service_list_playbill_claims(instance, at=coordinate)
-    claims = tuple(
-        claim
-        for claim in (_claim_from_view(view) for view in listed.claims)
-        if claim.lifecycle.state == "live"
-    )
+    if claims is None:
+        listed = service_list_playbill_claims(instance, at=coordinate)
+        claims = tuple(_claim_from_view(view) for view in listed.claims)
+    claims = tuple(claim for claim in claims if claim.lifecycle.state == "live")
     groups: dict[bytes, list[ClaimArtifactAny]] = defaultdict(list)
     for claim in claims:
         groups[
@@ -1419,8 +1421,17 @@ def _citation_commitments(
     *,
     coordinate: PlaybillAcceptedCoordinate,
     evaluation_time: datetime,
+    claims: tuple[ClaimArtifactAny, ...] | None = None,
+    facts_reader: _AcceptedQueryFactsRead | None = None,
 ) -> dict[str, _CitationCommitment]:
-    listed = service_list_playbill_claims(instance, at=coordinate)
+    population = (
+        (
+            _claim_from_view(view)
+            for view in service_list_playbill_claims(instance, at=coordinate).claims
+        )
+        if claims is None
+        else iter(claims)
+    )
     internal_coordinate = instance.resolve_accepted_coordinate(
         git_oid=coordinate.git_oid,
         semantic_root=coordinate.semantic_root,
@@ -1434,7 +1445,11 @@ def _citation_commitments(
     target_index = next(
         index for index, generation in enumerate(history) if generation.oid == coordinate.git_oid
     )
-    facts = build_accepted_query_facts(instance, coordinate=internal_coordinate)
+    facts = (
+        build_accepted_query_facts(instance, coordinate=internal_coordinate)
+        if facts_reader is None
+        else facts_reader.build()
+    )
     subjects = {subject.path: subject for subject in facts.subjects}
     providers = {provider.identity.qualified: provider for provider in facts.providers}
     visible_claims = {
@@ -1450,8 +1465,7 @@ def _citation_commitments(
         is not None
     }
     try:
-        for view in listed.claims:
-            claim = _claim_from_view(view)
+        for claim in population:
             if claim.lifecycle.state != "live" or claim.identity.qualified not in visible_claims:
                 continue
             evidence = _claim_law_evidence(
@@ -2177,15 +2191,16 @@ def _claim_dependency_items(
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
     access_profile: CoverageAccessProfileV1,
+    facts_reader: _AcceptedQueryFactsRead | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Coalesce stale recorded backing-input edges through the existing impact walker."""
 
     if not access_profile.permits("instance"):
         return ()
-    facts = build_accepted_query_facts(
-        instance,
-        coordinate=coordinate,
-        include_retired=True,
+    facts = (
+        build_accepted_query_facts(instance, coordinate=coordinate, include_retired=True)
+        if facts_reader is None
+        else facts_reader.build(include_retired=True)
     )
     subjects = {subject.path: subject for subject in facts.subjects}
     providers = {provider.identity.qualified: provider for provider in facts.providers}
@@ -2543,6 +2558,8 @@ def _workspace_items(
     evaluation_time: datetime,
     access_profile: CoverageAccessProfileV1,
     observation: PlaybillNextWorkspaceObservationV1 | None,
+    claims: tuple[ClaimArtifactAny, ...] | None = None,
+    facts_reader: _AcceptedQueryFactsRead | None = None,
 ) -> tuple[tuple[NextDomain, ...], tuple[PlaybillNextItemV1, ...]]:
     if observation is None:
         return (), ()
@@ -2593,6 +2610,8 @@ def _workspace_items(
             instance,
             coordinate=coordinate,
             evaluation_time=evaluation_time,
+            claims=claims,
+            facts_reader=facts_reader,
         )
         for drift in observation.drift_observations:
             expected = commitments.get(drift.citation_id)
@@ -2618,6 +2637,8 @@ def _workspace_items(
             instance,
             coordinate=coordinate,
             evaluation_time=evaluation_time,
+            claims=claims,
+            facts_reader=facts_reader,
         )
         defective_scan_notes = {
             source.source_id: notes
@@ -2915,6 +2936,7 @@ def _projection_items(
     access_profile: CoverageAccessProfileV1,
     observation: PlaybillNextWorkspaceObservationV1 | None,
     verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
+    facts_reader: _AcceptedQueryFactsRead | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Evaluate locally declared blocks only after every backing is visible."""
 
@@ -2977,7 +2999,11 @@ def _projection_items(
     if not sources:
         return tuple(items)
 
-    facts = build_accepted_query_facts(instance, coordinate=coordinate)
+    facts = (
+        build_accepted_query_facts(instance, coordinate=coordinate)
+        if facts_reader is None
+        else facts_reader.build()
+    )
     subjects = {subject.path: subject for subject in facts.subjects}
     providers = {provider.identity.qualified: provider for provider in facts.providers}
     claims = {row.accepted.claim.identity.qualified: row for row in facts.claims}
@@ -3307,15 +3333,20 @@ def service_playbill_next(
     # memo could not serve a fold that never asked it. Asking it first shares
     # one answer with every fold in this request and with every later read of
     # the same state.
+    # These inputs belong to this evaluation only. A later request constructs a
+    # fresh reader so body availability and other mutable evidence are observed.
+    facts_reader = _AcceptedQueryFactsRead(instance, coordinate=coordinate)
+    parsed_claims: tuple[ClaimArtifactAny, ...] | None = None
     try:
+        parsed_claims = tuple(
+            _claim_from_view(view)
+            for view in service_list_playbill_claims(
+                instance, at=public_coordinate, include_retired=True
+            ).claims
+        )
         claim_resolution_statuses(
             instance,
-            claims=tuple(
-                _claim_from_view(view)
-                for view in service_list_playbill_claims(
-                    instance, at=public_coordinate, include_retired=True
-                ).claims
-            ),
+            claims=parsed_claims,
             at=public_coordinate,
             evaluation_time=request.evaluation_time,
             verdicts_by_identity=verdicts_by_identity,
@@ -3331,6 +3362,8 @@ def service_playbill_next(
         evaluation_time=request.evaluation_time,
         access_profile=request.access_profile,
         observation=request.workspace_observation,
+        claims=parsed_claims,
+        facts_reader=facts_reader,
     )
     observed = tuple(
         domain
@@ -3355,6 +3388,7 @@ def service_playbill_next(
                     expiring_within=request.expiring_within,
                     door_events=door_events,
                     verdicts_by_identity=verdicts_by_identity,
+                    claims=parsed_claims,
                 ),
                 *(
                     _claim_attestation_door_items(
@@ -3373,6 +3407,7 @@ def service_playbill_next(
                     access_profile=request.access_profile,
                     observation=request.workspace_observation,
                     verdicts_by_identity=verdicts_by_identity,
+                    facts_reader=facts_reader,
                 ),
                 *_procedure_projection_items(
                     instance,
@@ -3386,6 +3421,7 @@ def service_playbill_next(
                     coordinate=coordinate,
                     evaluation_time=request.evaluation_time,
                     access_profile=request.access_profile,
+                    facts_reader=facts_reader,
                 ),
                 *_document_items(
                     instance,
