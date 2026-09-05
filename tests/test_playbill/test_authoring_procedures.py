@@ -21,6 +21,13 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.documents import (
+    DocumentAuthority,
+    DocumentLifecycle,
+    DocumentShell,
+    render_document,
+)
+from cruxible_client.contracts.errors import ProjectionFormatError
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureOwnedContractV1,
@@ -51,6 +58,7 @@ from cruxible_client.contracts.query.definitions import (
 )
 from cruxible_client.contracts.query.grammar import QueryProjectionV1
 from cruxible_core.playbill.actor_context import GovernedActorContext
+from cruxible_core.playbill.authoring import lowering
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.authoring.preflight import compute_preflight
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
@@ -407,6 +415,114 @@ def _submit_approve_activate(
         activated_by="owner",
     )
     assert activated.status == "accepted"
+
+
+def _world_holding_a_document(
+    tmp_path: Path,
+) -> tuple[AuthoringIntentCoordinator, AuthenticatedActor]:
+    """One instance whose accepted tree governs a single Document."""
+
+    instance, owner = initialize_local(tmp_path)
+    body = instance.store_document_body(b"# Accepted design\n")
+    shell = DocumentShell(
+        identity="document:design",
+        document_kind="design",
+        title="Accepted design",
+        media_type="text/markdown",
+        body_digest=body.digest,
+        authority=DocumentAuthority(required_tier="graph_write"),
+        governance_scope=("project:playbill",),
+        lifecycle=DocumentLifecycle(revision=1),
+    )
+    _accept_tree(
+        instance,
+        owner,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            "documents/design.json": render_document(shell),
+        },
+        timestamp=TIMESTAMP,
+        proposal_name="seed-governed-document",
+    )
+    instance.refresh()
+    store = AuthoringIntentStore(
+        instance.root / instance.descriptor.storage.exhaust,
+        token_factory=lambda: "4" * 32,
+    )
+    return (
+        AuthoringIntentCoordinator(instance=instance, store=store),
+        AuthenticatedActor(actor_id="owner"),
+    )
+
+
+def _list_contract_payload() -> ProcedureAuthoringPayloadV2:
+    return ProcedureAuthoringPayloadV2(
+        definition=_carried_definition(),
+        activation_policy="snapshot",
+        owned_contracts=(
+            _carried_contract("empty-input", PropertySchema(type="json")),
+            _carried_contract(
+                "rows-output",
+                PropertySchema(type="list", item_fields={"id": PropertySchema(type="string")}),
+            ),
+        ),
+    )
+
+
+def test_a_procedure_can_be_authored_in_a_world_that_governs_a_document(
+    tmp_path: Path,
+) -> None:
+    """Procedure lowering reads the accepted tree, so it must read all of it.
+
+    Resolving a Procedure's references parses every accepted artifact, and a
+    Document is registered by its body's DIGEST alone -- parsing one asks the
+    managed CAS for that body's metadata. Lowering asked without the resolver,
+    so the parse refused on the first `documents/*.json` it met and every
+    Procedure payload died with an untyped fault: an instance governing a
+    single Document could not author a Procedure at all.
+    """
+
+    coordinator, actor = _world_holding_a_document(tmp_path)
+
+    compiled = coordinator.compile(
+        actor=actor,
+        payload=_list_contract_payload(),
+        canonical_timestamp="2026-08-21T12:02:00.000000Z",
+    )
+
+    assert compiled.verdict == "passed", [item.code for item in compiled.frontier.diagnostics]
+    assert compiled.frontier.diagnostics == ()
+
+
+def test_an_unreadable_accepted_tree_refuses_typed_rather_than_faulting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The author asked a question and is owed an answer with a repair.
+
+    A tree this instance cannot parse is the instance's fault, not the
+    payload's, but it reached the author as a bare internal error whose only
+    diagnosis was the daemon log.
+    """
+
+    coordinator, actor = _world_holding_a_document(tmp_path)
+
+    def unreadable(*_args: object, **_values: object) -> object:
+        raise ProjectionFormatError("Document body is unavailable during projection")
+
+    monkeypatch.setattr(lowering, "parse_projection_tree", unreadable)
+
+    compiled = coordinator.compile(
+        actor=actor,
+        payload=_list_contract_payload(),
+        canonical_timestamp="2026-08-21T12:03:00.000000Z",
+    )
+
+    assert compiled.verdict == "refused"
+    (diagnostic,) = compiled.frontier.diagnostics
+    assert diagnostic.code == "playbill.authoring.lowering_invalid"
+    assert diagnostic.offending_element == "definition"
+    assert diagnostic.repairs[0].kind == "restore_accepted_projection"
 
 
 def test_max_items_requires_a_referenced_list_contract(tmp_path: Path) -> None:

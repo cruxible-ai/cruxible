@@ -169,7 +169,10 @@ from cruxible_core.playbill.compiler import (
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.producer_receipts import local_producer_receipt_resolver
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
-from cruxible_core.playbill.projection_artifacts import parse_projection_tree
+from cruxible_core.playbill.projection_artifacts import (
+    ParsedProjectionTree,
+    parse_projection_tree,
+)
 
 
 @dataclass(eq=False)
@@ -1394,7 +1397,47 @@ def _resolve_authoring_references(
     return value
 
 
+def _parse_reference_tree(
+    instance: PlaybillInstance,
+    tree: dict[str, bytes],
+    *,
+    base: AcceptedProjectionCoordinate,
+) -> ParsedProjectionTree:
+    """Read the accepted tree a Procedure's references resolve against.
+
+    The body-metadata resolver is not optional here. A Document is registered
+    with its body's digest and nothing else, so parsing one asks the managed
+    CAS for that body's metadata; without the resolver every tree holding a
+    `documents/*.json` refuses outright, and a Procedure could not be authored
+    at all in a world that governs a single Document. Every other reader of the
+    accepted tree hands it over, and so does this one.
+    """
+
+    try:
+        return parse_projection_tree(
+            tree,
+            registry=projection_registry_for_compiler(base.compiler),
+            artifact_kinds=artifact_kinds_for_compiler(base.compiler),
+            artifact_codec=artifact_codec_for_compiler(base.compiler),
+            bodies=instance.body_store(),
+        )
+    except PlaybillError as exc:
+        # An accepted tree this instance cannot read is a fault of the
+        # instance, not of the payload -- but the author still asked a question
+        # and is owed a typed answer with a repair rather than a bare 500.
+        _refuse(
+            "playbill.authoring.lowering_invalid",
+            "definition",
+            f"The accepted artifacts this Procedure resolves against cannot be read: {exc}",
+            repair_kind="restore_accepted_projection",
+            repair_description=(
+                "Restore the instance's body store so the accepted tree parses, then compile again."
+            ),
+        )
+
+
 def _lower_procedure(
+    instance: PlaybillInstance,
     *,
     intent: AuthoringIntentV1,
     base: AcceptedProjectionCoordinate,
@@ -1404,11 +1447,10 @@ def _lower_procedure(
 ) -> LoweredAuthoring:
     payload = intent.payload
     assert isinstance(payload, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2)
-    parsed = parse_projection_tree(
+    parsed = _parse_reference_tree(
+        instance,
         base_tree if accepted_reference_tree is None else accepted_reference_tree,
-        registry=projection_registry_for_compiler(base.compiler),
-        artifact_kinds=artifact_kinds_for_compiler(base.compiler),
-        artifact_codec=artifact_codec_for_compiler(base.compiler),
+        base=base,
     )
     accepted: dict[str, tuple[str, str]] = {}
     duplicates: set[str] = set()
@@ -1420,12 +1462,7 @@ def _lower_procedure(
         accepted.pop(duplicate_identity, None)
     candidate_artifacts: dict[str, tuple[str, str]] = {}
     if candidate_identities:
-        candidate_parsed = parse_projection_tree(
-            base_tree,
-            registry=projection_registry_for_compiler(base.compiler),
-            artifact_kinds=artifact_kinds_for_compiler(base.compiler),
-            artifact_codec=artifact_codec_for_compiler(base.compiler),
-        )
+        candidate_parsed = _parse_reference_tree(instance, base_tree, base=base)
         for envelope in candidate_parsed.envelopes:
             if envelope.identity in candidate_identities:
                 candidate_artifacts[envelope.identity] = (
@@ -2067,6 +2104,7 @@ def _stage_change_set_member(
         return tree, resolved, extra, {}
     if isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
         lowered = _lower_procedure(
+            instance,
             intent=intent.model_copy(update={"payload": member}),
             base=base,
             base_tree=staged_tree,
@@ -2617,7 +2655,7 @@ def lower_authoring(
             base_tree=base_tree,
         )
     if isinstance(intent.payload, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
-        return _lower_procedure(intent=intent, base=base, base_tree=base_tree)
+        return _lower_procedure(instance, intent=intent, base=base, base_tree=base_tree)
     if isinstance(intent.payload, ProcedureMandateAuthoringPayloadV1):
         path, content, digest = _render_procedure_mandate_member(
             intent.payload,
