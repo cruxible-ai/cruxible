@@ -16,11 +16,13 @@ from pydantic import BaseModel, ConfigDict
 
 from cruxible_client.contracts.claim_attestations import VerifiedClaimAttestationV1
 from cruxible_client.contracts.claim_types import (
+    ClaimType,
     claim_type_path,
     parse_claim_type,
 )
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
+    ClaimArtifactAny,
     ClaimLawEvidenceAny,
     claim_artifact_digest,
     claim_statement_digest,
@@ -119,10 +121,11 @@ def _fact_row(
     readers: Mapping[str, ExternalSourceReaderProtocol],
     evidence: ClaimLawEvidenceAny,
     history: ClaimReadHistoryIndex,
+    claim: ClaimArtifactAny,
+    claim_types: dict[str, ClaimType],
 ) -> ClaimFactRowV1:
     """Assemble one Claim's verdict inputs exactly as the verdict service does."""
 
-    claim = parse_claim(tree[path], path=path)
     accepted = AcceptedClaim(
         path=path,
         claim=claim,
@@ -135,7 +138,10 @@ def _fact_row(
     type_content = tree.get(type_path)
     if type_content is None:
         raise ClaimNotFoundError(type_path)
-    claim_type = parse_claim_type(type_content, path=type_path)
+    claim_type = claim_types.get(type_path)
+    if claim_type is None:
+        claim_type = parse_claim_type(type_content, path=type_path)
+        claim_types[type_path] = claim_type
     rule = _reproduced_claim_adjudication_rule(
         claim_type=claim_type,
         evidence_digest=evidence.adjudication_rule_digest,
@@ -185,6 +191,99 @@ def _fact_row(
     )
 
 
+class _AcceptedQueryFactsRead:
+    """Private facts shared by folds within one request at one coordinate.
+
+    The tree and reader mapping are fixed for this read. Capture availability
+    is sampled when a row is first assembled; no row survives into a later
+    request. Consumers must not mutate the shared facts.
+    """
+
+    def __init__(
+        self,
+        instance: ClaimReadSourceProtocol,
+        *,
+        coordinate: AcceptedProjectionCoordinate,
+        external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
+    ) -> None:
+        self._instance = instance
+        self._coordinate = coordinate
+        self._readers = dict(external_readers or {})
+        self._tree: dict[str, bytes] | None = None
+        self._history: ClaimReadHistoryIndex | None = None
+        self._claims: dict[str, ClaimArtifactAny] = {}
+        self._claim_types: dict[str, ClaimType] = {}
+        self._rows: dict[str, ClaimFactRowV1] = {}
+        self._results: dict[bool, ClaimQueryFactsV1] = {}
+
+    def build(self, *, include_retired: bool = False) -> ClaimQueryFactsV1:
+        previous = self._results.get(include_retired)
+        if previous is not None:
+            return previous
+        if self._tree is None:
+            self._tree = self._instance.tree_at(self._coordinate.git_oid)
+        tree = self._tree
+        if self._history is None:
+            self._history = _claim_read_history_index(self._instance, coordinate=self._coordinate)
+        history = self._history
+
+        def evidence_for(path: str) -> ClaimLawEvidenceAny:
+            evidence = history.law_evidence.get(path)
+            if evidence is None:
+                raise ProposalIntegrityError(
+                    "accepted Claim has no reproducible Claim law evidence"
+                )
+            return evidence
+
+        rows: list[ClaimFactRowV1] = []
+        for path in sorted(tree, key=lambda item: item.encode("utf-8")):
+            if not path.startswith(CLAIM_PATH_PREFIX):
+                continue
+            # The full-history path historically looked up evidence before
+            # parsing the Claim; live-only reads parsed lifecycle first and
+            # never demanded evidence for retired heads. Keep both orders.
+            evidence = evidence_for(path) if include_retired else None
+            claim = self._claims.get(path)
+            if claim is None:
+                claim = parse_claim(tree[path], path=path)
+                self._claims[path] = claim
+            if not include_retired and claim.lifecycle.state != "live":
+                continue
+            row = self._rows.get(path)
+            if row is None:
+                row = _fact_row(
+                    self._instance,
+                    path=path,
+                    tree=tree,
+                    coordinate=self._coordinate,
+                    readers=self._readers,
+                    evidence=evidence if evidence is not None else evidence_for(path),
+                    history=history,
+                    claim=claim,
+                    claim_types=self._claim_types,
+                )
+                self._rows[path] = row
+            rows.append(row)
+        assembled = next(iter(self._results.values()), None)
+        if assembled is None:
+            providers = accepted_claim_providers(tree)
+            subjects = _accepted_subjects(tree)
+            ordered_providers = tuple(
+                providers[key] for key in sorted(providers, key=lambda item: item.encode("utf-8"))
+            )
+        else:
+            subjects = assembled.subjects
+            ordered_providers = assembled.providers
+        result = ClaimQueryFactsV1(
+            coordinate=self._coordinate,
+            subjects=subjects,
+            claims=tuple(rows),
+            providers=ordered_providers,
+        )
+        self._results[include_retired] = result
+        return result
+
+
 def build_accepted_query_facts(
     instance: ClaimReadSourceProtocol,
     *,
@@ -200,39 +299,9 @@ def build_accepted_query_facts(
     dependents to live rows.
     """
 
-    tree = instance.tree_at(coordinate.git_oid)
-    readers = external_readers or {}
-    history = _claim_read_history_index(instance, coordinate=coordinate)
-
-    def evidence_for(path: str) -> ClaimLawEvidenceAny:
-        evidence = history.law_evidence.get(path)
-        if evidence is None:
-            raise ProposalIntegrityError("accepted Claim has no reproducible Claim law evidence")
-        return evidence
-
-    claims = tuple(
-        _fact_row(
-            instance,
-            path=path,
-            tree=tree,
-            coordinate=coordinate,
-            readers=readers,
-            evidence=evidence_for(path),
-            history=history,
-        )
-        for path in sorted(tree, key=lambda item: item.encode("utf-8"))
-        if path.startswith(CLAIM_PATH_PREFIX)
-        and (include_retired or parse_claim(tree[path], path=path).lifecycle.state == "live")
-    )
-    providers = accepted_claim_providers(tree)
-    return ClaimQueryFactsV1(
-        coordinate=coordinate,
-        subjects=_accepted_subjects(tree),
-        claims=claims,
-        providers=tuple(
-            providers[key] for key in sorted(providers, key=lambda item: item.encode("utf-8"))
-        ),
-    )
+    return _AcceptedQueryFactsRead(
+        instance, coordinate=coordinate, external_readers=external_readers
+    ).build(include_retired=include_retired)
 
 
 class PlaybillQueryReceiptJournal:
