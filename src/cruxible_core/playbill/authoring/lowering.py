@@ -124,9 +124,14 @@ from cruxible_client.contracts.procedures.artifacts import (
 )
 from cruxible_client.contracts.procedures.graph import (
     ProcedureGraphFormatError,
-    compute_procedure_definition_digest_v3,
+    compute_procedure_definition_digest,
 )
-from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3, iter_pin_bindings
+from cruxible_client.contracts.procedures.models import (
+    ProcedureDefinitionAny,
+    ProcedureDefinitionV3,
+    ProcedureDefinitionV4,
+    iter_pin_bindings,
+)
 from cruxible_client.contracts.providers import parse_provider, provider_digest, provider_path
 from cruxible_client.contracts.query.definitions import (
     query_definition_digest,
@@ -1536,19 +1541,20 @@ def _lower_procedure(
         candidate_identities=candidate_identities,
         owned_contracts=owned_contracts,
     )
-    if isinstance(resolved_definition, dict) and resolved_definition.get("graph_format") == 4:
-        _refuse(
-            "playbill.authoring.procedure_definition_invalid",
-            "definition.graph_format",
-            "Graph-v4 Procedure authoring is not supported by the graph-v3 lowering path.",
-            repair_kind="replace_definition",
-            repair_description=(
-                "Use a graph-v3 definition; graph-v4 authoring requires a future dedicated "
-                "lowering path."
-            ),
-        )
+    graph_format = (
+        resolved_definition.get("graph_format") if isinstance(resolved_definition, dict) else None
+    )
+    # The accepted Procedure envelope already carries either generation, and the
+    # definition digest already dispatches on the declared graph_format, so a
+    # graph-v4 definition lowers into the SAME accepted artifact shape a v3 one
+    # does. Only the parse generation differs; historical v3 bytes are untouched.
+    graph_generation = 4 if graph_format == 4 else 3
+    definition_model: type[ProcedureDefinitionV3] | type[ProcedureDefinitionV4] = (
+        ProcedureDefinitionV4 if graph_generation == 4 else ProcedureDefinitionV3
+    )
+    definition: ProcedureDefinitionAny
     try:
-        definition = ProcedureDefinitionV3.model_validate(resolved_definition)
+        definition = definition_model.model_validate(resolved_definition)
     except (ProcedureGraphFormatError, ValidationError) as exc:
         message = (
             str(exc)
@@ -1558,9 +1564,11 @@ def _lower_procedure(
         _refuse(
             "playbill.authoring.procedure_definition_invalid",
             "definition",
-            "The lowered graph-v3 Procedure definition is invalid: " + message,
+            f"The lowered graph-v{graph_generation} Procedure definition is invalid: " + message,
             repair_kind="replace_definition",
-            repair_description="Repair the indicated graph-v3 definition field.",
+            repair_description=(
+                f"Repair the indicated graph-v{graph_generation} definition field."
+            ),
         )
     identity = ArtifactIdentity(kind="Procedure", name=definition.name)
     path = procedure_path(definition.name)
@@ -1628,7 +1636,7 @@ def _lower_procedure(
             _refuse(
                 "playbill.authoring.procedure_definition_invalid",
                 "definition.budget.max_items",
-                "The lowered graph-v3 Procedure definition declares max_items but none of "
+                "The lowered Procedure definition declares max_items but none of "
                 "its pinned Contracts declares a list field.",
                 repair_kind="replace_definition",
                 repair_description=(
@@ -1646,7 +1654,7 @@ def _lower_procedure(
             procedure: ProcedureArtifactAny = ProcedureArtifactV2(
                 identity=identity,
                 definition=definition,
-                definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
+                definition_digest=compute_procedure_definition_digest(definition).tagged,
                 pins=pins,
                 owned_contracts=payload.owned_contracts,
                 activation_policy=payload.activation_policy,
@@ -1656,7 +1664,7 @@ def _lower_procedure(
             procedure = ProcedureArtifactV1(
                 identity=identity,
                 definition=definition,
-                definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
+                definition_digest=compute_procedure_definition_digest(definition).tagged,
                 pins=pins,
                 activation_policy=payload.activation_policy,
                 lifecycle=lifecycle,

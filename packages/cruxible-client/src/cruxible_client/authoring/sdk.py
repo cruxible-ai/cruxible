@@ -162,7 +162,10 @@ from cruxible_client.contracts.predictions import (
     PredictionThresholdRuleV1,
     TerminalSettlementEvidenceV1,
 )
-from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3
+from cruxible_client.contracts.procedures.models import (
+    ProcedureDefinitionV3,
+    ProcedureDefinitionV4,
+)
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
@@ -2276,13 +2279,19 @@ class Playbill:
     def procedure(
         self,
         *,
-        definition: ProcedureDefinitionV3,
+        definition: ProcedureDefinitionV3 | ProcedureDefinitionV4,
         activation_policy: ActivationPolicy | str,
         retire: bool,
     ) -> ProcedureDraft:
         sites = capture_keyword_sites("procedure", stacklevel=1)
         policy = _enum(activation_policy, ActivationPolicy, label="procedure activation policy")
+        # `source` is served only by the graph-v4 observation path: a v3 Source
+        # node names no interface or implementation, so nothing can plan its
+        # Provider occurrence. Keep it out of the v3 allow-list rather than
+        # letting authoring succeed on a graph no run lane can admit.
         allowed = {"state_tap", "transform", "project", "guard", "repeat", "halt"}
+        if isinstance(definition, ProcedureDefinitionV4):
+            allowed = allowed | {"source"}
         unsupported = tuple(node.node_id for node in definition.nodes if node.kind not in allowed)
         if unsupported:
             raise CapabilityNotServed(
@@ -2290,7 +2299,7 @@ class Playbill:
                 capability=f"procedure nodes {unsupported}",
                 repair=(
                     "Use only state_tap, transform, project, guard, repeat, and halt nodes "
-                    "on the served SDK lane."
+                    "on the served SDK lane, plus source on a graph-v4 definition."
                 ),
             )
         payload = ProcedureAuthoringPayloadV2(

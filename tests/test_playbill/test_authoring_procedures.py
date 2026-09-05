@@ -35,6 +35,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_path,
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
 from cruxible_client.contracts.procedures.models import (
     GuardNodeV3,
     GuardPredicateV1,
@@ -42,6 +43,7 @@ from cruxible_client.contracts.procedures.models import (
     PredicateOperandV1,
     ProcedureBudgetV3,
     ProcedureDefinitionV3,
+    ProcedureDefinitionV4,
     ProcedureHardCapsV3,
     ProcedurePinSlotRefV1,
     ProcedurePinSlotV1,
@@ -1100,10 +1102,42 @@ def test_graph_law_failures_use_typed_definition_refusal(
     assert "errors.pydantic.dev" not in diagnostic.message
 
 
-def test_graph_v4_authoring_names_the_unsupported_lowering_path(tmp_path: Path) -> None:
+def test_graph_v4_authoring_lowers_into_the_accepted_procedure_shape(tmp_path: Path) -> None:
+    """A v4 definition lowers; the artifact shape and its digest domain follow it."""
+
+    instance, _owner = initialize_local(tmp_path)
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    definition = _slot_definition().model_dump(mode="json", by_alias=True)
+    definition["graph_format"] = 4
+
+    result = coordinator.compile(
+        actor=actor,
+        payload=_payload(definition),
+        canonical_timestamp=TIMESTAMP,
+    )
+
+    assert result.verdict == "passed"
+    intent = coordinator.list_pending(actor=actor).intents[0]
+    lowered = compute_preflight(instance, intent=intent, actor=actor).lowered
+    assert lowered is not None
+    assert lowered.resolved_authoring["definition"]["graph_format"] == 4
+    parsed = parse_procedure(
+        lowered.proposed_tree[procedure_path("triage")],
+        path=procedure_path("triage"),
+    )
+    assert isinstance(parsed.definition, ProcedureDefinitionV4)
+    assert (
+        parsed.definition_digest
+        == compute_procedure_definition_digest_v4(parsed.definition).tagged
+    )
+
+
+def test_invalid_graph_v4_authoring_names_its_own_generation(tmp_path: Path) -> None:
     coordinator, actor = _coordinator(tmp_path)
     definition = _slot_definition().model_dump(mode="json", by_alias=True)
     definition["graph_format"] = 4
+    definition["returns"] = "absent"
 
     result = coordinator.compile(
         actor=actor,
@@ -1114,11 +1148,9 @@ def test_graph_v4_authoring_names_the_unsupported_lowering_path(tmp_path: Path) 
     assert result.verdict == "refused"
     diagnostic = result.frontier.diagnostics[0]
     assert diagnostic.code == "playbill.authoring.procedure_definition_invalid"
-    assert diagnostic.offending_element == "definition.graph_format"
-    assert diagnostic.message == (
-        "Graph-v4 Procedure authoring is not supported by the graph-v3 lowering path."
-    )
-    assert "future dedicated lowering path" in diagnostic.repairs[0].description
+    assert diagnostic.offending_element == "definition"
+    assert "graph-v4" in diagnostic.message
+    assert diagnostic.repairs[0].description == "Repair the indicated graph-v4 definition field."
 
 
 def test_layout_only_procedure_successor_refuses_in_coordinator(tmp_path: Path) -> None:
