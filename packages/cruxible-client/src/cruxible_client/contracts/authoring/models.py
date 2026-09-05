@@ -15,6 +15,7 @@ from pydantic import (
     Field,
     field_serializer,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
@@ -444,6 +445,17 @@ class WorkingSelectionObservationV1(_StrictAuthoringModel):
     # additive: a page with no stamped block sends nothing, and an intent
     # stored before the field existed reads back unchanged.
     source_content_base64: str | None = None
+
+    @model_serializer(mode="wrap")
+    def _preserve_source_content_presence(self, handler: Any) -> dict[str, object]:
+        payload = cast(dict[str, object], handler(self))
+        # Historical payloads predate this field. Adding a default null changes
+        # their payload, fingerprint and journal-event digest preimages. An
+        # explicit null may itself have been committed by a newer writer, so
+        # preserve presence as well as value rather than excluding every null.
+        if "source_content_base64" not in self.model_fields_set:
+            payload.pop("source_content_base64", None)
+        return payload
 
     @field_validator("source_id")
     @classmethod

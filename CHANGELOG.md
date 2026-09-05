@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Historical authoring events remain readable.** Working source observations
+  preserve whether `source_content_base64` was absent, explicitly null, or
+  populated. Reading older events no longer inserts a default null into their
+  digest preimages and blocks unrelated authoring. Existing journal bytes and
+  commitments remain unchanged; projection-window checks still apply.
+
 - **Evidence never comes from a projection block, and the daemon says so.** A
   page is a source: its bytes are captured, its capture is evidence, and a
   passage of it can be cited. A projection block inside that page is not --
