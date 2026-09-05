@@ -53,6 +53,7 @@ def test_removed_brief_refuses_before_cold_or_checkpointed_replay(
         parent_oid=base,
         sequence=instance._recovered.head.sequence + 1,
         timestamp=FIXED_TIMESTAMP,
+        message="Accept Playbill generation",
     )
     assert instance._ledger.compare_and_set_main(successor, expected_oid=base)
 
@@ -78,6 +79,7 @@ def test_invalid_generation_signature_precedes_prerelease_incompatibility(
         parent_oid=base,
         sequence=1,
         timestamp=FIXED_TIMESTAMP,
+        message="Accept Playbill generation",
     )
     assert instance._ledger.compare_and_set_main(successor, expected_oid=base)
     monkeypatch.setattr(
@@ -104,6 +106,7 @@ def test_removed_brief_after_daemon_key_rotation_is_incompatible_not_corrupt(
         parent_oid=base,
         sequence=1,
         timestamp=FIXED_TIMESTAMP,
+        message="Accept Playbill generation",
     )
     assert ledger.compare_and_set_main(rotation, expected_oid=base)
 
@@ -118,6 +121,7 @@ def test_removed_brief_after_daemon_key_rotation_is_incompatible_not_corrupt(
         parent_oid=rotation,
         sequence=2,
         timestamp=FIXED_TIMESTAMP,
+        message="Accept Playbill generation",
     )
     assert ledger.compare_and_set_main(incompatible, expected_oid=rotation)
 
