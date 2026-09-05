@@ -3,20 +3,26 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import secrets
+import threading
+from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cruxible_client.contracts.authoring.models import (
     AuthoringIntentV1,
     AuthoringIntentV2,
+    AuthoringPayloadV1,
     AuthoringProgramStampV1,
+    InsertionExpectationV2,
     authoring_program_stamp_operation_key,
 )
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
@@ -117,6 +123,65 @@ class AuthoringIntentEventV3(_StrictStoreModel):
 AuthoringIntentEventAny: TypeAlias = (
     AuthoringIntentEventV1 | AuthoringIntentEventV2 | AuthoringIntentEventV3
 )
+
+
+_StateT = TypeVar("_StateT")
+
+
+@dataclass(frozen=True)
+class AuthoringIntentPublicationState:
+    """Current publication protocol fields, without authored bodies or preflight."""
+
+    intent_id: str
+    insertion_expectations: tuple[InsertionExpectationV2, ...]
+
+
+@dataclass(frozen=True)
+class _ValidatedEvent:
+    raw_digest: bytes
+    raw_size: int
+    event: AuthoringIntentEventAny
+
+
+# Serialized byte weight bounds retained input size, not Python heap usage.
+# Entries are private: frozen contract models still contain mutable containers.
+_HISTORY_MEMO_MAX_BYTES = 256 * 1024 * 1024
+_HISTORY_MEMO_MAX_STREAMS = 128
+_HISTORY_MEMO: OrderedDict[Path, tuple[_ValidatedEvent, ...]] = OrderedDict()
+_HISTORY_MEMO_BYTES = 0
+_HISTORY_MEMO_LOCK = threading.Lock()
+
+
+def _reset_authoring_history_memo() -> None:
+    global _HISTORY_MEMO_BYTES
+    with _HISTORY_MEMO_LOCK:
+        _HISTORY_MEMO.clear()
+        _HISTORY_MEMO_BYTES = 0
+
+
+def _history_memo_get(directory: Path) -> tuple[_ValidatedEvent, ...]:
+    with _HISTORY_MEMO_LOCK:
+        cached = _HISTORY_MEMO.get(directory, ())
+        if cached:
+            _HISTORY_MEMO.move_to_end(directory)
+        return cached
+
+
+def _history_memo_put(directory: Path, events: tuple[_ValidatedEvent, ...]) -> None:
+    global _HISTORY_MEMO_BYTES
+    with _HISTORY_MEMO_LOCK:
+        previous = _HISTORY_MEMO.pop(directory, ())
+        _HISTORY_MEMO_BYTES -= sum(item.raw_size for item in previous)
+        weight = sum(item.raw_size for item in events)
+        if weight <= _HISTORY_MEMO_MAX_BYTES:
+            _HISTORY_MEMO[directory] = events
+            _HISTORY_MEMO_BYTES += weight
+        while _HISTORY_MEMO and (
+            _HISTORY_MEMO_BYTES > _HISTORY_MEMO_MAX_BYTES
+            or len(_HISTORY_MEMO) > _HISTORY_MEMO_MAX_STREAMS
+        ):
+            _, evicted = _HISTORY_MEMO.popitem(last=False)
+            _HISTORY_MEMO_BYTES -= sum(item.raw_size for item in evicted)
 
 
 def authoring_intent_event_digest(event: AuthoringIntentEventAny) -> str:
@@ -293,9 +358,9 @@ class AuthoringIntentStore:
                 return existing
             directory = self.root / intent.intent_id
             if directory.exists():
-                current = self._load_events(directory)[-1].intent
+                current = self._validated_events(directory)[-1].intent
                 if current == intent:
-                    return current
+                    return current.model_copy(deep=True)
                 raise AuthoringIntentStoreError("minted AuthoringIntent path is occupied")
             temporary = self.root / f".creating-{intent.intent_id}-{secrets.token_hex(8)}"
             events = temporary / "events"
@@ -355,19 +420,19 @@ class AuthoringIntentStore:
     def get(self, intent_id: str, *, actor_id: str) -> AuthoringIntentV1:
         intent_id = self.resolve_intent_id(intent_id)
         with self._locked():
-            events = self._load_events(self.root / intent_id)
+            events = self._validated_events(self.root / intent_id)
             intent = events[-1].intent
             if intent.actor_id != actor_id:
                 raise AuthoringIntentStoreError("AuthoringIntent belongs to another actor")
-            return intent
+            return intent.model_copy(deep=True)
 
     def list_pending(self, *, actor_id: str) -> tuple[AuthoringIntentV1, ...]:
         with self._locked():
             pending: list[AuthoringIntentV1] = []
             for directory in self._intent_directories():
-                intent = self._load_events(directory)[-1].intent
+                intent = self._validated_events(directory)[-1].intent
                 if intent.actor_id == actor_id and _intent_is_pending(intent):
-                    pending.append(intent)
+                    pending.append(intent.model_copy(deep=True))
             return tuple(sorted(pending, key=lambda item: item.intent_id.encode("ascii")))
 
     def events(self) -> tuple[AuthoringIntentEventAny, ...]:
@@ -380,17 +445,54 @@ class AuthoringIntentStore:
 
         if self._read_only:
             return tuple(
-                event
+                event.model_copy(deep=True)
                 for directory in self._intent_directories()
-                for event in self._load_events(directory)
+                for event in self._validated_events(directory)
             )
         with self._locked():
             self._recover_creating_directories()
             return tuple(
-                event
+                event.model_copy(deep=True)
                 for directory in self._intent_directories()
-                for event in self._load_events(directory)
+                for event in self._validated_events(directory)
             )
+
+    def latest_intents(self) -> tuple[AuthoringIntentV1, ...]:
+        """Latest validated recorded snapshots, without replay history or refresh.
+
+        Read-only consumers do not recover staged writes. Writable consumers use
+        the existing writer lock and recovery boundary. Returned snapshots are
+        owned by the caller; protocol refresh remains the coordinator's job.
+        """
+
+        return self._latest_states(lambda intent: intent.model_copy(deep=True))
+
+    def publication_states(self) -> tuple[AuthoringIntentPublicationState, ...]:
+        """Validated current publication fields, detached from private history."""
+
+        return self._latest_states(
+            lambda intent: AuthoringIntentPublicationState(
+                intent_id=intent.intent_id,
+                insertion_expectations=tuple(
+                    item.model_copy(deep=True) for item in intent.insertion_expectations
+                ),
+            )
+        )
+
+    def _latest_states(
+        self, project: Callable[[AuthoringIntentV1], _StateT]
+    ) -> tuple[_StateT, ...]:
+        def snapshots() -> tuple[_StateT, ...]:
+            return tuple(
+                project(self._validated_events(directory)[-1].intent)
+                for directory in self._intent_directories()
+            )
+
+        if self._read_only:
+            return snapshots()
+        with self._locked():
+            self._recover_creating_directories()
+            return snapshots()
 
     def latest_transition(
         self,
@@ -401,12 +503,12 @@ class AuthoringIntentStore:
         """Return the exact predecessor and latest event for protocol retry checks."""
 
         with self._locked():
-            events = self._load_events(self.root / intent_id)
+            events = self._validated_events(self.root / intent_id)
             latest = events[-1]
             if latest.intent.actor_id != actor_id:
                 raise AuthoringIntentStoreError("AuthoringIntent belongs to another actor")
-            predecessor = None if len(events) == 1 else events[-2].intent
-            return predecessor, latest
+            predecessor = None if len(events) == 1 else events[-2].intent.model_copy(deep=True)
+            return predecessor, latest.model_copy(deep=True)
 
     def operation_result(
         self,
@@ -418,11 +520,15 @@ class AuthoringIntentStore:
         """Return a previously committed operation result without appending an event."""
 
         with self._locked():
-            events = self._load_events(self.root / intent_id)
+            events = self._validated_events(self.root / intent_id)
             if events[-1].intent.actor_id != actor_id:
                 raise AuthoringIntentStoreError("AuthoringIntent belongs to another actor")
             return next(
-                (event.intent for event in events if event.operation_key == operation_key),
+                (
+                    event.intent.model_copy(deep=True)
+                    for event in events
+                    if event.operation_key == operation_key
+                ),
                 None,
             )
 
@@ -441,14 +547,14 @@ class AuthoringIntentStore:
         with self._locked():
             self._recover_creating_directories()
             directory = self.root / intent_id
-            events = self._load_events(directory)
+            events = self._validated_events(directory)
             for event in events:
                 if event.operation_key == operation_key:
-                    return event.intent
+                    return event.intent.model_copy(deep=True)
             current = events[-1].intent
             if current.actor_id != actor_id:
                 raise AuthoringIntentStoreError("AuthoringIntent belongs to another actor")
-            updated = transform(current)
+            updated = transform(current.model_copy(deep=True))
             self._validate_transition(current, updated, allow_rebase=allow_rebase)
             event = build_authoring_intent_event(
                 sequence=len(events),
@@ -491,7 +597,7 @@ class AuthoringIntentStore:
     ) -> AuthoringIntentV1 | None:
         matches: list[AuthoringIntentV1] = []
         for directory in self._intent_directories():
-            intent = self._load_events(directory)[-1].intent
+            intent = self._validated_events(directory)[-1].intent
             if (
                 intent.actor_id == actor_id
                 and intent.create_fingerprint == fingerprint
@@ -500,7 +606,7 @@ class AuthoringIntentStore:
                 matches.append(intent)
         if len(matches) > 1:
             raise AuthoringIntentStoreError("active AuthoringIntent fingerprint is not unique")
-        return None if not matches else matches[0]
+        return None if not matches else matches[0].model_copy(deep=True)
 
     def _intent_directories(self) -> tuple[Path, ...]:
         return tuple(
@@ -510,6 +616,18 @@ class AuthoringIntentStore:
         )
 
     def _load_events(self, directory: Path) -> tuple[AuthoringIntentEventAny, ...]:
+        """Caller-owned full history; narrow reads avoid copying old snapshots."""
+
+        return tuple(event.model_copy(deep=True) for event in self._validated_events(directory))
+
+    def _validated_events(self, directory: Path) -> tuple[AuthoringIntentEventAny, ...]:
+        """Private parsed events, reused only after checking exact persisted bytes.
+
+        Every invocation still checks paths, content hashes and stream links.
+        Only JSON/model/canonical validation of identical bytes is elided. A
+        valid shorter prefix retains the cold loader's semantics; no cached
+        suffix is resurrected. Cache publication happens after complete success.
+        """
         if directory.is_symlink() or not directory.is_dir():
             raise AuthoringIntentStoreError("AuthoringIntent does not exist")
         events_directory = directory / "events"
@@ -518,6 +636,18 @@ class AuthoringIntentStore:
         paths = tuple(sorted(events_directory.glob("*.json"), key=lambda item: item.name))
         if not paths:
             raise AuthoringIntentStoreError("AuthoringIntent event stream is empty")
+        cached = _history_memo_get(directory)
+        validated: list[_ValidatedEvent] = []
+        # Most transitions repeat a large immutable payload. Share it only
+        # inside private validated state and only under its verified commitment.
+        # Outward copies remain independent, including the transform input.
+        payloads: dict[tuple[type[object], str], AuthoringPayloadV1] = {
+            (
+                type(item.event.intent.payload),
+                item.event.intent.payload_digest,
+            ): item.event.intent.payload
+            for item in cached
+        }
         events: list[AuthoringIntentEventAny] = []
         previous: str | None = None
         operation_keys: set[str] = set()
@@ -526,11 +656,24 @@ class AuthoringIntentStore:
                 raise AuthoringIntentStoreError("AuthoringIntent event sequence is not contiguous")
             try:
                 raw = path.read_bytes()
-                event = _parse_authoring_intent_event(raw)
+                raw_digest = hashlib.sha256(raw).digest()
+                old = cached[sequence] if sequence < len(cached) else None
+                if old is not None and old.raw_size == len(raw) and old.raw_digest == raw_digest:
+                    validated_event = old
+                else:
+                    event = _parse_authoring_intent_event(raw)
+                    if raw != self._render_event(event):
+                        raise AuthoringIntentStoreError("AuthoringIntent event is not canonical")
+                    key = (type(event.intent.payload), event.intent.payload_digest)
+                    payload = payloads.setdefault(key, event.intent.payload)
+                    if payload is not event.intent.payload:
+                        event = event.model_copy(
+                            update={"intent": event.intent.model_copy(update={"payload": payload})}
+                        )
+                    validated_event = _ValidatedEvent(raw_digest, len(raw), event)
+                event = validated_event.event
             except (OSError, ValidationError, ValueError) as exc:
                 raise AuthoringIntentStoreError("AuthoringIntent event is malformed") from exc
-            if raw != self._render_event(event):
-                raise AuthoringIntentStoreError("AuthoringIntent event is not canonical")
             if event.sequence != sequence or event.previous_event_digest != previous:
                 raise AuthoringIntentStoreError("AuthoringIntent event chain is broken")
             if event.operation_key in operation_keys:
@@ -538,8 +681,10 @@ class AuthoringIntentStore:
             if event.intent.intent_id != directory.name:
                 raise AuthoringIntentStoreError("AuthoringIntent event names another stream")
             events.append(event)
+            validated.append(validated_event)
             operation_keys.add(event.operation_key)
             previous = event.event_digest
+        _history_memo_put(directory, tuple(validated))
         return tuple(events)
 
     @staticmethod

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Authoring reads reuse validated history and request narrower state.**
+  Unchanged event bytes reuse their parsed validation across store instances;
+  appended or altered events retain canonical, chain, and operation checks.
+  Projection registration reads only current publication fields. Private event
+  snapshots share identical committed payloads, and returned models remain
+  caller-owned. Historical journal bytes and public wire contracts are unchanged.
+
 - **Batch Claim authoring reuses a staged contender index.** Lowering parses the
   initial Claim population once and updates changed paths as members are staged,
   preserving sibling dispositions, retirements, and ClaimType succession output.
