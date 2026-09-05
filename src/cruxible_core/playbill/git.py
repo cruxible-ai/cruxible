@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import os
 import re
+import signal
 import subprocess
 import tempfile
 from collections.abc import Iterator, Mapping, Sequence
@@ -35,6 +36,17 @@ _SETTLED_REF_PREFIX: Final = "refs/settled/"
 # is a projection this daemon rebuilds -- a note restated by a second approver,
 # a review branch recomputed on reconcile -- so each is forced onto the mirror
 # and pruned when it stops existing here.
+MIRROR_PUSH_TIMEOUT_SECONDS: Final = 30.0
+"""How long a publication may hold its caller, and no longer.
+
+The mirror is a copy of state that is already durable, so the one thing it may
+never cost is availability of the daemon that holds the record. `GIT_TERMINAL_PROMPT=0`
+closes the prompt hang; nothing closed the network one, and a black-holed connect
+or a remote that accepts and then stalls held the caller for as long as the
+remote liked. Thirty seconds is far longer than a healthy push of a ledger this
+size and far shorter than a request timeout.
+"""
+
 _MIRROR_MAIN_REFSPEC: Final = "refs/heads/main:refs/heads/main"
 _MIRROR_WILDCARD_REFSPECS: Final = (
     "+refs/heads/proposals/*:refs/heads/proposals/*",
@@ -538,20 +550,27 @@ class GitLedger:
             if self._ref_exists(ref)
         )
         refspecs.extend(_MIRROR_WILDCARD_REFSPECS)
-        result = _command(
-            [
-                "git",
-                f"--git-dir={self.path}",
-                "push",
-                "--prune",
-                "--porcelain",
-                "--",
-                url,
-                *refspecs,
-            ],
-            environment=environment,
-            check=False,
-        )
+        try:
+            result = _command(
+                [
+                    "git",
+                    f"--git-dir={self.path}",
+                    "push",
+                    "--prune",
+                    "--porcelain",
+                    "--",
+                    url,
+                    *refspecs,
+                ],
+                environment=environment,
+                check=False,
+                timeout=MIRROR_PUSH_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            return (
+                f"git push did not finish within {MIRROR_PUSH_TIMEOUT_SECONDS:g}s and was "
+                "killed; the ledger is unchanged and the remote may be unreachable"
+            )
         if result.returncode == 0:
             return None
         detail = result.stderr.decode("utf-8", errors="replace").strip()
@@ -1300,7 +1319,17 @@ def _command(
     input_bytes: bytes | None = None,
     environment: Mapping[str, str] | None = None,
     check: bool = True,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
+    """Run one Git command, optionally under a deadline it cannot outlive.
+
+    A bounded run gets its own session so the deadline reaches the whole tree.
+    Git delegates the network to a transport child -- `git-remote-https`, `ssh`
+    -- and killing only the process Python started leaves that child holding the
+    connection, so a timeout that killed the parent alone would report a
+    deadline it had not actually enforced.
+    """
+
     merged_environment = {
         name: os.environ[name] for name in _PASSTHROUGH_ENVIRONMENT if name in os.environ
     }
@@ -1319,13 +1348,21 @@ def _command(
                 "unsupported Git command environment override: " + ", ".join(sorted(unexpected))
             )
         merged_environment.update(environment)
-    result = subprocess.run(
-        list(arguments),
-        input=input_bytes,
-        capture_output=True,
-        check=False,
-        env=merged_environment,
-    )
+    if timeout is None:
+        result = subprocess.run(
+            list(arguments),
+            input=input_bytes,
+            capture_output=True,
+            check=False,
+            env=merged_environment,
+        )
+    else:
+        result = _bounded_command(
+            list(arguments),
+            input_bytes=input_bytes,
+            environment=merged_environment,
+            timeout=timeout,
+        )
     if check and result.returncode != 0:
         # Do not echo command arguments or stderr: Git signing failures can
         # include managed credential paths, which inspection/logging must not expose.
@@ -1336,4 +1373,35 @@ def _command(
     return result
 
 
-__all__ = ["NOTE_REFS", "GitLedger", "GitTreeChange", "GitTreeEntry"]
+def _bounded_command(
+    arguments: list[str],
+    *,
+    input_bytes: bytes | None,
+    environment: Mapping[str, str],
+    timeout: float,
+) -> subprocess.CompletedProcess[bytes]:
+    """Run one command under a deadline, killing its whole process group on expiry."""
+
+    with subprocess.Popen(
+        arguments,
+        stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=dict(environment),
+        start_new_session=True,
+    ) as process:
+        try:
+            stdout, stderr = process.communicate(input=input_bytes, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):  # pragma: no cover - already gone
+                process.kill()
+            # Drain without a second deadline: the group is dead, so the pipes
+            # are at EOF and this cannot block.
+            process.communicate()
+            raise
+        return subprocess.CompletedProcess(arguments, process.returncode, stdout, stderr)
+
+
+__all__ = ["MIRROR_PUSH_TIMEOUT_SECONDS", "NOTE_REFS", "GitLedger", "GitTreeChange", "GitTreeEntry"]

@@ -424,6 +424,12 @@ is the record and the remote is a copy, so a network that is down, a credential
 that expired or a remote that was deleted becomes the `ledger_mirror_behind`
 warning row in `playbill next`, carrying the URL and Git's own reason.
 
+It also never runs longer than 30 seconds. A remote that accepts a connection
+and then stalls would otherwise hold the write's caller for as long as it liked;
+at the deadline the push and its whole transport process group are killed and
+the attempt is recorded as behind like any other failure. Availability is a
+condition too, and the copy may not hold the record hostage.
+
 The URL never carries a credential. `https://user:token@host/...` is refused,
 as is plain `http://`, `ext::` and anything beginning with a dash; the four
 accepted shapes are `https://`, `ssh://`, `user@host:path` and an absolute local

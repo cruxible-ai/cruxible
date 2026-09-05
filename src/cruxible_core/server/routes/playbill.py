@@ -373,7 +373,12 @@ async def prepare_approval(
     response_model=contracts.PlaybillApprovalReceipt,
     response_model_exclude={"git_workspace_note"},
 )
-async def submit_approval(
+# Synchronous, like every other mutating Playbill route: this one now publishes
+# the ledger to its mirror, and a blocking `git push` inside the event loop would
+# let one unreachable remote stall every request the daemon is serving. The push
+# has its own deadline as well; both bounds are needed, because a bounded stall
+# on the loop is still a stall of the whole process.
+def submit_approval(
     instance_id: str,
     proposal_id: str,
     req: PlaybillApprovalRequest,

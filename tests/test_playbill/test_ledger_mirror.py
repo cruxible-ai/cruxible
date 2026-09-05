@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from cruxible_client.contracts.ledger_mirror import (
     PlaybillLedgerMirrorUrlInvalid,
     validate_mirror_url,
 )
+from cruxible_core.playbill import git as git_module
 from cruxible_core.playbill.git import NOTE_REFS
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.ledger_mirror import MIRROR_STATE_FILE
@@ -317,3 +319,39 @@ def test_an_unapproved_proposal_publishes_no_approval_note(tmp_path: Path) -> No
         capture_output=True,
     )
     assert missing.returncode != 0
+
+
+def test_a_stalling_transport_is_killed_at_the_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A copy may never hold the record hostage for as long as the remote likes.
+
+    The stand-in transport writes a marker only AFTER its sleep, so the marker's
+    absence proves the deadline reached the child Git delegated the network to,
+    not merely the process Python started.
+    """
+
+    instance, _owner = initialize_local(tmp_path)
+    marker = tmp_path / "transport-finished"
+    transport = tmp_path / "slow-ssh"
+    transport.write_text(f"#!/bin/sh\nsleep 6\ntouch {marker}\n", encoding="utf-8")
+    transport.chmod(0o700)
+    monkeypatch.setenv("GIT_SSH_COMMAND", str(transport))
+    monkeypatch.setattr(git_module, "MIRROR_PUSH_TIMEOUT_SECONDS", 1.0)
+
+    started = time.monotonic()
+    state = instance.set_ledger_mirror("ssh://git@ledger.invalid/mirror.git")
+    elapsed = time.monotonic() - started
+
+    assert state is not None
+    assert state.status == "behind"
+    assert state.detail is not None and "did not finish within" in state.detail
+    assert elapsed < 5, f"the push outlived its deadline by {elapsed:.1f}s"
+    # The ledger is untouched and the instance still accepts writes.
+    assert instance.ledger_mirror_url() == "ssh://git@ledger.invalid/mirror.git"
+    assert instance.store_document_body(b"# still writable\n").digest.startswith("sha256:")
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline and not marker.exists():
+        time.sleep(0.25)
+    assert not marker.exists(), "the transport child outlived the push it was spawned for"
