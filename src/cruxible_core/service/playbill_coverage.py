@@ -63,6 +63,7 @@ from cruxible_core.playbill.citation_relations import (
     RELATION_SOURCE_USE_SCHEMA,
     logical_source_relation_subject,
 )
+from cruxible_core.playbill.compiler import artifact_codec_for_compiler
 from cruxible_core.playbill.coverage.adapter import (
     WorkingSourceObservationV1,
     build_overlay,
@@ -207,7 +208,24 @@ def build_accepted_evidence_index_v2(
 ) -> EvidenceCitationIndexV2:
     """Rebuild the association-native index and its verifier-owned trust axis."""
 
-    listing = service_list_playbill_claims(instance, at=at, include_retired=True)
+    index, _envelopes = _accepted_evidence_inputs_v2(instance, at=at)
+    return index
+
+
+def _accepted_evidence_inputs_v2(
+    instance: PlaybillInstance,
+    *,
+    at: PlaybillAcceptedCoordinate,
+) -> tuple[EvidenceCitationIndexV2, dict[str, CaptureEnvelopeAny]]:
+    """Read authoritative artifacts and retained envelopes once for this request.
+
+    Coverage needs Claim artifacts, not their inspection projections. Keep these
+    values request-local so each request still verifies current CAS availability
+    and resolves its full accepted coordinate before using the accepted tree.
+    """
+
+    at = _resolve_coordinate(instance, at)
+    artifact_codec = artifact_codec_for_compiler(instance.coordinate_for_oid(at.git_oid).compiler)
     access = BodyAccessContext(principal_id=COVERAGE_PRINCIPAL, can_read_body=True)
     store = instance.body_store()
     tree = instance.tree_at(at.git_oid)
@@ -220,11 +238,10 @@ def build_accepted_evidence_index_v2(
 
     claims: list[AcceptedClaim] = []
     captures: dict[str, CaptureCitationInputV2] = {}
-    for view in listing.claims:
-        artifact = _claim_from_view(view)
-        claim_path_value = view.envelope.get("path")
-        if not isinstance(claim_path_value, str):
-            raise ProposalIntegrityError("Claim projection envelope has no path")
+    for claim_path_value in sorted(tree, key=lambda item: item.encode("utf-8")):
+        if not claim_path_value.startswith("claims/"):
+            continue
+        artifact = parse_claim(tree[claim_path_value], path=claim_path_value, codec=artifact_codec)
         claims.append(
             AcceptedClaim(
                 path=claim_path_value,
@@ -252,11 +269,12 @@ def build_accepted_evidence_index_v2(
                 observation_trust=observation_trust_grade(provenance),
             )
 
-    return build_evidence_citation_index_v2(
+    index = build_evidence_citation_index_v2(
         at=at,
         captures=tuple(captures[digest] for digest in sorted(captures)),
         claims=tuple(claims),
     )
+    return index, {digest: capture.envelope for digest, capture in captures.items()}
 
 
 def accepted_evidence_sources(
@@ -354,6 +372,7 @@ def _citation_window_observations(
     """Observe each accepted citation's original window in its named working source."""
 
     by_source = {item.source.sort_key: item for item in observations}
+    source_content: dict[bytes, bytes] = {}
     windows: dict[tuple[bytes, bytes, int, int], PlaybillCitationWindowObservationV1] = {}
     associations: list[tuple[LogicalSourceIdentityV1, str, str, str]] = []
     for citation in index.citations:
@@ -397,7 +416,12 @@ def _citation_window_observations(
         addressable = observed is not None and end <= observed.byte_length
         observed_digest = None
         if addressable and observed is not None:
-            observed_digest = f"sha256:{hashlib.sha256(observed.content[start:end]).hexdigest()}"
+            source_key = accepted_source.sort_key
+            if source_key not in source_content:
+                source_content[source_key] = observed.content
+            observed_digest = (
+                f"sha256:{hashlib.sha256(source_content[source_key][start:end]).hexdigest()}"
+            )
         item = PlaybillCitationWindowObservationV1(
             source=accepted_source,
             citation_id=citation_id,
@@ -673,8 +697,7 @@ def service_resolve_playbill_coverage(
         raise ProposalIntegrityError("a coverage request must name at least one working source")
 
     coordinate = _resolve_coordinate(instance, at)
-    index = build_accepted_evidence_index_v2(instance, at=coordinate)
-    envelopes = _capture_envelopes(instance, index=index)
+    index, envelopes = _accepted_evidence_inputs_v2(instance, at=coordinate)
     retired_associations = _retired_citation_window_inputs(
         instance,
         coordinate=coordinate,
