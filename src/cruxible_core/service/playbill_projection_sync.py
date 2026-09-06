@@ -10,7 +10,7 @@ saying what it said. The answer is a currency verdict over the whole list, and
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from contextvars import ContextVar
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
@@ -24,7 +24,6 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
 )
 from cruxible_client.contracts.claims import (
-    ClaimArtifactAny,
     claim_artifact_digest,
     claim_path,
     claim_statement_digest,
@@ -38,14 +37,16 @@ from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityErr
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.subjects import parse_subject, subject_digest, subject_path
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.service.playbill_projection_lineage import (
+    ClaimLineageNode as _ClaimNode,
+)
+from cruxible_core.service.playbill_projection_lineage import (
+    read_claim_lineages,
+)
 
-
-@dataclass(frozen=True)
-class _ClaimNode:
-    claim: ClaimArtifactAny
-    artifact_digest: str
-    coordinate: AcceptedCoordinate
-    generation: int
+_LINEAGES: ContextVar[
+    tuple[PlaybillInstance, dict[str, dict[str, _ClaimNode] | PlaybillError]] | None
+] = ContextVar("block_sync_lineages", default=None)
 
 
 def _refusal(
@@ -68,6 +69,12 @@ def _refusal(
 
 
 def _claim_nodes(instance: PlaybillInstance, *, path: str) -> dict[str, _ClaimNode]:
+    prepared = _LINEAGES.get()
+    if prepared is not None and prepared[0] is instance and path in prepared[1]:
+        cached_nodes = prepared[1][path]
+        if isinstance(cached_nodes, PlaybillError):
+            raise cached_nodes
+        return cached_nodes
     nodes: dict[str, _ClaimNode] = {}
     for generation in instance.accepted_history():
         raw = instance.blob_at(generation.oid, path)
@@ -180,7 +187,7 @@ def _artifact_backing_state(
     """The artifact backing's current spelling when it moved, ``None`` when it did not."""
 
     path = _artifact_path(backing.identity)
-    original_raw = instance.tree_at(stamp_coordinate.git_oid).get(path)
+    original_raw = instance.blob_at(stamp_coordinate.git_oid, path)
     if original_raw is None:
         return _refusal(
             status="unsyncable",
@@ -202,7 +209,7 @@ def _artifact_backing_state(
             detail="the artifact backing digest does not reproduce at its declared coordinate",
             original_artifact_digest=original_digest,
         )
-    current_raw = instance.tree_at(current.git_oid).get(path)
+    current_raw = instance.blob_at(current.git_oid, path)
     if current_raw is None:
         return _refusal(
             status="unsyncable",
@@ -237,7 +244,7 @@ def _claim_backing_state(
     """The Claim backing's terminal spelling, or the typed refusal its lineage earns."""
 
     path = claim_path(backing.identity.name)
-    raw = instance.tree_at(stamp_coordinate.git_oid).get(path)
+    raw = instance.blob_at(stamp_coordinate.git_oid, path)
     if raw is None:
         return _refusal(
             status="unsyncable",
@@ -289,10 +296,12 @@ def _claim_backing_state(
     )
 
 
-def service_read_playbill_block_sync_backing(
+def _read_playbill_block_sync_backing(
     instance: PlaybillInstance,
     *,
     request: PlaybillBlockSyncReadRequestV1,
+    accepted: AcceptedCoordinate,
+    generation: int,
 ) -> PlaybillBlockSyncReadResultV1:
     """Say whether every backing a marker holds still reads as the marker says.
 
@@ -321,8 +330,6 @@ def service_read_playbill_block_sync_backing(
             reason="block_workspace_instance_mismatch",
             detail="the marker coordinate differs from the attached instance coordinate",
         )
-    accepted = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    generation = instance.accepted_history()[-1].sequence
     moved: list[ProjectionArtifactBackingV1 | ProjectionClaimBackingV1] = []
     # The CURRENT spelling of every held backing, moved or not. `block repin
     # --backing DIGEST` asks this read to name one exact successor and re-stamp
@@ -393,6 +400,38 @@ def service_read_playbill_block_sync_backing(
         backing=single,
         moved_backings=tuple(moved),
     )
+
+
+def service_read_playbill_block_sync_backing(
+    instance: PlaybillInstance, *, request: PlaybillBlockSyncReadRequestV1
+) -> PlaybillBlockSyncReadResultV1:
+    accepted = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    generation = next(g.sequence for g in instance.accepted_history() if g.oid == accepted.git_oid)
+    # Validate the declared origin before loading historical backings so invalid
+    # coordinates retain the existing typed refusal and do no unrelated work.
+    try:
+        declared = AcceptedCoordinate.from_internal(
+            instance.coordinate_for_oid(request.stamp.declared_coordinate.git_oid)
+        )
+    except PlaybillError:
+        declared = None
+    paths = tuple(
+        claim_path(b.identity.name)
+        for b in request.stamp.backing
+        if isinstance(b, ProjectionClaimBackingV1)
+    )
+    lineages = (
+        read_claim_lineages(instance, paths=paths, at=accepted, defer_errors=True)
+        if declared == request.stamp.declared_coordinate and paths
+        else {}
+    )
+    token = _LINEAGES.set((instance, lineages))
+    try:
+        return _read_playbill_block_sync_backing(
+            instance, request=request, accepted=accepted, generation=generation
+        )
+    finally:
+        _LINEAGES.reset(token)
 
 
 __all__ = ["service_read_playbill_block_sync_backing"]
