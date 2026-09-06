@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Final, Literal, Protocol
+from typing import Annotated, Final, Literal, Protocol
 
 from pydantic import (
     BaseModel,
@@ -474,6 +474,14 @@ def render_change_set(record: ChangeSetRecordAnyVersion) -> bytes:
     return canonical_bytes(record.model_dump(mode="json")) + b"\n"
 
 
+_CHANGE_SET_RECORD_ADAPTER: TypeAdapter[ChangeSetRecordAnyVersion] = TypeAdapter(
+    ChangeSetRecordAnyVersion
+)
+_TAGGED_CHANGE_SET_RECORD_ADAPTER: TypeAdapter[ChangeSetRecordAnyVersion] = TypeAdapter(
+    Annotated[ChangeSetRecordAnyVersion, Field(discriminator="tag")]
+)
+
+
 def parse_change_set_record(content: bytes, *, path: str) -> ChangeSetRecordAnyVersion:
     """Parse any accepted change-set version and verify exact canonical bytes.
 
@@ -484,9 +492,14 @@ def parse_change_set_record(content: bytes, *, path: str) -> ChangeSetRecordAnyV
     v1 or v2 prefix and a v3 suffix, and replaying it end to end is ordinary.
     """
 
-    adapter: TypeAdapter[ChangeSetRecordAnyVersion] = TypeAdapter(ChangeSetRecordAnyVersion)
     try:
-        record = adapter.validate_json(content)
+        try:
+            record = _TAGGED_CHANGE_SET_RECORD_ADAPTER.validate_json(content)
+        except (ValueError, ValidationError):
+            # Retain the ordinary union's historical malformed/missing-tag
+            # behavior and refusal cause. Only valid tagged records avoid
+            # probing unrelated versions; parsed models are never retained.
+            record = _CHANGE_SET_RECORD_ADAPTER.validate_json(content)
     except (ValueError, ValidationError) as exc:
         raise SettlementIntegrityError(f"generation change-set record is invalid: {path}") from exc
     if render_change_set(record) != content:
