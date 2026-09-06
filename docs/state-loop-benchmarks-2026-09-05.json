@@ -1,0 +1,53 @@
+{
+  "branch": "codex/state-loop-design",
+  "baseline_commit": "f8ce3336d58b055368c34548ce0bf46609c50428",
+  "instance_id": "inst_ebe8a0b27e50487d",
+  "accepted_generation": 26,
+  "accepted_git_oid": "134b33bb40dbcc7c00701c0e15d494b4faca7717",
+  "scope": "Isolated public-verification-key-only copy; service timings exclude HTTP, instance recovery, agent reasoning and review. Single-machine diagnostic samples, not latency guarantees. No live daemon deployment.",
+  "projection_check": [
+    {
+      "cache": "cold",
+      "before_seconds": 47.797417249996215,
+      "after_seconds": 1.4379113750183024
+    },
+    {
+      "cache": "warm",
+      "before_seconds": 48.520001041004434,
+      "after_seconds": 0.047254999983124435
+    }
+  ],
+  "projection_complete_result_sha256": "64058da0de524f929ced982077ceec192db7b803b679de38cea1dafa6eae627c",
+  "backing_and_claim_batches": [
+    {
+      "stage": "120 backing metadata",
+      "kind": "cold",
+      "before": 16.919420124962926,
+      "after": 0.08558654203079641,
+      "same_complete_backings": true
+    },
+    {
+      "stage": "120 backing metadata",
+      "kind": "warm",
+      "before": 16.024681874958333,
+      "after": 0.08568970899796113,
+      "same_complete_backings": true
+    },
+    {
+      "stage": "41 full Claim views",
+      "kind": "first",
+      "before": 5.602857874997426,
+      "after": 0.4005808330257423,
+      "same_complete_views": true
+    },
+    {
+      "stage": "41 full Claim views",
+      "kind": "warm",
+      "before": 5.46047524997266,
+      "after": 0.3950329580111429,
+      "same_complete_views": true
+    }
+  ],
+  "prepared_lowering_evidence": "/private/tmp/prepared-lowering-benchmark.json",
+  "prepared_submit_evidence": "/private/tmp/prepared-submit-benchmark.json"
+}

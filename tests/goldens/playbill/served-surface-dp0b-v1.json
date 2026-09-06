@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-10:ops-hotfix-3",
-    "surface_digest": "sha256:088662abde1c4e613f8696accca093f1403981e0b12f4889fd6ebca923ac5786"
+    "register_entry": "2026-09-05:state-loop-bulk-reads",
+    "surface_digest": "sha256:161f4b7b672b9dac90c9835ab39fbcd1b23151cb22b5f19167dc79dc140a5d37"
   },
   "surface": {
     "cli_leaves": [
@@ -793,6 +793,8 @@
       "playbill_propose_subject",
       "playbill_provider_seed",
       "playbill_read_block_sync_backing",
+      "playbill_read_claim_backings",
+      "playbill_read_claim_batch",
       "playbill_readmit_proposal",
       "playbill_recover_claim_attestations",
       "playbill_resolve_coverage",
@@ -1065,6 +1067,30 @@
         "request_schema_digest": null,
         "response_model": "cruxible_client.contracts.PlaybillClaimList",
         "response_schema_digest": "sha256:f2183fa29259accda90220112437c20d5cfe632c3e9c4873b7a23637fc17edcf"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.read_claim_backings",
+        "facade_operations": [
+          "playbill_read_claim_backings"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/playbill/claims/backings",
+        "request_model": "cruxible_client.contracts.claim_reads.ClaimBackingsRequestV1",
+        "request_schema_digest": "sha256:f096b89a2de30ad408f7f4a934f4a811e15bf5f97bf1e9298d3ef373129687de",
+        "response_model": "cruxible_client.contracts.claim_reads.ClaimBackingsResultV1",
+        "response_schema_digest": "sha256:bc166fc58935a91a11536cc1ef0d8a3161df6a027247eb41d746dcf09acfd2d8"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.read_claim_batch",
+        "facade_operations": [
+          "playbill_read_claim_batch"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/playbill/claims/read-batch",
+        "request_model": "cruxible_client.contracts.claim_reads.ClaimReadBatchRequestV1",
+        "request_schema_digest": "sha256:2777311d34cdcec582d03b785426e7cd95d8bd13a0379bc779719a3323e9137a",
+        "response_model": "cruxible_client.contracts.claim_reads.ClaimReadBatchResultV1",
+        "response_schema_digest": "sha256:b70594177157fb825c780bf3a43e7018614f8c205ba2a89e97dda4817d55c1b2"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.retire_claim",
@@ -1837,7 +1863,7 @@
         ],
         "input_schema_digest": "sha256:4ccba42723cf94a3b9c18d17ddbdd278c37322723223bcd3f8df9c7f1838f223",
         "name": "cruxible_playbill_activate",
-        "output_schema_digest": "sha256:2ea512fa2122c686c71f3abdab0e7c3b6713ae70f5c37789f2b09b5a3477d209",
+        "output_schema_digest": "sha256:9a81a66ebcb059f1fb1d420fdf23b973638f2104b42f264c46dbfa0ae91c5a8f",
         "permission": "GRAPH_WRITE"
       },
       {
