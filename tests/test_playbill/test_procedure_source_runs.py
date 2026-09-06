@@ -17,7 +17,7 @@ import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import get_args
+from typing import cast, get_args
 
 import pytest
 
@@ -42,6 +42,7 @@ from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactV2,
     ProcedureOwnedContractV1,
+    procedure_artifact_digest,
     procedure_owned_contract_digest,
     procedure_path,
     render_procedure,
@@ -295,7 +296,9 @@ def _procedure(
             wall_clock=CanonicalDurationV1(microseconds=5_000_000),
             max_provider_calls=2,
             max_capture_bytes=65_536,
-            max_items=100,
+            # No max_items: the authoring law ties a declared item budget to a
+            # pinned Contract with a list field, and this graph shapes one row.
+            max_items=None,
         ),
         hard_caps=ProcedureHardCapsV3(
             max_wall_clock=CanonicalDurationV1(microseconds=10_000_000),
@@ -356,6 +359,7 @@ def _world(  # noqa: PLR0913
     contract: CaptureContractV1 | None = None,
     policy: SourceAcquisitionPolicyV1 | None = None,
     accept_policy: bool = True,
+    accept_procedure: bool = True,
     relative_path: str = RELATIVE_PATH,
     write_at: str = RELATIVE_PATH,
 ):  # type: ignore[no-untyped-def]
@@ -414,9 +418,10 @@ def _world(  # noqa: PLR0913
     members = {
         capture_contract_path(accepted_contract.identity.name): render_capture_contract(
             accepted_contract
-        ),
-        procedure_path(PROCEDURE_NAME): render_procedure(procedure),
+        )
     }
+    if accept_procedure:
+        members[procedure_path(PROCEDURE_NAME)] = render_procedure(procedure)
     if accept_policy:
         members[acquisition_policy_path(accepted_policy.identity.name)] = render_acquisition_policy(
             accepted_policy
@@ -752,3 +757,76 @@ def test_the_admitted_plan_mismatch_code_stays_served(tmp_path: Path) -> None:
 
     assert "provider_acquisition_plan_mismatch" in get_args(ProcedureNodeRefusalCodeV1)
     assert "workspace_file_read_refused" in get_args(ProcedureNodeRefusalCodeV1)
+
+
+def test_the_authoring_path_produces_the_exact_artifact_the_run_lane_executes(
+    tmp_path: Path,
+) -> None:
+    """One lowering, one artifact: what authoring lowers is what the lane runs.
+
+    The served surfaces -- SDK, HTTP, MCP and CLI -- all submit the same
+    authoring intent into the one coordinator, so proving the coordinator lowers
+    this graph-v4 Source Procedure into the exact accepted artifact the run lane
+    executed above is what "the same definition gives the same digest" means.
+    """
+
+    from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayloadV2
+    from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.playbill.authoring.preflight import compute_preflight
+    from cruxible_core.playbill.proposals import AuthenticatedActor
+
+    instance, _owner, procedure, _root, _policy_artifact = _world(tmp_path, accept_procedure=False)
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+
+    # Authoring never supplies an exact digest: it names the accepted artifact
+    # and the owned Contract, and lowering resolves both. That is what makes
+    # the digest below an identity claim rather than an echo.
+    compiled = coordinator.compile(
+        actor=actor,
+        payload=ProcedureAuthoringPayloadV2(
+            definition=_authored_definition(procedure),
+            activation_policy=procedure.activation_policy,
+            owned_contracts=procedure.owned_contracts,
+            retire=False,
+        ),
+        canonical_timestamp=ACCEPT_STAMP,
+    )
+
+    assert compiled.verdict == "passed", compiled.frontier.diagnostics
+    intent = coordinator.list_pending(actor=actor).intents[0]
+    lowered = compute_preflight(instance, intent=intent, actor=actor).lowered
+    assert lowered is not None
+    assert lowered.resolved_authoring["artifact_digest"] == (
+        procedure_artifact_digest(procedure).tagged
+    )
+    assert lowered.resolved_authoring["definition"]["graph_format"] == 4
+    assert lowered.proposed_tree[procedure_path(PROCEDURE_NAME)] == render_procedure(procedure)
+
+
+def _authored_definition(procedure: ProcedureArtifactV2) -> dict[str, object]:
+    """Render the same graph the way an author names it, not the way it resolved."""
+
+    def rewrite(value: object) -> object:
+        if isinstance(value, dict):
+            if set(value) == {"role", "target", "artifact_digest"}:
+                target = cast(dict[str, str], value["target"])
+                if target["kind"] == "Contract":
+                    return {
+                        "kind": "carried_contract",
+                        "name": target["name"],
+                        "role": value["role"],
+                    }
+                return {
+                    "tag": "playbill-authoring-artifact-reference-v1",
+                    "role": value["role"],
+                    "target": target,
+                    "resolution": "accepted_at_intent_base",
+                }
+            return {key: rewrite(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [rewrite(item) for item in value]
+        return value
+
+    rendered = procedure.definition.model_dump(mode="json", by_alias=True)
+    return cast(dict[str, object], rewrite(rendered))
