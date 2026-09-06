@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Shared review commits retain every proposal's notes.** Admissions whose Git
+  identities collide now project deterministic evaluation groups and distinct
+  signed approval payloads. Activation checks original and published aliases.
+  Reconciliation repairs valid incomplete groups after a crash; modified notes
+  still refuse. Review identity computation no longer materializes orphan
+  commits during a refused operation.
+
 - **The state loop uses bounded reads and explicit maintenance.** World prefetch
   batches typed Claims at one accepted coordinate; backing and lineage reads
   reuse verified accepted history. Eligible self-source authoring reuses

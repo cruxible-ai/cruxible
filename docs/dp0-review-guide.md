@@ -72,6 +72,7 @@ playbill host show
 playbill init
 playbill instance decommission
 playbill ledger clone-url
+playbill ledger publish
 playbill ledger set-mirror
 playbill list
 playbill line run
@@ -175,6 +176,7 @@ GET  /api/v1/{instance_id}/playbill/principals
 POST /api/v1/{instance_id}/playbill/principals/proposals
 POST /api/v1/{instance_id}/playbill/instance/decommission
 POST /api/v1/{instance_id}/playbill/ledger/mirror
+POST /api/v1/{instance_id}/playbill/ledger/publish
 GET  /api/v1/{instance_id}/playbill/ledger/mirror
 POST /api/v1/{instance_id}/playbill/providers/seed
 GET  /api/v1/{instance_id}/playbill/proposals/{proposal_id}
@@ -199,6 +201,8 @@ POST /api/v1/{instance_id}/playbill/claim-types/migrations
 GET  /api/v1/{instance_id}/playbill/claim-types
 GET  /api/v1/{instance_id}/playbill/claim-types/{predicate}
 GET  /api/v1/{instance_id}/playbill/claims
+POST /api/v1/{instance_id}/playbill/claims/backings
+POST /api/v1/{instance_id}/playbill/claims/read-batch
 GET  /api/v1/{instance_id}/playbill/claims/{identity}
 GET  /api/v1/{instance_id}/playbill/claims/{identity}/history
 POST /api/v1/{instance_id}/playbill/claims/{identity}/explanation

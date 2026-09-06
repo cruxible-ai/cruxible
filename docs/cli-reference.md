@@ -1266,6 +1266,12 @@ are byte-identical projections of the proposal evidence store, which stays the
 source of record: activation refuses to settle a candidate whose note disagrees
 with it.
 
+A commit shared by several admissions carries one admission/evaluation pair per
+proposal, ordered by proposal ID. The approval list retains signatures for each
+distinct candidate digest. Match both IDs when inspecting the group. Activation
+checks original and materialized advisory aliases; recovery restores valid
+incomplete projections without treating modified records as accepted evidence.
+
 `proposal review` prints that pointer and those ref names; `--json` remains the
 structured read. `proposal approve` still renders the whole candidate before
 asking for a signature, because that rendering is what the signature covers.

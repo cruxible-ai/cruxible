@@ -52,9 +52,9 @@ def _call_graph() -> dict[str, set[str]]:
     return graph
 
 
-def _publishing_names() -> set[str]:
+def _publishing_names(target: str = PUBLICATION) -> set[str]:
     graph = _call_graph()
-    reaching = {PUBLICATION}
+    reaching = {target}
     changed = True
     while changed:
         changed = False
@@ -72,9 +72,17 @@ def test_the_closure_finds_the_publication_and_its_known_callers() -> None:
 
     assert PUBLICATION in reaching
     assert "set_ledger_mirror" in reaching
-    assert "service_submit_playbill_approval" in reaching
-    assert "service_activate_playbill_proposal" in reaching
-    assert "service_withdraw_playbill_proposal" in reaching
+    assert "playbill_ledger_publish" in reaching
+    # Governed writes now enqueue publication; only the explicit barrier waits
+    # for network I/O. Pin both halves so a future synchronous regression fails.
+    requesting = _publishing_names("request_ledger_mirror")
+    for name in (
+        "service_submit_playbill_approval",
+        "service_activate_playbill_proposal",
+        "service_withdraw_playbill_proposal",
+    ):
+        assert name in requesting
+        assert name not in reaching
     assert "playbill_init" in reaching
 
 

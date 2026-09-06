@@ -285,6 +285,14 @@ evaluation verdict with every diagnostic behind a refusal, and
 signer's own attestation. Nothing parses those messages; every fact an agent
 should act on is in `proposal review --json` or in the notes.
 
+Distinct proposal admissions can share one Git commit, including submissions
+within the same second. Its evaluation note then contains canonical
+admission/evaluation pairs ordered by proposal ID; its approval note retains
+all distinct signed candidate payloads. Match the proposal and candidate digest
+when reviewing. Activation verifies the complete group on the original and
+materialized review aliases. Reconciliation can restore absent notes or valid
+incomplete groups after a crash; edited or unrelated records remain a refusal.
+
 `proposal review` without `--json` prints the pointer and the note refs rather
 than re-rendering the change set. `playbill review open` / `review close`, which
 materialized a detached worktree under `.playbill/review/`, are deprecated in
