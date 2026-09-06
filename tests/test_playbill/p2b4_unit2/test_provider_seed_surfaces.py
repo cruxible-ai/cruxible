@@ -198,6 +198,7 @@ def test_cli_no_seed_is_an_explicit_opt_out_that_reports_the_repair(monkeypatch,
             require_independent_approval: bool,
             seed: bool = True,
             git_object_format: str | None = None,
+            mirror_url: str | None = None,
         ) -> contracts.PlaybillInitResult:
             seeds.append(seed)
             return contracts.PlaybillInitResult.model_validate(UNSEEDED_INIT)
