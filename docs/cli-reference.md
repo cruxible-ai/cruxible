@@ -703,9 +703,12 @@ cruxible playbill procedure status RUN_ID
 
 The served lanes run deterministic `state_tap`, `transform`, `project`, `guard`,
 `repeat` and `halt` graphs, plus `source` on a graph-v4 definition: a Procedure
-may READ an external source through an accepted Provider. Effectful terminals --
-`emit_capture`, `post_inbox`, `propose_change_set`, `mandate_settlement` -- are
-not served, and `readiness` lists them as unsupported nodes before execution.
+may READ an external source through an accepted Provider. On the DIRECT lane
+the effectful terminals -- `emit_capture`, `post_inbox`, `propose_change_set`,
+`mandate_settlement` -- are not served, and `readiness` lists them as
+unsupported nodes before execution: a direct invocation carries no requested
+rung, no occurrence, and no mandate coordinate, and none is fabricated for it.
+The Line lane serves `propose_change_set`; see `playbill line`.
 
 A Source run needs accepted state to authorize it: a live
 SourceAcquisitionPolicy, the CaptureContract each Source node pins, and the
@@ -755,6 +758,34 @@ state root, defaulting to the 300-second ProcedureMandate skew the bound
 protects, and refuses the run if that file exists but cannot be read as one.
 The accepted Line's governed mandate authorizes execution; without one the
 operation returns a typed no-mandate refusal.
+
+A Line whose Procedure ends in a `propose_change_set` terminal produces a
+proposal. Each resolved candidate template must be one Claim proposal item --
+a statement, a rationale, and optionally the Claim lineage it revises. The
+daemon supplies the evidence: the produced Capture in that item's own
+dependency closure is cited, so a computed interpretation is a Claim under its
+ClaimType's evidence admission policy, never an attested observation and never
+a self-asserted one. The items are lowered through the same change-set
+authoring every surface uses, the exact live ProcedureMandate is evaluated
+against the paths lowering actually changed, and the proposal door is called
+once. The run reports, per terminal, the proposal id, the exact candidate
+digest, the operation key, the mandate bound, and the Claim path each item
+lowered into; `--json` carries them in `terminal_egress`. Producing the
+proposal activates nothing: retrieve it with `playbill proposal show`, review
+it in the ledger, and activate it with the existing proposal verbs.
+
+The proposal ref is keyed on the admitted operation. A retry of the same
+operation recovers the same proposal and publishes the same receipt; other
+member bytes under the same key refuse `effectful_operation_payload_mismatch`.
+A run that dies between preparing its egress and receiving the door's receipt
+is resolved at daemon startup through the same door and finalized as
+`terminal_egress_recovered` with the receipt on its run state. An item that is
+not a Claim proposal item refuses `proposal_item_invalid`; one whose closure
+reached no Capture, or more than one, refuses `proposal_item_evidence_missing`
+or `proposal_item_evidence_ambiguous`; a ClaimType that does not admit the
+Capture refuses `proposal_lowering_refused` naming the lowering diagnostic; a
+mandate that does not cover the request refuses `procedure_mandate_*` naming
+the failed law. None of these creates a proposal ref.
 
 ## playbill predictions
 

@@ -28,6 +28,7 @@ from cruxible_client.contracts.provider_interfaces import (
     parse_provider_interface,
     provider_interface_digest,
 )
+from cruxible_client.contracts.providers import ProviderV2, parse_provider, provider_digest
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinitionV1,
     parse_query_definition,
@@ -61,6 +62,23 @@ class PlaybillDiscoveryResultV1(_StrictDiscoveryServiceModel):
     vocabulary_entry_count: int
 
 
+class ProviderInterfaceImplementationV1(_StrictDiscoveryServiceModel):
+    """One live Provider implementing an interface, with the pins a Source node needs."""
+
+    tag: Literal["playbill-provider-interface-implementation-v1"] = (
+        "playbill-provider-interface-implementation-v1"
+    )
+    provider_identity: str
+    provider_artifact_digest: str
+    implementation_digest: str
+
+    @field_validator("provider_artifact_digest", "implementation_digest")
+    @classmethod
+    def _digests(cls, value: str) -> str:
+        ArtifactDigest.from_tagged(value)
+        return value
+
+
 class ProviderInterfaceEntryV1(_StrictDiscoveryServiceModel):
     tag: Literal["playbill-provider-interface-entry-v1"] = "playbill-provider-interface-entry-v1"
     identity: str
@@ -73,6 +91,9 @@ class ProviderInterfaceEntryV1(_StrictDiscoveryServiceModel):
     effect_class: ProviderEffectClassV1
     classifier_status: Literal["installed", "not_installed"]
     interface_basis: Literal["accepted_registration"] = "accepted_registration"
+    # Additive: the live Providers implementing this interface, so an author can
+    # pin a graph-v4 Source node from the served inventory alone.
+    providers: tuple[ProviderInterfaceImplementationV1, ...] = ()
 
     @field_validator(
         "artifact_digest",
@@ -107,6 +128,21 @@ def _provider_interfaces(
     *,
     installed_classifier_digests: frozenset[str],
 ) -> tuple[ProviderInterfaceEntryV1, ...]:
+    implementations: dict[str, list[ProviderInterfaceImplementationV1]] = {}
+    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
+        if not path.startswith("providers/"):
+            continue
+        provider = parse_provider(tree[path], path=path)
+        if provider.lifecycle.state != "live" or not isinstance(provider, ProviderV2):
+            continue
+        for implementation in provider.implementations:
+            implementations.setdefault(implementation.interface_id, []).append(
+                ProviderInterfaceImplementationV1(
+                    provider_identity=provider.identity.qualified,
+                    provider_artifact_digest=provider_digest(provider).tagged,
+                    implementation_digest=implementation.implementation_digest,
+                )
+            )
     entries: list[ProviderInterfaceEntryV1] = []
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
         if not path.startswith("provider-interfaces/"):
@@ -116,6 +152,15 @@ def _provider_interfaces(
             continue
         entries.append(
             ProviderInterfaceEntryV1(
+                providers=tuple(
+                    sorted(
+                        implementations.get(registration.interface_id, ()),
+                        key=lambda item: (
+                            item.provider_identity.encode("utf-8"),
+                            item.implementation_digest.encode("ascii"),
+                        ),
+                    )
+                ),
                 identity=registration.identity.qualified,
                 artifact_digest=provider_interface_digest(registration).tagged,
                 interface_digest=registration.interface_digest,

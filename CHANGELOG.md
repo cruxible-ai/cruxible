@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- **A Line's `propose_change_set` terminal produces a durable proposal.** On
+  the served Line lane, each resolved candidate template must be one Claim
+  proposal item (statement, rationale, optional lineage); the daemon attaches
+  the produced Capture in that item's own dependency closure as its evidence,
+  lowers the items through the same change-set authoring every surface uses,
+  evaluates the exact live ProcedureMandate against the paths lowering actually
+  changed, and calls the proposal door once. Run state gains `terminal_egress`,
+  naming the proposal id, the exact candidate digest, the operation key, the
+  mandate bound, and the Claim path each item lowered into; `procedure run`,
+  `line run`, and `procedure status` print them. Producing a proposal never
+  activates it: review, approval, and activation stay with the existing
+  proposal verbs. The proposal ref is keyed on the admitted operation, so a
+  retry recovers the same proposal and receipt, and other member bytes under
+  the same key refuse `effectful_operation_payload_mismatch`. A `prepared`
+  journal record precedes the door and a resolving record follows it; daemon
+  startup resolves a run that died between the two through the same idempotent
+  door and finalizes it as `terminal_egress_recovered` with its receipt intact.
+  Mandate, item, evidence, and lowering refusals reach the run as typed node
+  refusals with the door's real limiting code. The direct lane is unchanged:
+  it has no requested rung, occurrence, or mandate coordinate, and still names
+  the terminal unsupported before admission.
+
 - **Shared review commits retain every proposal's notes.** Admissions whose Git
   identities collide now project deterministic evaluation groups and distinct
   signed approval payloads. Activation checks original and published aliases.

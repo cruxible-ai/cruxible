@@ -12,7 +12,13 @@ from typing import NoReturn, TypeAlias
 
 from pydantic import BaseModel, ValidationError
 
-from cruxible_client.contracts.acquisition_policies import ACQUISITION_POLICY_PIN_ROLE
+from cruxible_client.contracts.acquisition_policies import (
+    ACQUISITION_POLICY_PIN_ROLE,
+    acquisition_policy_digest,
+    acquisition_policy_path,
+    parse_acquisition_policy,
+    render_acquisition_policy,
+)
 from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_PATH,
     approval_policy_digest,
@@ -26,6 +32,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringChangeSetMemberV1,
     AuthoringExactContentObjectV1,
     AuthoringIntentV1,
+    CaptureContractAuthoringPayloadV1,
     ChangeSetAuthoringPayloadV1,
     ClaimAuthoringPayloadV1,
     ClaimAuthoringPayloadV2,
@@ -34,6 +41,7 @@ from cruxible_client.contracts.authoring.models import (
     ClaimTypeAuthoringPayloadV1,
     ClaimTypeSuccessionMemberV1,
     ExistingCaptureCitationSourceV1,
+    LineAuthoringPayloadV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
     ProcedureMandateAuthoringPayloadV1,
@@ -41,6 +49,7 @@ from cruxible_client.contracts.authoring.models import (
     QueryDefinitionAuthoringPayloadV1,
     RepairAlternativeV1,
     SelfSourceBodyV1,
+    SourceAcquisitionPolicyAuthoringPayloadV1,
     SubjectAuthoringPayloadV1,
     WorkingSelectionObservationV1,
     authoring_member_identity,
@@ -127,10 +136,18 @@ from cruxible_client.contracts.procedures.graph import (
     ProcedureGraphFormatError,
     compute_procedure_definition_digest,
 )
+from cruxible_client.contracts.procedures.line_specs import (
+    LineSpecV2,
+    line_spec_digest,
+    line_spec_path,
+    parse_line_spec,
+    render_line_spec,
+)
 from cruxible_client.contracts.procedures.models import (
     ProcedureDefinitionAny,
     ProcedureDefinitionV3,
     ProcedureDefinitionV4,
+    ProcedurePinSlotRefV1,
     iter_pin_bindings,
 )
 from cruxible_client.contracts.providers import parse_provider, provider_digest, provider_path
@@ -1763,8 +1780,24 @@ def _render_non_procedure_member(
     | QueryDefinitionAuthoringPayloadV1
     | ClaimTypeAuthoringPayloadV1
     | ApprovalPolicyAuthoringPayloadV1
-    | ProcedureRuntimePolicyAuthoringPayloadV1,
+    | ProcedureRuntimePolicyAuthoringPayloadV1
+    | CaptureContractAuthoringPayloadV1
+    | SourceAcquisitionPolicyAuthoringPayloadV1,
 ) -> tuple[str, bytes, str]:
+    if isinstance(payload, CaptureContractAuthoringPayloadV1):
+        contract = payload.capture_contract
+        return (
+            capture_contract_path(contract.identity.name),
+            render_capture_contract(contract),
+            capture_contract_digest(contract).tagged,
+        )
+    if isinstance(payload, SourceAcquisitionPolicyAuthoringPayloadV1):
+        policy = payload.acquisition_policy
+        return (
+            acquisition_policy_path(policy.identity.name),
+            render_acquisition_policy(policy),
+            acquisition_policy_digest(policy).tagged,
+        )
     if isinstance(payload, ClaimTypeAuthoringPayloadV1):
         definition = payload.claim_type
         return (
@@ -1797,6 +1830,127 @@ def _render_non_procedure_member(
         render_procedure_runtime_policy(payload.procedure_runtime_policy),
         procedure_runtime_policy_digest(payload.procedure_runtime_policy).tagged,
     )
+
+
+def _render_line_member(
+    payload: LineAuthoringPayloadV1,
+    *,
+    tree: Mapping[str, bytes],
+) -> tuple[str, bytes, str]:
+    """Lower one Line decision into the exact LineSpec its accepted closure pins.
+
+    The Procedure and the acquisition policy are named; both must be present in
+    the staged tree -- accepted at the base or authored earlier in the same
+    set -- and lowering pins their exact digests. A Procedure that pins every
+    Provider it names fills no slot, so the Line's slot bindings and Provider
+    closures are empty; graph-v4 Procedures lower to the v2 Line wire.
+    """
+
+    procedure_target = procedure_path(payload.procedure_name)
+    procedure_content = tree.get(procedure_target)
+    if procedure_content is None:
+        _refuse(
+            "playbill.authoring.line_procedure_missing",
+            "procedure_name",
+            "Line authoring requires the named accepted or same-ChangeSet Procedure.",
+            repair_kind="replace_procedure_name",
+            repair_description="Use a Procedure name present at the authoring coordinate.",
+        )
+    procedure = parse_procedure(procedure_content, path=procedure_target)
+    policy_target = acquisition_policy_path(payload.acquisition_policy_name)
+    policy_content = tree.get(policy_target)
+    if policy_content is None:
+        _refuse(
+            "playbill.authoring.line_acquisition_policy_missing",
+            "acquisition_policy_name",
+            "Line authoring requires the named accepted or same-ChangeSet SourceAcquisitionPolicy.",
+            repair_kind="replace_acquisition_policy_name",
+            repair_description=(
+                "Use a SourceAcquisitionPolicy name present at the authoring coordinate."
+            ),
+        )
+    policy = parse_acquisition_policy(policy_content, path=policy_target)
+    if procedure.definition.graph_format != 4:
+        _refuse(
+            "playbill.authoring.line_graph_format_unsupported",
+            "procedure_name",
+            "Line authoring lowers graph-v4 Procedures only.",
+            repair_kind="replace_procedure_name",
+            repair_description="Name a graph-v4 Procedure, or author the Line as raw bytes.",
+        )
+    if _required_slot_names(procedure):
+        _refuse(
+            "playbill.authoring.line_slots_unsupported",
+            "procedure_name",
+            "Line authoring supports Procedures that pin every Provider exactly; "
+            "this one declares open slots.",
+            repair_kind="replace_procedure_name",
+            repair_description="Name a Procedure with no open Provider slots.",
+        )
+    procedure_pin = ArtifactPin(
+        role="procedure",
+        target=procedure.identity,
+        artifact_digest=procedure_artifact_digest(procedure).tagged,
+    )
+    policy_pin = ArtifactPin(
+        role=ACQUISITION_POLICY_PIN_ROLE,
+        target=policy.identity,
+        artifact_digest=acquisition_policy_digest(policy).tagged,
+    )
+    caps = procedure.definition.hard_caps
+    budgets = (
+        {
+            "max_capture_bytes": caps.max_capture_bytes,
+            "max_items": caps.max_items,
+            "max_provider_calls": caps.max_provider_calls,
+            "max_wall_clock_microseconds": caps.max_wall_clock.microseconds,
+        }
+        if payload.budgets is None
+        else dict(payload.budgets)
+    )
+    path = line_spec_path(payload.name)
+    previous_content = tree.get(path)
+    predecessor_digest = None
+    if previous_content is not None:
+        previous = parse_line_spec(previous_content, path=path)
+        predecessor_digest = line_spec_digest(previous).tagged
+    line = LineSpecV2(
+        identity=ArtifactIdentity(kind="Line", name=payload.name),
+        occurrence_epoch=payload.occurrence_epoch,
+        procedure=procedure_pin,
+        parameters=payload.parameters,
+        slot_bindings=(),
+        trigger_policy=payload.trigger_policy,
+        acquisition_policy=policy_pin,
+        requested_terminal_rung=payload.requested_terminal_rung,
+        budgets=budgets,
+        epsilon=payload.epsilon,
+        pins=tuple(
+            sorted(
+                (procedure_pin, policy_pin),
+                key=lambda pin: (
+                    pin.role.encode("utf-8"),
+                    pin.target.qualified.encode("utf-8"),
+                    pin.artifact_digest.encode("ascii"),
+                ),
+            )
+        ),
+        provider_implementation_closures=(),
+        lifecycle=ArtifactLifecycle(
+            state="retired" if payload.retire else "live",
+            predecessor_digest=predecessor_digest,
+        ),
+    )
+    return path, render_line_spec(line), line_spec_digest(line).tagged
+
+
+def _required_slot_names(procedure: ProcedureArtifactAny) -> tuple[str, ...]:
+    names: list[str] = []
+    for node in procedure.definition.nodes:
+        for binding in iter_pin_bindings(node):
+            if isinstance(binding, ProcedurePinSlotRefV1):
+                names.append(binding.slot_name)
+    return tuple(sorted(set(names)))
 
 
 def _render_procedure_mandate_member(
@@ -1846,7 +2000,9 @@ def _lower_non_procedure(
     payload: SubjectAuthoringPayloadV1
     | QueryDefinitionAuthoringPayloadV1
     | ApprovalPolicyAuthoringPayloadV1
-    | ProcedureRuntimePolicyAuthoringPayloadV1,
+    | ProcedureRuntimePolicyAuthoringPayloadV1
+    | CaptureContractAuthoringPayloadV1
+    | SourceAcquisitionPolicyAuthoringPayloadV1,
     base_tree: dict[str, bytes],
 ) -> LoweredAuthoring:
     path, content, digest = _render_non_procedure_member(payload)
@@ -1870,6 +2026,7 @@ MEMBER_STAGING_ORDER = (
     "claim",
     "procedure",
     "procedure_mandate",
+    "line",
     "claim_retirement",
 )
 
@@ -1902,6 +2059,8 @@ def _member_stage(member: AuthoringChangeSetMemberV1) -> str:
         return "procedure"
     if isinstance(member, ProcedureMandateAuthoringPayloadV1):
         return "procedure_mandate"
+    if isinstance(member, LineAuthoringPayloadV1):
+        return "line"
     return "definition"
 
 
@@ -1922,6 +2081,8 @@ def _member_primary_path(
         return procedure_path(str(member.definition["name"]))
     if isinstance(member, ProcedureMandateAuthoringPayloadV1):
         return procedure_mandate_path(member.name)
+    if isinstance(member, LineAuthoringPayloadV1):
+        return line_spec_path(member.name)
     path, _content, _digest = _render_non_procedure_member(member)
     return path
 
@@ -2243,6 +2404,11 @@ def _stage_change_set_member(
         mandate_path, content, digest = _render_procedure_mandate_member(member, tree=staged_tree)
         staged_tree = dict(staged_tree)
         staged_tree[mandate_path] = content
+        return staged_tree, {"artifact_digest": digest}, set(), {}
+    if isinstance(member, LineAuthoringPayloadV1):
+        line_path, content, digest = _render_line_member(member, tree=staged_tree)
+        staged_tree = dict(staged_tree)
+        staged_tree[line_path] = content
         return staged_tree, {"artifact_digest": digest}, set(), {}
     _path, content, digest = _render_non_procedure_member(member)
     staged_tree = dict(staged_tree)
@@ -2807,6 +2973,20 @@ def lower_authoring(
             actor_id=actor_id,
             base=base,
             base_tree=base_tree,
+        )
+    if isinstance(intent.payload, LineAuthoringPayloadV1):
+        path, content, digest = _render_line_member(intent.payload, tree=base_tree)
+        candidate_tree = dict(base_tree)
+        candidate_tree[path] = content
+        changed = () if base_tree.get(path) == content else ((path, content),)
+        return LoweredAuthoring(
+            proposed_tree=candidate_tree,
+            resolved_authoring={
+                "artifact_digest": digest,
+                "changed_members": _encoded_members(changed),
+                "identity": authoring_member_identity(intent.payload),
+            },
+            changed_members=changed,
         )
     return _lower_non_procedure(payload=intent.payload, base_tree=base_tree)
 
