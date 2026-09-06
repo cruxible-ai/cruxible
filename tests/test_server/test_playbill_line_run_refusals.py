@@ -33,6 +33,10 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_spec_path,
     render_line_spec,
 )
+from cruxible_client.contracts.procedures.results import (
+    ProcedureSelectionDecisionV1,
+    procedure_selection_decision_digest,
+)
 from cruxible_client.contracts.repairs import (
     DECLARED_HAND_EDIT_CHANGES,
     RUNNABLE_REFUSAL_REPAIRS,
@@ -504,3 +508,14 @@ def test_a_source_free_line_under_a_required_rule_still_runs(
     assert selection.verdict == "selected"
     assert selection.decisions == ()
     assert selection.policy_digest == acquisition_policy_digest(policy).tagged
+    # Byte-identical to the blanket decision the lane recorded before the shared
+    # planner landed, so this occurrence's plan digest, replay key and run id are
+    # the ones it had -- there is no run-id break for a Source-free Line.
+    pre_batch = ProcedureSelectionDecisionV1(
+        policy_digest=acquisition_policy_digest(policy).tagged,
+        verdict="selected",
+        decisions=(),
+    )
+    assert procedure_selection_decision_digest(selection) == (
+        procedure_selection_decision_digest(pre_batch)
+    )

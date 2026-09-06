@@ -12,19 +12,41 @@
   `mandate_settlement`) stay dark, and a graph-v3 Source keeps its existing
   refusal because it names no interface or implementation for anything to plan.
 
-  A Source run is authorized by accepted state, not by the request: exactly one
-  live SourceAcquisitionPolicy whose declared inputs are exactly the Procedure's
-  Source aliases, the CaptureContract each node pins resolved from the accepted
-  tree by digest, and the Provider closure the graph names. Both run lanes plan
-  their Provider occurrences through ONE planner and now EVALUATE that policy
-  per declared input; the Line lane previously recorded a blanket
-  `verdict="selected"` with no decisions at all. Missing or ambiguous policy is
-  `source_acquisition_policy_required`, a rule that denies a declared input is
-  `source_acquisition_refused`, and a read outside an authorized workspace root,
-  over the contract's selection budget, or with no daemon-local reader is
-  `workspace_file_read_refused` with its path class. None of them leave partial
-  run history behind. The Line run route also gains the workspace reader the
-  direct route already had.
+  A Source run is authorized by accepted state, not by the request: the
+  SourceAcquisitionPolicy that governs it, the CaptureContract each node pins
+  resolved from the accepted tree by digest, and the Provider closure the graph
+  names. A Procedure names its policy on its own envelope, under the pin role
+  `acquisition-policy` -- authored by naming the policy, through
+  `procedure(..., acquisition_policy=...)` or the change-set member's
+  `acquisition_policy` field, with lowering resolving the name and owning the
+  digest. That pin is the binding, exactly as a Line's is the LineSpec's: it is
+  closure-checked at acceptance, and a pinned Procedure reads no other policy,
+  so accepting an unrelated policy elsewhere in the tree cannot change what an
+  already accepted Procedure does. A Procedure with no such pin falls back to
+  accepted state, which requires exactly one live SourceAcquisitionPolicy whose
+  declared inputs are exactly that Procedure's Source aliases; that binding is
+  keyed on Procedure-local alias names, so prefer the pin. A pinned policy that
+  does not declare this Procedure's Source inputs, and a missing or ambiguous
+  policy for an unpinned one, are both `source_acquisition_policy_required`; a
+  rule that denies a declared input is `source_acquisition_refused`; and a read
+  outside an authorized workspace root, over the contract's selection budget, or
+  with no daemon-local reader is `workspace_file_read_refused` with its path
+  class. None of them leave partial run history behind. The Line run route also
+  gains the workspace reader the direct route already had.
+
+  Both run lanes plan their Provider occurrences through ONE planner, which now
+  EVALUATES the accepted policy for every input the graph plans an occurrence
+  for; the Line lane previously recorded a blanket `verdict="selected"` with no
+  decisions at all. A declared input the graph plans NO occurrence for is not
+  scored at plan time -- whether such an input ever arrives is a fact only the
+  read can report, and the declared `on_unavailable`, `on_stale` and
+  `on_oversized` behaviours still fire from that read at execution time. So a
+  Line occurrence over a Procedure that plans a Source occurrence records
+  different selection decisions from this release, and therefore a different
+  `acquisition_plan_digest`, `semantic_replay_key_digest` and `run_id`; a Line
+  over a Source-free Procedure records the same empty decision it always did and
+  keeps the run ids it had, whatever its policy declares. Runs recorded before
+  this release keep their ids and stay readable through `procedure run status`.
 
   What the run retains is the point: per Source occurrence the run state and
   `procedure run status` now carry the `SourceReadReceiptV1` the daemon minted
