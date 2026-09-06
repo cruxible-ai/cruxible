@@ -2054,6 +2054,20 @@ class AuthoringIntentV1(_StrictAuthoringModel):
         payload_tag = payload_dump.pop("tag")
         normalized_payload = normalize_canonical(payload_dump)
         assert isinstance(normalized_payload, dict)
+        # One snapshot, two preimages that differ for exactly one payload: a
+        # change set's rationale is dropped beside `tag`, exactly as
+        # `authoring_payload_digest` drops it, because a set's identity is its
+        # members. Withheld here rather than re-derived, and put straight back
+        # into the fingerprint preimage below, where
+        # `authoring_create_fingerprint` still digests the whole payload. Unset,
+        # the field is absent from the dump, so nothing is withheld and nothing
+        # is restored -- which is what the standalone pop's default says. A
+        # Claim's rationale stays in both; the law is at
+        # `authoring_payload_digest`.
+        withheld: dict[str, CanonicalValue] = {}
+        if isinstance(self.payload, ChangeSetAuthoringPayloadV1):
+            if "rationale" in normalized_payload:
+                withheld["rationale"] = normalized_payload.pop("rationale")
         if self.payload_digest != _normalized_authoring_digest(
             AUTHORING_PAYLOAD_DIGEST_DOMAIN, normalized_payload
         ):
@@ -2064,6 +2078,7 @@ class AuthoringIntentV1(_StrictAuthoringModel):
         tagged_payload = {
             "tag": normalize_canonical(payload_tag, location="$.payload.tag"),
             **normalized_payload,
+            **withheld,
         }
         expected_fingerprint = _normalized_authoring_digest(
             AUTHORING_CREATE_FINGERPRINT_DOMAIN,
