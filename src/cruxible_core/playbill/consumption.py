@@ -14,7 +14,10 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.closure import dependency_artifacts, parse_dependency_artifact
 from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.review_operational import ReviewOperationalStoreError
+from cruxible_core.playbill.review_operational import (
+    REVIEW_OPERATIONAL_APPEND_BATCH_LIMIT,
+    ReviewOperationalStoreError,
+)
 
 CONSUMPTION_RECEIPT_ID_DOMAIN = "playbill-consumption-receipt-v1"
 CONSUMPTION_PARTITION_ID = "receipts"
@@ -194,27 +197,30 @@ def record_consumption(
         generation=generation,
         actor_context=context.actor_context,
     )
-    receipts: list[ConsumptionReceiptV1] = []
-    for identity, digest in ordered:
-        receipt = build_consumption_receipt(
+    receipts = tuple(
+        build_consumption_receipt(
             context=context,
             operation=operation,
             coordinate=coordinate,
             artifact_identity=identity,
             artifact_digest=digest,
         )
-        store.append(
+        for identity, digest in ordered
+    )
+    for offset in range(0, len(receipts), REVIEW_OPERATIONAL_APPEND_BATCH_LIMIT):
+        store.append_batch(
             family="consumption",
             partition_id=CONSUMPTION_PARTITION_ID,
-            event_id=receipt.receipt_id,
-            payload=receipt,
+            entries=tuple(
+                (receipt.receipt_id, receipt)
+                for receipt in receipts[offset : offset + REVIEW_OPERATIONAL_APPEND_BATCH_LIMIT]
+            ),
             coordinate=coordinate,
             generation=generation,
             actor_context=context.actor_context,
             recorded_at=context.actor_context.timestamp,
         )
-        receipts.append(receipt)
-    return tuple(receipts)
+    return receipts
 
 
 def ensure_consumption_epoch(

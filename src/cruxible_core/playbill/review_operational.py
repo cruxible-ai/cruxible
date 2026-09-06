@@ -11,6 +11,7 @@ import fcntl
 import json
 import os
 import stat
+from collections.abc import Sequence
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -34,6 +35,7 @@ REVIEW_OPERATIONAL_STORE_DIRECTORY = "review-operational-v1"
 ReviewOperationalFamily: TypeAlias = Literal[
     "curation", "audit", "consumption", "block_observation"
 ]
+REVIEW_OPERATIONAL_APPEND_BATCH_LIMIT = 256
 _UNCHECKED_PARTITION_HEAD = object()
 
 
@@ -452,11 +454,69 @@ class ReviewOperationalStore:
         recorded_at: datetime,
         expected_latest_event_digest: str | None | object = _UNCHECKED_PARTITION_HEAD,
     ) -> PlaybillReviewOperationalEventV1:
-        payload_value = (
-            payload.model_dump(mode="json") if isinstance(payload, BaseModel) else payload
+        return self._append_batch(
+            family=family,
+            partition_id=partition_id,
+            entries=((event_id, payload),),
+            coordinate=coordinate,
+            generation=generation,
+            actor_context=actor_context,
+            recorded_at=recorded_at,
+            expected_latest_event_digest=expected_latest_event_digest,
+        )[0]
+
+    def append_batch(
+        self,
+        *,
+        family: ReviewOperationalFamily,
+        partition_id: str,
+        entries: Sequence[tuple[str, BaseModel | dict[str, object]]],
+        coordinate: AcceptedCoordinate,
+        generation: int,
+        actor_context: GovernedActorContext,
+        recorded_at: datetime,
+    ) -> tuple[PlaybillReviewOperationalEventV1, ...]:
+        """Append a bounded durable prefix under one fresh partition verification.
+
+        Inputs are serialized before any mutation. After that prevalidation,
+        this is not an all-or-nothing transaction: each new item retains the
+        payload/event fsync boundaries of append(). A later error leaves earlier
+        events durable, and retry recovers them by identity. No verified state
+        escapes this lock scope. The public compare-and-append API stays singular.
+        """
+        return self._append_batch(
+            family=family,
+            partition_id=partition_id,
+            entries=entries,
+            coordinate=coordinate,
+            generation=generation,
+            actor_context=actor_context,
+            recorded_at=recorded_at,
         )
-        payload_digest = _payload_digest(payload_value)
-        payload_bytes = canonical_bytes(payload_value) + b"\n"
+
+    def _append_batch(
+        self,
+        *,
+        family: ReviewOperationalFamily,
+        partition_id: str,
+        entries: Sequence[tuple[str, BaseModel | dict[str, object]]],
+        coordinate: AcceptedCoordinate,
+        generation: int,
+        actor_context: GovernedActorContext,
+        recorded_at: datetime,
+        expected_latest_event_digest: str | None | object = _UNCHECKED_PARTITION_HEAD,
+    ) -> tuple[PlaybillReviewOperationalEventV1, ...]:
+        if len(entries) > REVIEW_OPERATIONAL_APPEND_BATCH_LIMIT:
+            raise ValueError("operational append batch exceeds the item limit")
+        if not entries:
+            return ()
+        # Detach caller-owned containers before acquiring the store lock.
+        prepared = []
+        for event_id, payload in entries:
+            value = payload.model_dump(mode="json") if isinstance(payload, BaseModel) else payload
+            payload_digest = _payload_digest(value)
+            payload_bytes = canonical_bytes(value) + b"\n"
+            prepared.append((event_id, payload_digest, payload_bytes, json.loads(payload_bytes)))
         with self._locked():
             self._ensure_initialized(
                 coordinate=coordinate, generation=generation, initialized_at=recorded_at
@@ -466,27 +526,13 @@ class ReviewOperationalStore:
             existing: tuple[tuple[PlaybillReviewOperationalEventV1, dict[str, object]], ...] = ()
             if any(events_directory.glob("*.json")):
                 existing = self._load_partition(family, partition_id)
-                for event, prior_payload in existing:
-                    if prior_payload.get("event_id") != event_id:
-                        continue
-                    if event.payload_digest == payload_digest:
-                        return event
-                    raise ReviewOperationalStoreError(
-                        "operational event identity has conflicting payload bytes"
-                    )
-            actual_latest = None if not existing else existing[-1][0].event_digest
-            if (
-                expected_latest_event_digest is not _UNCHECKED_PARTITION_HEAD
-                and expected_latest_event_digest != actual_latest
-            ):
-                raise ReviewOperationalConcurrentChangeError
-            payload_path = directory / "payloads" / f"{payload_digest[7:]}.json"
-            if payload_path.exists():
-                if payload_path.is_symlink() or payload_path.read_bytes() != payload_bytes:
-                    raise ReviewOperationalStoreError("operational payload path is occupied")
-            else:
-                _exclusive_write(payload_path, payload_bytes)
-            self._crash("after_payload_sync")
+            # Preserve append's first matching payload event_id behavior, including
+            # old records whose payload has no string event_id.
+            by_id: dict[str, PlaybillReviewOperationalEventV1] = {}
+            for event, prior_payload in existing:
+                prior_id = prior_payload.get("event_id")
+                if isinstance(prior_id, str):
+                    by_id.setdefault(prior_id, event)
             sequence = len(existing)
             previous = (
                 review_operational_partition_genesis_digest(
@@ -495,37 +541,97 @@ class ReviewOperationalStore:
                 if not existing
                 else existing[-1][0].event_digest
             )
-            placeholder = "sha256:" + "0" * 64
-            draft = PlaybillReviewOperationalEventV1.model_construct(
-                tag="playbill-review-operational-event-v1",
-                instance_id=self.instance_id,
-                family=family,
-                partition_id=partition_id,
-                sequence=sequence,
-                previous_event_digest=previous,
-                accepted_coordinate=coordinate,
-                accepted_generation=generation,
-                actor_context=actor_context,
-                payload_digest=payload_digest,
-                recorded_at=recorded_at,
-                event_digest=placeholder,
-            )
-            event = PlaybillReviewOperationalEventV1(
-                instance_id=self.instance_id,
-                family=family,
-                partition_id=partition_id,
-                sequence=sequence,
-                previous_event_digest=previous,
-                accepted_coordinate=coordinate,
-                accepted_generation=generation,
-                actor_context=actor_context,
-                payload_digest=payload_digest,
-                recorded_at=recorded_at,
-                event_digest=review_operational_event_digest(draft),
-            )
-            _exclusive_write(events_directory / f"{sequence:020d}.json", _render(event))
-            self._crash("after_event_sync")
-            return event
+            results: list[PlaybillReviewOperationalEventV1] = []
+            for event_id, payload_digest, payload_bytes, payload_value in prepared:
+                prior = by_id.get(event_id)
+                if prior is not None:
+                    if prior.payload_digest != payload_digest:
+                        raise ReviewOperationalStoreError(
+                            "operational event identity has conflicting payload bytes"
+                        )
+                    results.append(prior)
+                    continue
+                actual_latest = None if sequence == 0 else previous
+                if (
+                    expected_latest_event_digest is not _UNCHECKED_PARTITION_HEAD
+                    and expected_latest_event_digest != actual_latest
+                ):
+                    raise ReviewOperationalConcurrentChangeError
+                event = self._append_verified(
+                    directory=directory,
+                    family=family,
+                    partition_id=partition_id,
+                    coordinate=coordinate,
+                    generation=generation,
+                    actor_context=actor_context,
+                    recorded_at=recorded_at,
+                    sequence=sequence,
+                    previous=previous,
+                    payload_digest=payload_digest,
+                    payload_bytes=payload_bytes,
+                )
+                results.append(event)
+                prior_id = payload_value.get("event_id")
+                if isinstance(prior_id, str):
+                    by_id.setdefault(prior_id, event)
+                sequence += 1
+                previous = event.event_digest
+            return tuple(results)
+
+    def _append_verified(
+        self,
+        *,
+        directory: Path,
+        family: ReviewOperationalFamily,
+        partition_id: str,
+        coordinate: AcceptedCoordinate,
+        generation: int,
+        actor_context: GovernedActorContext,
+        recorded_at: datetime,
+        sequence: int,
+        previous: str,
+        payload_digest: str,
+        payload_bytes: bytes,
+    ) -> PlaybillReviewOperationalEventV1:
+        """Write one item while the caller owns the verified partition lock."""
+        payload_path = directory / "payloads" / f"{payload_digest[7:]}.json"
+        if payload_path.exists():
+            if payload_path.is_symlink() or payload_path.read_bytes() != payload_bytes:
+                raise ReviewOperationalStoreError("operational payload path is occupied")
+        else:
+            _exclusive_write(payload_path, payload_bytes)
+        self._crash("after_payload_sync")
+        placeholder = "sha256:" + "0" * 64
+        draft = PlaybillReviewOperationalEventV1.model_construct(
+            tag="playbill-review-operational-event-v1",
+            instance_id=self.instance_id,
+            family=family,
+            partition_id=partition_id,
+            sequence=sequence,
+            previous_event_digest=previous,
+            accepted_coordinate=coordinate,
+            accepted_generation=generation,
+            actor_context=actor_context,
+            payload_digest=payload_digest,
+            recorded_at=recorded_at,
+            event_digest=placeholder,
+        )
+        event = PlaybillReviewOperationalEventV1(
+            instance_id=self.instance_id,
+            family=family,
+            partition_id=partition_id,
+            sequence=sequence,
+            previous_event_digest=previous,
+            accepted_coordinate=coordinate,
+            accepted_generation=generation,
+            actor_context=actor_context,
+            payload_digest=payload_digest,
+            recorded_at=recorded_at,
+            event_digest=review_operational_event_digest(draft),
+        )
+        _exclusive_write(directory / "events" / f"{sequence:020d}.json", _render(event))
+        self._crash("after_event_sync")
+        return event
 
     def events(
         self, *, family: ReviewOperationalFamily | None = None
