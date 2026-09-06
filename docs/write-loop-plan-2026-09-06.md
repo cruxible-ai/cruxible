@@ -1,8 +1,11 @@
 # Write-loop performance and follow-up plan
 
 Prepared from the integrated code at `9f5ebb999` (daemon code `2215f370`).
-Execution branch: `codex/write-loop-latency`, in an isolated worktree. This is a
-plan; the new served trace and the changes below have not yet been implemented.
+Execution branch: `codex/write-loop-latency`, in an isolated worktree. The first
+measured implementation pass is recorded in
+[write-loop results](write-loop-results-2026-09-06.md). Four fixes through
+`283ca306` are independently reviewed; the performance exit gate below remains
+open. Follow-up stages are a sequence, not a claim that every stage has shipped.
 
 ## Objective
 
@@ -72,6 +75,15 @@ and its measured tradeoff. Avoid an endless micro-optimization campaign once
 ordinary project management is comfortably interactive.
 
 ## Product work after the performance gate
+
+Current next performance slice: cold intent-index initialization after restart,
+then projection prebuild and verified checkpoint recovery, followed by repeated
+evaluation and broad readback. The exact program workload's cold intent lookup
+takes 11.741 seconds versus 0.109 warm; the checkpoint report records its limits.
+Batched fresh Git
+reads removed most reconciliation subprocess cost without changing publication
+semantics. Moving publication off the foreground path is still a separate
+decision; no speedup in this pass is attributed to deferred acknowledgment.
 
 | Priority | Follow-up | Release proof |
 | --- | --- | --- |

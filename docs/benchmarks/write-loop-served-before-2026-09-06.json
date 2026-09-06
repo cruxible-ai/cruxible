@@ -1,0 +1,135 @@
+{
+  "repo": "/private/tmp/playbill-state-loop-design",
+  "head": "9f5ebb999009b725c3eb475904e437b1a2d186dd",
+  "working_tree": [],
+  "population": 1000,
+  "history": 8,
+  "repeats": 2,
+  "claims_per_write": 18,
+  "orphan_proposals": 48,
+  "scope": "SDK claim draft/prepare/submit/status; HTTP approval challenge/sign/submit; SDK accept; coordinate-pinned HTTP full Claim readback; explicit SDK refresh. Half of each batch revises seed Claim identities; remainder creates observations. Attached Git workspace; no floor or mirror. Acceptance service cProfile enabled. Cold means fresh daemon process, after separately timed SDK connect/orient; warm loops advance the accepted coordinate. Disk caches are uncontrolled.",
+  "rows": [
+    {
+      "iteration": 0,
+      "temperature": "cold",
+      "seconds": {
+        "draft": 0.05490591697162017,
+        "prepare": 1.3781488329987042,
+        "submit": 4.954958417045418,
+        "submitted_status": 0.036498375004157424,
+        "approval_challenge": 0.32642983295954764,
+        "sign": 0.0013526250259019434,
+        "approval_submit": 0.8486786669818684,
+        "accept": 61.53322766703786,
+        "readback": 3.633786374994088,
+        "refresh": 2.3145947919692844
+      },
+      "total_seconds": 75.08268454199424,
+      "accepted_coordinate": {
+        "tag": "playbill-accepted-coordinate-v1",
+        "git_oid": "89c8c4a224112717a22d21aa3b37d662468f5ae4",
+        "semantic_root": "sha256:c7cf1b696148ece2ef67d21374d1247684d13baedf7bc14d7981127e8b73cf75",
+        "generation_root": "sha256:22052f9f8234ad0b7fe71cc0618b105a62e0e093f3e297ed242773365838d45d",
+        "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+      },
+      "readback_identities": [
+        "Claim:CLM-05a95922dcaf72941c559a3e12d45960",
+        "Claim:CLM-15e899952da2bbda5a37479e5eeb1c6b",
+        "Claim:CLM-2d62548ae546418f8e0818d9f744bf7c",
+        "Claim:CLM-328990a98aca02fa6f30b902cd6e2a0d",
+        "Claim:CLM-4bc990c086dce7f44c093ceddddff6bc",
+        "Claim:CLM-6cdc8e4643f938c52c80449be6ba9695",
+        "Claim:CLM-7166f8957239fec95b5c6d3fef1af04a",
+        "Claim:CLM-75ae297d8d8c55eaee14947b7e19e414",
+        "Claim:CLM-7f96ec46d430115c39b710dd3d225d9d",
+        "Claim:CLM-896edd2fe78434735516a86226fee12e",
+        "Claim:CLM-8ac3838f574ec41aa21ec76aea9ad82f",
+        "Claim:CLM-8f661ea9880372d00b39e9ff176ec8b6",
+        "Claim:CLM-a3694496886f396cc64b32f7879f969e",
+        "Claim:CLM-acf1fc487682d994fc54282b8039a935",
+        "Claim:CLM-b8759d509a1ab46d7e26345e95e45698",
+        "Claim:CLM-bc6dcf6dfd189747f31fbc6a08a48e39",
+        "Claim:CLM-c2c74650d1dad3617f7944af7c87d11c",
+        "Claim:CLM-f44e8a285828ff57d1e89e587c07ded6"
+      ],
+      "workspace_advertisement": {
+        "tag": "playbill-workspace-advertisement-v1",
+        "status": "updated",
+        "workspace_path": "/private/tmp/pb-served-bench-9y7x_7c0/fixture/workspace",
+        "remote_name": "playbill",
+        "advertised_refs": [
+          "refs/remotes/playbill/accepted"
+        ],
+        "failure_code": null
+      }
+    },
+    {
+      "iteration": 1,
+      "temperature": "warm",
+      "seconds": {
+        "draft": 0.056142083019949496,
+        "prepare": 1.4075116660096683,
+        "submit": 4.776015000010375,
+        "submitted_status": 0.03157366695813835,
+        "approval_challenge": 0.30698979197768494,
+        "sign": 0.0011949160252697766,
+        "approval_submit": 1.0555326669709757,
+        "accept": 62.165769208048005,
+        "readback": 10.16826604201924,
+        "refresh": 2.548160457983613
+      },
+      "total_seconds": 82.51817320799455,
+      "accepted_coordinate": {
+        "tag": "playbill-accepted-coordinate-v1",
+        "git_oid": "489c4f81c1eed604fda140a8f286e46b74e3ca22",
+        "semantic_root": "sha256:85237d9ec2e52dcbb6a1f5c26e06436428ac271c43efe55c56b0075a5b98b3fe",
+        "generation_root": "sha256:9dd537fb9b2ec47dce23a3cf97ab764333bfd22932a9682b71803745ac745cae",
+        "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+      },
+      "readback_identities": [
+        "Claim:CLM-05a95922dcaf72941c559a3e12d45960",
+        "Claim:CLM-1a7f63fdf64d7c77cf77eae580d18348",
+        "Claim:CLM-20249c1adb6217bc13b602b44899107d",
+        "Claim:CLM-2d62548ae546418f8e0818d9f744bf7c",
+        "Claim:CLM-328990a98aca02fa6f30b902cd6e2a0d",
+        "Claim:CLM-4bc990c086dce7f44c093ceddddff6bc",
+        "Claim:CLM-51108559f0a828b7fca53becce8a0297",
+        "Claim:CLM-578e452e2cc97ba22cb9468b36b08476",
+        "Claim:CLM-75ae297d8d8c55eaee14947b7e19e414",
+        "Claim:CLM-8ac3838f574ec41aa21ec76aea9ad82f",
+        "Claim:CLM-8f661ea9880372d00b39e9ff176ec8b6",
+        "Claim:CLM-bc6dcf6dfd189747f31fbc6a08a48e39",
+        "Claim:CLM-bd7837460018d6e199828987a23621db",
+        "Claim:CLM-c2c74650d1dad3617f7944af7c87d11c",
+        "Claim:CLM-cabe7240f35a90e5c0b565a0c8c7bc87",
+        "Claim:CLM-da5c7af7eacc8b9484635db0cc108ee2",
+        "Claim:CLM-e5f3ce2eed5f1d5f14ef675db81d4ded",
+        "Claim:CLM-eb45f2af8f4ba0588258ecb6b6565af5"
+      ],
+      "workspace_advertisement": {
+        "tag": "playbill-workspace-advertisement-v1",
+        "status": "updated",
+        "workspace_path": "/private/tmp/pb-served-bench-9y7x_7c0/fixture/workspace",
+        "remote_name": "playbill",
+        "advertised_refs": [
+          "refs/remotes/playbill/accepted"
+        ],
+        "failure_code": null
+      }
+    }
+  ],
+  "setup_seconds": 86.39971695898566,
+  "seed_phase_seconds": {
+    "initialize": 0.5332974169868976,
+    "vocabulary-render": 0.001623834017664194,
+    "seed-vocabulary": 1.6815272090025246,
+    "seed-readings": 0.4964549170108512,
+    "seed-claims": 39.48849770799279,
+    "accept-generations": 16.827172874007374
+  },
+  "seed_generation": 14,
+  "startup_seconds": 1.4622138330014423,
+  "connect_seconds": 32.06444541597739,
+  "success": true,
+  "retained_state": null
+}

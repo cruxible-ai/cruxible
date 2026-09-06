@@ -1,0 +1,142 @@
+{
+  "repo": "/private/tmp/playbill-write-loop-latency",
+  "head": "283ca306cfeebabc84becb271079a02266059ba7",
+  "working_tree": [
+    "?? docs/benchmarks/write-loop-served.py",
+    "?? docs/reviews/evaluation-request-reuse-2026-09-06.md",
+    "?? docs/reviews/intent-response-versions-2026-09-06.md",
+    "?? docs/reviews/recovery-prefilter-2026-09-06.md",
+    "?? docs/reviews/review-projection-snapshot-2026-09-06.md",
+    "?? docs/reviews/write-loop-integration-2026-09-06.md"
+  ],
+  "population": 1000,
+  "history": 8,
+  "repeats": 2,
+  "claims_per_write": 18,
+  "orphan_proposals": 48,
+  "scope": "SDK claim draft/prepare/submit/status; HTTP approval challenge/sign/submit; SDK accept; coordinate-pinned HTTP full Claim readback; explicit SDK refresh. Half of each batch revises seed Claim identities; remainder creates observations. Attached Git workspace; no floor or mirror. Acceptance service cProfile enabled. Cold means fresh daemon process, after separately timed SDK connect/orient; warm loops advance the accepted coordinate. Disk caches are uncontrolled.",
+  "rows": [
+    {
+      "iteration": 0,
+      "temperature": "cold",
+      "seconds": {
+        "draft": 0.10104995797155425,
+        "prepare": 0.7785551249980927,
+        "submit": 3.8434352499898523,
+        "submitted_status": 0.032829292002134025,
+        "approval_challenge": 0.29218749998835847,
+        "sign": 0.0016507090185768902,
+        "approval_submit": 0.6768852079985663,
+        "accept": 17.607880916970316,
+        "readback": 3.5486177499988116,
+        "refresh": 2.228078124986496
+      },
+      "total_seconds": 29.111200500046834,
+      "accepted_coordinate": {
+        "tag": "playbill-accepted-coordinate-v1",
+        "git_oid": "710e660b5fd301416052d11afee2973b98ff26d9",
+        "semantic_root": "sha256:c81d82d472a40afc7e706cf8a77b3a9dc051a1764acedb4a7227f8af4bcc478e",
+        "generation_root": "sha256:72ae616be6ae30035cffee83069ea497d3cff12438fc5a31dbff76162dbbd703",
+        "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+      },
+      "readback_identities": [
+        "Claim:CLM-05a95922dcaf72941c559a3e12d45960",
+        "Claim:CLM-1058394eb409dc79f10e43f5af9aca49",
+        "Claim:CLM-2853812d0fecbfe16c732104e7620de2",
+        "Claim:CLM-2d62548ae546418f8e0818d9f744bf7c",
+        "Claim:CLM-328990a98aca02fa6f30b902cd6e2a0d",
+        "Claim:CLM-365163c137b5629ea3f8819bbe7e049d",
+        "Claim:CLM-379cd793382898795703969ba83ea69f",
+        "Claim:CLM-3beb1f43bd4cb35c25e39ba95c988e97",
+        "Claim:CLM-4bc990c086dce7f44c093ceddddff6bc",
+        "Claim:CLM-54d7b04ab204070942c6335f95768996",
+        "Claim:CLM-75ae297d8d8c55eaee14947b7e19e414",
+        "Claim:CLM-88013541600608f384636cac8dd561b6",
+        "Claim:CLM-8ac3838f574ec41aa21ec76aea9ad82f",
+        "Claim:CLM-8f661ea9880372d00b39e9ff176ec8b6",
+        "Claim:CLM-baa288e2546549f6c174b79f85d4afec",
+        "Claim:CLM-bc6dcf6dfd189747f31fbc6a08a48e39",
+        "Claim:CLM-c2c74650d1dad3617f7944af7c87d11c",
+        "Claim:CLM-d5c48331f8cd37b5efd4e7dd6f45d7ee"
+      ],
+      "workspace_advertisement": {
+        "tag": "playbill-workspace-advertisement-v1",
+        "status": "updated",
+        "workspace_path": "/private/tmp/pb-served-bench-qm4u4ti1/fixture/workspace",
+        "remote_name": "playbill",
+        "advertised_refs": [
+          "refs/remotes/playbill/accepted"
+        ],
+        "failure_code": null
+      }
+    },
+    {
+      "iteration": 1,
+      "temperature": "warm",
+      "seconds": {
+        "draft": 0.10224579198984429,
+        "prepare": 0.7777213749941438,
+        "submit": 3.407276332960464,
+        "submitted_status": 0.03465091600082815,
+        "approval_challenge": 0.31644220801535994,
+        "sign": 0.0014126249589025974,
+        "approval_submit": 0.7320619579986669,
+        "accept": 17.954554291965906,
+        "readback": 9.768160500039812,
+        "refresh": 2.33730720897438
+      },
+      "total_seconds": 35.43250687496038,
+      "accepted_coordinate": {
+        "tag": "playbill-accepted-coordinate-v1",
+        "git_oid": "ee6433005b4632cee26ae02023249b57d91d8b56",
+        "semantic_root": "sha256:7c2856df92a72247c748247766649be2743bf20b44ce0f7e38ca4125754c2344",
+        "generation_root": "sha256:ca4a24bec40283c8ad45c03edd6c46af00adef3e0bbd91e7f73e5410ec232a45",
+        "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+      },
+      "readback_identities": [
+        "Claim:CLM-05a95922dcaf72941c559a3e12d45960",
+        "Claim:CLM-2d62548ae546418f8e0818d9f744bf7c",
+        "Claim:CLM-328990a98aca02fa6f30b902cd6e2a0d",
+        "Claim:CLM-3a68b1e52a23aa49a03ec20c595bfdb3",
+        "Claim:CLM-4bc990c086dce7f44c093ceddddff6bc",
+        "Claim:CLM-58e88d2da69156042218d77ca3967627",
+        "Claim:CLM-5c038d2f82ff7adcb696230e8730be41",
+        "Claim:CLM-6ceb693314133aac38590441ba7110bd",
+        "Claim:CLM-75ae297d8d8c55eaee14947b7e19e414",
+        "Claim:CLM-810bcbe6d3bc4af7912b9b14fa985aae",
+        "Claim:CLM-8ac3838f574ec41aa21ec76aea9ad82f",
+        "Claim:CLM-8d7b98ac11d273bf02ae5dd68676e9ab",
+        "Claim:CLM-8f661ea9880372d00b39e9ff176ec8b6",
+        "Claim:CLM-9bf5a57666cbf1fe8384e9b64f76ae44",
+        "Claim:CLM-bc6dcf6dfd189747f31fbc6a08a48e39",
+        "Claim:CLM-c0dbac2b98c5ea33386f9eb04b2db585",
+        "Claim:CLM-c2c74650d1dad3617f7944af7c87d11c",
+        "Claim:CLM-fe00580de994ba05257db569dddf0599"
+      ],
+      "workspace_advertisement": {
+        "tag": "playbill-workspace-advertisement-v1",
+        "status": "updated",
+        "workspace_path": "/private/tmp/pb-served-bench-qm4u4ti1/fixture/workspace",
+        "remote_name": "playbill",
+        "advertised_refs": [
+          "refs/remotes/playbill/accepted"
+        ],
+        "failure_code": null
+      }
+    }
+  ],
+  "setup_seconds": 57.94780841702595,
+  "seed_phase_seconds": {
+    "initialize": 0.5607285830192268,
+    "vocabulary-render": 0.0016211659531109035,
+    "seed-vocabulary": 1.745315040985588,
+    "seed-readings": 0.49028799997176975,
+    "seed-claims": 22.78288374998374,
+    "accept-generations": 14.756561001122463
+  },
+  "seed_generation": 14,
+  "startup_seconds": 1.4730610409751534,
+  "connect_seconds": 9.368758582975715,
+  "success": true,
+  "retained_state": null
+}

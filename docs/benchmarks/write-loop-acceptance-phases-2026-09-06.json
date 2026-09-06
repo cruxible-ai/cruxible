@@ -1,0 +1,253 @@
+{
+  "scope": "cProfile in served sync acceptance worker; timings nested, profiler overhead included; raw per-function attribution",
+  "runs": [
+    {
+      "version": "baseline",
+      "iteration": 0,
+      "profile_seconds": 61.101476715999986,
+      "phases": {
+        "cruxible_core/playbill/instance.py:_reconcile_proposal_review_refs": {
+          "calls": 1,
+          "self_seconds": 0.00013933200000000001,
+          "cumulative_seconds": 0.257457208
+        },
+        "cruxible_core/playbill/recovery.py:_clean_unaccepted_generations": {
+          "calls": 1,
+          "self_seconds": 0.14419795500000002,
+          "cumulative_seconds": 43.503500959
+        },
+        "cruxible_core/playbill/instance.py:prepare_generation": {
+          "calls": 1,
+          "self_seconds": 0.0032252490000000003,
+          "cumulative_seconds": 3.389268625
+        },
+        "cruxible_core/playbill/checkpoints.py:_prefix_records": {
+          "calls": 1,
+          "self_seconds": 0.000519184,
+          "cumulative_seconds": 1.920421375
+        },
+        "cruxible_core/playbill/projection_artifacts.py:parse_projection_tree": {
+          "calls": 1,
+          "self_seconds": 0.041942272,
+          "cumulative_seconds": 5.632606333
+        },
+        "cruxible_core/playbill/activation.py:prebuild": {
+          "calls": 1,
+          "self_seconds": 0.024701417,
+          "cumulative_seconds": 8.151761333000001
+        },
+        "cruxible_core/playbill/instance.py:refresh": {
+          "calls": 1,
+          "self_seconds": 0.008187666,
+          "cumulative_seconds": 48.602061709000004
+        },
+        "cruxible_core/playbill/git.py:_command": {
+          "calls": 304,
+          "self_seconds": 0.010948339000000001,
+          "cumulative_seconds": 17.29704113
+        },
+        "cruxible_core/playbill/settlement.py:prepare_generation": {
+          "calls": 1,
+          "self_seconds": 0.00394596,
+          "cumulative_seconds": 3.384761417
+        },
+        "cruxible_core/playbill/service/documents.py:service_activate_playbill_proposal": {
+          "calls": 1,
+          "self_seconds": 0.000369333,
+          "cumulative_seconds": 61.519853042
+        },
+        "cruxible_core/playbill/recovery.py:recover_instance": {
+          "calls": 1,
+          "self_seconds": 0.001799086,
+          "cumulative_seconds": 48.591995084000004
+        }
+      }
+    },
+    {
+      "version": "baseline",
+      "iteration": 1,
+      "profile_seconds": 61.73323608299993,
+      "phases": {
+        "cruxible_core/playbill/instance.py:_reconcile_proposal_review_refs": {
+          "calls": 1,
+          "self_seconds": 0.000158793,
+          "cumulative_seconds": 0.48531916700000005
+        },
+        "cruxible_core/playbill/recovery.py:_clean_unaccepted_generations": {
+          "calls": 1,
+          "self_seconds": 0.153547322,
+          "cumulative_seconds": 43.692730625
+        },
+        "cruxible_core/playbill/instance.py:prepare_generation": {
+          "calls": 1,
+          "self_seconds": 0.0031055830000000003,
+          "cumulative_seconds": 3.379514292
+        },
+        "cruxible_core/playbill/checkpoints.py:_prefix_records": {
+          "calls": 1,
+          "self_seconds": 0.000572318,
+          "cumulative_seconds": 1.8900565
+        },
+        "cruxible_core/playbill/projection_artifacts.py:parse_projection_tree": {
+          "calls": 1,
+          "self_seconds": 0.042156831000000006,
+          "cumulative_seconds": 5.762442584
+        },
+        "cruxible_core/playbill/activation.py:prebuild": {
+          "calls": 1,
+          "self_seconds": 0.023942169000000003,
+          "cumulative_seconds": 8.255058417
+        },
+        "cruxible_core/playbill/instance.py:refresh": {
+          "calls": 1,
+          "self_seconds": 0.008591791000000001,
+          "cumulative_seconds": 48.858868791000006
+        },
+        "cruxible_core/playbill/git.py:_command": {
+          "calls": 316,
+          "self_seconds": 0.010966215000000001,
+          "cumulative_seconds": 17.645645873
+        },
+        "cruxible_core/playbill/settlement.py:prepare_generation": {
+          "calls": 1,
+          "self_seconds": 0.0023570410000000003,
+          "cumulative_seconds": 3.3750997920000003
+        },
+        "cruxible_core/playbill/service/documents.py:service_activate_playbill_proposal": {
+          "calls": 1,
+          "self_seconds": 0.00034345800000000004,
+          "cumulative_seconds": 62.15253125
+        },
+        "cruxible_core/playbill/recovery.py:recover_instance": {
+          "calls": 1,
+          "self_seconds": 0.0018691690000000002,
+          "cumulative_seconds": 48.847657584000004
+        }
+      }
+    },
+    {
+      "version": "after",
+      "iteration": 0,
+      "profile_seconds": 17.500917904000016,
+      "phases": {
+        "cruxible_core/playbill/instance.py:_reconcile_proposal_review_refs": {
+          "calls": 1,
+          "self_seconds": 9.8249e-05,
+          "cumulative_seconds": 0.1456585
+        },
+        "cruxible_core/playbill/instance.py:prepare_generation": {
+          "calls": 1,
+          "self_seconds": 0.002795417,
+          "cumulative_seconds": 2.362462667
+        },
+        "cruxible_core/playbill/checkpoints.py:_prefix_records": {
+          "calls": 1,
+          "self_seconds": 0.0005591330000000001,
+          "cumulative_seconds": 1.8927185830000002
+        },
+        "cruxible_core/playbill/projection_artifacts.py:parse_projection_tree": {
+          "calls": 1,
+          "self_seconds": 0.041441872000000005,
+          "cumulative_seconds": 5.760868667
+        },
+        "cruxible_core/playbill/activation.py:prebuild": {
+          "calls": 1,
+          "self_seconds": 0.02205704,
+          "cumulative_seconds": 8.188482625
+        },
+        "cruxible_core/playbill/instance.py:refresh": {
+          "calls": 1,
+          "self_seconds": 0.006634209,
+          "cumulative_seconds": 5.85780525
+        },
+        "cruxible_core/playbill/settlement.py:prepare_generation": {
+          "calls": 1,
+          "self_seconds": 0.002656416,
+          "cumulative_seconds": 2.3584405
+        },
+        "cruxible_core/playbill/git.py:_command": {
+          "calls": 154,
+          "self_seconds": 0.002922818,
+          "cumulative_seconds": 4.334581708
+        },
+        "cruxible_core/playbill/service/documents.py:service_activate_playbill_proposal": {
+          "calls": 1,
+          "self_seconds": 0.00027529000000000003,
+          "cumulative_seconds": 17.598091375000003
+        },
+        "cruxible_core/playbill/recovery.py:recover_instance": {
+          "calls": 1,
+          "self_seconds": 0.001243669,
+          "cumulative_seconds": 5.8490415
+        },
+        "cruxible_core/playbill/recovery.py:_clean_unaccepted_generations": {
+          "calls": 1,
+          "self_seconds": 0.0047337510000000005,
+          "cumulative_seconds": 1.8363575
+        }
+      }
+    },
+    {
+      "version": "after",
+      "iteration": 1,
+      "profile_seconds": 17.84596238099998,
+      "phases": {
+        "cruxible_core/playbill/instance.py:_reconcile_proposal_review_refs": {
+          "calls": 1,
+          "self_seconds": 7.925e-05,
+          "cumulative_seconds": 0.16403283300000002
+        },
+        "cruxible_core/playbill/instance.py:prepare_generation": {
+          "calls": 1,
+          "self_seconds": 0.002839126,
+          "cumulative_seconds": 2.4657632090000003
+        },
+        "cruxible_core/playbill/checkpoints.py:_prefix_records": {
+          "calls": 1,
+          "self_seconds": 0.000536963,
+          "cumulative_seconds": 1.963375416
+        },
+        "cruxible_core/playbill/projection_artifacts.py:parse_projection_tree": {
+          "calls": 1,
+          "self_seconds": 0.042065067000000005,
+          "cumulative_seconds": 5.823196542000001
+        },
+        "cruxible_core/playbill/activation.py:prebuild": {
+          "calls": 1,
+          "self_seconds": 0.022433168,
+          "cumulative_seconds": 8.234978667
+        },
+        "cruxible_core/playbill/instance.py:refresh": {
+          "calls": 1,
+          "self_seconds": 0.006502791000000001,
+          "cumulative_seconds": 6.0103835000000005
+        },
+        "cruxible_core/playbill/settlement.py:prepare_generation": {
+          "calls": 1,
+          "self_seconds": 0.002332208,
+          "cumulative_seconds": 2.4616812080000003
+        },
+        "cruxible_core/playbill/git.py:_command": {
+          "calls": 156,
+          "self_seconds": 0.0029754160000000003,
+          "cumulative_seconds": 4.394356947
+        },
+        "cruxible_core/playbill/service/documents.py:service_activate_playbill_proposal": {
+          "calls": 1,
+          "self_seconds": 0.000305625,
+          "cumulative_seconds": 17.945068333000002
+        },
+        "cruxible_core/playbill/recovery.py:recover_instance": {
+          "calls": 1,
+          "self_seconds": 0.00124196,
+          "cumulative_seconds": 6.001984
+        },
+        "cruxible_core/playbill/recovery.py:_clean_unaccepted_generations": {
+          "calls": 1,
+          "self_seconds": 0.0027334110000000003,
+          "cumulative_seconds": 1.867941166
+        }
+      }
+    }
+  ]
+}
