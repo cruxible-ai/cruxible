@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from cruxible_core.playbill.git import NOTE_REFS
-from cruxible_core.playbill.ledger_mirror import mirror_lock
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
@@ -84,14 +85,29 @@ def test_deleted_derived_archive_and_notes_rebuild_from_evidence(tmp_path, kind)
     assert _assert_archive(instance, remote, proposal) == (archived, oid)
 
 
-def test_coalesced_submit_and_withdraw_rebuilds_archive_before_first_open_view(tmp_path):
+def test_coalesced_submit_and_withdraw_rebuilds_archive_before_first_open_view(
+    tmp_path, monkeypatch
+):
     instance, owner = initialize_local(tmp_path)
     remote = _bare_remote(tmp_path, object_format=instance.descriptor.git_object_format)
     assert instance.set_ledger_mirror(str(remote)).status == "current"
-    # The worker can enqueue, but cannot inspect proposals until both durable
-    # actions have landed. This forces the asynchronous skipped-open case.
-    with mirror_lock(instance.root, review=True):
+    # Delay only the worker, while local evidence writers can take their common
+    # projection lock. Both actions land before the first worker observation.
+    entered = threading.Event()
+    release = threading.Event()
+    original = instance._publish_ledger_mirror_once
+
+    def gated():
+        entered.set()
+        assert release.wait(20)
+        return original()
+
+    monkeypatch.setattr(instance, "_publish_ledger_mirror_once", gated)
+    try:
         proposal = _submit(instance)
+        assert entered.wait(10)
         _settle(instance, owner, proposal, "withdrawal")
+    finally:
+        release.set()
     assert instance.publish_ledger_mirror(timeout=20).status == "current"
     _assert_archive(instance, remote, proposal)

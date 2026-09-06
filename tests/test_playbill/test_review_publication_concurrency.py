@@ -85,7 +85,7 @@ def test_review_note_reads_and_render_stay_inside_candidate_lock(tmp_path, monke
         proposal_id=proposed.admission.proposal_id,
         candidate_digest=digest,
     )
-    assert len(reads) >= 2  # presence check and the complete signer-list render
+    assert reads  # The complete signer-list render stayed inside the candidate lock.
     assert writes == [expected]
     assert original_read_note("approval", review_oid) == expected
 

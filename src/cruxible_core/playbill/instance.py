@@ -11,7 +11,7 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -31,6 +31,7 @@ from cruxible_client.contracts.errors import (
     PlaybillFormatError,
     PlaybillInstanceDecommissioned,
     PlaybillKeyError,
+    ProposalIntegrityError,
 )
 from cruxible_client.contracts.ledger_mirror import validate_mirror_url
 from cruxible_client.contracts.temporal import format_datetime, utc_now
@@ -95,6 +96,7 @@ from cruxible_core.playbill.projection import (
 )
 from cruxible_core.playbill.proposal_evidence import ProposalEvidenceStore
 from cruxible_core.playbill.proposal_message import proposal_commit_message
+from cruxible_core.playbill.proposal_note_projection import ProposalNoteIndex
 from cruxible_core.playbill.proposals import (
     ExhaustPromotionVerifierProtocol,
     ProposalReceiveLimits,
@@ -982,6 +984,7 @@ class PlaybillInstance:
             accepted=self.accepted_coordinate(),
             bodies=bodies,
             evidence=ProposalEvidenceStore(paths["exhaust"]),
+            review_projection_lock=self.review_projection_lock,
             current_coordinate=self.accepted_coordinate,
             promotion_verifier=self._promotion_verifier,
             producer_receipt_resolver=local_producer_receipt_resolver(
@@ -1029,10 +1032,16 @@ class PlaybillInstance:
                 failure_code="unexpected_failure",
             )
 
+    @contextmanager
+    def review_projection_lock(self) -> Iterator[None]:
+        """Keep evidence groups and their note aliases coherent across local writers."""
+        with mirror_lock(self.root, review=True):
+            yield
+
     def _reconcile_proposal_review_refs(self) -> None:
         """Serialize all local review projection writers, independently of network I/O."""
 
-        with mirror_lock(self.root, review=True):
+        with self.review_projection_lock():
             if self._ledger.read_main() != self.accepted_coordinate().git_oid:
                 self.refresh()
             self._reconcile_proposal_review_refs_locked()
@@ -1051,9 +1060,10 @@ class PlaybillInstance:
         bytes to the projected commit is what makes the published note readable
         by the reviewer it is published for.
 
-        Both note kinds are re-read before being written, so a steady state
-        costs one Git read per open proposal rather than a write. The approval
-        note shares the approval door's per-candidate lock from evidence read
+        Completed retained proposals rebuild both open and settled refs. One
+        evaluation index groups their original and advisory commit aliases;
+        existing notes are compared before a write. Approval rendering shares
+        the approval door's per-candidate lock from evidence read
         through Git write. A delayed renderer cannot overwrite a newer approval
         projection. All reconciliation callers also hold the review projection
         lock, so an older workspace writer cannot resurrect settled branches.
@@ -1067,15 +1077,19 @@ class PlaybillInstance:
             if generation.record is not None
         }
         evidence = self.proposal_evidence()
+        index = ProposalNoteIndex.build(evidence, self._ledger)
         refs: dict[str, str] = {}
         settled_refs: dict[str, str] = {}
-        published: list[tuple[str, str, str]] = []
-        for admission in evidence.list_admissions():
-            evaluation = evidence.read_evaluation(admission.proposal_id)
+        published: dict[str, tuple[str, str | None]] = {}
+        for oid, proposal_ids in index.proposal_ids_by_oid.items():
+            first = min(proposal_ids)
+            published[oid] = (first, index.evaluations[first].candidate_digest)
+        for admission in index.admissions.values():
+            evaluation = index.evaluations[admission.proposal_id]
             candidate_digest = evaluation.candidate_digest
             if candidate_digest is None or evaluation.evaluated_tree_oid is None:
                 continue
-            candidate = evidence.read_candidate(candidate_digest)
+            candidate = index.candidates[candidate_digest]
             is_settled = (
                 candidate_digest in accepted_candidates
                 or evidence.read_withdrawal(admission.proposal_id) is not None
@@ -1089,29 +1103,22 @@ class PlaybillInstance:
                 base_oid=evaluation.evaluated_base_oid,
                 actor_id=admission.actor_id,
                 timestamp=admission.admitted_at,
-                # The projection is rebuilt from stored evidence, and the
-                # summary is a pure function of the candidate's members and
-                # the admission's own rationale, so this branch carries
-                # byte-identical prose to the proposal commit the submission
-                # itself created. That is why the rationale is PERSISTED on
-                # the admission rather than read off a request that is gone.
-                message=proposal_commit_message(
-                    candidate.members,
-                    rationale=admission.rationale,
-                ),
+                message=proposal_commit_message(candidate.members, rationale=admission.rationale),
             )
+            if review_oid != index.review_oids[admission.proposal_id]:
+                raise ProposalIntegrityError("materialized review alias differs from its index")
             destination = settled_refs if is_settled else refs
             destination[admission.proposal_id.removeprefix("sha256:")] = review_oid
-            published.append((review_oid, admission.proposal_id, candidate_digest))
         self._ledger.replace_proposal_review_refs(refs, settled_refs=settled_refs)
         # After the refs, so every annotated commit is already reachable from
         # one: a note on an unreferenced object is a note a `gc` may collect.
-        for review_oid, proposal_id, candidate_digest in published:
+        for review_oid, (proposal_id, candidate_digest) in published.items():
             self._publish_review_commit_notes(
                 evidence,
                 review_oid=review_oid,
                 proposal_id=proposal_id,
                 candidate_digest=candidate_digest,
+                index=index,
             )
 
     def _publish_review_commit_notes(
@@ -1120,22 +1127,18 @@ class PlaybillInstance:
         *,
         review_oid: str,
         proposal_id: str,
-        candidate_digest: str,
+        candidate_digest: str | None,
+        index: ProposalNoteIndex | None = None,
     ) -> None:
         """Restate one proposal's evidence onto the commit a reviewer receives."""
 
-        evaluation_note = evidence.evaluation_note(proposal_id)
-        if self._ledger.read_proposal_note("evaluation", review_oid) != evaluation_note:
-            self._ledger.write_proposal_note("evaluation", review_oid, evaluation_note)
-        # An empty approval list projects nothing, exactly as it does on the
-        # candidate commit: writing a note to say "nobody has signed" would put
-        # a Git write on every publication of every unapproved proposal.
-        with self.approval_note_lock(candidate_digest):
-            if not evidence.read_approvals(candidate_digest):
-                return
-            approval_note = evidence.approval_note(candidate_digest)
-            if self._ledger.read_proposal_note("approval", review_oid) != approval_note:
-                self._ledger.write_proposal_note("approval", review_oid, approval_note)
+        grouped = index or ProposalNoteIndex.build(evidence, self._ledger)
+        if proposal_id not in grouped.proposal_ids_by_oid.get(review_oid, ()):
+            raise ProposalIntegrityError("review note target does not belong to the proposal")
+        with ExitStack() as locks:
+            for digest in grouped.candidate_digests(review_oid):
+                locks.enter_context(self.approval_note_lock(digest))
+            grouped.publish(self._ledger, (review_oid,))
 
     def proposal_evidence(self) -> ProposalEvidenceStore:
         """Return the immutable non-authoritative proposal/approval evidence store."""

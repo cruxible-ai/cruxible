@@ -479,6 +479,7 @@ def test_proposal_service_guard_contains_a_direct_advertiser_failure(tmp_path: P
         accepted=instance.accepted_coordinate(),
         bodies=instance.body_store(),
         evidence=instance.proposal_evidence(),
+        review_projection_lock=instance.review_projection_lock,
         current_coordinate=instance.accepted_coordinate,
         workspace_advertiser=advertise,
     )
@@ -505,6 +506,7 @@ def test_current_coordinate_provider_cannot_contradict_verified_base(tmp_path: P
         accepted=accepted,
         bodies=instance.body_store(),
         evidence=ProposalEvidenceStore(Path(instance.inspect().storage_directories["exhaust"])),
+        review_projection_lock=instance.review_projection_lock,
         current_coordinate=lambda: contradictory,
     )
     body = instance.store_document_body(b"body")

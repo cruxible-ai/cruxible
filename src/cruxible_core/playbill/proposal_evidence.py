@@ -252,11 +252,10 @@ class ProposalEvidenceStore:
         )
 
     def evaluation_note(self, proposal_id: str) -> bytes:
-        """Re-render one proposal's evaluation note from the source of record.
+        """Render one admission/evaluation pair from the source of record.
 
-        The store, not the note, is authority. Rendering the expected bytes here
-        is what lets a settlement door compare Git's copy against the daemon's
-        own files and refuse a note that has been edited underneath it.
+        Shared Git commits carry several such pairs through ProposalNoteIndex;
+        this helper preserves the original single-admission byte shape.
         """
 
         proposal_id = self.resolve_proposal_id(proposal_id)
@@ -266,9 +265,19 @@ class ProposalEvidenceStore:
         )
 
     def approval_note(self, candidate_digest_value: str) -> bytes:
-        """Re-render one candidate's approval note from the source of record."""
+        """Render one candidate's signed list; shared Git notes may combine lists."""
 
         return proposal_approval_note(self.read_approvals(candidate_digest_value))
+
+    def read_candidate_if_present(
+        self, candidate_digest_value: str
+    ) -> CandidateRecordAnyVersion | None:
+        """Distinguish an interrupted evidence write from malformed present bytes."""
+        CandidateDigest.from_tagged(candidate_digest_value)
+        path = self.candidates / f"{candidate_digest_value.removeprefix('sha256:')}.json"
+        if not path.exists() and not path.is_symlink():
+            return None
+        return self.read_candidate(candidate_digest_value)
 
     def read_candidate(self, candidate_digest_value: str) -> CandidateRecordAnyVersion:
         """Read one canonical validated candidate by its frozen C_s digest."""

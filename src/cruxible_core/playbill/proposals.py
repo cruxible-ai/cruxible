@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Final, Literal, Protocol
@@ -286,7 +287,7 @@ from cruxible_core.playbill.exhaust.promotions import (
 from cruxible_core.playbill.principal_lifecycle import evaluate_principal_lifecycle
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.proposal_message import proposal_commit_message
-from cruxible_core.playbill.proposal_notes import proposal_evaluation_note
+from cruxible_core.playbill.proposal_note_projection import ProposalNoteEvidence, ProposalNoteIndex
 from cruxible_core.playbill.provider_classifiers import (
     core_provider_bucket_conformance_fixtures,
 )
@@ -379,7 +380,7 @@ class ExhaustPromotionVerifierProtocol(Protocol):
     ) -> ExhaustPromotionLawResultV1: ...
 
 
-class ProposalEvidenceProtocol(Protocol):
+class ProposalEvidenceProtocol(ProposalNoteEvidence, Protocol):
     """Daemon persistence seam consumed by the pure proposal service."""
 
     def write_admission(self, record: ProposalAdmissionRecord) -> object: ...
@@ -3562,6 +3563,7 @@ class ProposalService:
         accepted: AcceptedProjectionCoordinate,
         bodies: BodyVerifierProtocol,
         evidence: ProposalEvidenceProtocol,
+        review_projection_lock: Callable[[], AbstractContextManager[None]],
         receive_limits: ProposalReceiveLimits = ProposalReceiveLimits(),
         current_coordinate: Callable[[], AcceptedProjectionCoordinate] | None = None,
         promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
@@ -3575,6 +3577,7 @@ class ProposalService:
         self.accepted = accepted
         self.bodies = bodies
         self.evidence = evidence
+        self._review_projection_lock = review_projection_lock
         self.receive_limits = receive_limits
         self._current_coordinate = current_coordinate or (lambda: accepted)
         self.promotion_verifier = promotion_verifier
@@ -3727,7 +3730,6 @@ class ProposalService:
             admitted_at=timestamp,
             rationale=request.rationale,
         )
-        self.evidence.write_admission(admission)
         candidate_value = outcome.candidate.candidate_digest if outcome.candidate else None
         try:
             evaluation = ProposalEvaluationRecord(
@@ -3745,18 +3747,28 @@ class ProposalService:
             raise ProposalEvaluationIntegrityError(
                 "proposal evaluation record failed deterministic validation"
             ) from exc
-        self.evidence.write_evaluation(evaluation)
-        if outcome.candidate is not None:
-            self.evidence.write_candidate(outcome.candidate)
-        # The note is written LAST, after every evidence file is durable, so it
-        # can only ever project records that already exist. A re-submission on
-        # the same ref lands on its own commit; a re-evaluation of one commit
-        # restates its note rather than accumulating a second one.
-        self.transport.write_proposal_note(
-            "evaluation",
-            commit_oid,
-            proposal_evaluation_note(admission=admission, evaluation=evaluation),
-        )
+        with self._review_projection_lock():
+            before = ProposalNoteIndex.build(self.evidence, self.transport)
+            affected = {commit_oid}
+            if outcome.candidate is not None and evaluated_tree_oid is not None:
+                affected.add(
+                    self.transport.proposal_review_commit_oid(
+                        tree_oid=evaluated_tree_oid,
+                        base_oid=current.git_oid,
+                        actor_id=actor.actor_id,
+                        timestamp=timestamp,
+                        message=message,
+                    )
+                )
+            previous_notes = before.validate_and_snapshot(self.transport, affected)
+            self.evidence.write_admission(admission)
+            self.evidence.write_evaluation(evaluation)
+            if outcome.candidate is not None:
+                self.evidence.write_candidate(outcome.candidate)
+            # Original and advisory aliases use the same complete group, so a
+            # second admission sharing a commit cannot overwrite the first.
+            after = ProposalNoteIndex.build(self.evidence, self.transport)
+            after.publish(self.transport, affected, previous=previous_notes)
         if self.transport.read_main() != current.git_oid:
             raise ProposalIntegrityError("proposal evaluation changed or raced accepted main")
         # Every byte this submission writes is durable, and the integrity proof

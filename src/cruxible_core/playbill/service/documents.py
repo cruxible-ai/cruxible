@@ -40,7 +40,7 @@ from cruxible_core.playbill.cas import BodyAccessContext, CasObjectMetadata
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.projection_documents import DocumentProjectionView
-from cruxible_core.playbill.proposal_notes import proposal_approval_note
+from cruxible_core.playbill.proposal_note_projection import ProposalNoteIndex
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
@@ -350,15 +350,15 @@ def service_submit_playbill_approval(
     # so rendering it is a read-modify-write over the store: two approvers who
     # rendered concurrently could leave the store holding both signatures and
     # Git holding one, and activation would then refuse a proposal nobody
-    # tampered with. Nothing else about approval is serialized -- each signer's
-    # own file is an exclusive create -- and nothing else needs to be.
-    with instance.approval_note_lock(candidate.candidate_digest):
-        evidence.write_approval(candidate.candidate_digest, submission)
-        instance.write_proposal_note(
-            "approval",
-            proposal.admission.candidate_commit_oid,
-            evidence.approval_note(candidate.candidate_digest),
-        )
+    # tampered with. The outer review lock also stabilizes admissions sharing
+    # this Git commit; compilation and network publication stay outside it.
+    with instance.review_projection_lock():
+        with instance.approval_note_lock(candidate.candidate_digest):
+            grouped = ProposalNoteIndex.build(evidence, instance._ledger)
+            affected = grouped.oids_for_candidate(candidate.candidate_digest)
+            previous_notes = grouped.validate_and_snapshot(instance._ledger, affected)
+            evidence.write_approval(candidate.candidate_digest, submission)
+            grouped.publish(instance._ledger, affected, previous=previous_notes)
     # Publication is deliberately OUTSIDE the lock: it rebuilds the advisory
     # branch and its notes from the store and now takes the same candidate lock
     # around projected approval rendering, so nesting would deadlock. Both lanes
@@ -416,26 +416,34 @@ def _reconcile_proposal_notes(
 
     evidence = instance.proposal_evidence()
     oid = proposal.admission.candidate_commit_oid
-    with instance.approval_note_lock(candidate.candidate_digest):
-        approvals = evidence.read_approvals(candidate.candidate_digest)
-        projections = (
-            ("evaluation", evidence.evaluation_note(proposal.admission.proposal_id)),
-            ("approval", proposal_approval_note(approvals)),
-        )
-        for kind, expected in projections:
-            stored = instance.read_proposal_note(kind, oid)
-            if stored == expected:
-                continue
-            if stored is not None:
-                raise ProposalIntegrityError(
-                    f"playbill.proposal.note_disagrees_with_evidence: the {kind} note on this "
-                    "candidate commit differs from the proposal evidence the daemon persisted; "
-                    "re-read the proposal with `playbill proposal review --json` and settle "
-                    "from that, or restore the ledger from its own evidence before activating"
-                )
-            if kind == "approval" and not approvals:
-                continue
-            instance.write_proposal_note(kind, oid, expected)
+    with instance.review_projection_lock():
+        with instance.approval_note_lock(candidate.candidate_digest):
+            grouped = ProposalNoteIndex.build(evidence, instance._ledger)
+            # Human review uses the advisory alias, which may differ from the
+            # original admission commit. Both must agree with their complete
+            # evidence group before settlement; neither is trusted as authority.
+            aliases = {oid, grouped.review_oids[proposal.admission.proposal_id]}
+            for oid in sorted(aliases):
+                projections = tuple(grouped.note_bytes(oid).items())
+                for kind, expected in projections:
+                    stored = instance.read_proposal_note(kind, oid)
+                    if stored == expected:
+                        continue
+                    if stored is not None:
+                        raise ProposalIntegrityError(
+                            "playbill.proposal.note_disagrees_with_evidence: "
+                            f"the {kind} note on this review commit differs from the "
+                            "proposal evidence the daemon persisted; re-read the proposal "
+                            "with `playbill proposal review --json` and settle from that, "
+                            "or restore the ledger from its own evidence before activating"
+                        )
+                    if kind == "approval" and expected == b"[]\n":
+                        continue
+                    # An advisory alias that has never been materialized has
+                    # no reachable review surface yet. Its absent note is built
+                    # by normal reconciliation after the alias is retained.
+                    if instance._ledger.object_exists(oid):
+                        instance.write_proposal_note(kind, oid, expected)
 
 
 def service_activate_playbill_proposal(

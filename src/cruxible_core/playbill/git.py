@@ -786,6 +786,59 @@ class GitLedger:
             == 0
         )
 
+    @staticmethod
+    def _review_commit_environment(actor_id: str, timestamp: str) -> dict[str, str]:
+        return {
+            "GIT_AUTHOR_NAME": actor_id,
+            "GIT_AUTHOR_EMAIL": f"{actor_id}@proposal.playbill.invalid",
+            "GIT_COMMITTER_NAME": "playbill-daemon",
+            "GIT_COMMITTER_EMAIL": "daemon@playbill.invalid",
+            "GIT_AUTHOR_DATE": timestamp,
+            "GIT_COMMITTER_DATE": timestamp,
+        }
+
+    def proposal_review_commit_oid(
+        self, *, tree_oid: str, base_oid: str, actor_id: str, timestamp: str, message: str
+    ) -> str:
+        """Derive Git's unsigned review representation without creating objects.
+
+        This is a rebuildable Git address, never a new accepted digest rule.
+        Git itself normalizes/refuses identities and dates. Materialization
+        verifies the resulting address against commit-tree before retaining it.
+        """
+        self._validate_oid(tree_oid)
+        self._validate_oid(base_oid)
+        _validate_commit_message(message)
+        values = dict(
+            line.partition("=")[::2]
+            for line in self._git(
+                ["var", "-l"], environment=self._review_commit_environment(actor_id, timestamp)
+            )
+            .decode("utf-8")
+            .splitlines()
+            if "=" in line
+        )
+        author = values.get("GIT_AUTHOR_IDENT")
+        committer = values.get("GIT_COMMITTER_IDENT")
+        if author is None or committer is None:
+            raise PlaybillGitError("Git omitted review commit identities")
+        headers = [
+            f"tree {tree_oid}",
+            f"parent {base_oid}",
+            f"author {author}",
+            f"committer {committer}",
+        ]
+        encoding = values.get("i18n.commitencoding", "UTF-8")
+        if encoding.lower() not in {"utf-8", "utf8"}:
+            headers.append(f"encoding {encoding}")
+        body = ("\n".join(headers) + "\n\n" + message).encode("utf-8")
+        if not body.endswith(b"\n"):
+            body += b"\n"
+        preimage = f"commit {len(body)}".encode("ascii") + b"\x00" + body
+        if self.object_format() == "sha1":
+            return hashlib.sha1(preimage).hexdigest()  # noqa: S324 - Git object identity
+        return hashlib.sha256(preimage).hexdigest()
+
     def proposal_review_commit(
         self,
         *,
@@ -800,14 +853,7 @@ class GitLedger:
         self._validate_oid(tree_oid)
         self._validate_oid(base_oid)
         _validate_commit_message(message)
-        environment = {
-            "GIT_AUTHOR_NAME": actor_id,
-            "GIT_AUTHOR_EMAIL": f"{actor_id}@proposal.playbill.invalid",
-            "GIT_COMMITTER_NAME": "playbill-daemon",
-            "GIT_COMMITTER_EMAIL": "daemon@playbill.invalid",
-            "GIT_AUTHOR_DATE": timestamp,
-            "GIT_COMMITTER_DATE": timestamp,
-        }
+        environment = self._review_commit_environment(actor_id, timestamp)
         oid = (
             self._git(
                 [
@@ -824,6 +870,15 @@ class GitLedger:
             .strip()
         )
         self._validate_oid(oid)
+        expected = self.proposal_review_commit_oid(
+            tree_oid=tree_oid,
+            base_oid=base_oid,
+            actor_id=actor_id,
+            timestamp=timestamp,
+            message=message,
+        )
+        if oid != expected:
+            raise PlaybillGitError("Git review commit differs from its derived representation")
         if self.tree_oid(oid) != tree_oid or self.parent_of(oid) != base_oid:
             raise PlaybillGitError("proposal review commit does not reproduce its evidence")
         return oid
