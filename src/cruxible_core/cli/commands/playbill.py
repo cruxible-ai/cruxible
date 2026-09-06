@@ -3556,6 +3556,25 @@ def bind_procedure(name: str, request_file: str, output_json: bool) -> None:
     _emit_json(result.model_dump(mode="json"))
 
 
+def _echo_source_observations(result: contracts.PlaybillProcedureRunState) -> None:
+    """Print what each admitted Source occurrence really observed.
+
+    A run with no Source occurrence prints nothing extra. `--json` already
+    carries the whole receipt; this is the one-glance version of it.
+    """
+
+    for observation in result.source_observations:
+        receipt = observation.source_read_receipt
+        where = observation.input_name or observation.occurrence_path
+        if receipt is not None:
+            click.echo(
+                f"Read {where}: {receipt.relative_path} "
+                f"({receipt.byte_length} bytes, {receipt.bytes_digest})"
+            )
+        if observation.capture_digest is not None:
+            click.echo(f"Capture {where}: {observation.capture_digest}")
+
+
 @procedure_group.command("run")
 @click.argument("name")
 @click.argument("input_file", type=click.Path(exists=True, dir_okay=False))
@@ -3594,6 +3613,7 @@ def run_procedure(
     click.echo(f"Next: {result.next_operation['kind']}")
     if result.receipt_digest is not None:
         click.echo(f"Receipt: {result.receipt_digest}")
+    _echo_source_observations(result)
 
 
 @procedure_group.command("status")
@@ -3648,6 +3668,7 @@ def run_line(
         return
     click.echo(f"{result.run_id or line_identity_digest}: {result.status}")
     click.echo(f"Next: {result.next_operation['kind']}")
+    _echo_source_observations(result)
 
 
 @playbill_group.command("next")

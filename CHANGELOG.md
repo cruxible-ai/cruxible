@@ -107,6 +107,61 @@
   the attached workspace; they still work and now emit the structured
   deprecation warning, and are removed in 0.6.0.
 
+- **A Procedure can read.** The served run lanes gain one node kind, `source`,
+  on a graph-v4 definition: a Procedure may READ an external source through an
+  accepted Provider, under accepted authority, and retain what it read. Graph-v4
+  Procedures now author through the ordinary SDK path -- the accepted envelope
+  always carried either graph generation, and its definition digest already
+  dispatched on the declared format, so nothing about accepted bytes moved.
+  Effectful terminals (`emit_capture`, `post_inbox`, `propose_change_set`,
+  `mandate_settlement`) stay dark, and a graph-v3 Source keeps its existing
+  refusal because it names no interface or implementation for anything to plan.
+
+  A Source run is authorized by accepted state, not by the request: the
+  SourceAcquisitionPolicy that governs it, the CaptureContract each node pins
+  resolved from the accepted tree by digest, and the Provider closure the graph
+  names. A Procedure names its policy on its own envelope, under the pin role
+  `acquisition-policy` -- authored by naming the policy, through
+  `procedure(..., acquisition_policy=...)` or the change-set member's
+  `acquisition_policy` field, with lowering resolving the name and owning the
+  digest. That pin is the binding, exactly as a Line's is the LineSpec's: it is
+  closure-checked at acceptance, and a pinned Procedure reads no other policy,
+  so accepting an unrelated policy elsewhere in the tree cannot change what an
+  already accepted Procedure does. A Procedure with no such pin falls back to
+  accepted state, which requires exactly one live SourceAcquisitionPolicy whose
+  declared inputs are exactly that Procedure's Source aliases; that binding is
+  keyed on Procedure-local alias names, so prefer the pin. A pinned policy that
+  does not declare this Procedure's Source inputs, and a missing or ambiguous
+  policy for an unpinned one, are both `source_acquisition_policy_required`; a
+  rule that denies a declared input is `source_acquisition_refused`; and a read
+  outside an authorized workspace root, over the contract's selection budget, or
+  with no daemon-local reader is `workspace_file_read_refused` with its path
+  class. None of them leave partial run history behind. The Line run route also
+  gains the workspace reader the direct route already had.
+
+  Both run lanes plan their Provider occurrences through ONE planner, which now
+  EVALUATES the accepted policy for every input the graph plans an occurrence
+  for; the Line lane previously recorded a blanket `verdict="selected"` with no
+  decisions at all. A declared input the graph plans NO occurrence for is not
+  scored at plan time -- whether such an input ever arrives is a fact only the
+  read can report, and the declared `on_unavailable`, `on_stale` and
+  `on_oversized` behaviours still fire from that read at execution time. So a
+  Line occurrence over a Procedure that plans a Source occurrence records
+  different selection decisions from this release, and therefore a different
+  `acquisition_plan_digest`, `semantic_replay_key_digest` and `run_id`; a Line
+  over a Source-free Procedure records the same empty decision it always did and
+  keeps the run ids it had, whatever its policy declares. Runs recorded before
+  this release keep their ids and stay readable through `procedure run status`.
+
+  What the run retains is the point: per Source occurrence the run state and
+  `procedure run status` now carry the `SourceReadReceiptV1` the daemon minted
+  for the exact bytes it read -- real on-disk path, byte length, SHA-256 -- and
+  the digest of the Capture those bytes became (additive, optional). A direct
+  Source run is identified by its evaluation instant, so re-running at the same
+  instant replays the retained observation rather than minting a second reading
+  of a world that moved; reading a changed source means running at a later one.
+  Full lineage from a Claim back to its producing run remains a later contract.
+
 - **Evidence never comes from a projection block, and the daemon says so.** A
   page is a source: its bytes are captured, its capture is evidence, and a
   passage of it can be cited. A projection block inside that page is not --

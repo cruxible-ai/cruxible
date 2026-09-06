@@ -93,7 +93,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:bfbf9e2cc19fe9e0fee8a87e9fbd74294e1fe59324f05bf78eaca6545c654a6a"
+    "sha256:75432134b8c36e8ee1c55291a9222b65b82396bb222b8950c5dca64cec0fd6b8"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -910,12 +910,25 @@ class ProcedureAuthoringPayloadV1(_StrictAuthoringModel):
 
 
 class ProcedureAuthoringPayloadV2(_StrictAuthoringModel):
+    """A Procedure envelope input, plus the acquisition policy that envelope pins.
+
+    `acquisition_policy` is the SEMANTIC NAME of an accepted (or same-change-set
+    candidate) `SourceAcquisitionPolicy`, never a digest: lowering resolves it
+    the way every other Procedure reference resolves, and declares the resolved
+    exact pin under role `acquisition-policy` on the artifact envelope. The
+    definition never mentions it, so the definition digest is untouched -- this
+    is a Procedure-level binding the way a Line's policy pin is a Line-level
+    one, and the closure evaluator holds it to the same standard as any other
+    non-deferred pin.
+    """
+
     tag: Literal["playbill-procedure-authoring-payload-v2"] = (
         "playbill-procedure-authoring-payload-v2"
     )
     definition: dict[str, object]
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
     owned_contracts: tuple[ProcedureOwnedContractV1, ...]
+    acquisition_policy: str | None = None
     retire: bool = False
 
     @field_validator("definition", mode="before")
@@ -927,6 +940,13 @@ class ProcedureAuthoringPayloadV2(_StrictAuthoringModel):
         if "name" not in normalized:
             raise ValueError("Procedure authoring definition requires a semantic name")
         return cast(dict[str, object], normalized)
+
+    @field_validator("acquisition_policy")
+    @classmethod
+    def _acquisition_policy(cls, value: str | None) -> str | None:
+        if value is not None and not _CANONICAL_NAME_RE.fullmatch(value):
+            raise ValueError("acquisition policy name is not canonical")
+        return value
 
 
 class ClaimTypeAuthoringPayloadV1(_StrictAuthoringModel):

@@ -1786,6 +1786,13 @@ def playbill_line_run(
     if actor is None:
         raise AuthenticationError("Line run requires an authenticated actor identity")
     manager = get_playbill_manager()
+    try:
+        workspace_file_reader = manager.workspace_file_reader(instance_id)
+    except WorkspaceFileReadRefused:
+        # Reader construction is operational, exactly as on the direct lane:
+        # a Line with no workspace occurrence still runs, and a workspace
+        # occurrence gets its typed binding refusal inside the run journal.
+        workspace_file_reader = None
     result = service_run_playbill_line(
         manager.get(instance_id),
         path_identity_digest=line_identity_digest,
@@ -1793,6 +1800,7 @@ def playbill_line_run(
         actor_context=actor,
         caller_rung=get_current_mode().value - 1,
         provider_runtime_operator=manager.provider_runtime_operator(),
+        workspace_file_reader=workspace_file_reader,
         evaluation_instant_skew=manager.procedure_run_config().evaluation_instant_skew,
     )
     return contracts.PlaybillProcedureRunState.model_validate(result.model_dump(mode="json"))

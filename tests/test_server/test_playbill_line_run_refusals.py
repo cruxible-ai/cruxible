@@ -33,6 +33,10 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_spec_path,
     render_line_spec,
 )
+from cruxible_client.contracts.procedures.results import (
+    ProcedureSelectionDecisionV1,
+    procedure_selection_decision_digest,
+)
 from cruxible_client.contracts.repairs import (
     DECLARED_HAND_EDIT_CHANGES,
     RUNNABLE_REFUSAL_REPAIRS,
@@ -425,3 +429,93 @@ def test_a_real_accepted_line_runs_through_the_live_route_with_no_patch(
     assert len(admissions) == 1
     assert admissions[0].journal_partition_id == procedure_line_partition(line.identity)
     assert admissions[0].line_spec_digest == line_spec_digest(line).tagged
+
+
+def _strict_acquisition_policy(name: str) -> SourceAcquisitionPolicyV1:
+    """The served-Line policy again, this time declaring the input REQUIRED."""
+
+    return SourceAcquisitionPolicyV1(
+        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name=name),
+        inputs=(
+            InputAcquisitionRuleV1(
+                input_name="status",
+                requirement="required",
+                permitted_replayability=("exact",),
+                on_unavailable="refuse",
+                on_stale="refuse",
+                on_oversized="refuse",
+                on_conflict="refuse",
+            ),
+        ),
+        coherence=IndependentCoherenceV1(),
+    )
+
+
+def test_a_source_free_line_under_a_required_rule_still_runs(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    """A declared input this Procedure cannot serve is not a plan-time denial.
+
+    The acceptance law requires a served Line to pin an acquisition policy and
+    requires that policy to declare at least one input; it has never required
+    the declared inputs to be the Procedure's Source aliases. This Line's
+    Procedure has no `source` node at all, so its policy's `status` rule can
+    never have a planned occurrence. Scoring that miss at plan time would take
+    an accepted, already running Line from `succeeded` to `admission_refused`
+    on nothing the author changed, so the planner leaves the arrival of an
+    input to the read that reports it.
+    """
+
+    client, instance_id, reviewer_key_path = playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    accepted = _slotless_procedure("strict-policy-triage")
+    policy = _strict_acquisition_policy("strict-policy-inputs")
+    line = _served_line("strict-policy-hourly", accepted=accepted, policy=policy)
+    mandate = _line_mandate(accepted)
+    _accept_members(
+        instance,
+        reviewer_key_path,
+        {
+            accepted.path: render_procedure(accepted.procedure),
+            acquisition_policy_path(policy.identity.name): render_acquisition_policy(policy),
+            line_spec_path(line.identity.name): render_line_spec(line),
+            procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
+        },
+        timestamp="2026-09-03T09:00:00.000000Z",
+    )
+
+    identity_digest = line_identity_digest(line.identity)
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/lines/{identity_digest}/runs",
+        json=_body(identity_digest),
+    )
+
+    assert response.status_code == 200, response.text
+    state = response.json()
+    assert state["status"] == "succeeded", state["terminal"]
+    admissions = procedure_run_service._line_admissions(  # noqa: SLF001
+        instance,
+        procedure_run_service._accepted_line_by_identity_digest(  # noqa: SLF001
+            instance.tree_at(instance.accepted_coordinate().git_oid),
+            identity_digest=identity_digest,
+        ),
+    )
+    assert len(admissions) == 1
+    # Nothing was scored, because nothing was planned: the recorded decision is
+    # the one a Source-free occurrence has always carried, which is why this
+    # Line's run id is the one it had before the shared planner landed.
+    selection = admissions[0].selection_decision
+    assert selection.verdict == "selected"
+    assert selection.decisions == ()
+    assert selection.policy_digest == acquisition_policy_digest(policy).tagged
+    # Byte-identical to the blanket decision the lane recorded before the shared
+    # planner landed, so this occurrence's plan digest, replay key and run id are
+    # the ones it had -- there is no run-id break for a Source-free Line.
+    pre_batch = ProcedureSelectionDecisionV1(
+        policy_digest=acquisition_policy_digest(policy).tagged,
+        verdict="selected",
+        decisions=(),
+    )
+    assert procedure_selection_decision_digest(selection) == (
+        procedure_selection_decision_digest(pre_batch)
+    )

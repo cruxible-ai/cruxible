@@ -10,6 +10,7 @@ from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
+from cruxible_client.contracts.acquisition_policies import ACQUISITION_POLICY_PIN_ROLE
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
@@ -223,7 +224,7 @@ class LineSpecV1(_StrictLineModel):
         if self.procedure.role != "procedure" or self.procedure.target.kind != "Procedure":
             raise ValueError("LineSpec procedure must be an exact role=procedure Procedure pin")
         if self.acquisition_policy is not None and (
-            self.acquisition_policy.role != "acquisition-policy"
+            self.acquisition_policy.role != ACQUISITION_POLICY_PIN_ROLE
             or self.acquisition_policy.target.kind != "SourceAcquisitionPolicy"
         ):
             raise ValueError("LineSpec acquisition_policy pin has the wrong role or kind")

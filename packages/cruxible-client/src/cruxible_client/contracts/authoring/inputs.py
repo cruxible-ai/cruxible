@@ -186,6 +186,10 @@ class ProcedureInput(_StrictInputModel):
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
     retire: bool = False
     contracts: tuple[CarriedContractInput, ...] = ()
+    #: Semantic name of the SourceAcquisitionPolicy this Procedure's envelope
+    #: pins. Lowering resolves it against the accepted tree (or this change
+    #: set's own candidates) and declares the exact pin.
+    acquisition_policy: str | None = None
 
     @field_validator("definition", mode="before")
     @classmethod
@@ -579,11 +583,12 @@ def _procedure_payload(
         dict[str, object],
         _procedure_references(value.definition, contracts=by_name),
     )
-    if contracts:
+    if contracts or value.acquisition_policy is not None:
         return ProcedureAuthoringPayloadV2(
             definition=definition,
             activation_policy=value.activation_policy,
             owned_contracts=contracts,
+            acquisition_policy=value.acquisition_policy,
             retire=value.retire,
         )
     return ProcedureAuthoringPayloadV1(

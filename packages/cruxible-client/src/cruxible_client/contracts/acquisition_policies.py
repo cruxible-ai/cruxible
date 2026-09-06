@@ -48,6 +48,11 @@ AcquisitionFailureBehaviorV1 = Literal["refuse", "omit_optional", "declared_cons
 _INPUT_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 _POLICY_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 
+#: The one pin role under which any artifact binds its acquisition policy. A
+#: LineSpec carries it on the Line; a Procedure envelope carries it for every
+#: direct run of that Procedure. One spelling, so one grep finds every binder.
+ACQUISITION_POLICY_PIN_ROLE = "acquisition-policy"
+
 
 class SourceAcquisitionPolicyError(PlaybillFormatError):
     """A SourceAcquisitionPolicy artifact or acceptance transition is invalid."""
@@ -629,6 +634,7 @@ def select_sources(
 
 
 __all__ = [
+    "ACQUISITION_POLICY_PIN_ROLE",
     "AcceptedSourceAcquisitionPolicyV1",
     "AcquisitionCandidateV1",
     "AcquisitionFailureBehaviorV1",

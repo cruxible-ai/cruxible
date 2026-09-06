@@ -2,19 +2,32 @@
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
 from typing import get_args
+
+import pytest
 
 import cruxible_core.playbill.provider_local_runtime as runtime_module
 import cruxible_core.playbill.provider_process_leases as lease_module
+from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_core.playbill.procedures.egress import compute_effective_rung
 from cruxible_core.playbill.procedures.execution import (
+    ProcedureExecutor,
     ProcedureRunAdmissionV3,
     ProcedureRunAdmissionV5,
 )
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
+from tests.test_playbill.test_procedure_execution import (
+    _fixture,
+    _prepare,
+    _state_procedure,
+    _StateReader,
+)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
@@ -50,11 +63,82 @@ def test_k8_operational_config_reaches_the_daemon_lease_store(short_root: Path) 
     assert operator.secret_store.root.is_relative_to(short_root.resolve())
 
 
-def test_c2_a_line_admission_is_the_only_effect_intent_origin() -> None:
-    assert get_args(ProcedureRunAdmissionV3.model_fields["invocation_origin"].annotation) == (
+def test_c2_a_line_admission_is_the_only_effect_intent_origin(tmp_path: Path) -> None:
+    """An acquisition carrier may be direct; an EFFECT intent may not.
+
+    The V3 carrier now admits an actor origin, because a direct run that reads
+    an external source binds a real acquisition plan. What still binds a Line
+    alone is the authority to cause an effect: an effective rung is checked
+    against Line-only coordinates and refused outright on an actor invocation,
+    so no direct run can reach a terminal.
+
+    Driven, not read. A real direct admission out of `prepare_direct_procedure_run`
+    and a real rung out of `compute_effective_rung` go through the executor's own
+    guard three ways: the actor origin refuses, the same rung relabelled as a Line
+    run passes, and one term changed refuses again -- so the test fails if the
+    guard goes missing, and it does not pass on a guard that is merely present.
+    """
+
+    assert set(get_args(ProcedureRunAdmissionV3.model_fields["invocation_origin"].annotation)) == {
+        "actor",
         "line",
-    )
+    }
     assert issubclass(ProcedureRunAdmissionV5, ProcedureRunAdmissionV3)
+
+    accepted = _state_procedure()
+    root = tmp_path / "c2"
+    root.mkdir()
+    fixture = _fixture(root)
+    admission = _prepare(accepted, fixture, _StateReader()).admission
+    assert admission.invocation_origin == "actor"
+    line_spec_digest = _c2_digest("line-spec")
+    sensitivity = _c2_digest("sensitivity")
+    mandate = _c2_digest("mandate-coordinate")
+    calibration = _c2_digest("calibration-coordinate")
+    rung = compute_effective_rung(
+        procedure_terminal_capability=accepted.procedure.definition.terminal_capability,
+        requested_terminal_rung=1,
+        selector_privacies={},
+        taint_labels=(),
+        mandate_grants={},
+        calibration_caps=(),
+        evaluation_time=admission.admitted_at,
+        procedure_definition_digest=admission.definition_digest,
+        line_spec_digest=line_spec_digest,
+        sensitivity_policy_digest=sensitivity,
+        mandate_coordinate_digest=mandate,
+        calibration_coordinate_digest=calibration,
+        procedure_mandate_rung=1,
+        caller_tier_rung=1,
+    )
+    executor = SimpleNamespace(effective_rung=rung)
+    verify = ProcedureExecutor._verify_effective_rung  # noqa: SLF001
+
+    with pytest.raises(PlaybillExecutionError) as refused:
+        verify(executor, admission)
+    assert "never a direct actor invocation" in str(refused.value)
+
+    as_line = admission.model_copy(
+        update={
+            "invocation_origin": "line",
+            "line_spec_digest": line_spec_digest,
+            "sensitivity_policy_digest": sensitivity,
+            "mandate_coordinate_digest": mandate,
+            "calibration_coordinate_digest": calibration,
+        }
+    )
+    verify(executor, as_line)
+
+    with pytest.raises(PlaybillExecutionError) as mismatched:
+        verify(
+            executor,
+            as_line.model_copy(update={"mandate_coordinate_digest": _c2_digest("another-mandate")}),
+        )
+    assert "another admission binding" in str(mismatched.value)
+
+
+def _c2_digest(label: str) -> str:
+    return "sha256:" + hashlib.sha256(label.encode("utf-8")).hexdigest()
 
 
 def test_f5_no_bare_timeout_literal_remains_on_the_fence_path() -> None:

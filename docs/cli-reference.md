@@ -701,11 +701,38 @@ cruxible playbill procedure run NAME INPUT_FILE --evaluation-time TS
 cruxible playbill procedure status RUN_ID
 ~~~
 
-The first served profile runs deterministic `state_tap`, `transform`, and
-`project` graphs only. `readiness` names open slots or unsupported nodes before
-execution. `bind` proposes a same-identity Procedure successor with exact accepted
-pins; it never mutates the accepted Procedure in place. Runs append replay-verifiable
-journal records and `status` reconstructs the one-read run state from those records.
+The served lanes run deterministic `state_tap`, `transform`, `project`, `guard`,
+`repeat` and `halt` graphs, plus `source` on a graph-v4 definition: a Procedure
+may READ an external source through an accepted Provider. Effectful terminals --
+`emit_capture`, `post_inbox`, `propose_change_set`, `mandate_settlement` -- are
+not served, and `readiness` lists them as unsupported nodes before execution.
+
+A Source run needs accepted state to authorize it: a live
+SourceAcquisitionPolicy, the CaptureContract each Source node pins, and the
+Provider closure it names. A Procedure names its policy on its own envelope,
+under the pin role `acquisition-policy` -- authored by naming the policy, the
+way a Line names its own -- and a pinned Procedure reads only that policy, so
+what anyone accepts afterwards cannot change what it does. A Procedure with no
+such pin falls back to accepted state: exactly one live SourceAcquisitionPolicy
+whose declared inputs are exactly the Procedure's Source aliases. The direct
+lane refuses `source_acquisition_policy_required` when the pinned policy does
+not declare this Procedure's Source inputs, or when no single policy applies to
+an unpinned one, and `source_acquisition_refused` when the policy's own rule
+denies a declared input; neither leaves run history behind. A read outside an
+authorized workspace root, over the CaptureContract's selection budget, or with
+no daemon-local reader refuses `workspace_file_read_refused` and names its path
+class.
+
+A completed Source run reports, per occurrence, the `SourceReadReceiptV1` the
+daemon minted for the exact bytes it read and the digest of the Capture those
+bytes became; `--json` carries both in `source_observations`. A direct Source
+run is identified by its evaluation instant, so re-running at the same instant
+replays the retained observation rather than reading the source again.
+
+`readiness` names open slots or unsupported nodes before execution. `bind`
+proposes a same-identity Procedure successor with exact accepted pins; it never
+mutates the accepted Procedure in place. Runs append replay-verifiable journal
+records and `status` reconstructs the one-read run state from those records.
 
 ## playbill line
 

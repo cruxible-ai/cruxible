@@ -452,6 +452,16 @@ class ProcedureRunAdmissionV1(_StrictExecutionModel):
             self.exhaust_inputs,
         )
 
+    @property
+    def direct_acquisition_carrier(self) -> bool:
+        """Whether this carrier may bind acquisition state on a direct run.
+
+        Only the V5 carrier plans external occurrences, so only it can bind the
+        acquisition policy and deployment snapshot a direct Source run reads.
+        """
+
+        return False
+
     @model_validator(mode="after")
     def _admission_shape(self) -> "ProcedureRunAdmissionV1":
         if self.procedure_identity.kind != "Procedure":
@@ -471,7 +481,29 @@ class ProcedureRunAdmissionV1(_StrictExecutionModel):
             self.calibration_coordinate_digest,
         )
         if self.invocation_origin == "actor":
-            if any(value is not None for value in line_state) or self.epsilon_member:
+            # A direct run of a graph-v4 Procedure with Source nodes acquires
+            # under a governed policy and a real deployment, so its admission
+            # binds those two coordinates. It still binds no Line, occurrence,
+            # mandate, or calibration coordinate: those are the Line's, and the
+            # older direct carriers keep refusing all six.
+            allowed = (
+                {"deployment_snapshot_digest", "acquisition_policy_digest"}
+                if self.direct_acquisition_carrier
+                else set()
+            )
+            claimed = {
+                name
+                for name, value in (
+                    ("line_spec_digest", self.line_spec_digest),
+                    ("occurrence_id", self.occurrence_id),
+                    ("deployment_snapshot_digest", self.deployment_snapshot_digest),
+                    ("acquisition_policy_digest", self.acquisition_policy_digest),
+                    ("mandate_coordinate_digest", self.mandate_coordinate_digest),
+                    ("calibration_coordinate_digest", self.calibration_coordinate_digest),
+                )
+                if value is not None
+            }
+            if claimed - allowed or self.epsilon_member:
                 raise ValueError("PC-E1 direct admission cannot claim Line/deployment policy state")
             if (
                 self.landed_capture_inputs
@@ -523,8 +555,8 @@ class ProcedureRunAdmissionV3(ProcedureRunAdmissionV2):
     """Line-only admission whose digest identifies byte-replay semantics."""
 
     tag: Literal["playbill-procedure-run-admission-v3"] = "playbill-procedure-run-admission-v3"  # type: ignore[assignment]
-    invocation_origin: Literal["line"] = "line"
-    line_identity: ArtifactIdentity
+    invocation_origin: Literal["actor", "line"] = "line"
+    line_identity: ArtifactIdentity | None = None
     occurrence_evaluation_time: datetime
     resolved_provider_bindings: tuple[ProcedureProviderBindingV1, ...]
     selection_decision: ProcedureSelectionDecisionV1
@@ -554,8 +586,6 @@ class ProcedureRunAdmissionV3(ProcedureRunAdmissionV2):
 
     @model_validator(mode="after")
     def _v3_shape(self) -> "ProcedureRunAdmissionV3":
-        if self.line_identity.kind != "Line":
-            raise ValueError("v3 admission line_identity must have kind Line")
         if self.acquisition_policy_digest != self.selection_decision.policy_digest:
             raise ValueError("selection decision must name the admitted acquisition policy")
         if self.selection_decision_digest != procedure_selection_decision_digest(
@@ -564,6 +594,19 @@ class ProcedureRunAdmissionV3(ProcedureRunAdmissionV2):
             raise ValueError("selection decision digest does not reproduce")
         if self.semantic_replay_key_digest != procedure_semantic_replay_key_digest(self):
             raise ValueError("v3 semantic replay key does not reproduce")
+        if self.invocation_origin == "actor":
+            # A direct acquisition carrier is not an occurrence of anything: it
+            # names no Line, no occurrence, and keeps the direct lane's own
+            # stream, partition, and semantic run id.
+            if self.line_identity is not None or self.occurrence_id is not None:
+                raise ValueError("direct admission cannot claim a Line occurrence")
+            if self.occurrence_evaluation_time != self.admitted_at:
+                raise ValueError("direct admission evaluates at the instant it was admitted")
+            if self.run_id != procedure_semantic_run_id(self.semantic_replay_key_digest):
+                raise ValueError("direct admission run_id does not reproduce")
+            return self
+        if self.line_identity is None or self.line_identity.kind != "Line":
+            raise ValueError("v3 admission line_identity must have kind Line")
         if self.journal_stream != procedure_line_journal_stream(self.instance_id):
             raise ValueError("Line admission must use the Procedure exhaust stream")
         if self.journal_partition_id != procedure_line_partition(self.line_identity):
@@ -610,6 +653,10 @@ class ProcedureRunAdmissionV5(ProcedureRunAdmissionV4):
     tag: Literal["playbill-procedure-run-admission-v5"] = "playbill-procedure-run-admission-v5"  # type: ignore[assignment]
     acquisition_plan_digest: str
     exhaust_access_binding_digest: str | None = None
+
+    @property
+    def direct_acquisition_carrier(self) -> bool:
+        return True
 
     @field_validator("acquisition_plan_digest", "exhaust_access_binding_digest")
     @classmethod
@@ -1375,6 +1422,24 @@ def procedure_line_run_id(
     return "RUN-" + digest.removeprefix("sha256:")
 
 
+def procedure_semantic_run_id(semantic_replay_key_digest: str) -> str:
+    """Return the direct lane's run id: exact replay semantics, one identity."""
+
+    _sha256(semantic_replay_key_digest, label="semantic_replay_key_digest")
+    return "RUN-" + typed_digest(
+        Sha256Value,
+        PROCEDURE_RUN_ID_V2_DOMAIN,
+        {"semantic_replay_key_digest": semantic_replay_key_digest},
+    ).tagged.removeprefix("sha256:")
+
+
+def procedure_direct_partition(semantic_replay_key_digest: str) -> str:
+    """Return the direct lane's journal partition for one replay identity."""
+
+    _sha256(semantic_replay_key_digest, label="semantic_replay_key_digest")
+    return "direct:" + semantic_replay_key_digest.removeprefix("sha256:")
+
+
 class ProcedureRuntimePolicyAbsent(PlaybillExecutionError):
     code = "procedure_runtime_policy_absent"
 
@@ -1679,33 +1744,22 @@ def accepted_procedure_pin_set_digest(accepted: AcceptedProcedureV1) -> str:
     return procedure_pin_set_digest(accepted.procedure.pins, _node_pin_sets(accepted))
 
 
-def prepare_direct_procedure_run(
+def bind_accepted_state_materials(
     accepted: AcceptedProcedureV1,
     *,
-    instance_id: str,
-    run_id: str | None,
     accepted_coordinate: AcceptedCoordinate,
-    invocation_input: object,
-    actor_context: GovernedActorContext,
     state_reader: StateTapReaderProtocol,
     bodies: ContentAddressedBodyStore,
-    journal_stream: JournalStreamIdentityV1,
-    journal_partition_id: str | None,
-    head_at_admission: AcceptedCoordinate | None = None,
-    lane: Literal["current", "replay"] = "current",
-    admitted_at: datetime,
-    attempt: int = 1,
-) -> PreparedProcedureRunV2:
-    """Bind exact accepted state and all pins for an actor-authenticated direct run."""
+) -> tuple[AcceptedStateRunMaterialV2, ...]:
+    """Read and retain every accepted-state tap this run will observe.
 
-    procedure = accepted.procedure
-    if not procedure.directly_runnable:
-        raise PlaybillExecutionError("line_binding_required: Procedure has unresolved pin slots")
-    if procedure_artifact_digest(procedure).tagged != accepted.artifact_digest:
-        raise PlaybillExecutionError("accepted Procedure artifact digest does not reproduce")
+    Both direct carriers -- the query-only V2 admission and the V5 acquisition
+    admission a Source run binds -- read the accepted-state plane the SAME way,
+    so this is the one place a state tap becomes admitted material.
+    """
 
     materials: list[AcceptedStateRunMaterialV2] = []
-    for node in procedure.definition.nodes:
+    for node in accepted.procedure.definition.nodes:
         if not isinstance(node, StateTapNodeV3):
             continue
         query = _exact_pin(node.query, label=f"state_tap {node.node_id!r}")
@@ -1735,6 +1789,42 @@ def prepare_direct_procedure_run(
         )
         materials.append(AcceptedStateRunMaterialV2(input=run_input, value=value))
     materials.sort(key=lambda item: item.input.input_name.encode("utf-8"))
+    return tuple(materials)
+
+
+def prepare_direct_procedure_run(
+    accepted: AcceptedProcedureV1,
+    *,
+    instance_id: str,
+    run_id: str | None,
+    accepted_coordinate: AcceptedCoordinate,
+    invocation_input: object,
+    actor_context: GovernedActorContext,
+    state_reader: StateTapReaderProtocol,
+    bodies: ContentAddressedBodyStore,
+    journal_stream: JournalStreamIdentityV1,
+    journal_partition_id: str | None,
+    head_at_admission: AcceptedCoordinate | None = None,
+    lane: Literal["current", "replay"] = "current",
+    admitted_at: datetime,
+    attempt: int = 1,
+) -> PreparedProcedureRunV2:
+    """Bind exact accepted state and all pins for an actor-authenticated direct run."""
+
+    procedure = accepted.procedure
+    if not procedure.directly_runnable:
+        raise PlaybillExecutionError("line_binding_required: Procedure has unresolved pin slots")
+    if procedure_artifact_digest(procedure).tagged != accepted.artifact_digest:
+        raise PlaybillExecutionError("accepted Procedure artifact digest does not reproduce")
+
+    materials = list(
+        bind_accepted_state_materials(
+            accepted,
+            accepted_coordinate=accepted_coordinate,
+            state_reader=state_reader,
+            bodies=bodies,
+        )
+    )
 
     node_pin_sets = _node_pin_sets(accepted)
     full_pins = procedure.pins
@@ -1778,12 +1868,8 @@ def prepare_direct_procedure_run(
         semantic_replay_key_digest="sha256:" + "0" * 64,
     )
     replay_key = procedure_semantic_replay_key_digest(provisional)
-    semantic_run_id = "RUN-" + typed_digest(
-        Sha256Value,
-        PROCEDURE_RUN_ID_V2_DOMAIN,
-        {"semantic_replay_key_digest": replay_key},
-    ).tagged.removeprefix("sha256:")
-    semantic_partition = "direct:" + replay_key.removeprefix("sha256:")
+    semantic_run_id = procedure_semantic_run_id(replay_key)
+    semantic_partition = procedure_direct_partition(replay_key)
     provisional = provisional.model_copy(
         update={
             "run_id": semantic_run_id,
@@ -5722,7 +5808,10 @@ __all__ = [
     "StateTapReaderProtocol",
     "SystemProcedureClock",
     "accepted_procedure_pin_set_digest",
+    "bind_accepted_state_materials",
+    "procedure_direct_partition",
     "procedure_node_pin_sets",
+    "procedure_semantic_run_id",
     "prepare_direct_procedure_run",
     "procedure_admission_digest",
     "procedure_pin_set_digest",

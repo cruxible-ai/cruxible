@@ -17,6 +17,10 @@ from cruxible_client.contracts.provider_execution import (
 )
 from cruxible_client.contracts.repairs import ServedRepairV1, served_repair_for_refusal
 from cruxible_client.contracts.temporal import ensure_utc
+from cruxible_client.contracts.workspace_file import (
+    SourceReadReceiptV1,
+    source_read_receipt_digest,
+)
 
 ProcedureAdmissionRefusalCodeV1: TypeAlias = Literal[
     "binding_required",
@@ -31,6 +35,8 @@ ProcedureAdmissionRefusalCodeV1: TypeAlias = Literal[
     "provider_explicit_implementation_required",
     "provider_replay_receipt_required",
     "exhaust_binding_carrier_required",
+    "source_acquisition_policy_required",
+    "source_acquisition_refused",
     "evaluation_instant_skewed",
     "line_identity_mismatch",
     "line_not_accepted",
@@ -77,6 +83,7 @@ ProcedureNodeRefusalCodeV1: TypeAlias = Literal[
     "terminal_rung_capped_by_calibration",
     "provider_acquisition_plan_required",
     "provider_acquisition_plan_mismatch",
+    "workspace_file_read_refused",
     "provider_effect_declaration_mismatch",
     "classifier_not_installed",
     "classifier_digest_mismatch",
@@ -777,9 +784,13 @@ class ProcedureAcquisitionPlanV2(_StrictResultModel):
     )
     stage: Literal["complete"] = "complete"
     accepted_coordinate: AcceptedCoordinate
-    line_identity: ArtifactIdentity
-    line_spec_digest: str
-    occurrence_id: str
+    # A direct actor run plans the same external occurrences under the same
+    # accepted policy, but is an occurrence of no Line. The three Line
+    # coordinates are therefore present together or absent together; every
+    # accepted Line plan keeps the exact fields, and bytes, it already had.
+    line_identity: ArtifactIdentity | None = None
+    line_spec_digest: str | None = None
+    occurrence_id: str | None = None
     occurrence_evaluation_time: datetime
     acquisition_policy_format: str
     acquisition_policy_digest: str
@@ -816,7 +827,14 @@ class ProcedureAcquisitionPlanV2(_StrictResultModel):
 
     @model_validator(mode="after")
     def _correspondence(self) -> ProcedureAcquisitionPlanV2:
-        if self.line_identity.kind != "Line":
+        line_coordinates = (self.line_identity, self.line_spec_digest, self.occurrence_id)
+        if any(item is None for item in line_coordinates) and any(
+            item is not None for item in line_coordinates
+        ):
+            raise ValueError(
+                "acquisition plan binds its Line identity, spec digest, and occurrence together"
+            )
+        if self.line_identity is not None and self.line_identity.kind != "Line":
             raise ValueError("acquisition plan requires a Line identity")
         if self.selection_decision.policy_digest != self.acquisition_policy_digest:
             raise ValueError("acquisition plan selection names another policy")
@@ -838,6 +856,45 @@ def procedure_acquisition_plan_digest(plan: ProcedureAcquisitionPlanV2) -> str:
     payload = plan.model_dump(mode="json")
     payload.pop("tag")
     return typed_digest(Sha256Value, PROCEDURE_ACQUISITION_PLAN_V2_DOMAIN, payload).tagged
+
+
+class ProcedureSourceObservationV1(_StrictResultModel):
+    """What one admitted Source occurrence really observed, per run.
+
+    Additive and optional: a run with no Source occurrence carries none. The
+    read receipt is the daemon's attestation of the exact bytes it read; the
+    capture digest names the Capture those bytes became. Full lineage from a
+    Claim back to this run is a later contract, not this field.
+    """
+
+    tag: Literal["playbill-procedure-source-observation-v1"] = (
+        "playbill-procedure-source-observation-v1"
+    )
+    occurrence_path: str
+    node_id: str | None = None
+    input_name: str | None = None
+    source_read_receipt: SourceReadReceiptV1 | None = None
+    source_read_receipt_digest: str | None = None
+    invocation_receipt_digest: str | None = None
+    capture_digest: str | None = None
+
+    _observation_digests = field_validator(
+        "source_read_receipt_digest",
+        "invocation_receipt_digest",
+        "capture_digest",
+    )(_digest)
+
+    @model_validator(mode="after")
+    def _receipt_pairing(self) -> "ProcedureSourceObservationV1":
+        if (self.source_read_receipt is None) != (self.source_read_receipt_digest is None):
+            raise ValueError("a Source read receipt and its digest are present together")
+        if (
+            self.source_read_receipt is not None
+            and source_read_receipt_digest(self.source_read_receipt)
+            != self.source_read_receipt_digest
+        ):
+            raise ValueError("Source read receipt digest does not reproduce")
+        return self
 
 
 class ProcedureSourceCaptureAssociationV1(_StrictResultModel):
@@ -1062,6 +1119,7 @@ __all__ = [
     "PROCEDURE_ACQUISITION_PLAN_V2_DOMAIN",
     "PROCEDURE_SELECTION_DECISION_DOMAIN",
     "ProcedureAdmissionMaterialManifestV1",
+    "ProcedureSourceObservationV1",
     "ProcedureAdmissionMaterialMemberV1",
     "ProcedureAdmissionRefusalCodeV1",
     "ProcedureAdmissionRefusalV1",

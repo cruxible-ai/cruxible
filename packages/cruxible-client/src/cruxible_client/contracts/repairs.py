@@ -73,6 +73,12 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "settlement_proposal_id_mismatch": "settle_the_proposal_the_candidate_was_admitted_under",
     "settlement_receipt_mismatch": "reproduce_the_terminal_receipt_before_settling",
     "block_frame_invalid": "restore_the_block_marker_frame_the_stamp_declares",
+    # The refusal already names its path class and its repair commands. The
+    # change itself is the author's: point the Source at a regular, unlinked
+    # file inside an authorized root, or attach the root that holds it.
+    "workspace_file_read_refused": (
+        "point_the_source_at_a_regular_file_inside_an_authorized_workspace_root"
+    ),
     # Deprecated alongside their reasons: nothing produces either code now that
     # a block holds a LIST of backings and may watch a query. They stay declared
     # so a caller resolving a result minted before this batch still reads the
@@ -144,6 +150,19 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperationV1] = {
         operation="playbill.block.sync", arguments={"all": True}
     ),
     "projection_dirty": RepairOperationV1(operation="playbill.block.sync", arguments={"all": True}),
+    # A Source run needs an accepted SourceAcquisitionPolicy covering exactly
+    # its declared source inputs; authoring one is the repair, so the runnable
+    # command is the authoring create the caller would run next.
+    "source_acquisition_policy_required": RepairOperationV1(
+        operation="playbill.authoring.create",
+        arguments={"example": "source-acquisition-policy"},
+    ),
+    # The policy is accepted but its rule denies a declared input. Authoring a
+    # successor policy is the repair; the run itself is not retryable as-is.
+    "source_acquisition_refused": RepairOperationV1(
+        operation="playbill.authoring.create",
+        arguments={"example": "source-acquisition-policy"},
+    ),
     "occurrence_not_due": RepairOperationV1(operation="playbill.line.run"),
     "occurrence_id_mismatch": RepairOperationV1(operation="playbill.line.run"),
     "evaluation_instant_skewed": RepairOperationV1(operation="playbill.line.run"),

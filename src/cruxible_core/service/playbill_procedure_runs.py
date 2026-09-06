@@ -4,14 +4,23 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from cruxible_client.contracts.acquisition_policies import (
+    ACQUISITION_POLICY_PIN_ROLE,
+    AcquisitionInputDecisionV1,
+    InputAcquisitionRuleV1,
+    SourceAcquisitionPolicyV1,
+    acquisition_policy_digest,
+    parse_acquisition_policy,
+)
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
@@ -20,7 +29,12 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import (
+    CanonicalDurationV1,
+    CaptureContractV1,
+    capture_contract_digest,
+    parse_capture_contract,
+)
 from cruxible_client.contracts.errors import PlaybillError, PlaybillExecutionError
 from cruxible_client.contracts.procedure_mandates import (
     PROCEDURE_MANDATE_CLOCK_SKEW,
@@ -107,6 +121,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureSettlementRefusalCodeV1,
     ProcedureSettlementRefusalV1,
     ProcedureSourceCaptureAssociationV1,
+    ProcedureSourceObservationV1,
     ProcedureTerminalV1,
     ProviderBucketClassificationPlanV1,
     procedure_acquisition_plan_digest,
@@ -146,6 +161,10 @@ from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
     PlaybillWorkspaceAdvertisement,
 )
+from cruxible_client.contracts.workspace_file import (
+    SourceReadReceiptV1,
+    source_read_receipt_digest,
+)
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.closure import DEFERRED_PIN_TARGET_KINDS, build_dependency_index
@@ -159,6 +178,10 @@ from cruxible_core.playbill.exhaust.records import parse_journal_payload
 from cruxible_core.playbill.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.material_reservations import ProcedureMaterialReservationStore
+from cruxible_core.playbill.procedures.acquisition import (
+    ACQUISITION_OVERSIZED,
+    ACQUISITION_REFUSED,
+)
 from cruxible_core.playbill.procedures.egress import compute_effective_rung
 from cruxible_core.playbill.procedures.execution import (
     PROCEDURE_RUN_RECEIPT_V2_DOMAIN,
@@ -167,6 +190,7 @@ from cruxible_core.playbill.procedures.execution import (
     PROCEDURE_RUN_RECEIPT_V5_DOMAIN,
     PROCEDURE_RUN_RECEIPT_V6_DOMAIN,
     AcceptedStateRunMaterialV2,
+    PreparedProcedureRunV2,
     PreparedProcedureRunV5,
     ProcedureAdmissionBoundPayloadV2,
     ProcedureAdmissionBoundPayloadV3,
@@ -181,9 +205,11 @@ from cruxible_core.playbill.procedures.execution import (
     ProcedureRuntimePolicyAbsent,
     ProviderRuntimeInvokerProtocol,
     SystemProcedureClock,
+    bind_accepted_state_materials,
     bind_line_admission_runtime_policy,
     prepare_direct_procedure_run,
     procedure_admission_digest,
+    procedure_direct_partition,
     procedure_line_journal_stream,
     procedure_line_partition,
     procedure_line_run_id,
@@ -191,6 +217,7 @@ from cruxible_core.playbill.procedures.execution import (
     procedure_pin_set_digest,
     procedure_replay_input_vector,
     procedure_semantic_replay_key_digest,
+    procedure_semantic_run_id,
     resolve_procedure_runtime_policy,
     run_value_digest,
     verify_line_admission_spec,
@@ -215,7 +242,26 @@ PROCEDURE_RUN_STREAM_ID = "procedures"
 PROCEDURE_RUN_PARTITION_ID = "direct-runs"
 PROCEDURE_RUN_FENCING_TOKEN = "playbill-procedure-direct-run-v1"
 DIRECT_RECEIPT_REDUCER_DOMAIN = "playbill-direct-procedure-receipt-reducer-v1"
-SERVED_NODE_KINDS = frozenset({"state_tap", "transform", "project", "guard", "repeat", "halt"})
+#: The node kinds the served run lanes admit. ``source`` is served only on the
+#: graph-v4 observation path: a graph-v3 Source names no interface or
+#: implementation, so `_graph_v3_external_occurrences` still refuses it before
+#: any journal exists. Effectful terminals stay dark.
+SERVED_NODE_KINDS = frozenset(
+    {"state_tap", "transform", "project", "guard", "repeat", "halt", "source"}
+)
+#: Node kinds a graph-v3 definition may not use on a served lane. A v3 Source
+#: names no interface and no implementation, so no occurrence can be planned for
+#: it; it keeps its existing `provider_explicit_implementation_required`
+#: refusal instead of becoming quietly runnable.
+GRAPH_V3_UNSERVED_NODE_KINDS = frozenset({"source"})
+
+
+def served_node_kinds(graph_format: int) -> frozenset[str]:
+    """Return the node kinds one graph generation serves on the run lanes."""
+
+    if graph_format == 4:
+        return SERVED_NODE_KINDS
+    return SERVED_NODE_KINDS - GRAPH_V3_UNSERVED_NODE_KINDS
 
 
 class _StrictProcedureSurfaceModel(BaseModel):
@@ -301,6 +347,34 @@ class LineRunIdentityMismatch(ProcedureSurfaceError):
 class LineRunEvaluationInstantSkewed(ProcedureSurfaceError):
     code = "playbill.line.run.evaluation_instant_skewed"
     error_code = "evaluation_instant_skewed"
+
+
+class SourceAcquisitionPolicyRequired(ProcedureSurfaceError):
+    """A Source run found no single accepted policy governing its inputs."""
+
+    code = "playbill.procedure.run.source_acquisition_policy_required"
+    error_code = "source_acquisition_policy_required"
+
+    def __init__(self, message: str, *, details: object | None = None) -> None:
+        super().__init__(message)
+        self.details = {} if details is None else details
+
+
+class PinnedAcquisitionPolicyUnresolved(ProcedureSurfaceError):
+    """A Procedure's pinned acquisition policy is not live at this coordinate.
+
+    The closure evaluator already requires a Procedure's `acquisition-policy`
+    pin to resolve, digest-matched and not retired under a live source, so this
+    is the belt to that pin's braces rather than a reachable state of an
+    accepted tree -- the same guard, and the same code, the Line lane keeps.
+    """
+
+    code = "playbill.procedure.run.artifact_binding_mismatch"
+    error_code = "artifact_binding_mismatch"
+
+    def __init__(self, message: str, *, details: object | None = None) -> None:
+        super().__init__(message)
+        self.details = {} if details is None else details
 
 
 class ProcedureNextOperationV1(_StrictProcedureSurfaceModel):
@@ -544,6 +618,7 @@ class ProcedureRunStateV2(_StrictProcedureSurfaceModel):
     ) = None
     receipt_digest: str | None = None
     terminal: ProcedureTerminalV1 | None = None
+    source_observations: tuple[ProcedureSourceObservationV1, ...] = ()
 
     @property
     def coordinate(self) -> PlaybillAcceptedCoordinate:
@@ -829,8 +904,7 @@ def _provider_nodes(
     return tuple(result)
 
 
-def _line_external_occurrences(
-    accepted_line: AcceptedLineSpecV1,
+def _plan_external_occurrences(
     accepted_procedure: AcceptedProcedureV1,
     *,
     providers: Mapping[str, AcceptedProviderV1],
@@ -839,7 +913,17 @@ def _line_external_occurrences(
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
     runtime_policy: object,
     budget: ProcedureBudgetV3,
+    implementation_closures: Sequence[Any] = (),
 ) -> tuple[ProviderExternalOccurrencePlanV1, ...]:
+    """Plan every external Provider occurrence one admitted run will invoke.
+
+    Both served run lanes call THIS function. A Line supplies the accepted
+    implementation closures its slot bindings resolved; a direct actor run
+    supplies none, because a directly runnable Procedure pins its Provider
+    implementation exactly. Nothing else about the plan differs, and nothing
+    else may: two planners would be two admission grammars.
+    """
+
     definition = accepted_procedure.procedure.definition
     if not isinstance(definition, ProcedureDefinitionV4):
         return ()
@@ -862,11 +946,7 @@ def _line_external_occurrences(
                 f"accepted Line Provider node {node.node_id!r} requires Provider v2"
             )
         closure = next(
-            (
-                item
-                for item in getattr(accepted_line.line, "provider_implementation_closures", ())
-                if item.node_id == node.node_id
-            ),
+            (item for item in implementation_closures if item.node_id == node.node_id),
             None,
         )
         implementation_digest = (
@@ -989,6 +1069,278 @@ def _line_external_occurrences(
     return tuple(sorted(occurrences, key=lambda item: item.occurrence_path.encode("utf-8")))
 
 
+def _line_external_occurrences(
+    accepted_line: AcceptedLineSpecV1,
+    accepted_procedure: AcceptedProcedureV1,
+    *,
+    providers: Mapping[str, AcceptedProviderV1],
+    interfaces: Mapping[str, AcceptedProviderInterfaceRegistrationV1],
+    slot_pins: Mapping[str, ArtifactPin],
+    provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
+    runtime_policy: object,
+    budget: ProcedureBudgetV3,
+) -> tuple[ProviderExternalOccurrencePlanV1, ...]:
+    """Plan a Line occurrence's Provider occurrences through the shared planner."""
+
+    return _plan_external_occurrences(
+        accepted_procedure,
+        providers=providers,
+        interfaces=interfaces,
+        slot_pins=slot_pins,
+        provider_runtime_operator=provider_runtime_operator,
+        runtime_policy=runtime_policy,
+        budget=budget,
+        implementation_closures=getattr(accepted_line.line, "provider_implementation_closures", ()),
+    )
+
+
+def _source_input_names(accepted: AcceptedProcedureV1) -> tuple[str, ...]:
+    definition = accepted.procedure.definition
+    if not isinstance(definition, ProcedureDefinitionV4):
+        return ()
+    return tuple(
+        sorted(
+            (node.as_ for node in definition.nodes if isinstance(node, SourceNodeV4)),
+            key=lambda item: item.encode("utf-8"),
+        )
+    )
+
+
+def _accepted_capture_contracts(
+    tree: Mapping[str, bytes],
+) -> dict[str, CaptureContractV1]:
+    """Index every live accepted CaptureContract by its own artifact digest.
+
+    Ruling: capture contracts come from the ACCEPTED tree, keyed by the pin
+    digest the graph names, never from caller input. A caller-supplied contract
+    would let the request choose the budget and grades that admit its own read.
+    """
+
+    contracts: dict[str, CaptureContractV1] = {}
+    for path, content in tree.items():
+        if not path.startswith("capture-contracts/") or not path.endswith((".json", ".yaml")):
+            continue
+        contract = parse_capture_contract(content, path=path)
+        if contract.lifecycle.state != "live":
+            continue
+        contracts[capture_contract_digest(contract).tagged] = contract
+    return contracts
+
+
+def _accepted_acquisition_policies(
+    tree: Mapping[str, bytes],
+) -> tuple[tuple[str, SourceAcquisitionPolicyV1], ...]:
+    policies: list[tuple[str, SourceAcquisitionPolicyV1]] = []
+    for path, content in tree.items():
+        if not path.startswith("source-acquisition-policies/") or not path.endswith(
+            (".json", ".yaml")
+        ):
+            continue
+        policy = parse_acquisition_policy(content, path=path)
+        if policy.lifecycle.state != "live":
+            continue
+        policies.append((acquisition_policy_digest(policy).tagged, policy))
+    return tuple(sorted(policies, key=lambda item: item[0].encode("ascii")))
+
+
+def _procedure_acquisition_policy_pin(procedure: ProcedureArtifactAny) -> ArtifactPin | None:
+    """The Procedure envelope's own acquisition-policy pin, if it declares one."""
+
+    return next(
+        (
+            pin
+            for pin in procedure.pins
+            if pin.role == ACQUISITION_POLICY_PIN_ROLE
+            and pin.target.kind == "SourceAcquisitionPolicy"
+        ),
+        None,
+    )
+
+
+def _direct_acquisition_policy(
+    tree: Mapping[str, bytes],
+    *,
+    procedure: ProcedureArtifactAny,
+    input_names: tuple[str, ...],
+) -> tuple[str, SourceAcquisitionPolicyV1]:
+    """Resolve the accepted policy that governs this direct run's inputs.
+
+    The DURABLE binding is the Procedure envelope's own `acquisition-policy`
+    pin, the way a Line's is the LineSpec's: an exact digest, authored with the
+    Procedure, closure-checked at acceptance, and immune to what anyone accepts
+    afterwards. A pinned Procedure never falls back and never consults the rest
+    of the tree, so two Procedures whose Source aliases happen to agree are
+    governed separately, and accepting an unrelated policy cannot take a running
+    Procedure offline.
+
+    Resolve-from-accepted-state is the FALLBACK, for a Procedure authored before
+    the pin existed or without one: exactly one live SourceAcquisitionPolicy
+    whose declared inputs are exactly this Procedure's Source aliases. Zero or
+    several is a typed refusal naming the repair, never a silently chosen
+    default. That binding is keyed on an alias SET, which is Procedure-local
+    naming, so it is ambiguous across Procedures and non-monotonic under
+    acceptance -- which is why it is the fallback and not the law.
+    """
+
+    accepted_policies = _accepted_acquisition_policies(tree)
+    pin = _procedure_acquisition_policy_pin(procedure)
+    if pin is not None:
+        pinned = next(
+            (policy for digest, policy in accepted_policies if digest == pin.artifact_digest),
+            None,
+        )
+        if pinned is None:
+            raise PinnedAcquisitionPolicyUnresolved(
+                f"{PinnedAcquisitionPolicyUnresolved.code}: the pinned SourceAcquisitionPolicy "
+                "is not live at this accepted coordinate",
+                details={
+                    "pinned_policy_identity": pin.target.qualified,
+                    "pinned_policy_digest": pin.artifact_digest,
+                },
+            )
+        declared = tuple(rule.input_name for rule in pinned.inputs)
+        if declared != input_names:
+            raise SourceAcquisitionPolicyRequired(
+                f"{SourceAcquisitionPolicyRequired.code}: the pinned SourceAcquisitionPolicy "
+                f"declares {list(declared)}, not this Procedure's Source inputs "
+                f"{list(input_names)}",
+                details={
+                    "required_input_names": list(input_names),
+                    "declared_input_names": list(declared),
+                    "pinned_policy_identity": pin.target.qualified,
+                    "matching_policy_digests": [],
+                },
+            )
+        return pin.artifact_digest, pinned
+    covering = tuple(
+        item
+        for item in accepted_policies
+        if tuple(rule.input_name for rule in item[1].inputs) == input_names
+    )
+    if len(covering) != 1:
+        raise SourceAcquisitionPolicyRequired(
+            f"{SourceAcquisitionPolicyRequired.code}: "
+            f"{len(covering)} accepted SourceAcquisitionPolicy artifacts declare exactly the "
+            f"inputs {list(input_names)}",
+            details={
+                "required_input_names": list(input_names),
+                "matching_policy_digests": [digest for digest, _policy in covering],
+            },
+        )
+    return covering[0]
+
+
+def _plan_selection_decision(
+    policy: SourceAcquisitionPolicyV1,
+    *,
+    policy_digest: str,
+    occurrences: tuple[ProviderExternalOccurrencePlanV1, ...],
+    capture_contracts: Mapping[str, CaptureContractV1],
+) -> ProcedureSelectionDecisionV1:
+    """Evaluate the accepted policy against this plan, per PLANNED occurrence.
+
+    This is a PLAN-time evaluation and it says only what a plan can say: which
+    declared input each planned Source occurrence serves, whether the accepted
+    policy authorizes that occurrence's classification and byte budget, and what
+    the declared failure behaviour does when it does not. It never invents an
+    acquisition outcome: `on_unavailable`/`on_stale`/`on_oversized` still fire
+    only from a real read, in `apply_acquisition_result` at execution time.
+
+    So a declared input this graph plans NO occurrence for is not scored here at
+    all. "The input never arrived" is an execution-time fact, not a plan-time
+    one, and a policy is free to declare inputs a given Procedure does not
+    serve: the acceptance law never tied a Line's policy to its Procedure's
+    Source aliases, so scoring the miss here would turn accepted, already
+    running Lines -- every Source-free one included -- into run-time refusals.
+    The direct lane refuses that mismatch where it belongs, at admission, when
+    the pinned policy's declared inputs are not the Procedure's Source aliases.
+    """
+
+    sources = {
+        occurrence.input_name: occurrence
+        for occurrence in occurrences
+        if occurrence.occurrence_kind == "source" and occurrence.input_name is not None
+    }
+    decisions: list[AcquisitionInputDecisionV1] = []
+    for rule in policy.inputs:
+        occurrence = sources.get(rule.input_name)
+        if occurrence is None:
+            continue
+        if not occurrence.accepted_bucket_selectors:
+            # An occurrence whose interface proved no input bucket cannot be
+            # classified, so no rule can authorize the material it would return.
+            decisions.append(
+                _plan_failure_decision(
+                    rule,
+                    behavior="refuse",
+                    reason=ACQUISITION_REFUSED,
+                )
+            )
+            continue
+        contract = capture_contracts.get(occurrence.capture_contract_digest or "")
+        if contract is None:
+            decisions.append(
+                _plan_failure_decision(
+                    rule,
+                    behavior="refuse",
+                    reason=ACQUISITION_REFUSED,
+                )
+            )
+            continue
+        if contract.selection_budget.max_bytes > (
+            occurrence.budget_translation.policy_output_bytes_cap
+        ):
+            decisions.append(
+                _plan_failure_decision(
+                    rule,
+                    behavior=rule.on_oversized,
+                    reason=ACQUISITION_OVERSIZED,
+                )
+            )
+            continue
+        decisions.append(
+            AcquisitionInputDecisionV1(input_name=rule.input_name, disposition="selected")
+        )
+    ordered = tuple(
+        sorted(decisions, key=lambda item: item.input_name.encode("utf-8")),
+    )
+    return ProcedureSelectionDecisionV1(
+        policy_digest=policy_digest,
+        verdict=(
+            "refused" if any(item.disposition == "refused" for item in ordered) else "selected"
+        ),
+        decisions=ordered,
+    )
+
+
+def _plan_failure_decision(
+    rule: InputAcquisitionRuleV1,
+    *,
+    behavior: str,
+    reason: str,
+) -> AcquisitionInputDecisionV1:
+    """Apply one declared failure behaviour to a plan-time authorization miss."""
+
+    if behavior == "omit_optional" and rule.requirement == "optional":
+        return AcquisitionInputDecisionV1(
+            input_name=rule.input_name,
+            disposition="omitted",
+            reason_codes=(reason,),
+        )
+    if behavior == "declared_conservative_default":
+        return AcquisitionInputDecisionV1(
+            input_name=rule.input_name,
+            disposition="defaulted",
+            default_value=rule.conservative_default,
+            reason_codes=(reason,),
+        )
+    return AcquisitionInputDecisionV1(
+        input_name=rule.input_name,
+        disposition="refused",
+        reason_codes=(reason,),
+    )
+
+
 def _required_slots(procedure: ProcedureArtifactAny) -> tuple[str, ...]:
     return tuple(
         sorted(
@@ -1009,8 +1361,9 @@ def _readiness(
     evaluation_time: datetime,
 ) -> ProcedureReadinessResultV1:
     unsupported_rows: list[ProcedureUnsupportedNodeV1] = []
+    served = served_node_kinds(accepted.procedure.definition.graph_format)
     for node in accepted.procedure.definition.nodes:
-        if node.kind not in SERVED_NODE_KINDS:
+        if node.kind not in served:
             unsupported_rows.append(
                 ProcedureUnsupportedNodeV1(node_id=node.node_id, kind=node.kind)
             )
@@ -1429,6 +1782,7 @@ def _state_from_records(
     source_capture_associations: tuple[ProcedureSourceCaptureAssociationV1, ...] = ()
     provider_invocations: dict[str, Literal["started", "completed"]] = {}
     derived_source_requests: dict[str, ProcedureDerivedSourceRequestV1] = {}
+    source_reads: dict[str, SourceReadReceiptV1] = {}
     produced_source_associations: list[ProcedureSourceCaptureAssociationV1] = []
     for stored in records:
         payload = parse_journal_payload(bodies.read(stored.record.payload_digest, access=access))
@@ -1490,6 +1844,24 @@ def _state_from_records(
                     "this run exactly"
                 )
             derived_source_requests[derived.occurrence_path] = derived
+        if stored.record.event_kind == "source_read" and isinstance(payload, dict):
+            try:
+                read_receipt = SourceReadReceiptV1.model_validate(payload.get("receipt"))
+            except (ValidationError, TypeError, ValueError) as exc:
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: Source read receipt is invalid"
+                ) from exc
+            if (
+                read_receipt.run_id != run_id
+                or read_receipt.admission_binding_digest != stored.record.admission_binding_digest
+                or payload.get("receipt_digest") != source_read_receipt_digest(read_receipt)
+                or read_receipt.occurrence_path in source_reads
+            ):
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: Source read receipt does not bind "
+                    "this run exactly"
+                )
+            source_reads[read_receipt.occurrence_path] = read_receipt
         if stored.record.event_kind == "provider_invocation_started":
             try:
                 started = ProviderInvocationStartedV1.model_validate(payload)
@@ -1516,9 +1888,25 @@ def _state_from_records(
                 )
             if planned[0].occurrence_kind == "source":
                 derived_for_start = derived_source_requests.get(started.occurrence_path)
-                if derived_for_start is None or started.input_digest != run_value_digest(
-                    "provider-input", derived_for_start.request
-                ):
+                if derived_for_start is None:
+                    raise ProcedureRunRecoveryRequired(
+                        f"{ProcedureRunRecoveryRequired.code}: Source spawn lacks its exact "
+                        "pre-spawn derived request result"
+                    )
+                expected_inputs = {run_value_digest("provider-input", derived_for_start.request)}
+                read_for_start = source_reads.get(started.occurrence_path)
+                if read_for_start is not None:
+                    # A governed workspace read hands the Provider the bytes the
+                    # daemon really read, not the request that named them. The
+                    # read receipt is what binds the two, so the reconstruction
+                    # requires that binding before it accepts the substitution.
+                    if read_for_start.derived_request_digest != derived_for_start.request_digest:
+                        raise ProcedureRunRecoveryRequired(
+                            f"{ProcedureRunRecoveryRequired.code}: Source read receipt names "
+                            "another derived request"
+                        )
+                    expected_inputs.add(read_for_start.provider_input_digest)
+                if started.input_digest not in expected_inputs:
                     raise ProcedureRunRecoveryRequired(
                         f"{ProcedureRunRecoveryRequired.code}: Source spawn lacks its exact "
                         "pre-spawn derived request result"
@@ -1726,8 +2114,15 @@ def _state_from_records(
                             ),
                             "node_id": str(refusal.get("node_id") or last_node_id),
                             "journal_coordinate": _journal_coordinate(final_record),
+                            # `detail_code` is the PROCEDURE-AUTHORED guard code
+                            # and nothing else. A daemon-authored classification
+                            # -- the workspace path class, say -- travels in
+                            # `details`, where the refusal already puts it.
                             "detail_code": (
-                                raw_detail_code if isinstance(raw_detail_code, str) else None
+                                raw_detail_code
+                                if refusal_code == "guard_refused"
+                                and isinstance(raw_detail_code, str)
+                                else None
                             ),
                             "details": refusal.get("details", {}),
                             "budget": budget,
@@ -1853,9 +2248,14 @@ def _state_from_records(
             "chain_head_digest": records[-1].record_digest,
         }
         raw_budget_block = final.get("budget") if isinstance(final, dict) else None
+        # The V4-V6 receipts are LINE receipts: every one of their added fields
+        # names a Line coordinate. A direct run binds none of those, even when
+        # it carries a V5 acquisition admission, so it keeps the direct lane's
+        # own V3 receipt and exposes what it observed on the run state instead.
         if (
             isinstance(raw_budget_block, dict)
             and isinstance(admission, ProcedureRunAdmissionV3)
+            and admission.invocation_origin == "line"
             and admission_material_manifest is not None
         ):
             required_line_fields = (
@@ -2001,6 +2401,37 @@ def _state_from_records(
     next_kind: Literal["retry", "done", "terminal"] = (
         "done" if status == "succeeded" else "retry" if status == "running" else "terminal"
     )
+    captures_by_path = {
+        item.occurrence_path: item
+        for item in (source_capture_associations or tuple(produced_source_associations))
+    }
+    observations = tuple(
+        ProcedureSourceObservationV1(
+            occurrence_path=occurrence_path,
+            node_id=None if derived is None else derived.node_id,
+            input_name=None if derived is None else derived.input_name,
+            source_read_receipt=receipt,
+            source_read_receipt_digest=(
+                None if receipt is None else source_read_receipt_digest(receipt)
+            ),
+            invocation_receipt_digest=(
+                None if association is None else association.invocation_receipt_digest
+            ),
+            capture_digest=None if association is None else association.capture_digest,
+        )
+        for occurrence_path, derived, receipt, association in (
+            (
+                path,
+                derived_source_requests.get(path),
+                source_reads.get(path),
+                captures_by_path.get(path),
+            )
+            for path in sorted(
+                set(derived_source_requests) | set(source_reads) | set(captures_by_path),
+                key=lambda item: item.encode("utf-8"),
+            )
+        )
+    )
     return ProcedureRunStateV2(
         run_id=run_id,
         procedure_identity=admission.procedure_identity,
@@ -2024,7 +2455,285 @@ def _state_from_records(
         receipt=public_receipt,
         receipt_digest=receipt_digest,
         terminal=terminal,
+        source_observations=observations,
     )
+
+
+def _direct_refusal_state(
+    accepted: AcceptedProcedureV1,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    head_at_admission: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    code: ProcedureAdmissionRefusalCodeV1,
+    message: str,
+    details: object,
+) -> ProcedureRunStateV2:
+    return ProcedureRunStateV2(
+        run_id=None,
+        procedure_identity=accepted.procedure.identity,
+        procedure_artifact_digest=accepted.artifact_digest,
+        bound_coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        head_at_admission=PlaybillAcceptedCoordinate.from_internal(head_at_admission),
+        lane="current",
+        evaluation_time=evaluation_time,
+        status="admission_refused",
+        pending_inputs=(),
+        outcomes=(),
+        next_operation=ProcedureNextOperationV1(kind="terminal"),
+        terminal=ProcedureAdmissionRefusalV1(
+            code=code,
+            message=message,
+            details=details,
+            repair=served_repair_for_refusal(code),
+        ),
+    )
+
+
+def _prepare_direct_source_run(
+    instance: PlaybillInstance,
+    accepted: AcceptedProcedureV1,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    head_at_admission: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    invocation_input: object,
+    actor_context: GovernedActorContext,
+    state_reader: PlaybillProcedureStateTapReader,
+    journal_stream: JournalStreamIdentityV1,
+    lane: Literal["current", "replay"],
+    provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
+) -> (
+    tuple[PreparedProcedureRunV5, SourceAcquisitionPolicyV1, Mapping[str, CaptureContractV1]]
+    | ProcedureRunStateV2
+):
+    """Admit one direct run of a graph-v4 Procedure that reads external sources.
+
+    The direct lane gets a REAL acquisition plan, never defaults: the accepted
+    policy, the same planner the Line lane runs, per-input selection decisions,
+    and a governed output-bytes cap. What it does not get is a Line: no
+    occurrence, no mandate coordinate, no calibration coordinate, and no
+    effective rung, so no terminal can fire from here.
+    """
+
+    definition = accepted.procedure.definition
+    assert isinstance(definition, ProcedureDefinitionV4)
+    tree = instance.tree_at(coordinate.git_oid)
+    refuse = partial(
+        _direct_refusal_state,
+        accepted,
+        coordinate=coordinate,
+        head_at_admission=head_at_admission,
+        evaluation_time=evaluation_time,
+    )
+    try:
+        runtime_policy = resolve_procedure_runtime_policy(tree)
+    except ProcedureRuntimePolicyAbsent as exc:
+        return refuse(
+            code="procedure_runtime_policy_absent",
+            message="Served Source execution requires an accepted ProcedureRuntimePolicy.",
+            details={"reason": str(exc), "repair": "Seed the instance ProcedureRuntimePolicy."},
+        )
+    try:
+        policy_digest, policy = _direct_acquisition_policy(
+            tree,
+            procedure=accepted.procedure,
+            input_names=_source_input_names(accepted),
+        )
+    except PinnedAcquisitionPolicyUnresolved as exc:
+        return refuse(
+            code="artifact_binding_mismatch",
+            message="The Procedure's pinned acquisition policy is not accepted at this coordinate.",
+            details={
+                **cast(dict[str, object], exc.details),
+                "repair": "Accept the pinned SourceAcquisitionPolicy or succeed the Procedure.",
+            },
+        )
+    except SourceAcquisitionPolicyRequired as exc:
+        return refuse(
+            code="source_acquisition_policy_required",
+            message=(
+                "A direct Source run requires an accepted SourceAcquisitionPolicy declaring "
+                "this Procedure's Source inputs."
+            ),
+            details={
+                **cast(dict[str, object], exc.details),
+                "repair": (
+                    "Pin a SourceAcquisitionPolicy on the Procedure, or accept exactly one "
+                    "whose inputs are this Procedure's Source aliases."
+                ),
+            },
+        )
+    providers, interfaces = _line_catalogs(tree)
+    capture_contracts = _accepted_capture_contracts(tree)
+    try:
+        external_occurrences = _plan_external_occurrences(
+            accepted,
+            providers=providers,
+            interfaces=interfaces,
+            slot_pins={},
+            provider_runtime_operator=provider_runtime_operator,
+            runtime_policy=runtime_policy,
+            budget=definition.budget,
+        )
+    except ProviderLocalRuntimeRefused as exc:
+        return ProcedureRunStateV2(
+            run_id=None,
+            procedure_identity=accepted.procedure.identity,
+            procedure_artifact_digest=accepted.artifact_digest,
+            bound_coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
+            head_at_admission=PlaybillAcceptedCoordinate.from_internal(head_at_admission),
+            lane="current",
+            evaluation_time=evaluation_time,
+            status="node_refused",
+            pending_inputs=(),
+            outcomes=(),
+            next_operation=ProcedureNextOperationV1(kind="terminal"),
+            terminal=ProcedureNodeRefusalV1(
+                code="provider_unavailable",
+                message="The daemon Provider lane cannot admit this direct Source run.",
+                node_id="direct-admission",
+                details={"reason": {"code": exc.code, "detail": str(exc)}, **exc.details},
+                retryable=True,
+                repair=served_repair_for_refusal("provider_unavailable"),
+            ),
+        )
+    except PlaybillExecutionError as exc:
+        return refuse(
+            code="artifact_binding_mismatch",
+            message="The accepted Provider closure for this Procedure is incomplete.",
+            details={"reason": str(exc), "repair": "Accept the Provider closure this graph pins."},
+        )
+    selection = _plan_selection_decision(
+        policy,
+        policy_digest=policy_digest,
+        occurrences=external_occurrences,
+        capture_contracts=capture_contracts,
+    )
+    if selection.verdict == "refused":
+        return refuse(
+            code="source_acquisition_refused",
+            message="The accepted acquisition policy refuses a declared Source input.",
+            details={
+                "decisions": [item.model_dump(mode="json") for item in selection.decisions],
+                "repair": "Widen the accepted policy rule or repair the Source binding.",
+            },
+        )
+    selection_digest = procedure_selection_decision_digest(selection)
+    accepted_coordinate = AcceptedCoordinate.from_internal(coordinate)
+    plan = ProcedureAcquisitionPlanV2(
+        accepted_coordinate=accepted_coordinate,
+        occurrence_evaluation_time=evaluation_time,
+        acquisition_policy_format="playbill-source-acquisition-policy-v1",
+        acquisition_policy_digest=policy_digest,
+        selection_decision=selection,
+        selection_decision_digest=selection_digest,
+        external_occurrences=external_occurrences,
+    )
+    plan_digest = procedure_acquisition_plan_digest(plan)
+    materials = bind_accepted_state_materials(
+        accepted,
+        accepted_coordinate=accepted_coordinate,
+        state_reader=state_reader,
+        bodies=instance.body_store(),
+    )
+    node_pin_sets = procedure_node_pin_sets(accepted)
+    bindings = tuple(
+        ProcedureProviderBindingV2(
+            node_id=item.node_id,
+            provider_artifact_digest=item.provider_artifact_digest,
+            classification_plan=ProviderBucketClassificationPlanV1(
+                node_id=item.node_id,
+                interface_artifact_digest=item.interface_artifact_digest,
+                interface_digest=item.interface_digest,
+                vocabulary_digest=item.vocabulary_digest,
+                classifier_digest=item.classifier_digest,
+                accepted_bucket_selectors=item.accepted_bucket_selectors,
+            ),
+            implementation_digest=item.implementation_digest,
+            effect_class=item.effect_class,
+            secret_binding_identity_digests=item.secret_plan.binding_identity_digests,
+        )
+        for item in external_occurrences
+    )
+    deployment_snapshot_digest = typed_digest(
+        Sha256Value,
+        "playbill-provider-deployment-snapshot-v1",
+        {
+            "bindings": [
+                item.local_execution.model_dump(mode="json") for item in external_occurrences
+            ]
+        },
+    ).tagged
+    fields: dict[str, Any] = {
+        "instance_id": instance.descriptor.instance_id,
+        "run_id": "RUN-" + "0" * 64,
+        "attempt": 1,
+        "accepted_coordinate": accepted_coordinate,
+        "procedure_identity": accepted.procedure.identity,
+        "procedure_path": accepted.path,
+        "procedure_artifact_digest": accepted.artifact_digest,
+        "definition_digest": accepted.procedure.definition_digest,
+        "activation_policy": accepted.procedure.activation_policy,
+        "full_pins": accepted.procedure.pins,
+        "node_pin_sets": node_pin_sets,
+        "pin_set_digest": procedure_pin_set_digest(accepted.procedure.pins, node_pin_sets),
+        "invocation_input": invocation_input,
+        "accepted_state_inputs": tuple(item.input for item in materials),
+        "landed_capture_inputs": (),
+        "exhaust_inputs": (),
+        "budget": definition.budget,
+        "hard_caps": definition.hard_caps,
+        "actor_context": actor_context,
+        "invocation_origin": "actor",
+        "journal_stream": journal_stream,
+        "journal_partition_id": "direct:" + "0" * 64,
+        "line_spec_digest": None,
+        "occurrence_id": None,
+        "deployment_snapshot_digest": deployment_snapshot_digest,
+        "acquisition_policy_digest": policy_digest,
+        "selection_receipt_digest": None,
+        "sensitivity_policy_digest": None,
+        "mandate_coordinate_digest": None,
+        "calibration_coordinate_digest": None,
+        "taint_labels": (),
+        "epsilon_member": False,
+        "admitted_at": evaluation_time,
+        "admission_binding_digest": "sha256:" + "0" * 64,
+        "bound_coordinate": accepted_coordinate,
+        "head_at_admission": AcceptedCoordinate.from_internal(head_at_admission),
+        "lane": lane,
+        "semantic_replay_key_digest": "sha256:" + "0" * 64,
+        "line_identity": None,
+        "occurrence_evaluation_time": evaluation_time,
+        "resolved_provider_bindings": bindings,
+        "selection_decision": selection,
+        "selection_decision_digest": selection_digest,
+        "provider_output_bytes_cap": runtime_policy.provider_output_bytes_cap,
+        "acquisition_plan_digest": plan_digest,
+        "exhaust_access_binding_digest": None,
+    }
+    provisional = ProcedureRunAdmissionV5.model_construct(**fields)
+    replay_key = procedure_semantic_replay_key_digest(provisional)
+    provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay_key})
+    admission = ProcedureRunAdmissionV5.model_validate(
+        {
+            **provisional.model_dump(mode="python"),
+            "journal_partition_id": procedure_direct_partition(replay_key),
+            "admission_binding_digest": procedure_admission_digest(provisional),
+            "run_id": procedure_semantic_run_id(replay_key),
+        }
+    )
+    manifest = ProcedureAdmissionMaterialManifestV1(members=())
+    prepared = PreparedProcedureRunV5(
+        admission=admission,
+        accepted_state_materials=materials,
+        admission_material_manifest=manifest,
+        admission_material_manifest_digest=procedure_admission_material_digest(manifest),
+        acquisition_plan=plan,
+        acquisition_plan_digest=plan_digest,
+    )
+    return prepared, policy, capture_contracts
 
 
 def service_run_playbill_procedure(
@@ -2123,25 +2832,49 @@ def service_run_playbill_procedure(
             f"{ProcedureRunNotCurrent.code}: Procedure is not current before journal creation"
         )
     stream = _stream(instance)
-    journal, root = _journal_for_write(instance)
-    prepared = prepare_direct_procedure_run(
-        accepted,
-        instance_id=instance.descriptor.instance_id,
-        run_id=None,
-        accepted_coordinate=AcceptedCoordinate.from_internal(coordinate),
-        invocation_input=request.input,
-        actor_context=actor_context.model_copy(update={"timestamp": evaluation_time}),
-        state_reader=PlaybillProcedureStateTapReader(
-            instance=instance,
-            evaluation_time=evaluation_time,
-        ),
-        bodies=instance.body_store(),
-        journal_stream=stream,
-        journal_partition_id=None,
-        head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
-        lane=lane,
-        admitted_at=evaluation_time,
+    state_reader = PlaybillProcedureStateTapReader(
+        instance=instance,
+        evaluation_time=evaluation_time,
     )
+    prepared: PreparedProcedureRunV2 | PreparedProcedureRunV5
+    acquisition_policy: SourceAcquisitionPolicyV1 | None = None
+    capture_contracts: Mapping[str, CaptureContractV1] = {}
+    if _source_input_names(accepted):
+        planned = _prepare_direct_source_run(
+            instance,
+            accepted,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            invocation_input=request.input,
+            actor_context=actor_context.model_copy(update={"timestamp": evaluation_time}),
+            state_reader=state_reader,
+            journal_stream=stream,
+            lane=lane,
+            provider_runtime_operator=provider_runtime_operator,
+        )
+        if isinstance(planned, ProcedureRunStateV2):
+            return planned
+        prepared, acquisition_policy, capture_contracts = planned
+    else:
+        prepared = prepare_direct_procedure_run(
+            accepted,
+            instance_id=instance.descriptor.instance_id,
+            run_id=None,
+            accepted_coordinate=AcceptedCoordinate.from_internal(coordinate),
+            invocation_input=request.input,
+            actor_context=actor_context.model_copy(update={"timestamp": evaluation_time}),
+            state_reader=state_reader,
+            bodies=instance.body_store(),
+            journal_stream=stream,
+            journal_partition_id=None,
+            head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
+            lane=lane,
+            admitted_at=evaluation_time,
+        )
+    # The journal is created only once an admission exists: a Source run that
+    # cannot be admitted leaves no run history behind it.
+    journal, root = _journal_for_write(instance)
     _activate_writer(journal, stream, prepared.admission.journal_partition_id)
     if request.at is None and instance.accepted_coordinate() != coordinate:
         raise ProcedureRunNotCurrent(
@@ -2165,6 +2898,8 @@ def service_run_playbill_procedure(
                     accepted_oid=coordinate.git_oid,
                 )
             ),
+            acquisition_policy=acquisition_policy,
+            capture_contracts=capture_contracts,
             workspace_file_reader=workspace_file_reader,
             clock=_DeterministicClock(evaluation_time),
         )
@@ -2244,6 +2979,7 @@ def service_run_playbill_line(
     actor_context: GovernedActorContext,
     caller_rung: int,
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None = None,
+    workspace_file_reader: WorkspaceFileReader | None = None,
     daemon_clock: ProcedureClockProtocol | None = None,
     evaluation_instant_skew: timedelta | None = None,
 ) -> ProcedureRunStateV2:
@@ -2472,11 +3208,40 @@ def service_run_playbill_line(
                 repair=served_repair_for_refusal("provider_unavailable"),
             ),
         )
-    selection = ProcedureSelectionDecisionV1(
+    capture_contracts = _accepted_capture_contracts(tree)
+    accepted_policies = dict(_accepted_acquisition_policies(tree))
+    line_policy = accepted_policies.get(accepted_line.line.acquisition_policy.artifact_digest)
+    if line_policy is None:
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="artifact_binding_mismatch",
+            message="The Line's pinned acquisition policy is not accepted at this coordinate.",
+            details={"repair": "Accept the pinned SourceAcquisitionPolicy or succeed the Line."},
+        )
+    selection = _plan_selection_decision(
+        line_policy,
         policy_digest=accepted_line.line.acquisition_policy.artifact_digest,
-        verdict="selected",
-        decisions=(),
+        occurrences=external_occurrences,
+        capture_contracts=capture_contracts,
     )
+    if selection.verdict == "refused":
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="source_acquisition_refused",
+            message="The accepted acquisition policy refuses a declared Source input.",
+            details={
+                "decisions": [item.model_dump(mode="json") for item in selection.decisions],
+                "repair": "Widen the accepted policy rule or repair the Source binding.",
+            },
+        )
     selection_digest = procedure_selection_decision_digest(selection)
     accepted_coordinate = AcceptedCoordinate.from_internal(coordinate)
     plan = ProcedureAcquisitionPlanV2(
@@ -2689,6 +3454,9 @@ def service_run_playbill_line(
                 accepted_oid=coordinate.git_oid,
             )
         ),
+        acquisition_policy=line_policy,
+        capture_contracts=capture_contracts,
+        workspace_file_reader=workspace_file_reader,
         slot_pins=slot_pins,
         effective_rung=effective_rung,
         clock=_DeterministicClock(evaluation_time),

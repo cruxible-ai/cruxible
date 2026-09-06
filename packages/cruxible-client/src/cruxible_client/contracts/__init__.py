@@ -63,6 +63,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunReceiptV4,
     ProcedureRunReceiptV5,
     ProcedureRunReceiptV6,
+    ProcedureSourceObservationV1,
     ProcedureTerminalV1,
 )
 from cruxible_client.contracts.workspace_advertisement import (
@@ -1451,6 +1452,7 @@ class PlaybillProcedureRunState(BaseModel):
     ) = None
     receipt_digest: str | None = None
     terminal: ProcedureTerminalV1 | None = None
+    source_observations: list[ProcedureSourceObservationV1] = Field(default_factory=list)
 
     @property
     def coordinate(self) -> PlaybillAcceptedCoordinate:
