@@ -31,6 +31,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringPayloadV1,
     AuthoringProgramStampV1,
     InsertionExpectationV2,
+    _AuthoringIntentDecodeContext,
     authoring_program_stamp_operation_key,
 )
 from cruxible_client.contracts.canonical import (
@@ -65,6 +66,15 @@ class AuthoringIntentStoreError(PlaybillError):
 
 class _StrictStoreModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _start_decode(cls, value: object, info: ValidationInfo) -> object:
+        if type(info.context) is _EventDecodeContext:
+            # Even an internal caller reusing a context gets fresh slots. These
+            # proofs must never cross event-validation calls or failed parses.
+            info.context.reset()
+        return value
 
 
 class AuthoringIntentEventV1(_StrictStoreModel):
@@ -136,11 +146,12 @@ AuthoringIntentEventAny: TypeAlias = (
 )
 
 
-@dataclass
-class _EventDecodeContext:
+class _EventDecodeContext(_AuthoringIntentDecodeContext):
     """One decoder's output slot, never populated from the wire or retained."""
 
-    rendered: bytes | None = None
+    def reset(self) -> None:
+        super().reset()
+        self.rendered: bytes | None = None
 
 
 def _verify_authoring_event_digest(event: AuthoringIntentEventAny, context: object) -> None:
@@ -150,8 +161,24 @@ def _verify_authoring_event_digest(event: AuthoringIntentEventAny, context: obje
         return
     # Nested models have completed their full validation. Their own serializers
     # select the frozen source-presence and preflight-certificate wire shapes.
-    context.rendered = None
-    normalized = normalize_canonical(event.model_dump(mode="json"))
+    bound_payload = context.payload
+    normalized_payload = context.normalized_payload
+    # Consume before verification, including failure. Pydantic may skip before
+    # validators when handed an existing model, so reset-on-entry alone cannot
+    # prevent a later call from reusing a mutated model's old normalized value.
+    context.reset()
+    dumped = event.model_dump(mode="json")
+    if bound_payload is event.intent.payload and normalized_payload is not None:
+        # Binding just normalized this exact payload during this decode. Reuse
+        # that ephemeral value; all other event fields still get normalized.
+        dumped["intent"].pop("payload")
+        normalized = normalize_canonical(dumped)
+        assert isinstance(normalized, dict)
+        normalized_intent = normalized["intent"]
+        assert isinstance(normalized_intent, dict)
+        normalized_intent["payload"] = normalized_payload
+    else:
+        normalized = normalize_canonical(dumped)
     assert isinstance(normalized, dict)
     preimage = dict(normalized)
     preimage.pop("tag")

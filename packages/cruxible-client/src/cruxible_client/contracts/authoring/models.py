@@ -13,6 +13,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    ValidationInfo,
     field_serializer,
     field_validator,
     model_serializer,
@@ -1237,6 +1238,24 @@ def authoring_change_set_membership(
     return tuple((identity.partition(":")[0], identity) for identity in identities)
 
 
+class _AuthoringIntentDecodeContext:
+    """Output slots for one private event decode, never retained on a model.
+
+    Payload validation and intent binding finish before the event validator
+    consumes these results. Identity guards bind reuse to those very objects,
+    within this validation call only; they are not a mutable-model cache.
+    """
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.members: tuple[AuthoringChangeSetMemberV1, ...] | None = None
+        self.member_identities: tuple[str, ...] = ()
+        self.payload: AuthoringPayloadV1 | None = None
+        self.normalized_payload: dict[str, CanonicalValue] | None = None
+
+
 class ChangeSetAuthoringPayloadV1(_StrictAuthoringModel):
     tag: Literal["playbill-change-set-authoring-payload-v1"] = (
         "playbill-change-set-authoring-payload-v1"
@@ -1268,12 +1287,16 @@ class ChangeSetAuthoringPayloadV1(_StrictAuthoringModel):
     def _members(
         cls,
         value: tuple[AuthoringChangeSetMemberV1, ...],
+        info: ValidationInfo,
     ) -> tuple[AuthoringChangeSetMemberV1, ...]:
         identities = tuple(authoring_member_identity(member) for member in value)
         if len(set(identities)) != len(identities):
             raise ValueError("change-set member identities must be unique")
         if identities != tuple(sorted(identities, key=lambda item: item.encode("utf-8"))):
             raise ValueError("change-set members must be sorted by semantic identity")
+        if isinstance(info.context, _AuthoringIntentDecodeContext):
+            info.context.members = value
+            info.context.member_identities = identities
         return value
 
 
@@ -2067,7 +2090,13 @@ class AuthoringIntentV1(_StrictAuthoringModel):
         return validate_candidate_timestamp(value)
 
     @model_validator(mode="after")
-    def _binding(self) -> "AuthoringIntentV1":
+    def _validated_binding(self, info: ValidationInfo) -> "AuthoringIntentV1":
+        # Pydantic detects context parameters by required argument count.
+        # Keep the directly callable binding helper's no-context form too.
+        return self._binding(info)
+
+    def _binding(self, info: ValidationInfo | None = None) -> "AuthoringIntentV1":
+        context = None if info is None else info.context
         # One ephemeral normalized snapshot feeds both frozen preimages. Never
         # cache it on the model: frozen payloads contain mutable nested values.
         payload_dump = self.payload.model_dump(mode="json")
@@ -2131,7 +2160,16 @@ class AuthoringIntentV1(_StrictAuthoringModel):
                 raise ValueError("a singular Claim intent carries its one expectation in both")
         else:
             if isinstance(self.payload, ChangeSetAuthoringPayloadV1):
-                membership = authoring_change_set_membership(self.payload.members)
+                if (
+                    isinstance(context, _AuthoringIntentDecodeContext)
+                    and context.members is self.payload.members
+                ):
+                    membership = tuple(
+                        (identity.partition(":")[0], identity)
+                        for identity in context.member_identities
+                    )
+                else:
+                    membership = authoring_change_set_membership(self.payload.members)
                 expected_identity = "ChangeSet:" + typed_digest(
                     Sha256Value,
                     AUTHORING_CHANGE_SET_MEMBERSHIP_DIGEST_DOMAIN,
@@ -2157,6 +2195,9 @@ class AuthoringIntentV1(_StrictAuthoringModel):
                     self.payload,
                     member_identities=tuple(identity for _kind, identity in membership),
                 )
+        if isinstance(context, _AuthoringIntentDecodeContext):
+            context.payload = self.payload
+            context.normalized_payload = tagged_payload
         return self
 
     def _bind_change_set_members(

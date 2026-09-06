@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from cruxible_client.contracts.authoring import models as authoring_models
 from cruxible_client.contracts.authoring.models import (
     DiagnosticFrontierV1,
     PreflightResultV1,
@@ -66,6 +67,89 @@ def test_decoder_normalizes_one_snapshot_without_calling_public_digest(
     _, rendered = store_module._decode_authoring_intent_event(wire)
     assert rendered == wire
     assert len(calls) == 1
+    # The intent binding already normalized its payload in this same decode.
+    # The event pass must visit only the remaining envelope/protocol fields.
+    assert "payload" not in calls[0]["intent"]
+
+
+@pytest.mark.parametrize("version", (1, 2, 3))
+def test_member_identity_is_computed_once_per_member_during_decode(
+    version: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wire = canonical_bytes(_wire_event("content", version)) + b"\n"
+    calls = []
+    original = authoring_models.authoring_member_identity
+
+    def identity(member):
+        calls.append(member)
+        return original(member)
+
+    monkeypatch.setattr(authoring_models, "authoring_member_identity", identity)
+    expected = store_module._parse_authoring_intent_event(wire)
+    ordinary_count = len(calls)
+    calls.clear()
+    actual, rendered = store_module._decode_authoring_intent_event(wire)
+    assert actual == expected
+    assert rendered == wire
+    assert len(calls) == len(actual.intent.payload.members)
+    assert ordinary_count == 2 * len(calls)
+
+
+@pytest.mark.parametrize("version", (1, 2, 3))
+def test_reused_internal_context_cannot_carry_proofs_across_decodes(version: int) -> None:
+    context = store_module._EventDecodeContext()
+    raw = _wire_event("content", version)
+    EVENT_MODELS[version].model_validate(raw, context=context)
+    assert context.rendered == canonical_bytes(raw) + b"\n"
+
+    # Even deliberately forged old slots cannot cross the decode boundary.
+    context.member_identities = ("forged",)
+    context.normalized_payload = {"forged": True}
+    invalid = _wire_event("content", version)
+    invalid["intent"]["payload_digest"] = "sha256:" + "0" * 64
+    with pytest.raises(ValidationError) as ordinary:
+        EVENT_MODELS[version].model_validate(invalid)
+    with pytest.raises(ValidationError) as reused:
+        EVENT_MODELS[version].model_validate(invalid, context=context)
+    assert reused.value.errors(include_context=False) == ordinary.value.errors(
+        include_context=False
+    )
+    assert context.rendered is None
+    assert context.normalized_payload is None
+
+    final = EVENT_MODELS[version].model_validate(raw, context=context)
+    assert final.model_dump(mode="json") == raw
+    assert context.rendered == canonical_bytes(raw) + b"\n"
+
+
+@pytest.mark.parametrize("version", (1, 2, 3))
+def test_existing_model_revalidation_cannot_reuse_consumed_payload(version: int) -> None:
+    context = store_module._EventDecodeContext()
+    raw = _wire_event("content", version)
+    member = raw["intent"]["payload"]["members"][0]
+    member["statement"]["object"]["value"] = {"state": "ready"}
+    payload = authoring_models.ChangeSetAuthoringPayloadV1.model_validate(raw["intent"]["payload"])
+    identity = authoring_models.authoring_member_identity(payload.members[0])
+    raw["intent"]["change_set_claim_identities"][0]["member_identity"] = identity
+    from tests.test_playbill.test_authoring_binding_reuse import _change_set_identity
+
+    raw["intent"]["semantic_identity"] = _change_set_identity(payload)
+    _commit_raw_event(raw)
+    event = EVENT_MODELS[version].model_validate(raw, context=context)
+    assert context.payload is None
+    assert context.normalized_payload is None
+    assert context.members is None
+    # Canonical-value dictionaries remain mutable despite frozen model fields.
+    # Pydantic skips before validators on existing model instances.
+    event.intent.payload.members[0].statement.object.value["state"] = "changed after validation"
+    with pytest.raises(ValidationError) as ordinary:
+        EVENT_MODELS[version].model_validate(event)
+    with pytest.raises(ValidationError) as reused:
+        EVENT_MODELS[version].model_validate(event, context=context)
+    assert reused.value.errors(include_context=False) == ordinary.value.errors(
+        include_context=False
+    )
+    assert context.rendered is None
 
 
 @pytest.mark.parametrize("version", (1, 2, 3))
@@ -171,3 +255,28 @@ def test_nested_preflight_uses_frozen_receive_subset_and_verifies_its_digest(ver
     _commit_raw_event(raw)
     with pytest.raises(ValidationError, match="preflight certificate digest does not reproduce"):
         store_module._decode_authoring_intent_event(canonical_bytes(raw))
+
+
+@pytest.mark.parametrize("rationale", (None, "Réviser café — 日本語 🧭"))
+def test_decoder_preserves_change_set_prose_and_unicode(rationale: str | None) -> None:
+    from tests.test_playbill.test_authoring_binding_reuse import (
+        _change_set_identity,
+        _claim_members,
+        _rationale_set,
+        _wire_intent,
+    )
+
+    payload = _rationale_set(rationale)
+    raw = _wire_intent(
+        payload,
+        semantic_identity=_change_set_identity(payload),
+        claim_identities=_claim_members(payload),
+    )
+    wire = canonical_bytes(raw) + b"\n"
+    ordinary = store_module._parse_authoring_intent_event(wire)
+    decoded, rendered = store_module._decode_authoring_intent_event(wire)
+    assert decoded == ordinary
+    assert rendered == wire == store_module.AuthoringIntentStore._render_event(ordinary)
+    assert decoded.intent.payload.rationale == rationale
+    assert decoded.intent.payload_digest == authoring_models.authoring_payload_digest(payload)
+    assert decoded.event_digest == store_module.authoring_intent_event_digest(decoded)

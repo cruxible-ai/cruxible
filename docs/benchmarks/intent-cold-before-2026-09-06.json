@@ -1,0 +1,25 @@
+{
+  "scope": "unprofiled copied-history lookup; process memos reset; OS cache not flushed",
+  "streams": 24,
+  "events": 173,
+  "history_inventory_digest": "9ed6cc9ff79f995c63d968600c5ac717e744faadd29746b74058b532ef9da069",
+  "exact_intent_verified": true,
+  "runs": [
+    {
+      "cold": 11.687909958011005,
+      "warm": 0.08063250000122935
+    },
+    {
+      "cold": 11.52554262499325,
+      "warm": 0.08023349998984486
+    },
+    {
+      "cold": 11.532056666037533,
+      "warm": 0.08203062502434477
+    }
+  ],
+  "median_seconds": {
+    "cold": 11.532056666037533,
+    "warm": 0.08063250000122935
+  }
+}

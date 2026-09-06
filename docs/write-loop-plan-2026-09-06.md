@@ -80,6 +80,11 @@ Current next performance slice: cold intent-index initialization after restart,
 then projection prebuild and verified checkpoint recovery, followed by repeated
 evaluation and broad readback. The exact program workload's cold intent lookup
 takes 11.741 seconds versus 0.109 warm; the checkpoint report records its limits.
+The [subsequent per-event validation pass](intent-cold-validation-2026-09-06.md)
+reduces a matched cold median from 11.532 to 9.152 seconds; warm remains about
+0.08 seconds. Cold readiness remains open. Before a durable index or new journal
+format, resolve payload retention, verifier-bound index trust, and the policy
+that historical intent corruption currently gates unrelated writes.
 Batched fresh Git
 reads removed most reconciliation subprocess cost without changing publication
 semantics. Moving publication off the foreground path is still a separate
