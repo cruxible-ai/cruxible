@@ -1,0 +1,149 @@
+{
+  "baseline_ref": "378126e0",
+  "scope": "162 synthetic self-source Claims; three fresh temporary instances per mode; same payload construction; unprofiled wall times; setup and intent creation excluded; no live daemon",
+  "before": {
+    "mode": "baseline",
+    "rows": [
+      {
+        "iteration": 0,
+        "prepare_seconds": 1.0850533329648897,
+        "submit_seconds": 7.751688166987151,
+        "total_seconds": 8.83674149995204,
+        "git_commands_in_submit": {
+          "rev-parse": 2,
+          "ls-tree": 2,
+          "cat-file": 4,
+          "hash-object": 324,
+          "read-tree": 2,
+          "update-index": 2,
+          "write-tree": 2,
+          "commit-tree": 2,
+          "update-ref": 2
+        },
+        "members": 162,
+        "prepared_certificate_retained": true
+      },
+      {
+        "iteration": 1,
+        "prepare_seconds": 1.057889791962225,
+        "submit_seconds": 7.466475875000469,
+        "total_seconds": 8.524365666962694,
+        "git_commands_in_submit": {
+          "rev-parse": 2,
+          "ls-tree": 2,
+          "cat-file": 4,
+          "hash-object": 324,
+          "read-tree": 2,
+          "update-index": 2,
+          "write-tree": 2,
+          "commit-tree": 2,
+          "update-ref": 2
+        },
+        "members": 162,
+        "prepared_certificate_retained": true
+      },
+      {
+        "iteration": 2,
+        "prepare_seconds": 1.0042223329655826,
+        "submit_seconds": 7.796852166007739,
+        "total_seconds": 8.801074498973321,
+        "git_commands_in_submit": {
+          "rev-parse": 2,
+          "ls-tree": 2,
+          "cat-file": 4,
+          "hash-object": 324,
+          "read-tree": 2,
+          "update-index": 2,
+          "write-tree": 2,
+          "commit-tree": 2,
+          "update-ref": 2
+        },
+        "members": 162,
+        "prepared_certificate_retained": true
+      }
+    ],
+    "medians": {
+      "prepare_seconds": 1.057889791962225,
+      "submit_seconds": 7.751688166987151,
+      "total_seconds": 8.801074498973321
+    }
+  },
+  "after": {
+    "mode": "current",
+    "rows": [
+      {
+        "iteration": 0,
+        "prepare_seconds": 1.037423666974064,
+        "submit_seconds": 2.8002707079867832,
+        "total_seconds": 3.837694374960847,
+        "git_commands_in_submit": {
+          "rev-parse": 2,
+          "ls-tree": 2,
+          "cat-file": 4,
+          "hash-object": 2,
+          "read-tree": 2,
+          "update-index": 2,
+          "write-tree": 2,
+          "commit-tree": 2,
+          "update-ref": 2
+        },
+        "members": 162,
+        "prepared_certificate_retained": true
+      },
+      {
+        "iteration": 1,
+        "prepare_seconds": 0.9958717080298811,
+        "submit_seconds": 2.8955925829941407,
+        "total_seconds": 3.891464291024022,
+        "git_commands_in_submit": {
+          "rev-parse": 2,
+          "ls-tree": 2,
+          "cat-file": 4,
+          "hash-object": 2,
+          "read-tree": 2,
+          "update-index": 2,
+          "write-tree": 2,
+          "commit-tree": 2,
+          "update-ref": 2
+        },
+        "members": 162,
+        "prepared_certificate_retained": true
+      },
+      {
+        "iteration": 2,
+        "prepare_seconds": 1.0157102500088513,
+        "submit_seconds": 2.8892831670236774,
+        "total_seconds": 3.9049934170325287,
+        "git_commands_in_submit": {
+          "rev-parse": 2,
+          "ls-tree": 2,
+          "cat-file": 4,
+          "hash-object": 2,
+          "read-tree": 2,
+          "update-index": 2,
+          "write-tree": 2,
+          "commit-tree": 2,
+          "update-ref": 2
+        },
+        "members": 162,
+        "prepared_certificate_retained": true
+      }
+    ],
+    "medians": {
+      "prepare_seconds": 1.0157102500088513,
+      "submit_seconds": 2.8892831670236774,
+      "total_seconds": 3.891464291024022
+    }
+  },
+  "diagnostic_profile": {
+    "submit": {
+      "profiled_seconds": 8.757282042002771
+    },
+    "activation": {
+      "profiled_seconds": 5.484188499976881
+    },
+    "scope": "cProfile diagnostic only; 162 synthetic self-source Claims; temporary instance and generated test signing keys; no live daemon mutation; no workspace attachment"
+  },
+  "implementation_commit": "0b7a465b",
+  "validation": "41 scoped tests passed; independent review approved; Ruff, formatting, focused mypy and diff checks passed."
+}

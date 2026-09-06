@@ -1,5 +1,9 @@
 # State-update loop: branch implementation and measurements
 
+A subsequent [Git batching pass](performance-git-batches-2026-09-05.md) improves
+the complete synthetic prepare-submit loop. The measurements below describe the
+earlier state-loop batch and remain its historical baseline.
+
 Implemented on `codex/state-loop-design`, based on `f8ce3336`. The primary
 `playbill` branch and running daemon are unchanged. This report records engineering
 measurements, not newly accepted Claims in the program world.
