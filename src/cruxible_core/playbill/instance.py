@@ -199,6 +199,9 @@ def _validate_client_principals(
 # Four generations cover every read path that walks a bounded lineage while
 # keeping the resident set to a handful of trees per served instance.
 _TREE_MEMO_GENERATIONS = 4
+# One index over metadata already owned by replay, with a hard entry ceiling.
+# Larger histories retain the original scan semantics instead of truncating.
+_HISTORY_LOOKUP_MAX_GENERATIONS = 65_536
 
 
 class PlaybillInstance:
@@ -220,6 +223,9 @@ class PlaybillInstance:
         self._ledger = ledger
         self._verified_genesis = verified_genesis
         self._recovered = recovered
+        self._history_lookup: (
+            tuple[RecoveredInstanceState, dict[str, RecoveredGeneration | None] | None] | None
+        ) = None
         self._promotion_verifier = promotion_verifier
         self._claim_attestation_store: ClaimAttestationEvidenceStore | None = None
         self._workspace_advertiser: Callable[[], PlaybillWorkspaceAdvertisement] | None = None
@@ -980,13 +986,34 @@ class PlaybillInstance:
 
         return self._recovered.history
 
+    def _generation_for_oid(self, oid: str) -> RecoveredGeneration | None:
+        """Resolve unique membership only in this captured replay-verified epoch.
+
+        An index hit replaces a history scan, never recovery or a blob proof.
+        The atomic epoch/index pair prevents concurrent refresh from applying
+        another history's membership. Duplicate identities remain ambiguous.
+        """
+        recovered = self._recovered
+        cached = self._history_lookup
+        if cached is None or cached[0] is not recovered:
+            index: dict[str, RecoveredGeneration | None] | None = None
+            if len(recovered.history) <= _HISTORY_LOOKUP_MAX_GENERATIONS:
+                index = {}
+                for generation in recovered.history:
+                    index[generation.oid] = None if generation.oid in index else generation
+            cached = (recovered, index)
+            self._history_lookup = cached
+        if cached[1] is not None:
+            return cached[1].get(oid)
+        matches = tuple(generation for generation in recovered.history if generation.oid == oid)
+        return matches[0] if len(matches) == 1 else None
+
     def accepted_evaluation_time(self, oid: str) -> datetime:
         """Resolve the immutable acceptance instant for one replayed generation."""
 
-        matches = tuple(item for item in self._recovered.history if item.oid == oid)
-        if len(matches) != 1:
+        generation = self._generation_for_oid(oid)
+        if generation is None:
             raise PlaybillFormatError("evaluation coordinate is outside accepted history")
-        generation = matches[0]
         if generation.record is not None:
             try:
                 return datetime.strptime(
@@ -1003,12 +1030,9 @@ class PlaybillInstance:
     def coordinate_for_oid(self, oid: str) -> AcceptedProjectionCoordinate:
         """Resolve one accepted historical OID to its complete verified coordinate."""
 
-        matches = tuple(
-            generation for generation in self._recovered.history if generation.oid == oid
-        )
-        if len(matches) != 1:
+        generation = self._generation_for_oid(oid)
+        if generation is None:
             raise PlaybillFormatError("Git OID is not one accepted generation of this instance")
-        generation = matches[0]
         return AcceptedProjectionCoordinate(
             instance_id=self.descriptor.instance_id,
             repository_path=str(self._ledger.path.resolve(strict=True)),
@@ -1156,6 +1180,7 @@ class PlaybillInstance:
             query_facts_builder=self._accepted_query_facts,
             checkpoint_directory=self._checkpoint_directory(self.root),
         )
+        self._history_lookup = None
         return self.accepted_coordinate()
 
     def activation_publisher(
