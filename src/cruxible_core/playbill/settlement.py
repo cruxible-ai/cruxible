@@ -72,6 +72,7 @@ from cruxible_core.playbill.proposal_message import generation_commit_message
 from cruxible_core.playbill.proposals import (
     ClaimQueryFactsProvider,
     ExhaustPromotionVerifierProtocol,
+    TreeStateProvider,
     claim_admission_accounts_from_candidate,
     claim_type_expansions_from_candidate,
     evaluate_proposal_tree,
@@ -717,6 +718,7 @@ def prepare_generation(
     promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
     query_facts_provider: ClaimQueryFactsProvider | None = None,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
+    tree_state_provider: TreeStateProvider | None = None,
 ) -> VerifiedGenerationBundle:
     """Build and verify a generation bundle without mutating main or serving state."""
 
@@ -745,6 +747,7 @@ def prepare_generation(
         replay_claim_admission_accounts=claim_admission_accounts_from_candidate(candidate),
         wire_version=candidate.tag,
         acceptance_laws=laws,
+        tree_state_provider=tree_state_provider,
         historical_law_coordinates={
             member.path: (
                 member.law_identifier,

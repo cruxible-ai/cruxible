@@ -1077,15 +1077,13 @@ def _claim_admission_evaluations(
     if not changed_by_subject:
         return {}, {}, {}, (), ()
 
-    parsed_claims: dict[tuple[str, bytes], ClaimArtifactAny] = {}
-    parent_values = _effective_claim_values(
-        current_tree, evaluation_time=timestamp, parsed_claims=parsed_claims
-    )
-    candidate_values = _effective_claim_values(
-        candidate_tree, evaluation_time=timestamp, parsed_claims=parsed_claims
-    )
-    # Keep complete parsed Claims only while constructing these two policy views.
-    parsed_claims.clear()
+    policy_values: (
+        tuple[
+            dict[str, dict[str, tuple[object, ...]]],
+            dict[str, dict[str, tuple[object, ...]]],
+        ]
+        | None
+    ) = None
     entries_by_path: dict[str, tuple[dict[str, object], ...]] = {}
     digests_by_path: dict[str, tuple[str, ...]] = {}
     query_digests_by_path: dict[str, tuple[str, ...]] = {}
@@ -1126,7 +1124,27 @@ def _claim_admission_evaluations(
             *,
             carries_corroboration: bool,
         ) -> Evaluation:
-            nonlocal facts
+            nonlocal facts, policy_values
+            parent_values: dict[str, dict[str, tuple[object, ...]]] = {}
+            candidate_values: dict[str, dict[str, tuple[object, ...]]] = {}
+            if policy.freeze_requirements:
+                # Only freeze law reads these values. Empty and corroboration-only
+                # policies need no Claim scan; corroboration still uses the complete
+                # accepted query facts below. Build both full policy views once on
+                # demand, retaining unchanged and cross-ClaimType Subject values.
+                if policy_values is None:
+                    parsed_claims: dict[tuple[str, bytes], ClaimArtifactAny] = {}
+                    policy_values = (
+                        _effective_claim_values(
+                            current_tree, evaluation_time=timestamp, parsed_claims=parsed_claims
+                        ),
+                        _effective_claim_values(
+                            candidate_tree, evaluation_time=timestamp, parsed_claims=parsed_claims
+                        ),
+                    )
+                    # Full parsed Claims live only while constructing these views.
+                    parsed_claims.clear()
+                parent_values, candidate_values = policy_values
             policy_digest = _canonical_model_digest(
                 "playbill-claim-admission-policy-v1",
                 accepted_type.claim_type.admission_policy,
@@ -1320,6 +1338,9 @@ class EvaluatedTreeState:
     members: Manifest
     merkle: MerkleManifest
     dependencies: DependencyIndexV1
+
+
+TreeStateProvider = Callable[[Mapping[str, bytes]], EvaluatedTreeState]
 
 
 def build_tree_state(tree: Mapping[str, bytes]) -> EvaluatedTreeState:
@@ -3407,6 +3428,7 @@ def evaluate_proposal_tree(
     acceptance_laws: AcceptanceLawRegistry = PLAYBILL_ACCEPTANCE_LAWS,
     historical_law_coordinates: Mapping[str, tuple[str, str]] | None = None,
     candidate_card_renderer_digest: str | None = None,
+    tree_state_provider: TreeStateProvider | None = None,
 ) -> CandidateEvaluation:
     """Rebase, scope, judge every member, and close: the whole evaluation.
 
@@ -3420,9 +3442,10 @@ def evaluate_proposal_tree(
     manifest, its manifest trie, and its dependency index. A caller that holds
     one, which replay does for every generation after the first, hands it in and
     the evaluation advances it over the change set instead of rebuilding it; a
-    caller that does not, which settlement never can, passes nothing and the
-    state is built from scratch. Both reach the same candidate: the carried state
-    is a cache of derivations, never a source of them.
+    caller without replay state may supply an exact-byte derivation provider.
+    Otherwise the state is built from scratch. All paths reach the same candidate:
+    the carried state is a cache of derivations, never a source of them. Laws,
+    bodies, approvals and current-coordinate query facts are never cached here.
     """
 
     candidate_tree = dict(proposed_tree)
@@ -3486,7 +3509,11 @@ def evaluate_proposal_tree(
             artifact_kinds=artifact_kinds_for_compiler(current.compiler),
         )
 
-    parent = parent_state if parent_state is not None else build_tree_state(current_tree)
+    parent = (
+        parent_state
+        if parent_state is not None
+        else (tree_state_provider or build_tree_state)(current_tree)
+    )
     advanced = advance_tree_members(parent, previous_tree=current_tree, tree=candidate_tree)
     if not advanced.scope:
         return CandidateEvaluation(
@@ -3595,6 +3622,7 @@ class ProposalService:
         workspace_advertiser: Callable[[], PlaybillWorkspaceAdvertisement] | None = None,
         require_writable: Callable[[], None] | None = None,
         ledger_publisher: Callable[[], object] | None = None,
+        tree_state_provider: TreeStateProvider | None = None,
     ) -> None:
         self.transport = transport
         self.accepted = accepted
@@ -3614,6 +3642,7 @@ class ProposalService:
         # Publication, not persistence: called after the last ledger write of a
         # submission, and by contract it never raises.
         self._ledger_publisher = ledger_publisher or (lambda: None)
+        self.tree_state_provider = tree_state_provider
 
     def submit(
         self,
@@ -3685,6 +3714,7 @@ class ProposalService:
             promotion_verifier=self.promotion_verifier,
             producer_receipt_resolver=self.producer_receipt_resolver,
             query_facts_provider=self.query_facts_provider,
+            tree_state_provider=self.tree_state_provider,
         )
         # A refused proposal has no members to summarize, so it keeps the bare
         # subject the ledger has always written for it -- unless the author said

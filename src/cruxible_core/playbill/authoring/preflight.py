@@ -887,6 +887,7 @@ def compute_preflight(
                         promotion_verifier=service.promotion_verifier,
                         producer_receipt_resolver=service.producer_receipt_resolver,
                         query_facts_provider=service.query_facts_provider,
+                        tree_state_provider=service.tree_state_provider,
                     )
                     evaluated_tree = evaluation.tree
                     diagnostics.extend(

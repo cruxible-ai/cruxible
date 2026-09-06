@@ -73,6 +73,7 @@ from cruxible_core.playbill.compiler import (
     SUPPORTED_COMPILERS,
     current_compiler_coordinate,
 )
+from cruxible_core.playbill.evaluation_state_cache import EvaluationStateCache
 from cruxible_core.playbill.git import GitLedger
 from cruxible_core.playbill.keys import (
     ALLOWED_SIGNERS_FILE,
@@ -235,6 +236,7 @@ class PlaybillInstance:
         self._recovered = recovered
         self._state_lock = threading.RLock()
         self._claim_compilation_cache = ClaimCompilationCache()
+        self._evaluation_state_cache = EvaluationStateCache()
         self._history_lookup: (
             tuple[RecoveredInstanceState, dict[str, RecoveredGeneration | None] | None] | None
         ) = None
@@ -1004,6 +1006,7 @@ class PlaybillInstance:
             receive_limits=self._receive_limits,
             require_writable=self.require_writable,
             ledger_publisher=self.request_ledger_mirror,
+            tree_state_provider=self._evaluation_state_cache.derive,
         )
 
     def bind_receive_limits(self, limits: ProposalReceiveLimits) -> None:
@@ -1422,6 +1425,7 @@ class PlaybillInstance:
         self._tree_memo.clear()
         self.claim_read_history_memo.clear()
         self._claim_compilation_cache.clear()
+        self._evaluation_state_cache.clear()
         self._recovered = recover_instance(
             self._ledger,
             genesis=self._verified_genesis,
@@ -1494,6 +1498,7 @@ class PlaybillInstance:
                 bodies=self.body_store(),
             ),
             query_facts_provider=lambda coordinate: self._accepted_query_facts(self, coordinate),
+            tree_state_provider=self._evaluation_state_cache.derive,
         )
 
     def settle_and_activate(
