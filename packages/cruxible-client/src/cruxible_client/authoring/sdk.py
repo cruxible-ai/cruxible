@@ -1762,9 +1762,9 @@ class Playbill:
         hands back a tree of kinds, predicates and admissible values, every ref
         stamped with this connection's orientation.
 
-        This refreshes first, so a world is always built at the instance's
-        current accepted coordinate rather than at whatever this connection last
-        installed. No Subject is read here. The first Subject access of any kind
+        The vocabulary listing selects the current accepted coordinate and
+        updates this connection to that snapshot, without fetching an orientation
+        page. No Subject is read here. The first Subject access of any kind
         reads every Subject of every kind in one list, because the served verb
         takes neither a kind filter nor a cursor; a world with a thousand
         Subjects therefore costs the vocabulary at `world()` and that one list
@@ -1773,11 +1773,8 @@ class Playbill:
 
         from cruxible_client.authoring.world import build_world
 
-        self.refresh()
-        listing = self._client.list_playbill_claim_types(
-            self._instance_id,
-            at=_api_coordinate(self.coordinate),
-        )
+        listing = self._client.list_playbill_claim_types(self._instance_id)
+        self._coordinate = _coordinate(listing.coordinate)
         return build_world(
             self,
             coordinate=self.coordinate,

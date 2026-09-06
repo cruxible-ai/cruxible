@@ -129,6 +129,7 @@ class _WorldClient:
         self.coordinate = _COORDINATE
         self.subject_list_calls = 0
         self.claim_type_list_calls = 0
+        self.claim_type_coordinates: list[Any] = []
         self.searches: list[dict[str, Any]] = []
         self.claim_reads: list[str] = []
         self.claim_predicates: dict[str, str] = {}
@@ -169,6 +170,7 @@ class _WorldClient:
         self, _instance_id: str, *, at: Any = None
     ) -> api.PlaybillClaimTypeList:
         self.claim_type_list_calls += 1
+        self.claim_type_coordinates.append(at)
         return api.PlaybillClaimTypeList(
             coordinate=self.coordinate,
             claim_types=[
@@ -747,7 +749,7 @@ def test_a_type_checker_reads_the_generated_stub_as_exact_types(
     assert "LiteralValue" in report, report
 
 
-def test_the_world_is_built_from_orient_and_the_claim_type_list_only(
+def test_the_world_is_built_from_the_current_claim_type_list_only(
     connection: tuple[Playbill, _WorldClient],
 ) -> None:
     playbill, client = connection
@@ -756,8 +758,9 @@ def test_the_world_is_built_from_orient_and_the_claim_type_list_only(
     world = playbill.world()
 
     assert isinstance(world, World)
-    assert [row["mode"] for row in client.searches[before:]] == ["orient"]
+    assert client.searches[before:] == []
     assert client.claim_type_list_calls == 1
+    assert client.claim_type_coordinates == [None]
     assert client.subject_list_calls == 0
     assert world.coordinate == AcceptedCoordinate.model_validate(
         _COORDINATE.model_dump(mode="json")
@@ -971,7 +974,8 @@ def test_a_world_is_built_at_the_instances_current_coordinate(
     """A world built at a coordinate the instance has left is a stale answer."""
 
     playbill, client = connection
-    assert playbill.world().coordinate.git_oid == "a" * 40
+    previous_world = playbill.world()
+    assert previous_world.coordinate.git_oid == "a" * 40
 
     # Another connection accepts a generation. This one is told nothing.
     client.coordinate = _MOVED_COORDINATE
@@ -980,6 +984,9 @@ def test_a_world_is_built_at_the_instances_current_coordinate(
 
     assert world.coordinate.git_oid == "b" * 40
     assert playbill.coordinate.git_oid == "b" * 40
+    assert client.claim_type_coordinates == [None, None]
+    with pytest.raises(ValueError, match="differs from the active orientation"):
+        previous_world.kind("sec.package")
 
 
 def test_a_read_only_connection_needs_no_workspace_source_catalog(
