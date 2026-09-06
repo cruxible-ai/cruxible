@@ -167,6 +167,47 @@ def _claim_backing(
     )
 
 
+def _claim_backings(
+    client: CruxibleClient,
+    instance_id: str,
+    *,
+    names: Sequence[str],
+    coordinate: AcceptedCoordinate,
+    evaluation_time: str,
+) -> list[ProjectionClaimBackingV1]:
+    """Resolve held Claim metadata in bounded batches, without admission reads."""
+    batch = getattr(client, "get_playbill_claim_backings", None)
+    if batch is None:
+        # Keep the documented structural client adapters usable. Production
+        # transports expose the batch method; server failures are never hidden
+        # by a retry through a different read surface.
+        return [
+            _claim_backing(
+                client,
+                instance_id,
+                name=name,
+                coordinate=coordinate,
+                evaluation_time=evaluation_time,
+            )
+            for name in names
+        ]
+    result: list[ProjectionClaimBackingV1] = []
+    for start in range(0, len(names), 256):
+        identities = tuple(name.removeprefix("Claim:") for name in names[start : start + 256])
+        page = batch(instance_id, claim_ids=identities, at=coordinate.model_dump(mode="json"))
+        returned_coordinate = AcceptedCoordinate.model_validate(
+            page.coordinate.model_dump(mode="json")
+        )
+        if returned_coordinate != coordinate:
+            raise ProjectionRepinError(
+                "Claim backing batch returned a different accepted coordinate"
+            )
+        if tuple(item.identity.name for item in page.backings) != identities:
+            raise ProjectionRepinError("Claim backing batch omitted or reordered requested Claims")
+        result.extend(page.backings)
+    return result
+
+
 def _query_backing(
     client: CruxibleClient,
     instance_id: str,
@@ -1103,16 +1144,15 @@ def repin_projection_block(
             raise ProjectionRepinError("orientation did not disclose the accepted generation")
         generation = generation_value
 
-        backing = [
-            _claim_backing(
+        backing = list(
+            _claim_backings(
                 client,
                 instance_id,
-                name=name,
+                names=claim_refs,
                 coordinate=active,
                 evaluation_time=formatted,
             )
-            for name in claim_refs
-        ]
+        )
         backing.extend(
             _query_backing(
                 client,
