@@ -119,12 +119,9 @@ def test_every_command_registered_on_a_group_is_in_the_lazy_cli_map() -> None:
 def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     """A command defined but never registered is dead or invisible, never fine."""
     group_claims, leaf_claims = _walk_lazy_map(CLI_COMMANDS)
-    # 109. It was 107 after `authoring prepare-publication` and `authoring
-    # confirm-insertion` went with the publication road that minted the
-    # expectation they acted on; `ledger set-mirror` and `ledger clone-url`
-    # bring it back to the same number by a different road.
-    assert len(leaf_claims) == 109, (
-        f"expected 109 Playbill/host leaf commands, found {len(leaf_claims)}"
+    # Includes the explicit `ledger publish` acknowledgment barrier.
+    assert len(leaf_claims) == 110, (
+        f"expected 110 Playbill/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)

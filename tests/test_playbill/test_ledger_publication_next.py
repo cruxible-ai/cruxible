@@ -9,9 +9,9 @@ from cruxible_core.service.playbill_next import _ledger_mirror_items
 
 
 @pytest.mark.parametrize("status", ("pending", "publishing", "behind"))
-def test_next_names_publication_status_and_the_appropriate_follow_up(status):
+def test_next_names_publication_status_and_the_appropriate_follow_up(status, tmp_path):
     state = LedgerMirrorStateV1(
-        url="/tmp/test-mirror.git",
+        url=str(tmp_path / "test-mirror.git"),
         status=status,
         attempted_at="2026-09-05T12:00:00Z",
         requested_sequence=3,

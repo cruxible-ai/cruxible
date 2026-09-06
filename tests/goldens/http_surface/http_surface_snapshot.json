@@ -72,6 +72,12 @@
   "/api/v1/{instance_id}/playbill/claims": {
     "GET": "PlaybillClaimList"
   },
+  "/api/v1/{instance_id}/playbill/claims/backings": {
+    "POST": "ClaimBackingsResultV1"
+  },
+  "/api/v1/{instance_id}/playbill/claims/read-batch": {
+    "POST": "ClaimReadBatchResultV1"
+  },
   "/api/v1/{instance_id}/playbill/claims/{claim_id}/retire": {
     "POST": "PlaybillClaimRetirePreflight | PlaybillClaimRetireResult"
   },
@@ -137,6 +143,9 @@
   },
   "/api/v1/{instance_id}/playbill/ledger/mirror": {
     "GET": "PlaybillLedgerMirrorV1",
+    "POST": "PlaybillLedgerMirrorV1"
+  },
+  "/api/v1/{instance_id}/playbill/ledger/publish": {
     "POST": "PlaybillLedgerMirrorV1"
   },
   "/api/v1/{instance_id}/playbill/lines/{line_identity_digest}/runs": {

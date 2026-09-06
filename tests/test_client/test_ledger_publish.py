@@ -6,7 +6,7 @@ import pytest
 from cruxible_client.transport.http import CruxibleClient
 
 
-def test_publish_barrier_forwards_timeout_and_parses_acknowledgment(monkeypatch):
+def test_publish_barrier_forwards_timeout_and_parses_acknowledgment(monkeypatch, tmp_path):
     with CruxibleClient(base_url="http://unused.invalid") as client:
         calls = []
 
@@ -16,7 +16,7 @@ def test_publish_barrier_forwards_timeout_and_parses_acknowledgment(monkeypatch)
                 200,
                 json={
                     "instance_id": "inst_test",
-                    "mirror_url": "/tmp/unused.git",
+                    "mirror_url": str(tmp_path / "unused.git"),
                     "status": "publishing",
                     "requested_sequence": 3,
                     "attempted_sequence": 3,

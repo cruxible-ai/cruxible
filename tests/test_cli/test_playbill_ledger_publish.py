@@ -16,7 +16,7 @@ def mirror_cli(monkeypatch, tmp_path):
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
     receipt = contracts.PlaybillLedgerMirrorV1(
         instance_id="inst_test",
-        mirror_url="/tmp/unused.git",
+        mirror_url=str(tmp_path / "unused.git"),
         status="pending",
         requested_sequence=3,
         published_sequence=2,
@@ -61,10 +61,10 @@ def test_cli_publish_json_and_timeout_validation(mirror_cli):
     assert len(calls) == 1
 
 
-def test_cli_clone_url_keeps_stdout_pipeable_and_status_visible(mirror_cli):
+def test_cli_clone_url_keeps_stdout_pipeable_and_status_visible(mirror_cli, tmp_path):
     args, _ = mirror_cli
     result = CliRunner().invoke(cli, [*args, "clone-url"])
     assert result.exit_code == 0, result.output
-    assert result.stdout == "/tmp/unused.git\n"
+    assert result.stdout == f"{tmp_path / 'unused.git'}\n"
     assert "Publication: pending" in result.stderr
     assert "acknowledged request 2, latest requested 3" in result.stderr

@@ -121,7 +121,7 @@ def _install_client(
             at=None,  # type: ignore[no-untyped-def]
         ) -> contracts.PlaybillFloorExport:
             assert instance_id == "inst_test"
-            assert at is None
+            assert at == (_coordinate() if status == "accepted" else None)
             return _export(corrupt=corrupt)
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
@@ -197,6 +197,7 @@ def test_accepted_activation_exactly_replaces_the_declared_floor(
     payload = json.loads(result.stdout)
     assert payload["status"] == "accepted"
     assert payload["floor_refresh"]["status"] == "refreshed"
+    assert payload["floor_refresh"]["coordinate"] == payload["accepted_coordinate"]
     assert payload["block_sync"]["has_refusals"] is False
     assert payload["block_sync"]["items"][0]["outcome"] == "skipped"
     assert payload["block_sync"]["items"][0]["reason"] == "workspace_not_attached"
