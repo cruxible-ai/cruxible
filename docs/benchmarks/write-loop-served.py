@@ -11,6 +11,9 @@ state, so "warm" does not mean repeated reads of an unchanged coordinate.
 With --world, drafts use typed references and each acceptance is followed by a
 fresh World snapshot; the daemon and SDK connection persist across all writes.
 No live instances or existing keys are used. State is removed unless --keep-state.
+With --reopen-after, the daemon stops after the writes and a fresh interpreter
+opens the same instance. That separately reported recovery time excludes imports
+and is not daemon startup or SDK connection time.
 Optional --profile writes client-side cProfile data beside the JSON report; it
 includes network wait, not daemon CPU. Setup and daemon startup are excluded.
 Acceptance is profiled by default inside the daemon service worker, producing
@@ -93,6 +96,9 @@ def main() -> None:
     parser.add_argument("--server-profile", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--profile-write-phases", action="store_true")
     parser.add_argument("--keep-state", action="store_true")
+    parser.add_argument(
+        "--reopen-after", action="store_true", help="Time fresh-process recovery after writes"
+    )
     parser.add_argument("--world", action="store_true", help="Use typed World references in drafts")
     args = parser.parse_args()
     if args.profile_write_phases and not args.server_profile:
@@ -154,6 +160,7 @@ def main() -> None:
         "server_profile": args.server_profile,
         "profile_write_phases": args.profile_write_phases,
         "world": args.world,
+        "reopen_after": args.reopen_after,
         "scope": "SDK claim draft/prepare/submit/status; HTTP approval challenge/sign/submit; "
         "SDK accept; coordinate-pinned HTTP full Claim readback; explicit SDK refresh "
         "(fresh typed World snapshot when world=true). "
@@ -463,6 +470,27 @@ def main() -> None:
             report["rows"].append(row)
             args.output.write_text(json.dumps(report, indent=2) + "\n")
             print(json.dumps(row), flush=True)
+        if args.reopen_after:
+            daemon.terminate()
+            daemon.wait(timeout=30)
+            daemon = None
+            reopened = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    "--reopen-entry",
+                    str(fixture.managed_root),
+                    str(trust),
+                ],
+                cwd=repo,
+                env=dict(os.environ),
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            report["reopen"] = json.loads(reopened.stdout)
+            expected = report["rows"][-1]["accepted_coordinate"]
+            assert report["reopen"]["coordinate"] == expected
         report["success"] = True
     except BaseException as exc:
         report["success"] = False
@@ -495,5 +523,29 @@ def main() -> None:
 if __name__ == "__main__":
     if len(sys.argv) == 5 and sys.argv[1] == "--daemon-entry":
         serve(sys.argv[2], sys.argv[3], sys.argv[4])
+    elif len(sys.argv) == 4 and sys.argv[1] == "--reopen-entry":
+        from cruxible_client.contracts.types import PlaybillTrustRoot
+        from cruxible_core.playbill.instance import PlaybillInstance
+        from cruxible_core.playbill.projection import AcceptedCoordinate
+
+        trust = PlaybillTrustRoot.model_validate_json(Path(sys.argv[3]).read_bytes())
+        started = time.perf_counter()
+        instance = PlaybillInstance.open(Path(sys.argv[2]), trust_root=trust)
+        elapsed = time.perf_counter() - started
+        coordinate = instance.accepted_coordinate()
+        print(
+            json.dumps(
+                {
+                    "seconds": elapsed,
+                    "generation_count": len(instance.accepted_history()),
+                    "coordinate": AcceptedCoordinate(
+                        git_oid=coordinate.git_oid,
+                        semantic_root=coordinate.semantic_root,
+                        generation_root=coordinate.generation_root,
+                        compiler_digest=coordinate.compiler.rule_digest,
+                    ).model_dump(mode="json"),
+                }
+            )
+        )
     else:
         main()
