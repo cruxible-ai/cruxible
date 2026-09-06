@@ -1,0 +1,70 @@
+{
+  "mode": "current",
+  "rows": [
+    {
+      "iteration": 0,
+      "prepare_seconds": 1.1714375419542193,
+      "submit_seconds": 2.9387257500202395,
+      "total_seconds": 4.110163291974459,
+      "git_commands_in_submit": {
+        "rev-parse": 2,
+        "ls-tree": 2,
+        "cat-file": 4,
+        "hash-object": 2,
+        "read-tree": 2,
+        "update-index": 2,
+        "write-tree": 2,
+        "commit-tree": 2,
+        "update-ref": 2,
+        "notes": 1
+      },
+      "members": 162,
+      "prepared_certificate_retained": true
+    },
+    {
+      "iteration": 1,
+      "prepare_seconds": 1.1166332919965498,
+      "submit_seconds": 3.0184160830103792,
+      "total_seconds": 4.135049375006929,
+      "git_commands_in_submit": {
+        "rev-parse": 2,
+        "ls-tree": 2,
+        "cat-file": 4,
+        "hash-object": 2,
+        "read-tree": 2,
+        "update-index": 2,
+        "write-tree": 2,
+        "commit-tree": 2,
+        "update-ref": 2,
+        "notes": 1
+      },
+      "members": 162,
+      "prepared_certificate_retained": true
+    },
+    {
+      "iteration": 2,
+      "prepare_seconds": 1.1050682499771938,
+      "submit_seconds": 3.088167042005807,
+      "total_seconds": 4.193235291983001,
+      "git_commands_in_submit": {
+        "rev-parse": 2,
+        "ls-tree": 2,
+        "cat-file": 4,
+        "hash-object": 2,
+        "read-tree": 2,
+        "update-index": 2,
+        "write-tree": 2,
+        "commit-tree": 2,
+        "update-ref": 2,
+        "notes": 1
+      },
+      "members": 162,
+      "prepared_certificate_retained": true
+    }
+  ],
+  "medians": {
+    "prepare_seconds": 1.1166332919965498,
+    "submit_seconds": 3.0184160830103792,
+    "total_seconds": 4.135049375006929
+  }
+}

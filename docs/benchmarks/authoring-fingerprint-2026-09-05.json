@@ -1,0 +1,248 @@
+{
+  "baseline_commit": "534da597",
+  "fixture": "3 events per stream, self-source payload, same exact filesystem fixture per before/after pair; full-model memo defaults 128streams/256MiB; no live daemon",
+  "rows": [
+    {
+      "streams": 32,
+      "events": 96,
+      "condition": "cold",
+      "mode": "before",
+      "repeat": 0,
+      "elapsed_s": 0.03212712501408532,
+      "decoded_events": 96
+    },
+    {
+      "streams": 32,
+      "events": 96,
+      "condition": "cold",
+      "mode": "after",
+      "repeat": 0,
+      "elapsed_s": 0.03076012502424419,
+      "decoded_events": 96
+    },
+    {
+      "streams": 32,
+      "events": 96,
+      "condition": "cold",
+      "mode": "before",
+      "repeat": 1,
+      "elapsed_s": 0.030535750032868236,
+      "decoded_events": 96
+    },
+    {
+      "streams": 32,
+      "events": 96,
+      "condition": "cold",
+      "mode": "after",
+      "repeat": 1,
+      "elapsed_s": 0.03943175001768395,
+      "decoded_events": 96
+    },
+    {
+      "streams": 32,
+      "events": 96,
+      "condition": "cold",
+      "mode": "before",
+      "repeat": 2,
+      "elapsed_s": 0.03264654194936156,
+      "decoded_events": 96
+    },
+    {
+      "streams": 32,
+      "events": 96,
+      "condition": "cold",
+      "mode": "after",
+      "repeat": 2,
+      "elapsed_s": 0.029685167013667524,
+      "decoded_events": 96
+    },
+    {
+      "streams": 32,
+      "events": 96,
+      "condition": "warm",
+      "mode": "before",
+      "repeat": 0,
+      "elapsed_s": 0.005785249988548458,
+      "decoded_events": 0
+    },
+    {
+      "streams": 32,
+      "events": 96,
+      "condition": "warm",
+      "mode": "after",
+      "repeat": 0,
+      "elapsed_s": 0.01327262498671189,
+      "decoded_events": 0
+    },
+    {
+      "streams": 32,
+      "events": 96,
+      "condition": "warm",
+      "mode": "before",
+      "repeat": 1,
+      "elapsed_s": 0.009418166009709239,
+      "decoded_events": 0
+    },
+    {
+      "streams": 32,
+      "events": 96,
+      "condition": "warm",
+      "mode": "after",
+      "repeat": 1,
+      "elapsed_s": 0.004410207970067859,
+      "decoded_events": 0
+    },
+    {
+      "streams": 32,
+      "events": 96,
+      "condition": "warm",
+      "mode": "before",
+      "repeat": 2,
+      "elapsed_s": 0.004215500026475638,
+      "decoded_events": 0
+    },
+    {
+      "streams": 32,
+      "events": 96,
+      "condition": "warm",
+      "mode": "after",
+      "repeat": 2,
+      "elapsed_s": 0.005063874996267259,
+      "decoded_events": 0
+    },
+    {
+      "streams": 160,
+      "events": 480,
+      "condition": "cold",
+      "mode": "before",
+      "repeat": 0,
+      "elapsed_s": 0.17671000002883375,
+      "decoded_events": 480
+    },
+    {
+      "streams": 160,
+      "events": 480,
+      "condition": "cold",
+      "mode": "after",
+      "repeat": 0,
+      "elapsed_s": 0.1568722499650903,
+      "decoded_events": 480
+    },
+    {
+      "streams": 160,
+      "events": 480,
+      "condition": "cold",
+      "mode": "before",
+      "repeat": 1,
+      "elapsed_s": 0.17158754100091755,
+      "decoded_events": 480
+    },
+    {
+      "streams": 160,
+      "events": 480,
+      "condition": "cold",
+      "mode": "after",
+      "repeat": 1,
+      "elapsed_s": 0.15780533297220245,
+      "decoded_events": 480
+    },
+    {
+      "streams": 160,
+      "events": 480,
+      "condition": "cold",
+      "mode": "before",
+      "repeat": 2,
+      "elapsed_s": 0.16922945802798495,
+      "decoded_events": 480
+    },
+    {
+      "streams": 160,
+      "events": 480,
+      "condition": "cold",
+      "mode": "after",
+      "repeat": 2,
+      "elapsed_s": 0.1517480420297943,
+      "decoded_events": 480
+    },
+    {
+      "streams": 160,
+      "events": 480,
+      "condition": "warm",
+      "mode": "before",
+      "repeat": 0,
+      "elapsed_s": 0.17528279102407396,
+      "decoded_events": 480
+    },
+    {
+      "streams": 160,
+      "events": 480,
+      "condition": "warm",
+      "mode": "after",
+      "repeat": 0,
+      "elapsed_s": 0.023020791995804757,
+      "decoded_events": 0
+    },
+    {
+      "streams": 160,
+      "events": 480,
+      "condition": "warm",
+      "mode": "before",
+      "repeat": 1,
+      "elapsed_s": 0.16815004200907424,
+      "decoded_events": 480
+    },
+    {
+      "streams": 160,
+      "events": 480,
+      "condition": "warm",
+      "mode": "after",
+      "repeat": 1,
+      "elapsed_s": 0.03825541597325355,
+      "decoded_events": 0
+    },
+    {
+      "streams": 160,
+      "events": 480,
+      "condition": "warm",
+      "mode": "before",
+      "repeat": 2,
+      "elapsed_s": 0.15830941702006385,
+      "decoded_events": 480
+    },
+    {
+      "streams": 160,
+      "events": 480,
+      "condition": "warm",
+      "mode": "after",
+      "repeat": 2,
+      "elapsed_s": 0.029871915990952402,
+      "decoded_events": 0
+    }
+  ],
+  "medians": [
+    {
+      "streams": 32,
+      "condition": "cold",
+      "before": 0.03212712501408532,
+      "after": 0.03076012502424419
+    },
+    {
+      "streams": 32,
+      "condition": "warm",
+      "before": 0.005785249988548458,
+      "after": 0.005063874996267259
+    },
+    {
+      "streams": 160,
+      "condition": "cold",
+      "before": 0.17158754100091755,
+      "after": 0.1568722499650903
+    },
+    {
+      "streams": 160,
+      "condition": "warm",
+      "before": 0.16815004200907424,
+      "after": 0.029871915990952402
+    }
+  ]
+}

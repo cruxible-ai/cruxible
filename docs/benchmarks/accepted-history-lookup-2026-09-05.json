@@ -1,0 +1,42 @@
+{
+  "baseline_commit": "534da597",
+  "scope": "Lookup-only synthetic recovered generation metadata in temporary initialized instance; same history for before/after; includes unchanged strict path resolution and full coordinate construction; excludes recovery, Git blob reads, HTTP, projection checking. Synthetic generations never published.",
+  "rows": [
+    {
+      "generations": 27,
+      "iterations_per_sample": 999,
+      "samples": 7,
+      "baseline_seconds_per_lookup": 2.697180485580344e-05,
+      "indexed_warm_seconds_per_lookup": 2.554913317818228e-05,
+      "indexed_first_lookup_seconds": 2.7292000595480204e-05,
+      "exact_coordinate_parity": true
+    },
+    {
+      "generations": 100,
+      "iterations_per_sample": 999,
+      "samples": 7,
+      "baseline_seconds_per_lookup": 2.895591488514502e-05,
+      "indexed_warm_seconds_per_lookup": 2.5766307301166745e-05,
+      "indexed_first_lookup_seconds": 3.354198997840285e-05,
+      "exact_coordinate_parity": true
+    },
+    {
+      "generations": 1000,
+      "iterations_per_sample": 999,
+      "samples": 7,
+      "baseline_seconds_per_lookup": 4.9213046015513405e-05,
+      "indexed_warm_seconds_per_lookup": 2.5853062061605988e-05,
+      "indexed_first_lookup_seconds": 7.9624995123595e-05,
+      "exact_coordinate_parity": true
+    },
+    {
+      "generations": 10000,
+      "iterations_per_sample": 999,
+      "samples": 7,
+      "baseline_seconds_per_lookup": 0.00024025617316514403,
+      "indexed_warm_seconds_per_lookup": 2.658796297186786e-05,
+      "indexed_first_lookup_seconds": 0.0005656249704770744,
+      "exact_coordinate_parity": true
+    }
+  ]
+}

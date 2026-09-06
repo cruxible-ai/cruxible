@@ -1,0 +1,98 @@
+[
+  {
+    "kind": "cold",
+    "seconds": 1.8361211250303313,
+    "results": [
+      {
+        "tag": "playbill-block-sync-read-result-v1",
+        "status": "current",
+        "original_artifact_digest": null,
+        "artifact_digest": null,
+        "coordinate": {
+          "tag": "playbill-accepted-coordinate-v1",
+          "git_oid": "134b33bb40dbcc7c00701c0e15d494b4faca7717",
+          "semantic_root": "sha256:951f6739dd38108e4ebd89f4440990de37226c3150b8b89e0613bffa59a6df28",
+          "generation_root": "sha256:c85950980bb54fcf249ece091786df76031ded2db01ac57923841b8744d63702",
+          "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+        },
+        "generation": 26,
+        "backing": null,
+        "moved_backings": [],
+        "body_content_base64": null,
+        "body_digest": null,
+        "successor_candidates": [],
+        "reason": null,
+        "detail": null
+      },
+      {
+        "tag": "playbill-block-sync-read-result-v1",
+        "status": "current",
+        "original_artifact_digest": null,
+        "artifact_digest": null,
+        "coordinate": {
+          "tag": "playbill-accepted-coordinate-v1",
+          "git_oid": "134b33bb40dbcc7c00701c0e15d494b4faca7717",
+          "semantic_root": "sha256:951f6739dd38108e4ebd89f4440990de37226c3150b8b89e0613bffa59a6df28",
+          "generation_root": "sha256:c85950980bb54fcf249ece091786df76031ded2db01ac57923841b8744d63702",
+          "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+        },
+        "generation": 26,
+        "backing": null,
+        "moved_backings": [],
+        "body_content_base64": null,
+        "body_digest": null,
+        "successor_candidates": [],
+        "reason": null,
+        "detail": null
+      }
+    ]
+  },
+  {
+    "kind": "warm",
+    "seconds": 0.05355675000464544,
+    "results": [
+      {
+        "tag": "playbill-block-sync-read-result-v1",
+        "status": "current",
+        "original_artifact_digest": null,
+        "artifact_digest": null,
+        "coordinate": {
+          "tag": "playbill-accepted-coordinate-v1",
+          "git_oid": "134b33bb40dbcc7c00701c0e15d494b4faca7717",
+          "semantic_root": "sha256:951f6739dd38108e4ebd89f4440990de37226c3150b8b89e0613bffa59a6df28",
+          "generation_root": "sha256:c85950980bb54fcf249ece091786df76031ded2db01ac57923841b8744d63702",
+          "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+        },
+        "generation": 26,
+        "backing": null,
+        "moved_backings": [],
+        "body_content_base64": null,
+        "body_digest": null,
+        "successor_candidates": [],
+        "reason": null,
+        "detail": null
+      },
+      {
+        "tag": "playbill-block-sync-read-result-v1",
+        "status": "current",
+        "original_artifact_digest": null,
+        "artifact_digest": null,
+        "coordinate": {
+          "tag": "playbill-accepted-coordinate-v1",
+          "git_oid": "134b33bb40dbcc7c00701c0e15d494b4faca7717",
+          "semantic_root": "sha256:951f6739dd38108e4ebd89f4440990de37226c3150b8b89e0613bffa59a6df28",
+          "generation_root": "sha256:c85950980bb54fcf249ece091786df76031ded2db01ac57923841b8744d63702",
+          "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+        },
+        "generation": 26,
+        "backing": null,
+        "moved_backings": [],
+        "body_content_base64": null,
+        "body_digest": null,
+        "successor_candidates": [],
+        "reason": null,
+        "detail": null
+      }
+    ]
+  }
+]
