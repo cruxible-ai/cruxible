@@ -883,6 +883,100 @@ class GitLedger:
             raise PlaybillGitError("proposal review commit does not reproduce its evidence")
         return oid
 
+    def read_review_projection(
+        self,
+        oids: Sequence[str],
+        *,
+        dependencies: Mapping[str, str],
+    ) -> tuple[dict[str, bool], dict[tuple[str, str], bytes | None]]:
+        """Read one fresh review snapshot while the caller holds its review lock.
+
+        Rehash actual objects, including the trees and parents commit-tree would
+        require, before an existing advisory commit can replace materialization.
+        Nothing is cached across reconciliation calls. Notes are still compared
+        against authoritative evidence by the caller, including valid-subset
+        repair and corruption refusals.
+        """
+        expected = {oid: "commit" for oid in oids}
+        for oid, kind in dependencies.items():
+            if kind not in {"tree", "commit"} or expected.get(oid, kind) != kind:
+                raise PlaybillGitError("review object has conflicting expected types")
+            expected[oid] = kind
+        objects = self._read_review_objects(expected)
+        if any(oid not in objects for oid in dependencies):
+            raise PlaybillGitError("review commit tree or parent is missing")
+        presence = {oid: oid in objects for oid in oids}
+        note_oids: dict[tuple[str, str], str] = {}
+        for kind in ("evaluation", "approval"):
+            listing = self._git(["notes", f"--ref={self._note_ref(kind)}", "list"])
+            try:
+                for row in listing.decode("ascii").splitlines():
+                    blob_oid, target_oid = row.split()
+                    self._validate_oid(blob_oid)
+                    self._validate_oid(target_oid)
+                    if target_oid in presence:
+                        key = (kind, target_oid)
+                        if key in note_oids:
+                            raise PlaybillGitError("review notes repeat an annotated object")
+                        note_oids[key] = blob_oid
+            except (UnicodeDecodeError, ValueError) as exc:
+                raise PlaybillGitError("Git review note listing is malformed") from exc
+        blobs = self._read_review_objects({oid: "blob" for oid in note_oids.values()})
+        if len(blobs) != len(set(note_oids.values())):
+            raise PlaybillGitError("review note body is missing")
+        notes = {
+            (kind, oid): blobs[note_oids[kind, oid]] if (kind, oid) in note_oids else None
+            for kind in ("evaluation", "approval")
+            for oid in presence
+        }
+        return presence, notes
+
+    def _read_review_objects(self, expected: Mapping[str, str]) -> dict[str, bytes]:
+        """Batch exact object bytes with positional, type, and Git-hash proofs."""
+        ordered = tuple(expected)
+        for oid in ordered:
+            self._validate_oid(oid)
+        objects: dict[str, bytes] = {}
+        for start in range(0, len(ordered), 128):
+            batch = ordered[start : start + 128]
+            output = self._git(
+                ["--no-replace-objects", "cat-file", "--batch"],
+                input_bytes=("\n".join(batch) + "\n").encode("ascii"),
+            )
+            position = 0
+            for oid in batch:
+                end = output.find(b"\n", position)
+                if end < 0:
+                    raise PlaybillGitError("Git review object output has no header")
+                header = output[position:end]
+                position = end + 1
+                if header == f"{oid} missing".encode("ascii"):
+                    continue
+                try:
+                    actual, kind, raw_size = header.decode("ascii").split()
+                    size = int(raw_size)
+                except (UnicodeDecodeError, ValueError) as exc:
+                    raise PlaybillGitError("Git review object metadata is malformed") from exc
+                if actual != oid or kind != expected[oid] or size < 0:
+                    raise PlaybillGitError("Git review object differs from the requested object")
+                end = position + size
+                if end >= len(output) or output[end : end + 1] != b"\n":
+                    raise PlaybillGitError("Git review object payload is truncated")
+                body = output[position:end]
+                preimage = f"{kind} {size}".encode("ascii") + b"\x00" + body
+                digest = (
+                    hashlib.sha1(preimage).hexdigest()  # noqa: S324 - Git object identity
+                    if self.object_format() == "sha1"
+                    else hashlib.sha256(preimage).hexdigest()
+                )
+                if digest != oid:
+                    raise PlaybillGitError("Git review object bytes do not reproduce its OID")
+                objects[oid] = body
+                position = end + 1
+            if position != len(output):
+                raise PlaybillGitError("Git review object output has trailing bytes")
+        return objects
+
     def tree_oid(self, commit_oid: str) -> str:
         self._validate_oid(commit_oid)
         oid = self._git(["rev-parse", f"{commit_oid}^{{tree}}"]).decode().strip()

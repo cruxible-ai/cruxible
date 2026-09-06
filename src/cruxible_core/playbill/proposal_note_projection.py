@@ -143,10 +143,21 @@ class ProposalNoteIndex:
         oids: Iterable[str],
         *,
         previous: Mapping[tuple[str, str], bytes | None] | None = None,
+        object_presence: Mapping[str, bool] | None = None,
+        stored_notes: Mapping[tuple[str, str], bytes | None] | None = None,
     ) -> None:
-        """Repair absent/incomplete projections or advance a verified old group."""
+        """Repair absent/incomplete projections or advance a verified old group.
+
+        Optional snapshots are fresh reads from this same review-lock scope,
+        never retained across calls. Uncovered entries use the ordinary reader.
+        """
         for oid in sorted(set(oids)):
-            if not transport.object_exists(oid):
+            exists = (
+                object_presence[oid]
+                if object_presence is not None and oid in object_presence
+                else transport.object_exists(oid)
+            )
+            if not exists:
                 if any(
                     self.admissions[item].candidate_commit_oid == oid
                     for item in self.proposal_ids_by_oid.get(oid, ())
@@ -156,7 +167,11 @@ class ProposalNoteIndex:
                 # reconciliation creates/retains it before publishing its notes.
                 continue
             for kind, content in self.note_bytes(oid).items():
-                stored = transport.read_proposal_note(kind, oid)
+                stored = (
+                    stored_notes[kind, oid]
+                    if stored_notes is not None and (kind, oid) in stored_notes
+                    else transport.read_proposal_note(kind, oid)
+                )
                 if stored == content:
                     continue
                 if stored is not None and (

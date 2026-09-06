@@ -10,7 +10,7 @@ import stat
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1077,6 +1077,20 @@ class PlaybillInstance:
         }
         evidence = self.proposal_evidence()
         index = ProposalNoteIndex.build(evidence, self._ledger)
+        dependencies: dict[str, str] = {}
+        for proposal_id in index.review_oids:
+            evaluation = index.evaluations[proposal_id]
+            assert evaluation.evaluated_tree_oid is not None
+            for oid, kind in (
+                (evaluation.evaluated_tree_oid, "tree"),
+                (evaluation.evaluated_base_oid, "commit"),
+            ):
+                if dependencies.get(oid, kind) != kind:
+                    raise ProposalIntegrityError("review dependency has conflicting object types")
+                dependencies[oid] = kind
+        object_presence, stored_notes = self._ledger.read_review_projection(
+            tuple(index.proposal_ids_by_oid), dependencies=dependencies
+        )
         refs: dict[str, str] = {}
         settled_refs: dict[str, str] = {}
         published: dict[str, tuple[str, str | None]] = {}
@@ -1097,15 +1111,18 @@ class PlaybillInstance:
             # A coalesced publisher may never observe this candidate while open.
             # Rebuild its archive from evidence, not from the disposable branch
             # inventory left by a previous advertisement.
-            review_oid = self._ledger.proposal_review_commit(
-                tree_oid=evaluation.evaluated_tree_oid,
-                base_oid=evaluation.evaluated_base_oid,
-                actor_id=admission.actor_id,
-                timestamp=admission.admitted_at,
-                message=candidate.message(rationale=admission.rationale),
-            )
+            review_oid = index.review_oids[admission.proposal_id]
+            if not object_presence[review_oid]:
+                review_oid = self._ledger.proposal_review_commit(
+                    tree_oid=evaluation.evaluated_tree_oid,
+                    base_oid=evaluation.evaluated_base_oid,
+                    actor_id=admission.actor_id,
+                    timestamp=admission.admitted_at,
+                    message=candidate.message(rationale=admission.rationale),
+                )
             if review_oid != index.review_oids[admission.proposal_id]:
                 raise ProposalIntegrityError("materialized review alias differs from its index")
+            object_presence[review_oid] = True
             destination = settled_refs if is_settled else refs
             destination[admission.proposal_id.removeprefix("sha256:")] = review_oid
         self._ledger.replace_proposal_review_refs(refs, settled_refs=settled_refs)
@@ -1118,6 +1135,8 @@ class PlaybillInstance:
                 proposal_id=proposal_id,
                 candidate_digest=candidate_digest,
                 index=index,
+                object_presence=object_presence,
+                stored_notes=stored_notes,
             )
 
     def _publish_review_commit_notes(
@@ -1128,6 +1147,8 @@ class PlaybillInstance:
         proposal_id: str,
         candidate_digest: str | None,
         index: ProposalNoteIndex | None = None,
+        object_presence: Mapping[str, bool] | None = None,
+        stored_notes: Mapping[tuple[str, str], bytes | None] | None = None,
     ) -> None:
         """Restate one proposal's evidence onto the commit a reviewer receives."""
 
@@ -1137,7 +1158,12 @@ class PlaybillInstance:
         with ExitStack() as locks:
             for digest in grouped.candidate_digests(review_oid):
                 locks.enter_context(self.approval_note_lock(digest))
-            grouped.publish(self._ledger, (review_oid,))
+            grouped.publish(
+                self._ledger,
+                (review_oid,),
+                object_presence=object_presence,
+                stored_notes=stored_notes,
+            )
 
     def proposal_evidence(self) -> ProposalEvidenceStore:
         """Return the immutable non-authoritative proposal/approval evidence store."""
