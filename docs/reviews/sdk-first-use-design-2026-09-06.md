@@ -113,14 +113,15 @@ proof, not online dependency resolution or managed authentication/remote deploym
 coverage. The example script was read from the repository; its imports resolve
 exclusively to the installed client wheel.
 
-The single tiny disposable run took **5.515 seconds** for the complete two-write
+The final committed-source run at `26db6ff2cbe96210f703c7920cdd71b16bfa4fe6` took **5.666 seconds** for the complete two-write
 workflow, excluding server/bootstrap/connection setup. Per-operation observations:
-review 0.040–0.044 s; challenge 0.044–0.046 s; approval submission 0.44–0.47 s;
-acceptance 0.94–1.11 s; Claim batch readback 0.009–0.010 s. These are individual
+review 0.043–0.048 s; challenge 0.047–0.049 s; approval submission 0.46–0.50 s;
+acceptance 0.993–0.996 s; Claim batch readback 0.0096–0.0099 s. These are individual
 intervals within that workflow, not additive independent benchmarks or scale
 claims. Signature and SDK guard overhead is included in total workflow time.
-Local raw evidence: `/private/tmp/sdk-wheel-verified-3em3yn8r/result.json`, including
-wheel digest and exact installed/source module parity. The isolated client's
+[Final wheel evidence](sdk-first-use-wheel-2026-09-06.json) records the source commit,
+wheel digest and exact installed/source module parity. The preceding pre-typecheck
+proof took 5.515 seconds; the final-source rerun replaces it as the implementation evidence. The isolated client's
 package root is `/private/tmp/playbill-sdk-first-use-client-env`.
 
 Remaining first-use work is practical setup documentation and broader packaged

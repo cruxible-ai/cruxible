@@ -1,0 +1,84 @@
+{
+  "result": {
+    "claim_id": "Claim:CLM-6c9e03e13b22aab135ec8e5f1e97e329",
+    "value": 49,
+    "verdict": "supported",
+    "revision": 2
+  },
+  "reviews": [
+    "sha256:f783e0e8e690a702d39f25d7a298909ae5a699176adb9e40a786956509c8fe57",
+    "sha256:205aa36ef45e765d69d1961483a6d86103f1b7ccfc05e0a3d210cafb46c07049"
+  ],
+  "elapsed_seconds": 5.66572162497323,
+  "phases": [
+    {
+      "phase": "review_playbill_proposal",
+      "seconds": 0.048342457972466946
+    },
+    {
+      "phase": "prepare_playbill_approval",
+      "seconds": 0.04868424998130649
+    },
+    {
+      "phase": "submit_playbill_approval",
+      "seconds": 0.45837166701676324
+    },
+    {
+      "phase": "activate_playbill_proposal",
+      "seconds": 0.9957897079875693
+    },
+    {
+      "phase": "read_playbill_claim_batch",
+      "seconds": 0.009914291033055633
+    },
+    {
+      "phase": "review_playbill_proposal",
+      "seconds": 0.04299308295594528
+    },
+    {
+      "phase": "prepare_playbill_approval",
+      "seconds": 0.04686204099562019
+    },
+    {
+      "phase": "submit_playbill_approval",
+      "seconds": 0.4950917909736745
+    },
+    {
+      "phase": "activate_playbill_proposal",
+      "seconds": 0.9931336659938097
+    },
+    {
+      "phase": "read_playbill_claim_batch",
+      "seconds": 0.009589250024873763
+    }
+  ],
+  "client_path": "/private/tmp/playbill-sdk-first-use-client-env/lib/python3.13/site-packages/cruxible_client/__init__.py",
+  "core_available": false,
+  "source_head": "26db6ff2cbe96210f703c7920cdd71b16bfa4fe6",
+  "source_and_installed_modules_identical": true,
+  "measured_module_sha256": {
+    "__init__.py": {
+      "source": "ccb4357c66faf36cfe568849c9dbbb34d3a54fe96f4033d9d8ca948ccb927524",
+      "installed": "ccb4357c66faf36cfe568849c9dbbb34d3a54fe96f4033d9d8ca948ccb927524"
+    },
+    "authoring/__init__.py": {
+      "source": "9e36875294cb1dfdb4259244dde0ab232fbca3c8bc4fe97c01578fb218f1b377",
+      "installed": "9e36875294cb1dfdb4259244dde0ab232fbca3c8bc4fe97c01578fb218f1b377"
+    },
+    "authoring/sdk.py": {
+      "source": "1444a2d2ee9874eced40d70b4cf70835efe5ecccce121f000e36ef7a5539b62e",
+      "installed": "1444a2d2ee9874eced40d70b4cf70835efe5ecccce121f000e36ef7a5539b62e"
+    },
+    "authoring/signing.py": {
+      "source": "28ed20cec3e9969a8f74b3d611e3a43e6eef15eb57282a567f62ba86c36f5f4c",
+      "installed": "28ed20cec3e9969a8f74b3d611e3a43e6eef15eb57282a567f62ba86c36f5f4c"
+    },
+    "authoring/approval.py": {
+      "source": "d91eb8f0de97efad311f82951e5613a1e04a927dc7f2e60e347d49d145cd8c32",
+      "installed": "d91eb8f0de97efad311f82951e5613a1e04a927dc7f2e60e347d49d145cd8c32"
+    }
+  },
+  "wheel_sha256": "ec0c32d266d6830fd90ae635b2d01d437c45b426e51aa4a60924189503d1b39e",
+  "tests_available": false,
+  "scope": "Single disposable local Unix HTTP run from installed client wheel using python -I; public example loaded from source. Offline dependencies reused from installed distributions. No Core/tests imports in client, no live instance access. Setup/connection excluded from workflow time; host load uncontrolled; not a scale, percentile, managed-auth or fresh dependency-resolution benchmark."
+}
