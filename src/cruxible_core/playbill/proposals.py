@@ -854,15 +854,26 @@ def _effective_claim_values(
     tree: Mapping[str, bytes],
     *,
     evaluation_time: str,
+    parsed_claims: dict[tuple[str, bytes], ClaimArtifactAny] | None = None,
 ) -> dict[str, dict[str, tuple[object, ...]]]:
-    """Project live Claim objects by exact Subject and predicate for policy law."""
+    """Project live Claim objects by exact Subject and predicate for policy law.
+
+    A single evaluation may share parsed bytes between its parent and candidate
+    views. The memo is request-local and includes both path and exact content;
+    lifecycle and effective-time filtering are always performed for this view.
+    """
 
     at = datetime.strptime(evaluation_time, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
     collected: dict[str, dict[str, dict[bytes, object]]] = {}
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
         if not _CLAIM_PATH_RE.fullmatch(path):
             continue
-        claim = parse_claim(tree[path], path=path)
+        key = (path, tree[path])
+        claim = None if parsed_claims is None else parsed_claims.get(key)
+        if claim is None:
+            claim = parse_claim(tree[path], path=path)
+            if parsed_claims is not None:
+                parsed_claims[key] = claim
         if claim.lifecycle.state != "live":
             continue
         statement = claim.statement
@@ -1066,8 +1077,15 @@ def _claim_admission_evaluations(
     if not changed_by_subject:
         return {}, {}, {}, (), ()
 
-    parent_values = _effective_claim_values(current_tree, evaluation_time=timestamp)
-    candidate_values = _effective_claim_values(candidate_tree, evaluation_time=timestamp)
+    parsed_claims: dict[tuple[str, bytes], ClaimArtifactAny] = {}
+    parent_values = _effective_claim_values(
+        current_tree, evaluation_time=timestamp, parsed_claims=parsed_claims
+    )
+    candidate_values = _effective_claim_values(
+        candidate_tree, evaluation_time=timestamp, parsed_claims=parsed_claims
+    )
+    # Keep complete parsed Claims only while constructing these two policy views.
+    parsed_claims.clear()
     entries_by_path: dict[str, tuple[dict[str, object], ...]] = {}
     digests_by_path: dict[str, tuple[str, ...]] = {}
     query_digests_by_path: dict[str, tuple[str, ...]] = {}
@@ -3002,6 +3020,8 @@ def _evaluate_scoped_members(
 
     used_expansions: set[str] = set()
     accepted: list[_AcceptedMember] = []
+    accepted_referents: frozenset[AcceptedCoordinate] | None = None
+    candidate_identities: dict[str, tuple[ArtifactIdentity, str]] | None = None
     for path in scope:
         kind = _member_kind(path)
         proposed = candidate_tree.get(path)
@@ -3018,6 +3038,15 @@ def _evaluate_scoped_members(
         if kind is None:
             diagnostics.append(_unregistered(path))
             continue
+        if accepted_referents is None:
+            accepted_referents = accepted_referent_coordinates_from_tree(
+                current_tree, current=AcceptedCoordinate.from_internal(current)
+            )
+            candidate_identities = {
+                item.identity.qualified: (item.identity, item.artifact_digest)
+                for item in candidate_states.values()
+            }
+        assert candidate_identities is not None
         verdict = kind.evaluate(
             _MemberContext(
                 path=path,
@@ -3031,16 +3060,10 @@ def _evaluate_scoped_members(
                 bodies=bodies,
                 promotion_verifier=promotion_verifier,
                 producer_receipt_resolver=producer_receipt_resolver,
-                accepted_referent_coordinates=accepted_referent_coordinates_from_tree(
-                    current_tree,
-                    current=AcceptedCoordinate.from_internal(current),
-                ),
+                accepted_referent_coordinates=accepted_referents,
                 candidate_tree=candidate_tree,
                 candidate_states=candidate_states,
-                candidate_identities={
-                    item.identity.qualified: (item.identity, item.artifact_digest)
-                    for item in candidate_states.values()
-                },
+                candidate_identities=candidate_identities,
                 resolved=resolved,
                 claim_admission_by_path=claim_admission_by_path,
                 claim_admission_digests_by_path=claim_admission_digests_by_path,
