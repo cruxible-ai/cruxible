@@ -1,0 +1,42 @@
+{
+  "instance": "inst_ebe8a0b27e50487d",
+  "audited_core": "c2cd76623b141ed3534db290390f67aa750fdb25",
+  "proposal_id": "sha256:380ca7502f2e46716db66f13daf74ddc6d99ab2b725aa8eb4bc1b29666f0ef1d",
+  "candidate_digest": "sha256:8669c79d4a263c1e3ab27237a7f42297056b456982c1ed1a717b06df16f989cc",
+  "base_coordinate": {
+    "tag": "playbill-accepted-coordinate-v1",
+    "git_oid": "b386f6eaf126063ccfc03d2c7193a683765941f7",
+    "semantic_root": "sha256:27cd091c081d6383aeda4c2d5cbb4ff98bca01f940823e415d50e720204f5a7c",
+    "generation_root": "sha256:a5c4424e27e15463d4954adb803aa7e0a0c21524d86fc7e1ab5f62224e397367",
+    "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+  },
+  "accepted_coordinate": {
+    "tag": "playbill-accepted-coordinate-v1",
+    "git_oid": "96ca34ed1cdf9a7ea5aa043045d561fa8ad778fa",
+    "semantic_root": "sha256:88b1954dc2452be0bf01461162256c487949d6f050a10632e7c0cdf481862cbf",
+    "generation_root": "sha256:2a36532a79c109d534352ffd13d7104493bc95aae09c6b02cbe7ca6b4d190ac8",
+    "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+  },
+  "claims_verified": 43,
+  "changes": {
+    "revised_notes": 25,
+    "new_partial_states": 16,
+    "feedback_findings": 2,
+    "new_subjects": 2
+  },
+  "verification": "Independent exact-candidate offline review approved; all 43 Claim values read back exactly and supported under existing manager self-assertion policy. No policy/adoption/release changes.",
+  "timings_seconds": {
+    "connect": 1.779256042034831,
+    "world": 0.01578633300960064,
+    "prefetch": 6.344200499996077,
+    "prepare": 12.565734041971155,
+    "submit": 10.570214165956713,
+    "review": 0.5293325410457328,
+    "accept_connect": 2.068335500021931,
+    "accept": 11.830493250046857,
+    "readback_connect": 6.55541412497405,
+    "readback_claims": 9.293078207992949
+  },
+  "broad_roadmap_prefetch_seconds": 80.9620734170312,
+  "limits": "Different workload/counts from historical checkpoints and synthetic benchmarks; no controlled causal speedup ratio or percentile claim."
+}
