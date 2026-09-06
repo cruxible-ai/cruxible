@@ -5133,6 +5133,18 @@
           "ProcedureInput": {
             "additionalProperties": false,
             "properties": {
+              "acquisition_policy": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Acquisition Policy"
+              },
               "activation_policy": {
                 "enum": [
                   "drain",
