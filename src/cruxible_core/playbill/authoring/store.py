@@ -191,6 +191,28 @@ class _ValidatedEvent:
     event: AuthoringIntentEventAny
 
 
+@dataclass(frozen=True)
+class _FingerprintState:
+    actor_id: str
+    fingerprint: str
+    pending: bool
+
+
+@dataclass(frozen=True)
+class _ValidatedFingerprintState:
+    event_count: int
+    stream_digest: bytes
+    state: _FingerprintState
+
+
+# Unlike the full parsed-history memo, this retains no payloads or event models.
+# A fixed-size stream proof lets a scan exceed the 128 full-history slots without
+# reparsing every stream on every scan. All event bytes are still checked.
+_FINGERPRINT_MEMO_MAX_STREAMS = 4096
+_FINGERPRINT_MEMO: OrderedDict[Path, _ValidatedFingerprintState] = OrderedDict()
+_FINGERPRINT_MEMO_LOCK = threading.Lock()
+
+
 # Serialized byte weight bounds retained input size, not Python heap usage.
 # Entries are private: frozen contract models still contain mutable containers.
 _HISTORY_MEMO_MAX_BYTES = 256 * 1024 * 1024
@@ -205,6 +227,33 @@ def _reset_authoring_history_memo() -> None:
     with _HISTORY_MEMO_LOCK:
         _HISTORY_MEMO.clear()
         _HISTORY_MEMO_BYTES = 0
+    with _FINGERPRINT_MEMO_LOCK:
+        _FINGERPRINT_MEMO.clear()
+
+
+def _fingerprint_state(intent: AuthoringIntentV1) -> _FingerprintState:
+    return _FingerprintState(
+        actor_id=intent.actor_id,
+        fingerprint=intent.create_fingerprint,
+        pending=_intent_is_pending(intent),
+    )
+
+
+def _fingerprint_memo_put(directory: Path, events: tuple[_ValidatedEvent, ...]) -> None:
+    digest = hashlib.sha256()
+    for event in events:
+        # Length framing and fixed-length SHA256 values commit to the exact
+        # ordered byte sequence, including truncation and event boundaries.
+        digest.update(event.raw_size.to_bytes(8, "big"))
+        digest.update(event.raw_digest)
+    value = _ValidatedFingerprintState(
+        len(events), digest.digest(), _fingerprint_state(events[-1].event.intent)
+    )
+    with _FINGERPRINT_MEMO_LOCK:
+        _FINGERPRINT_MEMO[directory] = value
+        _FINGERPRINT_MEMO.move_to_end(directory)
+        while len(_FINGERPRINT_MEMO) > _FINGERPRINT_MEMO_MAX_STREAMS:
+            _FINGERPRINT_MEMO.popitem(last=False)
 
 
 def _history_memo_get(directory: Path) -> tuple[_ValidatedEvent, ...]:
@@ -662,13 +711,18 @@ class AuthoringIntentStore:
     ) -> AuthoringIntentV1 | None:
         matches: list[AuthoringIntentV1] = []
         for directory in self._intent_directories():
-            intent = self._validated_events(directory)[-1].intent
-            if (
-                intent.actor_id == actor_id
-                and intent.create_fingerprint == fingerprint
-                and _intent_is_pending(intent)
-            ):
-                matches.append(intent)
+            state = self._validated_fingerprint_state(directory)
+            if state.actor_id == actor_id and state.fingerprint == fingerprint and state.pending:
+                # Only matches need a full snapshot. Recheck the returned
+                # snapshot too: an out-of-band writer could replace event bytes
+                # between this scan and the normal loader despite our lock.
+                intent = self._validated_events(directory)[-1].intent
+                if (
+                    intent.actor_id == actor_id
+                    and intent.create_fingerprint == fingerprint
+                    and _intent_is_pending(intent)
+                ):
+                    matches.append(intent)
         if len(matches) > 1:
             raise AuthoringIntentStoreError("active AuthoringIntent fingerprint is not unique")
         return None if not matches else matches[0].model_copy(deep=True)
@@ -685,14 +739,7 @@ class AuthoringIntentStore:
 
         return tuple(event.model_copy(deep=True) for event in self._validated_events(directory))
 
-    def _validated_events(self, directory: Path) -> tuple[AuthoringIntentEventAny, ...]:
-        """Private parsed events, reused only after checking exact persisted bytes.
-
-        Every invocation still checks paths, content hashes and stream links.
-        Only JSON/model/canonical validation of identical bytes is elided. A
-        valid shorter prefix retains the cold loader's semantics; no cached
-        suffix is resurrected. Cache publication happens after complete success.
-        """
+    def _event_paths(self, directory: Path) -> tuple[Path, ...]:
         if directory.is_symlink() or not directory.is_dir():
             raise AuthoringIntentStoreError("AuthoringIntent does not exist")
         events_directory = directory / "events"
@@ -701,6 +748,48 @@ class AuthoringIntentStore:
         paths = tuple(sorted(events_directory.glob("*.json"), key=lambda item: item.name))
         if not paths:
             raise AuthoringIntentStoreError("AuthoringIntent event stream is empty")
+        return paths
+
+    def _validated_fingerprint_state(self, directory: Path) -> _FingerprintState:
+        with _FINGERPRINT_MEMO_LOCK:
+            cached = _FINGERPRINT_MEMO.get(directory)
+            if cached is not None:
+                _FINGERPRINT_MEMO.move_to_end(directory)
+        if cached is not None:
+            paths = self._event_paths(directory)
+            if len(paths) == cached.event_count:
+                digest = hashlib.sha256()
+                for sequence, path in enumerate(paths):
+                    if (
+                        path.name != f"{sequence:020d}.json"
+                        or path.is_symlink()
+                        or not path.is_file()
+                    ):
+                        break
+                    try:
+                        raw = path.read_bytes()
+                    except OSError:
+                        break
+                    digest.update(len(raw).to_bytes(8, "big"))
+                    digest.update(hashlib.sha256(raw).digest())
+                else:
+                    if digest.digest() == cached.stream_digest:
+                        return cached.state
+        # A changed stream, eviction or restart always takes the ordinary full
+        # canonical/model/chain validation path. It alone publishes a new proof.
+        # Suspicious paths/read failures also go there, preserving the first
+        # refusal even when an earlier event's bytes have changed too.
+        return _fingerprint_state(self._validated_events(directory)[-1].intent)
+
+    def _validated_events(self, directory: Path) -> tuple[AuthoringIntentEventAny, ...]:
+        """Private parsed events, reused only after checking exact persisted bytes.
+
+        Every invocation still checks paths, content hashes and stream links.
+        Only JSON/model/canonical validation of identical bytes is elided. A
+        valid shorter prefix retains the cold loader's semantics; no cached
+        suffix is resurrected. Cache publication happens after complete success.
+        """
+        paths = self._event_paths(directory)
         cached = _history_memo_get(directory)
         validated: list[_ValidatedEvent] = []
         # Most transitions repeat a large immutable payload. Share it only
@@ -755,6 +844,7 @@ class AuthoringIntentStore:
             operation_keys.add(event.operation_key)
             previous = event.event_digest
         _history_memo_put(directory, tuple(validated))
+        _fingerprint_memo_put(directory, tuple(validated))
         return tuple(events)
 
     @staticmethod
