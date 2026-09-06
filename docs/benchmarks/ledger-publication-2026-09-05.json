@@ -1,0 +1,58 @@
+{
+  "scope": "One-document candidate submission, three paired fresh fixtures per mode; real local bare Git remote, controlled 1s delay per push. Baseline waits for the same publisher's acknowledgment inside the submission callback. No live daemon, public remote, HTTP, approval, activation or setup in timers.",
+  "delay_seconds": 1.0,
+  "rows": [
+    {
+      "iteration": 0,
+      "mode": "synchronous_completion",
+      "submit_seconds": 1.830746374966111,
+      "remote_ack_seconds": 1.8310984579729848,
+      "mirror_pushes": 1
+    },
+    {
+      "iteration": 0,
+      "mode": "background_publication",
+      "submit_seconds": 0.49508037499617785,
+      "remote_ack_seconds": 1.8173617079737596,
+      "mirror_pushes": 1
+    },
+    {
+      "iteration": 1,
+      "mode": "synchronous_completion",
+      "submit_seconds": 1.8090799169731326,
+      "remote_ack_seconds": 1.8092034999863245,
+      "mirror_pushes": 1
+    },
+    {
+      "iteration": 1,
+      "mode": "background_publication",
+      "submit_seconds": 0.5087105419952422,
+      "remote_ack_seconds": 1.8303102079662494,
+      "mirror_pushes": 1
+    },
+    {
+      "iteration": 2,
+      "mode": "synchronous_completion",
+      "submit_seconds": 1.8048749589943327,
+      "remote_ack_seconds": 1.8049770419602282,
+      "mirror_pushes": 1
+    },
+    {
+      "iteration": 2,
+      "mode": "background_publication",
+      "submit_seconds": 0.4836765420041047,
+      "remote_ack_seconds": 1.7930341250030324,
+      "mirror_pushes": 1
+    }
+  ],
+  "medians": {
+    "synchronous_completion": {
+      "submit_seconds": 1.8090799169731326,
+      "remote_ack_seconds": 1.8092034999863245
+    },
+    "background_publication": {
+      "submit_seconds": 0.49508037499617785,
+      "remote_ack_seconds": 1.8173617079737596
+    }
+  }
+}

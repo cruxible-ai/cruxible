@@ -1,4 +1,7 @@
-# Ledger publication latency: next design slice
+# Ledger publication latency: original design slice
+
+**Implemented:** see [behavior, measurements and validation](performance-ledger-publication-2026-09-05.md).
+The design below is retained for its original rationale.
 
 Review-flow integration at `24273db9` introduces synchronous remote publication
 on submission, approval, activation and withdrawal. This document is a design
