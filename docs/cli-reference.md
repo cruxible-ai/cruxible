@@ -723,6 +723,11 @@ authorized workspace root, over the CaptureContract's selection budget, or with
 no daemon-local reader refuses `workspace_file_read_refused` and names its path
 class.
 
+Source acquisition currently serves independent coherence. Bounded-window and
+declared-snapshot-group policies refuse before provider invocation. Actual
+captures are checked against the pinned replayability and maximum-age rules
+before selection, including the rule’s omission/default/refusal behavior.
+
 A completed Source run reports, per occurrence, the `SourceReadReceiptV1` the
 daemon minted for the exact bytes it read and the digest of the Capture those
 bytes became; `--json` carries both in `source_observations`. A direct Source

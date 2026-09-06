@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **The state loop uses bounded reads and explicit maintenance.** World prefetch
+  batches typed Claims at one accepted coordinate; backing and lineage reads
+  reuse verified accepted history. Eligible self-source authoring reuses
+  prepared lowering, and Git blob writes are batched. SDK `accept()` returns
+  durable acceptance without refreshing the workspace floor; `refresh_workspace`
+  explicitly pins that separate maintenance step.
+
+- **Ledger publication runs in the background with an acknowledgment barrier.**
+  Local writes record pending work; `ledger publish --timeout 60 --json` waits
+  for its request sequence. Exact ref snapshots publish atomically with leases,
+  and `main` must fast-forward. Settled review refs rebuild from durable evidence
+  even when the proposal was never published while open.
+
+- **Produced Source captures obey the pinned acquisition policy.** Replayability
+  and maximum age are checked before selection. Unsupported cross-source
+  coherence refuses before provider invocation instead of silently running as
+  independent acquisition. Historical run receipts retain their interpretation.
+
 - **Authoring reads reuse validated history and request narrower state.**
   Unchanged event bytes reuse their parsed validation across store instances;
   appended or altered events retain canonical, chain, and operation checks.
@@ -32,10 +50,10 @@
   pushes `refs/heads/main`, whichever of the three note refs exist, one branch
   per OPEN proposal, and the settled archive. `main` is pushed without force,
   because accepted history only extends and a rejected fast-forward means the
-  remote holds something this ledger does not; the projections are forced and
-  pruned, so the mirror's branch list IS the open inventory. Settlement now
-  MOVES a branch rather than deleting it: every departing ref is archived to
-  `refs/settled/<proposal-digest>` in the same transaction, on both sides, so a
+  remote holds something this ledger does not; review refs use exact
+  expected-old leases and known-ref pruning. The mirror's branch list tracks
+  the open inventory. Settlement archives the candidate under
+  `refs/settled/<proposal-digest>` in the same transaction, so a
   link to a settled candidate still resolves instead of pointing at an
   unreachable commit. A withdrawn proposal leaves that projection too, which it
   always should have -- the projection's own contract is "exactly the open

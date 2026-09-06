@@ -351,6 +351,12 @@ over the CaptureContract's selection budget, or a daemon with no local reader is
 `workspace_file_read_refused` with its path class. None of these leave partial
 run history.
 
+Served Source runs currently support independent acquisition coherence. Policies
+requiring a bounded window or a declared snapshot group refuse before source
+reads or provider invocation. Each produced capture must satisfy permitted
+replayability and maximum age; an ineligible capture follows the policy’s
+failure behavior and cannot become a selected run output.
+
 A Line names its policy on the LineSpec instead, under the same pin role. Both
 lanes plan through one planner, and that planner scores only the inputs the
 graph actually plans an occurrence for: a policy may declare an input a given
