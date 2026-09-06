@@ -39,6 +39,7 @@ from cruxible_core.playbill.projection import (
     render_projection_manifest,
 )
 from cruxible_core.playbill.projection_artifacts import ParsedProjectionTree, parse_projection_tree
+from cruxible_core.playbill.projection_claim_cache import ClaimCompilationCache
 from cruxible_core.playbill.projection_tree import read_registered_tree
 from cruxible_core.playbill.protocols import LedgerRepositoryProtocol
 from cruxible_core.storage.playbill_projection import (
@@ -162,6 +163,7 @@ class ProjectionAssembler:
         registry: ProjectionExtensionRegistry | None = None,
         bodies: BodyProjectionProtocol | None = None,
         accepted_coordinates_by_sequence: Mapping[int, AcceptedCoordinate] | None = None,
+        claim_compilation_cache: ClaimCompilationCache | None = None,
     ) -> None:
         if publication_directory.is_symlink() or not publication_directory.is_dir():
             raise ProjectionPublicationError(
@@ -170,6 +172,7 @@ class ProjectionAssembler:
         self._repository = repository
         self.accepted = accepted
         self.publication_directory = publication_directory.resolve(strict=True)
+        self.claim_compilation_cache = claim_compilation_cache
         self.registry = registry or projection_registry_for_compiler(accepted.compiler)
         self.artifact_kinds = artifact_kinds_for_compiler(accepted.compiler)
         self.artifact_codec = artifact_codec_for_compiler(accepted.compiler)
@@ -292,6 +295,7 @@ class ProjectionAssembler:
                 bodies=self.bodies,
                 coordinate=request,
                 accepted_coordinates_by_sequence=self.accepted_coordinates_by_sequence,
+                claim_compilation_cache=self.claim_compilation_cache,
             ),
         )
         if self.bodies is not None and self.registry.supports(

@@ -71,8 +71,14 @@ from cruxible_core.playbill.explanation import (
     accepted_artifact_explanation_facts,
     accepted_document_explanation_facts,
 )
+from cruxible_core.playbill.projection_claim_cache import (
+    CachedClaim,
+    ClaimCompilationCache,
+    FrozenClaimFact,
+)
 
 if TYPE_CHECKING:
+    from cruxible_client.contracts.claims import ClaimArtifactAny
     from cruxible_core.playbill.projection import AcceptedCoordinate
     from cruxible_core.playbill.settlement import ChangeSetRecordAnyVersion
 
@@ -686,6 +692,78 @@ def _procedure_node_span(
     )
 
 
+def _claim_static_facts(
+    claim: ClaimArtifactAny,
+    *,
+    path: str,
+    input_digest: str,
+    artifact_digest: str,
+    statement_digest: str,
+) -> tuple[ProjectionFact, ...]:
+    """Compile only byte-dependent Claim facts; acceptance proofs stay per-build."""
+    from cruxible_client.contracts.claims import ClaimArtifactV3, claim_statement_address
+
+    identity = claim.identity.qualified
+    facts: list[ProjectionFact] = []
+    facts.extend(
+        (
+            ProjectionFact(
+                schema_id="playbill.claim.identity",
+                schema_version=1,
+                subject_identity=identity,
+                fact_key="lineage",
+                value={
+                    "artifact_digest": {"$digest": artifact_digest},
+                    "identity": claim.identity.model_dump(mode="json"),
+                    "input_digest": {"$digest": input_digest},
+                    "statement_address": claim_statement_address(path).model_dump(mode="json"),
+                    "statement_digest": {"$digest": statement_digest},
+                },
+            ),
+            ProjectionFact(
+                schema_id="playbill.claim.statement",
+                schema_version=1,
+                subject_identity=identity,
+                fact_key="proposition",
+                value=claim.statement.model_dump(mode="json"),
+            ),
+            ProjectionFact(
+                schema_id="playbill.claim.backing",
+                schema_version=1,
+                subject_identity=identity,
+                fact_key="evidence",
+                value=claim.backing.model_dump(mode="json"),
+            ),
+            ProjectionFact(
+                schema_id="playbill.claim.lifecycle",
+                schema_version=1,
+                subject_identity=identity,
+                fact_key="accepted_revision",
+                value={
+                    "lifecycle": claim.lifecycle.model_dump(mode="json"),
+                    "pins": [pin.model_dump(mode="json") for pin in claim.pins],
+                    **(
+                        {"retirement": claim.retirement.model_dump(mode="json")}
+                        if isinstance(claim, ClaimArtifactV3)
+                        else {}
+                    ),
+                },
+            ),
+        )
+    )
+    for index, source_mapping in enumerate(claim.backing.source_mappings):
+        facts.append(
+            ProjectionFact(
+                schema_id="playbill.claim.source_mapping",
+                schema_version=1,
+                subject_identity=identity,
+                fact_key=f"source_{index:04d}",
+                value=source_mapping.model_dump(mode="json"),
+            )
+        )
+    return tuple(facts)
+
+
 def parse_projection_tree(
     blobs: dict[str, bytes],
     *,
@@ -695,6 +773,7 @@ def parse_projection_tree(
     bodies: BodyProjectionProtocol | None = None,
     coordinate: ProjectionCoordinateContext | None = None,
     accepted_coordinates_by_sequence: Mapping[int, AcceptedCoordinate] | None = None,
+    claim_compilation_cache: ClaimCompilationCache | None = None,
 ) -> ParsedProjectionTree:
     """Parse all registered blobs and produce one sorted, typed row stream."""
 
@@ -705,10 +784,8 @@ def parse_projection_tree(
     )
     from cruxible_client.contracts.claim_verdicts import claim_verdict_v1_compat
     from cruxible_client.contracts.claims import (
-        ClaimArtifactV3,
         ClaimFormatError,
         claim_artifact_digest,
-        claim_statement_address,
         claim_statement_digest,
         parse_claim,
         parse_claim_law_evidence,
@@ -2098,30 +2175,60 @@ def parse_projection_tree(
                 )
                 continue
             if kind == "claim":
-                try:
-                    claim = parse_claim(content, path=path, codec=artifact_codec)
-                except ClaimFormatError as exc:
-                    raise ProjectionFormatError(
-                        f"registered Claim failed strict validation: {path}"
-                    ) from exc
-                identity = claim.identity.qualified
+                cached = (
+                    claim_compilation_cache.get(
+                        compiler_digest=coordinate.compiler_digest,
+                        codec=artifact_codec,
+                        path=path,
+                        content=content,
+                    )
+                    if claim_compilation_cache is not None and coordinate is not None
+                    else None
+                )
+                claim = None
+                if cached is None:
+                    try:
+                        claim = parse_claim(content, path=path, codec=artifact_codec)
+                    except ClaimFormatError as exc:
+                        raise ProjectionFormatError(
+                            f"registered Claim failed strict validation: {path}"
+                        ) from exc
+                    identity = claim.identity.qualified
+                else:
+                    identity = cached.identity
                 previous = identities.get(identity)
                 if previous is not None:
                     raise ProjectionFormatError(
                         f"duplicate semantic identity {identity!r}: {previous} and {path}"
                     )
                 identities[identity] = path
-                input_digest = file_digest(content).tagged
-                artifact_digest = claim_artifact_digest(claim).tagged
-                statement_digest = claim_statement_digest(claim.statement).tagged
+                if cached is None:
+                    assert claim is not None
+                    input_digest = file_digest(content).tagged
+                    artifact_digest = claim_artifact_digest(claim).tagged
+                    statement_digest = claim_statement_digest(claim.statement).tagged
+                    format_tag: str = claim.artifact_format
+                    predecessor_digest = claim.lifecycle.predecessor_digest
+                    retired = claim.lifecycle.state == "retired"
+                    claim_pins = tuple(
+                        (pin.target.qualified, pin.artifact_digest) for pin in claim.pins
+                    )
+                else:
+                    input_digest = cached.input_digest
+                    artifact_digest = cached.artifact_digest
+                    statement_digest = cached.statement_digest
+                    format_tag = cached.format_tag
+                    predecessor_digest = cached.predecessor_digest
+                    retired = cached.retired
+                    claim_pins = cached.pins
                 envelopes.append(
                     ArtifactEnvelopeRow(
                         identity=identity,
                         kind="claim",
-                        format_tag=claim.artifact_format,
+                        format_tag=format_tag,
                         path=path,
                         artifact_digest=artifact_digest,
-                        predecessor_digest=claim.lifecycle.predecessor_digest,
+                        predecessor_digest=predecessor_digest,
                         revision=projected_revision(
                             accepted_change_sets,
                             path=path,
@@ -2130,74 +2237,48 @@ def parse_projection_tree(
                         ),
                     )
                 )
-                if claim.lifecycle.state == "retired":
+                if retired:
                     retired_identities.append(identity)
                 pins.extend(
                     PinRow(
                         source_identity=identity,
-                        target_identity=pin.target.qualified,
-                        target_digest=pin.artifact_digest,
+                        target_identity=target,
+                        target_digest=digest,
                     )
-                    for pin in claim.pins
+                    for target, digest in claim_pins
                 )
-                semantic_facts.extend(
-                    (
-                        ProjectionFact(
-                            schema_id="playbill.claim.identity",
-                            schema_version=1,
-                            subject_identity=identity,
-                            fact_key="lineage",
-                            value={
-                                "artifact_digest": {"$digest": artifact_digest},
-                                "identity": claim.identity.model_dump(mode="json"),
-                                "input_digest": {"$digest": input_digest},
-                                "statement_address": claim_statement_address(path).model_dump(
-                                    mode="json"
-                                ),
-                                "statement_digest": {"$digest": statement_digest},
-                            },
-                        ),
-                        ProjectionFact(
-                            schema_id="playbill.claim.statement",
-                            schema_version=1,
-                            subject_identity=identity,
-                            fact_key="proposition",
-                            value=claim.statement.model_dump(mode="json"),
-                        ),
-                        ProjectionFact(
-                            schema_id="playbill.claim.backing",
-                            schema_version=1,
-                            subject_identity=identity,
-                            fact_key="evidence",
-                            value=claim.backing.model_dump(mode="json"),
-                        ),
-                        ProjectionFact(
-                            schema_id="playbill.claim.lifecycle",
-                            schema_version=1,
-                            subject_identity=identity,
-                            fact_key="accepted_revision",
-                            value={
-                                "lifecycle": claim.lifecycle.model_dump(mode="json"),
-                                "pins": [pin.model_dump(mode="json") for pin in claim.pins],
-                                **(
-                                    {"retirement": claim.retirement.model_dump(mode="json")}
-                                    if isinstance(claim, ClaimArtifactV3)
-                                    else {}
-                                ),
-                            },
-                        ),
+                if cached is None:
+                    assert claim is not None
+                    static_facts = _claim_static_facts(
+                        claim,
+                        path=path,
+                        input_digest=input_digest,
+                        artifact_digest=artifact_digest,
+                        statement_digest=statement_digest,
                     )
-                )
-                for index, source_mapping in enumerate(claim.backing.source_mappings):
-                    semantic_facts.append(
-                        ProjectionFact(
-                            schema_id="playbill.claim.source_mapping",
-                            schema_version=1,
-                            subject_identity=identity,
-                            fact_key=f"source_{index:04d}",
-                            value=source_mapping.model_dump(mode="json"),
+                    if claim_compilation_cache is not None and coordinate is not None:
+                        claim_compilation_cache.put(
+                            compiler_digest=coordinate.compiler_digest,
+                            codec=artifact_codec,
+                            path=path,
+                            content=content,
+                            entry=CachedClaim(
+                                identity=identity,
+                                format_tag=format_tag,
+                                input_digest=input_digest,
+                                artifact_digest=artifact_digest,
+                                statement_digest=statement_digest,
+                                predecessor_digest=predecessor_digest,
+                                retired=retired,
+                                pins=claim_pins,
+                                facts=tuple(
+                                    FrozenClaimFact.from_fact(fact) for fact in static_facts
+                                ),
+                            ),
                         )
-                    )
+                else:
+                    static_facts = cached.materialize_facts()
+                semantic_facts.extend(static_facts)
                 if coordinate is not None and registry.supports(
                     "playbill.claim.current_verdict",
                     1,
@@ -2210,7 +2291,7 @@ def parse_projection_tree(
                             artifact_path=path,
                             input_digest=input_digest,
                             artifact_digest=artifact_digest,
-                            predecessor_digest=claim.lifecycle.predecessor_digest,
+                            predecessor_digest=predecessor_digest,
                             records=accepted_change_sets,
                             coordinate=coordinate,
                         )

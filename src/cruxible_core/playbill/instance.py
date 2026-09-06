@@ -97,6 +97,7 @@ from cruxible_core.playbill.projection import (
     AssemblerResult,
     projection_manifest_name,
 )
+from cruxible_core.playbill.projection_claim_cache import ClaimCompilationCache
 from cruxible_core.playbill.proposal_evidence import ProposalEvidenceStore
 from cruxible_core.playbill.proposal_note_projection import ProposalNoteIndex
 from cruxible_core.playbill.proposals import (
@@ -233,6 +234,7 @@ class PlaybillInstance:
         self._verified_genesis = verified_genesis
         self._recovered = recovered
         self._state_lock = threading.RLock()
+        self._claim_compilation_cache = ClaimCompilationCache()
         self._history_lookup: (
             tuple[RecoveredInstanceState, dict[str, RecoveredGeneration | None] | None] | None
         ) = None
@@ -1419,6 +1421,7 @@ class PlaybillInstance:
         bodies = ContentAddressedBodyStore(paths["cas"])
         self._tree_memo.clear()
         self.claim_read_history_memo.clear()
+        self._claim_compilation_cache.clear()
         self._recovered = recover_instance(
             self._ledger,
             genesis=self._verified_genesis,
@@ -1457,6 +1460,7 @@ class PlaybillInstance:
             checkpoint_directory=self._checkpoint_directory(self.root),
             checkpoint_interval=DEFAULT_CHECKPOINT_INTERVAL,
             genesis=self.descriptor.genesis,
+            claim_compilation_cache=self._claim_compilation_cache,
         )
 
     def prepare_generation(

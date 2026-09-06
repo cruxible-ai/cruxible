@@ -23,6 +23,7 @@ from cruxible_core.playbill.projection import (
     AcceptedProjectionCoordinate,
     AssemblerResult,
 )
+from cruxible_core.playbill.projection_claim_cache import ClaimCompilationCache
 from cruxible_core.playbill.serving import (
     publish_serving_manifest,
     remove_exact_projection_build,
@@ -81,6 +82,7 @@ class ActivationPublisher:
         checkpoint_directory: Path | None = None,
         checkpoint_interval: int = DEFAULT_CHECKPOINT_INTERVAL,
         genesis: GenesisCoordinate | None = None,
+        claim_compilation_cache: ClaimCompilationCache | None = None,
     ) -> None:
         if checkpoint_interval < 1:
             raise SettlementIntegrityError("checkpoint interval must be at least one generation")
@@ -92,6 +94,7 @@ class ActivationPublisher:
         self.checkpoint_directory = checkpoint_directory
         self.checkpoint_interval = checkpoint_interval
         self.genesis = genesis
+        self.claim_compilation_cache = claim_compilation_cache
 
     def prebuild(
         self,
@@ -123,6 +126,7 @@ class ActivationPublisher:
             publication_directory=self.publication_directory,
             bodies=self.bodies,
             accepted_coordinates_by_sequence=accepted_coordinates,
+            claim_compilation_cache=self.claim_compilation_cache,
         )
         stage = self.publication_directory / f".stage-{secrets.token_hex(12)}"
         return assembler.assemble(
