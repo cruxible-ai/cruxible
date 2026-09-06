@@ -1,0 +1,309 @@
+{
+  "repo": "/private/tmp/playbill-projection-reuse",
+  "head": "5a0b81b2b08cef50ed35a13e91a4f6646178847d",
+  "working_tree": [
+    "?? docs/reviews/projection-claim-reuse-2026-09-06.md"
+  ],
+  "population": 1000,
+  "history": 8,
+  "repeats": 3,
+  "claims_per_write": 2,
+  "orphan_proposals": 48,
+  "server_profile": false,
+  "profile_write_phases": false,
+  "world": true,
+  "reopen_after": true,
+  "scope": "SDK claim draft/prepare/submit/status; HTTP approval challenge/sign/submit; SDK accept; coordinate-pinned HTTP full Claim readback; explicit SDK refresh (fresh typed World snapshot when world=true). Half of each batch revises seed Claim identities; remainder creates observations. Attached Git workspace; no floor or mirror. See server_profile for instrumentation. Cold means fresh daemon process, after separately timed SDK connect/orient; warm loops advance the accepted coordinate. Disk caches are uncontrolled.",
+  "rows": [
+    {
+      "iteration": 0,
+      "temperature": "cold",
+      "seconds": {
+        "draft": 0.13150633301120251,
+        "prepare": 0.632558083976619,
+        "submit": 3.3278726669959724,
+        "submitted_status": 0.008711667032912374,
+        "approval_challenge": 0.26444449997507036,
+        "sign": 0.0015497919521294534,
+        "approval_submit": 0.6654830000479706,
+        "accept": 5.482081790978555,
+        "readback": 0.2323907079990022,
+        "world_refresh": 0.28420733305392787
+      },
+      "total_seconds": 11.030834875011351,
+      "accepted_coordinate": {
+        "tag": "playbill-accepted-coordinate-v1",
+        "git_oid": "5a71ed9bd69f751517f53d30423dee47ae520d9a",
+        "semantic_root": "sha256:5c4c8ed11a6a571f988d394dee037ab2966d627324cbd7ffc1b02d45a98a2061",
+        "generation_root": "sha256:9c3fb2c53b0d612229e202b0f76c8042069a07a792d9f8a5566f0219b35c3ca8",
+        "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+      },
+      "readback_identities": [
+        "Claim:CLM-23b9d00989ab5601f39ed35276dc7cb6",
+        "Claim:CLM-4bc990c086dce7f44c093ceddddff6bc"
+      ],
+      "readback_grades": [
+        {
+          "identity": "Claim:CLM-23b9d00989ab5601f39ed35276dc7cb6",
+          "current_verdict": {
+            "adjudication_rule_digest": "sha256:c943d740ad3d55f2d763cbfab2a96495ebcda00416510d354d14a3378a4a9190",
+            "authority_basis": [],
+            "basis_kinds": [],
+            "claim_statement_digest": "sha256:81e35331822c5569cd31c7511a11131f52851d892d5f880ddb895d1a2fe73cd9",
+            "contradicting_evidence_digests": [],
+            "control_components": [],
+            "currency": "current",
+            "epistemic_grades": [],
+            "evaluation_time": "2026-09-06T13:19:40.334403Z",
+            "provenance_grades": [],
+            "refusal_codes": [],
+            "supporting_evidence_digests": [],
+            "tag": "playbill-claim-verdict-v1",
+            "unsure_evidence_digests": [],
+            "verdict": "uncovered"
+          },
+          "admission_statuses": [
+            "not_evidence"
+          ]
+        },
+        {
+          "identity": "Claim:CLM-4bc990c086dce7f44c093ceddddff6bc",
+          "current_verdict": {
+            "adjudication_rule_digest": "sha256:70266bff36b2cb309919986d6adf3946cad028c0d8bbc4af8b75e78f1f6b784d",
+            "authority_basis": [],
+            "basis_kinds": [],
+            "claim_statement_digest": "sha256:78ac88940f686afc6e79d294836d5d95988c77d709fe19d7dee23d98dae633a9",
+            "contradicting_evidence_digests": [],
+            "control_components": [],
+            "currency": "current",
+            "epistemic_grades": [],
+            "evaluation_time": "2026-09-06T13:19:40.334403Z",
+            "provenance_grades": [],
+            "refusal_codes": [],
+            "supporting_evidence_digests": [],
+            "tag": "playbill-claim-verdict-v1",
+            "unsure_evidence_digests": [],
+            "verdict": "uncovered"
+          },
+          "admission_statuses": [
+            "admitted",
+            "not_evidence"
+          ]
+        }
+      ],
+      "workspace_advertisement": {
+        "tag": "playbill-workspace-advertisement-v1",
+        "status": "updated",
+        "workspace_path": "/private/tmp/pb-served-bench-s87m8ixy/fixture/workspace",
+        "remote_name": "playbill",
+        "advertised_refs": [
+          "refs/remotes/playbill/accepted"
+        ],
+        "failure_code": null
+      }
+    },
+    {
+      "iteration": 1,
+      "temperature": "warm",
+      "seconds": {
+        "draft": 0.0756142910104245,
+        "prepare": 0.6400033750105649,
+        "submit": 2.868060417007655,
+        "submitted_status": 0.008051417011301965,
+        "approval_challenge": 0.28195262502413243,
+        "sign": 0.0005858329823240638,
+        "approval_submit": 0.7511383329983801,
+        "accept": 5.079507542017382,
+        "readback": 0.3233812500257045,
+        "world_refresh": 0.2796720829792321
+      },
+      "total_seconds": 10.308141624962445,
+      "accepted_coordinate": {
+        "tag": "playbill-accepted-coordinate-v1",
+        "git_oid": "b875d8e6d5d6795c39d219000e7c319c88c89c05",
+        "semantic_root": "sha256:59343bb88c68dbd56d55923f41b46eed04dd3fd497c6bc9c6313a863bab72ed7",
+        "generation_root": "sha256:f533f6344a5d72172f034d135a772baa57999d3cb2ef507a7fa9a2430ec6c8fd",
+        "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+      },
+      "readback_identities": [
+        "Claim:CLM-1d1b323601b083f03f40de7265b8a985",
+        "Claim:CLM-4bc990c086dce7f44c093ceddddff6bc"
+      ],
+      "readback_grades": [
+        {
+          "identity": "Claim:CLM-1d1b323601b083f03f40de7265b8a985",
+          "current_verdict": {
+            "adjudication_rule_digest": "sha256:c943d740ad3d55f2d763cbfab2a96495ebcda00416510d354d14a3378a4a9190",
+            "authority_basis": [],
+            "basis_kinds": [],
+            "claim_statement_digest": "sha256:d62059186de8ece24820a515d9999910a5f3e31e0a75430d2a07223dfb2ea790",
+            "contradicting_evidence_digests": [],
+            "control_components": [],
+            "currency": "current",
+            "epistemic_grades": [],
+            "evaluation_time": "2026-09-06T13:19:51.310086Z",
+            "provenance_grades": [],
+            "refusal_codes": [],
+            "supporting_evidence_digests": [],
+            "tag": "playbill-claim-verdict-v1",
+            "unsure_evidence_digests": [],
+            "verdict": "uncovered"
+          },
+          "admission_statuses": [
+            "not_evidence"
+          ]
+        },
+        {
+          "identity": "Claim:CLM-4bc990c086dce7f44c093ceddddff6bc",
+          "current_verdict": {
+            "adjudication_rule_digest": "sha256:70266bff36b2cb309919986d6adf3946cad028c0d8bbc4af8b75e78f1f6b784d",
+            "authority_basis": [],
+            "basis_kinds": [],
+            "claim_statement_digest": "sha256:78ac88940f686afc6e79d294836d5d95988c77d709fe19d7dee23d98dae633a9",
+            "contradicting_evidence_digests": [],
+            "control_components": [],
+            "currency": "current",
+            "epistemic_grades": [],
+            "evaluation_time": "2026-09-06T13:19:51.310086Z",
+            "provenance_grades": [],
+            "refusal_codes": [],
+            "supporting_evidence_digests": [],
+            "tag": "playbill-claim-verdict-v1",
+            "unsure_evidence_digests": [],
+            "verdict": "uncovered"
+          },
+          "admission_statuses": [
+            "admitted",
+            "not_evidence",
+            "not_evidence"
+          ]
+        }
+      ],
+      "workspace_advertisement": {
+        "tag": "playbill-workspace-advertisement-v1",
+        "status": "updated",
+        "workspace_path": "/private/tmp/pb-served-bench-s87m8ixy/fixture/workspace",
+        "remote_name": "playbill",
+        "advertised_refs": [
+          "refs/remotes/playbill/accepted"
+        ],
+        "failure_code": null
+      }
+    },
+    {
+      "iteration": 2,
+      "temperature": "warm",
+      "seconds": {
+        "draft": 0.07542745798127726,
+        "prepare": 0.6428431249805726,
+        "submit": 2.9195986249833368,
+        "submitted_status": 0.008155207964591682,
+        "approval_challenge": 0.28135858301538974,
+        "sign": 0.0007244159933179617,
+        "approval_submit": 0.7590487919514999,
+        "accept": 5.035810875007883,
+        "readback": 0.42031537502771243,
+        "world_refresh": 0.27421266702003777
+      },
+      "total_seconds": 10.41767895797966,
+      "accepted_coordinate": {
+        "tag": "playbill-accepted-coordinate-v1",
+        "git_oid": "b3e5ed647cc413ece46aca8f1c4eeae4e08319da",
+        "semantic_root": "sha256:f1c422d5f1a5136488092266d2372b757bce9a6d49e53da5ab0ad75a94b3fe75",
+        "generation_root": "sha256:d7ea87a76a3e5c03b3de8045fb970aede799a3ddd8f91e05677d33251e704a20",
+        "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+      },
+      "readback_identities": [
+        "Claim:CLM-190ac025c72545faca144809f1162339",
+        "Claim:CLM-4bc990c086dce7f44c093ceddddff6bc"
+      ],
+      "readback_grades": [
+        {
+          "identity": "Claim:CLM-190ac025c72545faca144809f1162339",
+          "current_verdict": {
+            "adjudication_rule_digest": "sha256:c943d740ad3d55f2d763cbfab2a96495ebcda00416510d354d14a3378a4a9190",
+            "authority_basis": [],
+            "basis_kinds": [],
+            "claim_statement_digest": "sha256:dd9bb5f3eb08d04489748225185cd950eda8a69a947cc652d67f7b794508a60a",
+            "contradicting_evidence_digests": [],
+            "control_components": [],
+            "currency": "current",
+            "epistemic_grades": [],
+            "evaluation_time": "2026-09-06T13:20:01.618136Z",
+            "provenance_grades": [],
+            "refusal_codes": [],
+            "supporting_evidence_digests": [],
+            "tag": "playbill-claim-verdict-v1",
+            "unsure_evidence_digests": [],
+            "verdict": "uncovered"
+          },
+          "admission_statuses": [
+            "not_evidence"
+          ]
+        },
+        {
+          "identity": "Claim:CLM-4bc990c086dce7f44c093ceddddff6bc",
+          "current_verdict": {
+            "adjudication_rule_digest": "sha256:70266bff36b2cb309919986d6adf3946cad028c0d8bbc4af8b75e78f1f6b784d",
+            "authority_basis": [],
+            "basis_kinds": [],
+            "claim_statement_digest": "sha256:78ac88940f686afc6e79d294836d5d95988c77d709fe19d7dee23d98dae633a9",
+            "contradicting_evidence_digests": [],
+            "control_components": [],
+            "currency": "current",
+            "epistemic_grades": [],
+            "evaluation_time": "2026-09-06T13:20:01.618136Z",
+            "provenance_grades": [],
+            "refusal_codes": [],
+            "supporting_evidence_digests": [],
+            "tag": "playbill-claim-verdict-v1",
+            "unsure_evidence_digests": [],
+            "verdict": "uncovered"
+          },
+          "admission_statuses": [
+            "admitted",
+            "not_evidence",
+            "not_evidence",
+            "not_evidence"
+          ]
+        }
+      ],
+      "workspace_advertisement": {
+        "tag": "playbill-workspace-advertisement-v1",
+        "status": "updated",
+        "workspace_path": "/private/tmp/pb-served-bench-s87m8ixy/fixture/workspace",
+        "remote_name": "playbill",
+        "advertised_refs": [
+          "refs/remotes/playbill/accepted"
+        ],
+        "failure_code": null
+      }
+    }
+  ],
+  "setup_seconds": 56.96966137504205,
+  "seed_phase_seconds": {
+    "initialize": 0.5283880420029163,
+    "vocabulary-render": 0.0016352920210920274,
+    "seed-vocabulary": 1.6254014589940198,
+    "seed-readings": 0.47935362497810274,
+    "seed-claims": 22.694213167065755,
+    "accept-generations": 14.618905375071336
+  },
+  "seed_generation": 14,
+  "startup_seconds": 1.469251415983308,
+  "connect_seconds": 8.741261792019941,
+  "initial_world_seconds": 0.006022208952344954,
+  "reopen": {
+    "seconds": 4.1454099160037,
+    "generation_count": 18,
+    "coordinate": {
+      "tag": "playbill-accepted-coordinate-v1",
+      "git_oid": "b3e5ed647cc413ece46aca8f1c4eeae4e08319da",
+      "semantic_root": "sha256:f1c422d5f1a5136488092266d2372b757bce9a6d49e53da5ab0ad75a94b3fe75",
+      "generation_root": "sha256:d7ea87a76a3e5c03b3de8045fb970aede799a3ddd8f91e05677d33251e704a20",
+      "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+    }
+  },
+  "success": true,
+  "retained_state": null
+}
