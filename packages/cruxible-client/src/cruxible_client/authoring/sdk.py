@@ -20,6 +20,7 @@ from pydantic import SecretStr, TypeAdapter
 
 import cruxible_client.compatibility as client_compatibility
 from cruxible_client import contracts as api
+from cruxible_client.authoring.approval import ReviewedProposal, approve_reviewed, review_proposal
 from cruxible_client.authoring.attestations import (
     ClaimAttestationV2Signer,
     append_prepared_claim_attestation,
@@ -70,6 +71,7 @@ from cruxible_client.authoring.selectors import (
     FileSelector,
     WorkspaceSources,
 )
+from cruxible_client.authoring.signing import ApprovalSigner
 from cruxible_client.authoring.source_map import (
     DiagnosticSourceMap,
     capture_keyword_sites,
@@ -1115,6 +1117,16 @@ class Proposal:
             raise ValueError("proposal inspection omitted proposal_id")
         return cls(playbill, proposal_id, lint=inspection.lint)
 
+    def review(self) -> ReviewedProposal:
+        """Fetch an immutable full review; inspect its details before approving."""
+        return review_proposal(self._playbill, self.proposal_id)
+
+    def approve(
+        self, *, signer: ApprovalSigner, reviewed: ReviewedProposal
+    ) -> api.PlaybillApprovalReceipt:
+        """Sign this exact review with caller-configured custody; never activate."""
+        return approve_reviewed(self._playbill, self.proposal_id, signer=signer, reviewed=reviewed)
+
     @property
     def warnings(self) -> tuple[dict[str, Any], ...]:
         return () if self.lint is None else tuple(self.lint.warnings)
@@ -1566,6 +1578,10 @@ class Playbill:
             outcome=outcome,
             relation=result.relation,
         )
+
+    def proposal(self, proposal_id: str) -> Proposal:
+        """Return a handle for an existing proposal without creating or approving it."""
+        return Proposal(self, proposal_id)
 
     def accept(self, proposal_id: str) -> api.PlaybillActivationReceipt:
         """Request durable acceptance without refreshing local reading surfaces.

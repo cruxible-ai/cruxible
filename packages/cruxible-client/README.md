@@ -12,7 +12,7 @@ This package contains:
 - `World`: coordinate-bound vocabulary, Subject attributes, and bounded Claim prefetch
 - source selections, Capture references, audit/repair reads, and agent-owned projection helpers
 - `CruxibleClient`: the lower-level typed HTTP client
-- shared public contracts, client-side error decoding, and Claim-attestation signing
+- shared public contracts, client-side error decoding, and local approval/Claim-attestation signing
 
 It does not ship the daemon/runtime, Git ledger, CAS, projection internals, or
 MCP server implementation. Those stay in `cruxible`.
@@ -55,6 +55,50 @@ File-backed authoring requires a declared `.playbill/sources.yaml` catalog in th
 workspace. Supplying a body with `self_source` is an explicit self-assertion, not
 an observation of an independent source. The SDK's `derived_by()` method currently
 returns a typed unavailable refusal; it is not a supported derivation writer.
+
+## Review and approve an exact candidate
+
+Your operator supplies an `ApprovalSigner` capability, configured for an existing
+accepted principal. The agent does not discover a key, select its own authority,
+or send private key bytes to the daemon.
+
+```python
+proposal = pb.proposal(submitted.status().proposal_id)
+reviewed = proposal.review()
+review = reviewed.details  # Inspect all members, evidence, governance and provenance.
+# After deciding to approve this exact candidate:
+approval = proposal.approve(signer=configured_signer, reviewed=reviewed)
+# After a separate decision to accept:
+receipt = pb.accept(proposal.proposal_id)
+world = pb.world()
+```
+
+`ReviewedProposal` is a process-local, originating-session/instance-bound snapshot.
+`details` returns a fresh copy; editing it cannot alter the approved candidate.
+The token binds identity, not proof that a human or agent actually read it.
+The helper obtains fresh governance/challenge data, checks the reviewed candidate,
+root and signer, verifies the local signature and submits it. It never accepts
+or refreshes implicitly. The authenticated submitter may differ from the signer.
+
+This convenience path requires a complete unredacted review. An
+`ApprovalReviewMismatch` includes a repair instruction and never automatically
+reviews or signs a replacement candidate. If the receipt check fails after
+submission, inspect proposal status before retrying. Existing raw
+`CruxibleClient` review/challenge/attestation APIs remain available for advanced
+external signing and partial-visibility workflows under the server's policy.
+
+For operator configuration, `LocalEd25519ApprovalSigner.open(...)` takes an explicit
+principal ID, private key path, expected public key, and forbidden custody roots.
+It preserves existing file permissions, nonsymlink/no-follow reads, and key checks
+on every signature. The `ApprovalSigner` protocol is also the seam for a separately
+provided signer backend; hardware and broker implementations are not included.
+
+The [complete disposable example](examples/claim_review_repair.py) authors a
+source-backed Claim, prompts for review and acceptance, reads its World state,
+detects changed source evidence with free audit/`next`, and repairs the same Claim.
+It needs an initialized disposable instance and operator-provisioned signer;
+it does not bootstrap authority. World's qualified Claim IDs can be passed
+directly to `revises` and `dispositions`; duplicate normalized keys are refused.
 
 ## Public contract snapshot
 

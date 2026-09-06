@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from cruxible_client.authoring.approval import ApprovalReviewMismatch, ReviewedProposal
     from cruxible_client.authoring.attestations import (
         ClaimAttestationV2Signer,
         LocalEd25519ClaimAttestationSigner,
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
         SubjectRef,
         TypedRef,
     )
+    from cruxible_client.authoring.signing import ApprovalSigner, LocalEd25519ApprovalSigner
     from cruxible_client.authoring.workspace import (
         PlaybillWorkspaceError,
         activate_with_workspace_refresh,
@@ -82,6 +84,10 @@ if TYPE_CHECKING:
     from cruxible_client.transport.http import CruxibleClient
 
 __all__ = [
+    "ApprovalReviewMismatch",
+    "ReviewedProposal",
+    "ApprovalSigner",
+    "LocalEd25519ApprovalSigner",
     "AbsentSubject",
     "AccessProfile",
     "ActivationPolicy",
@@ -151,7 +157,15 @@ __version__ = "0.5.1"
 
 
 def __getattr__(name: str) -> Any:
-    """Load the HTTP client only when the public client class is requested."""
+    """Load public adapters only when requested."""
+    if name in {"ApprovalReviewMismatch", "ReviewedProposal"}:
+        from cruxible_client.authoring import approval
+
+        return getattr(approval, name)
+    if name in {"ApprovalSigner", "LocalEd25519ApprovalSigner"}:
+        from cruxible_client.authoring import signing
+
+        return getattr(signing, name)
     if name == "CruxibleClient":
         from cruxible_client.transport.http import CruxibleClient
 
