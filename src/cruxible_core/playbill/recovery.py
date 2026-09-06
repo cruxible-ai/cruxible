@@ -651,6 +651,18 @@ def _clean_unaccepted_generations(
             parent = by_oid.get(parent_oid or "")
             if parent is None:
                 continue
+            # Most unreachable commits are unsigned proposal/review residue,
+            # not failed generations. Reject that necessary condition before
+            # reading and deriving an entire accepted parent tree for each one.
+            # A passing signature is only a prefilter: the full successor proof
+            # below still decides whether targeted collection is permitted.
+            daemon = parent.principals.require_active("daemon")
+            if not ledger.verify_commit_with_public_key(
+                oid,
+                principal_id="daemon",
+                public_key_hex=daemon.public_key,
+            ):
+                continue
             # The parent tree is read back from the ledger for exactly this
             # check and released with the window when the iteration ends. Its
             # manifest is computed cold: this window is built from an arbitrary
