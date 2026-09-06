@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from cruxible_client.contracts.acquisition_policies import (
     ACQUISITION_POLICY_PIN_ROLE,
     AcquisitionInputDecisionV1,
+    IndependentCoherenceV1,
     InputAcquisitionRuleV1,
     SourceAcquisitionPolicyV1,
     acquisition_policy_digest,
@@ -1261,6 +1262,20 @@ def _plan_selection_decision(
         for occurrence in occurrences
         if occurrence.occurrence_kind == "source" and occurrence.input_name is not None
     }
+    # Produced Source captures have no cross-source proof/vector reducer yet.
+    # Do not silently treat an accepted coherence requirement as independent.
+    if sources and not isinstance(policy.coherence, IndependentCoherenceV1):
+        return ProcedureSelectionDecisionV1(
+            policy_digest=policy_digest,
+            verdict="refused",
+            decisions=(
+                AcquisitionInputDecisionV1(
+                    input_name="coherence",
+                    disposition="refused",
+                    reason_codes=("playbill.acquisition.coherence_unsupported",),
+                ),
+            ),
+        )
     decisions: list[AcquisitionInputDecisionV1] = []
     for rule in policy.inputs:
         occurrence = sources.get(rule.input_name)
@@ -2616,7 +2631,15 @@ def _prepare_direct_source_run(
             message="The accepted acquisition policy refuses a declared Source input.",
             details={
                 "decisions": [item.model_dump(mode="json") for item in selection.decisions],
-                "repair": "Widen the accepted policy rule or repair the Source binding.",
+                "repair": (
+                    "Served Source runs support independent coherence only; use a compatible "
+                    "runtime or deliberately accept an independent policy."
+                    if any(
+                        "playbill.acquisition.coherence_unsupported" in item.reason_codes
+                        for item in selection.decisions
+                    )
+                    else "Widen the accepted policy rule or repair the Source binding."
+                ),
             },
         )
     selection_digest = procedure_selection_decision_digest(selection)
@@ -3239,7 +3262,15 @@ def service_run_playbill_line(
             message="The accepted acquisition policy refuses a declared Source input.",
             details={
                 "decisions": [item.model_dump(mode="json") for item in selection.decisions],
-                "repair": "Widen the accepted policy rule or repair the Source binding.",
+                "repair": (
+                    "Served Source runs support independent coherence only; use a compatible "
+                    "runtime or deliberately accept an independent policy."
+                    if any(
+                        "playbill.acquisition.coherence_unsupported" in item.reason_codes
+                        for item in selection.decisions
+                    )
+                    else "Widen the accepted policy rule or repair the Source binding."
+                ),
             },
         )
     selection_digest = procedure_selection_decision_digest(selection)

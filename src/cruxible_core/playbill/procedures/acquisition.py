@@ -9,7 +9,7 @@ admitted-input tuple and never relabels its capture time.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
@@ -167,44 +167,62 @@ def apply_acquisition_result(
     result: ProcedureSourceAcquisitionResultV1,
     *,
     default_authorized: bool,
+    evaluation_time: datetime,
 ) -> AcquisitionInputDecisionV1:
     """Apply the declared failure behaviour to a real typed acquisition result only."""
 
     if result.input_name != rule.input_name:
         raise ValueError("acquisition result names a different declared input")
+    considered: tuple[str, ...] = ()
     if result.outcome == "acquired":
         acquisition = result.acquisition
         if acquisition is None:  # pragma: no cover - model invariant
             raise ValueError("acquired result lost its Capture")
-        return AcquisitionInputDecisionV1(
-            input_name=rule.input_name,
-            disposition="selected",
-            considered_capture_digests=(acquisition.capture_digest,),
-            selected_capture_digests=(acquisition.capture_digest,),
-        )
-    behavior = {
-        "unavailable": rule.on_unavailable,
-        "stale": rule.on_stale,
-        "oversized": rule.on_oversized,
-        "refused": "refuse",
-    }[result.outcome]
-    reason = _OUTCOME_REASONS[result.outcome]
+        considered = (acquisition.capture_digest,)
+        replayability = getattr(acquisition.envelope.source, "replayability", "exact")
+        # Producing bytes is not admission: apply the same eligibility rules as
+        # accepted Capture selection before those bytes enter the run context.
+        if replayability not in rule.permitted_replayability:
+            behavior, reason = rule.on_unavailable, ACQUISITION_UNAVAILABLE
+        elif rule.max_age is not None and (
+            evaluation_time - acquisition.envelope.observed_at
+            > timedelta(microseconds=rule.max_age.microseconds)
+        ):
+            behavior, reason = rule.on_stale, ACQUISITION_STALE
+        else:
+            return AcquisitionInputDecisionV1(
+                input_name=rule.input_name,
+                disposition="selected",
+                considered_capture_digests=considered,
+                selected_capture_digests=considered,
+            )
+    else:
+        behavior = {
+            "unavailable": rule.on_unavailable,
+            "stale": rule.on_stale,
+            "oversized": rule.on_oversized,
+            "refused": "refuse",
+        }[result.outcome]
+        reason = _OUTCOME_REASONS[result.outcome]
     if behavior == "omit_optional" and rule.requirement == "optional":
         return AcquisitionInputDecisionV1(
             input_name=rule.input_name,
             disposition="omitted",
+            considered_capture_digests=considered,
             reason_codes=(reason,),
         )
     if behavior == "declared_conservative_default" and default_authorized:
         return AcquisitionInputDecisionV1(
             input_name=rule.input_name,
             disposition="defaulted",
+            considered_capture_digests=considered,
             default_value=rule.conservative_default,
             reason_codes=(reason,),
         )
     return AcquisitionInputDecisionV1(
         input_name=rule.input_name,
         disposition="refused",
+        considered_capture_digests=considered,
         reason_codes=(reason,),
     )
 

@@ -3205,6 +3205,11 @@ class ProcedureExecutor:
             rule,
             result,
             default_authorized=rule.input_name in self.default_authorizations,
+            evaluation_time=(
+                admission.occurrence_evaluation_time
+                if isinstance(admission, ProcedureRunAdmissionV3)
+                else admission.admitted_at
+            ),
         )
         self._append_event(
             admission,
@@ -3397,6 +3402,11 @@ class ProcedureExecutor:
                 rule,
                 unavailable,
                 default_authorized=rule.input_name in self.default_authorizations,
+                evaluation_time=(
+                    admission.occurrence_evaluation_time
+                    if isinstance(admission, ProcedureRunAdmissionV3)
+                    else admission.admitted_at
+                ),
             )
             self._append_event(
                 admission,
@@ -3507,6 +3517,11 @@ class ProcedureExecutor:
             rule,
             result,
             default_authorized=rule.input_name in self.default_authorizations,
+            evaluation_time=(
+                admission.occurrence_evaluation_time
+                if isinstance(admission, ProcedureRunAdmissionV3)
+                else admission.admitted_at
+            ),
         )
         self._append_event(
             admission,
@@ -3524,6 +3539,10 @@ class ProcedureExecutor:
                 },
             },
         )
+        if decision.disposition != "selected":
+            # The attempted read remains journaled, but an ineligible Capture
+            # must not be published as an output of this run.
+            reserved_store.release()
         self._bind_acquisition(
             node,
             admission=admission,
@@ -3535,13 +3554,14 @@ class ProcedureExecutor:
             occurrence_path=occurrence.occurrence_path,
             invocation_receipt_digest=invocation_receipt_digest,
         )
-        state.source_capture_associations.append(
-            ProcedureSourceCaptureAssociationV1(
-                occurrence_path=occurrence.occurrence_path,
-                invocation_receipt_digest=invocation_receipt_digest,
-                capture_digest=built.capture_digest,
+        if decision.disposition == "selected":
+            state.source_capture_associations.append(
+                ProcedureSourceCaptureAssociationV1(
+                    occurrence_path=occurrence.occurrence_path,
+                    invocation_receipt_digest=invocation_receipt_digest,
+                    capture_digest=built.capture_digest,
+                )
             )
-        )
         reserved_store.release()
 
     def _acquisition_rule(self, input_name: str) -> InputAcquisitionRuleV1 | None:
