@@ -1364,6 +1364,10 @@ class Playbill:
 
         identity = _address(claim, RefKind.CLAIM) if isinstance(claim, ClaimRef) else claim
         view = self._client.get_playbill_claim(self._instance_id, identity)
+        return self._typed_claim_view(view, identity)
+
+    @staticmethod
+    def _typed_claim_view(view: api.PlaybillClaimViewV2, identity: str = "") -> ClaimView:
         facts = {
             str(fact.get("schema_id")): fact.get("value")
             for fact in view.facts
@@ -1416,6 +1420,37 @@ class Playbill:
                 for account in view.admission_accounts
             ),
         )
+
+    def claim_views(self, claims: Sequence[str | ClaimRef]) -> tuple[ClaimView, ...]:
+        """Read up to 256 exact or prefix identities at this connection's coordinate.
+
+        The complete batch preserves input order and all single-view fields.
+        Use explicit batches for larger selections; no population read is implied.
+        """
+        from cruxible_client.contracts.claim_reads import ClaimReadBatchRequestV1
+
+        for claim in claims:
+            if isinstance(claim, ClaimRef):
+                self._assert_coordinate(claim.coordinate)
+        request = ClaimReadBatchRequestV1(
+            at=_api_coordinate(self.coordinate),
+            claim_ids=tuple(
+                _address(claim, RefKind.CLAIM) if isinstance(claim, ClaimRef) else claim
+                for claim in claims
+            ),
+            evaluation_time=datetime.fromisoformat(self._evaluation_time()),
+        )
+        result = self._client.read_playbill_claim_batch(self._instance_id, request=request)
+        self._assert_coordinate(_coordinate(result.coordinate))
+        if result.truncated or result.cursor is not None or len(result.claims) != len(claims):
+            raise ValueError("identity batch did not return a complete Claim selection")
+        for identity, view in zip(request.claim_ids, result.claims, strict=True):
+            self._assert_coordinate(_coordinate(view.coordinate))
+            bare = identity.removeprefix("Claim:")
+            returned = str(view.envelope.get("identity", "")).removeprefix("Claim:")
+            if not returned.startswith(bare):
+                raise ValueError("identity batch returned a Claim outside its requested position")
+        return tuple(self._typed_claim_view(view) for view in result.claims)
 
     def predict(
         self,

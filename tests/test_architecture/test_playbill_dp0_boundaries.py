@@ -406,6 +406,8 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "recover_playbill_claim_attestations",
         "list_playbill_claims",
         "get_playbill_claim",
+        "read_playbill_claim_batch",
+        "get_playbill_claim_backings",
         "playbill_claim_history",
         "explain_playbill_claim",
         "propose_playbill_query_definition",

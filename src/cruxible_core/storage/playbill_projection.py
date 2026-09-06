@@ -808,6 +808,39 @@ class ProjectionHandle:
             coordinate=self.accepted,
         )
 
+    def select_claim_identities(
+        self,
+        *,
+        subject_paths: tuple[str, ...],
+        predicates: tuple[str, ...],
+        include_retired: bool,
+        after: str,
+        limit: int,
+    ) -> tuple[str, ...]:
+        """Select a bounded page without materializing unrelated Claim views."""
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
+        subject_slots = ",".join("?" for _ in subject_paths)
+        sql = (
+            "SELECT e.identity FROM artifact_envelopes e "
+            "JOIN semantic_facts s ON s.subject_identity=e.identity "
+            "AND s.schema_id='playbill.claim.statement' "
+            "JOIN semantic_facts l ON l.subject_identity=e.identity "
+            "AND l.schema_id='playbill.claim.lifecycle' "
+            "WHERE e.kind='claim' AND e.identity>? "
+            f"AND json_extract(s.value_json,'$.subject.artifact_path') IN ({subject_slots}) "
+        )
+        params: list[object] = [after, *subject_paths]
+        if predicates:
+            predicate_slots = ",".join("?" for _ in predicates)
+            sql += f"AND json_extract(s.value_json,'$.predicate') IN ({predicate_slots}) "
+            params.extend(predicates)
+        if not include_retired:
+            sql += "AND json_extract(l.value_json,'$.lifecycle.state')='live' "
+        sql += "ORDER BY e.identity LIMIT ?"
+        params.append(limit)
+        return tuple(str(row[0]) for row in self._connection.execute(sql, params).fetchall())
+
     def list_claims(self) -> tuple[ClaimProjectionView, ...]:
         """List canonical Claims in stable lineage-identity order."""
 

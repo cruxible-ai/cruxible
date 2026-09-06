@@ -782,6 +782,100 @@ class World:
         self._row_cache[subject_address] = tuple(rows)
         return self._row_cache[subject_address]
 
+    def prefetch(
+        self,
+        *,
+        subjects: Sequence[str | SubjectRef],
+        predicates: Sequence[str | ClaimTypeRef] = (),
+        page_size: int = 128,
+        max_claims: int = 4096,
+    ) -> tuple[ClaimView, ...]:
+        """Fill selected attribute caches in bounded, coordinate-pinned pages.
+
+        Strings are subject kind/id addresses or paths and fully qualified predicates.
+        Every live contender is retained. If the explicit budget is exceeded,
+        no partial attribute cache is installed and the caller can narrow the
+        selection or increase ``max_claims``.
+        """
+        from datetime import datetime
+
+        from cruxible_client.contracts.claim_reads import ClaimReadBatchRequestV1
+
+        self._assert_current()
+        if max_claims < 1:
+            raise ValueError("max_claims must be positive")
+        for ref in (*subjects, *predicates):
+            if isinstance(ref, (SubjectRef, ClaimTypeRef)):
+                self._playbill._assert_coordinate(ref.coordinate)
+        paths = tuple(ref.address if isinstance(ref, SubjectRef) else ref for ref in subjects)
+        addresses = tuple(
+            path.removeprefix("subjects/").removesuffix(".json")
+            if path.startswith("subjects/")
+            else path
+            for path in paths
+        )
+        paths = tuple(f"subjects/{address}.json" for address in addresses)
+        names = tuple(ref.address if isinstance(ref, ClaimTypeRef) else ref for ref in predicates)
+        request = ClaimReadBatchRequestV1.model_validate(
+            {
+                "at": self._coordinate.model_dump(mode="json"),
+                "subject_paths": paths,
+                "predicates": names,
+                "limit": page_size,
+                "evaluation_time": datetime.fromisoformat(self._playbill._evaluation_time()),
+            }
+        )
+        cursor: str | None = None
+        seen: set[str] = set()
+        views: list[ClaimView] = []
+        while True:
+            result = self._playbill._client.read_playbill_claim_batch(
+                self._playbill._instance_id,
+                request=request.model_copy(update={"cursor": cursor}),
+            )
+            self._assert_current()
+            if result.coordinate.model_dump(mode="json") != self._coordinate.model_dump(
+                mode="json"
+            ):
+                raise WorldStructureError("prefetch returned a different accepted coordinate")
+            for raw in result.claims:
+                if raw.coordinate != result.coordinate:
+                    raise WorldStructureError("prefetch Claim returned a different coordinate")
+                view = self._playbill._typed_claim_view(raw)
+                if (
+                    view.claim_id in seen
+                    or view.subject not in paths
+                    or (names and view.predicate not in names)
+                    or view.lifecycle_state != "live"
+                ):
+                    raise WorldStructureError("prefetch returned an invalid or duplicate selection")
+                seen.add(view.claim_id)
+                views.append(view)
+            if len(views) > max_claims:
+                raise WorldStructureError("prefetch exceeds max_claims; narrow the selection")
+            if not result.truncated:
+                if result.cursor is not None:
+                    raise WorldStructureError("complete prefetch page unexpectedly has a cursor")
+                break
+            if not result.claims or result.cursor is None or result.cursor == cursor:
+                raise WorldStructureError("prefetch pagination does not advance")
+            cursor = result.cursor
+        # Commit only complete selections, including genuinely empty attributes.
+        for address, path in zip(addresses, paths, strict=True):
+            selected = tuple(view for view in views if view.subject == path)
+            for name in names or (None,):
+                self._claim_cache[(address, name)] = tuple(
+                    view for view in selected if name is None or view.predicate == name
+                )
+            if not names:
+                for name in {view.predicate for view in selected}:
+                    self._claim_cache[(address, name)] = tuple(
+                        view for view in selected if view.predicate == name
+                    )
+        for view in views:
+            self._view_cache[view.claim_id] = view
+        return tuple(views)
+
     def _claims_about(
         self,
         subject_address: str,
@@ -790,6 +884,12 @@ class World:
     ) -> tuple[ClaimView, ...]:
         self._assert_current()
         cached = self._claim_cache.get((subject_address, predicate))
+        if cached is None and (subject_address, None) in self._claim_cache:
+            cached = tuple(
+                view
+                for view in self._claim_cache[(subject_address, None)]
+                if predicate is None or view.predicate == predicate
+            )
         if cached is not None:
             return cached
         playbill = self._playbill

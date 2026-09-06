@@ -35,6 +35,12 @@ from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequestV1,
     ClaimAttestationAppendResultV1,
 )
+from cruxible_client.contracts.claim_reads import (
+    ClaimBackingsRequestV1,
+    ClaimBackingsResultV1,
+    ClaimReadBatchRequestV1,
+    ClaimReadBatchResultV1,
+)
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.declared_blocks import ProjectionBlockStampV1
@@ -171,6 +177,10 @@ from cruxible_core.service.playbill_audit import (
     validate_playbill_audit_request,
 )
 from cruxible_core.service.playbill_claim_attestations import service_append_claim_attestation
+from cruxible_core.service.playbill_claim_reads import (
+    service_read_claim_backings,
+    service_read_claim_batch,
+)
 from cruxible_core.service.playbill_claims import (
     service_expand_playbill_semantic,
     service_explain_playbill_claim,
@@ -1400,6 +1410,27 @@ def playbill_list_claims(
         include_retired=include_retired,
     )
     return contracts.PlaybillClaimList.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_read_claim_batch(
+    instance_id: str, *, request: ClaimReadBatchRequestV1
+) -> ClaimReadBatchResultV1:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_read_claim_batch(get_playbill_manager().get(instance_id), request=request)
+    _record_consumed_paths(
+        instance_id,
+        operation="playbill.claim.get",
+        coordinate=AcceptedCoordinate.model_validate(result.coordinate.model_dump()),
+        paths=tuple(str(view.envelope["path"]) for view in result.claims),
+    )
+    return result
+
+
+def playbill_read_claim_backings(
+    instance_id: str, *, request: ClaimBackingsRequestV1
+) -> ClaimBackingsResultV1:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    return service_read_claim_backings(get_playbill_manager().get(instance_id), request=request)
 
 
 def playbill_get_claim(

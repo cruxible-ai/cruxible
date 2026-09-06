@@ -12,6 +12,12 @@ from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequestV1,
     ClaimAttestationAppendResultV1,
 )
+from cruxible_client.contracts.claim_reads import (
+    ClaimBackingsRequestV1,
+    ClaimBackingsResultV1,
+    ClaimReadBatchRequestV1,
+    ClaimReadBatchResultV1,
+)
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -937,6 +943,20 @@ async def list_claims(
         subject=(None if subject_path is None else SemanticAddress.whole_artifact(subject_path)),
         predicate=predicate,
         include_retired=include_retired,
+    )
+
+
+@router.post("/{instance_id}/playbill/claims/read-batch", response_model=ClaimReadBatchResultV1)
+def read_claim_batch(instance_id: str, req: ClaimReadBatchRequestV1) -> ClaimReadBatchResultV1:
+    return playbill_api.playbill_read_claim_batch(
+        resolve_server_instance_id(instance_id), request=req
+    )
+
+
+@router.post("/{instance_id}/playbill/claims/backings", response_model=ClaimBackingsResultV1)
+def read_claim_backings(instance_id: str, req: ClaimBackingsRequestV1) -> ClaimBackingsResultV1:
+    return playbill_api.playbill_read_claim_backings(
+        resolve_server_instance_id(instance_id), request=req
     )
 
 

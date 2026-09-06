@@ -24,6 +24,12 @@ from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequestV1,
     ClaimAttestationAppendResultV1,
 )
+from cruxible_client.contracts.claim_reads import (
+    ClaimBackingsRequestV1,
+    ClaimBackingsResultV1,
+    ClaimReadBatchRequestV1,
+    ClaimReadBatchResultV1,
+)
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.errors import (
     PlaybillDeprecatedWriteError,
@@ -1129,6 +1135,37 @@ class CruxibleClient:
             params=params,
         )
         return self._parse_model(response, contracts.PlaybillClaimList)
+
+    def read_playbill_claim_batch(
+        self,
+        instance_id: str,
+        *,
+        request: ClaimReadBatchRequestV1,
+    ) -> ClaimReadBatchResultV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/claims/read-batch",
+            json=request.model_dump(mode="json"),
+        )
+        return self._parse_model(response, ClaimReadBatchResultV1)
+
+    def get_playbill_claim_backings(
+        self,
+        instance_id: str,
+        *,
+        claim_ids: Sequence[str],
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any],
+    ) -> ClaimBackingsResultV1:
+        request = ClaimBackingsRequestV1.model_validate(
+            {
+                "at": self._playbill_coordinate_body(at),
+                "claim_ids": tuple(claim_ids),
+            }
+        )
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/claims/backings",
+            json=request.model_dump(mode="json"),
+        )
+        return self._parse_model(response, ClaimBackingsResultV1)
 
     def get_playbill_claim(
         self,

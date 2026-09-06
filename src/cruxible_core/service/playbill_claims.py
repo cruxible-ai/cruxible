@@ -451,17 +451,38 @@ def service_get_playbill_claim(
     public = _public_claim(claim)
     if public.envelope.get("path") != path:
         raise ProposalIntegrityError("Claim projection path differs from normalized identity")
-    evaluated_at = evaluation_time or _accepted_generation_time(instance, coordinate)
+    return materialize_playbill_claim_view(
+        instance,
+        public=public,
+        coordinate=coordinate,
+        evaluation_time=evaluation_time or _accepted_generation_time(instance, coordinate),
+    )
+
+
+def materialize_playbill_claim_view(
+    instance: PlaybillInstance,
+    *,
+    public: PlaybillClaimView,
+    coordinate: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    admission_tree: dict[str, bytes] | None = None,
+) -> PlaybillClaimViewV2:
+    """Shared single/batch admission semantics; binding and selection happen upstream."""
+    path = str(public.envelope["path"])
     parsed = _claim_from_view(public)
     return PlaybillClaimViewV2(
         coordinate=public.coordinate,
         envelope=public.envelope,
         facts=public.facts,
-        admission_evaluation_time=evaluated_at,
+        admission_evaluation_time=evaluation_time,
         admission_accounts=_claim_admission_accounts(
             instance,
             claim=parsed,
-            tree=_claim_admission_tree(instance, claim=parsed, coordinate=coordinate),
+            tree=(
+                admission_tree
+                if admission_tree is not None
+                else _claim_admission_tree(instance, claim=parsed, coordinate=coordinate)
+            ),
             law=_claim_law_evidence(instance, path=path, at=coordinate),
         ),
         statement=claim_statement_card(parsed),

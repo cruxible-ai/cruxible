@@ -45,12 +45,14 @@ _WORLD_MEMBERS = frozenset(
         "kind",
         "kinds",
         "predicates",
+        "prefetch",
         "stub",
         "unstructured_predicates",
     }
 )
 
 _STUB_IMPORTS = (
+    "from collections.abc import Sequence",
     "from collections.abc import Iterator",
     "",
     "from cruxible_client.authoring.sdk import ClaimView, SubjectDraft",
@@ -326,6 +328,11 @@ def render_world_stub(world: World) -> str:
     body.declare("def claim_type(self, predicate: str) -> WorldClaimType: ...")
     body.declare("def kind(self, subject_kind: str) -> KindNamespace: ...")
     body.declare("def stub(self) -> str: ...")
+    body.declare(
+        "def prefetch(self, *, subjects: Sequence[str | SubjectRef], "
+        "predicates: Sequence[str | ClaimTypeRef] = (), page_size: int = 128, "
+        "max_claims: int = 4096) -> tuple[ClaimView, ...]: ..."
+    )
     _children(world._root, body, reserved=_WORLD_MEMBERS)
     lines.extend(body.rendered())
     lines.append("")
