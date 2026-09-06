@@ -2723,7 +2723,14 @@ def _ledger_mirror_items(
     elif state is None or state.url != url:
         lag = {"message": "nothing has been published to this remote yet"}
     else:
-        lag = {"attempted_at": state.attempted_at, "message": state.detail}
+        lag = {
+            "attempted_at": state.attempted_at,
+            "status": state.status,
+            "requested_sequence": state.requested_sequence,
+            "published_sequence": state.published_sequence,
+            "message": state.detail or f"ledger publication is {state.status}",
+            "publication_command": "cruxible playbill ledger publish --json",
+        }
     return (
         _item(
             severity="warning",
@@ -2733,7 +2740,11 @@ def _ledger_mirror_items(
             repair=PlaybillNextRepairV1(
                 operation="hand_edit",
                 target=url,
-                required_change="restore_the_ledger_mirror_remote_or_its_credential",
+                required_change=(
+                    "wait_for_or_request_ledger_publication"
+                    if state is not None and state.status in {"pending", "publishing"}
+                    else "restore_the_ledger_mirror_remote_or_its_credential"
+                ),
             ),
         ),
     )
