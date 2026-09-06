@@ -43,6 +43,8 @@ class ProcedureRunIndexEntryV1(BaseModel):
     effect_result_count: int = 0
     provider_invocation_started_count: int = 0
     provider_invocation_completed_count: int = 0
+    terminal_egress_prepared_count: int = 0
+    terminal_egress_resolved_count: int = 0
 
     @field_validator("admission_binding_digest", "final_payload_digest")
     @classmethod
@@ -64,6 +66,8 @@ CREATE TABLE IF NOT EXISTS procedure_run_index (
     effect_result_count INTEGER NOT NULL DEFAULT 0
     , provider_invocation_started_count INTEGER NOT NULL DEFAULT 0
     , provider_invocation_completed_count INTEGER NOT NULL DEFAULT 0
+    , terminal_egress_prepared_count INTEGER NOT NULL DEFAULT 0
+    , terminal_egress_resolved_count INTEGER NOT NULL DEFAULT 0
 )
 """
 
@@ -96,6 +100,8 @@ class ProcedureRunIndex:
         for column in (
             "provider_invocation_started_count",
             "provider_invocation_completed_count",
+            "terminal_egress_prepared_count",
+            "terminal_egress_resolved_count",
         ):
             if column not in columns:
                 self._conn.execute(
@@ -125,6 +131,8 @@ class ProcedureRunIndex:
             effect_result_count=int(row["effect_result_count"]),
             provider_invocation_started_count=int(row["provider_invocation_started_count"]),
             provider_invocation_completed_count=int(row["provider_invocation_completed_count"]),
+            terminal_egress_prepared_count=int(row["terminal_egress_prepared_count"]),
+            terminal_egress_resolved_count=int(row["terminal_egress_resolved_count"]),
         )
 
     def apply_record(
@@ -226,6 +234,29 @@ class ProcedureRunIndex:
                 "provider_invocation_completed_count + 1 WHERE run_id = ?",
                 (record.run_id,),
             )
+        elif record.event_kind == "terminal_egress":
+            verdict = payload.get("verdict") if isinstance(payload, dict) else None
+            if verdict == "prepared":
+                self._conn.execute(
+                    "UPDATE procedure_run_index SET terminal_egress_prepared_count = "
+                    "terminal_egress_prepared_count + 1 WHERE run_id = ?",
+                    (record.run_id,),
+                )
+            elif verdict in {"delivered", "refused", "failed"}:
+                current = self.get(record.run_id)
+                if (
+                    current is not None
+                    and current.terminal_egress_resolved_count
+                    < current.terminal_egress_prepared_count
+                ):
+                    # A resolving record closes the prepared intent before it. A
+                    # non-effectful terminal never prepares, so its delivered
+                    # record closes nothing and counts nothing.
+                    self._conn.execute(
+                        "UPDATE procedure_run_index SET terminal_egress_resolved_count = "
+                        "terminal_egress_resolved_count + 1 WHERE run_id = ?",
+                        (record.run_id,),
+                    )
         elif record.event_kind == "attempt_finalized":
             if not isinstance(payload, dict) or payload.get("status") not in {
                 "succeeded",
@@ -243,6 +274,10 @@ class ProcedureRunIndex:
             ):
                 raise PlaybillExecutionError(
                     "provider_completion_not_durable: run has an unmatched invocation start"
+                )
+            if current.terminal_egress_prepared_count != current.terminal_egress_resolved_count:
+                raise PlaybillExecutionError(
+                    "terminal_egress_not_durable: run has an unresolved prepared terminal egress"
                 )
             self._conn.execute(
                 "UPDATE procedure_run_index SET status = ?, final_payload_digest = ? "

@@ -159,9 +159,14 @@ from cruxible_core.playbill.procedures.acquisition import (
 )
 from cruxible_core.playbill.procedures.egress import (
     EffectiveRungV1,
+    PreparedTerminalEgressV1,
+    TerminalAuthorityRefusal,
     TerminalEgressError,
     TerminalEgressItemV1,
+    TerminalEgressPreparerProtocol,
+    TerminalEgressReceiptV1,
     TerminalEgressRequestV1,
+    TerminalEgressRequestV2,
     TerminalEgressSinkProtocol,
     build_terminal_egress_request_v2,
     effect_dispatch_refusal,
@@ -190,6 +195,7 @@ from cruxible_core.playbill.procedures.terminal_dependencies import (
     DependencyEvidenceFactsV1,
     DependencyToken,
     TerminalChildReceiptV1,
+    TerminalItemDependencyManifestV1,
     accepted_state_token,
     admitted_capture_token,
     build_terminal_item_manifest,
@@ -2224,10 +2230,16 @@ class ProcedureExecutor:
                 != indexed.provider_invocation_completed_count
                 else ""
             )
+            terminal_state = (
+                " with an unresolved prepared terminal egress"
+                if indexed.terminal_egress_prepared_count != indexed.terminal_egress_resolved_count
+                else ""
+            )
             raise PlaybillExecutionError(
                 "run_recovery_required: admitted run has incomplete exhaust"
                 + effect_state
                 + provider_state
+                + terminal_state
             )
         self._require_current(admission)
         if isinstance(prepared, PreparedProcedureRunV5):
@@ -3703,9 +3715,15 @@ class ProcedureExecutor:
         The closure is bound before the cap is applied on purpose: a run that a
         term refused still owes an auditable account of exactly what it would
         have emitted and which term stopped it.
+
+        An effectful terminal is journaled twice around its sink: a `prepared`
+        record carrying the exact request before the sink is called, and a
+        resolving record (`delivered`, `refused`, or `failed`) after. The pair
+        is what lets a crash between the two be recovered against the same
+        operation instead of re-run as a second one.
         """
 
-        children, values = self._record_terminal_items(
+        children, values, manifests = self._record_terminal_items(
             node,
             admission=admission,
             state=state,
@@ -3753,35 +3771,82 @@ class ProcedureExecutor:
                 f"{rung.term(rung.limiting_term).reason}",
                 node_id=node.node_id,
             )
-        request = self._terminal_egress_request(
-            node,
-            admission=admission,
-            rung=rung,
-            children=children,
-            values=values,
-        )
         try:
-            receipt = self.egress_sink.deliver_terminal_egress(request=request)
-        except TerminalEgressError as exc:
-            from cruxible_core.playbill.procedures.terminal_services import (
-                ProcedureSettlementRefused,
+            request, prepared = self._terminal_egress_request(
+                node,
+                admission=admission,
+                rung=rung,
+                children=children,
+                values=values,
+                manifests=manifests,
             )
-
-            if isinstance(exc, ProcedureSettlementRefused):
-                raise _RunRefusal(
-                    exc.code,
-                    str(exc),
-                    node_id=node.node_id,
-                    details={
-                        "settlement_refusal": True,
-                        "retryable": exc.retryable,
-                        "detail": exc.details,
+        except TerminalEgressError as exc:
+            refusal = self._terminal_refusal(exc, node_id=node.node_id)
+            self._append_event(
+                admission,
+                records,
+                "terminal_egress",
+                {**payload, "verdict": "refused", "refusal_code": refusal.refusal.code},
+            )
+            raise refusal from exc
+        effectful = isinstance(request, TerminalEgressRequestV2) and request.kind in {
+            "propose_change_set",
+            "mandate_settlement",
+        }
+        if isinstance(request, TerminalEgressRequestV2) and effectful:
+            payload = {
+                **payload,
+                "operation_key": request.operation_key,
+                "target_paths": list(request.target_paths),
+                "procedure_mandate_digest": request.procedure_mandate_digest,
+            }
+            self._append_event(
+                admission,
+                records,
+                "terminal_egress",
+                {
+                    **payload,
+                    "verdict": "prepared",
+                    "request": request.model_dump(mode="json"),
+                    "prepared": None if prepared is None else prepared.model_dump(mode="json"),
+                    "evidence": {
+                        item_key: manifest.produced_capture_digests[0]
+                        for item_key, manifest in manifests.items()
+                        if len(manifest.produced_capture_digests) == 1
                     },
-                ) from exc
+                },
+            )
+        try:
+            receipt = self._deliver_terminal_egress(request, admission=admission)
+        except TerminalEgressError as exc:
+            refusal = self._terminal_refusal(exc, node_id=node.node_id)
+            if effectful:
+                self._append_event(
+                    admission,
+                    records,
+                    "terminal_egress",
+                    {**payload, "verdict": "refused", "refusal_code": refusal.refusal.code},
+                )
+            raise refusal from exc
+        except BaseException:
+            if effectful:
+                self._append_event(
+                    admission,
+                    records,
+                    "terminal_egress",
+                    {**payload, "verdict": "failed", "refusal_code": "unexpected_exception"},
+                )
             raise
         try:
             verify_terminal_egress_receipt(request, receipt)
         except TerminalEgressError as exc:
+            if effectful:
+                self._append_event(
+                    admission,
+                    records,
+                    "terminal_egress",
+                    {**payload, "verdict": "refused", "refusal_code": "terminal_egress_unverified"},
+                )
             raise _RunRefusal(
                 "terminal_egress_unverified",
                 str(exc),
@@ -3799,6 +3864,63 @@ class ProcedureExecutor:
             },
         )
 
+    def _deliver_terminal_egress(
+        self,
+        request: TerminalEgressRequestV1,
+        *,
+        admission: ProcedureRunAdmissionV1,
+    ) -> TerminalEgressReceiptV1:
+        """Hand the request to the sink; a preparer sink also receives the admission."""
+
+        assert self.egress_sink is not None
+        if isinstance(self.egress_sink, TerminalEgressPreparerProtocol):
+            return self.egress_sink.deliver_terminal_egress(  # type: ignore[call-arg]
+                request=request,
+                admission=admission,
+            )
+        return self.egress_sink.deliver_terminal_egress(request=request)
+
+    @staticmethod
+    def _terminal_refusal(exc: TerminalEgressError, *, node_id: str) -> _RunRefusal:
+        """Project a typed door refusal as the run's own node refusal, code intact."""
+
+        from cruxible_core.playbill.procedures.terminal_services import (
+            ProcedureSettlementRefused,
+            ProposalDeliveryRefused,
+        )
+
+        if isinstance(exc, ProcedureSettlementRefused):
+            return _RunRefusal(
+                exc.code,
+                str(exc),
+                node_id=node_id,
+                details={
+                    "settlement_refusal": True,
+                    "retryable": exc.retryable,
+                    "detail": exc.details,
+                },
+            )
+        if isinstance(exc, ProposalDeliveryRefused):
+            return _RunRefusal(
+                cast(ProcedureNodeRefusalCodeV1, exc.code),
+                str(exc),
+                node_id=node_id,
+                details=exc.details,
+            )
+        if isinstance(exc, TerminalAuthorityRefusal):
+            return _RunRefusal(
+                cast(ProcedureNodeRefusalCodeV1, exc.code),
+                str(exc),
+                node_id=node_id,
+                details={
+                    "codes": list(exc.codes),
+                    "repair_kind": exc.repair_kind,
+                    "repair": exc.repair.model_dump(mode="json"),
+                    "target_namespace": list(exc.target_namespace),
+                },
+            )
+        return _RunRefusal("terminal_egress_unverified", str(exc), node_id=node_id)
+
     def _terminal_egress_request(
         self,
         node: CaptureEgressNodeV3
@@ -3810,8 +3932,16 @@ class ProcedureExecutor:
         rung: EffectiveRungV1,
         children: tuple[TerminalChildReceiptV1, ...],
         values: tuple[CanonicalValue, ...],
-    ) -> TerminalEgressRequestV1:
-        """Hand the sink the exact pins this terminal kind's law traverses."""
+        manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
+    ) -> tuple[TerminalEgressRequestV1, PreparedTerminalEgressV1 | None]:
+        """Hand the sink the exact pins this terminal kind's law traverses.
+
+        A `propose_change_set` on a v5 admission is prepared first: the sink
+        lowers the items through shared authoring and reports the paths that
+        lowering actually changed and the exact live mandate it bound, and the
+        v2 request is built from THOSE, so the mandate law sees what will be
+        proposed rather than what the template declared.
+        """
 
         bound_pin: ArtifactPin | None = None
         mandate_pin: ArtifactPin | None = None
@@ -3859,14 +3989,37 @@ class ProcedureExecutor:
             prepared_at=self.clock.now(),
         )
         if isinstance(admission, ProcedureRunAdmissionV5) and isinstance(node, CaptureEgressNodeV3):
-            return build_terminal_egress_request_v2(
-                request,
-                admission=admission,
-                procedure_mandate_digest=None,
-                calibration_reading_digests=(),
-                target_paths=(),
+            return (
+                build_terminal_egress_request_v2(
+                    request,
+                    admission=admission,
+                    procedure_mandate_digest=None,
+                    calibration_reading_digests=(),
+                    target_paths=(),
+                ),
+                None,
             )
-        return request
+        if (
+            isinstance(admission, ProcedureRunAdmissionV5)
+            and isinstance(node, ProposeChangeSetNodeV3)
+            and isinstance(self.egress_sink, TerminalEgressPreparerProtocol)
+        ):
+            prepared = self.egress_sink.prepare_terminal_egress(
+                request=request,
+                admission=admission,
+                manifests=manifests or {},
+            )
+            return (
+                build_terminal_egress_request_v2(
+                    request,
+                    admission=admission,
+                    procedure_mandate_digest=prepared.procedure_mandate_digest,
+                    calibration_reading_digests=(),
+                    target_paths=prepared.target_paths,
+                ),
+                prepared,
+            )
+        return request, None
 
     def _record_terminal_items(
         self,
@@ -3878,7 +4031,11 @@ class ProcedureExecutor:
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
-    ) -> tuple[tuple[TerminalChildReceiptV1, ...], tuple[CanonicalValue, ...]]:
+    ) -> tuple[
+        tuple[TerminalChildReceiptV1, ...],
+        tuple[CanonicalValue, ...],
+        dict[str, TerminalItemDependencyManifestV1],
+    ]:
         """Derive one manifest per terminal item from the exact closure it consumed."""
 
         declared = _terminal_item_templates(node)
@@ -3888,6 +4045,7 @@ class ProcedureExecutor:
             sorted(state.outcomes.values(), key=lambda item: item.input_name.encode("utf-8"))
         )
         receipts: list[TerminalChildReceiptV1] = []
+        manifests: dict[str, TerminalItemDependencyManifestV1] = {}
         for index, value in enumerate(values):
             tokens = base | item_tokens[index]
             item_key = terminal_item_key(
@@ -3931,7 +4089,8 @@ class ProcedureExecutor:
                     sequence=stored.record.sequence,
                 )
             )
-        return tuple(receipts), tuple(values)
+            manifests[item_key] = manifest
+        return tuple(receipts), tuple(values), manifests
 
     @staticmethod
     def _bucket_is_accepted(bucket: str, selectors: tuple[str, ...]) -> bool:

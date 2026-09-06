@@ -339,6 +339,56 @@ class PlaybillInstanceManager:
             )
         return result
 
+    def recover_proposal_egress(self) -> dict[str, dict[str, str]]:
+        """Resolve prepared-but-unresolved proposal terminals before serving requests.
+
+        A run that died between preparing its `propose_change_set` egress and
+        journaling the door's receipt is driven through the same idempotent
+        door again: an existing proposal under the operation's ref is
+        recovered, an absent one is submitted once, and the attempt is
+        finalized. Nothing here activates a proposal.
+        """
+
+        from cruxible_core.service.playbill_proposal_egress import (
+            service_recover_proposal_egress,
+        )
+
+        recovered: dict[str, dict[str, str]] = {}
+        try:
+            records = get_registry().list_instances()
+        except Exception as exc:
+            _log.warning("proposal_egress_recovery_enumeration_failed", reason=str(exc))
+            return recovered
+        for record in records:
+            if record.backend != GOVERNED_DAEMON_BACKEND:
+                continue
+            try:
+                instance = self.get(record.instance_id)
+            except (PlaybillBootstrapError, PlaybillReseedRequired, InstanceNotFoundError) as exc:
+                _log.warning(
+                    "proposal_egress_recovery_instance_skipped",
+                    instance_id=record.instance_id,
+                    reason=str(exc),
+                )
+                continue
+            try:
+                resolved = service_recover_proposal_egress(instance, recorded_at=utc_now())
+            except Exception as exc:
+                _log.warning(
+                    "proposal_egress_recovery_failed",
+                    instance_id=record.instance_id,
+                    reason=str(exc),
+                )
+                continue
+            if resolved:
+                recovered[record.instance_id] = dict(resolved)
+                _log.info(
+                    "proposal_egress_recovered",
+                    instance_id=record.instance_id,
+                    runs=sorted(resolved),
+                )
+        return recovered
+
     def _fold_provider_recovery(
         self,
         operator: ProviderRuntimeOperator,

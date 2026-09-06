@@ -102,6 +102,11 @@ def create_app() -> FastAPI:
             f"Provider runtime startup recovery failed: {exc}",
             retryable=True,
         )
+    # Proposal terminals prepared before a crash are resolved after the Provider
+    # fences, so a recovered run reads as one complete attempt: the receipt of
+    # the proposal it produced, then its finalization. Recovery logs and
+    # continues per instance; it never keeps the daemon from starting.
+    manager.recover_proposal_egress()
     app = FastAPI(title="cruxible", responses=STANDARD_ERROR_RESPONSES)
     app.middleware("http")(token_auth_middleware)
 
