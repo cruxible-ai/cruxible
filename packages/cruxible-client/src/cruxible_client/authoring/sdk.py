@@ -79,6 +79,7 @@ from cruxible_client.authoring.workspace import (
     activate_with_workspace_refresh,
     observe_playbill_next_workspace,
     observe_playbill_next_workspace_with_coverage,
+    refresh_workspace_floor,
 )
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -1523,6 +1524,35 @@ class Playbill:
             relation=result.relation,
         )
 
+    def accept(self, proposal_id: str) -> api.PlaybillActivationReceipt:
+        """Request durable acceptance without refreshing local reading surfaces.
+
+        The daemon's publication, recovery and workspace-advertisement protocol
+        is unchanged. This call performs no client floor export or block check.
+        The returned accepted_coordinate identifies the result; this connection
+        and existing World snapshots retain their prior read coordinates. Call
+        refresh() explicitly to orient this connection to the current head.
+        """
+
+        return self._client.activate_playbill_proposal(self._instance_id, proposal_id)
+
+    def refresh_workspace(
+        self,
+        *,
+        at: AcceptedCoordinate | api.PlaybillAcceptedCoordinate,
+    ) -> api.PlaybillFloorRefreshResult:
+        """Materialize the configured floor at an explicit accepted coordinate.
+
+        Reports the coordinate written, or a failed/not_configured status.
+        Does not advance this connection's read coordinate or check agent-owned
+        projection blocks; use block.sync() separately for that inspection.
+        """
+
+        coordinate = api.PlaybillAcceptedCoordinate.model_validate(at.model_dump(mode="json"))
+        return refresh_workspace_floor(
+            self._client, self._instance_id, workspace=self._workspace, at=coordinate
+        )
+
     def activate(
         self,
         proposal_id: str,
@@ -1531,10 +1561,10 @@ class Playbill:
     ) -> api.PlaybillWorkspaceActivationResult:
         """Activate one proposal and refresh this workspace's configured floor.
 
-        Activation was the one step of the authoring loop `Playbill` did not
-        carry: callers had to build a second `CruxibleClient` and reach for
-        `activate_with_workspace_refresh` themselves, passing the workspace path
-        they had already given `connect`.
+        Convenience path: accepts, exports the floor at the accepted coordinate,
+        then checks blocks against the server's current head unless no_sync is
+        set. Use accept() and refresh_workspace() to schedule maintenance
+        separately. Neither path advances this connection's read coordinate.
         """
 
         return activate_with_workspace_refresh(

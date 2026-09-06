@@ -1443,6 +1443,39 @@ def observe_playbill_next_workspace_with_coverage(
     return base, resolved_coordinate
 
 
+def refresh_workspace_floor(
+    client: _FloorClient,
+    instance_id: str,
+    *,
+    workspace: str | Path,
+    at: contracts.PlaybillAcceptedCoordinate | None = None,
+) -> contracts.PlaybillFloorRefreshResult:
+    """Refresh only the local floor and report the coordinate actually written.
+
+    A pinned request refuses a mismatched export before touching local files.
+    inspect_workspace_floor reports the installed coordinate independently,
+    including after a failed refresh. No projection prose or declaration changes.
+    """
+
+    try:
+        relative_path = configured_floor_path(workspace)
+        if relative_path is None:
+            return contracts.PlaybillFloorRefreshResult(status="not_configured")
+        export = client.export_playbill_floor(instance_id, at=at)
+        if at is not None and export.coordinate != at:
+            raise PlaybillWorkspaceError("floor export differs from requested coordinate")
+        written = materialize_playbill_floor(workspace, export=export)
+        return contracts.PlaybillFloorRefreshResult(
+            status="refreshed",
+            path=relative_path,
+            destination=written.destination,
+            floor_digest=written.floor_digest,
+            coordinate=export.coordinate,
+        )
+    except Exception as exc:
+        return contracts.PlaybillFloorRefreshResult(status="failed", message=str(exc))
+
+
 def activate_with_workspace_refresh(
     client: _FloorClient,
     instance_id: str,
@@ -1454,24 +1487,12 @@ def activate_with_workspace_refresh(
     """Activate once, refresh the floor, then independently sync local blocks."""
 
     activation = client.activate_playbill_proposal(instance_id, proposal_id)
-    try:
-        relative_path = configured_floor_path(workspace)
-        if relative_path is None:
-            refresh = contracts.PlaybillFloorRefreshResult(status="not_configured")
-        else:
-            export = client.export_playbill_floor(instance_id)
-            written = materialize_playbill_floor(
-                workspace,
-                export=export,
-            )
-            refresh = contracts.PlaybillFloorRefreshResult(
-                status="refreshed",
-                path=relative_path,
-                destination=written.destination,
-                floor_digest=written.floor_digest,
-            )
-    except Exception as exc:  # report activation and refresh truth together
-        refresh = contracts.PlaybillFloorRefreshResult(status="failed", message=str(exc))
+    refresh = refresh_workspace_floor(
+        client,
+        instance_id,
+        workspace=workspace,
+        at=activation.accepted_coordinate,
+    )
     block_sync = None
     if sync and activation.status == "accepted":
         try:
@@ -1528,6 +1549,7 @@ __all__ = [
     "observe_playbill_projection_coverage",
     "materialize_playbill_floor",
     "record_playbill_floor_output",
+    "refresh_workspace_floor",
     "validate_playbill_workspace_config_write",
     "verified_floor_files",
     "write_playbill_workspace_config",

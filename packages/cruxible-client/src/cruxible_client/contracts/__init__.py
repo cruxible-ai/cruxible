@@ -672,6 +672,7 @@ class PlaybillFloorRefreshResult(BaseModel):
     path: str | None = None
     destination: str | None = None
     floor_digest: str | None = None
+    coordinate: PlaybillAcceptedCoordinate | None = None
     message: str | None = None
 
 
