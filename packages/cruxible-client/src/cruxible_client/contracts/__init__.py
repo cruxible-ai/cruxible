@@ -143,14 +143,25 @@ PlaybillNextReason: TypeAlias = Literal[
     "provider_lane_unavailable",
     "procedure_projection_missing",
     "instance_decommissioned",
+    "ledger_mirror_behind",
 ]
 PlaybillHandEditNextReason: TypeAlias = Literal[
     "procedure_projection_missing",
     "provider_lane_unavailable",
     "instance_decommissioned",
+    # The daemon has already retried by construction: it pushes after every
+    # write, so a mirror that is still behind is behind for a reason no verb
+    # can clear -- a remote that moved, a credential that expired, a network
+    # that is down. What repairs it is off this host.
+    "ledger_mirror_behind",
 ]
 PLAYBILL_HAND_EDIT_NEXT_REASONS: frozenset[PlaybillHandEditNextReason] = frozenset(
-    {"procedure_projection_missing", "provider_lane_unavailable", "instance_decommissioned"}
+    {
+        "procedure_projection_missing",
+        "provider_lane_unavailable",
+        "instance_decommissioned",
+        "ledger_mirror_behind",
+    }
 )
 
 ProviderLaneUnavailableCodeV1: TypeAlias = Literal[
@@ -789,6 +800,26 @@ class PlaybillInstanceDecommissionResultV1(BaseModel):
     decommissioned_at: str
     decommissioned_by: str
     coordinate: PlaybillAcceptedCoordinate
+
+
+class PlaybillLedgerMirrorV1(BaseModel):
+    """Where one instance publishes its ledger, and whether that copy is current.
+
+    One model for both doors: `ledger set-mirror` binds a remote and publishes
+    to it at once, and `ledger clone-url` reads back what a reviewer clones. The
+    URL carries no credential -- one that could is refused before it is stored --
+    so this model is safe to print, log and hand to anyone who may read the
+    instance at all.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-ledger-mirror-v1"] = "playbill-ledger-mirror-v1"
+    instance_id: str
+    mirror_url: str
+    status: Literal["current", "behind"]
+    attempted_at: str | None = None
+    detail: str | None = None
 
 
 class PlaybillSubjectIncomingClaimV1(BaseModel):

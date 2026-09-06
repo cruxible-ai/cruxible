@@ -30,6 +30,7 @@ from cruxible_core.playbill.service.review import (
     PlaybillReviewedMember,
     _projection_advisory,
     render_playbill_proposal_review,
+    render_playbill_proposal_review_pointer,
     service_prepare_playbill_approval,
     service_review_playbill_proposal,
 )
@@ -105,6 +106,22 @@ def test_review_and_signing_keep_private_key_outside_wire_contract(tmp_path: Pat
     assert f"Proposal admission tier: {review.candidate.required_tier}" in rendered
     assert "Approve requires: graph_write" in rendered
     assert "Activate requires: graph_write" in rendered
+
+    # `proposal review` prints the ledger coordinates instead: the diff a
+    # reviewer runs, and the two note refs carrying the daemon's own records.
+    pointer = render_playbill_proposal_review_pointer(review)
+    key = review.proposal_id.removeprefix("sha256:")
+    assert f"git diff playbill/accepted...playbill/proposals/{key}" in pointer
+    # The note reads name the branch a reviewer actually holds, not a
+    # placeholder they would have to resolve: the notes are attached to the
+    # projected review commit, which is what the mirror and the workspace carry.
+    assert f"git notes --ref=refs/notes/playbill-eval show playbill/proposals/{key}" in pointer
+    assert f"git notes --ref=refs/notes/playbill-approval show playbill/proposals/{key}" in pointer
+    assert "git fetch origin '+refs/notes/*:refs/notes/*'" in pointer
+    assert "--json" in pointer
+    # Nothing of the second rendering survives in it.
+    assert "Semantic delta" not in pointer
+    assert "+# Playbill" not in pointer
 
     advisory_rendered = render_playbill_proposal_review(
         review.model_copy(

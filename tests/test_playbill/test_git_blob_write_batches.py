@@ -190,6 +190,7 @@ def test_admitted_and_evaluated_commits_extend_proposal_ancestry(ledger, tmp_pat
         base_oid=base,
         target_ref=ref,
         actor_id="owner",
+        message="Add the authored proposal and its evaluated projection.",
         timestamp="2026-09-05T12:00:00.000000Z",
         expected_ref_oid=None,
     )
@@ -199,6 +200,7 @@ def test_admitted_and_evaluated_commits_extend_proposal_ancestry(ledger, tmp_pat
         base_oid=admitted,
         target_ref=ref,
         actor_id="owner",
+        message="Add the authored proposal and its evaluated projection.",
         timestamp="2026-09-05T12:00:00.000000Z",
         expected_ref_oid=admitted,
     )

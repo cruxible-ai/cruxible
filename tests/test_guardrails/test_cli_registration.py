@@ -95,7 +95,8 @@ def test_every_command_registered_on_a_group_is_in_the_lazy_cli_map() -> None:
     group_claims, _ = _walk_lazy_map(CLI_COMMANDS)
     defined = _defined_click_objects()
     groups = [(obj, origin) for obj, origin in defined.values() if isinstance(obj, click.Group)]
-    assert len(groups) == 29, f"expected 29 Playbill/host groups, found {len(groups)}"
+    # 30, up from 29: `playbill ledger` carries the mirror verbs.
+    assert len(groups) == 30, f"expected 30 Playbill/host groups, found {len(groups)}"
 
     problems: list[str] = []
     for group, origin in groups:
@@ -118,11 +119,12 @@ def test_every_command_registered_on_a_group_is_in_the_lazy_cli_map() -> None:
 def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     """A command defined but never registered is dead or invisible, never fine."""
     group_claims, leaf_claims = _walk_lazy_map(CLI_COMMANDS)
-    # 107, down from 109: `authoring prepare-publication` and `authoring
+    # 109. It was 107 after `authoring prepare-publication` and `authoring
     # confirm-insertion` went with the publication road that minted the
-    # expectation they acted on.
-    assert len(leaf_claims) == 107, (
-        f"expected 107 Playbill/host leaf commands, found {len(leaf_claims)}"
+    # expectation they acted on; `ledger set-mirror` and `ledger clone-url`
+    # bring it back to the same number by a different road.
+    assert len(leaf_claims) == 109, (
+        f"expected 109 Playbill/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)

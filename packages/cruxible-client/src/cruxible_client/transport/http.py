@@ -386,6 +386,7 @@ class CruxibleClient:
         workspace_root: str | None = None,
         seed: bool = True,
         git_object_format: Literal["sha1", "sha256"] | None = None,
+        mirror_url: str | None = None,
     ) -> contracts.PlaybillInitResult:
         payload: dict[str, Any] = {
             "principals": [dict(item) for item in principals],
@@ -397,6 +398,8 @@ class CruxibleClient:
             payload["workspace_root"] = workspace_root
         if git_object_format is not None:
             payload["git_object_format"] = git_object_format
+        if mirror_url is not None:
+            payload["mirror_url"] = mirror_url
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/init",
             json=payload,
@@ -422,6 +425,19 @@ class CruxibleClient:
             json={"reason": reason},
         )
         return self._parse_model(response, contracts.PlaybillInstanceDecommissionResultV1)
+
+    def set_playbill_ledger_mirror(
+        self, instance_id: str, *, url: str
+    ) -> contracts.PlaybillLedgerMirrorV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/ledger/mirror",
+            json={"url": url},
+        )
+        return self._parse_model(response, contracts.PlaybillLedgerMirrorV1)
+
+    def get_playbill_ledger_mirror(self, instance_id: str) -> contracts.PlaybillLedgerMirrorV1:
+        response = self._client.get(f"/api/v1/{instance_id}/playbill/ledger/mirror")
+        return self._parse_model(response, contracts.PlaybillLedgerMirrorV1)
 
     def seed_playbill_provider(self, instance_id: str) -> contracts.PlaybillProviderSeedResultV1:
         response = self._client.post(

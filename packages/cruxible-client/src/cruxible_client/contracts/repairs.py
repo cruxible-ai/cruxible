@@ -48,6 +48,7 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "procedure_runtime_policy_absent": "accept_a_procedure_runtime_policy",
     "provider_lane_unavailable": "restore_the_daemon_provider_lane_then_retry",
     "procedure_projection_missing": "add_procedure_projection_catalog_entries",
+    "ledger_mirror_behind": "restore_the_ledger_mirror_remote_or_its_credential",
     "instance_decommissioned": (
         "allocate_a_new_instance_with_playbill_host_create_or_archive_this_directory_yourself"
     ),

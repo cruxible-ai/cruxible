@@ -54,7 +54,12 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
 from cruxible_client.contracts.procedures.models import ProcedureHardCapsV3
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.proposal_models import AuthenticatedActor, ProposalReceiveLimits
+from cruxible_client.contracts.proposal_models import (
+    CHANGE_SET_RATIONALE_MAX_LENGTH,
+    AuthenticatedActor,
+    ProposalReceiveLimits,
+    validate_change_set_rationale,
+)
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.repairs import ServedRepairV1, served_repair_for_refusal
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -88,7 +93,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:5dda66b2d163f1b2f3067b6a8e49c27c140bfd7b62fb3a27942ce3c2007db07c"
+    "sha256:bfbf9e2cc19fe9e0fee8a87e9fbd74294e1fe59324f05bf78eaca6545c654a6a"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -1221,6 +1226,22 @@ class ChangeSetAuthoringPayloadV1(_StrictAuthoringModel):
     # `pb.changes(...)` path refuse exactly the smallest set an author writes
     # first, and pushed them back onto a second, singular surface to say it.
     members: tuple[AuthoringChangeSetMemberV1, ...] = Field(min_length=1)
+    # Why this set exists, in the author's own words. It was already an argument
+    # to `pb.changes(rationale=...)` and it was already hashed into the program
+    # digest -- which meant the daemon could prove the author wrote SOMETHING and
+    # could never read it, so the candidate commit fell back to a mechanical
+    # subject. Absent from the canonical bytes when unset, so a payload written
+    # before this field digests exactly as it did.
+    rationale: str | None = Field(
+        default=None,
+        max_length=CHANGE_SET_RATIONALE_MAX_LENGTH,
+        exclude_if=lambda value: value is None,
+    )
+
+    @field_validator("rationale")
+    @classmethod
+    def _rationale(cls, value: str | None) -> str | None:
+        return validate_change_set_rationale(value)
 
     @field_validator("members")
     @classmethod
@@ -1253,8 +1274,26 @@ AuthoringPayloadV1 = Annotated[
 
 
 def authoring_payload_digest(payload: AuthoringPayloadV1) -> str:
+    """Digest what the payload IS, which is never how its author described it.
+
+    A CHANGE SET's rationale is dropped beside `tag`. A set's identity is a
+    property of its members alone -- that is the law the three-surface parity
+    test pins, and it is what lets a CLI file, an MCP dict and an SDK draft
+    naming the same members be recognized as one authoring. A digest that moved
+    when the prose moved would make describing a set a different set. The prose
+    is still covered: `authoring_create_fingerprint` takes the whole payload, so
+    a rationale edited after the fact does not reproduce its own intent.
+
+    A CLAIM's rationale is NOT dropped, and the two are not the same field
+    wearing one name. A Claim's rationale is part of what the author asserted;
+    it travels into the capture and is evidence. Stripping it here would
+    silently restate the identity of every Claim payload ever digested.
+    """
+
     preimage = payload.model_dump(mode="json")
     preimage.pop("tag")
+    if isinstance(payload, ChangeSetAuthoringPayloadV1):
+        preimage.pop("rationale", None)
     return typed_digest(
         Sha256Value,
         AUTHORING_PAYLOAD_DIGEST_DOMAIN,
@@ -2015,6 +2054,20 @@ class AuthoringIntentV1(_StrictAuthoringModel):
         payload_tag = payload_dump.pop("tag")
         normalized_payload = normalize_canonical(payload_dump)
         assert isinstance(normalized_payload, dict)
+        # One snapshot, two preimages that differ for exactly one payload: a
+        # change set's rationale is dropped beside `tag`, exactly as
+        # `authoring_payload_digest` drops it, because a set's identity is its
+        # members. Withheld here rather than re-derived, and put straight back
+        # into the fingerprint preimage below, where
+        # `authoring_create_fingerprint` still digests the whole payload. Unset,
+        # the field is absent from the dump, so nothing is withheld and nothing
+        # is restored -- which is what the standalone pop's default says. A
+        # Claim's rationale stays in both; the law is at
+        # `authoring_payload_digest`.
+        withheld: dict[str, CanonicalValue] = {}
+        if isinstance(self.payload, ChangeSetAuthoringPayloadV1):
+            if "rationale" in normalized_payload:
+                withheld["rationale"] = normalized_payload.pop("rationale")
         if self.payload_digest != _normalized_authoring_digest(
             AUTHORING_PAYLOAD_DIGEST_DOMAIN, normalized_payload
         ):
@@ -2025,6 +2078,7 @@ class AuthoringIntentV1(_StrictAuthoringModel):
         tagged_payload = {
             "tag": normalize_canonical(payload_tag, location="$.payload.tag"),
             **normalized_payload,
+            **withheld,
         }
         expected_fingerprint = _normalized_authoring_digest(
             AUTHORING_CREATE_FINGERPRINT_DOMAIN,

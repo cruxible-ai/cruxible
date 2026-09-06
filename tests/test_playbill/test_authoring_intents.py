@@ -9,8 +9,11 @@ import pytest
 
 from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatementV1,
+    ChangeSetAuthoringPayloadV1,
     ClaimAuthoringPayloadV1,
     SelfSourceBodyV1,
+    SubjectAuthoringPayloadV1,
+    authoring_payload_digest,
 )
 from cruxible_client.contracts.claims import LiteralClaimObject
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -18,6 +21,7 @@ from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordina
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from tests.test_playbill._support import initialize_local
+from tests.test_playbill.test_authoring_change_set_intents import _shell
 
 TIMESTAMP = "2026-08-21T12:00:00.000000Z"
 
@@ -157,3 +161,65 @@ def test_resume_is_actor_scoped_and_payload_update_keeps_machine_identity(tmp_pa
     assert updated.intent.semantic_identity == created.intent.semantic_identity
     assert updated.intent.candidate_status.state == "draft"
     assert coordinator.resume(created.intent.intent_id, actor=actor) == updated
+
+
+def _prose_set(rationale: str) -> ChangeSetAuthoringPayloadV1:
+    """One change set whose members never move and whose prose does."""
+
+    return ChangeSetAuthoringPayloadV1(
+        members=(SubjectAuthoringPayloadV1(subject=_shell("wi-42")),),
+        rationale=rationale,
+    )
+
+
+def test_two_rationale_only_replacements_are_two_revisions_and_not_one_replay(
+    tmp_path: Path,
+) -> None:
+    """Rewriting only the prose must not read as a retry of the rewrite before it.
+
+    `replace_payload`'s idempotency key names the create fingerprint rather than
+    the payload digest, because a change set's payload digest drops its
+    rationale and nothing in that preimage is revision-scoped: one key for two
+    different requests would swallow the second for the life of the intent and
+    hand its author a success view carrying the prose it had just replaced.
+    """
+
+    coordinator, actor = _coordinator(tmp_path)
+    first = _prose_set("The first prose.")
+    second = _prose_set("Second prose, deliberately different.")
+    third = _prose_set("Third prose, corrected again.")
+    assert (
+        authoring_payload_digest(first)
+        == authoring_payload_digest(second)
+        == authoring_payload_digest(third)
+    )
+
+    created = coordinator.create(actor=actor, payload=first, canonical_timestamp=TIMESTAMP)
+    intent_id = created.intent.intent_id
+    after_second = coordinator.replace_payload(intent_id, actor=actor, payload=second)
+    after_third = coordinator.replace_payload(intent_id, actor=actor, payload=third)
+
+    assert after_second.intent.intent_revision == 1
+    assert after_second.intent.payload.rationale == "Second prose, deliberately different."
+    assert after_third.intent.intent_revision == 2
+    assert after_third.intent.payload.rationale == "Third prose, corrected again."
+
+    # The read path, not only the view the caller was handed: this is where a
+    # payload shared under a colliding digest used to return the older prose.
+    resumed = coordinator.resume(intent_id, actor=actor)
+    assert resumed.intent.payload.rationale == "Third prose, corrected again."
+    assert [event.intent.payload.rationale for event in coordinator.store.events()] == [
+        "The first prose.",
+        "Second prose, deliberately different.",
+        "Third prose, corrected again.",
+    ]
+
+    # And on disk, independently of any decode-time sharing.
+    events = sorted((coordinator.store.root / intent_id / "events").glob("*.json"))
+    assert len(events) == 3
+    assert b"Third prose, corrected again." in events[-1].read_bytes()
+
+    # A genuine retry of one request is still one operation.
+    retry = coordinator.replace_payload(intent_id, actor=actor, payload=third)
+    assert retry == after_third
+    assert len(sorted((coordinator.store.root / intent_id / "events").glob("*.json"))) == 3

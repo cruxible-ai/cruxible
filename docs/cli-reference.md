@@ -287,6 +287,7 @@ cruxible playbill init --key-dir DIR
   [--workspace DIR] [--replace]
   [--no-seed]
   [--object-format sha1|sha256]
+  [--mirror-url URL]
 ~~~
 
 Generates a client-held ordinary key outside the workspace and bootstraps the
@@ -329,6 +330,13 @@ already initialized keep their pinned format forever. The
 equivalent request field is `git_object_format` on the HTTP/SDK init body and on
 MCP `cruxible_playbill_init`.
 
+`--mirror-url` binds the ledger mirror during bootstrap, validated before any
+state is written and bound before the seed proposal, so the seed's own
+publication carries it. It is optional for the reason `--no-seed` is: an
+instance that publishes nowhere is a complete instance, and `playbill ledger
+set-mirror` binds one later without rebuilding anything. See
+[playbill ledger](#playbill-ledger) for the URL grammar and the credential.
+
 Initialization seeds the compiler-owned `workspace.file` Provider by default and
 refuses when its `seed_materializations` entry is absent, so a host is never
 seeded from an unchecked checkout. `--no-seed` is the explicit opt-out, never a
@@ -367,6 +375,85 @@ Nothing is deleted. Every accepted generation, receipt, and body stays exactly
 where it is, and archiving or erasing the directory afterwards is the operator's
 own step — no verb performs it, and the state cannot be reversed, so `--yes` is
 required.
+
+## playbill ledger
+
+~~~text
+cruxible playbill ledger set-mirror URL
+cruxible playbill ledger clone-url
+~~~
+
+The ledger is Git, so review is Git — but only for a reviewer who can reach the
+ledger, and the daemon's copy is a bare repository under the instance root that
+nobody else can open. A mirror is how the review flow leaves the host. Bind one
+and the daemon pushes to it after every ledger write: proposal submission and
+its evaluation note, an approval note, an activation, a withdrawal.
+
+What travels: `refs/heads/main`, whichever of `refs/notes/playbill-gen`,
+`refs/notes/playbill-eval` and `refs/notes/playbill-approval` exist, one branch
+per OPEN proposal under `refs/heads/proposals/`, and the settled archive under
+`refs/settled/`. The mirror's branch list is therefore the open inventory and
+nothing else. A settled proposal — activated, withdrawn, or stale — loses its
+branch and keeps its commit under `refs/settled/<proposal-digest>`, on the
+mirror and locally, so a link to a settled candidate still resolves.
+
+**The mirror branch is named by the PROPOSAL DIGEST, not by actor and name.**
+Two ref namespaces exist and they are keyed differently on purpose. The
+daemon's own transport ref is `refs/proposals/<actor>/<name>` — an actor writes
+to a ref they own, and resubmitting extends that ref's lineage. The branch a
+reviewer sees, locally as `playbill/proposals/<proposal-digest>` and on the
+mirror as `refs/heads/proposals/<proposal-digest>`, is the projection of ONE
+evaluated candidate, which is what a digest names and what a name does not: the
+same `<actor>/<name>` ref carries a different candidate after every
+resubmission. So `git diff playbill/accepted...playbill/proposals/<proposal-id>`
+takes the digest that `proposal list` and `proposal review` print.
+
+Re-keying that branch to `<actor>/<name>` is a deprecate-then-remove candidate,
+not a rename: `review open` resolves those ref names and the workspace
+advertisement fetches that refspec, so both are shipped surfaces. It would also
+have to answer what a resubmitted proposal's branch means, which the digest
+answers by construction. Nothing schedules it today.
+
+`main` is pushed without force; everything else is forced and pruned. Accepted
+history only extends, so a rejected fast-forward on `main` means the remote
+holds something this ledger does not, and that is reported rather than
+overwritten. The other refs are projections the daemon rebuilds.
+
+A push that fails never refuses the write that preceded it. The ledger on disk
+is the record and the remote is a copy, so a network that is down, a credential
+that expired or a remote that was deleted becomes the `ledger_mirror_behind`
+warning row in `playbill next`, carrying the URL and Git's own reason.
+
+It also never runs longer than 30 seconds. A remote that accepts a connection
+and then stalls would otherwise hold the write's caller for as long as it liked;
+at the deadline the push and its whole transport process group are killed and
+the attempt is recorded as behind like any other failure. Availability is a
+condition too, and the copy may not hold the record hostage.
+
+The URL never carries a credential. `https://user:token@host/...` is refused,
+as is plain `http://`, `ext::` and anything whose host or user begins with a
+dash (`ssh://-oProxyCommand@host/x` puts it where the transport reads its own
+arguments); the four
+accepted shapes are `https://`, `ssh://`, `user@host:path` and an absolute local
+path (or its `file:///` spelling). The daemon reads its own token from
+`CRUXIBLE_PLAYBILL_MIRROR_TOKEN` in its environment and sends it as an HTTP
+Basic `Authorization` header built through Git's environment-config protocol, so
+it appears in no command line, no config file and no error message. SSH and
+local remotes use no token at all: SSH authenticates as the daemon itself.
+
+Create the remote in the ledger's own object format — `git init --bare
+--object-format=sha1` or `sha256`, matching `playbill init --object-format` —
+because Git refuses a push between repositories with different hash algorithms.
+
+`set-mirror` publishes immediately, so a wrong credential or an unreachable host
+is reported at once rather than at the next governed write. It stays bound
+either way: a remote that is temporarily unreachable is not a wrong remote.
+`clone-url` prints the URL a reviewer clones and refuses with the typed
+`playbill.ledger.mirror_unset` when the instance publishes nowhere; the same
+value rides `playbill orient --json` as `orientation.mirror_url`, so an agent
+that has just oriented already has it. The equivalent surfaces are
+`POST`/`GET /{instance}/playbill/ledger/mirror` and the `mirror_url` field on
+the init body.
 
 ## playbill provider
 
@@ -1061,8 +1148,8 @@ cruxible playbill proposal approve PROPOSAL_ID
   --signer-id ID --key FILE [--yes]
 cruxible playbill proposal activate PROPOSAL_ID [--workspace-root DIR]
   [--no-sync]
-cruxible playbill review open PROPOSAL_ID [--workspace-root DIR]
-cruxible playbill review close PROPOSAL_ID [--workspace-root DIR]
+cruxible playbill review open PROPOSAL_ID [--workspace-root DIR]    # deprecated
+cruxible playbill review close PROPOSAL_ID [--workspace-root DIR]   # deprecated
 ~~~
 
 `cruxible playbill whoami` names the credential-derived actor, its effective
@@ -1099,13 +1186,54 @@ After an accepted activation, the client runs block sync last unless
 `--no-sync` is explicit. An unattached workspace retains a typed `skipped`
 `workspace_not_attached` row and exits zero; a sync refusal in an attached
 workspace reports the already-accepted truth, names `cruxible playbill block sync
---all`, and exits nonzero. `review open` refreshes the remote refs and creates a
-detached, gitignored worktree at `.playbill/review/<proposal-digest>/`; `review
-close` removes only a clean review worktree. A `review_workspace_not_attached`
-refusal names the local-socket `playbill host create --workspace` command needed
-when creating a host that supports review worktrees. This provides editor/diff
-access without creating a local branch. No review-ref mirror script is needed:
-standard Git tooling already lists the proposal namespace as remote branches.
+--all`, and exits nonzero.
+
+### Reviewing a proposal
+
+The ledger is Git, so review is Git. The daemon fetches its own refs into the
+attached workspace on every proposal, so a reviewer compares the candidate
+against accepted state with standard tooling and no bespoke rendering:
+
+~~~text
+git diff playbill/accepted...playbill/proposals/<proposal-id>
+~~~
+
+The daemon's records are notes on that same projected commit, fetched into the
+workspace under their own names (`git notes --ref=` prefixes anything that is
+not already under `refs/notes/`, so a note parked elsewhere reads back as "no
+note found"). From a clone of the ledger mirror, fetch them once:
+
+~~~text
+git fetch origin '+refs/notes/*:refs/notes/*'
+git notes --ref=refs/notes/playbill-eval show origin/proposals/<proposal-id>
+~~~
+
+The candidate commit carries the change set's own summary as its message: a
+subject naming what the set does, then one line per member as `<disposition>
+<kind> <address> [qualifier]`. It is prose for a reader; nothing parses it. The
+daemon's records travel beside it as Git notes on that commit:
+`refs/notes/playbill-eval` holds the admission and the evaluation verdict with
+every diagnostic behind a refusal, and `refs/notes/playbill-approval` holds the
+canonical approval list, each entry carrying its signer's own attestation. Both
+are byte-identical projections of the proposal evidence store, which stays the
+source of record: activation refuses to settle a candidate whose note disagrees
+with it.
+
+`proposal review` prints that pointer and those ref names; `--json` remains the
+structured read. `proposal approve` still renders the whole candidate before
+asking for a signature, because that rendering is what the signature covers.
+
+A reviewer without a workspace attachment clones the ledger mirror instead and
+runs the same diff against `origin/main`; see [playbill
+ledger](#playbill-ledger) for what the mirror carries and how to get its URL.
+
+`playbill review open` and `playbill review close`, which materialized a
+detached, gitignored worktree at `.playbill/review/<proposal-digest>/`, are
+DEPRECATED and are removed in 0.6.0; both emit the structured deprecation
+warning naming the diff above. They still work for the deprecation window. A
+`review_workspace_not_attached` refusal from `review open` names the
+local-socket `playbill host create --workspace` command needed when creating a
+host that supports review worktrees.
 
 ## playbill principal
 

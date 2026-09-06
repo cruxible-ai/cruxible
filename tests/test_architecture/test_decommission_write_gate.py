@@ -72,6 +72,12 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
             "PlaybillInstance.decommission",
             "PlaybillInstance.store_document_body",
             "PlaybillInstance.prepare_generation",
+            # Binding a mirror is operational rather than governed, but it
+            # WRITES the descriptor and then publishes, and a decommissioned
+            # instance accepts neither. Publishing itself stays open: it copies
+            # state that is already accepted, which is exactly the observation
+            # plane a dead instance keeps serving.
+            "PlaybillInstance.set_ledger_mirror",
         }
     ),
     "cruxible_core/playbill/authoring/coordinator.py": frozenset(

@@ -119,6 +119,7 @@ def test_hand_edit_next_membership_is_client_owned_and_positive() -> None:
         "instance_decommissioned",
         "procedure_projection_missing",
         "provider_lane_unavailable",
+        "ledger_mirror_behind",
     }
 
 

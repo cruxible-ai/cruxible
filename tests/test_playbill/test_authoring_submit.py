@@ -31,11 +31,14 @@ def test_submit_retry_reuses_candidate_and_status_tracks_acceptance(tmp_path: Pa
         contract=foreign_source_capture_contract("repo.work-items"),
     )
     advertisements = 0
+    # Named rather than counted: the approval door refreshes the workspace lane
+    # too, so an index would silently move this failure onto a different door.
+    failing = False
 
     def advertise() -> PlaybillWorkspaceAdvertisement:
         nonlocal advertisements
         advertisements += 1
-        if advertisements == 3:
+        if failing:
             raise MemoryError("simulated activation advertisement failure")
         return PlaybillWorkspaceAdvertisement(
             status="failed",
@@ -86,6 +89,7 @@ def test_submit_retry_reuses_candidate_and_status_tracks_acceptance(tmp_path: Pa
     assert retry_receipt == receipt
     assert coordinator.status(intent.intent_id, actor=actor).state == "ready_to_activate"
 
+    failing = True
     activated = service_activate_playbill_proposal(
         instance,
         proposal_id=first.status.proposal_id,

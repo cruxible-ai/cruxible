@@ -67,6 +67,7 @@ def test_cli_init_remembers_the_initialized_instance(monkeypatch, tmp_path) -> N
             require_independent_approval: bool,
             seed: bool = True,
             git_object_format: str | None = None,
+            mirror_url: str | None = None,
         ) -> contracts.PlaybillInitResult:
             assert instance_id == "inst_cli_init"
             assert principals[0]["principal_id"] == "operator"
@@ -130,6 +131,7 @@ def test_cli_init_writes_an_explicit_remote_workspace_config(monkeypatch, tmp_pa
             workspace_root: str | None = None,
             seed: bool = True,
             git_object_format: str | None = None,
+            mirror_url: str | None = None,
         ) -> contracts.PlaybillInitResult:
             assert workspace_root is None
             return contracts.PlaybillInitResult(

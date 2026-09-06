@@ -614,3 +614,61 @@ def test_advertisement_prunes_pre_df3_remote_refs_without_touching_local_main(
     assert "refs/remotes/playbill/HEAD" not in remaining
     assert "refs/remotes/playbill/main" not in remaining
     assert "refs/remotes/playbill/proposals/owner/example" not in remaining
+
+
+def test_advertisement_fetches_the_daemons_note_refs_for_the_reviewer(
+    tmp_path: Path,
+) -> None:
+    """A note a reviewer is told to read has to reach the workspace by name.
+
+    Under `refs/notes/` and no deeper: `git notes --ref=` prefixes anything that
+    does not already begin with `refs/notes/`, so a note parked inside
+    `refs/remotes/playbill/` reads back as "no note found".
+    """
+
+    workspace, ledger = _repositories(tmp_path, "sha1")
+    head = _git(ledger, "rev-parse", f"refs/heads/proposals/{PROPOSAL_KEY}")
+    _git(ledger, "notes", "--ref=refs/notes/playbill-eval", "add", "-m", "EVALUATION", head)
+
+    result = advertise_workspace_refs(
+        workspace_root=workspace,
+        ledger_path=ledger,
+        ledger_object_format="sha1",
+    )
+
+    assert result.status == "updated"
+    assert _git(workspace, "notes", "--ref=refs/notes/playbill-eval", "show", head) == "EVALUATION"
+
+
+def test_advertisement_succeeds_on_a_ledger_that_carries_no_notes_yet(
+    tmp_path: Path,
+) -> None:
+    """Git refuses a fetch that names one absent ref, and a fresh ledger has none."""
+
+    workspace, ledger = _repositories(tmp_path, "sha1")
+    assert _git(ledger, "for-each-ref", "--format=%(refname)", "refs/notes") == ""
+
+    result = advertise_workspace_refs(
+        workspace_root=workspace,
+        ledger_path=ledger,
+        ledger_object_format="sha1",
+    )
+
+    assert result.status == "updated"
+
+
+def test_advertisement_never_prunes_the_authors_own_notes(tmp_path: Path) -> None:
+    """The daemon fetches three names; the author's `refs/notes/` is not its business."""
+
+    workspace, ledger = _repositories(tmp_path, "sha1")
+    head = _git(workspace, "rev-parse", "HEAD")
+    _git(workspace, "notes", "--ref=refs/notes/commits", "add", "-m", "mine", head)
+    _git(ledger, "notes", "--ref=refs/notes/playbill-eval", "add", "-m", "EVALUATION", head)
+
+    advertise_workspace_refs(
+        workspace_root=workspace,
+        ledger_path=ledger,
+        ledger_object_format="sha1",
+    )
+
+    assert _git(workspace, "notes", "--ref=refs/notes/commits", "show", head) == "mine"

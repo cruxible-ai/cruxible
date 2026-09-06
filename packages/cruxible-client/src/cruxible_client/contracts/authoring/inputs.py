@@ -53,6 +53,10 @@ from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimeP
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.models import ProcedureHardCapsV3
+from cruxible_client.contracts.proposal_models import (
+    CHANGE_SET_RATIONALE_MAX_LENGTH,
+    validate_change_set_rationale,
+)
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, subject_path
@@ -263,6 +267,16 @@ AuthoringChangeSetMemberInputV1: TypeAlias = Annotated[
 class ChangeSetInput(_StrictInputModel):
     kind: Literal["change_set"]
     members: tuple[AuthoringChangeSetMemberInputV1, ...] = Field(min_length=1)
+    # The same sentence `pb.changes(rationale=...)` carries, on the surface a
+    # CLI file and an MCP dict use. Leaving it to the SDK would have made "say
+    # why you proposed this" an SDK-only capability, which is exactly the kind
+    # of split the three-surface parity law exists to prevent.
+    rationale: str | None = Field(default=None, max_length=CHANGE_SET_RATIONALE_MAX_LENGTH)
+
+    @field_validator("rationale")
+    @classmethod
+    def _rationale(cls, value: str | None) -> str | None:
+        return validate_change_set_rationale(value)
 
 
 AuthoringInputV1: TypeAlias = Annotated[
@@ -664,7 +678,8 @@ def lower_authoring_input(value: AuthoringInputV1, *, tree: dict[str, bytes]) ->
                 members,
                 key=lambda member: authoring_member_identity(member).encode("utf-8"),
             )
-        )
+        ),
+        rationale=value.rationale,
     )
 
 

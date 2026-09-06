@@ -52,9 +52,10 @@ Persistent anti-rollback protection is not introduced here.
 The shared LRU retains at most 128 streams and 256 MiB of serialized input
 weight. This bounds input weight, **not Python heap size**. Identical payloads
 within a stream share private objects only after canonical validation, keyed by
-concrete type and verified payload digest. Missing, null, and populated source
-fields retain distinct commitments and serialization. Every outward model and
-transition callback input is detached, including nested mutable containers.
+concrete type and verified create fingerprint. Missing, null, and populated
+source fields retain distinct commitments and serialization. Every outward
+model and transition callback input is detached, including nested mutable
+containers.
 
 The existing registration-result memo still uses its existing filesystem-stat
 identity. This pass does not expand that earlier trust boundary to intent-store

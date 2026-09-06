@@ -68,6 +68,7 @@ from cruxible_core.playbill.projection import (
     AcceptedProjectionCoordinate,
     CandidateGenerationProjectionCoordinate,
 )
+from cruxible_core.playbill.proposal_message import generation_commit_message
 from cruxible_core.playbill.proposals import (
     ClaimQueryFactsProvider,
     ExhaustPromotionVerifierProtocol,
@@ -801,6 +802,10 @@ def prepare_generation(
         parent_oid=binding.base_oid,
         sequence=sequence,
         timestamp=candidate.candidate.timestamp,
+        # The settled generation carries the proposal's own member summary, so
+        # accepted history reads as the same change set a reviewer approved
+        # rather than as an anonymous sequence number.
+        message=generation_commit_message(candidate.members, sequence=sequence),
     )
     if ledger.parent_of(oid) != binding.base_oid or not ledger.verify_commit(oid):
         raise SettlementIntegrityError("generation parent or daemon signature failed")

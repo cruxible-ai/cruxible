@@ -93,6 +93,8 @@ from cruxible_core.cli.commands._common import (
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.deprecation import (
     BLOCK_SYNC_DISCARD_LOCAL_FLAG,
+    REVIEW_CLOSE_WORKTREE,
+    REVIEW_OPEN_WORKTREE,
     DeprecationNotice,
     emit_cli_deprecation,
 )
@@ -143,6 +145,7 @@ from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.service.review import (
     PlaybillProposalReview,
     render_playbill_proposal_review,
+    render_playbill_proposal_review_pointer,
 )
 from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
 from cruxible_core.playbill.workspace_advertisement import (
@@ -950,6 +953,15 @@ def create_host(
         "A value that contradicts the attached workspace is refused."
     ),
 )
+@click.option(
+    "--mirror-url",
+    "mirror_url",
+    default=None,
+    help=(
+        "Remote this ledger publishes to after every write. Never a URL carrying a "
+        "credential; bind one later with 'playbill ledger set-mirror'."
+    ),
+)
 @json_option
 @handle_errors
 def init_playbill(
@@ -964,6 +976,7 @@ def init_playbill(
     replace: bool,
     no_seed: bool,
     object_format: str | None,
+    mirror_url: str | None,
     output_json: bool,
 ) -> None:
     """Create client custody and bootstrap the governed approval policy."""
@@ -1017,6 +1030,7 @@ def init_playbill(
             require_independent_approval=require_independent_approval,
             seed=not no_seed,
             git_object_format=cast(Any, object_format),
+            mirror_url=mirror_url,
             **(
                 {"workspace_root": str(git_workspace)}
                 if git_workspace is not None and _root_ctx_obj().get("server_socket")
@@ -1121,6 +1135,52 @@ def decommission_instance(reason: str, confirmed: bool, output_json: bool) -> No
     click.echo(f"By: {printable(result.decommissioned_by)}")
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
     click.echo("Reads keep serving; nothing was deleted. Archive the directory yourself.")
+
+
+@playbill_group.group("ledger")
+def ledger_group() -> None:
+    """Publish this instance's ledger, and read where it publishes to."""
+
+
+@ledger_group.command("set-mirror")
+@click.argument("url")
+@json_option
+@handle_errors
+def set_ledger_mirror(url: str, output_json: bool) -> None:
+    """Bind the remote this ledger publishes to, and publish to it now.
+
+    The URL must carry no credential: the daemon reads its token from its own
+    environment, and this string is printed back by `ledger clone-url` to
+    anyone who may read the instance at all.
+    """
+
+    result = _server_call(
+        lambda client, instance_id: client.set_playbill_ledger_mirror(instance_id, url=url),
+        command_name="playbill ledger set-mirror",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(f"Ledger mirror: {result.mirror_url}")
+    click.echo(f"Publication: {result.status}")
+    if result.detail is not None:
+        click.echo(f"Detail: {printable(result.detail)}")
+
+
+@ledger_group.command("clone-url")
+@json_option
+@handle_errors
+def ledger_clone_url(output_json: bool) -> None:
+    """Print the ledger mirror a reviewer clones to read this instance's proposals."""
+
+    result = _server_call(
+        lambda client, instance_id: client.get_playbill_ledger_mirror(instance_id),
+        command_name="playbill ledger clone-url",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(result.mirror_url)
 
 
 @playbill_group.group("provider")
@@ -1366,7 +1426,7 @@ def inspect_refusal(proposal_id: str, output_json: bool) -> None:
 
 @playbill_group.group("review")
 def review_group() -> None:
-    """Materialize detached local worktrees for proposal comparison."""
+    """Deprecated: materialize detached local worktrees for proposal comparison."""
 
 
 def _review_workspace_path(workspace_root: str | None) -> Path:
@@ -1386,8 +1446,9 @@ def open_review(
     workspace_root: str | None,
     output_json: bool,
 ) -> None:
-    """Open an advertised proposal tree for comparison, never checkout."""
+    """Deprecated: open an advertised proposal tree for comparison, never checkout."""
 
+    emit_cli_deprecation(REVIEW_OPEN_WORKTREE)
     inspection = _server_call(
         lambda client, instance_id: client.inspect_playbill_proposal(instance_id, proposal_id),
         command_name="playbill review open",
@@ -1440,8 +1501,9 @@ def close_review(
     workspace_root: str | None,
     output_json: bool,
 ) -> None:
-    """Close one clean detached proposal review worktree."""
+    """Deprecated: close one clean detached proposal review worktree."""
 
+    emit_cli_deprecation(REVIEW_CLOSE_WORKTREE)
     try:
         path = close_proposal_review_worktree(
             workspace_path=_review_workspace_path(workspace_root),
@@ -1515,7 +1577,7 @@ def review_proposal(
         _emit_json(result.model_dump(mode="json"))
     else:
         review = PlaybillProposalReview.model_validate(result.model_dump(mode="json"))
-        click.echo(render_playbill_proposal_review(review), nl=False)
+        click.echo(render_playbill_proposal_review_pointer(review), nl=False)
 
 
 @proposal_group.command("approve")

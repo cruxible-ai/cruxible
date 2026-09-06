@@ -8,7 +8,8 @@ import secrets
 import shutil
 import stat
 from collections import OrderedDict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -29,6 +30,7 @@ from cruxible_client.contracts.errors import (
     PlaybillInstanceDecommissioned,
     PlaybillKeyError,
 )
+from cruxible_client.contracts.ledger_mirror import validate_mirror_url
 from cruxible_client.contracts.temporal import format_datetime, utc_now
 from cruxible_client.contracts.types import (
     GenesisCoordinate,
@@ -74,6 +76,12 @@ from cruxible_core.playbill.keys import (
     public_key_hex_from_private_file,
     raw_public_key_hex_from_openssh,
 )
+from cruxible_core.playbill.ledger_mirror import (
+    LedgerMirrorStateV1,
+    mirror_credential_environment,
+    read_mirror_state,
+    write_mirror_state,
+)
 from cruxible_core.playbill.memo import memo_get, memo_put
 from cruxible_core.playbill.producer_receipts import local_producer_receipt_resolver
 from cruxible_core.playbill.projection import (
@@ -83,6 +91,7 @@ from cruxible_core.playbill.projection import (
     projection_manifest_name,
 )
 from cruxible_core.playbill.proposal_evidence import ProposalEvidenceStore
+from cruxible_core.playbill.proposal_message import proposal_commit_message
 from cruxible_core.playbill.proposals import (
     ExhaustPromotionVerifierProtocol,
     ProposalReceiveLimits,
@@ -615,20 +624,40 @@ class PlaybillInstance:
             decommissioned_at=terminal.decommissioned_at,
         )
 
-    def _persisted_decommission(self) -> PlaybillDecommissionV1 | None:
-        """Read the terminal record from disk rather than from this handle."""
+    def _persisted_descriptor(self) -> PlaybillDescriptor:
+        """Read the descriptor from disk rather than from this handle.
+
+        Two handles can be open over one directory, and the two operational
+        fields a descriptor carries -- the terminal decommission record and the
+        mirror URL -- are written by different verbs. Merging an update into
+        THIS handle's in-memory copy would silently drop whatever the other
+        handle wrote, so every write starts from the bytes on disk.
+        """
 
         try:
             payload = json.loads((self.root / DESCRIPTOR_FILE).read_bytes())
         except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise PlaybillFormatError("Playbill descriptor is missing or malformed") from exc
-        record = payload.get("decommissioned") if isinstance(payload, dict) else None
-        if record is None:
-            return None
         try:
-            return PlaybillDecommissionV1.model_validate(record)
+            return PlaybillDescriptor.model_validate(payload)
         except ValidationError as exc:
             raise PlaybillFormatError("Playbill descriptor failed strict validation") from exc
+
+    def _rewrite_descriptor(self, **updates: object) -> PlaybillDescriptor:
+        """Persist one operational descriptor change over the bytes on disk."""
+
+        updated = self._persisted_descriptor().model_copy(update=updates)
+        _atomic_replace(
+            self.root / DESCRIPTOR_FILE,
+            canonical_bytes(updated.model_dump(mode="json")) + b"\n",
+        )
+        self.descriptor = updated
+        return updated
+
+    def _persisted_decommission(self) -> PlaybillDecommissionV1 | None:
+        """Read the terminal record from disk rather than from this handle."""
+
+        return self._persisted_descriptor().decommissioned
 
     def decommission(self, *, reason: str, decommissioned_by: str) -> PlaybillDecommissionV1:
         """Stamp the terminal lifecycle state on the descriptor, deleting nothing.
@@ -653,13 +682,77 @@ class PlaybillInstance:
             decommissioned_at=format_datetime(utc_now()) or "",
             decommissioned_by=decommissioned_by,
         )
-        updated = self.descriptor.model_copy(update={"decommissioned": record})
-        _atomic_replace(
-            self.root / DESCRIPTOR_FILE,
-            canonical_bytes(updated.model_dump(mode="json")) + b"\n",
-        )
-        self.descriptor = updated
+        self._rewrite_descriptor(decommissioned=record)
         return record
+
+    def ledger_mirror_url(self) -> str | None:
+        """Return where this ledger publishes itself, or None if it publishes nowhere."""
+
+        return self.descriptor.mirror_url
+
+    def set_ledger_mirror(self, url: str) -> LedgerMirrorStateV1 | None:
+        """Bind a remote and publish to it at once, so a bad one is found now.
+
+        Setting a mirror without pushing to it would leave the operator holding
+        a URL whose credential, reachability and permissions are all unverified
+        until the next governed write happens to exercise them. Publishing here
+        makes the answer immediate, and it is still only a publication: a push
+        that fails records the reason and leaves the mirror bound, because a
+        remote that is temporarily unreachable is not a wrong remote.
+        """
+
+        self.require_writable()
+        self._rewrite_descriptor(mirror_url=validate_mirror_url(url))
+        return self.publish_ledger_mirror()
+
+    def ledger_mirror_state(self) -> LedgerMirrorStateV1 | None:
+        """Return the last recorded publication attempt, if this instance made one."""
+
+        return read_mirror_state(self.root)
+
+    def publish_ledger_mirror(self) -> LedgerMirrorStateV1 | None:
+        """Push the ledger to its mirror, and never let that failure become a refusal.
+
+        Every exception is caught. The mirror is a copy of state that is already
+        durable on disk, so an operator's remote may not become a condition of
+        governance: whatever went wrong is recorded and reported by `playbill
+        next` as `ledger_mirror_behind`, and the write that called this has
+        already landed.
+
+        The open-proposal branches are reconciled here rather than left to
+        `advertise_workspace`, which does nothing on an instance with no
+        attached worktree. A mirror is exactly the case where there is no local
+        worktree to advertise into, so the projection has to be built on the
+        publication path or the remote would carry `main` and no proposals.
+        """
+
+        url = self.descriptor.mirror_url
+        if url is None:
+            return None
+        detail: str | None
+        published: str | None = None
+        try:
+            self._reconcile_proposal_review_refs()
+            detail = self._ledger.push_mirror(
+                url,
+                environment=mirror_credential_environment(url),
+            )
+            if detail is None:
+                published = self._ledger.read_main()
+        except Exception as exc:  # noqa: BLE001 - a publication never refuses a write
+            detail = f"{type(exc).__name__}: {exc}"[:500]
+        state = LedgerMirrorStateV1(
+            url=url,
+            status="current" if detail is None else "behind",
+            attempted_at=format_datetime(utc_now()) or "",
+            published_main_oid=published,
+            detail=detail,
+        )
+        try:
+            write_mirror_state(self.root, state)
+        except OSError:  # pragma: no cover - a full or read-only state root
+            pass
+        return state
 
     def store_document_body(self, content: bytes) -> CasObjectMetadata:
         """Persist inert bytes without proposing or changing accepted state."""
@@ -688,6 +781,7 @@ class PlaybillInstance:
             workspace_advertiser=self.advertise_workspace,
             receive_limits=self._receive_limits,
             require_writable=self.require_writable,
+            ledger_publisher=self.publish_ledger_mirror,
         )
 
     def bind_receive_limits(self, limits: ProposalReceiveLimits) -> None:
@@ -724,7 +818,28 @@ class PlaybillInstance:
             )
 
     def _reconcile_proposal_review_refs(self) -> None:
-        """Project exactly the open proposal trees into standard ledger branch refs."""
+        """Project exactly the open proposal trees into standard ledger branch refs.
+
+        The notes travel with the branch. They were attached only to
+        `admission.candidate_commit_oid` -- the tip of `refs/proposals/<actor>/<name>`,
+        which is neither mirrored nor fetched into a workspace -- while the
+        commit a reviewer actually receives is the one rebuilt here. The two are
+        different objects whenever evaluation derives cards or rebases, which is
+        the ordinary case, so `git notes --ref=refs/notes/playbill-eval show
+        <commit>` (the command `proposal review` prints and both docs pages
+        promise) found nothing for anyone but the daemon. Attaching the same
+        bytes to the projected commit is what makes the published note readable
+        by the reviewer it is published for.
+
+        Both note kinds are re-read before being written, so a steady state
+        costs one Git read per open proposal rather than a write. The approval
+        note is written here WITHOUT the per-candidate lock the approval door
+        holds: this is a rebuild from the store, so an interleave with a
+        concurrent approver can leave one publication carrying the older render,
+        and the next publication -- or activation, which reconciles against the
+        store -- restates it. The lock is where it has to be, on the note
+        activation actually checks.
+        """
 
         coordinate = self.accepted_coordinate()
         accepted_candidates = {
@@ -734,6 +849,7 @@ class PlaybillInstance:
         }
         evidence = self.proposal_evidence()
         refs: dict[str, str] = {}
+        published: list[tuple[str, str, str]] = []
         for admission in evidence.list_admissions():
             evaluation = evidence.read_evaluation(admission.proposal_id)
             candidate_digest = evaluation.candidate_digest
@@ -741,20 +857,67 @@ class PlaybillInstance:
                 candidate_digest is None
                 or candidate_digest in accepted_candidates
                 or evaluation.evaluated_tree_oid is None
+                # A withdrawal is a settlement: the actor has said this tree will
+                # never activate, and every settlement door already refuses it.
+                # It kept its advisory branch only because this projection was
+                # written before withdrawal existed, which left the branch list
+                # claiming open work that no longer was.
+                or evidence.read_withdrawal(admission.proposal_id) is not None
             ):
                 continue
             candidate = evidence.read_candidate(candidate_digest)
             if candidate.candidate.parent_semantic_root != coordinate.semantic_root:
                 continue
-            refs[admission.proposal_id.removeprefix("sha256:")] = (
-                self._ledger.proposal_review_commit(
-                    tree_oid=evaluation.evaluated_tree_oid,
-                    base_oid=evaluation.evaluated_base_oid,
-                    actor_id=admission.actor_id,
-                    timestamp=admission.admitted_at,
-                )
+            review_oid = self._ledger.proposal_review_commit(
+                tree_oid=evaluation.evaluated_tree_oid,
+                base_oid=evaluation.evaluated_base_oid,
+                actor_id=admission.actor_id,
+                timestamp=admission.admitted_at,
+                # The projection is rebuilt from stored evidence, and the
+                # summary is a pure function of the candidate's members and
+                # the admission's own rationale, so this branch carries
+                # byte-identical prose to the proposal commit the submission
+                # itself created. That is why the rationale is PERSISTED on
+                # the admission rather than read off a request that is gone.
+                message=proposal_commit_message(
+                    candidate.members,
+                    rationale=admission.rationale,
+                ),
             )
+            refs[admission.proposal_id.removeprefix("sha256:")] = review_oid
+            published.append((review_oid, admission.proposal_id, candidate_digest))
         self._ledger.replace_proposal_review_refs(refs)
+        # After the refs, so every annotated commit is already reachable from
+        # one: a note on an unreferenced object is a note a `gc` may collect.
+        for review_oid, proposal_id, candidate_digest in published:
+            self._publish_review_commit_notes(
+                evidence,
+                review_oid=review_oid,
+                proposal_id=proposal_id,
+                candidate_digest=candidate_digest,
+            )
+
+    def _publish_review_commit_notes(
+        self,
+        evidence: ProposalEvidenceStore,
+        *,
+        review_oid: str,
+        proposal_id: str,
+        candidate_digest: str,
+    ) -> None:
+        """Restate one proposal's evidence onto the commit a reviewer receives."""
+
+        evaluation_note = evidence.evaluation_note(proposal_id)
+        if self._ledger.read_proposal_note("evaluation", review_oid) != evaluation_note:
+            self._ledger.write_proposal_note("evaluation", review_oid, evaluation_note)
+        # An empty approval list projects nothing, exactly as it does on the
+        # candidate commit: writing a note to say "nobody has signed" would put
+        # a Git write on every publication of every unapproved proposal.
+        if not evidence.read_approvals(candidate_digest):
+            return
+        approval_note = evidence.approval_note(candidate_digest)
+        if self._ledger.read_proposal_note("approval", review_oid) != approval_note:
+            self._ledger.write_proposal_note("approval", review_oid, approval_note)
 
     def proposal_evidence(self) -> ProposalEvidenceStore:
         """Return the immutable non-authoritative proposal/approval evidence store."""
@@ -766,6 +929,23 @@ class PlaybillInstance:
         """Read one proposal transport ref without exposing ledger mutation."""
 
         return self._ledger.read_proposal_ref(target_ref)
+
+    @contextmanager
+    def approval_note_lock(self, candidate_digest: str) -> Iterator[None]:
+        """Hold one candidate's approval read-modify-write, store through Git."""
+
+        with self._ledger.approval_note_lock(candidate_digest):
+            yield
+
+    def write_proposal_note(self, kind: str, oid: str, content: bytes) -> None:
+        """Project one proposal record onto its own candidate commit."""
+
+        self._ledger.write_proposal_note(kind, oid, content)
+
+    def read_proposal_note(self, kind: str, oid: str) -> bytes | None:
+        """Read one candidate commit's projected proposal note, if it carries one."""
+
+        return self._ledger.read_proposal_note(kind, oid)
 
     def review_operational_store(self) -> ReviewOperationalStore:
         """Return the local append-only review observation store.

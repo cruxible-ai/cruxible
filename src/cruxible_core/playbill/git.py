@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import os
 import re
+import signal
 import subprocess
 import tempfile
 from collections.abc import Iterator, Mapping, Sequence
@@ -13,12 +14,12 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import cast
+from typing import Final, cast
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from cruxible_client.contracts.canonical import normalize_manifest_paths
+from cruxible_client.contracts.canonical import CandidateDigest, normalize_manifest_paths
 from cruxible_client.contracts.errors import PlaybillGitError
 from cruxible_client.contracts.types import GitObjectFormat
 from cruxible_core.playbill.keys import raw_public_key_hex_from_openssh
@@ -26,6 +27,41 @@ from cruxible_core.playbill.keys import raw_public_key_hex_from_openssh
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _PROPOSAL_REF_RE = re.compile(r"^refs/proposals/[a-z][a-z0-9_.-]{0,127}/[a-z][a-z0-9_.-]{0,127}$")
 _PROPOSAL_REVIEW_REF_RE = re.compile(r"^refs/heads/proposals/[0-9a-f]{64}$")
+_SETTLED_REF_PREFIX: Final = "refs/settled/"
+
+# What a mirror carries, and in which direction each ref is allowed to move.
+# `main` is pushed WITHOUT force: accepted history only ever extends, so a
+# rejected fast-forward means the remote holds something this ledger does not,
+# and silently overwriting it would erase the evidence of that. Everything else
+# is a projection this daemon rebuilds -- a note restated by a second approver,
+# a review branch recomputed on reconcile -- so each is forced onto the mirror
+# and pruned when it stops existing here.
+MIRROR_PUSH_TIMEOUT_SECONDS: Final = 30.0
+"""How long a publication may hold its caller, and no longer.
+
+The mirror is a copy of state that is already durable, so the one thing it may
+never cost is availability of the daemon that holds the record. `GIT_TERMINAL_PROMPT=0`
+closes the prompt hang; nothing closed the network one, and a black-holed connect
+or a remote that accepts and then stalls held the caller for as long as the
+remote liked. Thirty seconds is far longer than a healthy push of a ledger this
+size and far shorter than a request timeout.
+"""
+
+_MIRROR_MAIN_REFSPEC: Final = "refs/heads/main:refs/heads/main"
+_MIRROR_WILDCARD_REFSPECS: Final = (
+    "+refs/heads/proposals/*:refs/heads/proposals/*",
+    "+refs/settled/*:refs/settled/*",
+)
+
+# Every Playbill note ref, in one table. The generation descriptor was the
+# first; the proposal evaluation and the approval list are projections of the
+# evidence store that reach Git through exactly the same write, so a note a
+# reviewer reads is never a second mechanism with its own persistence rules.
+NOTE_REFS: Final[Mapping[str, str]] = {
+    "generation": "refs/notes/playbill-gen",
+    "evaluation": "refs/notes/playbill-eval",
+    "approval": "refs/notes/playbill-approval",
+}
 _PASSTHROUGH_ENVIRONMENT = ("PATH", "TMPDIR", "TMP", "TEMP", "SYSTEMROOT")
 _COMMAND_ENVIRONMENT = frozenset(
     {
@@ -36,6 +72,18 @@ _COMMAND_ENVIRONMENT = frozenset(
         "GIT_COMMITTER_EMAIL",
         "GIT_AUTHOR_DATE",
         "GIT_COMMITTER_DATE",
+        # Publication only. A push is the one ledger operation that talks to a
+        # host outside this daemon, so it is also the only one that needs a
+        # credential: `HOME`/`SSH_AUTH_SOCK`/`GIT_SSH_COMMAND` let the daemon's
+        # own SSH identity answer, and the three `GIT_CONFIG_*` names are Git's
+        # environment-config protocol, which carries an HTTPS token without ever
+        # putting it in an argument vector every process on the host can read.
+        "HOME",
+        "SSH_AUTH_SOCK",
+        "GIT_SSH_COMMAND",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_KEY_0",
+        "GIT_CONFIG_VALUE_0",
     }
 )
 
@@ -81,6 +129,21 @@ def _quoted_stdin_path(path: Path) -> bytes:
     """Git's C-quoted path form, independent of TMPDIR's filesystem spelling."""
 
     return b'"' + b"".join(f"\\{byte:03o}".encode("ascii") for byte in os.fsencode(path)) + b'"'
+
+
+def _validate_commit_message(message: str) -> None:
+    """Refuse a commit message that is not the prose summary a reviewer reads.
+
+    Nothing ever parses a commit message back, so the only obligations are that
+    it exists, that it is not the blank subject Git would otherwise accept, and
+    that it carries no NUL -- which `commit-tree` truncates at, silently
+    dropping the rest of the summary.
+    """
+
+    if not message.strip():
+        raise PlaybillGitError("commit message must be a nonblank prose summary")
+    if "\x00" in message:
+        raise PlaybillGitError("commit message must not contain a NUL byte")
 
 
 def _proven_blob_entries(entries: tuple[GitTreeEntry, ...]) -> tuple[GitTreeEntry, ...]:
@@ -202,12 +265,14 @@ class GitLedger:
         parent_oid: str,
         sequence: int,
         timestamp: str,
+        message: str,
     ) -> str:
         """Create one signed, still-unsettled generation commit over an exact parent."""
 
         self._validate_oid(parent_oid)
         if sequence < 1:
             raise PlaybillGitError("non-genesis generation sequence must be positive")
+        _validate_commit_message(message)
         tree_oid = self._write_tree(tree)
         environment = {
             "GIT_AUTHOR_NAME": "playbill-daemon",
@@ -226,7 +291,7 @@ class GitLedger:
                     "-p",
                     parent_oid,
                     "-m",
-                    f"Accept Playbill generation {sequence}",
+                    message,
                 ],
                 environment=environment,
             )
@@ -396,10 +461,12 @@ class GitLedger:
         actor_id: str,
         timestamp: str,
         expected_ref_oid: str | None,
+        message: str,
     ) -> tuple[str, str]:
         """Write one unsigned proposal commit and CAS only its actor namespace ref."""
 
         self._validate_oid(base_oid)
+        _validate_commit_message(message)
         if not _PROPOSAL_REF_RE.fullmatch(target_ref):
             raise PlaybillGitError("proposal transport may update only canonical proposal refs")
         actor_namespace = target_ref.split("/")[2]
@@ -430,7 +497,7 @@ class GitLedger:
                     "-p",
                     base_oid,
                     "-m",
-                    "Record Playbill proposal",
+                    message,
                 ],
                 environment=commit_environment,
             )
@@ -458,7 +525,20 @@ class GitLedger:
         return oid
 
     def replace_proposal_review_refs(self, refs: Mapping[str, str]) -> None:
-        """Atomically replace the standard-Git projection of open proposal refs."""
+        """Atomically replace the open-proposal branches, archiving what settled.
+
+        A branch leaves this projection for exactly one reason: the proposal it
+        showed is no longer open -- activated, withdrawn, or gone stale against a
+        moved head. Deleting it outright was fine while the only reader was a
+        local worktree that could still resolve the commit by OID; on a mirror it
+        is not, because the commit becomes unreachable there and a reviewer
+        following a link to a settled proposal gets nothing. So the departing ref
+        is MOVED, in the same transaction that removes it, to
+        `refs/settled/<digest>`: the branch list stays the open inventory, and
+        every settled candidate stays reachable under a namespace that says what
+        it is. Re-settlement restates the same archive rather than failing, so
+        the reconcile is idempotent.
+        """
 
         normalized: dict[str, str] = {}
         for proposal_id, oid in refs.items():
@@ -467,22 +547,101 @@ class GitLedger:
                 raise PlaybillGitError("proposal review ref name is malformed")
             self._validate_oid(oid)
             normalized[ref] = oid
-        current = {
-            line
-            for line in self._git(["for-each-ref", "--format=%(refname)", "refs/heads/proposals"])
+        current: dict[str, str] = {}
+        for line in (
+            self._git(["for-each-ref", "--format=%(objectname) %(refname)", "refs/heads/proposals"])
             .decode("utf-8")
             .splitlines()
-            if line
-        }
+        ):
+            if not line:
+                continue
+            oid, _, ref = line.partition(" ")
+            self._validate_oid(oid)
+            current[ref] = oid
+        departing = sorted(set(current) - set(normalized), key=str.encode)
         commands = ["start"]
         commands.extend(
             f"update {ref} {normalized[ref]}" for ref in sorted(normalized, key=str.encode)
         )
-        commands.extend(
-            f"delete {ref}" for ref in sorted(current - set(normalized), key=str.encode)
-        )
+        for ref in departing:
+            settled = _SETTLED_REF_PREFIX + ref.removeprefix("refs/heads/proposals/")
+            commands.append(f"update {settled} {current[ref]}")
+            commands.append(f"delete {ref}")
         commands.extend(("prepare", "commit"))
         self._git(["update-ref", "--stdin"], input_bytes=("\n".join(commands) + "\n").encode())
+
+    def settled_proposal_refs(self) -> tuple[str, ...]:
+        """List the archived settled-proposal refs, for inspection and tests."""
+
+        return tuple(
+            line
+            for line in self._git(
+                ["for-each-ref", "--format=%(refname)", _SETTLED_REF_PREFIX.rstrip("/")]
+            )
+            .decode("utf-8")
+            .splitlines()
+            if line
+        )
+
+    def push_mirror(self, url: str, *, environment: Mapping[str, str] | None = None) -> str | None:
+        """Publish this ledger to its remote; return None, or why it did not.
+
+        Deliberately NOT a raising operation. The mirror is a copy of state that
+        is already accepted and already durable on disk, so a network that is
+        down, a credential that expired, or a remote that was deleted must not
+        turn into a refusal of the write that preceded the push -- that would
+        make an operator's remote a condition of governance. The caller records
+        the returned detail and `playbill next` reports it.
+
+        Git's stderr is passed back, truncated, because an operator repairing a
+        mirror needs to know WHICH failure it was; the credential cannot appear
+        in it, since it never enters the command line and Git does not echo the
+        header it sends.
+        """
+
+        refspecs = [_MIRROR_MAIN_REFSPEC]
+        refspecs.extend(
+            f"+{ref}:{ref}"
+            for ref in sorted(NOTE_REFS.values(), key=str.encode)
+            if self._ref_exists(ref)
+        )
+        refspecs.extend(_MIRROR_WILDCARD_REFSPECS)
+        try:
+            result = _command(
+                [
+                    "git",
+                    f"--git-dir={self.path}",
+                    "push",
+                    "--prune",
+                    "--porcelain",
+                    "--",
+                    url,
+                    *refspecs,
+                ],
+                environment=environment,
+                check=False,
+                timeout=MIRROR_PUSH_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            return (
+                f"git push did not finish within {MIRROR_PUSH_TIMEOUT_SECONDS:g}s and was "
+                "killed; the ledger is unchanged and the remote may be unreachable"
+            )
+        if result.returncode == 0:
+            return None
+        detail = result.stderr.decode("utf-8", errors="replace").strip()
+        if not detail:
+            detail = f"git push exited {result.returncode}"
+        return detail[:500]
+
+    def _ref_exists(self, ref: str) -> bool:
+        return (
+            _command(
+                ["git", f"--git-dir={self.path}", "rev-parse", "--verify", "--quiet", ref],
+                check=False,
+            ).returncode
+            == 0
+        )
 
     def proposal_review_commit(
         self,
@@ -491,11 +650,13 @@ class GitLedger:
         base_oid: str,
         actor_id: str,
         timestamp: str,
+        message: str,
     ) -> str:
         """Reproduce the evaluated proposal commit used only by advisory review refs."""
 
         self._validate_oid(tree_oid)
         self._validate_oid(base_oid)
+        _validate_commit_message(message)
         environment = {
             "GIT_AUTHOR_NAME": actor_id,
             "GIT_AUTHOR_EMAIL": f"{actor_id}@proposal.playbill.invalid",
@@ -512,7 +673,7 @@ class GitLedger:
                     "-p",
                     base_oid,
                     "-m",
-                    "Record Playbill proposal",
+                    message,
                 ],
                 environment=environment,
             )
@@ -564,7 +725,57 @@ class GitLedger:
     def activation_lock(self) -> Iterator[None]:
         """Serialize activation/publication and targeted loser collection across processes."""
 
-        path = self.path / "playbill-activation.lock"
+        with self._exclusive_lock("playbill-activation.lock"):
+            yield
+
+    @contextmanager
+    def approval_note_lock(self, candidate_digest: str) -> Iterator[None]:
+        """Serialize one candidate's approval read-modify-write across processes.
+
+        The approval note is not a copy of any one file: the store keeps one
+        file per signer and the note is a re-render of the whole canonical list,
+        which is the only shape Git's one-note-per-object rule allows. That
+        makes it a read-modify-write, and `_note_lock` covers only the Git call
+        at the end of it. Two approvers on one candidate could therefore have A
+        render `[A]`, B render `[A, B]` and write, then A force-write `[A]` --
+        leaving the store holding two approvals and Git holding one, and
+        activation refusing `note_disagrees_with_evidence` on a proposal nobody
+        tampered with, repairable only by re-submitting an approval that already
+        exists.
+
+        Per candidate rather than global: two candidates' approvals contend for
+        nothing but the note REF, which `_note_lock` already serializes, and a
+        single approval lock would make every signer on the instance queue
+        behind every other. Deliberately not `_note_lock` itself, which this is
+        nested inside: `flock` is per-open-file-description, so re-acquiring the
+        same lock file in one process deadlocks.
+        """
+
+        CandidateDigest.from_tagged(candidate_digest)
+        with self._exclusive_lock(
+            f"playbill-approval-{candidate_digest.removeprefix('sha256:')}.lock"
+        ):
+            yield
+
+    @contextmanager
+    def _note_lock(self) -> Iterator[None]:
+        """Serialize every note write across processes.
+
+        A note ref is an ordinary ref carrying one commit per update, so two
+        writers attaching notes to two *different* commits still contend for the
+        same ref lock. Without this the loser surfaces as an opaque Git ref-lock
+        failure on a write its caller has no way to retry. This lock is
+        deliberately not the activation lock: the generation note is written
+        while activation already holds that one, and a second acquisition of the
+        same file in the same process would deadlock.
+        """
+
+        with self._exclusive_lock("playbill-notes.lock"):
+            yield
+
+    @contextmanager
+    def _exclusive_lock(self, name: str) -> Iterator[None]:
+        path = self.path / name
         descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             os.chmod(path, 0o600)
@@ -641,6 +852,51 @@ class GitLedger:
                 commits.append(fields[2])
         return tuple(sorted(set(commits)))
 
+    def _note_ref(self, kind: str) -> str:
+        ref = NOTE_REFS.get(kind)
+        if ref is None:
+            raise PlaybillGitError(f"unknown Playbill note kind: {kind!r}")
+        return ref
+
+    def _write_note(self, kind: str, oid: str, content: bytes, *, replace: bool) -> None:
+        """Attach one note through the one write every note ref shares.
+
+        `replace` separates the two note lifetimes this ledger has: a generation
+        descriptor is written once and is immutable, while a proposal's
+        evaluation and approval notes are projections of an evidence store that
+        legitimately grows -- a re-evaluation, a second approver -- and must be
+        allowed to restate. Every write proves its own bytes persisted exactly,
+        so neither lifetime depends on Git's reporting.
+        """
+
+        self._validate_oid(oid)
+        ref = self._note_ref(kind)
+        arguments = ["notes", f"--ref={ref}", "add"]
+        if replace:
+            arguments.append("-f")
+        arguments.extend(("-F", "-", oid))
+        with self._note_lock():
+            self._git(arguments, input_bytes=content)
+        if self._read_note(kind, oid) != content:
+            raise PlaybillGitError(f"{kind} note did not persist exactly")
+
+    def _read_note(self, kind: str, oid: str) -> bytes | None:
+        self._validate_oid(oid)
+        result = _command(
+            [
+                "git",
+                f"--git-dir={self.path}",
+                "notes",
+                f"--ref={self._note_ref(kind)}",
+                "show",
+                oid,
+            ],
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout
+
     def write_generation_note(self, oid: str, content: bytes) -> None:
         """Durably attach one immutable descriptor note after the winning main CAS."""
 
@@ -649,12 +905,7 @@ class GitLedger:
             raise PlaybillGitError("generation note target is not the current main ref")
         if self.read_generation_note(oid) is not None:
             raise PlaybillGitError("generation already carries a descriptor note")
-        self._git(
-            ["notes", "--ref=refs/notes/playbill-gen", "add", "-F", "-", oid],
-            input_bytes=content,
-        )
-        if self.read_generation_note(oid) != content:
-            raise PlaybillGitError("generation descriptor note did not persist exactly")
+        self._write_note("generation", oid, content, replace=False)
 
     def write_recovered_generation_note(self, oid: str, content: bytes) -> None:
         """Repair a missing note only for a replay-proven commit on accepted main."""
@@ -664,29 +915,28 @@ class GitLedger:
             raise PlaybillGitError("recovered generation note target is outside main history")
         if self.read_generation_note(oid) is not None:
             raise PlaybillGitError("generation already carries a descriptor note")
-        self._git(
-            ["notes", "--ref=refs/notes/playbill-gen", "add", "-F", "-", oid],
-            input_bytes=content,
-        )
-        if self.read_generation_note(oid) != content:
-            raise PlaybillGitError("recovered generation descriptor note did not persist exactly")
+        self._write_note("generation", oid, content, replace=False)
 
     def read_generation_note(self, oid: str) -> bytes | None:
-        self._validate_oid(oid)
-        result = _command(
-            [
-                "git",
-                f"--git-dir={self.path}",
-                "notes",
-                "--ref=refs/notes/playbill-gen",
-                "show",
-                oid,
-            ],
-            check=False,
-        )
-        if result.returncode != 0:
-            return None
-        return result.stdout
+        return self._read_note("generation", oid)
+
+    def write_proposal_note(self, kind: str, oid: str, content: bytes) -> None:
+        """Project one proposal's evidence onto its own candidate commit.
+
+        Only the proposal note kinds are reachable here: the generation
+        descriptor keeps its own doors, which refuse a second write, because a
+        settled generation's note is a fact about accepted history rather than
+        a restatable projection.
+        """
+
+        if kind not in {"evaluation", "approval"}:
+            raise PlaybillGitError(f"unknown Playbill proposal note kind: {kind!r}")
+        self._write_note(kind, oid, content, replace=True)
+
+    def read_proposal_note(self, kind: str, oid: str) -> bytes | None:
+        if kind not in {"evaluation", "approval"}:
+            raise PlaybillGitError(f"unknown Playbill proposal note kind: {kind!r}")
+        return self._read_note(kind, oid)
 
     def read_main(self) -> str:
         result = self._git(["rev-parse", "--verify", "refs/heads/main"])
@@ -1154,7 +1404,17 @@ def _command(
     input_bytes: bytes | None = None,
     environment: Mapping[str, str] | None = None,
     check: bool = True,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
+    """Run one Git command, optionally under a deadline it cannot outlive.
+
+    A bounded run gets its own session so the deadline reaches the whole tree.
+    Git delegates the network to a transport child -- `git-remote-https`, `ssh`
+    -- and killing only the process Python started leaves that child holding the
+    connection, so a timeout that killed the parent alone would report a
+    deadline it had not actually enforced.
+    """
+
     merged_environment = {
         name: os.environ[name] for name in _PASSTHROUGH_ENVIRONMENT if name in os.environ
     }
@@ -1173,13 +1433,21 @@ def _command(
                 "unsupported Git command environment override: " + ", ".join(sorted(unexpected))
             )
         merged_environment.update(environment)
-    result = subprocess.run(
-        list(arguments),
-        input=input_bytes,
-        capture_output=True,
-        check=False,
-        env=merged_environment,
-    )
+    if timeout is None:
+        result = subprocess.run(
+            list(arguments),
+            input=input_bytes,
+            capture_output=True,
+            check=False,
+            env=merged_environment,
+        )
+    else:
+        result = _bounded_command(
+            list(arguments),
+            input_bytes=input_bytes,
+            environment=merged_environment,
+            timeout=timeout,
+        )
     if check and result.returncode != 0:
         # Do not echo command arguments or stderr: Git signing failures can
         # include managed credential paths, which inspection/logging must not expose.
@@ -1190,4 +1458,35 @@ def _command(
     return result
 
 
-__all__ = ["GitLedger", "GitTreeChange", "GitTreeEntry"]
+def _bounded_command(
+    arguments: list[str],
+    *,
+    input_bytes: bytes | None,
+    environment: Mapping[str, str],
+    timeout: float,
+) -> subprocess.CompletedProcess[bytes]:
+    """Run one command under a deadline, killing its whole process group on expiry."""
+
+    with subprocess.Popen(
+        arguments,
+        stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=dict(environment),
+        start_new_session=True,
+    ) as process:
+        try:
+            stdout, stderr = process.communicate(input=input_bytes, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):  # pragma: no cover - already gone
+                process.kill()
+            # Drain without a second deadline: the group is dead, so the pipes
+            # are at EOF and this cannot block.
+            process.communicate()
+            raise
+        return subprocess.CompletedProcess(arguments, process.returncode, stdout, stderr)
+
+
+__all__ = ["MIRROR_PUSH_TIMEOUT_SECONDS", "NOTE_REFS", "GitLedger", "GitTreeChange", "GitTreeEntry"]

@@ -164,6 +164,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillInsertionConfirmResultV2",
         "PlaybillInsertionPrepareResult",
         "PlaybillInstanceDecommissionResultV1",
+        "PlaybillLedgerMirrorV1",
         "PlaybillInterfaceInventory",
         "PlaybillNextResult",
         "PlaybillPolicyInForce",

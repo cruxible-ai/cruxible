@@ -406,6 +406,7 @@ def _orientation(
         ),
         conflicted_count=sum(row.status == "conflicted" for row in rows),
         decommissioned=instance.is_decommissioned,
+        mirror_url=instance.ledger_mirror_url(),
         available_kinds=tuple(
             item.kind for item in availability if item.availability == "installed"
         ),

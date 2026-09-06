@@ -186,3 +186,146 @@ def test_non_ascii_payload_and_actor_commitments_match_public_helpers() -> None:
     assert intent.create_fingerprint == models.authoring_create_fingerprint(
         instance_id=intent.instance_id, actor_id=intent.actor_id, payload=intent.payload
     )
+
+
+def _stamp_event_digest(raw: dict[str, object]) -> None:
+    """Restamp only the envelope, leaving the intent's own commitments alone."""
+
+    preimage = dict(raw)
+    preimage.pop("tag")
+    preimage.pop("event_digest")
+    raw["event_digest"] = typed_digest(Sha256Value, str(raw["tag"]), preimage).tagged
+
+
+def _change_set_identity(payload: models.ChangeSetAuthoringPayloadV1) -> str:
+    membership = models.authoring_change_set_membership(payload.members)
+    return (
+        "ChangeSet:"
+        + typed_digest(
+            Sha256Value,
+            models.AUTHORING_CHANGE_SET_MEMBERSHIP_DIGEST_DOMAIN,
+            {"members": [{"kind": kind, "identity": identity} for kind, identity in membership]},
+        ).value
+    )
+
+
+def _wire_intent(payload, *, semantic_identity: str, claim_identities: tuple[str, ...] = ()):
+    """One event whose intent digests come from the PUBLIC standalone helpers.
+
+    `_commit_raw_event` mints the payload digest from a raw preimage that pops
+    only `tag`, so it cannot express the change-set rationale law. These digests
+    are the ones a caller of the shipped helpers gets, which is exactly what
+    `_binding` has to reproduce.
+    """
+
+    raw = copy.deepcopy(_wire_event("missing", 2))
+    intent = raw["intent"]
+    intent["payload"] = payload.model_dump(mode="json")
+    intent["semantic_identity"] = semantic_identity
+    intent["change_set_claim_identities"] = [
+        models.ChangeSetClaimIdentityV1(
+            member_identity=identity, claim_id=f"CLM-{index:032x}"
+        ).model_dump(mode="json")
+        for index, identity in enumerate(claim_identities, start=1)
+    ]
+    intent["payload_digest"] = models.authoring_payload_digest(payload)
+    intent["create_fingerprint"] = models.authoring_create_fingerprint(
+        instance_id=intent["instance_id"], actor_id=intent["actor_id"], payload=payload
+    )
+    _stamp_event_digest(raw)
+    return raw
+
+
+def _rationale_set(rationale: str | None) -> models.ChangeSetAuthoringPayloadV1:
+    members = _change_set(
+        _claim(subject_id="wi-42"),
+        models.SubjectAuthoringPayloadV1(subject=_shell("wi-42")),
+    ).members
+    if rationale is None:
+        return models.ChangeSetAuthoringPayloadV1(members=members)
+    return models.ChangeSetAuthoringPayloadV1(members=members, rationale=rationale)
+
+
+def _claim_members(payload: models.ChangeSetAuthoringPayloadV1) -> tuple[str, ...]:
+    return tuple(
+        identity
+        for kind, identity in models.authoring_change_set_membership(payload.members)
+        if kind == "Claim"
+    )
+
+
+@pytest.mark.parametrize("rationale", (None, "Why this set exists, in the author's own words."))
+def test_binding_reproduces_the_standalone_digests_for_a_change_set(
+    rationale: str | None,
+) -> None:
+    payload = _rationale_set(rationale)
+    raw = _wire_intent(
+        payload,
+        semantic_identity=_change_set_identity(payload),
+        claim_identities=_claim_members(payload),
+    )
+
+    # Validation IS the assertion: `_binding` recomputes both commitments.
+    event = EVENT_MODELS[2].model_validate(raw)
+
+    intent = event.intent
+    assert intent.payload.rationale == rationale
+    assert intent.payload_digest == models.authoring_payload_digest(payload)
+    assert intent.create_fingerprint == models.authoring_create_fingerprint(
+        instance_id=intent.instance_id, actor_id=intent.actor_id, payload=payload
+    )
+    assert intent._binding() is intent
+
+
+def test_a_change_sets_prose_moves_its_fingerprint_and_never_its_payload_digest() -> None:
+    unset = _rationale_set(None)
+    first = _rationale_set("The first prose.")
+    second = _rationale_set("The corrected prose.")
+    fingerprints = {
+        models.authoring_create_fingerprint(
+            instance_id="binding-fixture", actor_id="fixture-author", payload=payload
+        )
+        for payload in (unset, first, second)
+    }
+
+    assert (
+        models.authoring_payload_digest(unset)
+        == models.authoring_payload_digest(first)
+        == models.authoring_payload_digest(second)
+    )
+    assert len(fingerprints) == 3
+
+
+def test_a_change_set_rationale_edited_after_the_fact_fails_the_fingerprint() -> None:
+    payload = _rationale_set("The first prose.")
+    raw = _wire_intent(
+        payload,
+        semantic_identity=_change_set_identity(payload),
+        claim_identities=_claim_members(payload),
+    )
+    raw["intent"]["payload"]["rationale"] = "Edited after the fact."
+    _stamp_event_digest(raw)
+
+    with pytest.raises(ValidationError) as refusal:
+        EVENT_MODELS[2].model_validate(raw)
+
+    assert "create fingerprint does not reproduce" in str(refusal.value)
+    assert "payload digest does not reproduce" not in str(refusal.value)
+
+
+def test_binding_keeps_a_singular_claims_rationale_in_both_commitments() -> None:
+    payload = _claim(subject_id="wi-42", rationale="The writer observed the current status.")
+    other = _claim(subject_id="wi-42", rationale="A different reason entirely.")
+    raw = _wire_intent(payload, semantic_identity="CLM-" + "2" * 32)
+
+    event = EVENT_MODELS[2].model_validate(raw)
+
+    intent = event.intent
+    assert isinstance(intent.payload, models.ClaimAuthoringPayloadV1)
+    assert intent.payload_digest == models.authoring_payload_digest(payload)
+    assert intent.create_fingerprint == models.authoring_create_fingerprint(
+        instance_id=intent.instance_id, actor_id=intent.actor_id, payload=payload
+    )
+    # A Claim's rationale is part of what its author asserted, so it moves the
+    # payload digest -- the half of the law a change set inverts.
+    assert models.authoring_payload_digest(payload) != models.authoring_payload_digest(other)

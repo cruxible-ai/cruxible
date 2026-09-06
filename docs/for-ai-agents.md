@@ -265,6 +265,50 @@ Do not combine stages. A proposal can be refused. Optional or candidate-required
 approvals may become stale. Activation can lose a compare-and-set race. Handle
 each typed result rather than assuming success.
 
+## Reviewing a proposal
+
+The ledger is Git, so review is Git. The daemon fetches its own refs into the
+attached workspace on every proposal, so a reviewer diffs the candidate against
+accepted state with standard tooling:
+
+~~~text
+git diff playbill/accepted...playbill/proposals/<proposal-id>
+~~~
+
+The candidate commit's message is the change set's own summary -- what it does,
+then one line per member -- and the daemon's records are attached to the SAME
+commit the branch points at, as Git notes read by name (`git notes
+--ref=refs/notes/playbill-eval show playbill/proposals/<proposal-id>`; from a
+clone of the mirror, `git fetch origin '+refs/notes/*:refs/notes/*'` first): `refs/notes/playbill-eval` carries the admission and the
+evaluation verdict with every diagnostic behind a refusal, and
+`refs/notes/playbill-approval` carries the canonical approval list with each
+signer's own attestation. Nothing parses those messages; every fact an agent
+should act on is in `proposal review --json` or in the notes.
+
+`proposal review` without `--json` prints the pointer and the note refs rather
+than re-rendering the change set. `playbill review open` / `review close`, which
+materialized a detached worktree under `.playbill/review/`, are deprecated in
+favour of the diff above and are removed in 0.6.0.
+
+The proposal ref in that diff is keyed by proposal DIGEST, not by actor and
+name: an actor's own transport ref `refs/proposals/<actor>/<name>` is extended
+by every resubmission, while the branch a reviewer reads projects exactly one
+evaluated candidate. Use the id `proposal list` prints.
+
+An agent with no attached workspace reads the same refs from the ledger mirror.
+`orient --json` carries `orientation.mirror_url` when the instance publishes to
+one, and `playbill ledger clone-url` asks for it directly; clone that, and
+`origin/main` is accepted state while `origin/proposals/<proposal-id>` is the
+candidate. The daemon pushes after every ledger write, so a mirror that has
+fallen behind says so as the `ledger_mirror_behind` warning row in `playbill
+next` rather than by serving stale refs silently.
+
+The change set's own summary reaches that commit only if a door carried one.
+`pb.changes(rationale="...")` and the `rationale` field on the tagless
+change-set input both send it, and the daemon writes it as the candidate
+commit's subject. Say why the set exists; what it does is already the roll
+underneath.
+
 ## Source alignment
 
 Local files do not enter the event stream automatically. A catalog declares

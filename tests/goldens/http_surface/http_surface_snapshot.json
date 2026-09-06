@@ -135,6 +135,10 @@
   "/api/v1/{instance_id}/playbill/instance/decommission": {
     "POST": "PlaybillInstanceDecommissionResultV1"
   },
+  "/api/v1/{instance_id}/playbill/ledger/mirror": {
+    "GET": "PlaybillLedgerMirrorV1",
+    "POST": "PlaybillLedgerMirrorV1"
+  },
   "/api/v1/{instance_id}/playbill/lines/{line_identity_digest}/runs": {
     "POST": "PlaybillProcedureRunState"
   },

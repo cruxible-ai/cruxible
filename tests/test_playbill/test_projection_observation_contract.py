@@ -122,6 +122,10 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         # decommissioned instance answers reads and refuses every write, and
         # this reason is how the queue says so.
         "instance_decommissioned",
+        # The ledger publishes itself to a remote after every write. That remote
+        # is a copy and never a condition of a write, so a push that failed is
+        # not a refusal -- it is this row, and nothing else would say it.
+        "ledger_mirror_behind",
     }
     assert set(get_args(NextRepairOperation)) == {
         "playbill.authoring.create",

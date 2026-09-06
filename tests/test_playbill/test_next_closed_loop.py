@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -186,6 +187,9 @@ EXPECTED_OPERATIONS = {
     "provider_lane_unavailable": "hand_edit",
     "procedure_projection_missing": "hand_edit",
     "instance_decommissioned": "hand_edit",
+    # The daemon already retried: it pushes after every write. A mirror still
+    # behind is behind for a reason off this host.
+    "ledger_mirror_behind": "hand_edit",
 }
 
 
@@ -1324,6 +1328,50 @@ def _provider_lane_unavailable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> 
     assert all(item.reason != "provider_lane_unavailable" for item in repaired.items)
 
 
+def _ledger_mirror_behind(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    instance, _owner = initialize_local(root)
+    request = _request(instance)
+    remote = root / "mirror.git"
+    subprocess.run(
+        [
+            "git",
+            "init",
+            "--bare",
+            "-q",
+            f"--object-format={instance.descriptor.git_object_format}",
+            str(remote),
+        ],
+        check=True,
+    )
+    # Bind a remote that is not there. Binding publishes, so the failure is
+    # recorded before any governed write happens at all.
+    subprocess.run(["rm", "-rf", str(remote)], check=True)
+    state = instance.set_ledger_mirror(str(remote))
+    assert state is not None and state.status == "behind"
+
+    row = _row(instance, "ledger_mirror_behind", request)
+    assert row.severity == "warning"
+    assert row.repair.operation == "hand_edit"
+    assert row.repair.command is None
+    assert row.repair.target == str(remote)
+
+    # The named repair is off this host: restore the remote. Nothing else runs.
+    subprocess.run(
+        [
+            "git",
+            "init",
+            "--bare",
+            "-q",
+            f"--object-format={instance.descriptor.git_object_format}",
+            str(remote),
+        ],
+        check=True,
+    )
+    republished = instance.publish_ledger_mirror()
+    assert republished is not None and republished.status == "current"
+    _assert_gone(instance, "ledger_mirror_behind", request)
+
+
 def _procedure_projection_missing(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     instance, _owner = initialize_local(root)
     coordinate = instance.accepted_coordinate()
@@ -1450,6 +1498,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("provider_lane_unavailable", None): _provider_lane_unavailable,
     ("procedure_projection_missing", None): _procedure_projection_missing,
     ("instance_decommissioned", None): _instance_decommissioned,
+    ("ledger_mirror_behind", None): _ledger_mirror_behind,
 }
 
 

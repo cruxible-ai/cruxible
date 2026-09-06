@@ -30,6 +30,8 @@ together.
 | `playbill block sync --discard-local` | `--accept-local`, which re-stamps the block on the body the author wrote | 0.5.1 | 0.6.0 |
 | `playbill subject get KIND ID two-argument form` | one `kind/name` Subject address argument | 0.5.1 | 0.6.0 |
 | `playbill subject history KIND ID two-argument form` | one `kind/name` Subject address argument | 0.5.1 | 0.6.0 |
+| `playbill review open` | diff the ledger in the attached workspace: `git diff playbill/accepted...playbill/proposals/<proposal-id>` | 0.5.1 | 0.6.0 |
+| `playbill review close` | diff the ledger in the attached workspace: `git diff playbill/accepted...playbill/proposals/<proposal-id>` | 0.5.1 | 0.6.0 |
 
 The rows stay after a surface is removed: this table is the historical schedule,
 not a list of what is still accepted. Removed in 0.4.0 (the registry entry, the

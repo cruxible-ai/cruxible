@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from cruxible_client.contracts.approval_policy import ApprovalPolicyMode
 from cruxible_client.contracts.canonical import Sha256Value
+from cruxible_client.contracts.ledger_mirror import validate_mirror_url
 
 GitObjectFormat = Literal["sha1", "sha256"]
 AuthorityMode = Literal["legacy", "ledger", "inactive"]
@@ -306,6 +307,13 @@ class PlaybillDescriptor(StrictModel):
     decommissioned: PlaybillDecommissionV1 | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    # Where this ledger publishes itself, on the same terms. It is operational
+    # configuration rather than accepted state: no generation, candidate or
+    # digest reads it, changing it changes nothing that was already governed,
+    # and an instance that publishes nowhere renders exactly the bytes it always
+    # did. It never carries a credential -- a URL with userinfo is refused at
+    # every door -- because `ledger clone-url` prints this string back.
+    mirror_url: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("instance_id")
     @classmethod
@@ -321,6 +329,13 @@ class PlaybillDescriptor(StrictModel):
         if not _LOWER_HEX_32_RE.fullmatch(value):
             raise ValueError("daemon_public_key must contain 32 bytes of lowercase hex")
         return value
+
+    @field_validator("mirror_url")
+    @classmethod
+    def _mirror_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return validate_mirror_url(value)
 
 
 class PrincipalInspection(StrictModel):

@@ -43,6 +43,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "instance", "decommission"): "active",
     ("playbill", "body", "store"): "active",
     ("playbill", "provider", "seed"): "active",
+    ("playbill", "ledger", "set-mirror"): "active",
     ("playbill", "document", "propose"): "active",
     ("playbill", "claim-type", "propose"): "active",
     ("playbill", "claim-type", "migrate"): "active",
@@ -392,6 +393,23 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 },
                 module="playbill",
                 attr="instance_group",
+            ),
+            "ledger": _group(
+                "Publish this instance's ledger, and read where it publishes to.",
+                {
+                    "set-mirror": _command(
+                        "playbill",
+                        "set_ledger_mirror",
+                        "Bind the remote this ledger publishes to.",
+                    ),
+                    "clone-url": _command(
+                        "playbill",
+                        "ledger_clone_url",
+                        "Print the ledger mirror a reviewer clones.",
+                    ),
+                },
+                module="playbill",
+                attr="ledger_group",
             ),
             "provider": _group(
                 "Manage governed Provider artifacts.",

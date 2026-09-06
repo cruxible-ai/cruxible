@@ -11,14 +11,18 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.authoring.models import (
+    AUTHORING_CHANGE_SET_MEMBERSHIP_DIGEST_DOMAIN,
     AuthoringIntentV1,
     CandidateStatusV1,
+    ChangeSetAuthoringPayloadV1,
+    SubjectAuthoringPayloadV1,
+    authoring_change_set_membership,
     authoring_create_fingerprint,
     authoring_payload_digest,
     build_insertion_expectation_v2,
     insertion_expectation_id,
 )
-from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.claims import LiteralClaimObject
 from cruxible_core.playbill.authoring import store as store_module
 from cruxible_core.playbill.authoring.store import (
@@ -27,6 +31,7 @@ from cruxible_core.playbill.authoring.store import (
     AuthoringIntentStoreError,
     build_authoring_intent_event,
 )
+from tests.test_playbill.test_authoring_change_set_intents import _shell
 from tests.test_playbill.test_authoring_insertions_v2 import _target
 from tests.test_playbill.test_authoring_intents import TIMESTAMP, _payload
 from tests.test_playbill.test_authoring_source_presence import _commit_raw_event, _wire_event
@@ -549,3 +554,105 @@ def test_private_payload_sharing_preserves_mixed_historical_source_presence(
     for _ in range(2):
         assert [store._render_event(event) for event in store.events()] == wires
     assert len(parsed) == 6
+
+
+def _change_set(rationale: str | None) -> ChangeSetAuthoringPayloadV1:
+    members = (SubjectAuthoringPayloadV1(subject=_shell("wi-1")),)
+    if rationale is None:
+        return ChangeSetAuthoringPayloadV1(members=members)
+    return ChangeSetAuthoringPayloadV1(members=members, rationale=rationale)
+
+
+def _change_set_intent(rationale: str | None, revision: int) -> AuthoringIntentV1:
+    payload = _change_set(rationale)
+    membership = authoring_change_set_membership(payload.members)
+    return AuthoringIntentV1(
+        intent_id="AIT-" + "4" * 32,
+        instance_id="history-reuse-fixture",
+        actor_id="owner",
+        canonical_timestamp=TIMESTAMP,
+        base_coordinate=_coordinate(),
+        semantic_identity="ChangeSet:"
+        + typed_digest(
+            Sha256Value,
+            AUTHORING_CHANGE_SET_MEMBERSHIP_DIGEST_DOMAIN,
+            {"members": [{"kind": kind, "identity": identity} for kind, identity in membership]},
+        ).value,
+        payload=payload,
+        payload_digest=authoring_payload_digest(payload),
+        create_fingerprint=authoring_create_fingerprint(
+            instance_id="history-reuse-fixture", actor_id="owner", payload=payload
+        ),
+        intent_revision=revision,
+        candidate_status=CandidateStatusV1(
+            state="draft", current_accepted_coordinate=_coordinate()
+        ),
+    )
+
+
+def _write_change_set_history(
+    exhaust: Path, rationales: tuple[str | None, ...]
+) -> tuple[AuthoringIntentStore, tuple[AuthoringIntentEventAny, ...]]:
+    exhaust.mkdir(parents=True, exist_ok=True)
+    store = AuthoringIntentStore(exhaust)
+    events: list[AuthoringIntentEventAny] = []
+    for sequence, rationale in enumerate(rationales):
+        event = build_authoring_intent_event(
+            sequence=sequence,
+            previous_event_digest=events[-1].event_digest if events else None,
+            operation_key=_operation(sequence),
+            intent=_change_set_intent(rationale, sequence),
+        )
+        path = _event_path(store, event)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(store._render_event(event))
+        events.append(event)
+    return store, tuple(events)
+
+
+def test_a_rationale_only_revision_is_never_shared_with_the_one_it_replaced(
+    tmp_path: Path, parsed: list[bytes]
+) -> None:
+    """Two revisions of one set can share a payload digest and not a payload.
+
+    A change set's payload digest deliberately drops its rationale, so prose
+    alone does not restate the set's identity. Sharing the decoded payload under
+    that digest would hand the reader the prose it replaced -- silently, because
+    the bytes on disk still carry the edit.
+    """
+
+    store, events = _write_change_set_history(
+        tmp_path / "exhaust", ("The first prose.", "The corrected prose.")
+    )
+    assert events[0].intent.payload_digest == events[1].intent.payload_digest
+    assert events[0].intent.create_fingerprint != events[1].intent.create_fingerprint
+
+    directory = store.root / events[0].intent.intent_id
+    private = store._validated_events(directory)
+
+    assert private[0].intent.payload is not private[1].intent.payload
+    assert [event.intent.payload.rationale for event in store.events()] == [
+        "The first prose.",
+        "The corrected prose.",
+    ]
+    assert store.get(events[0].intent.intent_id, actor_id="owner").payload.rationale == (
+        "The corrected prose."
+    )
+    assert tuple(store._render_event(event) for event in private) == tuple(
+        _event_path(store, event).read_bytes() for event in events
+    )
+    assert len(parsed) == 2
+
+
+def test_an_unchanged_change_set_payload_is_still_shared_across_revisions(
+    tmp_path: Path, parsed: list[bytes]
+) -> None:
+    store, events = _write_change_set_history(
+        tmp_path / "exhaust", ("The same prose.", "The same prose.", None)
+    )
+    private = store._validated_events(store.root / events[0].intent.intent_id)
+
+    assert private[0].intent.payload is private[1].intent.payload
+    assert private[2].intent.payload is not private[0].intent.payload
+    assert private[2].intent.payload.rationale is None
+    assert len(parsed) == 3

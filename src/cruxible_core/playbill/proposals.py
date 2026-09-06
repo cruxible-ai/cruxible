@@ -285,6 +285,8 @@ from cruxible_core.playbill.exhaust.promotions import (
 )
 from cruxible_core.playbill.principal_lifecycle import evaluate_principal_lifecycle
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.playbill.proposal_message import proposal_commit_message
+from cruxible_core.playbill.proposal_notes import proposal_evaluation_note
 from cruxible_core.playbill.provider_classifiers import (
     core_provider_bucket_conformance_fixtures,
 )
@@ -3522,6 +3524,14 @@ def _proposal_id_payload(
                 "candidate_commit_oid": candidate_commit_oid,
                 "candidate_tree_oid": candidate_tree_oid,
                 "source_compilation_digest": request.source_compilation_digest,
+                # `rationale` is deliberately not a field of its own here. It
+                # still reaches this digest, through `candidate_commit_oid`,
+                # because the message is part of the commit object -- two
+                # submissions of one tree under different prose ARE two
+                # commits, and an admission that claimed otherwise would name a
+                # commit no selector could resolve back. What naming it
+                # separately would add is a second path by which the same fact
+                # enters one identity.
                 "claim_type_expansions": [
                     item.model_dump(mode="json") for item in request.claim_type_expansions
                 ],
@@ -3559,6 +3569,7 @@ class ProposalService:
         query_facts_provider: ClaimQueryFactsProvider | None = None,
         workspace_advertiser: Callable[[], PlaybillWorkspaceAdvertisement] | None = None,
         require_writable: Callable[[], None] | None = None,
+        ledger_publisher: Callable[[], object] | None = None,
     ) -> None:
         self.transport = transport
         self.accepted = accepted
@@ -3574,6 +3585,9 @@ class ProposalService:
         # its limits and verifiers), so the terminal state is checked where the
         # write happens, not where the service is constructed.
         self._require_writable = require_writable or (lambda: None)
+        # Publication, not persistence: called after the last ledger write of a
+        # submission, and by contract it never raises.
+        self._ledger_publisher = ledger_publisher or (lambda: None)
 
     def submit(
         self,
@@ -3626,6 +3640,34 @@ class ProposalService:
             limits=self.receive_limits,
             base_tree=base_tree,
         )
+        is_rebase = current.git_oid != request.proposed_base_oid
+        # Evaluation runs BEFORE the ref moves. Two things depend on it: the
+        # commit message is the change set's own member summary, which only the
+        # evaluated candidate knows; and an evaluation that raises now leaves
+        # the actor's ref exactly where it was, instead of advancing it onto a
+        # commit no admission record will ever name.
+        outcome = evaluate_proposal_tree(
+            base_tree=base_tree,
+            current_tree=current_tree,
+            proposed_tree=validated_tree,
+            current=current,
+            bodies=self.bodies,
+            timestamp=timestamp,
+            rebased=is_rebase,
+            actor_id=actor.actor_id,
+            claim_type_expansions=request.claim_type_expansions,
+            promotion_verifier=self.promotion_verifier,
+            producer_receipt_resolver=self.producer_receipt_resolver,
+            query_facts_provider=self.query_facts_provider,
+        )
+        # A refused proposal has no members to summarize, so it keeps the bare
+        # subject the ledger has always written for it -- unless the author said
+        # why they proposed it, which is still true of a set that did not pass.
+        message = proposal_commit_message(
+            outcome.candidate.members if outcome.candidate is not None else (),
+            rationale=request.rationale,
+        )
+
         existing = self.transport.read_proposal_ref(request.target_ref)
         commit_oid, tree_oid = self.transport.create_proposal_commit(
             validated_tree,
@@ -3641,21 +3683,7 @@ class ProposalService:
             actor_id=actor.actor_id,
             timestamp=timestamp,
             expected_ref_oid=existing,
-        )
-        is_rebase = current.git_oid != request.proposed_base_oid
-        outcome = evaluate_proposal_tree(
-            base_tree=base_tree,
-            current_tree=current_tree,
-            proposed_tree=validated_tree,
-            current=current,
-            bodies=self.bodies,
-            timestamp=timestamp,
-            rebased=is_rebase,
-            actor_id=actor.actor_id,
-            claim_type_expansions=request.claim_type_expansions,
-            promotion_verifier=self.promotion_verifier,
-            producer_receipt_resolver=self.producer_receipt_resolver,
-            query_facts_provider=self.query_facts_provider,
+            message=message,
         )
 
         evaluated_tree_oid: str | None = tree_oid
@@ -3672,6 +3700,7 @@ class ProposalService:
                 actor_id=actor.actor_id,
                 timestamp=timestamp,
                 expected_ref_oid=commit_oid,
+                message=message,
             )
         # The admission names the commit the proposal ref actually holds. Evaluation
         # re-commits whenever it derives cards or rebases, so the record is written
@@ -3696,6 +3725,7 @@ class ProposalService:
             claim_type_expansions=request.claim_type_expansions,
             limits=self.receive_limits,
             admitted_at=timestamp,
+            rationale=request.rationale,
         )
         self.evidence.write_admission(admission)
         candidate_value = outcome.candidate.candidate_digest if outcome.candidate else None
@@ -3718,8 +3748,21 @@ class ProposalService:
         self.evidence.write_evaluation(evaluation)
         if outcome.candidate is not None:
             self.evidence.write_candidate(outcome.candidate)
+        # The note is written LAST, after every evidence file is durable, so it
+        # can only ever project records that already exist. A re-submission on
+        # the same ref lands on its own commit; a re-evaluation of one commit
+        # restates its note rather than accumulating a second one.
+        self.transport.write_proposal_note(
+            "evaluation",
+            commit_oid,
+            proposal_evaluation_note(admission=admission, evaluation=evaluation),
+        )
         if self.transport.read_main() != current.git_oid:
             raise ProposalIntegrityError("proposal evaluation changed or raced accepted main")
+        # Every byte this submission writes is durable, and the integrity proof
+        # above has passed. Publishing here rather than earlier means the mirror
+        # is only ever asked to carry a proposal the daemon has already kept.
+        self._ledger_publisher()
         if self.workspace_advertiser is None:
             advertisement = NOT_ATTACHED_ADVERTISEMENT
         else:

@@ -14,10 +14,21 @@ from cruxible_client.contracts.workspace_advertisement import (
     PlaybillWorkspaceAdvertisement,
     WorkspaceAdvertisementFailureCode,
 )
+from cruxible_core.playbill.git import NOTE_REFS
 
 _REMOTE_NAME = "playbill"
 _ACCEPTED_REFSPEC = "+refs/heads/main:refs/remotes/playbill/accepted"
 _PROPOSAL_REFSPEC = "+refs/heads/proposals/*:refs/remotes/playbill/proposals/*"
+# The note refs land under their own names rather than inside
+# `refs/remotes/playbill/`, because `git notes --ref=` prefixes anything that
+# does not already begin with `refs/notes/` -- so a note fetched to
+# `refs/remotes/playbill/notes/playbill-eval` reads back as "no note found",
+# which is the silent failure this refspec exists to remove. The names are
+# already the product's own (`playbill-gen`, `playbill-eval`,
+# `playbill-approval`), so one vocabulary serves the attached workspace and a
+# clone of the mirror alike: the command `proposal review` prints is the
+# command that runs, in both.
+_NOTE_REFS: tuple[str, ...] = tuple(sorted(NOTE_REFS.values()))
 _PROPOSAL_ID_RE = re.compile(r"^[0-9a-f]{64}$")
 _REVIEW_EXCLUDE = b"/.playbill/review/\n"
 _PASSTHROUGH_ENVIRONMENT = ("PATH", "TMPDIR", "TMP", "TEMP", "SYSTEMROOT")
@@ -255,6 +266,48 @@ def _advertise_workspace_refs(
     )
     if fetched.returncode != 0:
         return failed("fetch_failed")
+    # Which note refs exist is asked before they are fetched: Git refuses a
+    # whole fetch that names one absent ref, and an instance with no proposal
+    # yet -- or no approval yet -- legitimately has none of them. A wildcard
+    # would tolerate that and is not usable here: `--prune` over
+    # `refs/notes/*` would delete the author's OWN notes, which the daemon has
+    # no business touching.
+    advertised_notes = _git(
+        workspace,
+        [
+            "ls-remote",
+            # The same explicit pin the fetch carries. `remote.<name>.uploadpack`
+            # is workspace-writable and names a program to run; the command-line
+            # flag is what actually overrides it, which the executable-config
+            # guardrail proves by firing when it is missing.
+            "--upload-pack=git-upload-pack",
+            "--refs",
+            _REMOTE_NAME,
+            *_NOTE_REFS,
+        ],
+    )
+    if advertised_notes.returncode != 0:
+        return failed("fetch_failed")
+    present_notes = tuple(
+        line.split("\t")[1]
+        for line in _text(advertised_notes.stdout).splitlines()
+        if "\t" in line and line.split("\t")[1] in _NOTE_REFS
+    )
+    if present_notes:
+        fetched_notes = _git(
+            workspace,
+            [
+                "fetch",
+                "--atomic",
+                "--no-tags",
+                "--no-recurse-submodules",
+                "--upload-pack=git-upload-pack",
+                _REMOTE_NAME,
+                *(f"+{ref}:{ref}" for ref in present_notes),
+            ],
+        )
+        if fetched_notes.returncode != 0:
+            return failed("fetch_failed")
     listed = _git(
         workspace,
         [

@@ -30,7 +30,8 @@
       "values": [
         "procedure_projection_missing",
         "provider_lane_unavailable",
-        "instance_decommissioned"
+        "instance_decommissioned",
+        "ledger_mirror_behind"
       ]
     },
     "PlaybillHostCompatibilityReasonCodeV1": {
@@ -86,7 +87,8 @@
         "projection_marker_invalid",
         "provider_lane_unavailable",
         "procedure_projection_missing",
-        "instance_decommissioned"
+        "instance_decommissioned",
+        "ledger_mirror_behind"
       ]
     },
     "PlaybillPolicyKind": {
@@ -4021,6 +4023,19 @@
                 "minItems": 1,
                 "title": "Members",
                 "type": "array"
+              },
+              "rationale": {
+                "anyOf": [
+                  {
+                    "maxLength": 4096,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Rationale"
               }
             },
             "required": [
@@ -19763,6 +19778,162 @@
         "interfaces",
         "provider_status",
         "tag"
+      ]
+    },
+    "PlaybillLedgerMirrorV1": {
+      "fields": {
+        "attempted_at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "attempted_at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Attempted At"
+          }
+        },
+        "detail": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "detail",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          }
+        },
+        "instance_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance_id",
+          "required": true,
+          "schema": {
+            "title": "Instance Id",
+            "type": "string"
+          }
+        },
+        "mirror_url": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "mirror_url",
+          "required": true,
+          "schema": {
+            "title": "Mirror Url",
+            "type": "string"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "current",
+              "behind"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-ledger-mirror-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-ledger-mirror-v1",
+            "default": "playbill-ledger-mirror-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "Where one instance publishes its ledger, and whether that copy is current.\n\nOne model for both doors: `ledger set-mirror` binds a remote and publishes\nto it at once, and `ledger clone-url` reads back what a reviewer clones. The\nURL carries no credential -- one that could is refused before it is stored --\nso this model is safe to print, log and hand to anyone who may read the\ninstance at all.",
+        "properties": {
+          "attempted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Attempted At"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "mirror_url": {
+            "title": "Mirror Url",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "current",
+              "behind"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-ledger-mirror-v1",
+            "default": "playbill-ledger-mirror-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instance_id",
+          "mirror_url",
+          "status"
+        ],
+        "title": "PlaybillLedgerMirrorV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "instance_id",
+        "mirror_url",
+        "status"
       ]
     },
     "PlaybillNextResult": {

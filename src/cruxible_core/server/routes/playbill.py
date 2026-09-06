@@ -54,6 +54,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillInitRequest,
     PlaybillInsertionAbandonRequest,
     PlaybillInstanceDecommissionRequest,
+    PlaybillLedgerMirrorRequest,
     PlaybillNextRequest,
     PlaybillNextRequestV2,
     PlaybillProposalReadmitRequest,
@@ -137,6 +138,7 @@ def playbill_init(
         ),
         seed=req.seed,
         git_object_format=req.git_object_format,
+        mirror_url=req.mirror_url,
     )
 
 
@@ -152,6 +154,28 @@ def instance_decommission(
         resolve_server_instance_id(instance_id),
         reason=req.reason,
     )
+
+
+@router.post(
+    "/{instance_id}/playbill/ledger/mirror",
+    response_model=contracts.PlaybillLedgerMirrorV1,
+)
+def set_ledger_mirror(
+    instance_id: str,
+    req: PlaybillLedgerMirrorRequest,
+) -> contracts.PlaybillLedgerMirrorV1:
+    return playbill_api.playbill_ledger_set_mirror(
+        resolve_server_instance_id(instance_id),
+        url=req.url,
+    )
+
+
+@router.get(
+    "/{instance_id}/playbill/ledger/mirror",
+    response_model=contracts.PlaybillLedgerMirrorV1,
+)
+async def ledger_clone_url(instance_id: str) -> contracts.PlaybillLedgerMirrorV1:
+    return playbill_api.playbill_ledger_clone_url(resolve_server_instance_id(instance_id))
 
 
 @router.post(
@@ -355,7 +379,12 @@ async def prepare_approval(
     response_model=contracts.PlaybillApprovalReceipt,
     response_model_exclude={"git_workspace_note"},
 )
-async def submit_approval(
+# Synchronous, like every other mutating Playbill route: this one now publishes
+# the ledger to its mirror, and a blocking `git push` inside the event loop would
+# let one unreachable remote stall every request the daemon is serving. The push
+# has its own deadline as well; both bounds are needed, because a bounded stall
+# on the loop is still a stall of the whole process.
+def submit_approval(
     instance_id: str,
     proposal_id: str,
     req: PlaybillApprovalRequest,

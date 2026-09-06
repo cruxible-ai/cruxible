@@ -289,6 +289,7 @@ def test_cli_init_adopts_only_its_transport_bound_response_loss_orphan(
             require_independent_approval: bool,
             seed: bool = True,
             git_object_format: str | None = None,
+            mirror_url: str | None = None,
         ) -> contracts.PlaybillInitResult:
             nonlocal calls
             calls += 1
