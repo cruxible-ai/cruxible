@@ -706,10 +706,15 @@ class AuthoringIntentStore:
         # Most transitions repeat a large immutable payload. Share it only
         # inside private validated state and only under its verified commitment.
         # Outward copies remain independent, including the transform input.
+        # The commitment is the CREATE FINGERPRINT, never the payload digest: a
+        # change set's payload digest deliberately drops its rationale, so two
+        # revisions that differ only in prose share one payload digest and are
+        # not one payload. The fingerprint digests the whole payload, so equal
+        # fingerprints on one reproduced event mean equal payloads.
         payloads: dict[tuple[type[object], str], AuthoringPayloadV1] = {
             (
                 type(item.event.intent.payload),
-                item.event.intent.payload_digest,
+                item.event.intent.create_fingerprint,
             ): item.event.intent.payload
             for item in cached
         }
@@ -729,7 +734,7 @@ class AuthoringIntentStore:
                     event, rendered = _decode_authoring_intent_event(raw)
                     if raw != rendered:
                         raise AuthoringIntentStoreError("AuthoringIntent event is not canonical")
-                    key = (type(event.intent.payload), event.intent.payload_digest)
+                    key = (type(event.intent.payload), event.intent.create_fingerprint)
                     payload = payloads.setdefault(key, event.intent.payload)
                     if payload is not event.intent.payload:
                         event = event.model_copy(
