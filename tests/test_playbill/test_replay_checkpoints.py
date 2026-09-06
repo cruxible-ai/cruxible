@@ -21,6 +21,7 @@ from cruxible_core.playbill.checkpoints import (
     verify_checkpoint,
     write_checkpoint,
 )
+from cruxible_core.playbill.claim_subject_index import build_claim_subject_index
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.recovery import RecoveredInstanceState
 
@@ -139,6 +140,7 @@ def test_a_checkpoint_written_on_the_acceptance_stride_seeds_a_reopen(tmp_path: 
     )
     assert len(seed.prefix) == written.body.sequence + 1
     assert seed.prefix[-1].principals == written.body.principals
+    assert seed.state.claim_subjects == build_claim_subject_index(seed.tree)
 
 
 def test_a_stride_checkpoint_reopen_equals_a_genesis_rooted_recovery(tmp_path: Path) -> None:

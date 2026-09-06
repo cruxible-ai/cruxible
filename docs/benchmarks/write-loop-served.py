@@ -27,6 +27,11 @@ grades are recorded. Under this fixture's admission policy, the SDK's coordinato
 self-source does not support the claim: the diagnostic returns current, uncovered
 claims. This measures lawful accepted writes and readback, not a supported-evidence
 customer proof.
+With --freeze-policy, all seeded and measured values are ready, and each
+ClaimType freezes its predicate while its accepted value is frozen. This keeps
+writes eligible while exercising complete same-Subject freeze-policy reads.
+The constant seed value avoids ambiguous parent values independently of whether
+the freeze is active. The default workload retains its original varying seeds.
 """
 
 from __future__ import annotations
@@ -41,6 +46,49 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+
+
+def build_workload_fixture(fixture_module, root, profile, *, freeze_policy):
+    """Specialize fixture generation before any vocabulary or digest is pinned.
+
+    Keep this adapter in the portable harness: the fixture comes from --repo,
+    including historical checkouts that do not know the new workload flag. Its
+    original hooks are restored even on a failed build, and production compiler
+    or policy functions are never replaced.
+    """
+    if not freeze_policy:
+        return fixture_module.build_fixture(root, profile)
+
+    from cruxible_client.contracts.policies import ClaimAdmissionPolicyV1, FreezeRequirementV1
+
+    original_type = fixture_module._claim_type
+    original_values = fixture_module.CLAIM_VALUES
+
+    def frozen_type(index):
+        claim_type = original_type(index)
+        # Construct through normal validation. Claims and QueryDefinitions are
+        # subsequently built from this exact accepted type and derive its pins.
+        payload = claim_type.model_dump(mode="json")
+        payload["literal_schema"] = {"enum": ["ready", "frozen"], "type": "string"}
+        payload["admission_policy"] = ClaimAdmissionPolicyV1(
+            freeze_requirements=(
+                FreezeRequirementV1(
+                    requirement_id="benchmark-freeze",
+                    while_predicate=claim_type.predicate,
+                    while_values=("frozen",),
+                    frozen_predicates=(claim_type.predicate,),
+                ),
+            )
+        ).model_dump(mode="json")
+        return type(claim_type).model_validate(payload)
+
+    fixture_module._claim_type = frozen_type
+    fixture_module.CLAIM_VALUES = ("ready",)
+    try:
+        return fixture_module.build_fixture(root, profile)
+    finally:
+        fixture_module._claim_type = original_type
+        fixture_module.CLAIM_VALUES = original_values
 
 
 def serve(socket: str, profile_prefix: str, scope: str) -> None:
@@ -100,6 +148,11 @@ def main() -> None:
         "--reopen-after", action="store_true", help="Time fresh-process recovery after writes"
     )
     parser.add_argument("--world", action="store_true", help="Use typed World references in drafts")
+    parser.add_argument(
+        "--freeze-policy",
+        action="store_true",
+        help="Exercise inactive same-Subject freeze policies with constant ready seed values",
+    )
     args = parser.parse_args()
     if args.profile_write_phases and not args.server_profile:
         parser.error("--profile-write-phases requires --server-profile")
@@ -126,11 +179,11 @@ def main() -> None:
     # Imports deliberately follow --repo selection; never silently benchmark the
     # interpreter's installed distribution instead of the declared checkout.
     import httpx
+    from tests.test_playbill import _adoption_fixture as adoption_fixture
     from tests.test_playbill._adoption_fixture import (
         AdoptionFixtureProfile,
         _Builder,
         _digest_id,
-        build_fixture,
     )
 
     from cruxible_client import Playbill
@@ -160,6 +213,14 @@ def main() -> None:
         "server_profile": args.server_profile,
         "profile_write_phases": args.profile_write_phases,
         "world": args.world,
+        "freeze_policy": args.freeze_policy,
+        "policy_workload": (
+            "Each ClaimType freezes its predicate while its parent value is frozen; "
+            "all seed, history and measured values are ready, so writes remain eligible "
+            "while constructing complete same-Subject policy views."
+            if args.freeze_policy
+            else "Original empty ClaimType admission policies and varying seed/history values."
+        ),
         "reopen_after": args.reopen_after,
         "scope": "SDK claim draft/prepare/submit/status; HTTP approval challenge/sign/submit; "
         "SDK accept; coordinate-pinned HTTP full Claim readback; explicit SDK refresh "
@@ -186,7 +247,9 @@ def main() -> None:
             claims_per_generation=1,
         )
         started = time.perf_counter()
-        fixture = build_fixture(root / "fixture", profile)
+        fixture = build_workload_fixture(
+            adoption_fixture, root / "fixture", profile, freeze_policy=args.freeze_policy
+        )
         operator = generate_client_principal_key(
             root / "operator-custody",
             principal_id="operator",

@@ -255,6 +255,14 @@ from cruxible_core.playbill.candidate_cards import (
     derive_candidate_cards,
     is_candidate_card_path,
 )
+from cruxible_core.playbill.claim_subject_index import (
+    CLAIM_PATH_RE as _CLAIM_PATH_RE,
+)
+from cruxible_core.playbill.claim_subject_index import (
+    ClaimSubjectIndex,
+    build_claim_subject_index,
+    update_claim_subject_index,
+)
 from cruxible_core.playbill.closure import (
     ArtifactDependencyStateV1,
     ClosureEvaluationV2,
@@ -317,7 +325,6 @@ _SOURCE_ACQUISITION_POLICY_PATH_RE = re.compile(
 )
 _STANDING_MANDATE_PATH_RE = re.compile(r"^standing-mandates/[a-z][a-z0-9_.-]{0,255}\.json$")
 _PROCEDURE_MANDATE_PATH_RE = re.compile(r"^procedure-mandates/[a-z][a-z0-9_.-]{0,255}\.json$")
-_CLAIM_PATH_RE = re.compile(r"^claims/[0-9a-f]{2}/CLM-[0-9a-f]{32}\.json$")
 _PROCEDURE_PATH_RE = re.compile(r"^procedures/[a-z][a-z0-9_.-]{0,255}\.json$")
 _LINE_PATH_RE = re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.json$")
 _QUERY_DEFINITION_PATH_RE = re.compile(r"^query-definitions/[a-z][a-z0-9_.-]{0,255}\.json$")
@@ -1057,6 +1064,8 @@ def _claim_admission_evaluations(
     current: AcceptedProjectionCoordinate,
     query_facts_provider: ClaimQueryFactsProvider | None,
     replay_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] | None,
+    parent_claim_index: ClaimSubjectIndex | None = None,
+    candidate_claim_index: ClaimSubjectIndex | None = None,
 ) -> tuple[
     dict[str, tuple[dict[str, object], ...]],
     dict[str, tuple[str, ...]],
@@ -1084,6 +1093,9 @@ def _claim_admission_evaluations(
         ]
         | None
     ) = None
+    subject_policy_values: dict[
+        str, tuple[dict[str, tuple[object, ...]], dict[str, tuple[object, ...]]]
+    ] = {}
     entries_by_path: dict[str, tuple[dict[str, object], ...]] = {}
     digests_by_path: dict[str, tuple[str, ...]] = {}
     query_digests_by_path: dict[str, tuple[str, ...]] = {}
@@ -1127,13 +1139,46 @@ def _claim_admission_evaluations(
             nonlocal facts, policy_values
             parent_values: dict[str, dict[str, tuple[object, ...]]] = {}
             candidate_values: dict[str, dict[str, tuple[object, ...]]] = {}
-            if policy.freeze_requirements:
+            if (
+                policy.freeze_requirements
+                and parent_claim_index is not None
+                and candidate_claim_index is not None
+            ):
+                if subject_path not in subject_policy_values:
+                    parsed_claims: dict[tuple[str, bytes], ClaimArtifactAny] = {}
+                    parent_view = _effective_claim_values(
+                        {
+                            path: current_tree[path]
+                            for path in parent_claim_index.claims_by_subject.get(subject_path, ())
+                        },
+                        evaluation_time=timestamp,
+                        parsed_claims=parsed_claims,
+                    )
+                    candidate_view = _effective_claim_values(
+                        {
+                            path: candidate_tree[path]
+                            for path in candidate_claim_index.claims_by_subject.get(
+                                subject_path, ()
+                            )
+                        },
+                        evaluation_time=timestamp,
+                        parsed_claims=parsed_claims,
+                    )
+                    subject_policy_values[subject_path] = (
+                        parent_view.get(subject_path, {}),
+                        candidate_view.get(subject_path, {}),
+                    )
+                    parsed_claims.clear()
+                parent_subject, candidate_subject = subject_policy_values[subject_path]
+                parent_values = {subject_path: parent_subject}
+                candidate_values = {subject_path: candidate_subject}
+            elif policy.freeze_requirements:
                 # Only freeze law reads these values. Empty and corroboration-only
                 # policies need no Claim scan; corroboration still uses the complete
                 # accepted query facts below. Build both full policy views once on
                 # demand, retaining unchanged and cross-ClaimType Subject values.
                 if policy_values is None:
-                    parsed_claims: dict[tuple[str, bytes], ClaimArtifactAny] = {}
+                    parsed_claims = {}
                     policy_values = (
                         _effective_claim_values(
                             current_tree, evaluation_time=timestamp, parsed_claims=parsed_claims
@@ -1338,6 +1383,7 @@ class EvaluatedTreeState:
     members: Manifest
     merkle: MerkleManifest
     dependencies: DependencyIndexV1
+    claim_subjects: ClaimSubjectIndex
 
 
 TreeStateProvider = Callable[[Mapping[str, bytes]], EvaluatedTreeState]
@@ -1352,6 +1398,7 @@ def build_tree_state(tree: Mapping[str, bytes]) -> EvaluatedTreeState:
         members=members,
         merkle=build_merkle_manifest(members),
         dependencies=build_dependency_index(projected),
+        claim_subjects=build_claim_subject_index(projected),
     )
 
 
@@ -1420,6 +1467,9 @@ def advance_tree_state(
             state.dependencies,
             tree=semantic_projection(tree),
             changed=advanced.scope,
+        ),
+        claim_subjects=update_claim_subject_index(
+            state.claim_subjects, tree=tree, changed=advanced.scope
         ),
     )
 
@@ -3036,6 +3086,8 @@ def _evaluate_scoped_members(
             current=current,
             query_facts_provider=query_facts_provider,
             replay_accounts=replay_claim_admission_accounts,
+            parent_claim_index=parent.claim_subjects,
+            candidate_claim_index=candidate_state.claim_subjects,
         )
         diagnostics.extend(claim_admission_diagnostics)
 

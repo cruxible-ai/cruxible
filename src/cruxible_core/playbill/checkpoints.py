@@ -110,6 +110,7 @@ from cruxible_client.contracts.types import (
     GitObjectFormat,
 )
 from cruxible_core.playbill.bootstrap import VerifiedGenesis, generation_root
+from cruxible_core.playbill.claim_subject_index import build_claim_subject_index
 from cruxible_core.playbill.closure import build_dependency_index
 from cruxible_core.playbill.git import GitLedger
 from cruxible_core.playbill.proposals import EvaluatedTreeState
@@ -654,6 +655,7 @@ def verify_checkpoint(
             # Rebuilt from the coordinate's own member bytes. A checkpoint elides
             # the prefix's law evaluation, never the state the suffix reads.
             dependencies=build_dependency_index(projected),
+            claim_subjects=build_claim_subject_index(projected),
         ),
     )
 
