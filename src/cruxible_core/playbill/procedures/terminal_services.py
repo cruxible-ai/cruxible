@@ -308,12 +308,17 @@ class ProposalTerminalAdapter:
         item_paths: Mapping[str, str] | None = None,
         rationale: str | None = None,
         base_tree: Mapping[str, bytes] | None = None,
+        changed_paths: tuple[str, ...] | None = None,
     ) -> TerminalEgressReceiptV2:
         if request.kind != "propose_change_set":
             raise EffectfulTerminalError("proposal adapter serves propose_change_set only")
-        if base_tree is None:
-            base_tree = self.service.transport.read_tree(request.accepted_coordinate.git_oid)
-        changed = _changed_paths(base_tree, candidate_tree)
+        if changed_paths is None:
+            # A caller that lowered the tree already knows exactly which paths
+            # moved; only a caller handing over a bare tree pays for the diff.
+            if base_tree is None:
+                base_tree = self.service.transport.read_tree(request.accepted_coordinate.git_oid)
+            changed_paths = _changed_paths(base_tree, candidate_tree)
+        changed = changed_paths
         if changed != request.target_paths:
             raise ProposalDeliveryRefused(
                 "proposal_target_paths_mismatch",

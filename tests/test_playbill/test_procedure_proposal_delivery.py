@@ -688,3 +688,55 @@ def test_a_head_that_moves_before_delivery_rebases_the_candidate_honestly(
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     assert egress.children[0].path in tree
     assert subject_path(SUBJECT_KIND, "sibling") in tree
+
+
+# --- optimization parity: no second base-tree read ----------------------------
+
+
+def test_delivery_hands_the_door_lowering_paths_and_reads_no_second_base_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The targets the door checks are exactly the diff a fresh base-tree read would give."""
+
+    instance, _owner, root, line, _procedure = proposal_world(tmp_path)
+    base = instance.accepted_coordinate()
+    base_tree = instance.tree_at(base.git_oid)
+    reads: list[str] = []
+    original_tree_at = type(instance).tree_at
+
+    def counting_tree_at(self, oid):  # type: ignore[no-untyped-def]
+        reads.append(oid)
+        return original_tree_at(self, oid)
+
+    monkeypatch.setattr(type(instance), "tree_at", counting_tree_at)
+    original_lower = delivery_module.authoring_lowering.lower_authoring
+    seen: dict[str, object] = {}
+
+    def observing_lower(*args, **kwargs):  # type: ignore[no-untyped-def]
+        lowered = original_lower(*args, **kwargs)
+        seen["reads_after_lowering"] = list(reads)
+        return lowered
+
+    monkeypatch.setattr(delivery_module.authoring_lowering, "lower_authoring", observing_lower)
+    original_deliver = terminal_services.ProposalTerminalAdapter.deliver
+
+    def observing_deliver(self, **kwargs):  # type: ignore[no-untyped-def]
+        seen["changed_paths"] = kwargs.get("changed_paths")
+        seen["candidate_tree"] = kwargs["candidate_tree"]
+        seen["reads_before_door"] = list(reads)
+        return original_deliver(self, **kwargs)
+
+    monkeypatch.setattr(terminal_services.ProposalTerminalAdapter, "deliver", observing_deliver)
+
+    state = run_line(instance, root, line)
+
+    assert state.status == "succeeded", state.terminal
+    (egress,) = state.terminal_egress
+    # The door received lowering's own paths, and they equal an independent diff.
+    assert seen["changed_paths"] == egress.target_paths
+    assert terminal_services._changed_paths(base_tree, seen["candidate_tree"]) == (  # noqa: SLF001
+        egress.target_paths
+    )
+    # Between lowering's own read and the door, preparation read no tree at all.
+    assert seen["reads_before_door"] == seen["reads_after_lowering"]

@@ -123,7 +123,6 @@ class PreparedProposal:
 
     prepared: PreparedTerminalEgressV1
     candidate_tree: dict[str, bytes]
-    base_tree: dict[str, bytes]
     changed_members: tuple[tuple[str, bytes], ...]
     item_paths: dict[str, str]
     rationale: str
@@ -433,11 +432,12 @@ class ProposalTerminalEgressSink:
             lowering_digest=proposal_lowering_digest(lowered.changed_members),
             item_paths=tuple(sorted(item_paths.items(), key=lambda item: item[0].encode("utf-8"))),
         )
-        base_tree = self.instance.tree_at(request.accepted_coordinate.git_oid)
+        # Lowering already read the base tree and reported exactly which member
+        # paths moved; the door is handed those paths rather than a second
+        # full-tree read whose only purpose would be to diff them out again.
         self._prepared[(request.admission_binding_digest, request.node_id)] = PreparedProposal(
             prepared=prepared,
             candidate_tree=dict(lowered.proposed_tree),
-            base_tree=base_tree,
             changed_members=lowered.changed_members,
             item_paths=item_paths,
             rationale=rationale,
@@ -498,7 +498,7 @@ class ProposalTerminalEgressSink:
             accepted_mandates=self.accepted_mandates,
             item_paths=prepared.item_paths,
             rationale=prepared.rationale,
-            base_tree=prepared.base_tree,
+            changed_paths=prepared.prepared.target_paths,
         )
 
     def recover_existing(
