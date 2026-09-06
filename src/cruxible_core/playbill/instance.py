@@ -1068,25 +1068,22 @@ class PlaybillInstance:
         }
         evidence = self.proposal_evidence()
         refs: dict[str, str] = {}
+        settled_refs: dict[str, str] = {}
         published: list[tuple[str, str, str]] = []
         for admission in evidence.list_admissions():
             evaluation = evidence.read_evaluation(admission.proposal_id)
             candidate_digest = evaluation.candidate_digest
-            if (
-                candidate_digest is None
-                or candidate_digest in accepted_candidates
-                or evaluation.evaluated_tree_oid is None
-                # A withdrawal is a settlement: the actor has said this tree will
-                # never activate, and every settlement door already refuses it.
-                # It kept its advisory branch only because this projection was
-                # written before withdrawal existed, which left the branch list
-                # claiming open work that no longer was.
-                or evidence.read_withdrawal(admission.proposal_id) is not None
-            ):
+            if candidate_digest is None or evaluation.evaluated_tree_oid is None:
                 continue
             candidate = evidence.read_candidate(candidate_digest)
-            if candidate.candidate.parent_semantic_root != coordinate.semantic_root:
-                continue
+            is_settled = (
+                candidate_digest in accepted_candidates
+                or evidence.read_withdrawal(admission.proposal_id) is not None
+                or candidate.candidate.parent_semantic_root != coordinate.semantic_root
+            )
+            # A coalesced publisher may never observe this candidate while open.
+            # Rebuild its archive from evidence, not from the disposable branch
+            # inventory left by a previous advertisement.
             review_oid = self._ledger.proposal_review_commit(
                 tree_oid=evaluation.evaluated_tree_oid,
                 base_oid=evaluation.evaluated_base_oid,
@@ -1103,9 +1100,10 @@ class PlaybillInstance:
                     rationale=admission.rationale,
                 ),
             )
-            refs[admission.proposal_id.removeprefix("sha256:")] = review_oid
+            destination = settled_refs if is_settled else refs
+            destination[admission.proposal_id.removeprefix("sha256:")] = review_oid
             published.append((review_oid, admission.proposal_id, candidate_digest))
-        self._ledger.replace_proposal_review_refs(refs)
+        self._ledger.replace_proposal_review_refs(refs, settled_refs=settled_refs)
         # After the refs, so every annotated commit is already reachable from
         # one: a note on an unreferenced object is a note a `gc` may collect.
         for review_oid, proposal_id, candidate_digest in published:

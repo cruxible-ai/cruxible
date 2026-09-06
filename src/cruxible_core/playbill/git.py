@@ -9,7 +9,6 @@ import re
 import signal
 import subprocess
 import tempfile
-import uuid
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -22,6 +21,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from cruxible_client.contracts.canonical import CandidateDigest, normalize_manifest_paths
 from cruxible_client.contracts.errors import PlaybillGitError
+from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.types import GitObjectFormat
 from cruxible_core.playbill.keys import raw_public_key_hex_from_openssh
 
@@ -508,7 +508,9 @@ class GitLedger:
         self._validate_oid(oid)
         return oid
 
-    def replace_proposal_review_refs(self, refs: Mapping[str, str]) -> None:
+    def replace_proposal_review_refs(
+        self, refs: Mapping[str, str], *, settled_refs: Mapping[str, str] | None = None
+    ) -> None:
         """Atomically replace the open-proposal branches, archiving what settled.
 
         A branch leaves this projection for exactly one reason: the proposal it
@@ -521,7 +523,8 @@ class GitLedger:
         `refs/settled/<digest>`: the branch list stays the open inventory, and
         every settled candidate stays reachable under a namespace that says what
         it is. Re-settlement restates the same archive rather than failing, so
-        the reconcile is idempotent.
+        the reconcile is idempotent. ``settled_refs`` also reconstructs archives
+        directly from evidence, including proposals never projected while open.
         """
 
         normalized: dict[str, str] = {}
@@ -531,6 +534,14 @@ class GitLedger:
                 raise PlaybillGitError("proposal review ref name is malformed")
             self._validate_oid(oid)
             normalized[ref] = oid
+        settled: dict[str, str] = {}
+        for proposal_id, oid in (settled_refs or {}).items():
+            if not _PROPOSAL_REVIEW_REF_RE.fullmatch(f"refs/heads/proposals/{proposal_id}"):
+                raise PlaybillGitError("settled proposal ref name is malformed")
+            if f"refs/heads/proposals/{proposal_id}" in normalized:
+                raise PlaybillGitError("one proposal cannot be both open and settled")
+            self._validate_oid(oid)
+            settled[_SETTLED_REF_PREFIX + proposal_id] = oid
         current: dict[str, str] = {}
         for line in (
             self._git(["for-each-ref", "--format=%(objectname) %(refname)", "refs/heads/proposals"])
@@ -548,9 +559,11 @@ class GitLedger:
             f"update {ref} {normalized[ref]}" for ref in sorted(normalized, key=str.encode)
         )
         for ref in departing:
-            settled = _SETTLED_REF_PREFIX + ref.removeprefix("refs/heads/proposals/")
-            commands.append(f"update {settled} {current[ref]}")
+            archived = _SETTLED_REF_PREFIX + ref.removeprefix("refs/heads/proposals/")
+            # Explicit evidence-derived targets win over a disposable old ref.
+            settled.setdefault(archived, current[ref])
             commands.append(f"delete {ref}")
+        commands.extend(f"update {ref} {settled[ref]}" for ref in sorted(settled, key=str.encode))
         commands.extend(("prepare", "commit"))
         self._git(["update-ref", "--stdin"], input_bytes=("\n".join(commands) + "\n").encode())
 
@@ -609,7 +622,7 @@ class GitLedger:
     @contextmanager
     def _retain_mirror_snapshot(self, snapshot: Mapping[str, str]) -> Iterator[None]:
         """Keep captured objects reachable when live derived refs are replaced."""
-        prefix = f"refs/playbill-mirror-pins/{uuid.uuid4().hex}"
+        prefix = f"refs/playbill-mirror-pins/{new_id('pin', length=32)}"
         pins = {
             f"{prefix}/{index}": oid for index, oid in enumerate(sorted(set(snapshot.values())))
         }
