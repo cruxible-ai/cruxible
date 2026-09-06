@@ -312,7 +312,7 @@ def _expectation(
     return AuthoringReferenceExpectationV1(
         payload_path=payload_path,
         artifact_kind=cast(Any, _REFERENCE_KINDS[expected]),
-        address=value.address,
+        address=_claim_id(cast(ClaimRef, value)) if expected is RefKind.CLAIM else value.address,
         minted_coordinate=value.coordinate,
     )
 
@@ -1855,10 +1855,16 @@ class Playbill:
         """
 
         claim_role = _enum(role, ClaimRole, label="claim role")
-        resolved_dispositions = {
-            key: _enum(value, Disposition, label="claim disposition")
-            for key, value in dispositions.items()
-        }
+        resolved_dispositions: dict[str, Disposition] = {}
+        original_dispositions: dict[str, str | ClaimRef] = {}
+        for key, disposition_value in dispositions.items():
+            claim_id = _claim_id(key)
+            if claim_id in resolved_dispositions:
+                raise ValueError(f"duplicate normalized Claim disposition: {claim_id}")
+            resolved_dispositions[claim_id] = _enum(
+                disposition_value, Disposition, label="claim disposition"
+            )
+            original_dispositions[claim_id] = key
         branches = tuple(item is not None for item in (supported_by, copied_from, self_source))
         if sum(branches) != 1:
             raise ValueError("exactly one of supported_by, copied_from, or self_source is required")
@@ -1961,10 +1967,7 @@ class Playbill:
             citation_role = None
         sorted_dispositions = tuple(
             sorted(
-                (
-                    (_address(key, RefKind.CLAIM), value)
-                    for key, value in resolved_dispositions.items()
-                ),
+                resolved_dispositions.items(),
                 key=lambda item: item[0].encode("ascii"),
             )
         )
@@ -1981,7 +1984,7 @@ class Playbill:
             rationale=rationale,
             source=source,
             citation_role=citation_role,
-            claim_ref=(None if revises is None else _address(revises, RefKind.CLAIM)),
+            claim_ref=(None if revises is None else _claim_id(revises)),
             existing_claim_dispositions=tuple(
                 AuthoringExistingClaimDispositionV1(
                     claim_id=claim_id, disposition=disposition.value
@@ -2041,7 +2044,7 @@ class Playbill:
                 )
             )
         for index, (raw_key, _value) in enumerate(sorted_dispositions):
-            original = next(key for key in dispositions if _address(key, RefKind.CLAIM) == raw_key)
+            original = original_dispositions[raw_key]
             expectations.append(
                 _expectation(
                     original,
@@ -2114,7 +2117,7 @@ class Playbill:
                     "ends_at": format_datetime(effective_period.ends_at),
                 }
             ),
-            "revises": None if revises is None else _address(revises, RefKind.CLAIM),
+            "revises": None if revises is None else _claim_id(revises),
             "dispositions": {
                 identity: disposition.value for identity, disposition in sorted_dispositions
             },
