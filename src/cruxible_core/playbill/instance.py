@@ -95,7 +95,6 @@ from cruxible_core.playbill.projection import (
     projection_manifest_name,
 )
 from cruxible_core.playbill.proposal_evidence import ProposalEvidenceStore
-from cruxible_core.playbill.proposal_message import proposal_commit_message
 from cruxible_core.playbill.proposal_note_projection import ProposalNoteIndex
 from cruxible_core.playbill.proposals import (
     ExhaustPromotionVerifierProtocol,
@@ -1093,7 +1092,7 @@ class PlaybillInstance:
             is_settled = (
                 candidate_digest in accepted_candidates
                 or evidence.read_withdrawal(admission.proposal_id) is not None
-                or candidate.candidate.parent_semantic_root != coordinate.semantic_root
+                or candidate.parent_semantic_root != coordinate.semantic_root
             )
             # A coalesced publisher may never observe this candidate while open.
             # Rebuild its archive from evidence, not from the disposable branch
@@ -1103,7 +1102,7 @@ class PlaybillInstance:
                 base_oid=evaluation.evaluated_base_oid,
                 actor_id=admission.actor_id,
                 timestamp=admission.admitted_at,
-                message=proposal_commit_message(candidate.members, rationale=admission.rationale),
+                message=candidate.message(rationale=admission.rationale),
             )
             if review_oid != index.review_oids[admission.proposal_id]:
                 raise ProposalIntegrityError("materialized review alias differs from its index")

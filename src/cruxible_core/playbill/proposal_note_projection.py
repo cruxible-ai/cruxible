@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from cruxible_client.contracts.attestations import ApprovalSubmission
-from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import CanonicalEncodingError, ProposalIntegrityError
 from cruxible_client.contracts.proposal_models import (
@@ -22,14 +21,16 @@ from cruxible_client.contracts.proposal_models import (
     ProposalEvaluationRecord,
     ProposalTransportProtocol,
 )
-from cruxible_core.playbill.proposal_message import proposal_commit_message
+from cruxible_core.playbill.candidate_review_summary import CandidateReviewSummary
 from cruxible_core.playbill.proposal_notes import proposal_approval_note, proposal_evaluation_note
 
 
 class ProposalNoteEvidence(Protocol):
     def list_admissions(self) -> tuple[ProposalAdmissionRecord, ...]: ...
     def list_evaluations(self) -> tuple[ProposalEvaluationRecord, ...]: ...
-    def read_candidate_if_present(self, digest: str) -> CandidateRecordAnyVersion | None: ...
+    def read_candidate_review_summary_if_present(
+        self, digest: str
+    ) -> CandidateReviewSummary | None: ...
     def read_approvals(self, digest: str) -> tuple[ApprovalSubmission, ...]: ...
 
 
@@ -38,7 +39,7 @@ class ProposalNoteIndex:
     evidence: ProposalNoteEvidence
     admissions: dict[str, ProposalAdmissionRecord]
     evaluations: dict[str, ProposalEvaluationRecord]
-    candidates: dict[str, CandidateRecordAnyVersion]
+    candidates: dict[str, CandidateReviewSummary]
     review_oids: dict[str, str]
     proposal_ids_by_oid: dict[str, set[str]]
 
@@ -53,7 +54,7 @@ class ProposalNoteIndex:
             if record.proposal_id in evaluations:
                 raise ProposalIntegrityError("proposal evidence contains multiple evaluations")
             evaluations[record.proposal_id] = record
-        candidates: dict[str, CandidateRecordAnyVersion] = {}
+        candidates: dict[str, CandidateReviewSummary] = {}
         review_oids: dict[str, str] = {}
         groups: dict[str, set[str]] = {}
         for admission in all_admissions:
@@ -67,7 +68,7 @@ class ProposalNoteIndex:
                 continue
             digest = evaluation.candidate_digest
             if digest is not None and digest not in candidates:
-                candidate = evidence.read_candidate_if_present(digest)
+                candidate = evidence.read_candidate_review_summary_if_present(digest)
                 if candidate is None:
                     continue
                 candidates[digest] = candidate
@@ -80,9 +81,7 @@ class ProposalNoteIndex:
                 base_oid=evaluation.evaluated_base_oid,
                 actor_id=admission.actor_id,
                 timestamp=admission.admitted_at,
-                message=proposal_commit_message(
-                    candidates[digest].members, rationale=admission.rationale
-                ),
+                message=candidates[digest].message(rationale=admission.rationale),
             )
             review_oids[proposal_id] = oid
             groups.setdefault(oid, set()).add(proposal_id)

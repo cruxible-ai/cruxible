@@ -7,7 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar
 
-from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic import BaseModel, ValidationError
 
 from cruxible_client.contracts.attestations import (
     ApprovalSubmission,
@@ -27,6 +27,12 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.errors import ProposalIntegrityError, ProposalWithdrawnError
 from cruxible_client.contracts.source_catalog import SourceCompilationManifest
+from cruxible_core.playbill.candidate_review_summary import (
+    CandidateReviewSummary,
+    parse_candidate_evidence,
+    read_candidate_bytes,
+    read_candidate_review_summary,
+)
 from cruxible_core.playbill.id_prefixes import resolve_id_prefix
 from cruxible_core.playbill.proposal_notes import (
     admission_bytes,
@@ -282,21 +288,16 @@ class ProposalEvidenceStore:
     def read_candidate(self, candidate_digest_value: str) -> CandidateRecordAnyVersion:
         """Read one canonical validated candidate by its frozen C_s digest."""
 
-        CandidateDigest.from_tagged(candidate_digest_value)
-        path = self.candidates / f"{candidate_digest_value.removeprefix('sha256:')}.json"
-        if path.is_symlink() or not path.is_file():
-            raise ProposalIntegrityError(
-                "validated candidate evidence is missing or not a regular file"
-            )
-        try:
-            raw = path.read_bytes()
-            adapter: TypeAdapter[CandidateRecordAnyVersion] = TypeAdapter(CandidateRecordAnyVersion)
-            value: CandidateRecordAnyVersion = adapter.validate_json(raw)
-        except (OSError, ValidationError, ValueError) as exc:
-            raise ProposalIntegrityError("validated candidate evidence is malformed") from exc
-        if render_candidate_record(value) != raw:
-            raise ProposalIntegrityError("validated candidate evidence is not canonical")
-        return value
+        raw = read_candidate_bytes(self.candidates, candidate_digest_value)
+        assert raw is not None
+        return parse_candidate_evidence(raw, expected_digest=candidate_digest_value)
+
+    def read_candidate_review_summary_if_present(
+        self, candidate_digest_value: str
+    ) -> CandidateReviewSummary | None:
+        """Read immutable prose/parent metadata; absent interrupted writes stay absent."""
+
+        return read_candidate_review_summary(self.candidates, candidate_digest_value)
 
     def write_approval(
         self,

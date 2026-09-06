@@ -1,0 +1,59 @@
+{
+  "scope": "complete ProposalNoteIndex.build; recovery and note rendering excluded",
+  "fixture": "isolated instance copy",
+  "candidate_file_bytes": 27537952,
+  "cache_max_entries": 512,
+  "cache_max_accounted_bytes": 8388608,
+  "results": [
+    {
+      "stage": "cache_disabled",
+      "seconds": 4.427243750018533,
+      "admissions": 42,
+      "groups": 82,
+      "candidate_decodes": 40,
+      "retained_entries": 0,
+      "accounted_bytes": 0,
+      "exact_projection_fingerprint": "cedb8205647449ad177f95903f0a868ff268badae8447266910dc18260c4fd3c"
+    },
+    {
+      "stage": "cold_cache",
+      "seconds": 4.344700584013481,
+      "admissions": 42,
+      "groups": 82,
+      "candidate_decodes": 40,
+      "retained_entries": 40,
+      "accounted_bytes": 274293,
+      "exact_projection_fingerprint": "cedb8205647449ad177f95903f0a868ff268badae8447266910dc18260c4fd3c"
+    },
+    {
+      "stage": "warm_cache_1",
+      "seconds": 0.6886001660022885,
+      "admissions": 42,
+      "groups": 82,
+      "candidate_decodes": 0,
+      "retained_entries": 40,
+      "accounted_bytes": 274293,
+      "exact_projection_fingerprint": "cedb8205647449ad177f95903f0a868ff268badae8447266910dc18260c4fd3c"
+    },
+    {
+      "stage": "warm_cache_2",
+      "seconds": 0.6952535409945995,
+      "admissions": 42,
+      "groups": 82,
+      "candidate_decodes": 0,
+      "retained_entries": 40,
+      "accounted_bytes": 274293,
+      "exact_projection_fingerprint": "cedb8205647449ad177f95903f0a868ff268badae8447266910dc18260c4fd3c"
+    },
+    {
+      "stage": "warm_cache_3",
+      "seconds": 0.6862955000251532,
+      "admissions": 42,
+      "groups": 82,
+      "candidate_decodes": 0,
+      "retained_entries": 40,
+      "accounted_bytes": 274293,
+      "exact_projection_fingerprint": "cedb8205647449ad177f95903f0a868ff268badae8447266910dc18260c4fd3c"
+    }
+  ]
+}

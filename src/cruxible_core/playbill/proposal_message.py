@@ -111,14 +111,19 @@ def _message(subject_source: str, members: Sequence[CandidateMember]) -> str:
     message that said it twice would just be noise on the commonest proposal.
     """
 
+    ordered = sorted(members, key=lambda item: item.path.encode("utf-8"))
+    return message_from_parts(subject_source, "\n".join(member_line(member) for member in ordered))
+
+
+def message_from_parts(subject_source: str, member_roll: str) -> str:
+    """Assemble prose from an exact summary and already ordered member roll."""
+
     subject = _truncate_subject(subject_source.partition("\n")[0])
     paragraphs = [subject]
     if subject != subject_source:
         paragraphs.append(subject_source)
-    ordered = sorted(members, key=lambda item: item.path.encode("utf-8"))
-    roll = "\n".join(member_line(member) for member in ordered)
-    if roll and roll != subject_source:
-        paragraphs.append(roll)
+    if member_roll and member_roll != subject_source:
+        paragraphs.append(member_roll)
     return "\n\n".join(paragraphs) + "\n"
 
 
