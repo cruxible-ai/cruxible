@@ -72,6 +72,7 @@ from cruxible_core.playbill.authoring.lowering import (
     LoweredAuthoring,
     lower_authoring,
 )
+from cruxible_core.playbill.authoring.prepared_lowering import reuse_lowering
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import (
@@ -787,7 +788,14 @@ def compute_preflight(
         }
     if not over_record_ceiling:
         try:
-            lowered = lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
+            lowered = reuse_lowering(
+                instance,
+                intent=intent,
+                actor=actor,
+                accepted=current_public,
+                receive_limits=service.receive_limits,
+                compute=lambda: lower_authoring(instance, intent=intent, actor_id=actor.actor_id),
+            )
             record_entries = len(lowered.changed_members)
             if lowered.idempotent:
                 evaluated_tree = current_tree
