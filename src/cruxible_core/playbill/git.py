@@ -9,6 +9,7 @@ import re
 import signal
 import subprocess
 import tempfile
+import uuid
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -29,29 +30,12 @@ _PROPOSAL_REF_RE = re.compile(r"^refs/proposals/[a-z][a-z0-9_.-]{0,127}/[a-z][a-
 _PROPOSAL_REVIEW_REF_RE = re.compile(r"^refs/heads/proposals/[0-9a-f]{64}$")
 _SETTLED_REF_PREFIX: Final = "refs/settled/"
 
-# What a mirror carries, and in which direction each ref is allowed to move.
-# `main` is pushed WITHOUT force: accepted history only ever extends, so a
-# rejected fast-forward means the remote holds something this ledger does not,
-# and silently overwriting it would erase the evidence of that. Everything else
-# is a projection this daemon rebuilds -- a note restated by a second approver,
-# a review branch recomputed on reconcile -- so each is forced onto the mirror
-# and pruned when it stops existing here.
+# Exact snapshots and explicit leases protect both accepted and review history.
 MIRROR_PUSH_TIMEOUT_SECONDS: Final = 30.0
-"""How long a publication may hold its caller, and no longer.
-
-The mirror is a copy of state that is already durable, so the one thing it may
-never cost is availability of the daemon that holds the record. `GIT_TERMINAL_PROMPT=0`
-closes the prompt hang; nothing closed the network one, and a black-holed connect
-or a remote that accepts and then stalls held the caller for as long as the
-remote liked. Thirty seconds is far longer than a healthy push of a ledger this
-size and far shorter than a request timeout.
-"""
-
-_MIRROR_MAIN_REFSPEC: Final = "refs/heads/main:refs/heads/main"
-_MIRROR_WILDCARD_REFSPECS: Final = (
-    "+refs/heads/proposals/*:refs/heads/proposals/*",
-    "+refs/settled/*:refs/settled/*",
-)
+_MIRROR_ARG_BYTES: Final = 64 * 1024
+_MIRROR_MAX_REFS: Final = 4096
+_MIRROR_MAIN: Final = "refs/heads/main"
+_MIRROR_PREFIXES: Final = ("refs/heads/proposals/", "refs/settled/")
 
 # Every Playbill note ref, in one table. The generation descriptor was the
 # first; the proposal evaluation and the approval list are projections of the
@@ -583,56 +567,202 @@ class GitLedger:
             if line
         )
 
-    def push_mirror(self, url: str, *, environment: Mapping[str, str] | None = None) -> str | None:
-        """Publish this ledger to its remote; return None, or why it did not.
-
-        Deliberately NOT a raising operation. The mirror is a copy of state that
-        is already accepted and already durable on disk, so a network that is
-        down, a credential that expired, or a remote that was deleted must not
-        turn into a refusal of the write that preceded the push -- that would
-        make an operator's remote a condition of governance. The caller records
-        the returned detail and `playbill next` reports it.
-
-        Git's stderr is passed back, truncated, because an operator repairing a
-        mirror needs to know WHICH failure it was; the credential cannot appear
-        in it, since it never enters the command line and Git does not echo the
-        header it sends.
-        """
-
-        refspecs = [_MIRROR_MAIN_REFSPEC]
-        refspecs.extend(
-            f"+{ref}:{ref}"
-            for ref in sorted(NOTE_REFS.values(), key=str.encode)
-            if self._ref_exists(ref)
+    def mirror_refs(self) -> dict[str, str]:
+        """Capture owned public refs, excluding private proposal/pinning refs."""
+        rows = self._git(
+            [
+                "for-each-ref",
+                "--format=%(objectname) %(refname)",
+                _MIRROR_MAIN,
+                *NOTE_REFS.values(),
+                *_MIRROR_PREFIXES,
+            ]
         )
-        refspecs.extend(_MIRROR_WILDCARD_REFSPECS)
+        refs: dict[str, str] = {}
+        for line in rows.decode("utf-8").splitlines():
+            oid, _, ref = line.partition(" ")
+            if self._mirror_owned_ref(ref):
+                refs[ref] = oid
+        return self._validate_mirror_snapshot(refs)
+
+    @staticmethod
+    def _mirror_owned_ref(ref: str) -> bool:
+        return ref == _MIRROR_MAIN or ref in NOTE_REFS.values() or ref.startswith(_MIRROR_PREFIXES)
+
+    def _validate_mirror_snapshot(
+        self, refs: Mapping[str, str], *, require_main: bool = True
+    ) -> dict[str, str]:
+        if len(refs) > _MIRROR_MAX_REFS:
+            raise PlaybillGitError("mirror snapshot exceeds the ref count limit")
+        result = dict(refs)
+        for ref, oid in result.items():
+            valid = ref == _MIRROR_MAIN or ref in NOTE_REFS.values()
+            valid = valid or bool(_PROPOSAL_REVIEW_REF_RE.fullmatch(ref))
+            valid = valid or bool(re.fullmatch(r"refs/settled/[0-9a-f]{64}", ref))
+            if not valid:
+                raise PlaybillGitError("mirror snapshot contains an unowned or malformed ref")
+            self._validate_oid(oid)
+        if require_main and _MIRROR_MAIN not in result:
+            raise PlaybillGitError("mirror snapshot omits accepted main")
+        return result
+
+    @contextmanager
+    def _retain_mirror_snapshot(self, snapshot: Mapping[str, str]) -> Iterator[None]:
+        """Keep captured objects reachable when live derived refs are replaced."""
+        prefix = f"refs/playbill-mirror-pins/{uuid.uuid4().hex}"
+        pins = {
+            f"{prefix}/{index}": oid for index, oid in enumerate(sorted(set(snapshot.values())))
+        }
+        commands = [
+            "start",
+            *(f"create {ref} {oid}" for ref, oid in pins.items()),
+            "prepare",
+            "commit",
+        ]
+        self._git(["update-ref", "--stdin"], input_bytes=("\n".join(commands) + "\n").encode())
         try:
-            result = _command(
-                [
-                    "git",
-                    f"--git-dir={self.path}",
-                    "push",
-                    "--prune",
-                    "--porcelain",
-                    "--",
-                    url,
-                    *refspecs,
-                ],
-                environment=environment,
-                check=False,
-                timeout=MIRROR_PUSH_TIMEOUT_SECONDS,
+            yield
+        finally:
+            commands = [
+                "start",
+                *(f"delete {ref} {oid}" for ref, oid in pins.items()),
+                "prepare",
+                "commit",
+            ]
+            self._git(["update-ref", "--stdin"], input_bytes=("\n".join(commands) + "\n").encode())
+
+    def push_mirror(
+        self,
+        url: str,
+        *,
+        environment: Mapping[str, str] | None = None,
+        snapshot: Mapping[str, str] | None = None,
+        expected_remote: Mapping[str, str] | None = None,
+        previous_attempt: Mapping[str, str] | None = None,
+    ) -> str | None:
+        """Atomically publish exact refs, returning None or an operational failure.
+
+        ``expected_remote`` is the last acknowledged snapshot for this remote.
+        ``previous_attempt`` records a possibly acknowledged earlier attempt.
+        Known refs may be deleted; matching attempted or desired values permit
+        retry after uncertain outcomes. Missing state is recoverable only with
+        local ancestry or exact settlement proof. Main always fast-forwards.
+        Unknown nonempty remote values otherwise refuse publication. Success
+        acknowledges this snapshot, never later local refs. Each remote command
+        has a deadline; failure never undoes the already durable local ledger.
+        """
+        try:
+            desired = self._validate_mirror_snapshot(
+                self.mirror_refs() if snapshot is None else snapshot
             )
+            expected = self._validate_mirror_snapshot(
+                {} if expected_remote is None else expected_remote, require_main=False
+            )
+            attempted = self._validate_mirror_snapshot(
+                {} if previous_attempt is None else previous_attempt, require_main=False
+            )
+            owned = set(desired) | set(expected) | set(attempted)
+            # Refuse rather than split the atomic update across commands.
+            planned = [f"{desired.get(ref, '')}:{ref}" for ref in owned]
+            planned += [f"--force-with-lease={ref}:{'0' * 64}" for ref in owned]
+            if (
+                sum(len(arg.encode()) + 1 for arg in [url, str(self.path), *planned])
+                > _MIRROR_ARG_BYTES
+            ):
+                raise PlaybillGitError("mirror snapshot exceeds the atomic push argument limit")
+            with self._retain_mirror_snapshot(desired):
+                result = _command(
+                    [
+                        "git",
+                        f"--git-dir={self.path}",
+                        "ls-remote",
+                        "--refs",
+                        "--",
+                        url,
+                        _MIRROR_MAIN,
+                        *NOTE_REFS.values(),
+                        *(prefix + "*" for prefix in _MIRROR_PREFIXES),
+                    ],
+                    environment=environment,
+                    check=False,
+                    timeout=MIRROR_PUSH_TIMEOUT_SECONDS,
+                )
+                if result.returncode != 0:
+                    return self._mirror_failure(result, "ls-remote")
+                remote: dict[str, str] = {}
+                for line in result.stdout.decode("utf-8").splitlines():
+                    oid, separator, ref = line.partition("\t")
+                    if not separator or not self._mirror_owned_ref(ref) or ref in remote:
+                        raise PlaybillGitError("remote mirror advertisement is malformed")
+                    remote[ref] = oid
+                remote = self._validate_mirror_snapshot(remote, require_main=False)
+                for ref in set(remote) | owned:
+                    actual = remote.get(ref)
+                    # An empty/recreated remote has no conflicting history.
+                    if actual is None or actual in (
+                        desired.get(ref),
+                        expected.get(ref),
+                        attempted.get(ref),
+                    ):
+                        continue
+                    if not expected and not attempted:
+                        target = desired.get(ref)
+                        if target is not None and self.is_ancestor(actual, target):
+                            continue
+                        if ref.startswith("refs/heads/proposals/"):
+                            settled = _SETTLED_REF_PREFIX + ref.removeprefix(
+                                "refs/heads/proposals/"
+                            )
+                            if desired.get(settled) == actual:
+                                owned.add(ref)
+                                continue
+                    raise PlaybillGitError(f"remote mirror ref diverged: {ref}")
+                remote_main = remote.get(_MIRROR_MAIN)
+                if remote_main is not None and remote_main != desired[_MIRROR_MAIN]:
+                    if not self.is_ancestor(remote_main, desired[_MIRROR_MAIN]):
+                        raise PlaybillGitError(
+                            "remote accepted main is not an ancestor of the snapshot"
+                        )
+                leases: list[str] = []
+                refspecs: list[str] = []
+                for ref in sorted(owned, key=str.encode):
+                    if ref != _MIRROR_MAIN:
+                        leases.append(f"--force-with-lease={ref}:{remote.get(ref, '')}")
+                    refspecs.append(f"{desired.get(ref, '')}:{ref}")
+                if (
+                    sum(len(arg.encode()) + 1 for arg in [url, str(self.path), *leases, *refspecs])
+                    > _MIRROR_ARG_BYTES
+                ):
+                    raise PlaybillGitError("mirror snapshot exceeds the atomic push argument limit")
+                result = _command(
+                    [
+                        "git",
+                        f"--git-dir={self.path}",
+                        "push",
+                        "--atomic",
+                        "--porcelain",
+                        *leases,
+                        "--",
+                        url,
+                        *refspecs,
+                    ],
+                    environment=environment,
+                    check=False,
+                    timeout=MIRROR_PUSH_TIMEOUT_SECONDS,
+                )
+                return None if result.returncode == 0 else self._mirror_failure(result, "push")
         except subprocess.TimeoutExpired:
             return (
-                f"git push did not finish within {MIRROR_PUSH_TIMEOUT_SECONDS:g}s and was "
-                "killed; the ledger is unchanged and the remote may be unreachable"
+                f"mirror transport did not finish within {MIRROR_PUSH_TIMEOUT_SECONDS:g}s "
+                "and was killed; local state is durable, remote publication is unconfirmed"
             )
-        if result.returncode == 0:
-            return None
+        except (PlaybillGitError, OSError, UnicodeError) as exc:
+            return str(exc)[:500]
+
+    @staticmethod
+    def _mirror_failure(result: subprocess.CompletedProcess[bytes], operation: str) -> str:
         detail = result.stderr.decode("utf-8", errors="replace").strip()
-        if not detail:
-            detail = f"git push exited {result.returncode}"
-        return detail[:500]
+        return (detail or f"git {operation} exited {result.returncode}")[:500]
 
     def _ref_exists(self, ref: str) -> bool:
         return (
