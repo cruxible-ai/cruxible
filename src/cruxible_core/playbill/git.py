@@ -71,6 +71,17 @@ class GitTreeChange:
 # cannot overrun the system argument limit.
 _PATHSPEC_BATCH = 256
 
+# Bound temporary material per Git invocation. A single already-admissible blob
+# larger than the byte target travels alone rather than gaining a new size gate.
+_BLOB_WRITE_BATCH_OBJECTS = 256
+_BLOB_WRITE_BATCH_BYTES = 32 * 1024 * 1024
+
+
+def _quoted_stdin_path(path: Path) -> bytes:
+    """Git's C-quoted path form, independent of TMPDIR's filesystem spelling."""
+
+    return b'"' + b"".join(f"\\{byte:03o}".encode("ascii") for byte in os.fsencode(path)) + b'"'
+
 
 def _proven_blob_entries(entries: tuple[GitTreeEntry, ...]) -> tuple[GitTreeEntry, ...]:
     """Refuse a tree member that is anything but a plain committed file.
@@ -284,7 +295,8 @@ class GitLedger:
         re-storing every member would make each write cost O(members) Git
         processes for bytes the repository already holds. Blob addresses are
         computed in process, one batched existence check names the members Git
-        is actually missing, and one batched index update builds the tree. The
+        is actually missing, bounded Git writes store those blobs, and one
+        batched index update builds the tree. The
         resulting tree object ID is byte-for-byte the one a member-by-member
         write produces.
         """
@@ -300,19 +312,15 @@ class GitLedger:
         contents = {path: tree[normalized_to_raw[path]] for path in ordered}
         oids = {path: self._blob_oid(content) for path, content in contents.items()}
         absent = self._absent_objects(tuple(oids.values()))
-        stored: set[str] = set()
+        missing: dict[str, bytes] = {}
         for path in ordered:
             blob_oid = oids[path]
-            if blob_oid not in absent or blob_oid in stored:
+            if blob_oid not in absent:
                 continue
-            written = (
-                self._git(["hash-object", "-w", "--stdin"], input_bytes=contents[path])
-                .decode()
-                .strip()
-            )
-            if written != blob_oid:
-                raise PlaybillGitError("stored blob differs from its computed content address")
-            stored.add(blob_oid)
+            if blob_oid in missing and missing[blob_oid] != contents[path]:
+                raise PlaybillGitError("different blob bytes share a computed content address")
+            missing[blob_oid] = contents[path]
+        self._write_missing_blobs(missing)
 
         index_info = b"".join(
             b"100644 " + oids[path].encode("ascii") + b"\t" + path.encode("utf-8") + b"\x00"
@@ -330,6 +338,54 @@ class GitLedger:
             oid = self._git(["write-tree"], environment=environment).decode().strip()
         self._validate_oid(oid)
         return oid
+
+    def _write_missing_blobs(self, missing: Mapping[str, bytes]) -> None:
+        """Have system Git write unique blobs in bounded, exact-byte batches."""
+
+        batch: list[tuple[str, bytes]] = []
+        size = 0
+        for oid, content in missing.items():
+            if batch and (
+                len(batch) >= _BLOB_WRITE_BATCH_OBJECTS
+                or size + len(content) > _BLOB_WRITE_BATCH_BYTES
+            ):
+                self._write_blob_batch(batch)
+                batch = []
+                size = 0
+            batch.append((oid, content))
+            size += len(content)
+        if batch:
+            self._write_blob_batch(batch)
+
+    def _write_blob_batch(self, batch: Sequence[tuple[str, bytes]]) -> None:
+        # Filenames are private ordinal names, never authored ledger paths.
+        # --no-filters matches the former --stdin behavior even if this repository
+        # or a temporary parent directory contains Git attribute rules.
+        try:
+            with tempfile.TemporaryDirectory(prefix="playbill-tree-blobs-") as temporary:
+                paths: list[bytes] = []
+                for index, (_oid, content) in enumerate(batch):
+                    path = Path(temporary) / f"{index:04x}"
+                    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    with os.fdopen(fd, "wb") as stream:
+                        stream.write(content)
+                    paths.append(_quoted_stdin_path(path))
+                output = self._git(
+                    ["hash-object", "-w", "--stdin-paths", "--no-filters"],
+                    input_bytes=b"\n".join(paths) + b"\n",
+                )
+        except OSError as exc:
+            raise PlaybillGitError("temporary Git blob batch could not be written") from exc
+        try:
+            written = output.decode("ascii").splitlines()
+        except UnicodeDecodeError as exc:
+            raise PlaybillGitError("Git blob write output is malformed") from exc
+        if len(written) != len(batch):
+            raise PlaybillGitError("Git blob write output does not match its request")
+        for actual_oid, (expected_oid, _content) in zip(written, batch, strict=True):
+            self._validate_oid(actual_oid)
+            if actual_oid != expected_oid:
+                raise PlaybillGitError("stored blob differs from its computed content address")
 
     def create_proposal_commit(
         self,
