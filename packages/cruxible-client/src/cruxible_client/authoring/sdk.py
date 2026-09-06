@@ -2282,7 +2282,18 @@ class Playbill:
         definition: ProcedureDefinitionV3 | ProcedureDefinitionV4,
         activation_policy: ActivationPolicy | str,
         retire: bool,
+        acquisition_policy: str | None = None,
     ) -> ProcedureDraft:
+        """Author one Procedure, optionally pinning the policy its reads obey.
+
+        `acquisition_policy` names an accepted `SourceAcquisitionPolicy` by its
+        semantic name; lowering resolves that name and declares the exact pin on
+        the Procedure envelope. A direct run reads its policy from that pin, so
+        two Procedures whose Source aliases happen to agree are governed
+        separately, and accepting an unrelated policy cannot change what an
+        already accepted Procedure does.
+        """
+
         sites = capture_keyword_sites("procedure", stacklevel=1)
         policy = _enum(activation_policy, ActivationPolicy, label="procedure activation policy")
         # `source` is served only by the graph-v4 observation path: a v3 Source
@@ -2306,6 +2317,7 @@ class Playbill:
             definition=definition.model_dump(mode="json", by_alias=True),
             activation_policy=policy.value,
             owned_contracts=(),
+            acquisition_policy=acquisition_policy,
             retire=retire,
         )
         return ProcedureDraft(
@@ -2317,6 +2329,7 @@ class Playbill:
                 {
                     "definition": definition.model_dump(mode="json", by_alias=True),
                     "activation_policy": policy.value,
+                    "acquisition_policy": acquisition_policy,
                     "retire": retire,
                 },
             ),
@@ -2326,6 +2339,7 @@ class Playbill:
                     emitted={
                         "definition": ("definition",),
                         "activation_policy": ("activation_policy",),
+                        "acquisition_policy": ("acquisition_policy",),
                         "retire": ("retire",),
                     },
                     sites=sites,

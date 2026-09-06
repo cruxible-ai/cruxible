@@ -333,13 +333,26 @@ same as a lane being able to execute it.
 A `source` node reads through an accepted Provider under accepted authority,
 not through ambient filesystem access. Before it can run, accepted state must
 hold the Provider and its interface registration, the CaptureContract the node
-pins, and exactly one live SourceAcquisitionPolicy whose declared inputs are
-exactly the Procedure's Source aliases. Missing or ambiguous policy is the typed
-refusal `source_acquisition_policy_required`; a rule that denies a declared
-input is `source_acquisition_refused`; a path outside an authorized workspace
-root, one over the CaptureContract's selection budget, or a daemon with no
-local reader is `workspace_file_read_refused` with its path class. None of these
-leave partial run history.
+pins, and the SourceAcquisitionPolicy that governs the read. Name that policy
+when you author the Procedure: it becomes an `acquisition-policy` pin on the
+Procedure envelope, closure-checked at acceptance, and a pinned Procedure reads
+only that policy -- so another team accepting a policy of their own cannot
+change what yours does. A Procedure authored without the pin falls back to
+accepted state, which requires exactly one live SourceAcquisitionPolicy whose
+declared inputs are exactly that Procedure's Source aliases; prefer the pin. A
+pinned policy that does not declare this Procedure's Source inputs, and a
+missing or ambiguous policy for an unpinned one, are both the typed refusal
+`source_acquisition_policy_required`; a rule that denies a declared input is
+`source_acquisition_refused`; a path outside an authorized workspace root, one
+over the CaptureContract's selection budget, or a daemon with no local reader is
+`workspace_file_read_refused` with its path class. None of these leave partial
+run history.
+
+A Line names its policy on the LineSpec instead, under the same pin role. Both
+lanes plan through one planner, and that planner scores only the inputs the
+graph actually plans an occurrence for: a policy may declare an input a given
+Procedure does not serve, and whether such an input ever arrives is reported by
+the read, not guessed before it.
 
 What a completed run retains is the point. Each Source occurrence reports a
 `SourceReadReceiptV1` -- the real on-disk path, the byte length, and the SHA-256

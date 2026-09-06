@@ -910,12 +910,25 @@ class ProcedureAuthoringPayloadV1(_StrictAuthoringModel):
 
 
 class ProcedureAuthoringPayloadV2(_StrictAuthoringModel):
+    """A Procedure envelope input, plus the acquisition policy that envelope pins.
+
+    `acquisition_policy` is the SEMANTIC NAME of an accepted (or same-change-set
+    candidate) `SourceAcquisitionPolicy`, never a digest: lowering resolves it
+    the way every other Procedure reference resolves, and declares the resolved
+    exact pin under role `acquisition-policy` on the artifact envelope. The
+    definition never mentions it, so the definition digest is untouched -- this
+    is a Procedure-level binding the way a Line's policy pin is a Line-level
+    one, and the closure evaluator holds it to the same standard as any other
+    non-deferred pin.
+    """
+
     tag: Literal["playbill-procedure-authoring-payload-v2"] = (
         "playbill-procedure-authoring-payload-v2"
     )
     definition: dict[str, object]
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
     owned_contracts: tuple[ProcedureOwnedContractV1, ...]
+    acquisition_policy: str | None = None
     retire: bool = False
 
     @field_validator("definition", mode="before")
@@ -927,6 +940,13 @@ class ProcedureAuthoringPayloadV2(_StrictAuthoringModel):
         if "name" not in normalized:
             raise ValueError("Procedure authoring definition requires a semantic name")
         return cast(dict[str, object], normalized)
+
+    @field_validator("acquisition_policy")
+    @classmethod
+    def _acquisition_policy(cls, value: str | None) -> str | None:
+        if value is not None and not _CANONICAL_NAME_RE.fullmatch(value):
+            raise ValueError("acquisition policy name is not canonical")
+        return value
 
 
 class ClaimTypeAuthoringPayloadV1(_StrictAuthoringModel):

@@ -14,6 +14,7 @@ from typing import Any, Literal, Protocol, cast, get_args
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from cruxible_client.contracts.acquisition_policies import (
+    ACQUISITION_POLICY_PIN_ROLE,
     AcquisitionInputDecisionV1,
     InputAcquisitionRuleV1,
     SourceAcquisitionPolicyV1,
@@ -353,6 +354,23 @@ class SourceAcquisitionPolicyRequired(ProcedureSurfaceError):
 
     code = "playbill.procedure.run.source_acquisition_policy_required"
     error_code = "source_acquisition_policy_required"
+
+    def __init__(self, message: str, *, details: object | None = None) -> None:
+        super().__init__(message)
+        self.details = {} if details is None else details
+
+
+class PinnedAcquisitionPolicyUnresolved(ProcedureSurfaceError):
+    """A Procedure's pinned acquisition policy is not live at this coordinate.
+
+    The closure evaluator already requires a Procedure's `acquisition-policy`
+    pin to resolve, digest-matched and not retired under a live source, so this
+    is the belt to that pin's braces rather than a reachable state of an
+    accepted tree -- the same guard, and the same code, the Line lane keeps.
+    """
+
+    code = "playbill.procedure.run.artifact_binding_mismatch"
+    error_code = "artifact_binding_mismatch"
 
     def __init__(self, message: str, *, details: object | None = None) -> None:
         super().__init__(message)
@@ -1125,23 +1143,78 @@ def _accepted_acquisition_policies(
     return tuple(sorted(policies, key=lambda item: item[0].encode("ascii")))
 
 
+def _procedure_acquisition_policy_pin(procedure: ProcedureArtifactAny) -> ArtifactPin | None:
+    """The Procedure envelope's own acquisition-policy pin, if it declares one."""
+
+    return next(
+        (
+            pin
+            for pin in procedure.pins
+            if pin.role == ACQUISITION_POLICY_PIN_ROLE
+            and pin.target.kind == "SourceAcquisitionPolicy"
+        ),
+        None,
+    )
+
+
 def _direct_acquisition_policy(
     tree: Mapping[str, bytes],
     *,
+    procedure: ProcedureArtifactAny,
     input_names: tuple[str, ...],
 ) -> tuple[str, SourceAcquisitionPolicyV1]:
-    """Resolve the one accepted policy that governs this direct run's inputs.
+    """Resolve the accepted policy that governs this direct run's inputs.
 
-    A Line names its policy by pin. A direct run has no Line to carry that pin
-    and the Procedure definition carries none either, so the policy is resolved
-    from ACCEPTED state: exactly one live SourceAcquisitionPolicy whose declared
-    inputs are exactly this Procedure's Source aliases. Zero or several is a
-    typed refusal naming the repair, never a silently chosen default.
+    The DURABLE binding is the Procedure envelope's own `acquisition-policy`
+    pin, the way a Line's is the LineSpec's: an exact digest, authored with the
+    Procedure, closure-checked at acceptance, and immune to what anyone accepts
+    afterwards. A pinned Procedure never falls back and never consults the rest
+    of the tree, so two Procedures whose Source aliases happen to agree are
+    governed separately, and accepting an unrelated policy cannot take a running
+    Procedure offline.
+
+    Resolve-from-accepted-state is the FALLBACK, for a Procedure authored before
+    the pin existed or without one: exactly one live SourceAcquisitionPolicy
+    whose declared inputs are exactly this Procedure's Source aliases. Zero or
+    several is a typed refusal naming the repair, never a silently chosen
+    default. That binding is keyed on an alias SET, which is Procedure-local
+    naming, so it is ambiguous across Procedures and non-monotonic under
+    acceptance -- which is why it is the fallback and not the law.
     """
 
+    accepted_policies = _accepted_acquisition_policies(tree)
+    pin = _procedure_acquisition_policy_pin(procedure)
+    if pin is not None:
+        pinned = next(
+            (policy for digest, policy in accepted_policies if digest == pin.artifact_digest),
+            None,
+        )
+        if pinned is None:
+            raise PinnedAcquisitionPolicyUnresolved(
+                f"{PinnedAcquisitionPolicyUnresolved.code}: the pinned SourceAcquisitionPolicy "
+                "is not live at this accepted coordinate",
+                details={
+                    "pinned_policy_identity": pin.target.qualified,
+                    "pinned_policy_digest": pin.artifact_digest,
+                },
+            )
+        declared = tuple(rule.input_name for rule in pinned.inputs)
+        if declared != input_names:
+            raise SourceAcquisitionPolicyRequired(
+                f"{SourceAcquisitionPolicyRequired.code}: the pinned SourceAcquisitionPolicy "
+                f"declares {list(declared)}, not this Procedure's Source inputs "
+                f"{list(input_names)}",
+                details={
+                    "required_input_names": list(input_names),
+                    "declared_input_names": list(declared),
+                    "pinned_policy_identity": pin.target.qualified,
+                    "matching_policy_digests": [],
+                },
+            )
+        return pin.artifact_digest, pinned
     covering = tuple(
         item
-        for item in _accepted_acquisition_policies(tree)
+        for item in accepted_policies
         if tuple(rule.input_name for rule in item[1].inputs) == input_names
     )
     if len(covering) != 1:
@@ -2464,20 +2537,30 @@ def _prepare_direct_source_run(
     try:
         policy_digest, policy = _direct_acquisition_policy(
             tree,
+            procedure=accepted.procedure,
             input_names=_source_input_names(accepted),
+        )
+    except PinnedAcquisitionPolicyUnresolved as exc:
+        return refuse(
+            code="artifact_binding_mismatch",
+            message="The Procedure's pinned acquisition policy is not accepted at this coordinate.",
+            details={
+                **cast(dict[str, object], exc.details),
+                "repair": "Accept the pinned SourceAcquisitionPolicy or succeed the Procedure.",
+            },
         )
     except SourceAcquisitionPolicyRequired as exc:
         return refuse(
             code="source_acquisition_policy_required",
             message=(
-                "A direct Source run requires exactly one accepted SourceAcquisitionPolicy "
-                "declaring this Procedure's Source inputs."
+                "A direct Source run requires an accepted SourceAcquisitionPolicy declaring "
+                "this Procedure's Source inputs."
             ),
             details={
                 **cast(dict[str, object], exc.details),
                 "repair": (
-                    "Accept one SourceAcquisitionPolicy whose inputs are exactly this "
-                    "Procedure's Source aliases."
+                    "Pin a SourceAcquisitionPolicy on the Procedure, or accept exactly one "
+                    "whose inputs are this Procedure's Source aliases."
                 ),
             },
         )

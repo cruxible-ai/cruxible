@@ -12,6 +12,7 @@ from typing import NoReturn, TypeAlias
 
 from pydantic import BaseModel, ValidationError
 
+from cruxible_client.contracts.acquisition_policies import ACQUISITION_POLICY_PIN_ROLE
 from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_PATH,
     approval_policy_digest,
@@ -1322,6 +1323,50 @@ def _validation_error_lines(exc: ValidationError, *, root: str) -> tuple[str, ..
     return tuple(lines)
 
 
+def _acquisition_policy_pin(
+    payload: ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2,
+    *,
+    accepted: dict[str, tuple[str, str]],
+    candidates: dict[str, tuple[str, str]],
+    candidate_identities: frozenset[str],
+) -> ArtifactPin | None:
+    """Resolve the Procedure's named acquisition policy into its exact pin.
+
+    The author names the policy the way they name any other artifact -- by its
+    semantic name -- and lowering owns the digest, so a caller can neither
+    supply one nor pin a policy this instance has not accepted. A change set may
+    accept the policy and the Procedure together: the same candidate reference
+    every other Procedure member uses resolves it.
+    """
+
+    name = payload.acquisition_policy if isinstance(payload, ProcedureAuthoringPayloadV2) else None
+    if name is None:
+        return None
+    try:
+        target = ArtifactIdentity(kind="SourceAcquisitionPolicy", name=name)
+    except ValueError:
+        _refuse(
+            "playbill.authoring.artifact_reference_invalid",
+            "acquisition_policy",
+            "The named SourceAcquisitionPolicy identity is not canonical.",
+            repair_kind="replace_reference",
+            repair_description="Name an accepted SourceAcquisitionPolicy by its semantic name.",
+        )
+    reference: AuthoringArtifactReferenceV1 | AuthoringCandidateReferenceV1 = (
+        AuthoringCandidateReferenceV1(role=ACQUISITION_POLICY_PIN_ROLE, target=target)
+        if target.qualified in candidate_identities
+        else AuthoringArtifactReferenceV1(role=ACQUISITION_POLICY_PIN_ROLE, target=target)
+    )
+    resolved = _resolve_authoring_references(
+        reference.model_dump(mode="json"),
+        accepted=accepted,
+        candidates=candidates,
+        candidate_identities=candidate_identities,
+        location="acquisition_policy",
+    )
+    return ArtifactPin.model_validate(resolved)
+
+
 def _resolve_authoring_references(
     value: object,
     *,
@@ -1575,13 +1620,27 @@ def _lower_procedure(
     predecessor: ProcedureArtifactAny | None = None
     if path in base_tree:
         predecessor = parse_procedure(base_tree[path], path=path)
+    declared_pins = {
+        binding for binding in iter_pin_bindings(definition) if isinstance(binding, ArtifactPin)
+    }
+    # The acquisition policy binds the PROCEDURE, not any one node, so it rides
+    # on the envelope and never in the definition -- which is exactly why
+    # adopting it leaves the definition digest, and every historical artifact,
+    # byte-identical. The envelope law requires only that definition-referenced
+    # pins be declared, so an extra declared pin is legal today; the closure
+    # evaluator then holds it to the same standard as any other non-deferred
+    # pin, because SourceAcquisitionPolicy is not a deferred target kind.
+    policy_pin = _acquisition_policy_pin(
+        payload,
+        accepted=accepted,
+        candidates=candidate_artifacts,
+        candidate_identities=candidate_identities,
+    )
+    if policy_pin is not None:
+        declared_pins.add(policy_pin)
     pins = tuple(
         sorted(
-            {
-                binding
-                for binding in iter_pin_bindings(definition)
-                if isinstance(binding, ArtifactPin)
-            },
+            declared_pins,
             key=lambda item: (
                 item.role.encode("utf-8"),
                 item.target.qualified.encode("utf-8"),

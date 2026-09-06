@@ -609,3 +609,62 @@ def test_claim_type_source_intent_produces_an_actionable_per_source_warning(
     assert source_warning.replacement_rule_fragment["capture_contract_digests"] == [
         source_warning.contract_digest
     ]
+
+
+def test_a_procedure_input_names_its_acquisition_policy_and_lowering_owns_the_digest(
+    tmp_path: Path,
+) -> None:
+    """The change-set member's spelling of the Procedure's policy binding.
+
+    An author names the policy; they never supply its digest. So the member
+    below carries a name, the lowered payload carries the same name, and the
+    envelope pin only ever exists once lowering has resolved that name against
+    accepted state -- which this world does not hold, so it refuses by name.
+    """
+
+    instance, _owner = initialize_local(tmp_path)
+    coordinator = _coordinator(instance)
+    definition = _slot_definition().model_dump(mode="json", by_alias=True)
+
+    def remove_tags(value: object) -> object:
+        if isinstance(value, dict):
+            return {key: remove_tags(item) for key, item in value.items() if key != "tag"}
+        if isinstance(value, list):
+            return [remove_tags(item) for item in value]
+        return value
+
+    tagless = remove_tags(definition)
+    assert isinstance(tagless, dict)
+    for key in ("contract_in", "contract_out"):
+        tagless[key] = {
+            "kind": "slot",
+            "slot_name": definition[key]["slot_name"],  # type: ignore[index]
+        }
+
+    member = ProcedureInput(
+        kind="procedure",
+        definition=tagless,
+        activation_policy="drain",
+        acquisition_policy="advisory-reads",
+    )
+    payload = lower_authoring_input(member, tree={})
+    # A named policy makes this a v2 payload even with no carried Contract, and
+    # the payload carries the NAME: no caller ever supplies the digest.
+    assert payload.tag == "playbill-procedure-authoring-payload-v2"
+    assert payload.acquisition_policy == "advisory-reads"
+
+    result = coordinator.compile_input(
+        actor=AuthenticatedActor(actor_id="owner"),
+        input=member,
+        canonical_timestamp=TIMESTAMP,
+    )
+
+    assert result.verdict == "refused"
+    diagnostics = {item.code for item in result.frontier.diagnostics}
+    assert "playbill.authoring.artifact_reference_unresolved" in diagnostics
+    offending = {
+        item.offending_element
+        for item in result.frontier.diagnostics
+        if item.code == "playbill.authoring.artifact_reference_unresolved"
+    }
+    assert offending == {"acquisition_policy"}

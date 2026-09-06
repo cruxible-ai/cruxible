@@ -22,6 +22,7 @@ from typing import Any, cast, get_args
 import pytest
 
 from cruxible_client.contracts.acquisition_policies import (
+    ACQUISITION_POLICY_PIN_ROLE,
     IndependentCoherenceV1,
     InputAcquisitionRuleV1,
     SourceAcquisitionPolicyV1,
@@ -85,6 +86,7 @@ from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.exhaust.records import parse_journal_payload
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.procedures.execution import ProcedureAdmissionBoundPayloadV5
 from cruxible_core.playbill.provider_classifiers import (
     install_compiler_owned_provider_classifier,
 )
@@ -246,7 +248,7 @@ def _source_request(instance: PlaybillInstance, root: Path) -> WorkspaceFileSour
     )
 
 
-def _procedure(
+def _procedure(  # noqa: PLR0913
     instance: PlaybillInstance,
     *,
     root: Path,
@@ -254,6 +256,7 @@ def _procedure(
     provider_pin: ArtifactPin,
     interface_pin: ArtifactPin,
     relative_path: str = RELATIVE_PATH,
+    policy_pin: ArtifactPin | None = None,
 ) -> ProcedureArtifactV2:
     input_contract, output_contract = _contracts()
     contract_in = ArtifactPin(
@@ -320,7 +323,14 @@ def _procedure(
         definition_digest=compute_procedure_definition_digest_v4(definition).tagged,
         pins=tuple(
             sorted(
-                (contract_in, contract_out, capture_pin, provider_pin, interface_pin),
+                (
+                    contract_in,
+                    contract_out,
+                    capture_pin,
+                    provider_pin,
+                    interface_pin,
+                    *(() if policy_pin is None else (policy_pin,)),
+                ),
                 key=lambda pin: (
                     pin.role.encode("utf-8"),
                     pin.target.qualified.encode("utf-8"),
@@ -363,6 +373,16 @@ def _policy(
     )
 
 
+def _policy_pin(policy: SourceAcquisitionPolicyV1) -> ArtifactPin:
+    """The envelope pin an author's `acquisition_policy` name lowers into."""
+
+    return ArtifactPin(
+        role=ACQUISITION_POLICY_PIN_ROLE,
+        target=policy.identity,
+        artifact_digest=acquisition_policy_digest(policy).tagged,
+    )
+
+
 def _world(  # noqa: PLR0913
     tmp_path: Path,
     *,
@@ -373,6 +393,7 @@ def _world(  # noqa: PLR0913
     accept_procedure: bool = True,
     relative_path: str = RELATIVE_PATH,
     write_at: str = RELATIVE_PATH,
+    pin_policy: bool = False,
 ):  # type: ignore[no-untyped-def]
     instance, owner = initialize_local(tmp_path)
     service_seed_workspace_file_provider(
@@ -425,6 +446,7 @@ def _world(  # noqa: PLR0913
         provider_pin=provider_pin,
         interface_pin=interface_pin,
         relative_path=relative_path,
+        policy_pin=_policy_pin(accepted_policy) if pin_policy else None,
     )
     members = {
         capture_contract_path(accepted_contract.identity.name): render_capture_contract(
@@ -831,6 +853,269 @@ def _acquisition_decisions(instance: PlaybillInstance) -> list[tuple[str, str]]:
             decision = cast(dict[str, Any], payload["decision"])
             applied.append((str(payload["input_name"]), str(decision["disposition"])))
     return applied
+
+
+# --- the durable policy binding: the Procedure's own envelope pin -------------
+
+
+SECOND_STAMP = "2026-09-12T11:45:00.000000Z"
+
+
+def _accept_more(instance, owner, members, *, name: str) -> None:  # type: ignore[no-untyped-def]
+    inspection = submit_member_candidate(
+        instance,
+        members=members,
+        actor_id="owner",
+        proposal_name=name,
+        proposal_family="procedure",
+        timestamp=SECOND_STAMP,
+    )
+    accept_proposal(instance, owner, inspection)
+
+
+def _twin_policy() -> SourceAcquisitionPolicyV1:
+    """Another team's policy that happens to declare the same alias set."""
+
+    return _policy(name="advisory-twin")
+
+
+def test_a_pinned_procedure_reads_its_policy_off_its_own_envelope(tmp_path: Path) -> None:
+    """The pin is the binding: it names the exact policy, and nothing else does."""
+
+    instance, _owner, procedure, root, policy_artifact = _world(tmp_path, pin_policy=True)
+    pin = _policy_pin(policy_artifact)
+    assert pin in procedure.pins
+
+    state, invoker = _run(instance, root)
+
+    assert state.status == "succeeded", state.terminal
+    assert invoker.spawn_calls == 1
+    assert _admission(instance, state).acquisition_policy_digest == pin.artifact_digest
+
+
+def test_accepting_an_unrelated_policy_cannot_change_a_pinned_procedures_run(
+    tmp_path: Path,
+) -> None:
+    """The defect the pin closes: another team's acceptance is not this run's input.
+
+    Resolve-from-accepted-state keys on the Procedure's alias SET, and aliases
+    are Procedure-local names, so a second live policy declaring the same set
+    made an already accepted Procedure unrunnable. A pinned Procedure never
+    consults the rest of the tree, so the same acceptance is a no-op for it.
+    """
+
+    instance, owner, _procedure, root, policy_artifact = _world(tmp_path, pin_policy=True)
+    twin = _twin_policy()
+    assert [rule.input_name for rule in twin.inputs] == [SOURCE_ALIAS]
+    _accept_more(
+        instance,
+        owner,
+        {acquisition_policy_path(twin.identity.name): render_acquisition_policy(twin)},
+        name="twin-policy",
+    )
+
+    state, invoker = _run(instance, root, evaluation_time=NOW + timedelta(minutes=5))
+
+    assert state.status == "succeeded", state.terminal
+    assert invoker.spawn_calls == 1
+    # It resolved the PINNED policy, not one of the two the alias set matches.
+    assert _admission(instance, state).acquisition_policy_digest == (
+        acquisition_policy_digest(policy_artifact).tagged
+    )
+
+
+def test_the_same_second_acceptance_refuses_an_unpinned_procedure(tmp_path: Path) -> None:
+    """The fallback's own behaviour, unchanged and still the reason to pin."""
+
+    instance, owner, _procedure, root, _policy_artifact = _world(tmp_path)
+    twin = _twin_policy()
+    _accept_more(
+        instance,
+        owner,
+        {acquisition_policy_path(twin.identity.name): render_acquisition_policy(twin)},
+        name="twin-policy",
+    )
+
+    state, invoker = _run(instance, root, evaluation_time=NOW + timedelta(minutes=5))
+
+    assert state.status == "admission_refused", state.terminal
+    assert isinstance(state.terminal, ProcedureAdmissionRefusalV1)
+    assert state.terminal.code == "source_acquisition_policy_required"
+    assert len(state.terminal.details["matching_policy_digests"]) == 2
+    assert invoker.spawn_calls == 0
+
+
+def test_a_pinned_policy_declaring_other_inputs_refuses_at_admission(tmp_path: Path) -> None:
+    """A pin binds an exact artifact; it does not excuse it from governing these inputs."""
+
+    instance, _owner, _procedure, root, _policy_artifact = _world(
+        tmp_path,
+        policy=_policy(input_name="other-input"),
+        pin_policy=True,
+    )
+    journal_root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
+
+    state, invoker = _run(instance, root)
+
+    assert state.status == "admission_refused", state.terminal
+    assert isinstance(state.terminal, ProcedureAdmissionRefusalV1)
+    assert state.terminal.code == "source_acquisition_policy_required"
+    assert state.terminal.details["required_input_names"] == [SOURCE_ALIAS]
+    assert state.terminal.details["declared_input_names"] == ["other-input"]
+    assert state.terminal.repair is not None
+    assert invoker.spawn_calls == 0
+    assert not journal_root.exists()
+
+
+def test_a_procedure_pinning_an_absent_policy_is_refused_at_acceptance(tmp_path: Path) -> None:
+    """The pin closes at acceptance, like every other non-deferred pin kind."""
+
+    instance, _owner, procedure, _root, _policy_artifact = _world(tmp_path, accept_procedure=False)
+    absent = _policy(name="never-accepted")
+    dangling = procedure.model_copy(
+        update={
+            "pins": tuple(
+                sorted(
+                    (*procedure.pins, _policy_pin(absent)),
+                    key=lambda pin: (
+                        pin.role.encode("utf-8"),
+                        pin.target.qualified.encode("utf-8"),
+                        pin.artifact_digest.encode("ascii"),
+                    ),
+                )
+            )
+        }
+    )
+
+    inspection = submit_member_candidate(
+        instance,
+        members={procedure_path(PROCEDURE_NAME): render_procedure(dangling)},
+        actor_id="owner",
+        proposal_name="dangling-policy-pin",
+        proposal_family="procedure",
+        timestamp=SECOND_STAMP,
+    )
+
+    evaluation = inspection.proposal.evaluation
+    assert evaluation.verdict == "refused"
+    unresolved = [
+        item for item in evaluation.diagnostics if item.code == "playbill.change_set.unresolved_pin"
+    ]
+    assert len(unresolved) == 1
+    detail = json.loads(unresolved[0].message)["pins"]
+    assert [item["pin_role"] for item in detail] == [ACQUISITION_POLICY_PIN_ROLE]
+    assert detail[0]["target_identity"]["name"] == absent.identity.name
+    assert detail[0]["reason"] == "missing_or_digest_mismatch"
+
+
+def test_the_policy_pin_leaves_the_definition_digest_byte_identical(tmp_path: Path) -> None:
+    """The pin rides on the envelope, so no accepted definition byte moves."""
+
+    _instance, _owner, unpinned, _root, policy_artifact = _world(tmp_path)
+    pinned = unpinned.model_copy(
+        update={
+            "pins": tuple(
+                sorted(
+                    (*unpinned.pins, _policy_pin(policy_artifact)),
+                    key=lambda pin: (
+                        pin.role.encode("utf-8"),
+                        pin.target.qualified.encode("utf-8"),
+                        pin.artifact_digest.encode("ascii"),
+                    ),
+                )
+            )
+        }
+    )
+
+    assert pinned.definition_digest == unpinned.definition_digest
+    assert compute_procedure_definition_digest_v4(pinned.definition).tagged == (
+        compute_procedure_definition_digest_v4(unpinned.definition).tagged
+    )
+    # The ARTIFACT digest moves, because adopting the pin authors a new
+    # Procedure; nothing already accepted is rewritten.
+    assert procedure_artifact_digest(pinned).tagged != procedure_artifact_digest(unpinned).tagged
+
+
+def test_the_authoring_path_lowers_the_named_policy_into_the_envelope_pin(
+    tmp_path: Path,
+) -> None:
+    """How an author names it: the policy's semantic name, and lowering owns the digest."""
+
+    from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayloadV2
+    from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.playbill.authoring.preflight import compute_preflight
+    from cruxible_core.playbill.proposals import AuthenticatedActor
+
+    instance, _owner, procedure, _root, policy_artifact = _world(
+        tmp_path, accept_procedure=False, pin_policy=True
+    )
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+
+    compiled = coordinator.compile(
+        actor=actor,
+        payload=ProcedureAuthoringPayloadV2(
+            definition=_authored_definition(procedure),
+            activation_policy=procedure.activation_policy,
+            owned_contracts=procedure.owned_contracts,
+            acquisition_policy=policy_artifact.identity.name,
+            retire=False,
+        ),
+        canonical_timestamp=ACCEPT_STAMP,
+    )
+
+    assert compiled.verdict == "passed", compiled.frontier.diagnostics
+    intent = coordinator.list_pending(actor=actor).intents[0]
+    lowered = compute_preflight(instance, intent=intent, actor=actor).lowered
+    assert lowered is not None
+    assert lowered.resolved_authoring["artifact_digest"] == (
+        procedure_artifact_digest(procedure).tagged
+    )
+    assert lowered.proposed_tree[procedure_path(PROCEDURE_NAME)] == render_procedure(procedure)
+    assert (
+        _policy_pin(policy_artifact).model_dump(mode="json") in (lowered.resolved_authoring["pins"])
+    )
+
+
+def test_the_sdk_carries_the_named_policy_into_the_authoring_payload(tmp_path: Path) -> None:
+    """The SDK verb an author reaches for, and the payload it emits."""
+
+    from cruxible_client.authoring.sdk import Playbill, ProcedureDraft
+
+    _instance, _owner, procedure, _root, policy_artifact = _world(tmp_path)
+    draft = Playbill.procedure(
+        object(),
+        definition=procedure.definition,
+        activation_policy="drain",
+        retire=False,
+        acquisition_policy=policy_artifact.identity.name,
+    )
+
+    assert isinstance(draft, ProcedureDraft)
+    assert draft.payload.acquisition_policy == policy_artifact.identity.name
+
+
+def _admission(instance: PlaybillInstance, state):  # type: ignore[no-untyped-def]
+    """The V5 admission this run bound, read back off its own journal."""
+
+    import cruxible_core.service.playbill_procedure_runs as service
+
+    journal, _root = service._journal(instance)  # noqa: SLF001
+    stream = service._stream(instance)  # noqa: SLF001
+    bodies = instance.body_store()
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    for partition_id in journal.partition_ids(stream):
+        for stored in journal.all_records(stream, partition_id):
+            if stored.record.event_kind != "admission_bound":
+                continue
+            if stored.record.run_id != state.run_id:
+                continue
+            payload = parse_journal_payload(
+                bodies.read(stored.record.payload_digest, access=access)
+            )
+            assert isinstance(payload, dict)
+            return ProcedureAdmissionBoundPayloadV5.model_validate(payload).admission
+    raise AssertionError("no admission_bound record for this run")
 
 
 def test_a_source_closure_that_stops_reproducing_refuses_before_the_first_attempt(

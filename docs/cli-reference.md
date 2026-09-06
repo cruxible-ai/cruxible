@@ -692,15 +692,21 @@ may READ an external source through an accepted Provider. Effectful terminals --
 `emit_capture`, `post_inbox`, `propose_change_set`, `mandate_settlement` -- are
 not served, and `readiness` lists them as unsupported nodes before execution.
 
-A Source run needs accepted state to authorize it: one live
-SourceAcquisitionPolicy whose declared inputs are exactly the Procedure's Source
-aliases, the CaptureContract each Source node pins, and the Provider closure it
-names. The direct lane refuses `source_acquisition_policy_required` when no
-single policy applies, and `source_acquisition_refused` when the policy's own
-rule denies a declared input; neither leaves run history behind. A read outside
-an authorized workspace root, over the CaptureContract's selection budget, or
-with no daemon-local reader refuses `workspace_file_read_refused` and names its
-path class.
+A Source run needs accepted state to authorize it: a live
+SourceAcquisitionPolicy, the CaptureContract each Source node pins, and the
+Provider closure it names. A Procedure names its policy on its own envelope,
+under the pin role `acquisition-policy` -- authored by naming the policy, the
+way a Line names its own -- and a pinned Procedure reads only that policy, so
+what anyone accepts afterwards cannot change what it does. A Procedure with no
+such pin falls back to accepted state: exactly one live SourceAcquisitionPolicy
+whose declared inputs are exactly the Procedure's Source aliases. The direct
+lane refuses `source_acquisition_policy_required` when the pinned policy does
+not declare this Procedure's Source inputs, or when no single policy applies to
+an unpinned one, and `source_acquisition_refused` when the policy's own rule
+denies a declared input; neither leaves run history behind. A read outside an
+authorized workspace root, over the CaptureContract's selection budget, or with
+no daemon-local reader refuses `workspace_file_read_refused` and names its path
+class.
 
 A completed Source run reports, per occurrence, the `SourceReadReceiptV1` the
 daemon minted for the exact bytes it read and the digest of the Capture those
