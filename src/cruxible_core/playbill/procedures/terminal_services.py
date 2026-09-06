@@ -19,8 +19,10 @@ from cruxible_client.contracts.procedure_mandates import ProcedureMandateV1
 from cruxible_client.contracts.procedures.results import ProcedureSettlementRefusalCodeV1
 from cruxible_core.playbill.procedures.egress import (
     TerminalEgressChildReceiptV1,
+    TerminalEgressChildReceiptV2,
     TerminalEgressError,
     TerminalEgressReceiptV2,
+    TerminalEgressReceiptV3,
     TerminalEgressRequestV2,
     require_procedure_mandate,
 )
@@ -28,6 +30,7 @@ from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
+    ProposalResult,
     ProposalService,
 )
 from cruxible_core.playbill.service.documents import service_activate_playbill_proposal
@@ -39,6 +42,26 @@ if TYPE_CHECKING:
 
 class EffectfulTerminalError(PlaybillFormatError):
     """An effectful terminal cannot traverse the governed service door."""
+
+
+class ProposalDeliveryRefused(EffectfulTerminalError, TerminalEgressError):
+    """Typed proposal-door refusal preserved as the run's node refusal.
+
+    The code is a member of the served node-refusal vocabulary, so the run
+    state names exactly why the proposal was not produced and the served
+    repair catalog answers it; the details carry what the door observed.
+    """
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        details: object | None = None,
+    ) -> None:
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.details = {} if details is None else details
 
 
 class ProcedureSettlementRefused(EffectfulTerminalError, TerminalEgressError):
@@ -282,13 +305,23 @@ class ProposalTerminalAdapter:
         admission: ProcedureRunAdmissionV1,
         candidate_tree: Mapping[str, bytes],
         accepted_mandates: Mapping[str, ProcedureMandateV1],
+        item_paths: Mapping[str, str] | None = None,
+        rationale: str | None = None,
+        base_tree: Mapping[str, bytes] | None = None,
     ) -> TerminalEgressReceiptV2:
         if request.kind != "propose_change_set":
             raise EffectfulTerminalError("proposal adapter serves propose_change_set only")
-        base_tree = self.service.transport.read_tree(request.accepted_coordinate.git_oid)
-        if _changed_paths(base_tree, candidate_tree) != request.target_paths:
-            raise EffectfulTerminalError(
-                "effectful_target_paths_mismatch: lowered candidate differs from declared targets"
+        if base_tree is None:
+            base_tree = self.service.transport.read_tree(request.accepted_coordinate.git_oid)
+        changed = _changed_paths(base_tree, candidate_tree)
+        if changed != request.target_paths:
+            raise ProposalDeliveryRefused(
+                "proposal_target_paths_mismatch",
+                "The lowered candidate differs from the terminal's declared targets.",
+                details={
+                    "declared_target_paths": list(request.target_paths),
+                    "lowered_target_paths": list(changed),
+                },
             )
         # Authority is the last pure check and occurs before ProposalService can
         # create a ref, write admission evidence, or commit proposal bytes.
@@ -302,44 +335,80 @@ class ProposalTerminalAdapter:
         result = self.service.submit(
             actor=AuthenticatedActor(actor_id=actor_id),
             request=ProposalAdmissionRequest(
-                target_ref=(
-                    f"refs/proposals/{actor_id}/procedure-{request.operation_key.removeprefix('sha256:')[:64]}"
-                ),
+                target_ref=proposal_terminal_ref(actor_id, request.operation_key),
                 proposed_base_oid=request.accepted_coordinate.git_oid,
+                rationale=rationale,
             ),
             candidate_tree=candidate_tree,
             timestamp=canonical_candidate_timestamp(request.evaluation_time),
         )
-        candidate = result.candidate
-        if candidate is None:
-            codes = ", ".join(item.code for item in result.evaluation.diagnostics)
-            raise EffectfulTerminalError(
-                f"effectful_candidate_refused: proposal receive refused the candidate ({codes})"
-            )
-        by_path = {member.path: member for member in candidate.members}
-        children: list[TerminalEgressChildReceiptV1] = []
-        for item in request.items:
-            member = by_path.get(item.item_key)
-            candidate_artifact_digest = None if member is None else _candidate_member_digest(member)
-            if candidate_artifact_digest is None:
-                raise EffectfulTerminalError(
-                    "effectful_candidate_receipt_incomplete: item does not name a candidate member"
-                )
-            children.append(
-                TerminalEgressChildReceiptV1(
-                    child_index=item.child_index,
-                    item_key=item.item_key,
-                    egress_digest=candidate_artifact_digest,
-                )
-            )
-        return TerminalEgressReceiptV2(
-            kind=request.kind,
-            run_id=request.run_id,
-            node_id=request.node_id,
-            disposition="received",
-            children=tuple(children),
-            operation_key=request.operation_key,
+        return proposal_terminal_receipt(
+            request,
+            result=result,
+            item_paths=item_paths,
         )
+
+
+def proposal_terminal_ref(actor_id: str, operation_key: str) -> str:
+    """The one proposal ref an admitted operation may create, keyed on its identity."""
+
+    return f"refs/proposals/{actor_id}/procedure-{operation_key.removeprefix('sha256:')[:64]}"
+
+
+def proposal_terminal_receipt(
+    request: TerminalEgressRequestV2,
+    *,
+    result: ProposalResult,
+    item_paths: Mapping[str, str] | None,
+) -> TerminalEgressReceiptV2:
+    """Bind every terminal item to the exact candidate member it lowered into."""
+
+    candidate = result.candidate
+    if candidate is None:
+        codes = tuple(item.code for item in result.evaluation.diagnostics)
+        raise ProposalDeliveryRefused(
+            "proposal_candidate_refused",
+            "Proposal receive refused the lowered candidate.",
+            details={
+                "proposal_id": result.admission.proposal_id,
+                "diagnostics": [
+                    item.model_dump(mode="json") for item in result.evaluation.diagnostics
+                ],
+                "codes": list(codes),
+            },
+        )
+    by_path = {member.path: member for member in candidate.members}
+    children: list[TerminalEgressChildReceiptV2] = []
+    for item in request.items:
+        path = item.item_key if item_paths is None else item_paths.get(item.item_key)
+        member = None if path is None else by_path.get(path)
+        candidate_artifact_digest = None if member is None else _candidate_member_digest(member)
+        if path is None or candidate_artifact_digest is None:
+            raise ProposalDeliveryRefused(
+                "proposal_receipt_incomplete",
+                "A terminal item does not name a candidate member.",
+                details={"item_key": item.item_key, "path": path},
+            )
+        children.append(
+            TerminalEgressChildReceiptV2(
+                child_index=item.child_index,
+                item_key=item.item_key,
+                egress_digest=candidate_artifact_digest,
+                path=path,
+            )
+        )
+    assert request.operation_key is not None  # request shape
+    return TerminalEgressReceiptV3(
+        kind=request.kind,
+        run_id=request.run_id,
+        node_id=request.node_id,
+        disposition="received",
+        children=tuple(children),
+        operation_key=request.operation_key,
+        proposal_id=result.admission.proposal_id,
+        candidate_digest=candidate.candidate_digest,
+        target_paths=request.target_paths,
+    )
 
 
 class SettlementTerminalAdapter:
@@ -420,7 +489,10 @@ class SettlementTerminalAdapter:
 
 __all__ = [
     "EffectfulTerminalError",
+    "ProposalDeliveryRefused",
     "ProposalTerminalAdapter",
+    "proposal_terminal_receipt",
+    "proposal_terminal_ref",
     "PlaybillSettlementDoor",
     "ProcedureSettlementRefused",
     "SettlementCandidateInspection",

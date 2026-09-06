@@ -34,6 +34,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import (
+    CandidateDigest,
+    ProposalDigest,
     Sha256Value,
     canonical_bytes,
     normalize_canonical,
@@ -69,6 +71,7 @@ from cruxible_core.playbill.procedures.terminal_dependencies import (
     TAINT_CONSERVATIVE_DEFAULT,
     TAINT_OMITTED_OPTIONAL,
     TAINT_UNPROMOTED_EXHAUST,
+    TerminalItemDependencyManifestV1,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
 
@@ -874,6 +877,113 @@ class TerminalEgressReceiptV2(TerminalEgressReceiptV1):
         return self
 
 
+class TerminalEgressChildReceiptV2(TerminalEgressChildReceiptV1):
+    """A child receipt that also names the lowered artifact path it settled into."""
+
+    tag: Literal["playbill-terminal-egress-child-receipt-v2"] = (
+        "playbill-terminal-egress-child-receipt-v2"  # type: ignore[assignment]
+    )
+    path: str
+
+
+class TerminalEgressReceiptV3(TerminalEgressReceiptV2):
+    """A proposal receipt that names the proposal and exact candidate it produced.
+
+    The handles are what a manager needs to retrieve, review, and activate the
+    candidate through the existing proposal doors; a receipt that carried only
+    per-child artifact digests could not be resolved back to either.
+    """
+
+    tag: Literal["playbill-terminal-egress-receipt-v3"] = "playbill-terminal-egress-receipt-v3"  # type: ignore[assignment]
+    proposal_id: str
+    candidate_digest: str
+    target_paths: tuple[str, ...]
+    children: tuple[TerminalEgressChildReceiptV2, ...]
+
+    @field_validator("proposal_id")
+    @classmethod
+    def _proposal(cls, value: str) -> str:
+        ProposalDigest.from_tagged(value)
+        return value
+
+    @field_validator("candidate_digest")
+    @classmethod
+    def _candidate(cls, value: str) -> str:
+        CandidateDigest.from_tagged(value)
+        return value
+
+    @field_validator("target_paths")
+    @classmethod
+    def _targets(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value or value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("proposal receipt target paths must be nonempty, sorted, and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _proposal_shape(self) -> "TerminalEgressReceiptV3":
+        if self.kind != "propose_change_set":
+            raise ValueError("only propose_change_set egress reports a proposal receipt")
+        if any(child.path not in self.target_paths for child in self.children):
+            raise ValueError("every proposal child settles into one of the receipt's targets")
+        return self
+
+
+class PreparedTerminalEgressV1(_StrictEgressModel):
+    """What a preparer resolved for one effectful terminal before delivery.
+
+    `target_paths` are the ACTUAL changed paths shared lowering produced, so the
+    mandate is evaluated against what will be proposed rather than what the
+    template declared. `lowering_digest` commits to the exact changed member
+    bytes; a retry that reproduces it recovers the same proposal, one that does
+    not is refused rather than relabelled.
+    """
+
+    tag: Literal["playbill-prepared-terminal-egress-v1"] = "playbill-prepared-terminal-egress-v1"
+    target_paths: tuple[str, ...]
+    procedure_mandate_digest: str | None = None
+    lowering_digest: str
+    item_paths: tuple[tuple[str, str], ...]
+
+    _lowering = field_validator("lowering_digest")(_tagged)
+
+    @field_validator("procedure_mandate_digest")
+    @classmethod
+    def _mandate(cls, value: str | None) -> str | None:
+        return None if value is None else _tagged(value)
+
+    @field_validator("target_paths")
+    @classmethod
+    def _targets(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value or value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("prepared target paths must be nonempty, sorted, and unique")
+        return value
+
+    @field_validator("item_paths")
+    @classmethod
+    def _item_paths(cls, value: tuple[tuple[str, str], ...]) -> tuple[tuple[str, str], ...]:
+        keys = tuple(item[0] for item in value)
+        if keys != tuple(sorted(set(keys), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("prepared item paths must be keyed by sorted unique item keys")
+        return value
+
+    def path_for(self, item_key: str) -> str | None:
+        return next((path for key, path in self.item_paths if key == item_key), None)
+
+
+@runtime_checkable
+class TerminalEgressPreparerProtocol(Protocol):
+    """A sink that must lower before it can be asked what it will change."""
+
+    def prepare_terminal_egress(
+        self,
+        *,
+        request: TerminalEgressRequestV1,
+        admission: ProcedureRunAdmissionV1,
+        manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
+        evidence: Mapping[str, str] | None = None,
+    ) -> PreparedTerminalEgressV1: ...
+
+
 def require_procedure_mandate(
     request: TerminalEgressRequestV2,
     *,
@@ -988,6 +1098,11 @@ def verify_terminal_egress_receipt(
             raise TerminalEgressError("Capture egress did not bind its exact producer receipt")
         if receipt.operation_key != request.operation_key:
             raise TerminalEgressError("effectful egress did not reproduce its operation key")
+        if isinstance(receipt, TerminalEgressReceiptV3):
+            if receipt.target_paths != request.target_paths:
+                raise TerminalEgressError("proposal egress did not settle the exact target paths")
+        elif request.kind == "propose_change_set":
+            raise TerminalEgressError("proposal egress requires a receipt naming its proposal")
     elif isinstance(request, TerminalEgressRequestV2):
         raise TerminalEgressError("v2 terminal egress requires a v2 receipt")
 
@@ -1177,6 +1292,10 @@ __all__ = [
     "TerminalEgressKindV1",
     "TerminalEgressReceiptV1",
     "TerminalEgressReceiptV2",
+    "TerminalEgressReceiptV3",
+    "TerminalEgressChildReceiptV2",
+    "PreparedTerminalEgressV1",
+    "TerminalEgressPreparerProtocol",
     "TerminalEgressRequestV1",
     "TerminalEgressRequestV2",
     "TerminalEgressSinkProtocol",
