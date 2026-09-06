@@ -162,5 +162,9 @@ These are diagnostic copied-instance profiles, not a decomposition of the live
 37.778 s acceptance or a promised end-to-end speedup. The copied preflight
 reproduced the exact candidate digest, but omitted reference assertions because
 the public intent view did not return them; reference-validation and transport
-costs are therefore outside that experiment. The intent-view round-trip gap
-also needs a separate contract check.
+costs are therefore outside that experiment. The separate contract defect is
+confirmed: an intent-v2 GET omits required `reference_expectations`, so its inner
+document cannot round-trip through V2 validation. It needs a focused wire fix;
+the operational checkpoint used the stored intent and passed exact-candidate
+review and normal settlement checks. No repair was included in this diagnosis.
+See the [complete latency diagnosis](benchmarks/checkpoint-latency-diagnosis-2026-09-06.md).
