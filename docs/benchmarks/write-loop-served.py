@@ -8,6 +8,8 @@ Setup uses the lawful adoption fixture; all measured operations use real HTTP.
 The first loop follows daemon startup and SDK orientation (reported separately),
 not an OS disk-cache flush. Later loops reuse the processes but advance accepted
 state, so "warm" does not mean repeated reads of an unchanged coordinate.
+With --world, drafts use typed references and each acceptance is followed by a
+fresh World snapshot; the daemon and SDK connection persist across all writes.
 No live instances or existing keys are used. State is removed unless --keep-state.
 Optional --profile writes client-side cProfile data beside the JSON report; it
 includes network wait, not daemon CPU. Setup and daemon startup are excluded.
@@ -17,11 +19,11 @@ use matching instrumentation on both sides of a comparison. The default batch
 has nine in-place revisions and nine creates. Forty-eight unsigned, unreferenced
 review commits exercise recovery's handling of real proposal leftovers.
 Use --no-server-profile for plain latency, or --profile-write-phases to also
-profile compile/preflight and submit inside their service worker calls. Readback
+profile compile/preflight, submit, and readback inside service worker calls. Readback
 grades are recorded. Under this fixture's admission policy, the SDK's coordinator
 self-source does not support the claim: the diagnostic returns current, uncovered
-claims. This measures lawful
-accepted writes and readback, not a supported-evidence customer proof.
+claims. This measures lawful accepted writes and readback, not a supported-evidence
+customer proof.
 """
 
 from __future__ import annotations
@@ -72,6 +74,9 @@ def serve(socket: str, profile_prefix: str, scope: str) -> None:
                 name,
                 traced(name, getattr(AuthoringIntentCoordinator, name)),
             )
+        playbill_api.service_read_claim_batch = traced(
+            "readback", playbill_api.service_read_claim_batch
+        )
     run_server(socket_path=socket)
 
 
@@ -88,6 +93,7 @@ def main() -> None:
     parser.add_argument("--server-profile", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--profile-write-phases", action="store_true")
     parser.add_argument("--keep-state", action="store_true")
+    parser.add_argument("--world", action="store_true", help="Use typed World references in drafts")
     args = parser.parse_args()
     if args.profile_write_phases and not args.server_profile:
         parser.error("--profile-write-phases requires --server-profile")
@@ -147,8 +153,10 @@ def main() -> None:
         "orphan_proposals": args.orphan_proposals,
         "server_profile": args.server_profile,
         "profile_write_phases": args.profile_write_phases,
+        "world": args.world,
         "scope": "SDK claim draft/prepare/submit/status; HTTP approval challenge/sign/submit; "
-        "SDK accept; coordinate-pinned HTTP full Claim readback; explicit SDK refresh. "
+        "SDK accept; coordinate-pinned HTTP full Claim readback; explicit SDK refresh "
+        "(fresh typed World snapshot when world=true). "
         "Half of each batch revises seed Claim identities; remainder creates observations. "
         "Attached Git workspace; no floor or mirror. See server_profile for instrumentation. "
         "Cold means fresh daemon process, after separately timed SDK connect/orient; "
@@ -278,6 +286,9 @@ def main() -> None:
         )
         report["connect_seconds"] = time.perf_counter() - started
         client = CruxibleClient(socket_path=str(socket))
+        started = time.perf_counter()
+        world = pb.world() if args.world else None
+        report["initial_world_seconds"] = time.perf_counter() - started if args.world else None
         for iteration in range(args.repeats):
             row = {"iteration": iteration, "temperature": "cold" if iteration == 0 else "warm"}
             phases = {}
@@ -312,8 +323,18 @@ def main() -> None:
                     previous = f"CLM-{_digest_id(profile, 'claim', member)}"
                     revising = f"Claim:{previous}" in revised_ids
                     changes.claim(
-                        subject=f"project.work_item/wi-{member % profile.subjects:05d}",
-                        predicate=f"project.work_item.attribute_{member % profile.claim_types:04d}",
+                        subject=(
+                            world.kind("project.work_item")[f"wi-{member % profile.subjects:05d}"]
+                            if world is not None
+                            else f"project.work_item/wi-{member % profile.subjects:05d}"
+                        ),
+                        predicate=(
+                            world.claim_type(
+                                f"project.work_item.attribute_{member % profile.claim_types:04d}"
+                            )
+                            if world is not None
+                            else f"project.work_item.attribute_{member % profile.claim_types:04d}"
+                        ),
                         value="ready",
                         role="observation",
                         rationale=f"Served write-loop observation {iteration}/{member}.",
@@ -405,7 +426,16 @@ def main() -> None:
                 return found
 
             observed = timed("readback", readback)
-            timed("refresh", pb.refresh)
+            if args.world:
+                # Worlds are coordinate-pinned snapshots, not mutable sessions.
+                # Keep one throughout a write, then acquire the new generation's
+                # World on the same SDK connection for the next write.
+                world = timed("world_refresh", pb.world)
+                assert world.coordinate.model_dump(
+                    mode="json"
+                ) == receipt.accepted_coordinate.model_dump(mode="json")
+            else:
+                timed("refresh", pb.refresh)
             row.update(
                 seconds=phases,
                 total_seconds=time.perf_counter() - total,
