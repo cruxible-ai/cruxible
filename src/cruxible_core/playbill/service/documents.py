@@ -360,11 +360,11 @@ def service_submit_playbill_approval(
             evidence.approval_note(candidate.candidate_digest),
         )
     # Publication is deliberately OUTSIDE the lock: it rebuilds the advisory
-    # branch and its notes from the store, takes no candidate lock of its own,
-    # and would deadlock on this one. An approval is also what a second reviewer
-    # is waiting to see, so both lanes are refreshed rather than only the mirror.
+    # branch and its notes from the store and now takes the same candidate lock
+    # around projected approval rendering, so nesting would deadlock. Both lanes
+    # are refreshed so the next reviewer can see the new approval.
     instance.advertise_workspace()
-    instance.publish_ledger_mirror()
+    instance.request_ledger_mirror()
     return _approval_receipt(proposal_id, candidate, verified)
 
 
@@ -495,7 +495,7 @@ def service_activate_playbill_proposal(
     # Main moved and the settled candidate's branch has just been archived, so
     # the mirror is republished last: a reviewer following the old branch finds
     # it under `refs/settled/` rather than finding nothing.
-    instance.publish_ledger_mirror()
+    instance.request_ledger_mirror()
     return PlaybillActivationReceipt(
         proposal_id=proposal_id,
         activated_by=activated_by,

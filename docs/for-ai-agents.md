@@ -299,9 +299,12 @@ An agent with no attached workspace reads the same refs from the ledger mirror.
 `orient --json` carries `orientation.mirror_url` when the instance publishes to
 one, and `playbill ledger clone-url` asks for it directly; clone that, and
 `origin/main` is accepted state while `origin/proposals/<proposal-id>` is the
-candidate. The daemon pushes after every ledger write, so a mirror that has
-fallen behind says so as the `ledger_mirror_behind` warning row in `playbill
-next` rather than by serving stale refs silently.
+candidate. Local write completion does not imply remote visibility. Before a
+remote review, run `playbill ledger publish --json` and require non-null
+`wait_sequence` with `published_sequence >= wait_sequence`; retry or inspect
+`detail` if the bounded wait is unacknowledged. The background publisher combines
+pending work and reports pending/failure through `ledger_mirror_behind` in
+`playbill next`. Publication receipts name the exact acknowledged ref snapshot.
 
 The change set's own summary reaches that commit only if a door carried one.
 `pb.changes(rationale="...")` and the `rationale` field on the tagless

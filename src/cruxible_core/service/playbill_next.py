@@ -98,7 +98,6 @@ from cruxible_core.playbill.coverage.indexes import (
     WorkingOccurrenceV1,
 )
 from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.ledger_mirror import read_mirror_state
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.query.backends import claim_row_visibility
 from cruxible_core.playbill.query.engine import evaluate_claim_query
@@ -2712,7 +2711,7 @@ def _ledger_mirror_items(
     url = instance.ledger_mirror_url()
     if url is None:
         return ()
-    state = read_mirror_state(instance.root)
+    state = instance.ledger_mirror_state()
     if state is not None and state.url == url and state.status == "current":
         if state.published_main_oid == coordinate.git_oid:
             return ()

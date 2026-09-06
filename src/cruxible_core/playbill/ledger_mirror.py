@@ -5,8 +5,8 @@ ledger. A daemon-owned bare repository under the instance root is reachable by
 the daemon and nobody else, so every ref the review flow projects -- the
 candidate commits, the three note refs, the open-proposal branches -- is
 invisible to the person the projection exists for. The mirror is the one step
-that closes that: one remote, one push after every ledger write, and a verb that
-prints the URL a reviewer clones.
+that closes that: one remote, coalesced publication after ledger writes, and an explicit
+wait barrier for a reviewer who needs remote visibility.
 
 Three properties keep it from becoming a second source of record.
 
@@ -28,8 +28,12 @@ Three properties keep it from becoming a second source of record.
 from __future__ import annotations
 
 import base64
+import fcntl
 import json
 import os
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Final, Literal
 
@@ -87,9 +91,15 @@ class LedgerMirrorStateV1(BaseModel):
 
     tag: Literal["playbill-ledger-mirror-state-v1"] = "playbill-ledger-mirror-state-v1"
     url: str
-    status: Literal["current", "behind"]
+    status: Literal["current", "behind", "pending", "publishing"]
     attempted_at: str
     published_main_oid: str | None = None
+    published_refs: dict[str, str] = Field(default_factory=dict)
+    attempted_refs: dict[str, str] = Field(default_factory=dict)
+    requested_sequence: int = Field(default=0, ge=0)
+    attempted_sequence: int = Field(default=0, ge=0)
+    published_sequence: int = Field(default=0, ge=0)
+    wait_sequence: int | None = Field(default=None, ge=0)
     detail: str | None = Field(default=None, max_length=1_000)
 
     @field_validator("url")
@@ -120,17 +130,42 @@ def write_mirror_state(root: Path, state: LedgerMirrorStateV1) -> None:
     """Replace the last-attempt record atomically, or leave the previous one."""
 
     path = root / MIRROR_STATE_FILE
-    temporary = path.with_name(f"{MIRROR_STATE_FILE}.tmp")
     payload = json.dumps(state.model_dump(mode="json"), sort_keys=True).encode() + b"\n"
-    temporary.write_bytes(payload)
-    os.chmod(temporary, 0o600)
-    os.replace(temporary, path)
+    descriptor, temporary = tempfile.mkstemp(prefix=".ledger-mirror-", dir=root)
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(payload)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+@contextmanager
+def mirror_lock(root: Path, *, publication: bool = False, review: bool = False) -> Iterator[None]:
+    """Separate short state transactions from the long cross-process push lock."""
+
+    name = (
+        "ledger-review-projection.lock"
+        if review
+        else "ledger-mirror-publication.lock"
+        if publication
+        else "ledger-mirror-state.lock"
+    )
+    descriptor = os.open(root / name, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
 
 
 __all__ = [
     "MIRROR_STATE_FILE",
     "LedgerMirrorStateV1",
     "mirror_credential_environment",
+    "mirror_lock",
     "read_mirror_state",
     "write_mirror_state",
 ]

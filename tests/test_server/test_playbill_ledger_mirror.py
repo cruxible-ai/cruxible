@@ -121,6 +121,12 @@ def test_init_binds_the_mirror_during_bootstrap(
         "mirror_url": str(remote),
         "status": "current",
         "attempted_at": read_back.json()["attempted_at"],
+        "published_main_oid": read_back.json()["published_main_oid"],
+        "requested_sequence": 1,
+        "attempted_sequence": 1,
+        "published_sequence": 1,
+        "wait_sequence": None,
+        "published_refs": {"refs/heads/main": read_back.json()["published_main_oid"]},
         "detail": None,
     }
 

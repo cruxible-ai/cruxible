@@ -381,13 +381,15 @@ required.
 ~~~text
 cruxible playbill ledger set-mirror URL
 cruxible playbill ledger clone-url
+cruxible playbill ledger publish [--timeout 0..60] [--json]
 ~~~
 
 The ledger is Git, so review is Git — but only for a reviewer who can reach the
 ledger, and the daemon's copy is a bare repository under the instance root that
 nobody else can open. A mirror is how the review flow leaves the host. Bind one
-and the daemon pushes to it after every ledger write: proposal submission and
-its evaluation note, an approval note, an activation, a withdrawal.
+and the daemon schedules background publication after proposal submission,
+approval, activation and withdrawal. Local writes return after durable local
+completion; the publisher combines pending work into exact ref snapshots.
 
 What travels: `refs/heads/main`, whichever of `refs/notes/playbill-gen`,
 `refs/notes/playbill-eval` and `refs/notes/playbill-approval` exist, one branch
@@ -414,21 +416,34 @@ advertisement fetches that refspec, so both are shipped surfaces. It would also
 have to answer what a resubmitted proposal's branch means, which the digest
 answers by construction. Nothing schedules it today.
 
-`main` is pushed without force; everything else is forced and pruned. Accepted
-history only extends, so a rejected fast-forward on `main` means the remote
-holds something this ledger does not, and that is reported rather than
-overwritten. The other refs are projections the daemon rebuilds.
+The publisher captures exact object IDs and pushes them atomically. `main`
+always fast-forwards. Updates and deletions of known review refs use explicit
+expected-old-ID leases; unexpected remote changes report divergence. A stale
+push cannot update notes while its main update is rejected. Remote hosts must
+support atomic Git pushes. Snapshots exceeding the current 64 KiB argument
+budget report a publication failure rather than splitting the atomic update.
 
 A push that fails never refuses the write that preceded it. The ledger on disk
 is the record and the remote is a copy, so a network that is down, a credential
 that expired or a remote that was deleted becomes the `ledger_mirror_behind`
 warning row in `playbill next`, carrying the URL and Git's own reason.
 
-It also never runs longer than 30 seconds. A remote that accepts a connection
-and then stalls would otherwise hold the write's caller for as long as it liked;
-at the deadline the push and its whole transport process group are killed and
-the attempt is recorded as behind like any other failure. Availability is a
-condition too, and the copy may not hold the record hostage.
+Remote discovery and push each have a 30-second deadline; one attempt may
+therefore take up to roughly 60 seconds. These commands run in a background
+worker. Failed attempts retry at most three times for a request; newer work,
+explicit publication or reopening can start another attempt. Reopening repairs
+missed scheduling from durable ledger and evidence records.
+
+Use `ledger publish` before relying on a remote review view. It requests
+publication and waits at most `--timeout` seconds (default 60); zero only queues
+work. The JSON receipt includes `wait_sequence`, `published_sequence`, and the
+exact `published_refs` acknowledged by the remote. The barrier succeeded when
+`wait_sequence` is non-null and `published_sequence >= wait_sequence`. Newer work
+may still be `pending` or `publishing`. Failure is `behind`; timeout returns the
+actual pending/publishing status. A destination change interrupts the old wait.
+A success acknowledges that snapshot at that time, not permanent remote durability.
+`clone-url` keeps stdout as the URL and reports publication status on stderr;
+`--json` returns both. Missing local status is rebuilt; it is not ledger authority.
 
 The URL never carries a credential. `https://user:token@host/...` is refused,
 as is plain `http://`, `ext::` and anything whose host or user begins with a

@@ -7,6 +7,8 @@ import os
 import secrets
 import shutil
 import stat
+import threading
+import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -79,6 +81,7 @@ from cruxible_core.playbill.keys import (
 from cruxible_core.playbill.ledger_mirror import (
     LedgerMirrorStateV1,
     mirror_credential_environment,
+    mirror_lock,
     read_mirror_state,
     write_mirror_state,
 )
@@ -230,6 +233,8 @@ class PlaybillInstance:
         self._claim_attestation_store: ClaimAttestationEvidenceStore | None = None
         self._workspace_advertiser: Callable[[], PlaybillWorkspaceAdvertisement] | None = None
         self._receive_limits = ProposalReceiveLimits()
+        self._mirror_condition = threading.Condition()
+        self._mirror_thread: threading.Thread | None = None
         self._tree_memo: OrderedDict[str, dict[str, bytes]] = OrderedDict()
         # Read services keyed by accepted coordinate park their derived
         # history indexes here so activation drops them with one clear().
@@ -491,7 +496,7 @@ class PlaybillInstance:
             query_facts_builder=cls._accepted_query_facts,
             checkpoint_directory=cls._checkpoint_directory(managed_root),
         )
-        return cls(
+        instance = cls(
             managed_root,
             descriptor,
             trust_root,
@@ -500,6 +505,9 @@ class PlaybillInstance:
             recovered,
             promotion_verifier,
         )
+        if descriptor.mirror_url is not None and descriptor.decommissioned is None:
+            instance.request_ledger_mirror()
+        return instance
 
     @staticmethod
     def _checkpoint_directory(root: Path) -> Path:
@@ -712,53 +720,251 @@ class PlaybillInstance:
         return self.publish_ledger_mirror()
 
     def ledger_mirror_state(self) -> LedgerMirrorStateV1 | None:
-        """Return the last recorded publication attempt, if this instance made one."""
+        """Report acknowledgement and local ref lag, including note-only changes."""
 
-        return read_mirror_state(self.root)
+        state = read_mirror_state(self.root)
+        if state is not None and state.status == "current":
+            try:
+                if state.published_refs != self._ledger.mirror_refs():
+                    return state.model_copy(
+                        update={
+                            "status": "pending",
+                            "detail": "local review refs await publication",
+                        }
+                    )
+            except Exception:  # noqa: BLE001 - publication status cannot refuse a read
+                return state.model_copy(
+                    update={"status": "behind", "detail": "cannot inspect local publication refs"}
+                )
+        return state
 
-    def publish_ledger_mirror(self) -> LedgerMirrorStateV1 | None:
-        """Push the ledger to its mirror, and never let that failure become a refusal.
+    def request_ledger_mirror(self) -> LedgerMirrorStateV1 | None:
+        """Mark publication pending and wake a worker without waiting for Git/network.
 
-        Every exception is caught. The mirror is a copy of state that is already
-        durable on disk, so an operator's remote may not become a condition of
-        governance: whatever went wrong is recorded and reported by `playbill
-        next` as `ledger_mirror_behind`, and the write that called this has
-        already landed.
-
-        The open-proposal branches are reconciled here rather than left to
-        `advertise_workspace`, which does nothing on an instance with no
-        attached worktree. A mirror is exactly the case where there is no local
-        worktree to advertise into, so the projection has to be built on the
-        publication path or the remote would carry `main` and no proposals.
+        This is called only after durable local work. Queue failure cannot undo
+        that work; reopening reconciles from the ledger and evidence stores.
         """
 
-        url = self.descriptor.mirror_url
-        if url is None:
-            return None
-        detail: str | None
-        published: str | None = None
+        url = self.ledger_mirror_url()
         try:
-            self._reconcile_proposal_review_refs()
-            detail = self._ledger.push_mirror(
-                url,
-                environment=mirror_credential_environment(url),
+            url = self._persisted_descriptor().mirror_url
+            if url is None:
+                return None
+            with mirror_lock(self.root):
+                url = PlaybillDescriptor.model_validate_json(
+                    (self.root / DESCRIPTOR_FILE).read_bytes()
+                ).mirror_url
+                if url is None:
+                    return None
+                previous = read_mirror_state(self.root)
+                state = (
+                    previous
+                    if previous is not None and previous.url == url
+                    else LedgerMirrorStateV1(
+                        url=url, status="pending", attempted_at=format_datetime(utc_now()) or ""
+                    )
+                )
+                state = state.model_copy(
+                    update={
+                        "requested_sequence": state.requested_sequence + 1,
+                        "status": "pending",
+                        "detail": None,
+                        "wait_sequence": None,
+                    }
+                )
+                write_mirror_state(self.root, state)
+            with self._mirror_condition:
+                if self._mirror_thread is None or not self._mirror_thread.is_alive():
+                    self._mirror_thread = threading.Thread(
+                        target=self._run_ledger_publisher,
+                        name=f"ledger-publisher-{self.descriptor.instance_id}",
+                        daemon=True,
+                    )
+                    self._mirror_thread.start()
+                self._mirror_condition.notify_all()
+            return state
+        except Exception as exc:  # noqa: BLE001 - an accepted write must still succeed
+            with self._mirror_condition:
+                if self._mirror_thread is not None and not self._mirror_thread.is_alive():
+                    self._mirror_thread = None
+            if url is None:
+                return None
+            return LedgerMirrorStateV1(
+                url=url,
+                status="behind",
+                attempted_at=format_datetime(utc_now()) or "",
+                detail=f"publication scheduling failed: {type(exc).__name__}"[:500],
             )
-            if detail is None:
-                published = self._ledger.read_main()
-        except Exception as exc:  # noqa: BLE001 - a publication never refuses a write
-            detail = f"{type(exc).__name__}: {exc}"[:500]
-        state = LedgerMirrorStateV1(
-            url=url,
-            status="current" if detail is None else "behind",
-            attempted_at=format_datetime(utc_now()) or "",
-            published_main_oid=published,
-            detail=detail,
-        )
+
+    def publish_ledger_mirror(self, *, timeout: float = 60.0) -> LedgerMirrorStateV1 | None:
+        """Wait at most timeout for this request's publication, returning its watermark.
+
+        A newer request may remain pending after this barrier is satisfied.
+        Compare published_sequence with wait_sequence for this call's result.
+        """
+
+        if not 0 <= timeout <= 60:
+            raise ValueError("publication timeout must be between 0 and 60 seconds")
+        deadline = time.monotonic() + timeout
+        requested = self.request_ledger_mirror()
+        if requested is None:
+            return None
+        sequence = requested.requested_sequence
+        if requested.status == "behind":
+            return requested.model_copy(update={"wait_sequence": None})
+        with self._mirror_condition:
+            while True:
+                state = read_mirror_state(self.root) or requested
+                remaining = deadline - time.monotonic()
+                if state.url != requested.url:
+                    return requested.model_copy(
+                        update={
+                            "status": "behind",
+                            "wait_sequence": sequence,
+                            "detail": "publication wait interrupted: mirror destination changed",
+                        }
+                    )
+                if (
+                    state.published_sequence >= sequence
+                    or (state.attempted_sequence >= sequence and state.status == "behind")
+                    or remaining <= 0
+                ):
+                    return state.model_copy(update={"wait_sequence": sequence})
+                # Another process's publisher cannot signal our condition.
+                self._mirror_condition.wait(min(remaining, 0.1))
+
+    def _run_ledger_publisher(self) -> None:
+        failures = 0
+        previous_sequence = -1
+        observed: tuple[str, int] | None = None
         try:
-            write_mirror_state(self.root, state)
-        except OSError:  # pragma: no cover - a full or read-only state root
-            pass
-        return state
+            while True:
+                before = read_mirror_state(self.root)
+                observed = None if before is None else (before.url, before.requested_sequence)
+                state = self._publish_ledger_mirror_once()
+                with self._mirror_condition:
+                    self._mirror_condition.notify_all()
+                    current = read_mirror_state(self.root)
+                    if current is None or state is None:
+                        return
+                    if current.requested_sequence > state.attempted_sequence:
+                        failures = 0
+                        continue
+                    if state.status == "behind":
+                        failures = (
+                            failures + 1 if previous_sequence == state.attempted_sequence else 1
+                        )
+                        previous_sequence = state.attempted_sequence
+                        if failures < 3:
+                            self._mirror_condition.wait(0.25 if failures == 1 else 1.0)
+                            continue
+                    return
+        except Exception as exc:  # noqa: BLE001 - contain operational storage failures
+            try:
+                with mirror_lock(self.root):
+                    current = read_mirror_state(self.root)
+                    if current is not None:
+                        write_mirror_state(
+                            self.root,
+                            current.model_copy(
+                                update={
+                                    "status": "behind",
+                                    "attempted_sequence": current.requested_sequence,
+                                    "detail": f"publication worker failed: {type(exc).__name__}",
+                                }
+                            ),
+                        )
+            except Exception:  # noqa: BLE001 - no writable status store remains
+                pass
+        finally:
+            with self._mirror_condition:
+                self._mirror_thread = None
+                current = read_mirror_state(self.root)
+                # A request can arrive between our last decision to stop and
+                # this finalization. Start its worker under the same condition
+                # used by request_ledger_mirror so that wakeup cannot be lost.
+                if current is not None and (
+                    observed is None
+                    or current.url != observed[0]
+                    or current.requested_sequence > observed[1]
+                ):
+                    self._mirror_thread = threading.Thread(
+                        target=self._run_ledger_publisher,
+                        name=f"ledger-publisher-{self.descriptor.instance_id}",
+                        daemon=True,
+                    )
+                    try:
+                        self._mirror_thread.start()
+                    except RuntimeError:
+                        # Resource exhaustion is operational. Leave the request
+                        # pending and allow the next explicit request/reopen to
+                        # start a worker, instead of retaining a dead handle.
+                        self._mirror_thread = None
+                self._mirror_condition.notify_all()
+
+    def _publish_ledger_mirror_once(self) -> LedgerMirrorStateV1 | None:
+        """Serialize publication across handles/processes and acknowledge exact refs."""
+
+        with mirror_lock(self.root, publication=True):
+            with mirror_lock(self.root):
+                state = read_mirror_state(self.root)
+                if state is None:
+                    return None
+                # Use current durable configuration, not a stale instance handle.
+                descriptor = PlaybillDescriptor.model_validate_json(
+                    (self.root / DESCRIPTOR_FILE).read_bytes()
+                )
+                if descriptor.mirror_url != state.url:
+                    return None
+                if (
+                    state.published_sequence >= state.requested_sequence
+                    and state.status == "current"
+                ):
+                    return state
+                sequence = state.requested_sequence
+                state = state.model_copy(update={"status": "publishing"})
+                write_mirror_state(self.root, state)
+            snapshot: dict[str, str] = {}
+            try:
+                self._reconcile_proposal_review_refs()
+                snapshot = self._ledger.mirror_refs()
+                with mirror_lock(self.root):
+                    current = read_mirror_state(self.root)
+                    if current is None or current.url != state.url:
+                        return current
+                    write_mirror_state(
+                        self.root, current.model_copy(update={"attempted_refs": snapshot})
+                    )
+                detail = self._ledger.push_mirror(
+                    state.url,
+                    environment=mirror_credential_environment(state.url),
+                    snapshot=snapshot,
+                    expected_remote=state.published_refs,
+                    previous_attempt=state.attempted_refs,
+                )
+            except Exception as exc:  # noqa: BLE001 - remote failure never refuses local work
+                detail = f"publication failed: {type(exc).__name__}"[:500]
+            with mirror_lock(self.root):
+                current = read_mirror_state(self.root)
+                if current is None or current.url != state.url:
+                    return current
+                update: dict[str, object] = {
+                    "attempted_at": format_datetime(utc_now()) or "",
+                    "attempted_sequence": sequence,
+                    "detail": detail,
+                    "status": "behind"
+                    if detail is not None
+                    else ("current" if current.requested_sequence == sequence else "pending"),
+                }
+                if detail is None:
+                    update.update(
+                        published_sequence=sequence,
+                        published_refs=snapshot,
+                        published_main_oid=snapshot.get("refs/heads/main"),
+                    )
+                result = current.model_copy(update=update)
+                write_mirror_state(self.root, result)
+                return result
 
     def store_document_body(self, content: bytes) -> CasObjectMetadata:
         """Persist inert bytes without proposing or changing accepted state."""
@@ -787,7 +993,7 @@ class PlaybillInstance:
             workspace_advertiser=self.advertise_workspace,
             receive_limits=self._receive_limits,
             require_writable=self.require_writable,
-            ledger_publisher=self.publish_ledger_mirror,
+            ledger_publisher=self.request_ledger_mirror,
         )
 
     def bind_receive_limits(self, limits: ProposalReceiveLimits) -> None:
@@ -824,6 +1030,14 @@ class PlaybillInstance:
             )
 
     def _reconcile_proposal_review_refs(self) -> None:
+        """Serialize all local review projection writers, independently of network I/O."""
+
+        with mirror_lock(self.root, review=True):
+            if self._ledger.read_main() != self.accepted_coordinate().git_oid:
+                self.refresh()
+            self._reconcile_proposal_review_refs_locked()
+
+    def _reconcile_proposal_review_refs_locked(self) -> None:
         """Project exactly the open proposal trees into standard ledger branch refs.
 
         The notes travel with the branch. They were attached only to
@@ -839,18 +1053,17 @@ class PlaybillInstance:
 
         Both note kinds are re-read before being written, so a steady state
         costs one Git read per open proposal rather than a write. The approval
-        note is written here WITHOUT the per-candidate lock the approval door
-        holds: this is a rebuild from the store, so an interleave with a
-        concurrent approver can leave one publication carrying the older render,
-        and the next publication -- or activation, which reconciles against the
-        store -- restates it. The lock is where it has to be, on the note
-        activation actually checks.
+        note shares the approval door's per-candidate lock from evidence read
+        through Git write. A delayed renderer cannot overwrite a newer approval
+        projection. All reconciliation callers also hold the review projection
+        lock, so an older workspace writer cannot resurrect settled branches.
         """
 
-        coordinate = self.accepted_coordinate()
+        recovered = self._recovered
+        coordinate = recovered.coordinate
         accepted_candidates = {
             generation.record.candidate_digest
-            for generation in self.accepted_history()
+            for generation in recovered.history
             if generation.record is not None
         }
         evidence = self.proposal_evidence()
@@ -919,11 +1132,12 @@ class PlaybillInstance:
         # An empty approval list projects nothing, exactly as it does on the
         # candidate commit: writing a note to say "nobody has signed" would put
         # a Git write on every publication of every unapproved proposal.
-        if not evidence.read_approvals(candidate_digest):
-            return
-        approval_note = evidence.approval_note(candidate_digest)
-        if self._ledger.read_proposal_note("approval", review_oid) != approval_note:
-            self._ledger.write_proposal_note("approval", review_oid, approval_note)
+        with self.approval_note_lock(candidate_digest):
+            if not evidence.read_approvals(candidate_digest):
+                return
+            approval_note = evidence.approval_note(candidate_digest)
+            if self._ledger.read_proposal_note("approval", review_oid) != approval_note:
+                self._ledger.write_proposal_note("approval", review_oid, approval_note)
 
     def proposal_evidence(self) -> ProposalEvidenceStore:
         """Return the immutable non-authoritative proposal/approval evidence store."""

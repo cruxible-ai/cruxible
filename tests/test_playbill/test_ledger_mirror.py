@@ -109,6 +109,7 @@ def test_a_submitted_proposal_reaches_the_mirror_as_a_branch_with_its_eval_note(
     instance, remote = _mirrored(tmp_path)
 
     result = _submit(instance)
+    instance.publish_ledger_mirror()  # Remote inspection waits for publication explicitly.
 
     digest = result.admission.proposal_id.removeprefix("sha256:")
     refs = _remote_refs(remote)
@@ -119,6 +120,7 @@ def test_a_submitted_proposal_reaches_the_mirror_as_a_branch_with_its_eval_note(
 def test_an_approval_reaches_the_mirror_as_its_own_note_ref(tmp_path: Path) -> None:
     instance, remote = _mirrored(tmp_path)
     result = _submit(instance)
+    instance.publish_ledger_mirror()  # Remote inspection waits for publication explicitly.
     assert result.candidate is not None
     submission = _sign(
         instance._owner_material,  # type: ignore[attr-defined]
@@ -132,6 +134,7 @@ def test_an_approval_reaches_the_mirror_as_its_own_note_ref(tmp_path: Path) -> N
         attestation=submission.attestation,
         authenticated_submitter="approval-relay",
     )
+    instance.publish_ledger_mirror()  # Remote inspection waits for publication explicitly.
 
     assert NOTE_REFS["approval"] in _remote_refs(remote)
 
@@ -141,6 +144,7 @@ def test_activation_moves_main_and_replaces_the_branch_with_a_settled_ref(
 ) -> None:
     instance, remote = _mirrored(tmp_path)
     result = _submit(instance)
+    instance.publish_ledger_mirror()  # Remote inspection waits for publication explicitly.
     digest = result.admission.proposal_id.removeprefix("sha256:")
     before = (
         subprocess.run(
@@ -157,6 +161,7 @@ def test_activation_moves_main_and_replaces_the_branch_with_a_settled_ref(
         proposal_id=result.admission.proposal_id,
         activated_by="owner",
     )
+    instance.publish_ledger_mirror()  # Remote inspection waits for publication explicitly.
 
     assert receipt.status == "accepted"
     refs = _remote_refs(remote)
@@ -178,6 +183,7 @@ def test_activation_moves_main_and_replaces_the_branch_with_a_settled_ref(
 def test_withdrawal_retires_the_branch_on_both_sides(tmp_path: Path) -> None:
     instance, remote = _mirrored(tmp_path)
     result = _submit(instance)
+    instance.publish_ledger_mirror()  # Remote inspection waits for publication explicitly.
     digest = result.admission.proposal_id.removeprefix("sha256:")
     assert f"refs/heads/proposals/{digest}" in _remote_refs(remote)
 
@@ -188,6 +194,7 @@ def test_withdrawal_retires_the_branch_on_both_sides(tmp_path: Path) -> None:
         reason="superseded by a later change set",
         withdrawn_at=WITHDRAWN_AT,
     )
+    instance.publish_ledger_mirror()  # Remote inspection waits for publication explicitly.
 
     refs = _remote_refs(remote)
     assert f"refs/heads/proposals/{digest}" not in refs
@@ -201,6 +208,7 @@ def test_a_failed_push_lands_the_write_and_records_the_lag(tmp_path: Path) -> No
     subprocess.run(["rm", "-rf", str(remote)], check=True)
 
     result = _submit(instance)
+    instance.publish_ledger_mirror()  # Remote inspection waits for publication explicitly.
 
     assert result.evaluation.verdict == "candidate"
     state = instance.ledger_mirror_state()
@@ -214,6 +222,7 @@ def test_a_repaired_remote_publishes_again_without_a_new_write(tmp_path: Path) -
     instance, remote = _mirrored(tmp_path)
     subprocess.run(["rm", "-rf", str(remote)], check=True)
     _submit(instance)
+    instance.publish_ledger_mirror()  # Remote inspection waits for publication explicitly.
     assert (state := instance.ledger_mirror_state()) is not None and state.status == "behind"
 
     subprocess.run(
@@ -267,6 +276,7 @@ def test_a_reviewer_cloning_the_mirror_can_read_the_evaluation_note(
 
     instance, remote = _mirrored(tmp_path)
     result = _submit(instance)
+    instance.publish_ledger_mirror()  # Remote inspection waits for publication explicitly.
     digest = result.admission.proposal_id.removeprefix("sha256:")
 
     clone = _clone(remote, tmp_path / "reviewer")
@@ -286,6 +296,7 @@ def test_a_reviewer_cloning_the_mirror_can_read_the_evaluation_note(
 def test_a_reviewer_cloning_the_mirror_can_read_the_approval_note(tmp_path: Path) -> None:
     instance, remote = _mirrored(tmp_path)
     result = _submit(instance)
+    instance.publish_ledger_mirror()  # Remote inspection waits for publication explicitly.
     assert result.candidate is not None
     digest = result.admission.proposal_id.removeprefix("sha256:")
     submission = _sign(
@@ -300,6 +311,7 @@ def test_a_reviewer_cloning_the_mirror_can_read_the_approval_note(tmp_path: Path
         attestation=submission.attestation,
         authenticated_submitter="approval-relay",
     )
+    instance.publish_ledger_mirror()  # Remote inspection waits for publication explicitly.
 
     clone = _clone(remote, tmp_path / "reviewer")
     note = _note_in_clone(clone, NOTE_REFS["approval"], f"origin/proposals/{digest}")
@@ -310,6 +322,7 @@ def test_a_reviewer_cloning_the_mirror_can_read_the_approval_note(tmp_path: Path
 def test_an_unapproved_proposal_publishes_no_approval_note(tmp_path: Path) -> None:
     instance, remote = _mirrored(tmp_path)
     result = _submit(instance)
+    instance.publish_ledger_mirror()  # Remote inspection waits for publication explicitly.
     digest = result.admission.proposal_id.removeprefix("sha256:")
 
     clone = _clone(remote, tmp_path / "reviewer")

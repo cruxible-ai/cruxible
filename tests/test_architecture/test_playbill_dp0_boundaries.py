@@ -364,6 +364,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "decommission_playbill_instance",
         "set_playbill_ledger_mirror",
         "get_playbill_ledger_mirror",
+        "publish_playbill_ledger",
         "store_playbill_body",
         "propose_playbill_document",
         "propose_playbill_principal_change",
