@@ -14,6 +14,7 @@ from cruxible_client.contracts.authoring.models import (
     PlaybillBlockSyncReason,
 )
 from cruxible_client.contracts.predictions import PredictionRefusalCodeV1
+from cruxible_client.contracts.procedures.readings import ProcedureMeasurementRefusalCodeV1
 from cruxible_client.contracts.procedures.results import (
     ProcedureAdmissionRefusalCodeV1,
     ProcedureInternalFailureCodeV1,
@@ -42,6 +43,7 @@ CLOSED_SERVED_REFUSAL_VOCABULARIES: dict[str, frozenset[str]] = {
     "procedure_internal_failure": frozenset(get_args(ProcedureInternalFailureCodeV1)),
     "procedure_settlement_refusal": frozenset(get_args(ProcedureSettlementRefusalCodeV1)),
     "prediction_refusal": frozenset(get_args(PredictionRefusalCodeV1)),
+    "procedure_measurement_refusal": frozenset(get_args(ProcedureMeasurementRefusalCodeV1)),
 }
 
 ALL_SERVED_REFUSAL_CODES = frozenset().union(*CLOSED_SERVED_REFUSAL_VOCABULARIES.values())

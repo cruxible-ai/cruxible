@@ -699,6 +699,10 @@ cruxible playbill procedure readiness NAME --evaluation-time TS
 cruxible playbill procedure bind NAME REQUEST_FILE
 cruxible playbill procedure run NAME INPUT_FILE --evaluation-time TS
 cruxible playbill procedure status RUN_ID
+cruxible playbill procedure measure NAME [--run-id RUN_ID] [--measurement NAME]...
+  [--evaluation-time TS] [--at FILE] [--json]
+cruxible playbill procedure readings NAME [--run-id RUN_ID] [--measurement NAME]...
+  [--limit N] [--cursor C] [--json]
 ~~~
 
 The served lanes run deterministic `state_tap`, `transform`, `project`, `guard`,
@@ -738,6 +742,70 @@ replays the retained observation rather than reading the source again.
 proposes a same-identity Procedure successor with exact accepted pins; it never
 mutates the accepted Procedure in place. Runs append replay-verifiable journal
 records and `status` reconstructs the one-read run state from those records.
+
+### Measurements and readings
+
+A Procedure declares measurements -- an accepted query, a Claim statement's
+evidence-relative verdict, or the ClaimAttestations on a statement -- and the
+generation that accepts the Procedure revision ACTIVATES them: `activated_at`
+is that generation's signed acceptance instant, `check_at` and `expires_at`
+are that instant plus the declaration's `check_after` and `expires_after`.
+Nothing restarts the window per run or per poll.
+
+`measure` is the due/pending/resume door. It evaluates at an explicit
+OBSERVATION instant (`--evaluation-time`, default now) and coordinate (`--at`,
+default the current head), which are distinct from the activation coordinate
+and from a run's admission coordinate. Before `check_at` a measurement reports
+`pending`; at or after `expires_at` with no standing answer it reports
+`expired`; neither writes anything. Inside the window the door gathers real
+evidence -- the exact accepted QueryDefinition run with the declared
+parameters and budgets and its receipt retained, the statement's verdict at
+that instant, or the verified attestations with a declared stance, one credit
+per independent principal -- evaluates the frozen resolution law, and appends
+one resolution per activation. A refused or truncated query resolves
+`indeterminate`; it never establishes complete or satisfied evidence. The
+latest non-overturned resolution governs: calling again returns it rather
+than re-deriving it, and only an overturned answer reopens the contract.
+
+With `--run-id`, the standing resolution is bound to the grain that run really
+reached as one contract-grade reading: a unit reading needs a succeeded run, a
+node reading a node that fired and succeeded, an arm reading a guard that
+selected that arm and a target that succeeded. A run that did not reach the
+grain reports `grain_not_occurred` and earns nothing; a run that has not
+finalized reports `run_not_final`. Readings are keyed on the activation, the
+grain, and the run -- or the Line occurrence, so a second attempt of the same
+occurrence replays the first attempt's reading -- and a retry with the same
+key returns the same record (`replayed`); the same key with a different
+payload refuses `measurement_reading_conflict`. A crash between the resolution
+append and the reading append resumes at the reading. Execution outcome and
+measurement verdict stay distinct: a completed run does not satisfy a
+measurement, and a failed run does not contradict one.
+
+`readings` is read-only: it reports each activation's standing (pending,
+expired, or resolved with its resolution id, verdict, value, and retrievable
+journal record) and pages through retained readings, at most 200 per page.
+Resolutions and readings are operational exhaust in the Procedure journal.
+They are not accepted state and grant no authority.
+
+A complete loop, from a run through a delayed evaluation to inspection and a
+retry:
+
+~~~text
+$ cruxible playbill procedure run release-guard input.json --evaluation-time 2026-09-06T10:00:00Z
+RUN-3f…: succeeded
+$ cruxible playbill procedure measure release-guard --run-id RUN-3f…
+rollout-healthy: pending reading=no_resolution
+  the measurement window has not opened
+$ cruxible playbill procedure measure release-guard --run-id RUN-3f… \
+    --evaluation-time 2026-09-06T11:00:00Z
+rollout-healthy: resolved (satisfied, RSR-9a…) reading=recorded PRD-c1…
+$ cruxible playbill procedure measure release-guard --run-id RUN-3f… \
+    --evaluation-time 2026-09-06T11:05:00Z
+rollout-healthy: resolved (satisfied, RSR-9a…) reading=replayed PRD-c1…
+$ cruxible playbill procedure readings release-guard --run-id RUN-3f…
+rollout-healthy: resolved readings=1 (satisfied, RSR-9a…)
+PRD-c1… rollout-healthy procedure_unit satisfied run=RUN-3f…
+~~~
 
 ## playbill line
 

@@ -163,6 +163,16 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperationV1] = {
         operation="playbill.authoring.create",
         arguments={"example": "source-acquisition-policy"},
     ),
+    # Measurement doors. A declaration, run, or subject that does not fit is
+    # repaired by inspecting what stands (the readings door is read-only) or
+    # by re-running the evaluation once the named fault is corrected.
+    "measurement_not_declared": RepairOperationV1(operation="playbill.procedure.readings"),
+    "measurement_run_mismatch": RepairOperationV1(operation="playbill.procedure.readings"),
+    "measurement_subject_absent": RepairOperationV1(operation="playbill.procedure.readings"),
+    "measurement_subject_mismatch": RepairOperationV1(operation="playbill.procedure.readings"),
+    "measurement_basis_unsupported": RepairOperationV1(operation="playbill.procedure.readings"),
+    "measurement_reading_conflict": RepairOperationV1(operation="playbill.procedure.readings"),
+    "measurement_resolution_conflict": RepairOperationV1(operation="playbill.procedure.measure"),
     "occurrence_not_due": RepairOperationV1(operation="playbill.line.run"),
     "occurrence_id_mismatch": RepairOperationV1(operation="playbill.line.run"),
     "evaluation_instant_skewed": RepairOperationV1(operation="playbill.line.run"),

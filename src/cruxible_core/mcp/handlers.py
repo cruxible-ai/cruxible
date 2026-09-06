@@ -291,6 +291,7 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     ),
     "cruxible_playbill_propose_source_bundle": TypeAdapter(PlaybillSourceProposeRequest),
     "cruxible_playbill_propose_subject": TypeAdapter(PlaybillProposeSubjectRequest),
+    "cruxible_playbill_procedure_measure": TypeAdapter(contracts.PlaybillProcedureMeasureRequestV1),
     "cruxible_playbill_settle": TypeAdapter(contracts.PlaybillSettleRequestV1),
     "cruxible_playbill_store_body": TypeAdapter(PlaybillStoreBodyRequest),
     "cruxible_playbill_submit_approval": TypeAdapter(PlaybillApprovalRequest),
@@ -1391,6 +1392,31 @@ def handle_playbill_procedure_run_status(
         lambda client: client.get_playbill_procedure_run(instance_id, run_id),
         lambda: playbill_api.playbill_procedure_run_status(instance_id, run_id),
         operation_name="cruxible_playbill_procedure_run_status",
+    )
+
+
+def handle_playbill_procedure_measure(
+    instance_id: str,
+    name: str,
+    request: contracts.PlaybillProcedureMeasureRequestV1,
+) -> contracts.PlaybillProcedureMeasureResultV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.measure_playbill_procedure(instance_id, name, request=request),
+        lambda: playbill_api.playbill_procedure_measure(instance_id, name, request=request),
+        operation_name="cruxible_playbill_procedure_measure",
+        local_payload=request.model_dump(mode="json"),
+    )
+
+
+def handle_playbill_procedure_readings(
+    instance_id: str,
+    name: str,
+    request: contracts.PlaybillProcedureReadingsRequestV1,
+) -> contracts.PlaybillProcedureReadingsResultV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.list_playbill_procedure_readings(instance_id, name, request=request),
+        lambda: playbill_api.playbill_procedure_readings(instance_id, name, request=request),
+        operation_name="cruxible_playbill_procedure_readings",
     )
 
 

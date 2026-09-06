@@ -55,6 +55,36 @@ from cruxible_client.contracts.predictions import (
     TerminalSettlementEvidenceV1 as TerminalSettlementEvidenceV1,
 )
 from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.procedures.readings import (
+    PlaybillProcedureMeasureRequestV1 as PlaybillProcedureMeasureRequestV1,
+)
+from cruxible_client.contracts.procedures.readings import (
+    PlaybillProcedureMeasureResultV1 as PlaybillProcedureMeasureResultV1,
+)
+from cruxible_client.contracts.procedures.readings import (
+    PlaybillProcedureReadingsRequestV1 as PlaybillProcedureReadingsRequestV1,
+)
+from cruxible_client.contracts.procedures.readings import (
+    PlaybillProcedureReadingsResultV1 as PlaybillProcedureReadingsResultV1,
+)
+from cruxible_client.contracts.procedures.readings import (
+    ProcedureMeasurementContractStatusV1 as ProcedureMeasurementContractStatusV1,
+)
+from cruxible_client.contracts.procedures.readings import (
+    ProcedureMeasurementEligibilityV1 as ProcedureMeasurementEligibilityV1,
+)
+from cruxible_client.contracts.procedures.readings import (
+    ProcedureMeasurementRefusalCodeV1 as ProcedureMeasurementRefusalCodeV1,
+)
+from cruxible_client.contracts.procedures.readings import (
+    ProcedureMeasurementResolutionSummaryV1 as ProcedureMeasurementResolutionSummaryV1,
+)
+from cruxible_client.contracts.procedures.readings import (
+    ProcedureMeasurementRowV1 as ProcedureMeasurementRowV1,
+)
+from cruxible_client.contracts.procedures.readings import (
+    ProcedureReadingSummaryV1 as ProcedureReadingSummaryV1,
+)
 from cruxible_client.contracts.procedures.results import (
     ProcedurePendingSuccessorV1,
     ProcedureRunAttributionV1,

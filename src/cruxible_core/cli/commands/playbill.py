@@ -3628,6 +3628,119 @@ def procedure_run_status(run_id: str, output_json: bool) -> None:
     _emit_json(result.model_dump(mode="json"))
 
 
+@procedure_group.command("measure")
+@click.argument("name")
+@click.option("--run-id", default=None, help="Credit this finalized run's exact grain.")
+@click.option(
+    "--measurement",
+    "measurements",
+    multiple=True,
+    help="Evaluate only these declared measurements (default: every declaration).",
+)
+@click.option(
+    "--evaluation-time",
+    default=None,
+    help="Explicit ISO-8601 OBSERVATION instant (default: now).",
+)
+@click.option(
+    "--at",
+    "at_file",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="AcceptedCoordinate JSON/YAML file naming the OBSERVATION coordinate.",
+)
+@json_option
+@handle_errors
+def procedure_measure(
+    name: str,
+    run_id: str | None,
+    measurements: tuple[str, ...],
+    evaluation_time: str | None,
+    at_file: str | None,
+    output_json: bool,
+) -> None:
+    """Evaluate due measurements from real evidence; retry replays, never duplicates."""
+
+    at = None if at_file is None else _read_model(at_file, AcceptedCoordinate)
+    request = contracts.PlaybillProcedureMeasureRequestV1(
+        run_id=run_id,
+        measurement_names=tuple(sorted(set(measurements), key=lambda item: item.encode())),
+        evaluation_time=(
+            None
+            if evaluation_time is None
+            else datetime.fromisoformat(evaluation_time.replace("Z", "+00:00"))
+        ),
+        at=at,
+    )
+    result = _server_call(
+        lambda client, instance_id: client.measure_playbill_procedure(
+            instance_id, name, request=request
+        ),
+        command_name="playbill procedure measure",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    for row in result.rows:
+        line = f"{row.measurement_name}: {row.status}"
+        if row.resolution is not None:
+            line += f" ({row.resolution.verdict}, {row.resolution.resolution_id})"
+        if row.reading_status != "not_requested":
+            line += f" reading={row.reading_status}"
+            if row.reading is not None:
+                line += f" {row.reading.reading_id}"
+        click.echo(line)
+        if row.detail:
+            click.echo(f"  {row.detail}")
+
+
+@procedure_group.command("readings")
+@click.argument("name")
+@click.option("--run-id", default=None, help="Only readings crediting this run.")
+@click.option("--measurement", "measurements", multiple=True, help="Only these measurements.")
+@click.option("--limit", default=50, show_default=True, type=click.IntRange(1, 200))
+@click.option("--cursor", default=None, help="Continue a previous page.")
+@json_option
+@handle_errors
+def procedure_readings(
+    name: str,
+    run_id: str | None,
+    measurements: tuple[str, ...],
+    limit: int,
+    cursor: str | None,
+    output_json: bool,
+) -> None:
+    """Inspect measurement standing and retained readings. Read-only."""
+
+    request = contracts.PlaybillProcedureReadingsRequestV1(
+        run_id=run_id,
+        measurement_names=tuple(sorted(set(measurements), key=lambda item: item.encode())),
+        limit=limit,
+        cursor=cursor,
+    )
+    result = _server_call(
+        lambda client, instance_id: client.list_playbill_procedure_readings(
+            instance_id, name, request=request
+        ),
+        command_name="playbill procedure readings",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    for contract in result.contracts:
+        line = f"{contract.measurement_name}: {contract.status} readings={contract.reading_count}"
+        if contract.resolution is not None:
+            line += f" ({contract.resolution.verdict}, {contract.resolution.resolution_id})"
+        click.echo(line)
+    for reading in result.readings:
+        click.echo(
+            f"{reading.reading_id} {reading.measurement_name} {reading.subject_grain} "
+            f"{reading.verdict} run={reading.run_id}"
+        )
+    if result.cursor is not None:
+        click.echo(f"Next: --cursor {result.cursor}")
+
+
 @playbill_group.group("line")
 def line_group() -> None:
     """Trigger accepted Lines."""

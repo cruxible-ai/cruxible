@@ -56,6 +56,7 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("playbill", "authoring", "submit"): "active",
     ("playbill", "procedure", "bind"): "active",
     ("playbill", "procedure", "run"): "active",
+    ("playbill", "procedure", "measure"): "active",
     ("playbill", "line", "run"): "active",
     ("playbill", "proposal", "approve"): "active",
     ("playbill", "proposal", "activate"): "active",

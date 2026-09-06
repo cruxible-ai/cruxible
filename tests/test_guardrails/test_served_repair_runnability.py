@@ -156,6 +156,14 @@ def _prediction_refusal_repair(code: str) -> object:
     return response.repair
 
 
+def _measurement_refusal_repair(code: str) -> object:
+    from cruxible_core.server.errors import error_to_response
+    from cruxible_core.service.playbill_measurements import ProcedureMeasurementRefused
+
+    _status, response = error_to_response(ProcedureMeasurementRefused(code, "refused"))  # type: ignore[arg-type]
+    return response.repair
+
+
 def test_every_runnable_repair_reaches_a_live_wire_response() -> None:
     """A declared runnable repair that never reaches a served payload is prose."""
 
@@ -180,6 +188,11 @@ def test_every_runnable_repair_reaches_a_live_wire_response() -> None:
             assert isinstance(built, RepairOperationV1), code
             assert built.operation == declared.operation, code
             seen[code] = "prediction_refusal"
+        elif "procedure_measurement_refusal" in owners:
+            built = _measurement_refusal_repair(code)
+            assert isinstance(built, RepairOperationV1), code
+            assert built.operation == declared.operation, code
+            seen[code] = "procedure_measurement_refusal"
         elif "playbill_next_reason" in owners:
             # The next lane carries its own structured repair; the catalog entry
             # is honest only if that lane really composes a runnable command for

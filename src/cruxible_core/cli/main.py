@@ -62,6 +62,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "authoring", "submit"): "active",
     ("playbill", "procedure", "bind"): "active",
     ("playbill", "procedure", "run"): "active",
+    ("playbill", "procedure", "measure"): "active",
     ("playbill", "line", "run"): "active",
     ("playbill", "proposal", "approve"): "active",
     ("playbill", "proposal", "activate"): "active",
@@ -693,6 +694,16 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                     ),
                     "status": _command(
                         "playbill", "procedure_run_status", "Read one Procedure run state."
+                    ),
+                    "measure": _command(
+                        "playbill",
+                        "procedure_measure",
+                        "Evaluate due measurements and credit one run's exact grain.",
+                    ),
+                    "readings": _command(
+                        "playbill",
+                        "procedure_readings",
+                        "Inspect measurement standing and retained readings.",
                     ),
                 },
                 module="playbill",

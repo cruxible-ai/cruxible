@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- **Declared measurements resolve from real evidence and credit exact grains.**
+  `playbill procedure measure` (HTTP `POST .../procedures/{name}/measurements`,
+  MCP `cruxible_playbill_procedure_measure`, SDK `Procedure.measure()`) is the
+  due/pending/resume door for a Procedure's declared measurements. Activation
+  is the generation that accepted the exact revision; its signed instant plus
+  `check_after`/`expires_after` is the only window, and pending or expired
+  measurements write nothing. Inside the window the door runs the exact
+  accepted QueryDefinition (receipt retained in the query-receipt journal),
+  evaluates the Claim statement's verdict, or counts verified attestations by
+  independent principal, then appends one resolution per activation under the
+  frozen law; refused or truncated queries resolve `indeterminate`. Naming a
+  finalized run binds the standing resolution to the grain that run actually
+  reached -- unit, node, or arm -- as one contract-grade reading keyed on the
+  activation, grain, and run or Line occurrence, so retries replay and
+  attempts never double. `playbill procedure readings` inspects standing and
+  retained readings read-only, paginated. Seven closed `measurement_*`
+  refusals each carry a runnable repair. Readings and resolutions stay
+  operational exhaust.
+
 - **Shared review commits retain every proposal's notes.** Admissions whose Git
   identities collide now project deterministic evaluation groups and distinct
   signed approval payloads. Activation checks original and published aliases.

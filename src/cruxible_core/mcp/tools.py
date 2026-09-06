@@ -669,6 +669,24 @@ def register_tools(
         return handlers.handle_playbill_procedure_run_status(instance_id, run_id)
 
     @_tool
+    def cruxible_playbill_procedure_measure(
+        instance_id: str,
+        name: str,
+        request: contracts.PlaybillProcedureMeasureRequestV1,
+    ) -> contracts.PlaybillProcedureMeasureResultV1:
+        """Evaluate due Procedure measurements from real evidence and credit one run."""
+        return handlers.handle_playbill_procedure_measure(instance_id, name, request)
+
+    @_tool
+    def cruxible_playbill_procedure_readings(
+        instance_id: str,
+        name: str,
+        request: contracts.PlaybillProcedureReadingsRequestV1,
+    ) -> contracts.PlaybillProcedureReadingsResultV1:
+        """Inspect measurement standing and retained exact-grain readings."""
+        return handlers.handle_playbill_procedure_readings(instance_id, name, request)
+
+    @_tool
     def cruxible_playbill_line_run(
         instance_id: str,
         line_identity_digest: str,

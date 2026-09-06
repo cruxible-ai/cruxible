@@ -378,6 +378,43 @@ Cite those, not your own reading of the file. A direct Source run is identified
 by its evaluation instant: re-running at the same instant replays the retained
 observation, and reading a changed source means running at a later one.
 
+### Measurements and readings
+
+A Procedure may declare measurements: an accepted query with an expectation, a
+Claim statement's acceptable verdicts, or the ClaimAttestations on a statement.
+The generation that accepts the Procedure ACTIVATES them, and the window
+(`check_after`, `expires_after`) runs from that acceptance instant, never from a
+run or a poll. Evaluating is a separate, explicit step, so delayed measurements
+complete after the run that they will credit has returned:
+
+~~~python
+proc = pb.accepted_procedure("release-guard")
+run = proc.run(release="2.4.0")           # execution outcome: run.status
+
+batch = proc.measure(run=run)             # observation instant = pb's clock
+batch["rollout-healthy"].status           # "pending" | "expired" | "resolved"
+batch["rollout-healthy"].reading_status   # "no_resolution" | "recorded" | "replayed"
+                                          # | "grain_not_occurred" | "run_not_final"
+
+# Later, once check_after has elapsed: the same call is the resume.
+batch = proc.measure(run=run)
+outcome = batch["rollout-healthy"]
+outcome.verdict, outcome.resolution_id, outcome.reading_id
+batch = proc.measure(run=run)             # retry: "replayed", same reading id
+
+page = proc.readings(measurements=("rollout-healthy",))   # read-only, paginated
+page.contracts[0].resolution              # standing answer + journal record digest
+~~~
+
+A pending measurement reports and writes nothing; an expired one reports and
+writes nothing; only a due one gathers evidence and resolves. The standing
+resolution governs every later call until it is overturned, and a reading is
+minted only for the grain the named run really reached: a succeeded unit, a
+node that fired and succeeded, an arm the guard actually selected. A completed
+run does not satisfy a measurement, and a failed run does not contradict one;
+the verdict comes from the evidence. Resolutions and readings are operational
+exhaust in the Procedure journal, not accepted state, and grant no authority.
+
 ## MCP and CLI
 
 The MCP tool set is Playbill-only and mirrors the same service core as CLI and
