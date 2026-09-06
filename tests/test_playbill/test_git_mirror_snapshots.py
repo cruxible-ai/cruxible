@@ -206,3 +206,44 @@ def test_limits_and_unowned_ref_refuse_before_transport(repos, monkeypatch):
     assert "argument limit" in local.push_mirror(str(remote.path))
     assert not pins(local)
     assert not remote._ref_exists(MAIN)
+
+
+def test_lost_uncertain_attempt_recovers_from_ancestry_and_exact_settlement(repos, monkeypatch):
+    local, remote = repos
+    published_oid = commit(local, "published P")
+    refs(local, **{MAIN: published_oid, NOTE: published_oid})
+    published = local.mirror_refs()
+    assert local.push_mirror(str(remote.path)) is None
+
+    attempted_oid = commit(local, "uncertain A", published_oid)
+    refs(local, **{MAIN: attempted_oid, NOTE: attempted_oid, PROPOSAL: attempted_oid})
+    attempted = local.mirror_refs()
+    original = git_module._command
+
+    def acknowledge_then_timeout(args, **kwargs):
+        result = original(args, **kwargs)
+        if "push" in args:
+            assert result.returncode == 0
+            raise subprocess.TimeoutExpired(args, 0.01)
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(git_module, "_command", acknowledge_then_timeout)
+        assert "unconfirmed" in local.push_mirror(str(remote.path), expected_remote=published)
+    assert remote.mirror_refs() == attempted
+    assert not pins(local)
+
+    desired_oid = commit(local, "recorded B", attempted_oid)
+    refs(local, **{MAIN: desired_oid, NOTE: desired_oid, SETTLED: attempted_oid})
+    local._git(["update-ref", "-d", PROPOSAL])
+    desired = local.mirror_refs()
+    # B replaced attempted_refs on disk, then the daemon died before its push.
+    # Restart knows P and B, while the actual remote still carries forgotten A.
+    assert (
+        local.push_mirror(
+            str(remote.path), snapshot=desired, expected_remote=published, previous_attempt=desired
+        )
+        is None
+    )
+    assert remote.mirror_refs() == desired
+    assert not pins(local)

@@ -705,17 +705,17 @@ class GitLedger:
                         attempted.get(ref),
                     ):
                         continue
-                    if not expected and not attempted:
-                        target = desired.get(ref)
-                        if target is not None and self.is_ancestor(actual, target):
+                    # A successful-but-unacknowledged push may be older than
+                    # the retained attempt after a crash. These local proofs
+                    # are safe independently of operational snapshot retention.
+                    target = desired.get(ref)
+                    if target is not None and self.is_ancestor(actual, target):
+                        continue
+                    if ref.startswith("refs/heads/proposals/"):
+                        settled = _SETTLED_REF_PREFIX + ref.removeprefix("refs/heads/proposals/")
+                        if desired.get(settled) == actual:
+                            owned.add(ref)
                             continue
-                        if ref.startswith("refs/heads/proposals/"):
-                            settled = _SETTLED_REF_PREFIX + ref.removeprefix(
-                                "refs/heads/proposals/"
-                            )
-                            if desired.get(settled) == actual:
-                                owned.add(ref)
-                                continue
                     raise PlaybillGitError(f"remote mirror ref diverged: {ref}")
                 remote_main = remote.get(_MIRROR_MAIN)
                 if remote_main is not None and remote_main != desired[_MIRROR_MAIN]:
