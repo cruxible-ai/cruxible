@@ -404,6 +404,8 @@ def service_activate_playbill_proposal(
     activation = publisher.activate(bundle, projection, base=base)
     if activation.status not in {"accepted", "lost_cas"}:
         raise SettlementIntegrityError("activation returned an unsupported terminal status")
+    if activation.status == "accepted" and activation.accepted is None:
+        raise SettlementIntegrityError("accepted activation omitted its coordinate")
     status = cast(Literal["accepted", "lost_cas"], activation.status)
     # Accepted state moved. Every per-process read memo keyed on a coordinate is
     # keyed on the old one and would simply miss, but a memo that outlives the
@@ -419,8 +421,8 @@ def service_activate_playbill_proposal(
         activated_by=activated_by,
         status=status,
         accepted_coordinate=(
-            PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
-            if activation.status == "accepted"
+            PlaybillAcceptedCoordinate.from_internal(activation.accepted)
+            if activation.status == "accepted" and activation.accepted is not None
             else None
         ),
         workspace_advertisement=advertisement,
