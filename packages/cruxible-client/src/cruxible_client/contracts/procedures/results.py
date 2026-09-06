@@ -9,7 +9,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from cruxible_client.contracts.acquisition_policies import AcquisitionInputDecisionV1
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_client.contracts.canonical import Sha256Value, normalize_canonical, typed_digest
+from cruxible_client.contracts.canonical import (
+    ProposalDigest,
+    Sha256Value,
+    normalize_canonical,
+    typed_digest,
+)
 from cruxible_client.contracts.procedures.models import ProcedureBudgetV3, ProcedureHardCapsV3
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_execution import (
@@ -66,6 +71,24 @@ ProcedureNodeRefusalCodeV1: TypeAlias = Literal[
     "source_material_unavailable",
     "terminal_not_available",
     "terminal_egress_unverified",
+    "proposal_item_invalid",
+    "proposal_item_evidence_missing",
+    "proposal_item_evidence_ambiguous",
+    "proposal_lowering_refused",
+    "proposal_candidate_refused",
+    "proposal_target_paths_mismatch",
+    "proposal_receipt_incomplete",
+    "effectful_operation_payload_mismatch",
+    "procedure_mandate_required",
+    "procedure_mandate_superseded",
+    "procedure_mandate_expired",
+    "procedure_mandate_procedure_mismatch",
+    "procedure_mandate_rung_insufficient",
+    "procedure_mandate_authority_ceiling_insufficient",
+    "procedure_mandate_namespace_mismatch",
+    "procedure_mandate_not_applicable",
+    "procedure_authority_admission_invalid",
+    "procedure_authority_admission_mismatch",
     "provider_unavailable",
     "unclassified_input",
     "unclaimed_bucket",
@@ -118,6 +141,7 @@ ProcedureOperationalFailureCodeV1: TypeAlias = Literal[
     "journal_read_failed",
     "journal_conflict",
     "run_recovery_required",
+    "terminal_egress_recovered",
     "admission_material_unavailable_by_policy",
     "replay_material_unavailable",
     "admission_material_corrupt",
@@ -917,6 +941,96 @@ class ProcedureSourceCaptureAssociationV1(_StrictResultModel):
         return value
 
 
+TerminalEgressVerdictV1: TypeAlias = Literal[
+    "dependencies_bound_egress_pending",
+    "refused_effective_rung",
+    "prepared",
+    "delivered",
+    "refused",
+    "failed",
+]
+
+
+class ProcedureTerminalEgressChildV1(_StrictResultModel):
+    """One fanout child of a terminal, and the handle its sink produced for it."""
+
+    tag: Literal["playbill-procedure-terminal-egress-child-v1"] = (
+        "playbill-procedure-terminal-egress-child-v1"
+    )
+    child_index: int = Field(ge=0)
+    item_key: str
+    manifest_digest: str
+    egress_digest: str | None = None
+    path: str | None = None
+
+    _digests = field_validator("manifest_digest")(_digest)
+
+    @field_validator("egress_digest")
+    @classmethod
+    def _egress(cls, value: str | None) -> str | None:
+        return None if value is None else _digest(value)
+
+
+class ProcedureTerminalEgressV1(_StrictResultModel):
+    """What one terminal node of a run did, reconstructed from its journal.
+
+    Additive and optional: a run with no terminal carries none. A delivered
+    `propose_change_set` names the proposal and the exact candidate it produced,
+    so a manager can retrieve, review and activate that candidate through the
+    existing proposal doors; producing it never activates it. A refused or
+    failed egress names the code the run refused with, so the run reads as the
+    reason it stopped rather than as a bare failure.
+    """
+
+    tag: Literal["playbill-procedure-terminal-egress-v1"] = "playbill-procedure-terminal-egress-v1"
+    node_id: str
+    kind: Literal["emit_capture", "post_inbox", "propose_change_set", "mandate_settlement"]
+    verdict: TerminalEgressVerdictV1
+    required_rung: int = Field(ge=0, le=3)
+    effective_rung: int | None = Field(default=None, ge=-1, le=3)
+    limiting_term: str | None = None
+    operation_key: str | None = None
+    procedure_mandate_digest: str | None = None
+    target_paths: tuple[str, ...] = ()
+    proposal_id: str | None = None
+    candidate_digest: str | None = None
+    refusal_code: str | None = None
+    children: tuple[ProcedureTerminalEgressChildV1, ...] = ()
+    journal_coordinate: ProcedureJournalCoordinateV1 | None = None
+
+    @field_validator("operation_key", "procedure_mandate_digest", "candidate_digest")
+    @classmethod
+    def _optional_digests(cls, value: str | None) -> str | None:
+        return None if value is None else _digest(value)
+
+    @field_validator("proposal_id")
+    @classmethod
+    def _proposal_id(cls, value: str | None) -> str | None:
+        if value is not None:
+            ProposalDigest.from_tagged(value)
+        return value
+
+    @field_validator("target_paths")
+    @classmethod
+    def _targets(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("terminal target paths must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _delivered_shape(self) -> "ProcedureTerminalEgressV1":
+        if self.verdict == "delivered" and self.kind == "propose_change_set":
+            if self.proposal_id is None or self.candidate_digest is None:
+                raise ValueError(
+                    "a delivered proposal egress names its proposal and exact candidate"
+                )
+        elif self.proposal_id is not None or self.candidate_digest is not None:
+            raise ValueError("only a delivered proposal egress names a proposal")
+        if (self.verdict in {"refused", "failed"}) != (self.refusal_code is not None):
+            raise ValueError("a refused or failed egress carries exactly its refusal code")
+        return self
+
+
 class ProcedureRunBudgetDeclaredV2(_StrictResultModel):
     tag: Literal["playbill-procedure-run-budget-declared-v2"] = (
         "playbill-procedure-run-budget-declared-v2"
@@ -1157,7 +1271,10 @@ __all__ = [
     "ProcedureRunReceiptV6",
     "ProcedureSourceCaptureAssociationV1",
     "ProcedureSelectionDecisionV1",
+    "ProcedureTerminalEgressChildV1",
+    "ProcedureTerminalEgressV1",
     "ProcedureTerminalV1",
+    "TerminalEgressVerdictV1",
     "procedure_admission_material_digest",
     "procedure_acquisition_plan_digest",
     "procedure_selection_decision_digest",
