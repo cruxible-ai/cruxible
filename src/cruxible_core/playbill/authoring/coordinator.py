@@ -998,6 +998,20 @@ class AuthoringIntentCoordinator:
                     "a v3 program stamp requires the v2 reference-assertion envelope",
                 )
         payload_digest = authoring_payload_digest(payload)
+        # The idempotency key names the CREATE FINGERPRINT, never the payload
+        # digest: a change set's payload digest deliberately drops its
+        # rationale, so two replacements that keep the members and rewrite the
+        # prose would mint one key, and the store would read the second as a
+        # replay and return the first without applying it -- a success view
+        # carrying the prose the author had just replaced. Nothing in this
+        # preimage is revision-scoped, so the collision would be permanent for
+        # the life of the intent. The fingerprint digests the whole payload, so
+        # a genuine retry of one request still mints one key.
+        replacement_fingerprint = authoring_create_fingerprint(
+            instance_id=self.instance.descriptor.instance_id,
+            actor_id=actor.actor_id,
+            payload=payload,
+        )
         expectations_digest = (
             None
             if reference_expectations is None
@@ -1013,7 +1027,7 @@ class AuthoringIntentCoordinator:
             {
                 "actor_id": actor.actor_id,
                 "intent_id": intent_id,
-                "payload_digest": payload_digest,
+                "create_fingerprint": replacement_fingerprint,
                 **(
                     {}
                     if expectations_digest is None
