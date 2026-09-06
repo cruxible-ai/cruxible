@@ -1,0 +1,70 @@
+{
+  "scope": "Live manager SDK to Unix HTTP daemon, 64 roadmap Subjects and seven predicates; fresh World per measured prefetch, same accepted coordinate, 408 returned current claim values/verdicts.",
+  "coordinate": {
+    "tag": "playbill-accepted-coordinate-v1",
+    "git_oid": "96ca34ed1cdf9a7ea5aa043045d561fa8ad778fa",
+    "semantic_root": "sha256:88b1954dc2452be0bf01461162256c487949d6f050a10632e7c0cdf481862cbf",
+    "generation_root": "sha256:2a36532a79c109d534352ffd13d7104493bc95aae09c6b02cbe7ca6b4d190ac8",
+    "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+  },
+  "subject_count": 64,
+  "claim_values": 408,
+  "fields": [
+    "task_title",
+    "proposed_release",
+    "strategic_bucket",
+    "completion_criterion",
+    "adoption_state",
+    "implementation_state",
+    "reconciliation_note"
+  ],
+  "exact_coordinate_and_claim_parity": true,
+  "samples": {
+    "before": {
+      "timings": {
+        "connect": 2.221861833008006,
+        "world": 0.01732912502484396,
+        "subject_ids": 0.5093641250277869
+      },
+      "samples": [
+        {
+          "ordinal": 0,
+          "prefetch_seconds": 106.15489229100058,
+          "task_content_sha256": "1d8bfb7652d95c0fa68949dc78a2e25b89055f2dfe3bf98a88d9562cf7131ae1"
+        },
+        {
+          "ordinal": 1,
+          "prefetch_seconds": 122.27096579095814,
+          "task_content_sha256": "1d8bfb7652d95c0fa68949dc78a2e25b89055f2dfe3bf98a88d9562cf7131ae1"
+        }
+      ],
+      "daemon_build": "c2cd76623b141ed3534db290390f67aa750fdb25"
+    },
+    "after": {
+      "timings": {
+        "connect": 6.214021207997575,
+        "world": 0.013992500025779009,
+        "subject_ids": 0.24691799998981878
+      },
+      "samples": [
+        {
+          "ordinal": 0,
+          "prefetch_seconds": 5.283946333976928,
+          "task_content_sha256": "1d8bfb7652d95c0fa68949dc78a2e25b89055f2dfe3bf98a88d9562cf7131ae1"
+        },
+        {
+          "ordinal": 1,
+          "prefetch_seconds": 4.9469974170206115,
+          "task_content_sha256": "1d8bfb7652d95c0fa68949dc78a2e25b89055f2dfe3bf98a88d9562cf7131ae1"
+        }
+      ],
+      "daemon_build": "a5a7e3760e6ca41019d3cb557014434346acb913"
+    }
+  },
+  "limits": [
+    "Two live observations per build, not controlled p95/p99; filesystem caches and concurrent host work were uncontrolled.",
+    "Before daemon was already warm; after daemon had just restarted. Startup recovery appears separately in connect. Each timed prefetch uses a fresh World to avoid client memoization.",
+    "Read-side operational journals were not rolled back between observations; epochs, time, and consumption history may differ. This does not replace restored-store isolated-service benchmarks.",
+    "Accepted state was unchanged. Verification compares full claim IDs, values and verdicts, not just timing or result counts."
+  ]
+}

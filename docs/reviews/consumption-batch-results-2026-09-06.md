@@ -4,7 +4,7 @@
 
 Small bulk reads no longer reverify the entire consumption partition for every returned artifact. One bounded append verifies the existing partition once under the operational lock, looks up receipt identities in a local index, and preserves each receipt's original payload/event durability boundaries. The accepted ledger, frozen receipt/event digests, operational storage format and wire contracts are unchanged.
 
-Source commit: a1d24188e79d7c009bfe9875826a6fb2704f4af6, based on 097d175594279f2735458de0a87a3fe58ed11e83. The change is on codex/consumption-batch; these measurements do not establish deployed SDK latency.
+Source commit: a1d24188e79d7c009bfe9875826a6fb2704f4af6, based on 097d175594279f2735458de0a87a3fe58ed11e83. The isolated measurements below were taken on codex/consumption-batch. The change was subsequently integrated and deployed at a5a7e3760e6ca41019d3cb557014434346acb913; the separate live SDK measurements are reported below.
 
 ## Matched isolated-service measurements
 
@@ -55,4 +55,21 @@ Tests cover exact scalar/batch store bytes, sorted deduplication/chunking, histo
 
 Epoch discovery and each chunk still scan current history. Filename sorting, strict decoding and hashing remain proportional to history size/bytes. The call retains parsed history, its identity index and serialized inputs; the 256-item cap is not a byte/RSS cap. Holding one lock across the bounded writes can delay other operational writers, although expensive external work is not performed under that lock.
 
-The real program roadmap's earlier 80.96-second prefetch has not been rerun on this branch. Measure the complete served workload before claiming its new time or deciding that consumption is now negligible. Separately profile per-Claim admission parsing and eventual history-independent operational lookup; preserve current-byte corruption checks and existing receipt semantics in any subsequent design.
+The live SDK rerun below establishes the practical benefit for the manager roadmap. Separately profile the remaining served time before choosing between per-Claim admission parsing and history-independent operational lookup; preserve current-byte corruption checks and existing receipt semantics in any subsequent design.
+
+
+## Deployed roadmap read
+
+The independently reviewed source was fast-forwarded into playbill and deployed locally at `a5a7e3760e6ca41019d3cb557014434346acb913`. All three existing instances remained healthy. The manager then repeated the same public SDK → authenticated Unix HTTP → daemon workload used immediately before deployment: 64 roadmap Subjects, seven predicates, 408 current Claim values/verdicts. Each sample created a fresh World snapshot, so the SDK prefetch memo did not satisfy it locally.
+
+| Live phase | Before | After |
+| --- | ---: | ---: |
+| First measured prefetch | 106.155 s | 5.284 s |
+| Second measured prefetch, fresh World | 122.271 s | 4.947 s |
+| SDK connect/orientation, separately measured | 2.222 s | 6.214 s |
+
+The before daemon was already warm; the after daemon had just restarted, so connection time includes different recovery conditions. The prefetch reductions are about 20.1× and 24.7× for these observations. All four samples returned identical Claim IDs, values and verdicts at accepted coordinate `96ca34ed1cdf9a7ea5aa043045d561fa8ad778fa` (complete content SHA-256 `1d8bfb7652d95c0fa68949dc78a2e25b89055f2dfe3bf98a88d9562cf7131ae1`). No accepted generation was written by this measurement.
+
+[Compact live evidence](consumption-roadmap-live-2026-09-06.json) records source builds, exact accepted coordinates, timings and parity hashes. Full local task snapshots and the deployment receipt are retained in `docs/world-model/consumption-roadmap-{before,after}-2026-09-06.json` and `docs/world-model/consumption-batch-deployment-2026-09-06.json`; these local operational artifacts are not part of the source commit.
+
+These two observations per build are customer workload samples, not a controlled percentile or growth guarantee. Filesystem caches and concurrent host work were uncontrolled, and read-side operational history was not restored between samples. The matched isolated-service measurements above provide the separate work-reduction and durability-parity evidence. Five seconds remains noticeable; this measurement does not establish where the remaining time is spent.
