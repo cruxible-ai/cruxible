@@ -195,3 +195,32 @@ def test_cached_containers_and_nested_input_values_are_not_shared(tmp_path: Path
         third.result.certificate.candidate_tree_digest
         != fourth.result.certificate.candidate_tree_digest
     )
+
+
+def test_two_prose_replacements_survive_lowering_reuse(tmp_path: Path) -> None:
+    """Review prose is outside payload_digest but still part of cache identity."""
+
+    _instance, coordinator, actor, intent = _setup(tmp_path)
+    with patch.object(
+        preflight_module, "lower_authoring", wraps=preflight_module.lower_authoring
+    ) as lowering:
+        coordinator.preflight(intent.intent_id, actor=actor)
+        first = coordinator.replace_payload(
+            intent.intent_id,
+            actor=actor,
+            payload=intent.payload.model_copy(update={"rationale": "Explain the first revision."}),
+        ).intent
+        coordinator.preflight(intent.intent_id, actor=actor)
+        second = coordinator.replace_payload(
+            intent.intent_id,
+            actor=actor,
+            payload=intent.payload.model_copy(update={"rationale": "Explain the final revision."}),
+        ).intent
+        prepared = coordinator.preflight(intent.intent_id, actor=actor)
+        submitted = coordinator.submit(intent.intent_id, actor=actor)
+    assert first.payload_digest == second.payload_digest
+    assert first.create_fingerprint != second.create_fingerprint
+    assert submitted.intent.payload.rationale == "Explain the final revision."
+    assert submitted.intent.last_preflight == prepared
+    assert submitted.status.candidate_digest is not None
+    assert lowering.call_count == 3
