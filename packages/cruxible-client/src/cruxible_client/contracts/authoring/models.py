@@ -2220,14 +2220,20 @@ class AuthoringIntentV2(AuthoringIntentV1):
         return canonical_reference_expectations(value)
 
 
+# Response wrappers must retain the fields selected by the nested intent tag.
+_AuthoringIntentResponse: TypeAlias = Annotated[
+    AuthoringIntentV1 | AuthoringIntentV2, Field(discriminator="tag")
+]
+
+
 class AuthoringIntentViewV1(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-intent-view-v1"] = "playbill-authoring-intent-view-v1"
-    intent: AuthoringIntentV1
+    intent: _AuthoringIntentResponse
 
 
 class AuthoringIntentListV1(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-intent-list-v1"] = "playbill-authoring-intent-list-v1"
-    intents: tuple[AuthoringIntentV1, ...]
+    intents: tuple[_AuthoringIntentResponse, ...]
 
 
 class AuthoringIntentCreateRequestV1(_StrictAuthoringModel):
@@ -2338,7 +2344,7 @@ class AuthoringSubmitMemberV1(_StrictAuthoringModel):
 
 class AuthoringSubmitResultV1(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-submit-result-v1"] = "playbill-authoring-submit-result-v1"
-    intent: AuthoringIntentV1
+    intent: _AuthoringIntentResponse
     status: CandidateStatusV1
     workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
     # A `revises` submit amends one Claim identity in place rather than adding a
@@ -2405,7 +2411,7 @@ class InsertionPrepareResultV2(_StrictAuthoringModel):
         "expired",
         "claim_currency_changed",
     ]
-    intent: AuthoringIntentV1
+    intent: _AuthoringIntentResponse
     expectation: InsertionExpectationV2
     preparation: PublicationPreparationV2 | None = None
     inserted_block_base64: str | None = Field(
@@ -2464,7 +2470,7 @@ class InsertionConfirmRequestV2(_StrictAuthoringModel):
 class InsertionConfirmResultV2(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-confirm-result-v2"] = "playbill-insertion-confirm-result-v2"
     outcome: Literal["bound", "already_bound", "expired", "claim_currency_changed"]
-    intent: AuthoringIntentV1
+    intent: _AuthoringIntentResponse
     expectation: InsertionExpectationV2
 
 
@@ -2474,7 +2480,7 @@ class InsertionAbandonRequestV1(_StrictAuthoringModel):
 
 class InsertionAbandonResultV1(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-abandon-result-v1"] = "playbill-insertion-abandon-result-v1"
-    intent: AuthoringIntentV1
+    intent: _AuthoringIntentResponse
     expectation: InsertionExpectationV2
 
 
