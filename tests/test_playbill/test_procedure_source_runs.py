@@ -15,6 +15,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import time
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast, get_args
@@ -40,6 +42,11 @@ from cruxible_client.contracts.captures import (
     render_capture_contract,
 )
 from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.procedure_mandates import (
+    ProcedureMandateV1,
+    procedure_mandate_path,
+    render_procedure_mandate,
+)
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactV2,
     ProcedureOwnedContractV1,
@@ -50,6 +57,13 @@ from cruxible_client.contracts.procedures.artifacts import (
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
+from cruxible_client.contracts.procedures.line_specs import (
+    LineSpecV2,
+    ManualTriggerPolicyV1,
+    line_identity_digest,
+    line_spec_path,
+    render_line_spec,
+)
 from cruxible_client.contracts.procedures.models import (
     CaptureEgressNodeV3,
     ProcedureBudgetV3,
@@ -108,11 +122,13 @@ from cruxible_core.playbill.service.provider_seed import service_seed_workspace_
 from cruxible_core.playbill.workspace_file import WorkspaceFileReader, workspace_binding_digest
 from cruxible_core.service.playbill_procedure_runs import (
     SERVED_NODE_KINDS,
+    LineRunRequestV1,
     ProcedureReadinessRequestV1,
     ProcedureRunRequestV2,
     served_node_kinds,
     service_get_playbill_procedure_run,
     service_playbill_procedure_readiness,
+    service_run_playbill_line,
     service_run_playbill_procedure,
 )
 from tests.support.provider_seed import workspace_seed_materialization
@@ -666,23 +682,330 @@ def test_a_changed_file_yields_a_different_receipt_and_a_different_value(
     assert second.run_id != first.run_id
 
 
+# --- the same governed read, on the Line lane --------------------------------
+
+
+LINE_NAME = "advisory-hourly"
+
+
+def _served_line(
+    procedure: ProcedureArtifactV2,
+    policy: SourceAcquisitionPolicyV1,
+) -> LineSpecV2:
+    """A Line over the same graph-v4 Source Procedure the direct lane runs.
+
+    Graph-v4 requires the v2 Line wire; this Procedure pins its Provider
+    exactly, so it fills no slot and its closure list is empty.
+    """
+
+    procedure_pin = ArtifactPin(
+        role="procedure",
+        target=procedure.identity,
+        artifact_digest=procedure_artifact_digest(procedure).tagged,
+    )
+    policy_pin = _policy_pin(policy)
+    caps = procedure.definition.hard_caps
+    return LineSpecV2(
+        identity=ArtifactIdentity(kind="Line", name=LINE_NAME),
+        occurrence_epoch=1,
+        procedure=procedure_pin,
+        parameters={},
+        slot_bindings=(),
+        trigger_policy=ManualTriggerPolicyV1(),
+        acquisition_policy=policy_pin,
+        requested_terminal_rung=1,
+        budgets={
+            "max_capture_bytes": caps.max_capture_bytes,
+            "max_items": caps.max_items,
+            "max_provider_calls": caps.max_provider_calls,
+            "max_wall_clock_microseconds": caps.max_wall_clock.microseconds,
+        },
+        epsilon={"$decimal": "0.1"},
+        pins=tuple(
+            sorted(
+                (procedure_pin, policy_pin),
+                key=lambda pin: (
+                    pin.role.encode("utf-8"),
+                    pin.target.qualified.encode("utf-8"),
+                    pin.artifact_digest.encode("ascii"),
+                ),
+            )
+        ),
+        provider_implementation_closures=(),
+    )
+
+
+def _line_mandate(procedure: ProcedureArtifactV2) -> ProcedureMandateV1:
+    return ProcedureMandateV1(
+        identity=ArtifactIdentity(kind="ProcedureMandate", name="advisory-line-mandate"),
+        procedure=ArtifactPin(
+            role="procedure",
+            target=procedure.identity,
+            artifact_digest=procedure_artifact_digest(procedure).tagged,
+        ),
+        rung=2,
+        authority_ceiling=procedure.definition.hard_caps,
+        namespace=("claims",),
+        valid_from=datetime(2026, 1, 1, tzinfo=UTC),
+        expires_at=datetime(2027, 1, 1, tzinfo=UTC),
+    )
+
+
+def _line_world(tmp_path: Path, **kwargs):  # type: ignore[no-untyped-def]
+    """The direct lane's world, plus the accepted Line that triggers the same graph."""
+
+    instance, owner, procedure, root, policy_artifact = _world(tmp_path, **kwargs)
+    line = _served_line(procedure, policy_artifact)
+    mandate = _line_mandate(procedure)
+    _accept_more(
+        instance,
+        owner,
+        {
+            line_spec_path(line.identity.name): render_line_spec(line),
+            procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
+        },
+        name="advisory-line",
+    )
+    return instance, root, line
+
+
+def _run_line(instance, root, line, *, invoker=None):  # type: ignore[no-untyped-def]
+    spawned = _WorkspaceInvoker() if invoker is None else invoker
+    identity_digest = line_identity_digest(line.identity)
+    return (
+        service_run_playbill_line(
+            instance,
+            path_identity_digest=identity_digest,
+            request=LineRunRequestV1(
+                line_identity_digest=identity_digest,
+                occurrence_id=None,
+                evaluation_time=None,
+            ),
+            actor_context=_actor(instance),
+            caller_rung=2,
+            provider_runtime_operator=_Operator(spawned),  # type: ignore[arg-type]
+            workspace_file_reader=_reader(instance, root),
+            daemon_clock=_TestClock(NOW),
+        ),
+        spawned,
+    )
+
+
+@dataclass(frozen=True)
+class _TestClock:
+    """The daemon clock a Line occurrence is derived from, pinned."""
+
+    evaluation_time: datetime
+
+    def now(self) -> datetime:
+        return self.evaluation_time
+
+    def monotonic_ns(self) -> int:
+        return time.monotonic_ns()
+
+
+def test_a_line_occurrence_reads_the_workspace_file_through_the_same_reader(
+    tmp_path: Path,
+) -> None:
+    """The Line lane now builds the reader too, and reads exactly what the direct lane does."""
+
+    instance, root, line = _line_world(tmp_path)
+
+    state, invoker = _run_line(instance, root, line)
+
+    assert state.status == "succeeded", state.terminal
+    assert state.result == {"severity": "high"}
+    assert invoker.spawn_calls == 1
+    observation = state.source_observations[0]
+    assert observation.source_read_receipt is not None
+    assert observation.source_read_receipt.relative_path == RELATIVE_PATH
+    assert observation.capture_digest is not None
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "write_at", "path_class"),
+    [
+        ("../outside.json", RELATIVE_PATH, "path_grammar"),
+        (".GIT/config", RELATIVE_PATH, "git_metadata"),
+        ("Data/.PlayBill/keys.json", RELATIVE_PATH, "playbill_control"),
+    ],
+)
+def test_the_line_lane_refuses_the_same_uncontained_paths(
+    tmp_path: Path,
+    relative_path: str,
+    write_at: str,
+    path_class: str,
+) -> None:
+    """One reader, one root policy, one containment law -- on both lanes."""
+
+    instance, root, line = _line_world(tmp_path, relative_path=relative_path, write_at=write_at)
+
+    state, invoker = _run_line(instance, root, line)
+
+    assert _read_refusal(state).details["path_class"] == path_class
+    assert invoker.spawn_calls == 0
+
+
+def test_the_line_lane_refuses_a_symlinked_leaf_and_a_symlinked_directory(
+    tmp_path: Path,
+) -> None:
+    """The two containment cases the request grammar cannot reach, on the Line lane."""
+
+    leaf_path = tmp_path / "leaf"
+    leaf_path.mkdir()
+    instance, root, line = _line_world(leaf_path, relative_path="data/link.json")
+    secret = leaf_path / "outside-secret.json"
+    secret.write_bytes(canonical_bytes({"severity": "leaked"}))
+    (root / "data" / "link.json").symlink_to(secret)
+
+    state, invoker = _run_line(instance, root, line)
+
+    assert _read_refusal(state).details["path_class"] == "symlink"
+    assert invoker.spawn_calls == 0
+
+    dir_path = tmp_path / "dir"
+    dir_path.mkdir()
+    instance, root, line = _line_world(dir_path, relative_path="linkdir/osv.json")
+    outside = dir_path / "outside-dir"
+    outside.mkdir()
+    (outside / "osv.json").write_bytes(canonical_bytes({"severity": "leaked"}))
+    (root / "linkdir").symlink_to(outside, target_is_directory=True)
+
+    state, invoker = _run_line(instance, root, line)
+
+    assert _read_refusal(state).details["path_class"] == "symlink"
+    assert invoker.spawn_calls == 0
+
+
+def test_the_line_lane_attests_the_real_on_disk_name_for_a_case_flipped_read(
+    tmp_path: Path,
+) -> None:
+    """The APFS law holds on the Line lane too: the kernel names the file, not the request."""
+
+    instance, root, line = _line_world(
+        tmp_path, relative_path="DATA/OSV-ADVISORY.JSON", write_at=RELATIVE_PATH
+    )
+
+    state, _invoker = _run_line(instance, root, line)
+
+    if state.status == "node_refused":
+        assert _read_refusal(state).details["path_class"] == "missing"
+        pytest.skip("case-sensitive volume: no folding case to attest")
+    assert state.status == "succeeded", state.terminal
+    receipt = state.source_observations[0].source_read_receipt
+    assert receipt is not None
+    assert receipt.relative_path == RELATIVE_PATH
+    assert receipt.requested_path == "DATA/OSV-ADVISORY.JSON"
+
+
 # --- typed refusals ----------------------------------------------------------
 
 
+def _read_refusal(state) -> ProcedureNodeRefusalV1:  # type: ignore[no-untyped-def]
+    assert state.status == "node_refused", state.terminal
+    assert isinstance(state.terminal, ProcedureNodeRefusalV1)
+    assert state.terminal.code == "workspace_file_read_refused"
+    assert state.terminal.details["repair_commands"]
+    # The daemon-authored path class travels in `details`; `detail_code` is the
+    # Procedure-authored guard code alone.
+    assert state.terminal.detail_code is None
+    return state.terminal
+
+
 def test_a_path_outside_the_authorized_root_refuses_typed(tmp_path: Path) -> None:
+    """The `..` case the request GRAMMAR refuses, with a real file to reach."""
+
     instance, _owner, _procedure, root, _policy_artifact = _world(
         tmp_path,
         relative_path="../outside.json",
         write_at=RELATIVE_PATH,
     )
+    (root.parent / "outside.json").write_bytes(canonical_bytes({"severity": "leaked"}))
 
     state, invoker = _run(instance, root)
 
-    assert state.status == "node_refused", state.terminal
-    assert isinstance(state.terminal, ProcedureNodeRefusalV1)
-    assert state.terminal.code == "workspace_file_read_refused"
-    assert state.terminal.details["repair_commands"]
+    assert _read_refusal(state).details["path_class"] == "path_grammar"
     assert invoker.spawn_calls == 0
+
+
+def test_a_symlinked_leaf_out_of_the_root_refuses_typed(tmp_path: Path) -> None:
+    """Containment is on the real on-disk object, not on the spelling."""
+
+    instance, _owner, _procedure, root, _policy_artifact = _world(
+        tmp_path, relative_path="data/link.json"
+    )
+    secret = tmp_path / "outside-secret.json"
+    secret.write_bytes(canonical_bytes({"severity": "leaked"}))
+    (root / "data" / "link.json").symlink_to(secret)
+
+    state, invoker = _run(instance, root)
+
+    assert _read_refusal(state).details["path_class"] == "symlink"
+    assert invoker.spawn_calls == 0
+
+
+def test_a_symlinked_directory_inside_the_root_refuses_typed(tmp_path: Path) -> None:
+    """Every component is opened without following, not just the leaf."""
+
+    instance, _owner, _procedure, root, _policy_artifact = _world(
+        tmp_path, relative_path="linkdir/osv.json"
+    )
+    outside = tmp_path / "outside-dir"
+    outside.mkdir()
+    (outside / "osv.json").write_bytes(canonical_bytes({"severity": "leaked"}))
+    (root / "linkdir").symlink_to(outside, target_is_directory=True)
+
+    state, invoker = _run(instance, root)
+
+    assert _read_refusal(state).details["path_class"] == "symlink"
+    assert invoker.spawn_calls == 0
+
+
+def test_a_case_flipped_git_metadata_path_refuses_typed(tmp_path: Path) -> None:
+    """The APFS incident's own case: the deny list folds, so `.GIT` is `.git`."""
+
+    instance, _owner, _procedure, root, _policy_artifact = _world(
+        tmp_path, relative_path=".GIT/config"
+    )
+
+    state, invoker = _run(instance, root)
+
+    assert _read_refusal(state).details["path_class"] == "git_metadata"
+    assert invoker.spawn_calls == 0
+
+
+def test_a_case_flipped_playbill_control_path_refuses_typed(tmp_path: Path) -> None:
+    """The same folding, on a denied name that is not the leading component."""
+
+    instance, _owner, _procedure, root, _policy_artifact = _world(
+        tmp_path, relative_path="Data/.PlayBill/keys.json"
+    )
+
+    state, invoker = _run(instance, root)
+
+    assert _read_refusal(state).details["path_class"] == "playbill_control"
+    assert invoker.spawn_calls == 0
+
+
+def test_a_case_flipped_real_read_attests_the_real_on_disk_name(tmp_path: Path) -> None:
+    """On a folding volume the requested spelling never becomes the attested one."""
+
+    instance, _owner, _procedure, root, _policy_artifact = _world(
+        tmp_path, relative_path="DATA/OSV-ADVISORY.JSON", write_at=RELATIVE_PATH
+    )
+
+    state, _invoker = _run(instance, root)
+
+    if state.status == "node_refused":
+        # A case-sensitive volume: the request simply names no file, and there
+        # is no folding case to attest.
+        assert _read_refusal(state).details["path_class"] == "missing"
+        pytest.skip("case-sensitive volume: no folding case to attest")
+    assert state.status == "succeeded", state.terminal
+    receipt = state.source_observations[0].source_read_receipt
+    assert receipt is not None
+    assert receipt.relative_path == RELATIVE_PATH
+    assert receipt.requested_path == "DATA/OSV-ADVISORY.JSON"
 
 
 def test_a_file_over_the_contract_selection_budget_refuses_typed(tmp_path: Path) -> None:
@@ -1211,6 +1534,94 @@ def test_a_source_closure_that_stops_reproducing_refuses_before_the_first_attemp
 
     assert "source_acquisition_plan_mismatch" in str(excinfo.value)
     assert invoker.spawn_calls == 0
+
+
+def test_an_external_mutation_occurrence_refuses_before_the_first_attempt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Source occurrence is a READ; an interface declaring mutation is not one.
+
+    `effect_class` comes from the accepted interface registration, so the only
+    way to reach the guard is to plan the same occurrence with a mutating class.
+    The Source preflight refuses the whole closure before the first attempt
+    record, so the Provider is never spawned.
+    """
+
+    import cruxible_core.service.playbill_procedure_runs as service
+
+    instance, _owner, _procedure, root, _policy_artifact = _world(tmp_path)
+    real_plan = service._plan_external_occurrences  # noqa: SLF001
+
+    def mutating(*args, **kwargs):  # type: ignore[no-untyped-def]
+        return tuple(
+            item.model_copy(update={"effect_class": "external_mutation"})
+            for item in real_plan(*args, **kwargs)
+        )
+
+    monkeypatch.setattr(service, "_plan_external_occurrences", mutating)
+    invoker = _WorkspaceInvoker()
+
+    with pytest.raises(PlaybillExecutionError) as excinfo:
+        _run(instance, root, invoker=invoker)
+
+    assert "source_acquisition_plan_mismatch" in str(excinfo.value)
+    assert invoker.spawn_calls == 0
+
+
+def test_a_crash_between_the_read_receipt_and_the_capture_leaves_no_half_capture(
+    tmp_path: Path,
+) -> None:
+    """The retained receipt is what makes an interrupted read legible and safe.
+
+    The daemon reads the file, journals the receipt, and then dies before the
+    Provider result is durable. Re-running the same occurrence must not read
+    again: it refuses typed, and the half-run's own state shows exactly what
+    happened -- the receipt for the bytes that were read, and no Capture.
+    """
+
+    from cruxible_core.service.playbill_procedure_runs import ProcedureRunRecoveryRequired
+
+    instance, _owner, _procedure, root, _policy_artifact = _world(tmp_path)
+
+    class _Exploding(_WorkspaceInvoker):
+        def invoke_provider(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.spawn_calls += 1
+            raise RuntimeError("simulated daemon crash after the governed read")
+
+    with pytest.raises(PlaybillExecutionError) as crash:
+        _run(instance, root, invoker=_Exploding())
+    assert "provider_completion_not_durable" in str(crash.value)
+
+    with pytest.raises(ProcedureRunRecoveryRequired) as rerun:
+        _run(instance, root)
+    assert "recovery_required" in str(rerun.value)
+
+    status = service_get_playbill_procedure_run(instance, run_id=_admitted_run_id(instance))
+    assert status.status == "running"
+    observation = status.source_observations[0]
+    assert observation.source_read_receipt is not None
+    assert observation.source_read_receipt.bytes_digest == (
+        "sha256:" + hashlib.sha256(canonical_bytes(ADVISORY)).hexdigest()
+    )
+    assert observation.capture_digest is None
+
+
+def _admitted_run_id(instance: PlaybillInstance) -> str:
+    """The one run id this instance's procedure journal bound."""
+
+    import cruxible_core.service.playbill_procedure_runs as service
+
+    journal, _root = service._journal(instance)  # noqa: SLF001
+    stream = service._stream(instance)  # noqa: SLF001
+    run_ids = [
+        stored.record.run_id
+        for partition_id in journal.partition_ids(stream)
+        for stored in journal.all_records(stream, partition_id)
+        if stored.record.event_kind == "admission_bound" and stored.record.run_id is not None
+    ]
+    assert len(run_ids) == 1, run_ids
+    return run_ids[0]
 
 
 def test_the_admitted_plan_mismatch_code_stays_served(tmp_path: Path) -> None:
