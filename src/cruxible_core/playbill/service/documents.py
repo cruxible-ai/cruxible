@@ -471,7 +471,7 @@ def service_activate_playbill_proposal(
         raise SettlementIntegrityError("candidate parent root differs from evaluated base")
     approvals = instance.proposal_evidence().read_approvals(candidate.candidate_digest)
     _reconcile_proposal_notes(instance, proposal=proposal, candidate=candidate)
-    bundle = instance.prepare_generation(
+    activation = instance.settle_and_activate(
         base=base,
         candidate_tree=instance.proposal_tree(evaluation.evaluated_tree_oid),
         candidate=candidate,
@@ -481,11 +481,7 @@ def service_activate_playbill_proposal(
             source_compilation_digest=proposal.admission.source_compilation_digest,
         ),
         proposal_actor_id=proposal.admission.actor_id,
-        sequence=instance.accepted_history()[-1].sequence + 1,
     )
-    publisher = instance.activation_publisher()
-    projection = publisher.prebuild(bundle, base=base)
-    activation = publisher.activate(bundle, projection, base=base)
     if activation.status not in {"accepted", "lost_cas"}:
         raise SettlementIntegrityError("activation returned an unsupported terminal status")
     if activation.status == "accepted" and activation.accepted is None:
@@ -498,7 +494,6 @@ def service_activate_playbill_proposal(
     from cruxible_core.service.playbill_search import reset_claim_resolution_memo
 
     reset_claim_resolution_memo()
-    instance.refresh()
     advertisement = instance.advertise_workspace()
     # Main moved and the settled candidate's branch has just been archived, so
     # the mirror is republished last: a reviewer following the old branch finds

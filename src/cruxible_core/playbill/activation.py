@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import secrets
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Protocol
@@ -137,14 +137,24 @@ class ActivationPublisher:
         *,
         base: AcceptedProjectionCoordinate,
         crash_hook: ActivationCrashHook | None = None,
+        on_completed: Callable[[ActivationResult], None] | None = None,
     ) -> ActivationResult:
+        """Publish and optionally hand off the outcome while still excluding writers.
+
+        The callback runs after all normal publication steps, including on a
+        lost CAS. A callback failure cannot undo a committed acceptance.
+        Callbacks must not reacquire the ledger activation lock.
+        """
         with self.ledger.activation_lock():
-            return self._activate_locked(
+            result = self._activate_locked(
                 bundle,
                 projection,
                 base=base,
                 crash_hook=crash_hook,
             )
+            if on_completed is not None:
+                on_completed(result)
+            return result
 
     def _activate_locked(
         self,

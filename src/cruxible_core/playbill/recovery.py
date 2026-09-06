@@ -83,6 +83,7 @@ from cruxible_core.playbill.settlement import (
     ChangeSetRecordAnyVersion,
     ChangeSetRecordV2,
     ChangeSetRecordV3,
+    VerifiedGenerationBundle,
     parse_change_set_record,
     render_generation_descriptor,
     semantic_root_for_record,
@@ -97,7 +98,7 @@ from cruxible_core.storage.playbill_projection import (
 
 @dataclass(frozen=True)
 class RecoveredGeneration:
-    """One replay-verified accepted generation, without its artifact payload.
+    """One acceptance- or replay-verified generation, without its artifact payload.
 
     A generation never carries its tree. The ledger *is* the store: every
     accepted tree is already content-addressed and deduplicated in Git, so
@@ -363,6 +364,60 @@ def _candidate_from_record(
         members=record.members,
         law_digests=record.law_digests,
         compiler_digest=record.compiler_digest,
+    )
+
+
+def prepared_generation_for_handoff(
+    ledger: GitLedger,
+    *,
+    parent: RecoveredGeneration,
+    bundle: VerifiedGenerationBundle,
+    candidate: CandidateRecordAnyVersion,
+) -> RecoveredGeneration | None:
+    """Detach a just-prepared successor, preserving replay-only checks.
+
+    This is an internal handoff for an owned prepare/publish operation, not a
+    verifier for arbitrary bundles. Settlement has already re-evaluated the
+    candidate, checked approvals and roots, and compared stored tree bytes.
+    Suspected retired content keeps the full authenticated recovery path.
+    """
+    if bundle.settlement.base_oid != parent.oid or ledger.parent_of(bundle.oid) != parent.oid:
+        raise SettlementIntegrityError("generation parent differs from accepted predecessor")
+    daemon = parent.principals.require_active("daemon")
+    if not ledger.verify_commit_with_public_key(
+        bundle.oid, principal_id="daemon", public_key_hex=daemon.public_key
+    ):
+        raise SettlementIntegrityError("generation daemon signature does not verify")
+    changes = [
+        change
+        for change in ledger.changed_entries(parent.oid, bundle.oid)
+        if change.path.startswith("changesets/")
+    ]
+    if len(changes) != 1 or changes[0].status != "A" or changes[0].path != bundle.record_path:
+        raise SettlementIntegrityError("generation must append exactly one change-set record")
+    record = parse_change_set_record(bundle.tree[bundle.record_path], path=bundle.record_path)
+    if record.sequence != parent.sequence + 1:
+        raise SettlementIntegrityError("change-set sequence is not contiguous")
+    if bundle.record_path != f"changesets/cs-{record.sequence:020d}.json":
+        raise SettlementIntegrityError("change-set path differs from its sequence")
+    if _candidate_from_record(record) != candidate:
+        raise SettlementIntegrityError("stored change-set candidate differs from preparation")
+    if any(
+        b'"predicate":"knowledge.brief"' in content
+        for path, content in bundle.tree.items()
+        if path == "claim-types/knowledge/brief.json" or path.startswith("claims/")
+    ):
+        return None
+    return RecoveredGeneration(
+        sequence=record.sequence,
+        oid=bundle.oid,
+        semantic_root=bundle.semantic_root,
+        descriptor=bundle.descriptor.model_copy(deep=True),
+        generation_root=bundle.generation_root,
+        principals=principal_registry_from_tree(
+            bundle.tree, semantic_root=bundle.semantic_root.tagged
+        ),
+        record=record,
     )
 
 

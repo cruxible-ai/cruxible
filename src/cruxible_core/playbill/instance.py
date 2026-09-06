@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import secrets
@@ -31,7 +32,9 @@ from cruxible_client.contracts.errors import (
     PlaybillFormatError,
     PlaybillInstanceDecommissioned,
     PlaybillKeyError,
+    ProjectionIntegrityError,
     ProposalIntegrityError,
+    SettlementIntegrityError,
 )
 from cruxible_client.contracts.ledger_mirror import validate_mirror_url
 from cruxible_client.contracts.temporal import format_datetime, utc_now
@@ -53,7 +56,7 @@ from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
     PlaybillWorkspaceAdvertisement,
 )
-from cruxible_core.playbill.activation import ActivationPublisher
+from cruxible_core.playbill.activation import ActivationPublisher, ActivationResult
 from cruxible_core.playbill.assembler import ProjectionAssembler, ProjectionCrashHook
 from cruxible_core.playbill.bootstrap import (
     VerifiedGenesis,
@@ -104,6 +107,7 @@ from cruxible_core.playbill.proposals import (
 from cruxible_core.playbill.recovery import (
     RecoveredGeneration,
     RecoveredInstanceState,
+    prepared_generation_for_handoff,
     recover_instance,
 )
 from cruxible_core.playbill.review_operational import ReviewOperationalStore
@@ -112,6 +116,7 @@ from cruxible_core.playbill.settlement import (
     ChangeActorBinding,
     VerifiedGenerationBundle,
     prepare_generation,
+    render_generation_descriptor,
 )
 from cruxible_core.playbill.witness import WitnessSink
 from cruxible_core.storage.playbill_projection import ProjectionHandle, bind_projection
@@ -227,6 +232,7 @@ class PlaybillInstance:
         self._ledger = ledger
         self._verified_genesis = verified_genesis
         self._recovered = recovered
+        self._state_lock = threading.RLock()
         self._history_lookup: (
             tuple[RecoveredInstanceState, dict[str, RecoveredGeneration | None] | None] | None
         ) = None
@@ -1222,7 +1228,12 @@ class PlaybillInstance:
         return self._claim_attestation_store
 
     def accepted_history(self) -> tuple[RecoveredGeneration, ...]:
-        """Return the genesis-rooted, replay-verified accepted history."""
+        """Return genesis-rooted history verified by acceptance or replay.
+
+        Internal callers borrow these records and must treat nested values as
+        read-only. Public transports serialize them rather than exposing this
+        process-owned state.
+        """
 
         return self._recovered.history
 
@@ -1396,8 +1407,14 @@ class PlaybillInstance:
         return bind_projection(manifest_path, expected=verified)
 
     def refresh(self, *, witness: WitnessSink | None = None) -> AcceptedProjectionCoordinate:
-        """Replay accepted state after activation and repair its serving boundary."""
+        """Replay accepted state and repair publication, excluding concurrent writers."""
+        with self._state_lock, self._ledger.activation_lock():
+            return self._refresh_locked(witness=witness)
 
+    def _refresh_locked(
+        self, *, witness: WitnessSink | None = None
+    ) -> AcceptedProjectionCoordinate:
+        """Recover with both the instance and ledger activation locks held."""
         paths = self._validated_paths(self.root, self.descriptor.storage)
         bodies = ContentAddressedBodyStore(paths["cas"])
         self._tree_memo.clear()
@@ -1474,6 +1491,104 @@ class PlaybillInstance:
             ),
             query_facts_provider=lambda coordinate: self._accepted_query_facts(self, coordinate),
         )
+
+    def settle_and_activate(
+        self,
+        *,
+        base: AcceptedProjectionCoordinate,
+        candidate_tree: dict[str, bytes],
+        candidate: CandidateRecordAnyVersion,
+        approvals: tuple[ApprovalSubmission, ...],
+        actor_binding: ChangeActorBinding,
+        proposal_actor_id: str,
+    ) -> ActivationResult:
+        """Publish one owned preparation and install its verified successor state.
+
+        Ordinary success retains the verified prefix and the exact successor;
+        lost CAS, stale epochs and publication failures use recovery. Locks are
+        released before callers reconcile advisory review/workspace surfaces.
+        """
+        with self._state_lock:
+            previous = self._recovered
+            bundle = self.prepare_generation(
+                base=base,
+                candidate_tree=candidate_tree,
+                candidate=candidate,
+                approvals=approvals,
+                actor_binding=actor_binding,
+                proposal_actor_id=proposal_actor_id,
+                sequence=previous.head.sequence + 1,
+            )
+            successor = (
+                prepared_generation_for_handoff(
+                    self._ledger, parent=previous.head, bundle=bundle, candidate=candidate
+                )
+                if previous.coordinate == base
+                else None
+            )
+            publisher = self.activation_publisher()
+
+            def install(result: ActivationResult) -> None:
+                # The publisher holds the cross-process lock until this returns.
+                # Never install a stale epoch or manufacture an accepted result
+                # when the CAS lost. Full recovery supplies the winning history.
+                if (
+                    result.status != "accepted"
+                    or successor is None
+                    or self._recovered is not previous
+                    or result.accepted is None
+                    or result.projection is None
+                    or self._ledger.read_main() != bundle.oid
+                ):
+                    self._refresh_locked()
+                    return
+                expected = AcceptedProjectionCoordinate(
+                    instance_id=base.instance_id,
+                    repository_path=base.repository_path,
+                    git_object_format=base.git_object_format,
+                    git_oid=bundle.oid,
+                    semantic_root=bundle.semantic_root.tagged,
+                    generation_root=bundle.generation_root.tagged,
+                    compiler=base.compiler,
+                )
+                if result.accepted != expected:
+                    raise SettlementIntegrityError(
+                        "activation handoff coordinate differs from bundle"
+                    )
+                if self._ledger.read_generation_note(bundle.oid) != render_generation_descriptor(
+                    successor.descriptor
+                ):
+                    self._refresh_locked()
+                    return
+                try:
+                    with bind_current_projection(
+                        publisher.publication_directory, expected=expected
+                    ):
+                        pass
+                except (OSError, ProjectionIntegrityError):
+                    self._refresh_locked()
+                    return
+                advanced = RecoveredInstanceState(
+                    genesis=previous.genesis,
+                    head=successor,
+                    history=(*previous.history, successor),
+                    coordinate=copy.deepcopy(result.accepted),
+                    projection=copy.deepcopy(result.projection),
+                )
+                self._tree_memo.clear()
+                self.claim_read_history_memo.clear()
+                self._history_lookup = None
+                self._recovered = advanced
+
+            try:
+                projection = publisher.prebuild(bundle, base=base)
+                return publisher.activate(bundle, projection, base=base, on_completed=install)
+            except Exception:
+                # Main may have moved before a post-CAS publication failure.
+                # Repair from authority, never install a partially published
+                # outcome. Preserve the caller's failure even if repair succeeds.
+                self.refresh()
+                raise
 
     def assemble_projection(
         self,
