@@ -51,6 +51,7 @@ from cruxible_client.contracts.procedures.artifacts import (
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
 from cruxible_client.contracts.procedures.models import (
+    CaptureEgressNodeV3,
     ProcedureBudgetV3,
     ProcedureDefinitionV3,
     ProcedureDefinitionV4,
@@ -853,6 +854,71 @@ def _acquisition_decisions(instance: PlaybillInstance) -> list[tuple[str, str]]:
             decision = cast(dict[str, Any], payload["decision"])
             applied.append((str(payload["input_name"]), str(decision["disposition"])))
     return applied
+
+
+# --- C2: a direct run causes no effect ---------------------------------------
+
+
+def test_a_v4_terminal_cannot_fire_on_the_direct_lane(tmp_path: Path) -> None:
+    """The restated C2 law, driven rather than read.
+
+    Graph-v4 serves `source`; it does not serve a terminal, and a direct run
+    binds no effective rung, so `_verify_effective_rung` would refuse one even
+    if a caller found a way to hand it over. What a caller can actually reach is
+    this: a v4 Procedure whose Source flows into an `emit_capture` terminal.
+    Readiness names the terminal unsupported, the run refuses at ADMISSION --
+    before any journal directory exists -- no Provider is spawned, and no egress
+    is observed.
+    """
+
+    instance, owner, procedure, root, _policy_artifact = _world(tmp_path, accept_procedure=False)
+    source = procedure.definition.nodes[0]
+    assert isinstance(source, SourceNodeV4)
+    definition = procedure.definition.model_copy(
+        update={
+            "nodes": (
+                source.model_copy(update={"next": "emit"}),
+                CaptureEgressNodeV3(
+                    node_id="emit",
+                    capture_contract=source.capture_contract,
+                    input=f"$steps.{SOURCE_ALIAS}",
+                ),
+            ),
+            "returns": SOURCE_ALIAS,
+        }
+    )
+    with_terminal = procedure.model_copy(
+        update={
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest_v4(definition).tagged,
+        }
+    )
+    _accept_more(
+        instance,
+        owner,
+        {procedure_path(PROCEDURE_NAME): render_procedure(with_terminal)},
+        name="terminal-procedure",
+    )
+    journal_root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
+    assert not journal_root.exists()
+
+    readiness = service_playbill_procedure_readiness(
+        instance,
+        name=PROCEDURE_NAME,
+        request=ProcedureReadinessRequestV1(evaluation_time=NOW),
+    )
+    assert [row.kind for row in readiness.unsupported_nodes] == ["emit_capture"]
+    assert readiness.state == "unsupported"
+
+    state, invoker = _run(instance, root)
+
+    assert state.status == "admission_refused", state.terminal
+    assert isinstance(state.terminal, ProcedureAdmissionRefusalV1)
+    assert state.terminal.code == "unsupported_node"
+    assert state.run_id is None
+    assert invoker.spawn_calls == 0
+    # No journal at all, so no effect record and nothing to observe egress from.
+    assert not journal_root.exists()
 
 
 # --- the durable policy binding: the Procedure's own envelope pin -------------
