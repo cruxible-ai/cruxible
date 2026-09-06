@@ -98,6 +98,12 @@ class PlaybillLedgerMirrorRequest(_StrictPlaybillRequest):
     url: str = Field(min_length=1, max_length=MIRROR_URL_MAX_LENGTH)
 
 
+class PlaybillLedgerPublishRequest(_StrictPlaybillRequest):
+    """Wait at most this many seconds for the configured mirror to acknowledge."""
+
+    timeout: float = Field(default=60.0, ge=0.0, le=60.0, allow_inf_nan=False, strict=True)
+
+
 class PlaybillInstanceDecommissionRequest(_StrictPlaybillRequest):
     """The operator's stated reason for ending this instance's governed writes."""
 

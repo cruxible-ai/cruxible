@@ -553,6 +553,12 @@ def _mirror_receipt(
         mirror_url=url,
         status=state.status,
         attempted_at=state.attempted_at,
+        published_main_oid=state.published_main_oid,
+        requested_sequence=state.requested_sequence,
+        attempted_sequence=state.attempted_sequence,
+        published_sequence=state.published_sequence,
+        published_refs=dict(state.published_refs),
+        wait_sequence=state.wait_sequence,
         detail=state.detail,
     )
 
@@ -562,7 +568,7 @@ def playbill_ledger_set_mirror(
     *,
     url: str,
 ) -> contracts.PlaybillLedgerMirrorV1:
-    """Bind the remote this ledger publishes to, and publish to it now.
+    """Bind the remote and wait boundedly for its initial publication attempt.
 
     Operational configuration rather than a governed change: it proposes
     nothing, accepts nothing, and moves no coordinate. It is an ADMIN lever all
@@ -573,6 +579,22 @@ def playbill_ledger_set_mirror(
     instance = get_playbill_manager().get(instance_id)
     state = instance.set_ledger_mirror(url)
     return _mirror_receipt(instance_id, url=instance.ledger_mirror_url() or url, state=state)
+
+
+def playbill_ledger_publish(
+    instance_id: str, *, timeout: float = 60.0
+) -> contracts.PlaybillLedgerMirrorV1:
+    """Request publication to the configured mirror and wait for its acknowledgment."""
+
+    check_permission("cruxible_playbill_ledger_publish", instance_id=instance_id)
+    if isinstance(timeout, bool) or not 0 <= timeout <= 60:
+        raise ValueError("timeout must be between 0 and 60 seconds")
+    instance = get_playbill_manager().get(instance_id)
+    url = instance.ledger_mirror_url()
+    if url is None:
+        raise PlaybillLedgerMirrorUnset()
+    state = instance.publish_ledger_mirror(timeout=timeout)
+    return _mirror_receipt(instance_id, url=url, state=state)
 
 
 def playbill_ledger_clone_url(instance_id: str) -> contracts.PlaybillLedgerMirrorV1:

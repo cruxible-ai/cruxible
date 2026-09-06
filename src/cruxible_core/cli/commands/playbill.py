@@ -1147,7 +1147,7 @@ def ledger_group() -> None:
 @json_option
 @handle_errors
 def set_ledger_mirror(url: str, output_json: bool) -> None:
-    """Bind the remote this ledger publishes to, and publish to it now.
+    """Bind the remote and wait boundedly for its initial publication attempt.
 
     The URL must carry no credential: the daemon reads its token from its own
     environment, and this string is printed back by `ledger clone-url` to
@@ -1181,6 +1181,36 @@ def ledger_clone_url(output_json: bool) -> None:
         _emit_json(result.model_dump(mode="json"))
         return
     click.echo(result.mirror_url)
+    click.echo(
+        f"Publication: {result.status}; acknowledged request {result.published_sequence}, "
+        f"latest requested {result.requested_sequence}",
+        err=True,
+    )
+
+
+@ledger_group.command("publish")
+@click.option("--timeout", type=click.FloatRange(0, 60), default=60.0, show_default=True)
+@json_option
+@handle_errors
+def ledger_publish(timeout: float, output_json: bool) -> None:
+    """Wait for publication to the configured mirror; timeout 0 only requests it."""
+
+    result = _server_call(
+        lambda client, instance_id: client.publish_playbill_ledger(instance_id, timeout=timeout),
+        command_name="playbill ledger publish",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(f"Publication: {result.status}")
+    if result.wait_sequence is not None:
+        acknowledged = result.published_sequence >= result.wait_sequence
+        click.echo(
+            f"Request {result.wait_sequence}: "
+            f"{'acknowledged' if acknowledged else 'awaiting acknowledgment'}"
+        )
+    if result.detail is not None:
+        click.echo(f"Detail: {printable(result.detail)}")
 
 
 @playbill_group.group("provider")

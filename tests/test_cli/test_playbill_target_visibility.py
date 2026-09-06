@@ -38,6 +38,7 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("playbill", "body", "store"): "active",
     ("playbill", "provider", "seed"): "active",
     ("playbill", "ledger", "set-mirror"): "active",
+    ("playbill", "ledger", "publish"): "active",
     ("playbill", "document", "propose"): "active",
     ("playbill", "claim-type", "propose"): "active",
     ("playbill", "claim-type", "migrate"): "active",

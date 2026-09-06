@@ -435,6 +435,17 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillLedgerMirrorV1)
 
+    def publish_playbill_ledger(
+        self, instance_id: str, *, timeout: float = 60.0
+    ) -> contracts.PlaybillLedgerMirrorV1:
+        if isinstance(timeout, bool) or not 0 <= timeout <= 60:
+            raise ValueError("timeout must be between 0 and 60 seconds")
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/ledger/publish",
+            json={"timeout": timeout},
+        )
+        return self._parse_model(response, contracts.PlaybillLedgerMirrorV1)
+
     def get_playbill_ledger_mirror(self, instance_id: str) -> contracts.PlaybillLedgerMirrorV1:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/ledger/mirror")
         return self._parse_model(response, contracts.PlaybillLedgerMirrorV1)

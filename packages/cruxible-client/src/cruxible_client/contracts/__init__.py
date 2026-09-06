@@ -805,8 +805,9 @@ class PlaybillInstanceDecommissionResultV1(BaseModel):
 class PlaybillLedgerMirrorV1(BaseModel):
     """Where one instance publishes its ledger, and whether that copy is current.
 
-    One model for both doors: `ledger set-mirror` binds a remote and publishes
-    to it at once, and `ledger clone-url` reads back what a reviewer clones. The
+    `ledger set-mirror` binds a remote and waits boundedly for initial publication;
+    `ledger clone-url` reads its status. A publish barrier is acknowledged when
+    published_sequence reaches wait_sequence, even if newer work is pending. The
     URL carries no credential -- one that could is refused before it is stored --
     so this model is safe to print, log and hand to anyone who may read the
     instance at all.
@@ -817,8 +818,14 @@ class PlaybillLedgerMirrorV1(BaseModel):
     tag: Literal["playbill-ledger-mirror-v1"] = "playbill-ledger-mirror-v1"
     instance_id: str
     mirror_url: str
-    status: Literal["current", "behind"]
+    status: Literal["current", "behind", "pending", "publishing"]
     attempted_at: str | None = None
+    published_main_oid: str | None = None
+    requested_sequence: int = Field(default=0, ge=0)
+    attempted_sequence: int = Field(default=0, ge=0)
+    published_sequence: int = Field(default=0, ge=0)
+    published_refs: dict[str, str] = Field(default_factory=dict)
+    wait_sequence: int | None = Field(default=None, ge=0)
     detail: str | None = None
 
 

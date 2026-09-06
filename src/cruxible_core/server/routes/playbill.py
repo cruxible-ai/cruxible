@@ -55,6 +55,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillInsertionAbandonRequest,
     PlaybillInstanceDecommissionRequest,
     PlaybillLedgerMirrorRequest,
+    PlaybillLedgerPublishRequest,
     PlaybillNextRequest,
     PlaybillNextRequestV2,
     PlaybillProposalReadmitRequest,
@@ -167,6 +168,19 @@ def set_ledger_mirror(
     return playbill_api.playbill_ledger_set_mirror(
         resolve_server_instance_id(instance_id),
         url=req.url,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/ledger/publish",
+    response_model=contracts.PlaybillLedgerMirrorV1,
+)
+def publish_ledger(
+    instance_id: str,
+    req: PlaybillLedgerPublishRequest,
+) -> contracts.PlaybillLedgerMirrorV1:
+    return playbill_api.playbill_ledger_publish(
+        resolve_server_instance_id(instance_id), timeout=req.timeout
     )
 
 
