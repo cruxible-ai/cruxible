@@ -17,7 +17,7 @@ import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import cast, get_args
+from typing import Any, cast, get_args
 
 import pytest
 
@@ -82,6 +82,8 @@ from cruxible_client.contracts.workspace_file import (
     WorkspaceFileSourceRequestV1,
 )
 from cruxible_core.playbill.actor_context import GovernedActorContext
+from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.exhaust.records import parse_journal_payload
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.provider_classifiers import (
     install_compiler_owned_provider_classifier,
@@ -90,7 +92,10 @@ from cruxible_core.playbill.provider_local_runtime import (
     BoundLocalProviderV1,
     ProviderDriverOutcomeV1,
 )
-from cruxible_core.playbill.provider_runtime_contract import ProviderRuntimeResultEnvelopeV1
+from cruxible_core.playbill.provider_runtime_contract import (
+    ProviderRuntimeRefusalV1,
+    ProviderRuntimeResultEnvelopeV1,
+)
 from cruxible_core.playbill.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_IMPLEMENTATION_DIGEST,
     WORKSPACE_FILE_INTERFACE_ID,
@@ -333,18 +338,24 @@ def _procedure(
     )
 
 
-def _policy(*, input_name: str = SOURCE_ALIAS) -> SourceAcquisitionPolicyV1:
+def _policy(
+    *,
+    input_name: str = SOURCE_ALIAS,
+    name: str = "advisory-reads",
+    requirement: str = "required",
+    on_failure: str = "refuse",
+) -> SourceAcquisitionPolicyV1:
     return SourceAcquisitionPolicyV1(
-        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="advisory-reads"),
+        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name=name),
         inputs=(
             InputAcquisitionRuleV1(
                 input_name=input_name,
-                requirement="required",
+                requirement=cast(Any, requirement),
                 permitted_replayability=("attested_only", "exact"),
                 max_age=CanonicalDurationV1(microseconds=3_600_000_000),
-                on_unavailable="refuse",
-                on_stale="refuse",
-                on_oversized="refuse",
+                on_unavailable=cast(Any, on_failure),
+                on_stale=cast(Any, on_failure),
+                on_oversized=cast(Any, on_failure),
                 on_conflict="preserve",
             ),
         ),
@@ -719,6 +730,107 @@ def test_a_policy_that_declares_another_input_refuses_before_any_journal(
     assert state.terminal.code == "source_acquisition_policy_required"
     assert state.terminal.details["matching_policy_digests"] == []
     assert invoker.spawn_calls == 0
+
+
+class _DecliningInvoker(_WorkspaceInvoker):
+    """The governed read happens; the Provider then declines the material."""
+
+    def invoke_provider(self, *, occurrence, context, invocation_id, bound):  # type: ignore[no-untyped-def]
+        self.spawn_calls += 1
+        return ProviderDriverOutcomeV1(
+            envelope=ProviderRuntimeResultEnvelopeV1(
+                protocol_version="1.0",
+                run_id=context.run_id,
+                status="refused",
+                refusal=ProviderRuntimeRefusalV1(
+                    code="provider_declined",
+                    message="the adapter declined this material",
+                ),
+            ),
+            stderr="",
+            duration_seconds=0.001,
+            egress=ProviderEgressObservationV1(
+                observer_backend="test-attribution",
+                observer_grade="attribution",
+            ),
+            verified_binding=bound.binding,
+        )
+
+
+def test_a_planned_occurrence_that_fails_acquisition_applies_on_unavailable(
+    tmp_path: Path,
+) -> None:
+    """The declared failure behaviour fires from a real read, at execution time.
+
+    The planner never scores an absent occurrence, so this is where
+    `on_unavailable` belongs: the occurrence WAS planned, the read WAS attempted,
+    and the Provider declined it. An optional input whose rule says
+    `omit_optional` is then omitted rather than refused -- the same rule, applied
+    to a fact rather than to a plan.
+    """
+
+    instance, _owner, _procedure, root, _policy_artifact = _world(
+        tmp_path,
+        policy=_policy(requirement="optional", on_failure="omit_optional"),
+    )
+
+    state, invoker = _run(instance, root, invoker=_DecliningInvoker())
+
+    assert invoker.spawn_calls == 1
+    assert _acquisition_decisions(instance) == [(SOURCE_ALIAS, "omitted")]
+    # The Source node did not refuse: the omission carried past it, and the
+    # graph then failed where an omitted input actually shows -- at the
+    # projection that names it.
+    assert state.status == "node_refused", state.terminal
+    assert isinstance(state.terminal, ProcedureNodeRefusalV1)
+    assert (state.terminal.node_id, state.terminal.code) == (
+        "shape",
+        "runtime_reference_unresolved",
+    )
+    # The read still happened and is still retained; only the material was
+    # declined, so the occurrence carries a receipt and no Capture.
+    observation = state.source_observations[0]
+    assert observation.source_read_receipt is not None
+    assert observation.capture_digest is None
+
+
+def test_a_required_rule_refuses_the_same_declined_read_at_the_source_node(
+    tmp_path: Path,
+) -> None:
+    """The other direction of the same execution-time application."""
+
+    instance, _owner, _procedure, root, _policy_artifact = _world(tmp_path)
+
+    state, invoker = _run(instance, root, invoker=_DecliningInvoker())
+
+    assert invoker.spawn_calls == 1
+    assert state.status == "node_refused", state.terminal
+    assert isinstance(state.terminal, ProcedureNodeRefusalV1)
+    assert state.terminal.node_id == "read"
+    assert state.terminal.code == "provider_declined"
+
+
+def _acquisition_decisions(instance: PlaybillInstance) -> list[tuple[str, str]]:
+    """Every declared failure behaviour the RUN applied, straight off the journal."""
+
+    import cruxible_core.service.playbill_procedure_runs as service
+
+    journal, _root = service._journal(instance)  # noqa: SLF001
+    stream = service._stream(instance)  # noqa: SLF001
+    bodies = instance.body_store()
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    applied: list[tuple[str, str]] = []
+    for partition_id in journal.partition_ids(stream):
+        for stored in journal.all_records(stream, partition_id):
+            if stored.record.event_kind != "source_acquisition":
+                continue
+            payload = parse_journal_payload(
+                bodies.read(stored.record.payload_digest, access=access)
+            )
+            assert isinstance(payload, dict)
+            decision = cast(dict[str, Any], payload["decision"])
+            applied.append((str(payload["input_name"]), str(decision["disposition"])))
+    return applied
 
 
 def test_a_source_closure_that_stops_reproducing_refuses_before_the_first_attempt(

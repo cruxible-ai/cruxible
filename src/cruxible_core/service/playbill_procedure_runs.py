@@ -180,7 +180,6 @@ from cruxible_core.playbill.material_reservations import ProcedureMaterialReserv
 from cruxible_core.playbill.procedures.acquisition import (
     ACQUISITION_OVERSIZED,
     ACQUISITION_REFUSED,
-    ACQUISITION_UNAVAILABLE,
 )
 from cruxible_core.playbill.procedures.egress import compute_effective_rung
 from cruxible_core.playbill.procedures.execution import (
@@ -1165,7 +1164,7 @@ def _plan_selection_decision(
     occurrences: tuple[ProviderExternalOccurrencePlanV1, ...],
     capture_contracts: Mapping[str, CaptureContractV1],
 ) -> ProcedureSelectionDecisionV1:
-    """Evaluate the accepted policy against this plan, per declared input.
+    """Evaluate the accepted policy against this plan, per PLANNED occurrence.
 
     This is a PLAN-time evaluation and it says only what a plan can say: which
     declared input each planned Source occurrence serves, whether the accepted
@@ -1173,6 +1172,15 @@ def _plan_selection_decision(
     the declared failure behaviour does when it does not. It never invents an
     acquisition outcome: `on_unavailable`/`on_stale`/`on_oversized` still fire
     only from a real read, in `apply_acquisition_result` at execution time.
+
+    So a declared input this graph plans NO occurrence for is not scored here at
+    all. "The input never arrived" is an execution-time fact, not a plan-time
+    one, and a policy is free to declare inputs a given Procedure does not
+    serve: the acceptance law never tied a Line's policy to its Procedure's
+    Source aliases, so scoring the miss here would turn accepted, already
+    running Lines -- every Source-free one included -- into run-time refusals.
+    The direct lane refuses that mismatch where it belongs, at admission, when
+    the pinned policy's declared inputs are not the Procedure's Source aliases.
     """
 
     sources = {
@@ -1184,13 +1192,6 @@ def _plan_selection_decision(
     for rule in policy.inputs:
         occurrence = sources.get(rule.input_name)
         if occurrence is None:
-            decisions.append(
-                _plan_failure_decision(
-                    rule,
-                    behavior=rule.on_unavailable,
-                    reason=ACQUISITION_UNAVAILABLE,
-                )
-            )
             continue
         if not occurrence.accepted_bucket_selectors:
             # An occurrence whose interface proved no input bucket cannot be

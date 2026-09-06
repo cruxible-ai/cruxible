@@ -7,6 +7,13 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from cruxible_client.contracts.acquisition_policies import (
+    IndependentCoherenceV1,
+    InputAcquisitionRuleV1,
+    SourceAcquisitionPolicyV1,
+    acquisition_policy_digest,
+)
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.procedures.results import (
     ProcedureAcquisitionPlanV2,
     ProcedureAdmissionMaterialManifestV1,
@@ -29,7 +36,10 @@ from cruxible_core.playbill.procedures.execution import (
     procedure_line_run_id,
     procedure_semantic_replay_key_digest,
 )
-from cruxible_core.service.playbill_procedure_runs import service_prepare_playbill_line_admission
+from cruxible_core.service.playbill_procedure_runs import (
+    _plan_selection_decision,
+    service_prepare_playbill_line_admission,
+)
 from tests.test_playbill.test_procedure_execution import (
     _digest,
     _fixture,
@@ -340,3 +350,44 @@ def test_reserved_b4_source_capture_associations_are_path_sorted_and_unique() ->
         ProcedureRunReceiptV6._source_associations((second, first))  # noqa: SLF001
     with pytest.raises(ValueError, match="path-sorted and unique"):
         ProcedureRunReceiptV6._source_associations((first, first))  # noqa: SLF001
+
+
+def test_a_declared_input_with_no_planned_occurrence_is_not_scored(tmp_path: Path) -> None:
+    """The planner scores planned occurrences, never the absence of one.
+
+    An exhaust tap is the sharpest instance: the acceptance law requires a Line
+    over an exhaust-tapping Procedure to pin an acquisition policy, and a policy
+    must declare at least one input, yet `_provider_nodes` never yields an
+    exhaust tap -- so that declared input can never have a planned occurrence.
+    Scoring the miss here would refuse every such Line forever under a code that
+    says the policy denied a Source input. "It never arrived" is a fact only the
+    read can report, and `apply_acquisition_result` reports it.
+    """
+
+    plan, _admission = _plan_and_admission(tmp_path)
+    strict = SourceAcquisitionPolicyV1(
+        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="tally-reads"),
+        inputs=(
+            InputAcquisitionRuleV1(
+                input_name="tally",
+                requirement="required",
+                permitted_replayability=("exact",),
+                on_unavailable="refuse",
+                on_stale="refuse",
+                on_oversized="refuse",
+                on_conflict="refuse",
+            ),
+        ),
+        coherence=IndependentCoherenceV1(),
+    )
+    assert all(item.occurrence_kind != "source" for item in plan.external_occurrences)
+
+    selection = _plan_selection_decision(
+        strict,
+        policy_digest=acquisition_policy_digest(strict).tagged,
+        occurrences=plan.external_occurrences,
+        capture_contracts={},
+    )
+
+    assert selection.decisions == ()
+    assert selection.verdict == "selected"
