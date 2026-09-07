@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Literal
 
@@ -18,10 +19,6 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
-from cruxible_client.contracts.procedures.graph import (
-    compute_procedure_node_digests_v3,
-    compute_procedure_node_digests_v4,
-)
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_core.playbill.actor_context import GovernedActorContext
@@ -32,7 +29,9 @@ from cruxible_core.playbill.exhaust import (
     StoredProcedureJournalRecordV1,
     parse_journal_payload,
 )
+from cruxible_core.playbill.exhaust.records import JournalPartitionHeadV1
 from cruxible_core.playbill.procedures.execution import accepted_procedure_pin_set_digest
+from cruxible_core.playbill.procedures.graph_digests import cached_node_digests
 from cruxible_core.playbill.procedures.resolution import (
     ProcedureProofReferenceV1,
     ProcedureResolutionBook,
@@ -266,10 +265,11 @@ def _grain_fields(
     arm_label: Literal["on_true", "on_false"] | None,
 ) -> dict[str, Any]:
     definition = accepted.procedure.definition
-    digests = (
-        compute_procedure_node_digests_v3(definition)
-        if definition.graph_format == 3
-        else compute_procedure_node_digests_v4(definition)
+    # The vector is a pure function of the definition, which the accepted
+    # definition digest names exactly, so one revision computes it once.
+    digests = cached_node_digests(
+        definition,
+        definition_digest=accepted.procedure.definition_digest,
     )
     if grain == "procedure_unit":
         return {
@@ -489,6 +489,36 @@ def evaluate_procedure_reading(
     )
 
 
+#: The frozen replay domain of one keyed reading: Procedure path, actor org,
+#: actor id, idempotency key. Two readings in the same domain are the same
+#: operation and must carry the same bytes.
+ReadingReplayKey = tuple[str, str, str, str]
+
+
+def reading_replay_key(reading: ProcedureReadingV1) -> ReadingReplayKey | None:
+    if reading.idempotency_key is None:
+        return None
+    return (
+        reading.subject.artifact_path,
+        reading.actor_context.org_id,
+        reading.actor_context.actor_id,
+        reading.idempotency_key,
+    )
+
+
+def _replay_existing(
+    existing: ProcedureReadingV1,
+    stored: StoredProcedureJournalRecordV1,
+    *,
+    reading: ProcedureReadingV1,
+) -> StoredProcedureJournalRecordV1:
+    if procedure_reading_digest(existing) != procedure_reading_digest(reading):
+        raise PlaybillExecutionError(
+            "Procedure reading idempotency key was retried with a different payload"
+        )
+    return stored
+
+
 def append_procedure_reading(
     writer: ProcedureExhaustWriter,
     *,
@@ -499,8 +529,22 @@ def append_procedure_reading(
     bodies: ContentAddressedBodyStore,
     activations: tuple[ResolutionContractActivationV1, ...] = (),
     resolution_book: ProcedureResolutionBook | None = None,
+    replay_index: Mapping[
+        ReadingReplayKey, tuple[StoredProcedureJournalRecordV1, ProcedureReadingV1]
+    ]
+    | None = None,
+    expected_head: JournalPartitionHeadV1 | None = None,
 ) -> StoredProcedureJournalRecordV1:
-    """Append idempotently in the frozen instance/Procedure/actor/key domain."""
+    """Append idempotently in the frozen instance/Procedure/actor/key domain.
+
+    ``replay_index`` lets a producer that has already parsed the partition hand
+    over its keyed readings, so a batch of appends does not replay and re-parse
+    the whole partition once per record. The index must describe the partition
+    as the writer will see it; the fallback scans it from the journal.
+    ``expected_head`` is the partition head that index was read at: the append
+    is then a compare-and-set, refusing as a journal conflict when another
+    writer landed a record after the index was taken.
+    """
 
     partition_id = procedure_reading_partition_id(accepted)
 
@@ -514,7 +558,13 @@ def append_procedure_reading(
     if law.verdict == "refused":
         raise PlaybillExecutionError(law.message or "Procedure reading law refused")
 
-    if reading.idempotency_key is not None:
+    replay = reading_replay_key(reading)
+    if replay is not None and replay_index is not None:
+        indexed = replay_index.get(replay)
+        if indexed is not None:
+            stored, existing = indexed
+            return _replay_existing(existing, stored, reading=reading)
+    elif replay is not None:
         access = BodyAccessContext(principal_id="procedure-reading-replay", can_read_body=True)
         for stored in writer.journal.all_records(stream, partition_id):
             if stored.record.event_kind != "procedure_reading":
@@ -522,19 +572,9 @@ def append_procedure_reading(
             existing = ProcedureReadingV1.model_validate(
                 parse_journal_payload(bodies.read(stored.record.payload_digest, access=access))
             )
-            same_domain = (
-                existing.idempotency_key == reading.idempotency_key
-                and existing.subject.artifact_path == reading.subject.artifact_path
-                and existing.actor_context.org_id == reading.actor_context.org_id
-                and existing.actor_context.actor_id == reading.actor_context.actor_id
-            )
-            if not same_domain:
+            if reading_replay_key(existing) != replay:
                 continue
-            if procedure_reading_digest(existing) != procedure_reading_digest(reading):
-                raise PlaybillExecutionError(
-                    "Procedure reading idempotency key was retried with a different payload"
-                )
-            return stored
+            return _replay_existing(existing, stored, reading=reading)
     return writer.append(
         stream=stream,
         partition_id=partition_id,
@@ -546,6 +586,7 @@ def append_procedure_reading(
         recorded_at=reading.recorded_at,
         payload=reading.model_dump(mode="json"),
         run_id=reading.run_id,
+        expected_head=expected_head,
     )
 
 
@@ -554,10 +595,12 @@ __all__ = [
     "ProcedureReadingLawResultV1",
     "ProcedureReadingV1",
     "ProcedureReadingVerdictV1",
+    "ReadingReplayKey",
     "append_procedure_reading",
     "build_procedure_reading",
     "evaluate_procedure_reading",
     "procedure_reading_digest",
     "procedure_reading_id",
     "procedure_reading_partition_id",
+    "reading_replay_key",
 ]

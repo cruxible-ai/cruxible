@@ -199,6 +199,15 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillSemanticFieldValue",
         "PlaybillSettleRequestV1",
         "PlaybillSettleResultV1",
+        "PlaybillProcedureMeasureRequestV1",
+        "PlaybillProcedureMeasureResultV1",
+        "PlaybillProcedureReadingsRequestV1",
+        "PlaybillProcedureReadingsResultV1",
+        "ProcedureMeasurementContractStatusV1",
+        "ProcedureMeasurementEligibilityV1",
+        "ProcedureMeasurementResolutionSummaryV1",
+        "ProcedureMeasurementRowV1",
+        "ProcedureReadingSummaryV1",
         "PlaybillSinceCursor",
         "PlaybillSinceRequest",
         "PlaybillSinceResult",
@@ -243,6 +252,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "WorkspaceFileSourceRequestV1",
     }
     assert set(current["literal_aliases"]) == {
+        "ProcedureMeasurementRefusalCodeV1",
         "ApprovalPolicyMode",
         "PlaybillAuthoringExampleName",
         "PlaybillHandEditNextReason",

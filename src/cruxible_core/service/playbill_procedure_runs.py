@@ -3631,6 +3631,98 @@ def service_get_playbill_procedure_run(
     return _state_from_records(instance, run_id=run_id)
 
 
+@dataclass(frozen=True)
+class ProcedureRunGrainRecordV1:
+    """One run's authentic admission binding and the grains it actually reached.
+
+    Read-only material for producers that credit a run's exact grain (a
+    measurement reading, say) without joining the run's authoritative event
+    chain: the state is the served reconstruction, the occurrence and attempt
+    are the Line coordinates the admission really bound, and the node verdicts
+    and selected arms are exactly what the journal recorded.
+    """
+
+    state: ProcedureRunStateV2
+    invocation_origin: Literal["actor", "line"]
+    occurrence_id: str | None
+    attempt: int
+    line_identity: ArtifactIdentity | None
+    line_spec_digest: str | None
+    finalized: bool
+    #: Last recorded ``node_fired`` verdict per node id.
+    node_verdicts: Mapping[str, str]
+    #: Every arm a guard selected in this run, in journal order.
+    selected_arms: Mapping[str, tuple[str, ...]]
+
+
+def load_playbill_procedure_run_grain(
+    instance: PlaybillInstance,
+    *,
+    run_id: str,
+) -> ProcedureRunGrainRecordV1:
+    """Reconstruct one run's state and read back the grains its journal proves."""
+
+    state = _state_from_records(instance, run_id=run_id)
+    records = _records_for_run(instance, run_id)
+    bodies = instance.body_store()
+    access = BodyAccessContext(principal_id="procedure-run-grain", can_read_body=True)
+    admission: (
+        ProcedureRunAdmissionV2
+        | ProcedureRunAdmissionV3
+        | ProcedureRunAdmissionV4
+        | ProcedureRunAdmissionV5
+        | None
+    ) = None
+    node_verdicts: dict[str, str] = {}
+    selected_arms: dict[str, list[str]] = {}
+    finalized = False
+    for stored in records:
+        kind = stored.record.event_kind
+        if kind not in {"admission_bound", "node_fired", "branch_evaluated", "attempt_finalized"}:
+            continue
+        payload = parse_journal_payload(bodies.read(stored.record.payload_digest, access=access))
+        if not isinstance(payload, dict):
+            continue
+        if kind == "admission_bound":
+            tag = payload.get("tag")
+            if tag == "playbill-procedure-admission-bound-payload-v5":
+                admission = ProcedureAdmissionBoundPayloadV5.model_validate(payload).admission
+            elif tag == "playbill-procedure-admission-bound-payload-v4":
+                admission = ProcedureAdmissionBoundPayloadV4.model_validate(payload).admission
+            elif tag == "playbill-procedure-admission-bound-payload-v3":
+                admission = ProcedureAdmissionBoundPayloadV3.model_validate(payload).admission
+            elif tag == "playbill-procedure-admission-bound-payload-v2":
+                admission = ProcedureAdmissionBoundPayloadV2.model_validate(payload).admission
+        elif kind == "node_fired":
+            node_id = payload.get("node_id")
+            verdict = payload.get("verdict")
+            if isinstance(node_id, str) and isinstance(verdict, str):
+                node_verdicts[node_id] = verdict
+        elif kind == "branch_evaluated":
+            node_id = payload.get("node_id")
+            arm = payload.get("selected_arm")
+            if isinstance(node_id, str) and isinstance(arm, str):
+                selected_arms.setdefault(node_id, []).append(arm)
+        else:
+            finalized = True
+    if admission is None:
+        raise ProcedureRunRecoveryRequired(
+            f"{ProcedureRunRecoveryRequired.code}: run lacks a supported admission_bound"
+        )
+    line_identity = getattr(admission, "line_identity", None)
+    return ProcedureRunGrainRecordV1(
+        state=state,
+        invocation_origin=admission.invocation_origin,
+        occurrence_id=admission.occurrence_id,
+        attempt=admission.attempt,
+        line_identity=line_identity if isinstance(line_identity, ArtifactIdentity) else None,
+        line_spec_digest=admission.line_spec_digest,
+        finalized=finalized,
+        node_verdicts=node_verdicts,
+        selected_arms={key: tuple(value) for key, value in selected_arms.items()},
+    )
+
+
 def service_recover_provider_invocations(
     instance: PlaybillInstance,
     *,
@@ -3959,6 +4051,8 @@ class DirectProcedureReceiptReducer:
 __all__ = [
     "DIRECT_RECEIPT_REDUCER_DOMAIN",
     "DirectProcedureReceiptReducer",
+    "ProcedureRunGrainRecordV1",
+    "load_playbill_procedure_run_grain",
     "LineRunIdentityMismatch",
     "LineRunNotAccepted",
     "LineRunRequestV1",

@@ -70,9 +70,17 @@ JournalEventKindV1 = Literal[
     "resolution_disposition",
     "procedure_reading",
     "query_executed",
+    "claim_verdict_observed",
 ]
 
 QUERY_RECEIPT_EVENT_KIND: JournalEventKindV1 = "query_executed"
+CLAIM_VERDICT_OBSERVATION_EVENT_KIND: JournalEventKindV1 = "claim_verdict_observed"
+"""A Claim verdict evaluated as measurement evidence, retained like a query receipt.
+
+The verdict itself is a derivation over accepted state at one coordinate and
+instant; the record retains exactly which state, which Claim artifact, and
+which verdict inputs produced the answer a resolution cites.
+"""
 """A canonical query execution is the one journalled event with no Procedure.
 
 Every other kind names a step of a Procedure run, so none of them could carry a
@@ -113,7 +121,7 @@ def _validate_event_family(
 ) -> None:
     """Bind each event kind to the one family whose coordinates it can honestly fill."""
 
-    if event_kind == QUERY_RECEIPT_EVENT_KIND:
+    if event_kind in (QUERY_RECEIPT_EVENT_KIND, CLAIM_VERDICT_OBSERVATION_EVENT_KIND):
         if journal_family != QUERY_RECEIPT_JOURNAL_FAMILY:
             raise ValueError("query execution receipts require the query-receipt journal family")
         if any(
@@ -651,6 +659,7 @@ __all__ = [
     "PROCEDURE_EXHAUST_JOURNAL_FAMILY",
     "ProcedureJournalRecordDraftV1",
     "ProcedureJournalRecordV1",
+    "CLAIM_VERDICT_OBSERVATION_EVENT_KIND",
     "QUERY_RECEIPT_EVENT_KIND",
     "QUERY_RECEIPT_JOURNAL_FAMILY",
     "REGISTERED_JOURNAL_FAMILIES",

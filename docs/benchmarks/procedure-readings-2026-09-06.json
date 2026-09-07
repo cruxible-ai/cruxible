@@ -1,0 +1,418 @@
+{
+  "recorded_at": "2026-09-07T02:39:05.871960+00:00",
+  "scope": "Temporary knowledge-loop instance (2 Claims, 1 QueryDefinition, 1 guarded query-only Procedure); explicit clocks; phases timed in-process from the service layer, no HTTP; CAS body reads counted through the shared read seam; the synthetic instance is never published. No 'before' exists for production emission; before/after columns cover only the node digest memo and the keyed replay index.",
+  "rows": [
+    {
+      "measurements": 2,
+      "retained_readings_before": 0,
+      "run_only": {
+        "median_seconds": 0.023607750015798956,
+        "min_seconds": 0.02271395904244855,
+        "max_seconds": 0.0960472910082899,
+        "samples": 3,
+        "cas_reads_per_call": 19
+      },
+      "activation_fresh": {
+        "median_seconds": 0.00137645797803998,
+        "min_seconds": 0.00131537503330037,
+        "max_seconds": 0.0015322919934988022,
+        "samples": 3,
+        "cas_reads_per_call": 0
+      },
+      "activation_warm": {
+        "median_seconds": 2.92027834802866e-07,
+        "min_seconds": 2.08965502679348e-07,
+        "max_seconds": 1.459033228456974e-06,
+        "samples": 5,
+        "cas_reads_per_call": 0
+      },
+      "resolve_fresh_first_evaluation": {
+        "median_seconds": 0.04045874997973442,
+        "min_seconds": 0.04045874997973442,
+        "max_seconds": 0.04045874997973442,
+        "samples": 1,
+        "cas_reads_per_call": 7
+      },
+      "resolve_standing_answer_warm": {
+        "median_seconds": 0.009553000039886683,
+        "min_seconds": 0.009403832955285907,
+        "max_seconds": 0.010074291029013693,
+        "samples": 5,
+        "cas_reads_per_call": 4
+      },
+      "credit_new_run_fresh": {
+        "median_seconds": 0.03710608300752938,
+        "min_seconds": 0.03710608300752938,
+        "max_seconds": 0.03710608300752938,
+        "samples": 1,
+        "cas_reads_per_call": 21
+      },
+      "credit_same_run_retry_warm": {
+        "median_seconds": 0.031211333989631385,
+        "min_seconds": 0.0305813750019297,
+        "max_seconds": 0.03399954200722277,
+        "samples": 5,
+        "cas_reads_per_call": 21
+      },
+      "credit_same_run_retry_fresh_attribution": {
+        "median_seconds": 0.032227582996711135,
+        "min_seconds": 0.03028029203414917,
+        "max_seconds": 0.0330598329892382,
+        "samples": 5,
+        "cas_reads_per_call": 21
+      },
+      "readings_list_fresh": {
+        "median_seconds": 0.011088291008491069,
+        "min_seconds": 0.010965875000692904,
+        "max_seconds": 0.01121479197172448,
+        "samples": 3,
+        "cas_reads_per_call": 8
+      },
+      "readings_list_warm": {
+        "median_seconds": 0.009026249987073243,
+        "min_seconds": 0.007896375027485192,
+        "max_seconds": 0.0484911659732461,
+        "samples": 5,
+        "cas_reads_per_call": 6
+      },
+      "retained_readings_after": 2,
+      "grain_digests_direct": {
+        "median_seconds": 0.00015879198326729238,
+        "min_seconds": 0.00015112495748326182,
+        "max_seconds": 0.000303666980471462,
+        "samples": 20,
+        "cas_reads_per_call": 0.0
+      },
+      "grain_digests_memo_warm": {
+        "median_seconds": 1.6600824892520905e-07,
+        "min_seconds": 1.2497184798121452e-07,
+        "max_seconds": 1.8330174498260021e-06,
+        "samples": 20,
+        "cas_reads_per_call": 0.0
+      },
+      "reading_replay_partition_rescan": {
+        "median_seconds": 0.0012769579770974815,
+        "min_seconds": 0.0011916669900529087,
+        "max_seconds": 0.0013317089760676026,
+        "samples": 5,
+        "cas_reads_per_call": 1
+      },
+      "reading_replay_keyed_index": {
+        "median_seconds": 0.000496207969263196,
+        "min_seconds": 0.0004822090268135071,
+        "max_seconds": 0.0005596249829977751,
+        "samples": 5,
+        "cas_reads_per_call": 0
+      }
+    },
+    {
+      "measurements": 2,
+      "retained_readings_before": 40,
+      "run_only": {
+        "median_seconds": 0.024256708042230457,
+        "min_seconds": 0.023163250007200986,
+        "max_seconds": 0.10920379200251773,
+        "samples": 3,
+        "cas_reads_per_call": 19
+      },
+      "activation_fresh": {
+        "median_seconds": 0.0014006670098751783,
+        "min_seconds": 0.0013559999642893672,
+        "max_seconds": 0.001656333974096924,
+        "samples": 3,
+        "cas_reads_per_call": 0
+      },
+      "activation_warm": {
+        "median_seconds": 2.92027834802866e-07,
+        "min_seconds": 2.500019036233425e-07,
+        "max_seconds": 1.2919772416353226e-06,
+        "samples": 5,
+        "cas_reads_per_call": 0
+      },
+      "resolve_fresh_first_evaluation": {
+        "median_seconds": 0.03931345901219174,
+        "min_seconds": 0.03931345901219174,
+        "max_seconds": 0.03931345901219174,
+        "samples": 1,
+        "cas_reads_per_call": 7
+      },
+      "resolve_standing_answer_warm": {
+        "median_seconds": 0.009756416955497116,
+        "min_seconds": 0.0091379169607535,
+        "max_seconds": 0.010250500054098666,
+        "samples": 5,
+        "cas_reads_per_call": 4
+      },
+      "credit_new_run_fresh": {
+        "median_seconds": 0.24824837496271357,
+        "min_seconds": 0.24824837496271357,
+        "max_seconds": 0.24824837496271357,
+        "samples": 1,
+        "cas_reads_per_call": 61
+      },
+      "credit_same_run_retry_warm": {
+        "median_seconds": 0.19597991701448336,
+        "min_seconds": 0.19205620797583833,
+        "max_seconds": 0.20051204203628004,
+        "samples": 5,
+        "cas_reads_per_call": 21
+      },
+      "credit_same_run_retry_fresh_attribution": {
+        "median_seconds": 0.1893496250268072,
+        "min_seconds": 0.18617891700705513,
+        "max_seconds": 0.19964974996400997,
+        "samples": 5,
+        "cas_reads_per_call": 21
+      },
+      "readings_list_fresh": {
+        "median_seconds": 0.05049224995309487,
+        "min_seconds": 0.049521957989782095,
+        "max_seconds": 0.050957916013430804,
+        "samples": 3,
+        "cas_reads_per_call": 88
+      },
+      "readings_list_warm": {
+        "median_seconds": 0.030921416997443885,
+        "min_seconds": 0.029671000025700778,
+        "max_seconds": 0.031312833016272634,
+        "samples": 5,
+        "cas_reads_per_call": 46
+      },
+      "retained_readings_after": 42,
+      "grain_digests_direct": {
+        "median_seconds": 0.0001604169956408441,
+        "min_seconds": 0.0001526669948361814,
+        "max_seconds": 0.0002376250340603292,
+        "samples": 20,
+        "cas_reads_per_call": 0.0
+      },
+      "grain_digests_memo_warm": {
+        "median_seconds": 1.66997779160738e-07,
+        "min_seconds": 1.2497184798121452e-07,
+        "max_seconds": 7.919734343886375e-07,
+        "samples": 20,
+        "cas_reads_per_call": 0.0
+      },
+      "reading_replay_partition_rescan": {
+        "median_seconds": 0.004724208964034915,
+        "min_seconds": 0.0043182080262340605,
+        "max_seconds": 0.004939667007420212,
+        "samples": 5,
+        "cas_reads_per_call": 1
+      },
+      "reading_replay_keyed_index": {
+        "median_seconds": 0.0005315419984981418,
+        "min_seconds": 0.0005078749964013696,
+        "max_seconds": 0.0006847499753348529,
+        "samples": 5,
+        "cas_reads_per_call": 0
+      }
+    },
+    {
+      "measurements": 6,
+      "retained_readings_before": 0,
+      "run_only": {
+        "median_seconds": 0.02649166702758521,
+        "min_seconds": 0.02376729203388095,
+        "max_seconds": 0.09067116695223376,
+        "samples": 3,
+        "cas_reads_per_call": 19
+      },
+      "activation_fresh": {
+        "median_seconds": 0.0013241249835118651,
+        "min_seconds": 0.00132079201284796,
+        "max_seconds": 0.001476417004596442,
+        "samples": 3,
+        "cas_reads_per_call": 0
+      },
+      "activation_warm": {
+        "median_seconds": 2.9098009690642357e-07,
+        "min_seconds": 2.500019036233425e-07,
+        "max_seconds": 1.333013642579317e-06,
+        "samples": 5,
+        "cas_reads_per_call": 0
+      },
+      "resolve_fresh_first_evaluation": {
+        "median_seconds": 0.06543879199307412,
+        "min_seconds": 0.06543879199307412,
+        "max_seconds": 0.06543879199307412,
+        "samples": 1,
+        "cas_reads_per_call": 13
+      },
+      "resolve_standing_answer_warm": {
+        "median_seconds": 0.014297707995865494,
+        "min_seconds": 0.013397709000855684,
+        "max_seconds": 0.018381375004537404,
+        "samples": 5,
+        "cas_reads_per_call": 8
+      },
+      "credit_new_run_fresh": {
+        "median_seconds": 0.051576375029981136,
+        "min_seconds": 0.051576375029981136,
+        "max_seconds": 0.051576375029981136,
+        "samples": 1,
+        "cas_reads_per_call": 26
+      },
+      "credit_same_run_retry_warm": {
+        "median_seconds": 0.039676666958257556,
+        "min_seconds": 0.03936499997507781,
+        "max_seconds": 0.04013812495395541,
+        "samples": 5,
+        "cas_reads_per_call": 26
+      },
+      "credit_same_run_retry_fresh_attribution": {
+        "median_seconds": 0.041427374992053956,
+        "min_seconds": 0.0386714999913238,
+        "max_seconds": 0.05725233297562227,
+        "samples": 5,
+        "cas_reads_per_call": 26
+      },
+      "readings_list_fresh": {
+        "median_seconds": 0.01482870796462521,
+        "min_seconds": 0.014546125021297485,
+        "max_seconds": 0.014961374981794506,
+        "samples": 3,
+        "cas_reads_per_call": 14
+      },
+      "readings_list_warm": {
+        "median_seconds": 0.012969792005605996,
+        "min_seconds": 0.011935084010474384,
+        "max_seconds": 0.01769679196877405,
+        "samples": 5,
+        "cas_reads_per_call": 11
+      },
+      "retained_readings_after": 3,
+      "grain_digests_direct": {
+        "median_seconds": 0.00016902099014259875,
+        "min_seconds": 0.00015470798825845122,
+        "max_seconds": 0.0014114170335233212,
+        "samples": 20,
+        "cas_reads_per_call": 0.0
+      },
+      "grain_digests_memo_warm": {
+        "median_seconds": 1.66997779160738e-07,
+        "min_seconds": 1.2497184798121452e-07,
+        "max_seconds": 1.4170072972774506e-06,
+        "samples": 20,
+        "cas_reads_per_call": 0.0
+      },
+      "reading_replay_partition_rescan": {
+        "median_seconds": 0.0015305840061046183,
+        "min_seconds": 0.0014332080027088523,
+        "max_seconds": 0.0021704580285586417,
+        "samples": 5,
+        "cas_reads_per_call": 1
+      },
+      "reading_replay_keyed_index": {
+        "median_seconds": 0.00048558402340859175,
+        "min_seconds": 0.00047629198525100946,
+        "max_seconds": 0.000518416054546833,
+        "samples": 5,
+        "cas_reads_per_call": 0
+      }
+    },
+    {
+      "measurements": 6,
+      "retained_readings_before": 40,
+      "run_only": {
+        "median_seconds": 0.03191262495238334,
+        "min_seconds": 0.022974457999225706,
+        "max_seconds": 0.09549908404005691,
+        "samples": 3,
+        "cas_reads_per_call": 19
+      },
+      "activation_fresh": {
+        "median_seconds": 0.0013875410077162087,
+        "min_seconds": 0.0013535830075852573,
+        "max_seconds": 0.0016165419947355986,
+        "samples": 3,
+        "cas_reads_per_call": 0
+      },
+      "activation_warm": {
+        "median_seconds": 2.92027834802866e-07,
+        "min_seconds": 2.08965502679348e-07,
+        "max_seconds": 1.0409858077764511e-06,
+        "samples": 5,
+        "cas_reads_per_call": 0
+      },
+      "resolve_fresh_first_evaluation": {
+        "median_seconds": 0.07198420801432803,
+        "min_seconds": 0.07198420801432803,
+        "max_seconds": 0.07198420801432803,
+        "samples": 1,
+        "cas_reads_per_call": 13
+      },
+      "resolve_standing_answer_warm": {
+        "median_seconds": 0.014106666028965265,
+        "min_seconds": 0.013396000023931265,
+        "max_seconds": 0.014806624967604876,
+        "samples": 5,
+        "cas_reads_per_call": 8
+      },
+      "credit_new_run_fresh": {
+        "median_seconds": 0.2787297919858247,
+        "min_seconds": 0.2787297919858247,
+        "max_seconds": 0.2787297919858247,
+        "samples": 1,
+        "cas_reads_per_call": 66
+      },
+      "credit_same_run_retry_warm": {
+        "median_seconds": 0.20501016604248434,
+        "min_seconds": 0.2005842499784194,
+        "max_seconds": 0.21248470904538408,
+        "samples": 5,
+        "cas_reads_per_call": 26
+      },
+      "credit_same_run_retry_fresh_attribution": {
+        "median_seconds": 0.20566899998812005,
+        "min_seconds": 0.20517016598023474,
+        "max_seconds": 0.2098765000118874,
+        "samples": 5,
+        "cas_reads_per_call": 26
+      },
+      "readings_list_fresh": {
+        "median_seconds": 0.05395866697654128,
+        "min_seconds": 0.053085084015037864,
+        "max_seconds": 0.054368042037822306,
+        "samples": 3,
+        "cas_reads_per_call": 94
+      },
+      "readings_list_warm": {
+        "median_seconds": 0.03336595796281472,
+        "min_seconds": 0.033093374979216605,
+        "max_seconds": 0.03365791600663215,
+        "samples": 5,
+        "cas_reads_per_call": 51
+      },
+      "retained_readings_after": 43,
+      "grain_digests_direct": {
+        "median_seconds": 0.00015535400598309934,
+        "min_seconds": 0.00014925003051757812,
+        "max_seconds": 0.00021183403441682458,
+        "samples": 20,
+        "cas_reads_per_call": 0.0
+      },
+      "grain_digests_memo_warm": {
+        "median_seconds": 1.66997779160738e-07,
+        "min_seconds": 1.6600824892520905e-07,
+        "max_seconds": 9.589712135493755e-07,
+        "samples": 20,
+        "cas_reads_per_call": 0.0
+      },
+      "reading_replay_partition_rescan": {
+        "median_seconds": 0.005601582990493625,
+        "min_seconds": 0.004433416994288564,
+        "max_seconds": 0.006165332975797355,
+        "samples": 5,
+        "cas_reads_per_call": 1
+      },
+      "reading_replay_keyed_index": {
+        "median_seconds": 0.0005032909684814513,
+        "min_seconds": 0.0004882089560851455,
+        "max_seconds": 0.0006718329968862236,
+        "samples": 5,
+        "cas_reads_per_call": 0
+      }
+    }
+  ]
+}

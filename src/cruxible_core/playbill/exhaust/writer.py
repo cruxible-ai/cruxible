@@ -16,6 +16,7 @@ from cruxible_core.playbill.cas import ContentAddressedBodyStore
 from cruxible_core.playbill.exhaust.backends import LocalJournalBackend
 from cruxible_core.playbill.exhaust.records import (
     JournalEventKindV1,
+    JournalPartitionHeadV1,
     JournalStreamIdentityV1,
     ProcedureJournalRecordDraftV1,
     StoredProcedureJournalRecordV1,
@@ -61,7 +62,15 @@ class ProcedureExhaustWriter:
         line_spec_digest: str | None = None,
         occurrence_id: str | None = None,
         attempt: int | None = None,
+        expected_head: JournalPartitionHeadV1 | None = None,
     ) -> StoredProcedureJournalRecordV1:
+        """Append one record; ``expected_head`` makes the append a compare-and-set.
+
+        A caller that decided what to append by reading the partition passes
+        the head it read, so a record another writer landed in between refuses
+        this append as a conflict instead of being silently appended after.
+        """
+
         payload_bytes = journal_payload_bytes(payload)
         body_digest = self.bodies.digest_bytes(payload_bytes).tagged
         reservation = make_run_reservation(
@@ -75,7 +84,11 @@ class ProcedureExhaustWriter:
         with self.material_reservations.locked():
             self.material_reservations.reserve_locked(reservation)
             metadata = self.bodies.store(payload_bytes)
-            head = self.journal.read_head(stream, partition_id)
+            head = (
+                self.journal.read_head(stream, partition_id)
+                if expected_head is None
+                else expected_head
+            )
             stored = self.journal.append(
                 ProcedureJournalRecordDraftV1(
                     stream=stream,

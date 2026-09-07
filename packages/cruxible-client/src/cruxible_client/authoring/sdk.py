@@ -3179,6 +3179,61 @@ class ProjectionBlocks:
         )
 
 
+@dataclass(frozen=True)
+class MeasurementOutcome:
+    """One declared measurement's standing after an evaluation or inspection."""
+
+    measurement_name: str
+    status: str
+    reading_status: str
+    verdict: str | None
+    resolution_id: str | None
+    reading_id: str | None
+    detail: str | None
+    raw: api.ProcedureMeasurementRowV1
+
+
+@dataclass(frozen=True)
+class MeasurementBatch:
+    """The result of one measurement evaluation: rows plus the three coordinates."""
+
+    run_id: str | None
+    activation_coordinate: AcceptedCoordinate
+    observation_coordinate: AcceptedCoordinate
+    observation_time: datetime
+    outcomes: tuple[MeasurementOutcome, ...]
+    raw: api.PlaybillProcedureMeasureResultV1
+
+    def __getitem__(self, measurement_name: str) -> MeasurementOutcome:
+        for outcome in self.outcomes:
+            if outcome.measurement_name == measurement_name:
+                return outcome
+        raise KeyError(measurement_name)
+
+
+def _measurement_batch(raw: api.PlaybillProcedureMeasureResultV1) -> MeasurementBatch:
+    return MeasurementBatch(
+        run_id=raw.run_id,
+        activation_coordinate=raw.activation_coordinate,
+        observation_coordinate=raw.observation_coordinate,
+        observation_time=raw.observation_time,
+        outcomes=tuple(
+            MeasurementOutcome(
+                measurement_name=row.measurement_name,
+                status=row.status,
+                reading_status=row.reading_status,
+                verdict=None if row.resolution is None else row.resolution.verdict,
+                resolution_id=None if row.resolution is None else row.resolution.resolution_id,
+                reading_id=None if row.reading is None else row.reading.reading_id,
+                detail=row.detail,
+                raw=row,
+            )
+            for row in raw.rows
+        ),
+        raw=raw,
+    )
+
+
 class Procedure:
     def __init__(
         self, playbill: Playbill, name: str, coordinate: AcceptedCoordinate | None
@@ -3252,6 +3307,68 @@ class Procedure:
         )
         return ProcedureRun(self._playbill, result)
 
+    def measure(
+        self,
+        *,
+        run: ProcedureRun | str | None = None,
+        measurements: Sequence[str] = (),
+        at: AcceptedCoordinate | None = None,
+    ) -> MeasurementBatch:
+        """Evaluate this Procedure's due measurements, crediting ``run`` if given.
+
+        Pending measurements are reported, not evaluated; a standing resolution
+        is returned rather than re-derived; calling again with the same run
+        replays the same reading.
+        """
+
+        run_id = run.run_id if isinstance(run, ProcedureRun) else run
+        if isinstance(run, ProcedureRun) and run_id is None:
+            raise ValueError(
+                "a run without a run_id was refused at admission and cannot be measured"
+            )
+        result = self._playbill._client.measure_playbill_procedure(
+            self._playbill._instance_id,
+            self._name,
+            request=api.PlaybillProcedureMeasureRequestV1(
+                run_id=run_id,
+                measurement_names=tuple(sorted(set(measurements), key=lambda item: item.encode())),
+                evaluation_time=self._playbill._clock(),
+                at=at,
+            ),
+        )
+        return _measurement_batch(result)
+
+    def readings(
+        self,
+        *,
+        run: ProcedureRun | str | None = None,
+        measurements: Sequence[str] = (),
+        limit: int = 50,
+        cursor: str | None = None,
+        at: AcceptedCoordinate | None = None,
+    ) -> api.PlaybillProcedureReadingsResultV1:
+        """Inspect measurement standing and retained readings. Never writes.
+
+        A page's ``cursor`` continues that page's selection: the observation
+        instant and coordinate the first page was answered at travel inside
+        it, so passing the cursor back with the same ``run``/``measurements``
+        pages the same selection even though this call stamps a fresh clock.
+        """
+
+        run_id = run.run_id if isinstance(run, ProcedureRun) else run
+        return self._playbill._client.list_playbill_procedure_readings(
+            self._playbill._instance_id,
+            self._name,
+            request=api.PlaybillProcedureReadingsRequestV1(
+                run_id=run_id,
+                measurement_names=tuple(sorted(set(measurements), key=lambda item: item.encode())),
+                evaluation_time=self._playbill._clock(),
+                at=at,
+                limit=limit,
+                cursor=cursor,
+            ),
+        )
+
 
 class ProcedureRun:
     def __init__(self, playbill: Playbill, raw: api.PlaybillProcedureRunState) -> None:
@@ -3305,6 +3422,25 @@ class ProcedureRun:
         )
         return self
 
+    def measure(self, *, measurements: Sequence[str] = ()) -> MeasurementBatch:
+        """Credit this run's exact grain with every due measurement's standing answer."""
+
+        if self.run_id is None:
+            raise ValueError(
+                "a run without a run_id was refused at admission and cannot be measured"
+            )
+        name = str(self._raw.procedure_identity.get("name", ""))
+        result = self._playbill._client.measure_playbill_procedure(
+            self._playbill._instance_id,
+            name,
+            request=api.PlaybillProcedureMeasureRequestV1(
+                run_id=self.run_id,
+                measurement_names=tuple(sorted(set(measurements), key=lambda item: item.encode())),
+                evaluation_time=self._playbill._clock(),
+            ),
+        )
+        return _measurement_batch(result)
+
 
 __all__ = [
     "ChangeSetDraft",
@@ -3312,6 +3448,8 @@ __all__ = [
     "ClaimTypeDraft",
     "Intent",
     "KnowledgeCard",
+    "MeasurementBatch",
+    "MeasurementOutcome",
     "NextPage",
     "Playbill",
     "Prediction",

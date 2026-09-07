@@ -223,6 +223,16 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_procedure_run_status": (
         "Use when you need one Procedure run's typed outcomes and exact next operation."
     ),
+    "cruxible_playbill_procedure_measure": (
+        "Use when a Procedure's declared measurements are due: evaluate them from real evidence "
+        "at an explicit observation instant, persist the resolution, and credit one finalized "
+        "run's exact grain. Retrying replays the standing answer; pending and expired windows "
+        "write nothing."
+    ),
+    "cruxible_playbill_procedure_readings": (
+        "Use when you need each measurement's standing (pending, expired, resolved) and the "
+        "retained exact-grain readings that credit real runs. Read-only and paginated."
+    ),
     "cruxible_playbill_line_run": (
         "Trigger one due accepted Line occurrence. Reuse a returned occurrence id only as an "
         "idempotency assertion; the daemon derives occurrence identity."

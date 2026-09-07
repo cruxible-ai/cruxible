@@ -113,6 +113,9 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
             "service_accept_fixed_playbill_curation",
         }
     ),
+    "cruxible_core/service/playbill_measurements.py": frozenset(
+        {"service_measure_playbill_procedure"}
+    ),
     "cruxible_core/service/playbill_predictions.py": frozenset(
         {"service_predict_playbill", "service_settle_playbill_prediction"}
     ),

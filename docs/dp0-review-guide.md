@@ -102,6 +102,8 @@ playbill procedure bind
 playbill procedure readiness
 playbill procedure run
 playbill procedure status
+playbill procedure measure
+playbill procedure readings
 playbill provider seed
 playbill query get
 playbill query list
@@ -225,6 +227,8 @@ POST /api/v1/{instance_id}/playbill/procedures/{name}/bind
 POST /api/v1/{instance_id}/playbill/procedures/{name}/runs
 POST /api/v1/{instance_id}/playbill/lines/{line_identity_digest}/runs
 GET  /api/v1/{instance_id}/playbill/procedure-runs/{run_id}
+POST /api/v1/{instance_id}/playbill/procedures/{name}/measurements
+POST /api/v1/{instance_id}/playbill/procedures/{name}/readings
 POST /api/v1/{instance_id}/playbill/projections/sync-backing
 POST /api/v1/{instance_id}/playbill/claim-attestations
 POST /api/v1/{instance_id}/playbill/claim-attestations/recover
@@ -303,6 +307,8 @@ cruxible_playbill_procedure_readiness
 cruxible_playbill_procedure_bind
 cruxible_playbill_procedure_run
 cruxible_playbill_procedure_run_status
+cruxible_playbill_procedure_measure
+cruxible_playbill_procedure_readings
 cruxible_playbill_line_run
 cruxible_playbill_predict
 cruxible_playbill_settle

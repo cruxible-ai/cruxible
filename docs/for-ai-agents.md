@@ -378,6 +378,80 @@ Cite those, not your own reading of the file. A direct Source run is identified
 by its evaluation instant: re-running at the same instant replays the retained
 observation, and reading a changed source means running at a later one.
 
+### Measurements and readings
+
+A Procedure may declare measurements: an accepted query with an expectation, a
+Claim statement's acceptable verdicts, or the ClaimAttestations on a statement.
+The generation that accepts the Procedure ACTIVATES them, and the window
+(`check_after`, `expires_after`) runs from that acceptance instant, never from a
+run or a poll. Evaluating is a separate, explicit step, so delayed measurements
+complete after the run that they will credit has returned:
+
+~~~python
+proc = pb.accepted_procedure("release-guard")
+run = proc.run(release="2.4.0")           # execution outcome: run.status
+
+batch = proc.measure(run=run)             # observation instant = pb's clock
+batch["rollout-healthy"].status           # "pending" | "expired" | "resolved"
+batch["rollout-healthy"].reading_status   # "no_resolution" | "recorded" | "replayed"
+                                          # | "grain_not_occurred" | "run_not_final"
+
+# Later, once check_after has elapsed: the same call is the resume.
+batch = proc.measure(run=run)
+outcome = batch["rollout-healthy"]
+outcome.verdict, outcome.resolution_id, outcome.reading_id
+batch = proc.measure(run=run)             # retry: "replayed", same reading id
+
+page = proc.readings(measurements=("rollout-healthy",), limit=50)   # read-only
+page.contracts[0].resolution              # standing answer + journal record digest
+while page.cursor:                        # the cursor carries page 1's observation
+    page = proc.readings(measurements=("rollout-healthy",), limit=50, cursor=page.cursor)
+~~~
+
+The same loop from nothing, declaring the measurement it later evaluates:
+
+~~~python
+from cruxible_client.contracts.procedures.measurements import (
+    AcceptedQueryProcedureMeasurementV1,
+    ProcedureMeasurementDeclarationV1,
+    ProcedureMeasurementExpectationV1,
+)
+
+definition = ...                          # any ProcedureDefinitionV3/V4 (see above)
+definition = definition.model_copy(update={"measurements": (
+    ProcedureMeasurementDeclarationV1(
+        name="rows-present",
+        subject_grain="procedure_unit",
+        measurement=AcceptedQueryProcedureMeasurementV1(
+            query=definition.nodes[0].query,          # the pinned QueryDefinition
+            expect=ProcedureMeasurementExpectationV1(min_count=1),
+        ),
+        check_after=CanonicalDurationV1(microseconds=0),
+        expires_after=CanonicalDurationV1(microseconds=86_400_000_000),
+    ),
+)})
+accepted = pb.procedure(definition=definition, activation_policy="abort", retire=False)
+# ... submit and approve the change set as usual; acceptance activates the window
+proc = pb.accepted_procedure("release-guard")
+run = proc.run()
+batch = proc.measure(run=run)             # "resolved" + "recorded" once due
+batch = proc.measure(run=run)             # fresh request attribution: "replayed"
+~~~
+
+A pending measurement reports and writes nothing; an expired one reports and
+writes nothing; only a due one gathers evidence and resolves. The standing
+resolution governs every later call until it is overturned -- a later
+`measure` reports the standing answer, it does not evaluate fresh evidence --
+and a reading is minted only for the grain the named run really reached: a
+succeeded unit, a node that fired and succeeded, an arm the guard actually
+selected. A retry is any later call by the same principal: the per-request
+attribution the SDK re-mints is not part of the reading, the retained record
+keeps its original attribution, and two concurrent calls land one reading. A
+completed run does not satisfy a measurement, and a failed run does not
+contradict one; the verdict comes from the evidence. Resolutions and readings
+are operational exhaust in the Procedure journal, not accepted state, and grant
+no authority.
+
 ## MCP and CLI
 
 The MCP tool set is Playbill-only and mirrors the same service core as CLI and

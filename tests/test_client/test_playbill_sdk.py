@@ -1680,3 +1680,98 @@ def test_a_string_value_reads_the_object_kind_from_the_sets_own_definition(
     assert isinstance(claim.statement.object, SubjectClaimObject)
     assert claim.statement.object.address.artifact_path == "subjects/sec.package/click.json"
     assert client.claim_type_reads == reads_before, "the set's own definition answered"
+
+
+def test_sdk_measure_and_readings_carry_the_run_and_observation_basis(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    observation = datetime(2026, 8, 24, 12, tzinfo=UTC)
+    coordinate = AcceptedCoordinate.model_validate(_COORDINATE.model_dump(mode="json"))
+
+    class MeasureClient(_Client):
+        def __init__(self) -> None:
+            super().__init__()
+            self.measure_requests: list[api.PlaybillProcedureMeasureRequestV1] = []
+            self.readings_requests: list[api.PlaybillProcedureReadingsRequestV1] = []
+
+        def measure_playbill_procedure(
+            self,
+            _instance_id: str,
+            name: str,
+            *,
+            request: api.PlaybillProcedureMeasureRequestV1,
+        ) -> api.PlaybillProcedureMeasureResultV1:
+            self.measure_requests.append(request)
+            return api.PlaybillProcedureMeasureResultV1(
+                procedure_identity={"kind": "Procedure", "name": name},
+                procedure_artifact_digest=_DIGEST,
+                activation_coordinate=coordinate,
+                observation_coordinate=coordinate,
+                observation_time=observation,
+                run_id=request.run_id,
+                rows=(
+                    api.ProcedureMeasurementRowV1(
+                        measurement_name="rows-present",
+                        measurement_kind="accepted_query",
+                        contract_id="RSC-" + "a" * 32,
+                        activation_id="RSA-" + "a" * 32,
+                        subject_grain="procedure_unit",
+                        subject=SemanticAddress.procedure_unit("procedures/daily-summary.json"),
+                        status="pending",
+                        eligibility=api.ProcedureMeasurementEligibilityV1(
+                            activation_coordinate=coordinate,
+                            activated_at=observation,
+                            check_at=observation,
+                            expires_at=observation.replace(hour=13),
+                            observation_coordinate=coordinate,
+                            observation_time=observation,
+                            window="before_check",
+                        ),
+                        reading_status="no_resolution",
+                        detail="the measurement window has not opened",
+                    ),
+                ),
+            )
+
+        def list_playbill_procedure_readings(
+            self,
+            _instance_id: str,
+            name: str,
+            *,
+            request: api.PlaybillProcedureReadingsRequestV1,
+        ) -> api.PlaybillProcedureReadingsResultV1:
+            self.readings_requests.append(request)
+            return api.PlaybillProcedureReadingsResultV1(
+                procedure_identity={"kind": "Procedure", "name": name},
+                procedure_artifact_digest=_DIGEST,
+                activation_coordinate=coordinate,
+                observation_coordinate=coordinate,
+                observation_time=observation,
+                contracts=(),
+                readings=(),
+            )
+
+    client = MeasureClient()
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_test",
+        workspace=tmp_path,
+        clock=lambda: observation,
+    )
+    procedure = pb.accepted_procedure("daily-summary")
+
+    batch = procedure.measure(run="RUN-" + "a" * 64, measurements=("rows-present",))
+    assert batch.run_id == "RUN-" + "a" * 64
+    assert batch["rows-present"].status == "pending"
+    assert batch["rows-present"].reading_status == "no_resolution"
+    with pytest.raises(KeyError):
+        batch["absent"]
+    sent = client.measure_requests[0]
+    assert sent.run_id == "RUN-" + "a" * 64
+    assert sent.measurement_names == ("rows-present",)
+    assert sent.evaluation_time == observation
+
+    page = procedure.readings(measurements=("rows-present",), limit=10)
+    assert page.readings == ()
+    listed = client.readings_requests[0]
+    assert listed.limit == 10 and listed.measurement_names == ("rows-present",)
+    assert listed.evaluation_time == observation

@@ -175,8 +175,14 @@
   "/api/v1/{instance_id}/playbill/procedures/{name}/bind": {
     "POST": "PlaybillProcedureBindResult"
   },
+  "/api/v1/{instance_id}/playbill/procedures/{name}/measurements": {
+    "POST": "PlaybillProcedureMeasureResultV1"
+  },
   "/api/v1/{instance_id}/playbill/procedures/{name}/readiness": {
     "GET": "PlaybillProcedureReadiness"
+  },
+  "/api/v1/{instance_id}/playbill/procedures/{name}/readings": {
+    "POST": "PlaybillProcedureReadingsResultV1"
   },
   "/api/v1/{instance_id}/playbill/procedures/{name}/runs": {
     "POST": "PlaybillProcedureRunState"

@@ -28,10 +28,6 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
-from cruxible_client.contracts.procedures.graph import (
-    compute_procedure_node_digests_v3,
-    compute_procedure_node_digests_v4,
-)
 from cruxible_client.contracts.procedures.measurements import (
     ClaimAttestationProcedureMeasurementV1,
     ClaimStatementProcedureMeasurementV1,
@@ -42,11 +38,13 @@ from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
 from cruxible_core.playbill.exhaust import (
+    JournalPartitionHeadV1,
     JournalStreamIdentityV1,
     ProcedureExhaustWriter,
     StoredProcedureJournalRecordV1,
     parse_journal_payload,
 )
+from cruxible_core.playbill.procedures.graph_digests import cached_node_digests
 from cruxible_core.playbill.projection import AcceptedCoordinate
 
 ResolutionVerdictV1 = Literal["satisfied", "contradicted", "indeterminate"]
@@ -343,10 +341,9 @@ def derive_resolution_activations(
 
     activated_at = ensure_utc(activated_at)
     definition = accepted.procedure.definition
-    node_digests = (
-        compute_procedure_node_digests_v3(definition)
-        if definition.graph_format == 3
-        else compute_procedure_node_digests_v4(definition)
+    node_digests = cached_node_digests(
+        definition,
+        definition_digest=accepted.procedure.definition_digest,
     )
     activations: list[ResolutionContractActivationV1] = []
     for declaration in definition.measurements:
@@ -1167,7 +1164,16 @@ def append_procedure_resolution(
     activation: ResolutionContractActivationV1 | ResolutionContractActivationV2,
     resolution: ProcedureResolutionV1 | ProcedureResolutionV2,
     stream: JournalStreamIdentityV1,
+    expected_head: JournalPartitionHeadV1 | None = None,
 ) -> StoredProcedureJournalRecordV1:
+    """Append one resolution; ``expected_head`` makes it a compare-and-set.
+
+    The sequence and closed-contract checks read the partition as it is now;
+    a producer that decided the sequence from an earlier read passes the head
+    of that read, so a competing resolution landed in between refuses this
+    append as a journal conflict instead of retaining a second answer.
+    """
+
     partition_id = resolution_contract_partition_id(activation)
     law = evaluate_procedure_resolution(activation, resolution)
     if law.verdict == "refused":
@@ -1194,6 +1200,7 @@ def append_procedure_resolution(
         actor_context=resolution.actor_context,
         recorded_at=resolution.recorded_at,
         payload=resolution.model_dump(mode="json"),
+        expected_head=expected_head,
     )
 
 

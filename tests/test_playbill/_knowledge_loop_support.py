@@ -123,6 +123,13 @@ def seed_claims(tmp_path: Path) -> tuple[PlaybillInstance, GeneratedKeyMaterial]
     """Return an instance holding two accepted work-item status Claims."""
 
     instance, owner = initialize_local(tmp_path)
+    seed_claims_into(instance, owner)
+    return instance, owner
+
+
+def seed_claims_into(instance: PlaybillInstance, owner: GeneratedKeyMaterial) -> None:
+    """Accept the Claim surface and two work-item status Claims into ``instance``."""
+
     source_id = "fixture.work-items"
     _seed_claim_surface(
         instance,
@@ -169,7 +176,6 @@ def seed_claims(tmp_path: Path) -> tuple[PlaybillInstance, GeneratedKeyMaterial]
         timestamp=TIMESTAMP,
     )
     activate(instance, owner, second)
-    return instance, owner
 
 
 def work_item_query(

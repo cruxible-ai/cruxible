@@ -1223,6 +1223,38 @@ async def procedure_run_status(
 
 
 @router.post(
+    "/{instance_id}/playbill/procedures/{name}/measurements",
+    response_model=contracts.PlaybillProcedureMeasureResultV1,
+)
+def procedure_measure(
+    instance_id: str,
+    name: str,
+    req: contracts.PlaybillProcedureMeasureRequestV1,
+) -> contracts.PlaybillProcedureMeasureResultV1:
+    return playbill_api.playbill_procedure_measure(
+        resolve_server_instance_id(instance_id),
+        name,
+        request=req,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/procedures/{name}/readings",
+    response_model=contracts.PlaybillProcedureReadingsResultV1,
+)
+async def procedure_readings(
+    instance_id: str,
+    name: str,
+    req: contracts.PlaybillProcedureReadingsRequestV1,
+) -> contracts.PlaybillProcedureReadingsResultV1:
+    return playbill_api.playbill_procedure_readings(
+        resolve_server_instance_id(instance_id),
+        name,
+        request=req,
+    )
+
+
+@router.post(
     "/{instance_id}/playbill/next",
     response_model=contracts.PlaybillNextResult,
 )

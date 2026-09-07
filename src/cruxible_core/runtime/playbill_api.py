@@ -214,6 +214,10 @@ from cruxible_core.service.playbill_discovery import (
     service_discover_playbill_semantic,
 )
 from cruxible_core.service.playbill_floor import MANIFEST_PATH, service_export_playbill_floor
+from cruxible_core.service.playbill_measurements import (
+    service_list_playbill_procedure_readings,
+    service_measure_playbill_procedure,
+)
 from cruxible_core.service.playbill_next import (
     PlaybillNextRequestV1,
     service_playbill_next,
@@ -1772,6 +1776,49 @@ def playbill_procedure_run_status(
         run_id=run_id,
     )
     return contracts.PlaybillProcedureRunState.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_procedure_measure(
+    instance_id: str,
+    name: str,
+    *,
+    request: contracts.PlaybillProcedureMeasureRequestV1,
+) -> contracts.PlaybillProcedureMeasureResultV1:
+    """Evaluate due measurements, persist their resolutions, and credit one run.
+
+    The served due/pending/resume door: a retry replays the standing
+    resolution and reading rather than minting a second one, and a crash
+    between the two appends resumes at the reading.
+    """
+
+    check_permission("cruxible_playbill_procedure_measure", instance_id=instance_id)
+    actor_context = _actor_context()
+    if actor_context is None:
+        raise AuthenticationError("Measurement evaluation requires an authenticated actor identity")
+    return service_measure_playbill_procedure(
+        get_playbill_manager().get(instance_id),
+        name=name,
+        request=request,
+        actor_context=actor_context,
+        recorded_at=actor_context.timestamp,
+    )
+
+
+def playbill_procedure_readings(
+    instance_id: str,
+    name: str,
+    *,
+    request: contracts.PlaybillProcedureReadingsRequestV1,
+) -> contracts.PlaybillProcedureReadingsResultV1:
+    """Inspect measurement standing and retained readings. Never writes."""
+
+    check_permission("cruxible_playbill_procedure_readings", instance_id=instance_id)
+    return service_list_playbill_procedure_readings(
+        get_playbill_manager().get(instance_id),
+        name=name,
+        request=request,
+        evaluation_time=_evaluation_time(None),
+    )
 
 
 def playbill_line_run(

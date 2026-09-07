@@ -108,6 +108,17 @@
         "line_trigger_policy"
       ]
     },
+    "ProcedureMeasurementRefusalCodeV1": {
+      "values": [
+        "measurement_not_declared",
+        "measurement_run_mismatch",
+        "measurement_subject_absent",
+        "measurement_subject_mismatch",
+        "measurement_basis_unsupported",
+        "measurement_reading_conflict",
+        "measurement_resolution_conflict"
+      ]
+    },
     "ProviderLaneUnavailableCodeV1": {
       "values": [
         "provider_process_lease_invalid",
@@ -24205,6 +24216,1019 @@
         "accepted_readiness"
       ]
     },
+    "PlaybillProcedureMeasureRequestV1": {
+      "fields": {
+        "at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "evaluation_time": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "evaluation_time",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Evaluation Time"
+          }
+        },
+        "measurement_names": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "measurement_names",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Measurement Names",
+            "type": "array"
+          }
+        },
+        "run_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "run_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Run Id"
+          }
+        },
+        "tag": {
+          "default": "playbill-procedure-measure-request-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-procedure-measure-request-v1",
+            "default": "playbill-procedure-measure-request-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Evaluate the due measurements of one accepted Procedure, optionally for one run.\n\n``evaluation_time`` is the explicit OBSERVATION INSTANT; ``at`` is the\nOBSERVATION COORDINATE. Both default to the daemon's current view when\nomitted. ``run_id`` names the real run whose grain a reading should\ncredit; without it only the contract-level resolution is produced.",
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "evaluation_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Evaluation Time"
+          },
+          "measurement_names": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Measurement Names",
+            "type": "array"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Run Id"
+          },
+          "tag": {
+            "const": "playbill-procedure-measure-request-v1",
+            "default": "playbill-procedure-measure-request-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "title": "PlaybillProcedureMeasureRequestV1",
+        "type": "object"
+      },
+      "required_fields": []
+    },
+    "PlaybillProcedureMeasureResultV1": {
+      "fields": {
+        "activation_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "activation_coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "observation_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "observation_coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "observation_time": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "observation_time",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Observation Time",
+            "type": "string"
+          }
+        },
+        "procedure_artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "procedure_artifact_digest",
+          "required": true,
+          "schema": {
+            "title": "Procedure Artifact Digest",
+            "type": "string"
+          }
+        },
+        "procedure_identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "procedure_identity",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ArtifactIdentity"
+          }
+        },
+        "rows": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "rows",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/ProcedureMeasurementRowV1"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "run_admission_coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "run_admission_coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "run_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "run_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Run Id"
+          }
+        },
+        "tag": {
+          "default": "playbill-procedure-measure-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-procedure-measure-result-v1",
+            "default": "playbill-procedure-measure-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "ProcedureMeasurementEligibilityV1": {
+            "additionalProperties": false,
+            "description": "The window the producer honours, and where this evaluation stood in it.\n\n``activated_at`` reads the signed acceptance instant of the declaring\ngeneration; ``check_at`` and ``expires_at`` are that instant plus the\ndeclaration's ``check_after`` and ``expires_after``. The producer evaluates\nonly inside ``[check_at, expires_at)``: before it the measurement is\npending, at or after ``expires_at`` it is expired, and neither writes a\nresolution. The frozen resolution law is narrower than this producer rule\nand is left exactly as it was.",
+            "properties": {
+              "activated_at": {
+                "format": "date-time",
+                "title": "Activated At",
+                "type": "string"
+              },
+              "activation_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "check_at": {
+                "format": "date-time",
+                "title": "Check At",
+                "type": "string"
+              },
+              "expires_at": {
+                "format": "date-time",
+                "title": "Expires At",
+                "type": "string"
+              },
+              "observation_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "observation_time": {
+                "format": "date-time",
+                "title": "Observation Time",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-measurement-eligibility-v1",
+                "default": "playbill-procedure-measurement-eligibility-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "window": {
+                "enum": [
+                  "before_check",
+                  "open",
+                  "closed"
+                ],
+                "title": "Window",
+                "type": "string"
+              }
+            },
+            "required": [
+              "activation_coordinate",
+              "activated_at",
+              "check_at",
+              "expires_at",
+              "observation_coordinate",
+              "observation_time",
+              "window"
+            ],
+            "title": "ProcedureMeasurementEligibilityV1",
+            "type": "object"
+          },
+          "ProcedureMeasurementResolutionSummaryV1": {
+            "additionalProperties": false,
+            "description": "The standing resolution for one activation, with its retrievable record.",
+            "properties": {
+              "contract_id": {
+                "title": "Contract Id",
+                "type": "string"
+              },
+              "evidence_refs": {
+                "default": [],
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Evidence Refs",
+                "type": "array"
+              },
+              "journal_partition_id": {
+                "title": "Journal Partition Id",
+                "type": "string"
+              },
+              "journal_record_digest": {
+                "title": "Journal Record Digest",
+                "type": "string"
+              },
+              "note": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Note"
+              },
+              "observed_at": {
+                "format": "date-time",
+                "title": "Observed At",
+                "type": "string"
+              },
+              "recorded_at": {
+                "format": "date-time",
+                "title": "Recorded At",
+                "type": "string"
+              },
+              "resolution_digest": {
+                "title": "Resolution Digest",
+                "type": "string"
+              },
+              "resolution_id": {
+                "title": "Resolution Id",
+                "type": "string"
+              },
+              "sequence": {
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-procedure-measurement-resolution-summary-v1",
+                "default": "playbill-procedure-measurement-resolution-summary-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "value": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Value"
+              },
+              "verdict": {
+                "enum": [
+                  "satisfied",
+                  "contradicted",
+                  "indeterminate"
+                ],
+                "title": "Verdict",
+                "type": "string"
+              },
+              "written_now": {
+                "title": "Written Now",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "resolution_id",
+              "contract_id",
+              "sequence",
+              "verdict",
+              "observed_at",
+              "recorded_at",
+              "journal_partition_id",
+              "journal_record_digest",
+              "resolution_digest",
+              "written_now"
+            ],
+            "title": "ProcedureMeasurementResolutionSummaryV1",
+            "type": "object"
+          },
+          "ProcedureMeasurementRowV1": {
+            "additionalProperties": false,
+            "description": "One declared measurement's outcome for this evaluation request.",
+            "properties": {
+              "activation_id": {
+                "title": "Activation Id",
+                "type": "string"
+              },
+              "contract_id": {
+                "title": "Contract Id",
+                "type": "string"
+              },
+              "detail": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Detail"
+              },
+              "eligibility": {
+                "$ref": "#/$defs/ProcedureMeasurementEligibilityV1"
+              },
+              "measurement_kind": {
+                "enum": [
+                  "accepted_query",
+                  "claim_statement",
+                  "claim_attestation"
+                ],
+                "title": "Measurement Kind",
+                "type": "string"
+              },
+              "measurement_name": {
+                "title": "Measurement Name",
+                "type": "string"
+              },
+              "reading": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureReadingSummaryV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "reading_status": {
+                "enum": [
+                  "not_requested",
+                  "recorded",
+                  "replayed",
+                  "run_not_final",
+                  "grain_not_occurred",
+                  "no_resolution"
+                ],
+                "title": "Reading Status",
+                "type": "string"
+              },
+              "resolution": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureMeasurementResolutionSummaryV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "status": {
+                "enum": [
+                  "pending",
+                  "expired",
+                  "resolved"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "subject": {
+                "$ref": "#/$defs/SemanticAddress"
+              },
+              "subject_grain": {
+                "enum": [
+                  "procedure_unit",
+                  "node",
+                  "arm"
+                ],
+                "title": "Subject Grain",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-measurement-row-v1",
+                "default": "playbill-procedure-measurement-row-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "measurement_name",
+              "measurement_kind",
+              "contract_id",
+              "activation_id",
+              "subject_grain",
+              "subject",
+              "status",
+              "eligibility",
+              "reading_status"
+            ],
+            "title": "ProcedureMeasurementRowV1",
+            "type": "object"
+          },
+          "ProcedureReadingSummaryV1": {
+            "additionalProperties": false,
+            "description": "One retained exact-grain reading and the run it credits.",
+            "properties": {
+              "accepted_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "arm_label": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "on_true",
+                      "on_false"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Arm Label"
+              },
+              "claim_attestation_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Claim Attestation Digests",
+                "type": "array"
+              },
+              "contract_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Id"
+              },
+              "definition_digest": {
+                "title": "Definition Digest",
+                "type": "string"
+              },
+              "episode_ref": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Episode Ref"
+              },
+              "evidence_refs": {
+                "default": [],
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Evidence Refs",
+                "type": "array"
+              },
+              "from_node_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "From Node Id"
+              },
+              "grade": {
+                "enum": [
+                  "contract",
+                  "observation"
+                ],
+                "title": "Grade",
+                "type": "string"
+              },
+              "idempotency_key": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Idempotency Key"
+              },
+              "journal_partition_id": {
+                "title": "Journal Partition Id",
+                "type": "string"
+              },
+              "journal_record_digest": {
+                "title": "Journal Record Digest",
+                "type": "string"
+              },
+              "measurement_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Measurement Name"
+              },
+              "node_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Node Id"
+              },
+              "observed_at": {
+                "format": "date-time",
+                "title": "Observed At",
+                "type": "string"
+              },
+              "reading_digest": {
+                "title": "Reading Digest",
+                "type": "string"
+              },
+              "reading_id": {
+                "title": "Reading Id",
+                "type": "string"
+              },
+              "recorded_at": {
+                "format": "date-time",
+                "title": "Recorded At",
+                "type": "string"
+              },
+              "resolution_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Resolution Id"
+              },
+              "run_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Run Id"
+              },
+              "run_receipt_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Run Receipt Digest"
+              },
+              "subject": {
+                "$ref": "#/$defs/SemanticAddress"
+              },
+              "subject_grain": {
+                "enum": [
+                  "procedure_unit",
+                  "node",
+                  "arm"
+                ],
+                "title": "Subject Grain",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-reading-summary-v1",
+                "default": "playbill-procedure-reading-summary-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "value": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Value"
+              },
+              "verdict": {
+                "enum": [
+                  "satisfied",
+                  "contradicted",
+                  "indeterminate"
+                ],
+                "title": "Verdict",
+                "type": "string"
+              }
+            },
+            "required": [
+              "reading_id",
+              "reading_digest",
+              "journal_partition_id",
+              "journal_record_digest",
+              "subject_grain",
+              "subject",
+              "accepted_coordinate",
+              "definition_digest",
+              "grade",
+              "verdict",
+              "observed_at",
+              "recorded_at",
+              "actor_id"
+            ],
+            "title": "ProcedureReadingSummaryV1",
+            "type": "object"
+          },
+          "SemanticAddress": {
+            "additionalProperties": false,
+            "description": "Stable meaning identity, independent of source-line presentation.",
+            "properties": {
+              "artifact_path": {
+                "title": "Artifact Path",
+                "type": "string"
+              },
+              "selector": {
+                "$ref": "#/$defs/SemanticSelector"
+              },
+              "tag": {
+                "const": "playbill-semantic-address-v1",
+                "default": "playbill-semantic-address-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifact_path",
+              "selector"
+            ],
+            "title": "SemanticAddress",
+            "type": "object"
+          },
+          "SemanticSelector": {
+            "additionalProperties": false,
+            "properties": {
+              "scheme": {
+                "title": "Scheme",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "scheme",
+              "value"
+            ],
+            "title": "SemanticSelector",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "activation_coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "observation_coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "observation_time": {
+            "format": "date-time",
+            "title": "Observation Time",
+            "type": "string"
+          },
+          "procedure_artifact_digest": {
+            "title": "Procedure Artifact Digest",
+            "type": "string"
+          },
+          "procedure_identity": {
+            "$ref": "#/$defs/ArtifactIdentity"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/$defs/ProcedureMeasurementRowV1"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "run_admission_coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Run Id"
+          },
+          "tag": {
+            "const": "playbill-procedure-measure-result-v1",
+            "default": "playbill-procedure-measure-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "procedure_identity",
+          "procedure_artifact_digest",
+          "activation_coordinate",
+          "observation_coordinate",
+          "observation_time",
+          "rows"
+        ],
+        "title": "PlaybillProcedureMeasureResultV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "activation_coordinate",
+        "observation_coordinate",
+        "observation_time",
+        "procedure_artifact_digest",
+        "procedure_identity",
+        "rows"
+      ]
+    },
     "PlaybillProcedureReadiness": {
       "fields": {
         "coordinate": {
@@ -24449,6 +25473,1095 @@
         "required_slots",
         "state",
         "unsupported_nodes"
+      ]
+    },
+    "PlaybillProcedureReadingsRequestV1": {
+      "fields": {
+        "at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cursor"
+          }
+        },
+        "evaluation_time": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "evaluation_time",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Evaluation Time"
+          }
+        },
+        "limit": {
+          "default": 50,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "measurement_names": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "measurement_names",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Measurement Names",
+            "type": "array"
+          }
+        },
+        "run_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "run_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Run Id"
+          }
+        },
+        "subject_grain": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "subject_grain",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "procedure_unit",
+                  "node",
+                  "arm"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Subject Grain"
+          }
+        },
+        "tag": {
+          "default": "playbill-procedure-readings-request-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-procedure-readings-request-v1",
+            "default": "playbill-procedure-readings-request-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Bounded, paginated inspection of retained readings. Never writes.",
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cursor"
+          },
+          "evaluation_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Evaluation Time"
+          },
+          "limit": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "measurement_names": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Measurement Names",
+            "type": "array"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Run Id"
+          },
+          "subject_grain": {
+            "anyOf": [
+              {
+                "enum": [
+                  "procedure_unit",
+                  "node",
+                  "arm"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Subject Grain"
+          },
+          "tag": {
+            "const": "playbill-procedure-readings-request-v1",
+            "default": "playbill-procedure-readings-request-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "title": "PlaybillProcedureReadingsRequestV1",
+        "type": "object"
+      },
+      "required_fields": []
+    },
+    "PlaybillProcedureReadingsResultV1": {
+      "fields": {
+        "activation_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "activation_coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "contracts": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "contracts",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/ProcedureMeasurementContractStatusV1"
+            },
+            "title": "Contracts",
+            "type": "array"
+          }
+        },
+        "cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cursor"
+          }
+        },
+        "observation_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "observation_coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "observation_time": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "observation_time",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Observation Time",
+            "type": "string"
+          }
+        },
+        "procedure_artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "procedure_artifact_digest",
+          "required": true,
+          "schema": {
+            "title": "Procedure Artifact Digest",
+            "type": "string"
+          }
+        },
+        "procedure_identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "procedure_identity",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ArtifactIdentity"
+          }
+        },
+        "readings": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "readings",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/ProcedureReadingSummaryV1"
+            },
+            "title": "Readings",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "default": "playbill-procedure-readings-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-procedure-readings-result-v1",
+            "default": "playbill-procedure-readings-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "ProcedureMeasurementContractStatusV1": {
+            "additionalProperties": false,
+            "description": "Read-only standing of one activation at the inspection instant.",
+            "properties": {
+              "activation_id": {
+                "title": "Activation Id",
+                "type": "string"
+              },
+              "contract_id": {
+                "title": "Contract Id",
+                "type": "string"
+              },
+              "eligibility": {
+                "$ref": "#/$defs/ProcedureMeasurementEligibilityV1"
+              },
+              "measurement_kind": {
+                "enum": [
+                  "accepted_query",
+                  "claim_statement",
+                  "claim_attestation"
+                ],
+                "title": "Measurement Kind",
+                "type": "string"
+              },
+              "measurement_name": {
+                "title": "Measurement Name",
+                "type": "string"
+              },
+              "reading_count": {
+                "minimum": 0,
+                "title": "Reading Count",
+                "type": "integer"
+              },
+              "resolution": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureMeasurementResolutionSummaryV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "status": {
+                "enum": [
+                  "pending",
+                  "expired",
+                  "resolved"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "subject": {
+                "$ref": "#/$defs/SemanticAddress"
+              },
+              "subject_grain": {
+                "enum": [
+                  "procedure_unit",
+                  "node",
+                  "arm"
+                ],
+                "title": "Subject Grain",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-measurement-contract-status-v1",
+                "default": "playbill-procedure-measurement-contract-status-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "measurement_name",
+              "measurement_kind",
+              "contract_id",
+              "activation_id",
+              "subject_grain",
+              "subject",
+              "status",
+              "eligibility",
+              "reading_count"
+            ],
+            "title": "ProcedureMeasurementContractStatusV1",
+            "type": "object"
+          },
+          "ProcedureMeasurementEligibilityV1": {
+            "additionalProperties": false,
+            "description": "The window the producer honours, and where this evaluation stood in it.\n\n``activated_at`` reads the signed acceptance instant of the declaring\ngeneration; ``check_at`` and ``expires_at`` are that instant plus the\ndeclaration's ``check_after`` and ``expires_after``. The producer evaluates\nonly inside ``[check_at, expires_at)``: before it the measurement is\npending, at or after ``expires_at`` it is expired, and neither writes a\nresolution. The frozen resolution law is narrower than this producer rule\nand is left exactly as it was.",
+            "properties": {
+              "activated_at": {
+                "format": "date-time",
+                "title": "Activated At",
+                "type": "string"
+              },
+              "activation_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "check_at": {
+                "format": "date-time",
+                "title": "Check At",
+                "type": "string"
+              },
+              "expires_at": {
+                "format": "date-time",
+                "title": "Expires At",
+                "type": "string"
+              },
+              "observation_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "observation_time": {
+                "format": "date-time",
+                "title": "Observation Time",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-measurement-eligibility-v1",
+                "default": "playbill-procedure-measurement-eligibility-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "window": {
+                "enum": [
+                  "before_check",
+                  "open",
+                  "closed"
+                ],
+                "title": "Window",
+                "type": "string"
+              }
+            },
+            "required": [
+              "activation_coordinate",
+              "activated_at",
+              "check_at",
+              "expires_at",
+              "observation_coordinate",
+              "observation_time",
+              "window"
+            ],
+            "title": "ProcedureMeasurementEligibilityV1",
+            "type": "object"
+          },
+          "ProcedureMeasurementResolutionSummaryV1": {
+            "additionalProperties": false,
+            "description": "The standing resolution for one activation, with its retrievable record.",
+            "properties": {
+              "contract_id": {
+                "title": "Contract Id",
+                "type": "string"
+              },
+              "evidence_refs": {
+                "default": [],
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Evidence Refs",
+                "type": "array"
+              },
+              "journal_partition_id": {
+                "title": "Journal Partition Id",
+                "type": "string"
+              },
+              "journal_record_digest": {
+                "title": "Journal Record Digest",
+                "type": "string"
+              },
+              "note": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Note"
+              },
+              "observed_at": {
+                "format": "date-time",
+                "title": "Observed At",
+                "type": "string"
+              },
+              "recorded_at": {
+                "format": "date-time",
+                "title": "Recorded At",
+                "type": "string"
+              },
+              "resolution_digest": {
+                "title": "Resolution Digest",
+                "type": "string"
+              },
+              "resolution_id": {
+                "title": "Resolution Id",
+                "type": "string"
+              },
+              "sequence": {
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-procedure-measurement-resolution-summary-v1",
+                "default": "playbill-procedure-measurement-resolution-summary-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "value": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Value"
+              },
+              "verdict": {
+                "enum": [
+                  "satisfied",
+                  "contradicted",
+                  "indeterminate"
+                ],
+                "title": "Verdict",
+                "type": "string"
+              },
+              "written_now": {
+                "title": "Written Now",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "resolution_id",
+              "contract_id",
+              "sequence",
+              "verdict",
+              "observed_at",
+              "recorded_at",
+              "journal_partition_id",
+              "journal_record_digest",
+              "resolution_digest",
+              "written_now"
+            ],
+            "title": "ProcedureMeasurementResolutionSummaryV1",
+            "type": "object"
+          },
+          "ProcedureReadingSummaryV1": {
+            "additionalProperties": false,
+            "description": "One retained exact-grain reading and the run it credits.",
+            "properties": {
+              "accepted_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "arm_label": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "on_true",
+                      "on_false"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Arm Label"
+              },
+              "claim_attestation_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Claim Attestation Digests",
+                "type": "array"
+              },
+              "contract_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Id"
+              },
+              "definition_digest": {
+                "title": "Definition Digest",
+                "type": "string"
+              },
+              "episode_ref": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Episode Ref"
+              },
+              "evidence_refs": {
+                "default": [],
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Evidence Refs",
+                "type": "array"
+              },
+              "from_node_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "From Node Id"
+              },
+              "grade": {
+                "enum": [
+                  "contract",
+                  "observation"
+                ],
+                "title": "Grade",
+                "type": "string"
+              },
+              "idempotency_key": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Idempotency Key"
+              },
+              "journal_partition_id": {
+                "title": "Journal Partition Id",
+                "type": "string"
+              },
+              "journal_record_digest": {
+                "title": "Journal Record Digest",
+                "type": "string"
+              },
+              "measurement_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Measurement Name"
+              },
+              "node_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Node Id"
+              },
+              "observed_at": {
+                "format": "date-time",
+                "title": "Observed At",
+                "type": "string"
+              },
+              "reading_digest": {
+                "title": "Reading Digest",
+                "type": "string"
+              },
+              "reading_id": {
+                "title": "Reading Id",
+                "type": "string"
+              },
+              "recorded_at": {
+                "format": "date-time",
+                "title": "Recorded At",
+                "type": "string"
+              },
+              "resolution_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Resolution Id"
+              },
+              "run_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Run Id"
+              },
+              "run_receipt_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Run Receipt Digest"
+              },
+              "subject": {
+                "$ref": "#/$defs/SemanticAddress"
+              },
+              "subject_grain": {
+                "enum": [
+                  "procedure_unit",
+                  "node",
+                  "arm"
+                ],
+                "title": "Subject Grain",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-reading-summary-v1",
+                "default": "playbill-procedure-reading-summary-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "value": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Value"
+              },
+              "verdict": {
+                "enum": [
+                  "satisfied",
+                  "contradicted",
+                  "indeterminate"
+                ],
+                "title": "Verdict",
+                "type": "string"
+              }
+            },
+            "required": [
+              "reading_id",
+              "reading_digest",
+              "journal_partition_id",
+              "journal_record_digest",
+              "subject_grain",
+              "subject",
+              "accepted_coordinate",
+              "definition_digest",
+              "grade",
+              "verdict",
+              "observed_at",
+              "recorded_at",
+              "actor_id"
+            ],
+            "title": "ProcedureReadingSummaryV1",
+            "type": "object"
+          },
+          "SemanticAddress": {
+            "additionalProperties": false,
+            "description": "Stable meaning identity, independent of source-line presentation.",
+            "properties": {
+              "artifact_path": {
+                "title": "Artifact Path",
+                "type": "string"
+              },
+              "selector": {
+                "$ref": "#/$defs/SemanticSelector"
+              },
+              "tag": {
+                "const": "playbill-semantic-address-v1",
+                "default": "playbill-semantic-address-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifact_path",
+              "selector"
+            ],
+            "title": "SemanticAddress",
+            "type": "object"
+          },
+          "SemanticSelector": {
+            "additionalProperties": false,
+            "properties": {
+              "scheme": {
+                "title": "Scheme",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "scheme",
+              "value"
+            ],
+            "title": "SemanticSelector",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "activation_coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "contracts": {
+            "items": {
+              "$ref": "#/$defs/ProcedureMeasurementContractStatusV1"
+            },
+            "title": "Contracts",
+            "type": "array"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cursor"
+          },
+          "observation_coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "observation_time": {
+            "format": "date-time",
+            "title": "Observation Time",
+            "type": "string"
+          },
+          "procedure_artifact_digest": {
+            "title": "Procedure Artifact Digest",
+            "type": "string"
+          },
+          "procedure_identity": {
+            "$ref": "#/$defs/ArtifactIdentity"
+          },
+          "readings": {
+            "items": {
+              "$ref": "#/$defs/ProcedureReadingSummaryV1"
+            },
+            "title": "Readings",
+            "type": "array"
+          },
+          "tag": {
+            "const": "playbill-procedure-readings-result-v1",
+            "default": "playbill-procedure-readings-result-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "procedure_identity",
+          "procedure_artifact_digest",
+          "activation_coordinate",
+          "observation_coordinate",
+          "observation_time",
+          "contracts",
+          "readings"
+        ],
+        "title": "PlaybillProcedureReadingsResultV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "activation_coordinate",
+        "contracts",
+        "observation_coordinate",
+        "observation_time",
+        "procedure_artifact_digest",
+        "procedure_identity",
+        "readings"
       ]
     },
     "PlaybillProcedureRunState": {
@@ -37223,6 +39336,1792 @@
         "threshold"
       ]
     },
+    "ProcedureMeasurementContractStatusV1": {
+      "fields": {
+        "activation_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "activation_id",
+          "required": true,
+          "schema": {
+            "title": "Activation Id",
+            "type": "string"
+          }
+        },
+        "contract_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "contract_id",
+          "required": true,
+          "schema": {
+            "title": "Contract Id",
+            "type": "string"
+          }
+        },
+        "eligibility": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "eligibility",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ProcedureMeasurementEligibilityV1"
+          }
+        },
+        "measurement_kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "measurement_kind",
+          "required": true,
+          "schema": {
+            "enum": [
+              "accepted_query",
+              "claim_statement",
+              "claim_attestation"
+            ],
+            "title": "Measurement Kind",
+            "type": "string"
+          }
+        },
+        "measurement_name": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "measurement_name",
+          "required": true,
+          "schema": {
+            "title": "Measurement Name",
+            "type": "string"
+          }
+        },
+        "reading_count": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reading_count",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Reading Count",
+            "type": "integer"
+          }
+        },
+        "resolution": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "resolution",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProcedureMeasurementResolutionSummaryV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "pending",
+              "expired",
+              "resolved"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "subject": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/SemanticAddress"
+          }
+        },
+        "subject_grain": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject_grain",
+          "required": true,
+          "schema": {
+            "enum": [
+              "procedure_unit",
+              "node",
+              "arm"
+            ],
+            "title": "Subject Grain",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-procedure-measurement-contract-status-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-procedure-measurement-contract-status-v1",
+            "default": "playbill-procedure-measurement-contract-status-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "ProcedureMeasurementEligibilityV1": {
+            "additionalProperties": false,
+            "description": "The window the producer honours, and where this evaluation stood in it.\n\n``activated_at`` reads the signed acceptance instant of the declaring\ngeneration; ``check_at`` and ``expires_at`` are that instant plus the\ndeclaration's ``check_after`` and ``expires_after``. The producer evaluates\nonly inside ``[check_at, expires_at)``: before it the measurement is\npending, at or after ``expires_at`` it is expired, and neither writes a\nresolution. The frozen resolution law is narrower than this producer rule\nand is left exactly as it was.",
+            "properties": {
+              "activated_at": {
+                "format": "date-time",
+                "title": "Activated At",
+                "type": "string"
+              },
+              "activation_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "check_at": {
+                "format": "date-time",
+                "title": "Check At",
+                "type": "string"
+              },
+              "expires_at": {
+                "format": "date-time",
+                "title": "Expires At",
+                "type": "string"
+              },
+              "observation_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "observation_time": {
+                "format": "date-time",
+                "title": "Observation Time",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-measurement-eligibility-v1",
+                "default": "playbill-procedure-measurement-eligibility-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "window": {
+                "enum": [
+                  "before_check",
+                  "open",
+                  "closed"
+                ],
+                "title": "Window",
+                "type": "string"
+              }
+            },
+            "required": [
+              "activation_coordinate",
+              "activated_at",
+              "check_at",
+              "expires_at",
+              "observation_coordinate",
+              "observation_time",
+              "window"
+            ],
+            "title": "ProcedureMeasurementEligibilityV1",
+            "type": "object"
+          },
+          "ProcedureMeasurementResolutionSummaryV1": {
+            "additionalProperties": false,
+            "description": "The standing resolution for one activation, with its retrievable record.",
+            "properties": {
+              "contract_id": {
+                "title": "Contract Id",
+                "type": "string"
+              },
+              "evidence_refs": {
+                "default": [],
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Evidence Refs",
+                "type": "array"
+              },
+              "journal_partition_id": {
+                "title": "Journal Partition Id",
+                "type": "string"
+              },
+              "journal_record_digest": {
+                "title": "Journal Record Digest",
+                "type": "string"
+              },
+              "note": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Note"
+              },
+              "observed_at": {
+                "format": "date-time",
+                "title": "Observed At",
+                "type": "string"
+              },
+              "recorded_at": {
+                "format": "date-time",
+                "title": "Recorded At",
+                "type": "string"
+              },
+              "resolution_digest": {
+                "title": "Resolution Digest",
+                "type": "string"
+              },
+              "resolution_id": {
+                "title": "Resolution Id",
+                "type": "string"
+              },
+              "sequence": {
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-procedure-measurement-resolution-summary-v1",
+                "default": "playbill-procedure-measurement-resolution-summary-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "value": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Value"
+              },
+              "verdict": {
+                "enum": [
+                  "satisfied",
+                  "contradicted",
+                  "indeterminate"
+                ],
+                "title": "Verdict",
+                "type": "string"
+              },
+              "written_now": {
+                "title": "Written Now",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "resolution_id",
+              "contract_id",
+              "sequence",
+              "verdict",
+              "observed_at",
+              "recorded_at",
+              "journal_partition_id",
+              "journal_record_digest",
+              "resolution_digest",
+              "written_now"
+            ],
+            "title": "ProcedureMeasurementResolutionSummaryV1",
+            "type": "object"
+          },
+          "SemanticAddress": {
+            "additionalProperties": false,
+            "description": "Stable meaning identity, independent of source-line presentation.",
+            "properties": {
+              "artifact_path": {
+                "title": "Artifact Path",
+                "type": "string"
+              },
+              "selector": {
+                "$ref": "#/$defs/SemanticSelector"
+              },
+              "tag": {
+                "const": "playbill-semantic-address-v1",
+                "default": "playbill-semantic-address-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifact_path",
+              "selector"
+            ],
+            "title": "SemanticAddress",
+            "type": "object"
+          },
+          "SemanticSelector": {
+            "additionalProperties": false,
+            "properties": {
+              "scheme": {
+                "title": "Scheme",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "scheme",
+              "value"
+            ],
+            "title": "SemanticSelector",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Read-only standing of one activation at the inspection instant.",
+        "properties": {
+          "activation_id": {
+            "title": "Activation Id",
+            "type": "string"
+          },
+          "contract_id": {
+            "title": "Contract Id",
+            "type": "string"
+          },
+          "eligibility": {
+            "$ref": "#/$defs/ProcedureMeasurementEligibilityV1"
+          },
+          "measurement_kind": {
+            "enum": [
+              "accepted_query",
+              "claim_statement",
+              "claim_attestation"
+            ],
+            "title": "Measurement Kind",
+            "type": "string"
+          },
+          "measurement_name": {
+            "title": "Measurement Name",
+            "type": "string"
+          },
+          "reading_count": {
+            "minimum": 0,
+            "title": "Reading Count",
+            "type": "integer"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProcedureMeasurementResolutionSummaryV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "expired",
+              "resolved"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject": {
+            "$ref": "#/$defs/SemanticAddress"
+          },
+          "subject_grain": {
+            "enum": [
+              "procedure_unit",
+              "node",
+              "arm"
+            ],
+            "title": "Subject Grain",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-procedure-measurement-contract-status-v1",
+            "default": "playbill-procedure-measurement-contract-status-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "measurement_name",
+          "measurement_kind",
+          "contract_id",
+          "activation_id",
+          "subject_grain",
+          "subject",
+          "status",
+          "eligibility",
+          "reading_count"
+        ],
+        "title": "ProcedureMeasurementContractStatusV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "activation_id",
+        "contract_id",
+        "eligibility",
+        "measurement_kind",
+        "measurement_name",
+        "reading_count",
+        "status",
+        "subject",
+        "subject_grain"
+      ]
+    },
+    "ProcedureMeasurementEligibilityV1": {
+      "fields": {
+        "activated_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "activated_at",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Activated At",
+            "type": "string"
+          }
+        },
+        "activation_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "activation_coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "check_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "check_at",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Check At",
+            "type": "string"
+          }
+        },
+        "expires_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "expires_at",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          }
+        },
+        "observation_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "observation_coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "observation_time": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "observation_time",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Observation Time",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-procedure-measurement-eligibility-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-procedure-measurement-eligibility-v1",
+            "default": "playbill-procedure-measurement-eligibility-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "window": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "window",
+          "required": true,
+          "schema": {
+            "enum": [
+              "before_check",
+              "open",
+              "closed"
+            ],
+            "title": "Window",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "The window the producer honours, and where this evaluation stood in it.\n\n``activated_at`` reads the signed acceptance instant of the declaring\ngeneration; ``check_at`` and ``expires_at`` are that instant plus the\ndeclaration's ``check_after`` and ``expires_after``. The producer evaluates\nonly inside ``[check_at, expires_at)``: before it the measurement is\npending, at or after ``expires_at`` it is expired, and neither writes a\nresolution. The frozen resolution law is narrower than this producer rule\nand is left exactly as it was.",
+        "properties": {
+          "activated_at": {
+            "format": "date-time",
+            "title": "Activated At",
+            "type": "string"
+          },
+          "activation_coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "check_at": {
+            "format": "date-time",
+            "title": "Check At",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "observation_coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "observation_time": {
+            "format": "date-time",
+            "title": "Observation Time",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-procedure-measurement-eligibility-v1",
+            "default": "playbill-procedure-measurement-eligibility-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "window": {
+            "enum": [
+              "before_check",
+              "open",
+              "closed"
+            ],
+            "title": "Window",
+            "type": "string"
+          }
+        },
+        "required": [
+          "activation_coordinate",
+          "activated_at",
+          "check_at",
+          "expires_at",
+          "observation_coordinate",
+          "observation_time",
+          "window"
+        ],
+        "title": "ProcedureMeasurementEligibilityV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "activated_at",
+        "activation_coordinate",
+        "check_at",
+        "expires_at",
+        "observation_coordinate",
+        "observation_time",
+        "window"
+      ]
+    },
+    "ProcedureMeasurementResolutionSummaryV1": {
+      "fields": {
+        "contract_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "contract_id",
+          "required": true,
+          "schema": {
+            "title": "Contract Id",
+            "type": "string"
+          }
+        },
+        "evidence_refs": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "evidence_refs",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Evidence Refs",
+            "type": "array"
+          }
+        },
+        "journal_partition_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "journal_partition_id",
+          "required": true,
+          "schema": {
+            "title": "Journal Partition Id",
+            "type": "string"
+          }
+        },
+        "journal_record_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "journal_record_digest",
+          "required": true,
+          "schema": {
+            "title": "Journal Record Digest",
+            "type": "string"
+          }
+        },
+        "note": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "note",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Note"
+          }
+        },
+        "observed_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "observed_at",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          }
+        },
+        "recorded_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "recorded_at",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          }
+        },
+        "resolution_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "resolution_digest",
+          "required": true,
+          "schema": {
+            "title": "Resolution Digest",
+            "type": "string"
+          }
+        },
+        "resolution_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "resolution_id",
+          "required": true,
+          "schema": {
+            "title": "Resolution Id",
+            "type": "string"
+          }
+        },
+        "sequence": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "sequence",
+          "required": true,
+          "schema": {
+            "minimum": 1,
+            "title": "Sequence",
+            "type": "integer"
+          }
+        },
+        "tag": {
+          "default": "playbill-procedure-measurement-resolution-summary-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-procedure-measurement-resolution-summary-v1",
+            "default": "playbill-procedure-measurement-resolution-summary-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "value": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "value",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Value"
+          }
+        },
+        "verdict": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "verdict",
+          "required": true,
+          "schema": {
+            "enum": [
+              "satisfied",
+              "contradicted",
+              "indeterminate"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "written_now": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "written_now",
+          "required": true,
+          "schema": {
+            "title": "Written Now",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "The standing resolution for one activation, with its retrievable record.",
+        "properties": {
+          "contract_id": {
+            "title": "Contract Id",
+            "type": "string"
+          },
+          "evidence_refs": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "journal_partition_id": {
+            "title": "Journal Partition Id",
+            "type": "string"
+          },
+          "journal_record_digest": {
+            "title": "Journal Record Digest",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Note"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "resolution_digest": {
+            "title": "Resolution Digest",
+            "type": "string"
+          },
+          "resolution_id": {
+            "title": "Resolution Id",
+            "type": "string"
+          },
+          "sequence": {
+            "minimum": 1,
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "tag": {
+            "const": "playbill-procedure-measurement-resolution-summary-v1",
+            "default": "playbill-procedure-measurement-resolution-summary-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Value"
+          },
+          "verdict": {
+            "enum": [
+              "satisfied",
+              "contradicted",
+              "indeterminate"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          },
+          "written_now": {
+            "title": "Written Now",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "resolution_id",
+          "contract_id",
+          "sequence",
+          "verdict",
+          "observed_at",
+          "recorded_at",
+          "journal_partition_id",
+          "journal_record_digest",
+          "resolution_digest",
+          "written_now"
+        ],
+        "title": "ProcedureMeasurementResolutionSummaryV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "contract_id",
+        "journal_partition_id",
+        "journal_record_digest",
+        "observed_at",
+        "recorded_at",
+        "resolution_digest",
+        "resolution_id",
+        "sequence",
+        "verdict",
+        "written_now"
+      ]
+    },
+    "ProcedureMeasurementRowV1": {
+      "fields": {
+        "activation_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "activation_id",
+          "required": true,
+          "schema": {
+            "title": "Activation Id",
+            "type": "string"
+          }
+        },
+        "contract_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "contract_id",
+          "required": true,
+          "schema": {
+            "title": "Contract Id",
+            "type": "string"
+          }
+        },
+        "detail": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "detail",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          }
+        },
+        "eligibility": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "eligibility",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ProcedureMeasurementEligibilityV1"
+          }
+        },
+        "measurement_kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "measurement_kind",
+          "required": true,
+          "schema": {
+            "enum": [
+              "accepted_query",
+              "claim_statement",
+              "claim_attestation"
+            ],
+            "title": "Measurement Kind",
+            "type": "string"
+          }
+        },
+        "measurement_name": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "measurement_name",
+          "required": true,
+          "schema": {
+            "title": "Measurement Name",
+            "type": "string"
+          }
+        },
+        "reading": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "reading",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProcedureReadingSummaryV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "reading_status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reading_status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "not_requested",
+              "recorded",
+              "replayed",
+              "run_not_final",
+              "grain_not_occurred",
+              "no_resolution"
+            ],
+            "title": "Reading Status",
+            "type": "string"
+          }
+        },
+        "resolution": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "resolution",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProcedureMeasurementResolutionSummaryV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "pending",
+              "expired",
+              "resolved"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "subject": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/SemanticAddress"
+          }
+        },
+        "subject_grain": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject_grain",
+          "required": true,
+          "schema": {
+            "enum": [
+              "procedure_unit",
+              "node",
+              "arm"
+            ],
+            "title": "Subject Grain",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-procedure-measurement-row-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-procedure-measurement-row-v1",
+            "default": "playbill-procedure-measurement-row-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "ProcedureMeasurementEligibilityV1": {
+            "additionalProperties": false,
+            "description": "The window the producer honours, and where this evaluation stood in it.\n\n``activated_at`` reads the signed acceptance instant of the declaring\ngeneration; ``check_at`` and ``expires_at`` are that instant plus the\ndeclaration's ``check_after`` and ``expires_after``. The producer evaluates\nonly inside ``[check_at, expires_at)``: before it the measurement is\npending, at or after ``expires_at`` it is expired, and neither writes a\nresolution. The frozen resolution law is narrower than this producer rule\nand is left exactly as it was.",
+            "properties": {
+              "activated_at": {
+                "format": "date-time",
+                "title": "Activated At",
+                "type": "string"
+              },
+              "activation_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "check_at": {
+                "format": "date-time",
+                "title": "Check At",
+                "type": "string"
+              },
+              "expires_at": {
+                "format": "date-time",
+                "title": "Expires At",
+                "type": "string"
+              },
+              "observation_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "observation_time": {
+                "format": "date-time",
+                "title": "Observation Time",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-measurement-eligibility-v1",
+                "default": "playbill-procedure-measurement-eligibility-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "window": {
+                "enum": [
+                  "before_check",
+                  "open",
+                  "closed"
+                ],
+                "title": "Window",
+                "type": "string"
+              }
+            },
+            "required": [
+              "activation_coordinate",
+              "activated_at",
+              "check_at",
+              "expires_at",
+              "observation_coordinate",
+              "observation_time",
+              "window"
+            ],
+            "title": "ProcedureMeasurementEligibilityV1",
+            "type": "object"
+          },
+          "ProcedureMeasurementResolutionSummaryV1": {
+            "additionalProperties": false,
+            "description": "The standing resolution for one activation, with its retrievable record.",
+            "properties": {
+              "contract_id": {
+                "title": "Contract Id",
+                "type": "string"
+              },
+              "evidence_refs": {
+                "default": [],
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Evidence Refs",
+                "type": "array"
+              },
+              "journal_partition_id": {
+                "title": "Journal Partition Id",
+                "type": "string"
+              },
+              "journal_record_digest": {
+                "title": "Journal Record Digest",
+                "type": "string"
+              },
+              "note": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Note"
+              },
+              "observed_at": {
+                "format": "date-time",
+                "title": "Observed At",
+                "type": "string"
+              },
+              "recorded_at": {
+                "format": "date-time",
+                "title": "Recorded At",
+                "type": "string"
+              },
+              "resolution_digest": {
+                "title": "Resolution Digest",
+                "type": "string"
+              },
+              "resolution_id": {
+                "title": "Resolution Id",
+                "type": "string"
+              },
+              "sequence": {
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-procedure-measurement-resolution-summary-v1",
+                "default": "playbill-procedure-measurement-resolution-summary-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "value": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Value"
+              },
+              "verdict": {
+                "enum": [
+                  "satisfied",
+                  "contradicted",
+                  "indeterminate"
+                ],
+                "title": "Verdict",
+                "type": "string"
+              },
+              "written_now": {
+                "title": "Written Now",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "resolution_id",
+              "contract_id",
+              "sequence",
+              "verdict",
+              "observed_at",
+              "recorded_at",
+              "journal_partition_id",
+              "journal_record_digest",
+              "resolution_digest",
+              "written_now"
+            ],
+            "title": "ProcedureMeasurementResolutionSummaryV1",
+            "type": "object"
+          },
+          "ProcedureReadingSummaryV1": {
+            "additionalProperties": false,
+            "description": "One retained exact-grain reading and the run it credits.",
+            "properties": {
+              "accepted_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "arm_label": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "on_true",
+                      "on_false"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Arm Label"
+              },
+              "claim_attestation_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Claim Attestation Digests",
+                "type": "array"
+              },
+              "contract_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Id"
+              },
+              "definition_digest": {
+                "title": "Definition Digest",
+                "type": "string"
+              },
+              "episode_ref": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Episode Ref"
+              },
+              "evidence_refs": {
+                "default": [],
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Evidence Refs",
+                "type": "array"
+              },
+              "from_node_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "From Node Id"
+              },
+              "grade": {
+                "enum": [
+                  "contract",
+                  "observation"
+                ],
+                "title": "Grade",
+                "type": "string"
+              },
+              "idempotency_key": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Idempotency Key"
+              },
+              "journal_partition_id": {
+                "title": "Journal Partition Id",
+                "type": "string"
+              },
+              "journal_record_digest": {
+                "title": "Journal Record Digest",
+                "type": "string"
+              },
+              "measurement_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Measurement Name"
+              },
+              "node_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Node Id"
+              },
+              "observed_at": {
+                "format": "date-time",
+                "title": "Observed At",
+                "type": "string"
+              },
+              "reading_digest": {
+                "title": "Reading Digest",
+                "type": "string"
+              },
+              "reading_id": {
+                "title": "Reading Id",
+                "type": "string"
+              },
+              "recorded_at": {
+                "format": "date-time",
+                "title": "Recorded At",
+                "type": "string"
+              },
+              "resolution_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Resolution Id"
+              },
+              "run_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Run Id"
+              },
+              "run_receipt_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Run Receipt Digest"
+              },
+              "subject": {
+                "$ref": "#/$defs/SemanticAddress"
+              },
+              "subject_grain": {
+                "enum": [
+                  "procedure_unit",
+                  "node",
+                  "arm"
+                ],
+                "title": "Subject Grain",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-reading-summary-v1",
+                "default": "playbill-procedure-reading-summary-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "value": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Value"
+              },
+              "verdict": {
+                "enum": [
+                  "satisfied",
+                  "contradicted",
+                  "indeterminate"
+                ],
+                "title": "Verdict",
+                "type": "string"
+              }
+            },
+            "required": [
+              "reading_id",
+              "reading_digest",
+              "journal_partition_id",
+              "journal_record_digest",
+              "subject_grain",
+              "subject",
+              "accepted_coordinate",
+              "definition_digest",
+              "grade",
+              "verdict",
+              "observed_at",
+              "recorded_at",
+              "actor_id"
+            ],
+            "title": "ProcedureReadingSummaryV1",
+            "type": "object"
+          },
+          "SemanticAddress": {
+            "additionalProperties": false,
+            "description": "Stable meaning identity, independent of source-line presentation.",
+            "properties": {
+              "artifact_path": {
+                "title": "Artifact Path",
+                "type": "string"
+              },
+              "selector": {
+                "$ref": "#/$defs/SemanticSelector"
+              },
+              "tag": {
+                "const": "playbill-semantic-address-v1",
+                "default": "playbill-semantic-address-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifact_path",
+              "selector"
+            ],
+            "title": "SemanticAddress",
+            "type": "object"
+          },
+          "SemanticSelector": {
+            "additionalProperties": false,
+            "properties": {
+              "scheme": {
+                "title": "Scheme",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "scheme",
+              "value"
+            ],
+            "title": "SemanticSelector",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One declared measurement's outcome for this evaluation request.",
+        "properties": {
+          "activation_id": {
+            "title": "Activation Id",
+            "type": "string"
+          },
+          "contract_id": {
+            "title": "Contract Id",
+            "type": "string"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          },
+          "eligibility": {
+            "$ref": "#/$defs/ProcedureMeasurementEligibilityV1"
+          },
+          "measurement_kind": {
+            "enum": [
+              "accepted_query",
+              "claim_statement",
+              "claim_attestation"
+            ],
+            "title": "Measurement Kind",
+            "type": "string"
+          },
+          "measurement_name": {
+            "title": "Measurement Name",
+            "type": "string"
+          },
+          "reading": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProcedureReadingSummaryV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "reading_status": {
+            "enum": [
+              "not_requested",
+              "recorded",
+              "replayed",
+              "run_not_final",
+              "grain_not_occurred",
+              "no_resolution"
+            ],
+            "title": "Reading Status",
+            "type": "string"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProcedureMeasurementResolutionSummaryV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "expired",
+              "resolved"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject": {
+            "$ref": "#/$defs/SemanticAddress"
+          },
+          "subject_grain": {
+            "enum": [
+              "procedure_unit",
+              "node",
+              "arm"
+            ],
+            "title": "Subject Grain",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-procedure-measurement-row-v1",
+            "default": "playbill-procedure-measurement-row-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "measurement_name",
+          "measurement_kind",
+          "contract_id",
+          "activation_id",
+          "subject_grain",
+          "subject",
+          "status",
+          "eligibility",
+          "reading_status"
+        ],
+        "title": "ProcedureMeasurementRowV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "activation_id",
+        "contract_id",
+        "eligibility",
+        "measurement_kind",
+        "measurement_name",
+        "reading_status",
+        "status",
+        "subject",
+        "subject_grain"
+      ]
+    },
     "ProcedurePendingSuccessorV1": {
       "fields": {
         "pending_successor_digest": {
@@ -37288,6 +41187,766 @@
       "required_fields": [
         "pending_successor_digest",
         "proposal_id"
+      ]
+    },
+    "ProcedureReadingSummaryV1": {
+      "fields": {
+        "accepted_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "accepted_coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "actor_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "actor_id",
+          "required": true,
+          "schema": {
+            "title": "Actor Id",
+            "type": "string"
+          }
+        },
+        "arm_label": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "arm_label",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "on_true",
+                  "on_false"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Arm Label"
+          }
+        },
+        "claim_attestation_digests": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claim_attestation_digests",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Claim Attestation Digests",
+            "type": "array"
+          }
+        },
+        "contract_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "contract_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Contract Id"
+          }
+        },
+        "definition_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "definition_digest",
+          "required": true,
+          "schema": {
+            "title": "Definition Digest",
+            "type": "string"
+          }
+        },
+        "episode_ref": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "episode_ref",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Episode Ref"
+          }
+        },
+        "evidence_refs": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "evidence_refs",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Evidence Refs",
+            "type": "array"
+          }
+        },
+        "from_node_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "from_node_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "From Node Id"
+          }
+        },
+        "grade": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "grade",
+          "required": true,
+          "schema": {
+            "enum": [
+              "contract",
+              "observation"
+            ],
+            "title": "Grade",
+            "type": "string"
+          }
+        },
+        "idempotency_key": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "idempotency_key",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Idempotency Key"
+          }
+        },
+        "journal_partition_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "journal_partition_id",
+          "required": true,
+          "schema": {
+            "title": "Journal Partition Id",
+            "type": "string"
+          }
+        },
+        "journal_record_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "journal_record_digest",
+          "required": true,
+          "schema": {
+            "title": "Journal Record Digest",
+            "type": "string"
+          }
+        },
+        "measurement_name": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "measurement_name",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Measurement Name"
+          }
+        },
+        "node_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "node_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Node Id"
+          }
+        },
+        "observed_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "observed_at",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          }
+        },
+        "reading_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reading_digest",
+          "required": true,
+          "schema": {
+            "title": "Reading Digest",
+            "type": "string"
+          }
+        },
+        "reading_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reading_id",
+          "required": true,
+          "schema": {
+            "title": "Reading Id",
+            "type": "string"
+          }
+        },
+        "recorded_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "recorded_at",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          }
+        },
+        "resolution_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "resolution_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resolution Id"
+          }
+        },
+        "run_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "run_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Run Id"
+          }
+        },
+        "run_receipt_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "run_receipt_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Run Receipt Digest"
+          }
+        },
+        "subject": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/SemanticAddress"
+          }
+        },
+        "subject_grain": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject_grain",
+          "required": true,
+          "schema": {
+            "enum": [
+              "procedure_unit",
+              "node",
+              "arm"
+            ],
+            "title": "Subject Grain",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-procedure-reading-summary-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-procedure-reading-summary-v1",
+            "default": "playbill-procedure-reading-summary-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "value": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "value",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Value"
+          }
+        },
+        "verdict": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "verdict",
+          "required": true,
+          "schema": {
+            "enum": [
+              "satisfied",
+              "contradicted",
+              "indeterminate"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "SemanticAddress": {
+            "additionalProperties": false,
+            "description": "Stable meaning identity, independent of source-line presentation.",
+            "properties": {
+              "artifact_path": {
+                "title": "Artifact Path",
+                "type": "string"
+              },
+              "selector": {
+                "$ref": "#/$defs/SemanticSelector"
+              },
+              "tag": {
+                "const": "playbill-semantic-address-v1",
+                "default": "playbill-semantic-address-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifact_path",
+              "selector"
+            ],
+            "title": "SemanticAddress",
+            "type": "object"
+          },
+          "SemanticSelector": {
+            "additionalProperties": false,
+            "properties": {
+              "scheme": {
+                "title": "Scheme",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "scheme",
+              "value"
+            ],
+            "title": "SemanticSelector",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One retained exact-grain reading and the run it credits.",
+        "properties": {
+          "accepted_coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "actor_id": {
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "arm_label": {
+            "anyOf": [
+              {
+                "enum": [
+                  "on_true",
+                  "on_false"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Arm Label"
+          },
+          "claim_attestation_digests": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Claim Attestation Digests",
+            "type": "array"
+          },
+          "contract_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Contract Id"
+          },
+          "definition_digest": {
+            "title": "Definition Digest",
+            "type": "string"
+          },
+          "episode_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Episode Ref"
+          },
+          "evidence_refs": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "from_node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "From Node Id"
+          },
+          "grade": {
+            "enum": [
+              "contract",
+              "observation"
+            ],
+            "title": "Grade",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Idempotency Key"
+          },
+          "journal_partition_id": {
+            "title": "Journal Partition Id",
+            "type": "string"
+          },
+          "journal_record_digest": {
+            "title": "Journal Record Digest",
+            "type": "string"
+          },
+          "measurement_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Measurement Name"
+          },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Node Id"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "reading_digest": {
+            "title": "Reading Digest",
+            "type": "string"
+          },
+          "reading_id": {
+            "title": "Reading Id",
+            "type": "string"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "resolution_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resolution Id"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Run Id"
+          },
+          "run_receipt_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Run Receipt Digest"
+          },
+          "subject": {
+            "$ref": "#/$defs/SemanticAddress"
+          },
+          "subject_grain": {
+            "enum": [
+              "procedure_unit",
+              "node",
+              "arm"
+            ],
+            "title": "Subject Grain",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-procedure-reading-summary-v1",
+            "default": "playbill-procedure-reading-summary-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Value"
+          },
+          "verdict": {
+            "enum": [
+              "satisfied",
+              "contradicted",
+              "indeterminate"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reading_id",
+          "reading_digest",
+          "journal_partition_id",
+          "journal_record_digest",
+          "subject_grain",
+          "subject",
+          "accepted_coordinate",
+          "definition_digest",
+          "grade",
+          "verdict",
+          "observed_at",
+          "recorded_at",
+          "actor_id"
+        ],
+        "title": "ProcedureReadingSummaryV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "accepted_coordinate",
+        "actor_id",
+        "definition_digest",
+        "grade",
+        "journal_partition_id",
+        "journal_record_digest",
+        "observed_at",
+        "reading_digest",
+        "reading_id",
+        "recorded_at",
+        "subject",
+        "subject_grain",
+        "verdict"
       ]
     },
     "ProcedureRunAttributionV1": {
