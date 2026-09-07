@@ -15,10 +15,19 @@
   activates it: review, approval, and activation stay with the existing
   proposal verbs. The proposal ref is keyed on the admitted operation, so a
   retry recovers the same proposal and receipt, and other member bytes under
-  the same key refuse `effectful_operation_payload_mismatch`. A `prepared`
-  journal record precedes the door and a resolving record follows it; daemon
-  startup resolves a run that died between the two through the same idempotent
-  door and finalizes it as `terminal_egress_recovered` with its receipt intact.
+  the same key refuse `effectful_operation_payload_mismatch`. The mandate
+  admission bound is re-established inside the proposal door against the exact
+  head tree the proposal is evaluated at, so a mandate retired or replaced
+  after admission refuses `procedure_mandate_superseded` before any ref moves;
+  replaying an operation the door already kept needs no live mandate. A
+  `prepared` journal record precedes the door and a resolving record follows
+  it. Daemon startup recovers each admitted run on its own account, whichever
+  boundary it died at: an unresolved preparation is driven through the same
+  idempotent door, a run whose egress already resolved is finalized from that
+  durable record without redelivery, and a publication the door left half
+  written (ref moved, no admission) is completed on the same ref when its
+  bytes are the operation's own. Every recovered attempt reads
+  `terminal_egress_recovered` with its receipt intact.
   Mandate, item, evidence, and lowering refusals reach the run as typed node
   refusals with the door's real limiting code. The direct lane is unchanged:
   it has no requested rung, occurrence, or mandate coordinate, and still names

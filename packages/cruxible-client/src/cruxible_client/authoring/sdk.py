@@ -797,6 +797,12 @@ class ChangeSetDraft:
         in this same set -- into the exact pins the LineSpec carries. A Line is
         manual unless another trigger policy is given, and inherits the
         Procedure's hard caps as its budget unless one is given.
+
+        Lowering refuses a Procedure that is not graph-v4 and one whose Source
+        nodes leave a Provider slot open: the Line pins exactly what the
+        Procedure names, and an open slot is nothing to pin. A rung-2 Line
+        also needs a live ProcedureMandate over its target namespace before it
+        can run; that is checked at admission, not here.
         """
 
         self._members.append(
