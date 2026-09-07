@@ -25,8 +25,9 @@ from cruxible_core.playbill.procedures.egress import (
     TerminalEgressReceiptV3,
     TerminalEgressRequestV2,
     require_procedure_mandate,
+    require_procedure_mandate_at_head,
 )
-from cruxible_core.playbill.projection import AcceptedCoordinate
+from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
@@ -337,6 +338,17 @@ class ProposalTerminalAdapter:
         )
         actor_id = request.actor_context.actor_id
         assert request.operation_key is not None  # request shape
+
+        def _authorize_at_head(
+            _current: AcceptedProjectionCoordinate,
+            head_tree: Mapping[str, bytes],
+        ) -> None:
+            # The mandate admission bound is re-established against the exact
+            # head tree the door evaluates at, inside the door's own read, so a
+            # mandate retired since admission cannot author a new proposal and
+            # no second read can disagree with the first.
+            require_procedure_mandate_at_head(request, admission=admission, head_tree=head_tree)
+
         result = self.service.submit(
             actor=AuthenticatedActor(actor_id=actor_id),
             request=ProposalAdmissionRequest(
@@ -346,6 +358,7 @@ class ProposalTerminalAdapter:
             ),
             candidate_tree=candidate_tree,
             timestamp=canonical_candidate_timestamp(request.evaluation_time),
+            authorize=_authorize_at_head,
         )
         return proposal_terminal_receipt(
             request,

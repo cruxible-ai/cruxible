@@ -55,6 +55,8 @@ from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandateInvocationV1,
     ProcedureMandateV1,
     evaluate_procedure_mandate,
+    parse_procedure_mandate,
+    procedure_mandate_digest,
 )
 from cruxible_client.contracts.procedures.models import TERMINAL_REQUIRED_RUNGS, ProcedureHardCapsV3
 from cruxible_client.contracts.repairs import (
@@ -1040,6 +1042,67 @@ def require_procedure_mandate(
     return mandate
 
 
+def procedure_mandates_in_tree(
+    tree: Mapping[str, bytes],
+    *,
+    procedure_identity: ArtifactIdentity,
+    procedure_artifact_digest: str,
+) -> dict[str, ProcedureMandateV1]:
+    """Every ProcedureMandate one accepted tree carries for this exact Procedure artifact.
+
+    Keyed on the mandate's content digest, retired ones included: a caller that
+    asks for a digest and finds it retired is answered "superseded" by the
+    mandate law itself, and one that finds nothing is answered the same way
+    here, because the accepted state no longer carries the mandate at all.
+    """
+
+    found: dict[str, ProcedureMandateV1] = {}
+    for path, content in tree.items():
+        if not path.startswith("procedure-mandates/") or not path.endswith((".json", ".yaml")):
+            continue
+        mandate = parse_procedure_mandate(content, path=path)
+        if (
+            mandate.procedure.target == procedure_identity
+            and mandate.procedure.artifact_digest == procedure_artifact_digest
+        ):
+            found[procedure_mandate_digest(mandate).tagged] = mandate
+    return found
+
+
+def require_procedure_mandate_at_head(
+    request: TerminalEgressRequestV2,
+    *,
+    admission: ProcedureRunAdmissionV1,
+    head_tree: Mapping[str, bytes],
+) -> ProcedureMandateV1:
+    """Re-establish the bound mandate against the accepted tree an effect is about to touch.
+
+    Admission bound the mandate at the run's base. Accepted state may have
+    moved since -- the mandate retired, replaced, or removed -- and a proposal
+    is evaluated at the head, so the head is where the authority to create it
+    must still hold. The same mandate law runs, over the head's own copy of
+    the bound mandate; a head that no longer carries that exact mandate is a
+    superseded one.
+    """
+
+    mandates = procedure_mandates_in_tree(
+        head_tree,
+        procedure_identity=request.procedure_identity,
+        procedure_artifact_digest=request.procedure_artifact_digest,
+    )
+    digest = request.procedure_mandate_digest
+    if digest is not None and digest not in mandates:
+        raise TerminalAuthorityRefusal(
+            "procedure_mandate_superseded",
+            "The accepted head no longer carries the Procedure mandate this run was "
+            "admitted under.",
+            request=request,
+            repair_kind="author_successor",
+            repair=PROCEDURE_MANDATE_REPAIR,
+        )
+    return require_procedure_mandate(request, admission=admission, accepted_mandates=mandates)
+
+
 def producer_receipt_for_request(
     request: TerminalEgressRequestV1,
 ) -> ProcedureProducerReceiptV1:
@@ -1271,6 +1334,8 @@ def effect_dispatch_refusal(
 
 
 __all__ = [
+    "procedure_mandates_in_tree",
+    "require_procedure_mandate_at_head",
     "EFFECTIVE_RUNG_TERMS",
     "MANDATE_FREE_RUNG_CEILING",
     "NO_TERMINAL_EGRESS",

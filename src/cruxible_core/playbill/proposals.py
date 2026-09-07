@@ -3703,7 +3703,18 @@ class ProposalService:
         request: ProposalAdmissionRequest,
         candidate_tree: Mapping[str, bytes],
         timestamp: str,
+        authorize: Callable[[AcceptedProjectionCoordinate, Mapping[str, bytes]], None]
+        | None = None,
     ) -> ProposalResult:
+        """Admit one candidate tree under the actor's ref.
+
+        `authorize`, when given, is called with the exact current coordinate and
+        tree this submission evaluates against, after the actor is known to be
+        active there and before any ref moves or record is written. A caller
+        whose authority to propose lives in accepted state (a Procedure's
+        mandate) checks it there, so the state it authorized against and the
+        state the proposal is evaluated at are one read, not two.
+        """
         self._require_writable()
         validate_candidate_timestamp(timestamp)
         if "propose" not in actor.capabilities:
@@ -3740,6 +3751,8 @@ class ProposalService:
                 "playbill.proposal.creator_principal_invalid: authenticated actor does not "
                 "resolve to an active Principal at the accepted coordinate"
             ) from exc
+        if authorize is not None:
+            authorize(current, current_tree)
 
         base_tree = self.transport.read_tree(request.proposed_base_oid)
         validated_tree = validate_proposal_tree(

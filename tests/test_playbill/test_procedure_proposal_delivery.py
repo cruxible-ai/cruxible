@@ -740,3 +740,365 @@ def test_delivery_hands_the_door_lowering_paths_and_reads_no_second_base_tree(
     )
     # Between lowering's own read and the door, preparation read no tree at all.
     assert seen["reads_before_door"] == seen["reads_after_lowering"]
+
+
+# --- authority is re-established at the head the door evaluates at ----------
+
+
+from cruxible_client.contracts.artifacts import ArtifactLifecycle  # noqa: E402
+from cruxible_client.contracts.procedure_mandates import (  # noqa: E402
+    parse_procedure_mandate,
+    procedure_mandate_digest,
+)
+from cruxible_core.playbill.exhaust import ProcedureExhaustWriter  # noqa: E402
+from cruxible_core.playbill.proposal_evidence import ProposalEvidenceStore  # noqa: E402
+
+
+def _retire_mandate(instance: PlaybillInstance, owner: Any) -> str:
+    """Accept a retired successor of the one live mandate; return its path."""
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = next(p for p in tree if p.startswith("procedure-mandates/"))
+    live = parse_procedure_mandate(tree[path], path=path)
+    assert live.lifecycle.state == "live"
+    retired = live.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired",
+                predecessor_digest=procedure_mandate_digest(live).tagged,
+            )
+        }
+    )
+    fixtures._accept_more(
+        instance, owner, {path: render_procedure_mandate(retired)}, name="retire-mandate"
+    )
+    now = parse_procedure_mandate(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path
+    )
+    assert now.lifecycle.state == "retired"
+    return path
+
+
+def test_a_mandate_retired_at_the_head_refuses_the_first_delivery_with_no_ref(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Admission bound a live mandate; the head the proposal is evaluated at retired it."""
+
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    original = delivery_module.ProposalTerminalEgressSink.deliver_terminal_egress
+
+    def retire_then_deliver(self, **kwargs):  # type: ignore[no-untyped-def]
+        _retire_mandate(instance, owner)
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(
+        delivery_module.ProposalTerminalEgressSink, "deliver_terminal_egress", retire_then_deliver
+    )
+
+    state = run_line(instance, root, line)
+
+    refusal = _refusal(state)
+    assert refusal.code == "procedure_mandate_superseded", refusal
+    assert refusal.node_id == "propose"
+    assert refusal.details["repair_kind"] == "author_successor"
+    assert _proposal_refs(instance) == []
+    (egress,) = state.terminal_egress
+    assert egress.verdict == "refused"
+    assert egress.refusal_code == "procedure_mandate_superseded"
+    assert egress.proposal_id is None
+
+
+def test_a_proposal_created_before_retirement_replays_after_it_without_a_new_effect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replaying a durable operation is not a new effect; it needs no live mandate."""
+
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    original = delivery_module.ProposalTerminalEgressSink.deliver_terminal_egress
+    receipts = []
+
+    def deliver_retire_replay(self, **kwargs):  # type: ignore[no-untyped-def]
+        first = original(self, **kwargs)
+        _retire_mandate(instance, owner)
+        second = original(self, **kwargs)
+        receipts.append((first, second))
+        return second
+
+    monkeypatch.setattr(
+        delivery_module.ProposalTerminalEgressSink, "deliver_terminal_egress", deliver_retire_replay
+    )
+
+    state = run_line(instance, root, line)
+
+    assert state.status == "succeeded", state.terminal
+    ((first, second),) = receipts
+    assert first == second
+    assert len(_proposal_refs(instance)) == 1
+
+
+# --- recovery: per run, across every boundary --------------------------------
+
+
+def _finalized_runs(instance: PlaybillInstance) -> dict[str, str]:
+    from cruxible_core.service.playbill_procedure_runs import _journal_for_write, _stream
+
+    journal, _root = _journal_for_write(instance)
+    stream = _stream(instance)
+    statuses: dict[str, str] = {}
+    for partition in journal.partition_ids(stream):
+        for stored in journal.all_records(stream, partition):
+            if stored.record.event_kind == "admission_bound" and stored.record.run_id:
+                statuses[stored.record.run_id] = service_get_playbill_procedure_run(
+                    instance, run_id=stored.record.run_id
+                ).status
+    return statuses
+
+
+def test_recovery_finds_a_crashed_occurrence_after_a_completed_one_in_the_same_partition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Line partition holds many runs; an earlier finalized one hides nothing."""
+
+    instance, _owner, root, line, _procedure = proposal_world(tmp_path)
+    first = run_line(instance, root, line)
+    assert first.status == "succeeded", first.terminal
+    _crash_after(monkeypatch, after_submit=False)
+    with pytest.raises(_Crash):
+        run_line(instance, root, line, at=NOW + timedelta(hours=1))
+    monkeypatch.undo()
+    before = _finalized_runs(instance)
+    assert len(before) == 2
+    assert before[first.run_id] == "succeeded"
+    (later_run_id,) = [run_id for run_id in before if run_id != first.run_id]
+    assert before[later_run_id] == "running"
+
+    recovered = service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(hours=2))
+
+    assert recovered == {later_run_id: "delivered"}
+    after = _finalized_runs(instance)
+    assert after[first.run_id] == "succeeded"
+    assert after[later_run_id] == "operational_failed"
+    later = service_get_playbill_procedure_run(instance, run_id=later_run_id)
+    (egress,) = later.terminal_egress
+    assert egress.verdict == "delivered" and egress.proposal_id is not None
+    # Two occurrences, two operations, two proposals; the first run's is untouched.
+    assert len(_proposal_refs(instance)) == 2
+    assert egress.proposal_id != first.terminal_egress[0].proposal_id
+    assert service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(hours=3)) == {}
+
+
+def _crash_at_finalization(monkeypatch: pytest.MonkeyPatch) -> None:
+    original_append = ProcedureExecutor._append_event
+
+    def crash_before_final(self, admission, records, event_kind, payload):  # type: ignore[no-untyped-def]
+        if event_kind == "attempt_finalized":
+            raise _Crash()
+        return original_append(self, admission, records, event_kind, payload)
+
+    monkeypatch.setattr(ProcedureExecutor, "_append_event", crash_before_final)
+
+
+@pytest.mark.parametrize("resolution", ["delivered", "refused"])
+def test_a_crash_after_the_resolving_record_finalizes_the_run_without_redelivery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    resolution: str,
+) -> None:
+    """The durable receipt (or refusal) is reused; the door is not driven again."""
+
+    if resolution == "delivered":
+        instance, _owner, root, line, _procedure = proposal_world(tmp_path)
+    else:
+        instance, _owner, root, line, procedure = proposal_world(tmp_path, mandate=None)
+        mandate = fixtures._line_mandate(procedure).model_copy(update={"namespace": ("subjects",)})
+        fixtures._accept_more(
+            instance,
+            _owner,
+            {procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate)},
+            name="subjects-mandate",
+        )
+    _crash_at_finalization(monkeypatch)
+    with pytest.raises(_Crash):
+        run_line(instance, root, line)
+    monkeypatch.undo()
+    refs = _proposal_refs(instance)
+    assert len(refs) == (1 if resolution == "delivered" else 0)
+    ((run_id, status),) = _finalized_runs(instance).items()
+    assert status == "running"
+    door_calls = []
+    original_deliver = terminal_services.ProposalTerminalAdapter.deliver
+    monkeypatch.setattr(
+        terminal_services.ProposalTerminalAdapter,
+        "deliver",
+        lambda self, **kwargs: door_calls.append(kwargs) or original_deliver(self, **kwargs),
+    )
+
+    recovered = service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(minutes=1))
+
+    assert recovered == {run_id: resolution}
+    assert door_calls == []
+    state = service_get_playbill_procedure_run(instance, run_id=run_id)
+    assert state.status == "operational_failed"
+    assert state.terminal is not None and state.terminal.code == "terminal_egress_recovered"
+    (egress,) = state.terminal_egress
+    assert egress.verdict == resolution
+    if resolution == "delivered":
+        assert egress.proposal_id is not None
+        inspection = service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
+        assert inspection.proposal.candidate is not None
+        assert inspection.proposal.candidate.candidate_digest == egress.candidate_digest
+    else:
+        assert egress.refusal_code == "procedure_mandate_namespace_mismatch"
+    assert _proposal_refs(instance) == refs
+    assert service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(minutes=2)) == {}
+
+
+def test_recovery_interrupted_between_its_own_appends_completes_on_the_next_sweep(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner, root, line, _procedure = proposal_world(tmp_path)
+    _crash_after(monkeypatch, after_submit=False)
+    with pytest.raises(_Crash):
+        run_line(instance, root, line)
+    monkeypatch.undo()
+    original_append = ProcedureExhaustWriter.append
+
+    def crash_before_final(self, **kwargs):  # type: ignore[no-untyped-def]
+        if kwargs["event_kind"] == "attempt_finalized":
+            raise _Crash()
+        return original_append(self, **kwargs)
+
+    monkeypatch.setattr(ProcedureExhaustWriter, "append", crash_before_final)
+    with pytest.raises(_Crash):
+        service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(minutes=1))
+    monkeypatch.undo()
+    # The door was driven and the resolving record kept; the run is still open.
+    assert len(_proposal_refs(instance)) == 1
+    ((run_id, status),) = _finalized_runs(instance).items()
+    assert status == "running"
+
+    recovered = service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(minutes=2))
+
+    assert recovered == {run_id: "delivered"}
+    assert len(_proposal_refs(instance)) == 1
+    state = service_get_playbill_procedure_run(instance, run_id=run_id)
+    assert state.status == "operational_failed"
+    (egress,) = state.terminal_egress
+    assert egress.verdict == "delivered" and egress.proposal_id is not None
+    assert service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(minutes=3)) == {}
+
+
+# --- an interrupted publication is completed, not refused --------------------
+
+
+def _interrupt_publication(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    """Die inside the door: after the ref moved, before its admission was written."""
+
+    original_admission = ProposalEvidenceStore.write_admission
+    original_append = ProcedureExecutor._append_event
+    seen: dict[str, str] = {}
+
+    def crash_admission(self, record):  # type: ignore[no-untyped-def]
+        if "/procedure-" in record.target_ref:
+            seen["target_ref"] = record.target_ref
+            raise _Crash()
+        return original_admission(self, record)
+
+    def dead_append(self, admission, records, event_kind, payload):  # type: ignore[no-untyped-def]
+        if seen:
+            raise _Crash()
+        return original_append(self, admission, records, event_kind, payload)
+
+    monkeypatch.setattr(ProposalEvidenceStore, "write_admission", crash_admission)
+    monkeypatch.setattr(ProcedureExecutor, "_append_event", dead_append)
+    return seen
+
+
+def _admissions_for(instance: PlaybillInstance, target_ref: str) -> list[Any]:
+    return [
+        record
+        for record in instance.proposal_evidence().list_admissions()
+        if record.target_ref == target_ref
+    ]
+
+
+def test_an_interrupted_publication_is_completed_on_the_same_ref(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    seen = _interrupt_publication(monkeypatch)
+    with pytest.raises(_Crash):
+        run_line(instance, root, line)
+    monkeypatch.undo()
+    target_ref = seen["target_ref"]
+    interrupted_oid = instance.proposal_ref_target(target_ref)
+    assert interrupted_oid is not None
+    assert _admissions_for(instance, target_ref) == []
+
+    recovered = service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(minutes=1))
+
+    ((run_id, disposition),) = recovered.items()
+    assert disposition == "delivered"
+    (admission,) = _admissions_for(instance, target_ref)
+    # The completed publication extends the interrupted commit on the same ref.
+    assert admission.candidate_commit_oid == instance.proposal_ref_target(target_ref)
+    assert admission.candidate_commit_oid != interrupted_oid
+    state = service_get_playbill_procedure_run(instance, run_id=run_id)
+    assert state.status == "operational_failed"
+    (egress,) = state.terminal_egress
+    assert egress.verdict == "delivered"
+    assert egress.proposal_id == admission.proposal_id
+    inspection = service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
+    assert inspection.proposal.candidate is not None
+    assert inspection.proposal.candidate.candidate_digest == egress.candidate_digest
+    assert service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(minutes=2)) == {}
+    accept_proposal(instance, owner, inspection)
+    assert egress.children[0].path in instance.tree_at(instance.accepted_coordinate().git_oid)
+
+
+def test_an_interrupted_publication_with_other_bytes_still_refuses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Completion is for the same payload only; other bytes under the key stay refused."""
+
+    instance, _owner, root, line, _procedure = proposal_world(tmp_path)
+    seen = _interrupt_publication(monkeypatch)
+    with pytest.raises(_Crash):
+        run_line(instance, root, line)
+    monkeypatch.undo()
+    target_ref = seen["target_ref"]
+    interrupted_oid = instance.proposal_ref_target(target_ref)
+    original_prepare = delivery_module.ProposalTerminalEgressSink.prepare_terminal_egress
+
+    def drifting_prepare(self, **kwargs):  # type: ignore[no-untyped-def]
+        prepared = original_prepare(self, **kwargs)
+        key = (kwargs["request"].admission_binding_digest, kwargs["request"].node_id)
+        entry = self._prepared[key]
+        path, content = entry.changed_members[0]
+        drifted = content.replace(b"high", b"low!")
+        assert drifted != content
+        entry.candidate_tree[path] = drifted
+        object.__setattr__(entry, "changed_members", ((path, drifted),))
+        return prepared
+
+    monkeypatch.setattr(
+        delivery_module.ProposalTerminalEgressSink, "prepare_terminal_egress", drifting_prepare
+    )
+
+    recovered = service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(minutes=1))
+
+    ((run_id, disposition),) = recovered.items()
+    assert disposition == "refused"
+    state = service_get_playbill_procedure_run(instance, run_id=run_id)
+    (egress,) = state.terminal_egress
+    assert egress.verdict == "refused"
+    assert egress.refusal_code == "effectful_operation_payload_mismatch"
+    # Nothing was published over the interrupted commit.
+    assert instance.proposal_ref_target(target_ref) == interrupted_oid
+    assert _admissions_for(instance, target_ref) == []

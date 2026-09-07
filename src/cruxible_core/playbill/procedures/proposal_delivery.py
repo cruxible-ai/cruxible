@@ -516,21 +516,38 @@ class ProposalTerminalEgressSink:
         same proposal, and the same receipt is published for it. An existing
         ref carrying other bytes is another payload under the same key, which
         is refused rather than replaced or relabelled.
+
+        The door moves the ref before it writes the admission that names the
+        commit. A ref no admission names is a publication the door did not
+        finish, not a competing payload: its commit is checked against this
+        lowering's bytes and, when they agree, `None` is returned so the door
+        completes the publication on the same ref (its lineage extends the
+        interrupted commit; nothing is discarded or re-keyed).
         """
 
         assert request.operation_key is not None
         actor_id = request.actor_context.actor_id
         ref = proposal_terminal_ref(actor_id, request.operation_key)
-        if service.transport.read_proposal_ref(ref) is None:
+        ref_oid = service.transport.read_proposal_ref(ref)
+        if ref_oid is None:
+            return None
+        prepared = self._prepared.get((request.admission_binding_digest, request.node_id))
+        if prepared is None:  # pragma: no cover - deliver() prepares before recovering
             return None
         evidence = self.instance.proposal_evidence()
-        admissions = [record for record in evidence.list_admissions() if record.target_ref == ref]
+        admissions = [
+            record
+            for record in evidence.list_admissions()
+            if record.target_ref == ref and record.candidate_commit_oid == ref_oid
+        ]
         if not admissions:
-            raise ProposalDeliveryRefused(
-                "effectful_operation_payload_mismatch",
-                "The operation's proposal ref exists but no admission records it.",
-                details={"target_ref": ref},
+            self._require_same_member_bytes(
+                prepared,
+                lowering_digest=lowering_digest,
+                tree=service.transport.read_tree(ref_oid),
+                details={"target_ref": ref, "ref_oid": ref_oid, "publication": "interrupted"},
             )
+            return None
         admission_record = max(admissions, key=lambda record: record.admitted_at)
         evaluation = evidence.read_evaluation(admission_record.proposal_id)
         candidate = (
@@ -552,34 +569,15 @@ class ProposalTerminalEgressSink:
                     "admitted_base_oid": request.accepted_coordinate.git_oid,
                 },
             )
-        prepared = self._prepared.get((request.admission_binding_digest, request.node_id))
-        if prepared is None:  # pragma: no cover - deliver() prepares before recovering
-            return None
-        evaluated_tree = self.instance.proposal_tree(evaluation.evaluated_tree_oid)
-        # Compare the bytes THIS preparation lowered with the bytes the existing
-        # candidate carries at the same paths; the journaled digest is not
-        # trusted over the members themselves.
-        current_digest = proposal_lowering_digest(prepared.changed_members)
-        existing_digest = proposal_lowering_digest(
-            tuple(
-                (path, evaluated_tree[path])
-                for path, _content in prepared.changed_members
-                if path in evaluated_tree
-            )
+        self._require_same_member_bytes(
+            prepared,
+            lowering_digest=lowering_digest,
+            tree=self.instance.proposal_tree(evaluation.evaluated_tree_oid),
+            details={
+                "proposal_id": admission_record.proposal_id,
+                "candidate_digest": candidate.candidate_digest,
+            },
         )
-        if (
-            existing_digest != current_digest
-            or current_digest != lowering_digest
-            or any(path not in evaluated_tree for path, _content in prepared.changed_members)
-        ):
-            raise ProposalDeliveryRefused(
-                "effectful_operation_payload_mismatch",
-                "The operation key already names a proposal carrying other member bytes.",
-                details={
-                    "proposal_id": admission_record.proposal_id,
-                    "candidate_digest": candidate.candidate_digest,
-                },
-            )
         return proposal_terminal_receipt(
             request,
             result=ProposalResult(
@@ -589,6 +587,36 @@ class ProposalTerminalEgressSink:
             ),
             item_paths=item_paths,
         )
+
+    @staticmethod
+    def _require_same_member_bytes(
+        prepared: PreparedProposal,
+        *,
+        lowering_digest: str,
+        tree: Mapping[str, bytes],
+        details: dict[str, object],
+    ) -> None:
+        """Refuse unless `tree` carries exactly the bytes THIS preparation lowered.
+
+        The members themselves are compared, not the journaled digest alone: a
+        journal can only say what an earlier attempt claimed to lower, while the
+        tree says what the ref actually holds.
+        """
+
+        current_digest = proposal_lowering_digest(prepared.changed_members)
+        existing_digest = proposal_lowering_digest(
+            tuple((path, tree[path]) for path, _content in prepared.changed_members if path in tree)
+        )
+        if (
+            existing_digest != current_digest
+            or current_digest != lowering_digest
+            or any(path not in tree for path, _content in prepared.changed_members)
+        ):
+            raise ProposalDeliveryRefused(
+                "effectful_operation_payload_mismatch",
+                "The operation key already names a proposal carrying other member bytes.",
+                details=details,
+            )
 
 
 __all__ = [
