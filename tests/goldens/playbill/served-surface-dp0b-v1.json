@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-09-13:procedure-readings",
-    "surface_digest": "sha256:32c8c95dc8b899dd05e0222cf7f62502a0e1c5bd63eea764835854c95f7cba5d"
+    "surface_digest": "sha256:3f0848666c25c9df6108edc560fc0cc492713088fb98d8ed0a9cfa4720488eaa"
   },
   "surface": {
     "cli_leaves": [
@@ -1188,7 +1188,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/coverage/resolve",
         "request_model": "cruxible_core.server.playbill_request_models.PlaybillResolveCoverageRequest",
-        "request_schema_digest": "sha256:b986b0fd9b56b752ad01882ffdc434194819c55933f83d1e2d50382224fb776d",
+        "request_schema_digest": "sha256:569b4a772d8cbe13deb31ebaa05d3c4e360312f871431a8c92968df77848d3aa",
         "response_model": "cruxible_client.contracts.PlaybillCoverageResult",
         "response_schema_digest": "sha256:1af1b51f12edc6267d09753d79cb0557413c6f0fb25add3da648d5f204508fb7"
       },
@@ -1344,9 +1344,9 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/floor/export",
         "request_model": "cruxible_core.server.playbill_request_models.PlaybillFloorExportRequest",
-        "request_schema_digest": "sha256:78e8aeff087629bf99bfb004d656319424f995630846eba9e0b6a82e1fca34d8",
+        "request_schema_digest": "sha256:8744eef1f69e5680787706fb102676516b237f8542b63786605655252fffba41",
         "response_model": "cruxible_client.contracts.PlaybillFloorExport",
-        "response_schema_digest": "sha256:6a8d645b478de86bfc5465327ce6a7de943d8f34976f2146bfdb18b53b2054d9"
+        "response_schema_digest": "sha256:e79de950c1ca4b47eaad87fce7d991058eb57e56f43265cc8e99997a8e195243"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.playbill_init",
@@ -2273,7 +2273,7 @@
         ],
         "input_schema_digest": "sha256:0368f95602c4a441d51af57f4744819894e5b04cfb20331f7fdbc27d667028a3",
         "name": "cruxible_playbill_export_floor",
-        "output_schema_digest": "sha256:dc56ad9dc964a3ddf94b634337f1bd5c451839f688f0de62071f3398a5390f4f",
+        "output_schema_digest": "sha256:fa1da4e74991d4c7b98d38094d1b005ec1d9ec5c55d5ae4ecd262a25cb4dc27e",
         "permission": "READ_ONLY"
       },
       {
