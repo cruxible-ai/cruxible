@@ -9,11 +9,13 @@ Medians over the stated sample counts; single-shot phases are labelled
 `n=1` and are not percentiles. The synthetic instance is never published.
 
 Timings measure in-process service calls, not end-to-end SDK or HTTP latency.
-They are taken after the review-fix pass: reading lookup and append are one
-compare-and-set on the partition head, every served or replayed reading is
-re-read through its content address, reservation recovery walks the complete
-journal, and Claim verdict observations are retained as their own records.
-Concurrent credit is covered by a regression test, not a timing.
+They are taken after the review-fix pass: reading and resolution appends are
+compare-and-sets on their partition heads, every served or replayed reading is
+re-read through its content address, reservation recovery scans both journals
+this lane writes (the Procedure journal and the query-receipt journal, which
+share one reservation store), and Claim verdict observations are retained as
+their own records. Concurrent credit and concurrent first resolution are
+covered by regression tests, not timings.
 
 There is no "before" for production emission: no emitter existed. The
 before/after pairs below cover only the two local kernel optimizations, the
@@ -67,9 +69,10 @@ or corrupt body exactly as a cold one does.
 - **Run lookup and reservation recovery dominate the warm retry at 40
   retained readings** (196 ms vs 31 ms at zero). Two full journal walks
   precede the credit: `_records_for_run` finds the run by walking every
-  partition, and reservation recovery scans the complete journal, as the run
-  and settlement writers do, because a partial scan would release another
-  partition's crashed lease. This world has one partition per seeded run. A
+  partition, and reservation recovery scans every partition of both journals
+  this lane writes, as the run and settlement writers do, because a partial
+  scan would release another partition's crashed lease. This world has one
+  partition per seeded run. A
   run-id to partition index and a bounded recovery scan belong with the run
   lane's own indexing work; the measurement lane will not shortcut them.
 - **Served readings cost one CAS read each** (46 reads for 42 readings at

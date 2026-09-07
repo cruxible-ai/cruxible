@@ -31,7 +31,7 @@ from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, cast
+from typing import Literal, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -94,6 +94,7 @@ from cruxible_core.playbill.exhaust.records import (
     CLAIM_VERDICT_OBSERVATION_EVENT_KIND,
     QUERY_RECEIPT_EVENT_KIND,
     QUERY_RECEIPT_JOURNAL_FAMILY,
+    JournalEventKindV1,
     JournalPartitionHeadV1,
     StoredProcedureJournalRecordV1,
     parse_journal_payload,
@@ -159,6 +160,9 @@ MEASUREMENT_CLAIM_VERDICT_OBSERVATION_TAG = "playbill-measurement-claim-verdict-
 # A reading append is a compare-and-set on the partition head; a head that
 # keeps moving under one request is reported, never spun on.
 _APPEND_ATTEMPTS = 3
+# The event kinds this lane's recovery scan covers completely: everything the
+# Procedure journal and the query-receipt journal carry.
+_RECOVERED_EVENT_KINDS: frozenset[JournalEventKindV1] = frozenset(get_args(JournalEventKindV1))
 # Request attribution a fresh authenticated retry legitimately re-mints. The
 # principal (actor_type, actor_id, org_id) stays part of the reading's meaning.
 _VOLATILE_ACTOR_FIELDS = ("timestamp", "operation_id", "request_id")
@@ -416,6 +420,7 @@ class _ContractState:
     book: ProcedureResolutionBook
     latest: ProcedureResolutionV1 | ProcedureResolutionV2 | None
     latest_record: StoredProcedureJournalRecordV1 | None
+    head: JournalPartitionHeadV1
 
 
 def _contract_state(
@@ -424,7 +429,11 @@ def _contract_state(
     stream: JournalStreamIdentityV1,
     activation: ResolutionContractActivationV1,
 ) -> _ContractState:
-    records = journal.all_records(stream, resolution_contract_partition_id(activation))
+    partition_id = resolution_contract_partition_id(activation)
+    # Head first, records trimmed to it: a write keyed on this head is a
+    # compare-and-set against exactly the state this decision was made on.
+    head = journal.read_head(stream, partition_id)
+    records = journal.all_records(stream, partition_id)[: head.sequence]
     book = ProcedureResolutionBook((activation,))
     book.replay(records, bodies=instance.body_store())
     latest = book.latest_non_overturned(activation.contract_id)
@@ -445,6 +454,7 @@ def _contract_state(
         book=book,
         latest=latest,
         latest_record=latest_record,
+        head=head,
     )
 
 
@@ -802,9 +812,12 @@ def _evaluate_claim_attestation(
     # observation instant may be exactly the one it dropped.
     door_events = store.events(at_head=attestation_head)
     artifact_digest = claim_artifact_digest(claim).tagged
-    # Eligibility at the OBSERVATION instant is decided per event, before the
-    # latest-per-principal reduction: a principal's later word cannot erase
-    # the word that stood at the instant being observed.
+    # Temporal selection, in this order: (1) only events that had OCCURRED by
+    # the observation instant -- a later word cannot erase the word that
+    # stood; (2) the latest such event per principal is that principal's
+    # standing word; (3) validity and stance are judged on that word alone. An
+    # expired standing word contributes no current proof, and it does not
+    # hand the floor back to the older word it superseded.
     latest_door: dict[str, tuple[int, ClaimAttestationEventPayloadV1]] = {}
     for event, payload in door_events:
         statement = payload.attestation.statement
@@ -815,7 +828,6 @@ def _evaluate_claim_attestation(
             or statement.attestation_basis != "examined_existing"
             or not payload.current_at_append
             or statement.attested_at > observation_time
-            or (statement.valid_until is not None and observation_time >= statement.valid_until)
         ):
             continue
         previous = latest_door.get(payload.attesting_principal_id)
@@ -826,6 +838,10 @@ def _evaluate_claim_attestation(
     principals: set[str] = set()
     for sequence, payload in latest_door.values():
         statement = payload.attestation.statement
+        if statement.valid_until is not None and observation_time >= statement.valid_until:
+            # The standing word has expired: no current proof from this
+            # principal, and no revival of what it superseded.
+            continue
         if statement.stance not in stances:
             # The principal's standing word at the observation carries another
             # stance: it stands, it is simply not counted toward this one.
@@ -1272,17 +1288,24 @@ def service_measure_playbill_procedure(
     rows: list[ProcedureMeasurementRowV1] = []
     try:
         # Recover append-window leases exactly as the run and settlement
-        # writers do, over the COMPLETE journal: recovery releases every active
-        # lease a scan does not reference, so a partial scan would release
-        # another partition's crashed lease on the strength of not looking.
+        # writers do, over the COMPLETE scan of every journal this lane writes
+        # (the Procedure journal and the query-receipt journal share one
+        # reservation store), scoped to the event kinds those journals carry:
+        # recovery releases every active lease a scan does not reference, so
+        # a lease this scan cannot speak for is left to the writer that can.
         recovery_records = tuple(
             stored
-            for partition_id in journal.partition_ids(stream)
-            for stored in journal.all_records(stream, partition_id)
+            for backend, scanned_stream in ((journal, stream), (receipt_backend, _receipt_stream))
+            for partition_id in backend.partition_ids(scanned_stream)
+            for stored in backend.all_records(scanned_stream, partition_id)
         )
         ProcedureMaterialReservationStore(
             instance.body_store().reservation_root
-        ).recover_run_material(recovery_records, bodies=instance.body_store())
+        ).recover_run_material(
+            recovery_records,
+            bodies=instance.body_store(),
+            intended_event_kinds=_RECOVERED_EVENT_KINDS,
+        )
         for activation in activations:
             eligibility = _eligibility(
                 activation,
@@ -1316,12 +1339,18 @@ def service_measure_playbill_procedure(
                 )
                 partition_id = resolution_contract_partition_id(activation)
                 fenced.acquire(stream, partition_id)
+                # Both appends are keyed on the head this evaluation was decided
+                # at: the activation record on the state's head, the resolution
+                # on the head that record leaves behind. A competing evaluation
+                # that lands first turns ours into a conflict, and we adopt its
+                # answer instead of retaining a second sequence 1.
+                expected_head = state.head
                 try:
                     if not any(
                         stored.record.event_kind == "resolution_activation"
                         for stored in state.records
                     ):
-                        fenced.writer.append(
+                        stored_activation = fenced.writer.append(
                             stream=stream,
                             partition_id=partition_id,
                             event_kind="resolution_activation",
@@ -1331,19 +1360,29 @@ def service_measure_playbill_procedure(
                             actor_context=actor_context,
                             recorded_at=activation.activated_at,
                             payload=activation.model_dump(mode="json"),
+                            expected_head=expected_head,
+                        )
+                        expected_head = JournalPartitionHeadV1(
+                            stream=stream,
+                            partition_id=partition_id,
+                            sequence=stored_activation.record.sequence,
+                            record_digest=stored_activation.record_digest,
                         )
                     append_procedure_resolution(
                         fenced.writer,
                         activation=activation,
                         resolution=resolution,
                         stream=stream,
+                        expected_head=expected_head,
                     )
                 except PlaybillJournalConflictError as exc:
-                    raise _refuse(
-                        "measurement_resolution_conflict",
-                        "Another writer moved this measurement's journal partition; retry.",
-                        contract_id=activation.contract_id,
-                    ) from exc
+                    state = _contract_state(instance, journal, stream, activation)
+                    if state.latest is None:
+                        raise _refuse(
+                            "measurement_resolution_conflict",
+                            "Another writer moved this measurement's journal partition; retry.",
+                            contract_id=activation.contract_id,
+                        ) from exc
                 except PlaybillExecutionError as exc:
                     # The kernel refused the sequence or the closed contract:
                     # a concurrent evaluation landed first. Re-read and return

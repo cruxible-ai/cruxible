@@ -765,10 +765,16 @@ accepted coordinate, which Claim artifact, which verdict inputs) and cited as a
 `journal_record` proof, or the verified attestations with a declared stance,
 one credit per independent principal -- evaluates the frozen resolution law,
 and appends one resolution per activation. Attestation evidence is selected at
-the observation instant over the complete attestation history: a principal's
-later word does not erase the word that stood when observed, and no
-attestation at all resolves `indeterminate`, even against a `max_count` of 0,
-because the law demands proof for every verdict. A refused or truncated query
+the observation instant over the complete attestation history, in this order:
+only events that had occurred by the observation instant count; the latest of
+those per principal is that principal's standing word; validity and stance are
+judged on that word alone. A later word does not erase the word that stood
+when observed, an expired standing word contributes no proof and does not
+revive the word it superseded, and no attestation at all resolves
+`indeterminate`, even against a `max_count` of 0, because the law demands
+proof for every verdict. The resolution append is a compare-and-set on the
+contract partition's head: two evaluations racing to answer first retain one
+resolution, and the loser reports the winner's answer. A refused or truncated query
 resolves `indeterminate`; it never establishes complete or satisfied evidence.
 The latest non-overturned resolution governs: calling again returns the
 STANDING answer rather than re-deriving it (the observation instant on a later

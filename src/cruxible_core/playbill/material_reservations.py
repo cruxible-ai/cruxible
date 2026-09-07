@@ -452,10 +452,21 @@ class ProcedureMaterialReservationStore:
         records: Sequence[StoredProcedureJournalRecordV1],
         *,
         bodies: ContentAddressedBodyStore,
+        intended_event_kinds: frozenset[JournalEventKindV1] | None = None,
     ) -> tuple[str, ...]:
-        """Recover append-window leases without racing pending Line admission material."""
+        """Recover append-window leases without racing pending Line admission material.
 
-        return self._recover(records, bodies=bodies, include_pending_admission=False)
+        ``intended_event_kinds`` scopes recovery to the leases the scan can speak
+        for: a writer whose complete scan covers only the journals carrying those
+        event kinds must not release a lease another journal's records reference.
+        """
+
+        return self._recover(
+            records,
+            bodies=bodies,
+            include_pending_admission=False,
+            intended_event_kinds=intended_event_kinds,
+        )
 
     def _recover(
         self,
@@ -463,6 +474,7 @@ class ProcedureMaterialReservationStore:
         *,
         bodies: ContentAddressedBodyStore,
         include_pending_admission: bool,
+        intended_event_kinds: frozenset[JournalEventKindV1] | None = None,
     ) -> tuple[str, ...]:
 
         released: list[str] = []
@@ -472,6 +484,11 @@ class ProcedureMaterialReservationStore:
                 if (
                     isinstance(reservation, PendingAdmissionMaterialReservationV1)
                     and not include_pending_admission
+                ):
+                    continue
+                if (
+                    intended_event_kinds is not None
+                    and reservation.intended_event_kind not in intended_event_kinds
                 ):
                     continue
                 matches: list[StoredProcedureJournalRecordV1] = []

@@ -448,6 +448,7 @@ def _attest(  # type: ignore[no-untyped-def]
     stance: str = "support",
     attested_at: datetime = RUN_TIME - timedelta(minutes=5),
     recorded_at: datetime | None = None,
+    valid_until: datetime | None = None,
 ):
     path, _claim = _accepted_claim(instance)
     claim_id = path.rsplit("/", 1)[-1].removesuffix(".json")
@@ -458,6 +459,7 @@ def _attest(  # type: ignore[no-untyped-def]
         tmp_path,
         stance=stance,
         attested_at=attested_at,
+        valid_until=valid_until,
     )
     return service_append_claim_attestation(
         instance,
@@ -1436,3 +1438,194 @@ def test_a_real_line_occurrence_is_credited_once_per_occurrence(tmp_path: Path) 
     )
     assert [row.run_id for row in listed.readings] == [second.run_id]
     assert len(_reading_records(instance, procedure)) == 2
+
+
+# ---------------------------------------------------------------------------
+# Second review: resolution contention, expired supersession
+# ---------------------------------------------------------------------------
+
+
+def _resolution_records(instance, activation):  # type: ignore[no-untyped-def]
+    journal, stream = measurements._journal(instance)  # noqa: SLF001
+    return journal.all_records(stream, resolution_contract_partition_id(activation))
+
+
+def _activation_for(instance, procedure, name: str):  # type: ignore[no-untyped-def]
+    accepted = AcceptedProcedureV1(
+        path=procedure_path(procedure.identity.name),
+        procedure=procedure,
+        artifact_digest=procedure_artifact_digest(procedure).tagged,
+    )
+    basis = measurements.measurement_activation_basis(
+        instance, accepted=accepted, observation=instance.accepted_coordinate()
+    )
+    return next(item for item in basis.activations if item.measurement_name == name)
+
+
+def _race_resolution(instance, procedure, monkeypatch, *, minute: int):  # type: ignore[no-untyped-def]
+    """Land a competing evaluation between this request's decision and its append."""
+
+    original = measurements.append_procedure_resolution
+    competitor: list[object] = []
+    raced = False
+
+    def racing_append(*args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal raced
+        if not raced:
+            raced = True
+            competitor.append(
+                _rows(
+                    _measure(
+                        instance,
+                        procedure,
+                        names=("rows-present",),
+                        at=OBSERVE_AT + timedelta(minutes=minute),
+                        recorded=RECORD_AT + timedelta(minutes=minute),
+                        actor=_actor(instance).model_copy(update={"operation_id": "competitor"}),
+                    )
+                )["rows-present"]
+            )
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(measurements, "append_procedure_resolution", racing_append)
+    outer = _rows(
+        _measure(
+            instance,
+            procedure,
+            names=("rows-present",),
+            at=OBSERVE_AT + timedelta(minutes=minute, seconds=30),
+            recorded=RECORD_AT + timedelta(minutes=minute, seconds=30),
+        )
+    )["rows-present"]
+    monkeypatch.undo()
+    return competitor[0], outer
+
+
+def test_concurrent_first_evaluations_retain_one_lawful_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, _owner, procedure = _world(tmp_path)
+    inner, outer = _race_resolution(instance, procedure, monkeypatch, minute=0)
+
+    assert inner.resolution is not None and inner.resolution.written_now  # type: ignore[attr-defined]
+    assert outer.resolution is not None and not outer.resolution.written_now
+    assert outer.resolution.resolution_id == inner.resolution.resolution_id  # type: ignore[attr-defined]
+    activation = _activation_for(instance, procedure, "rows-present")
+    records = _resolution_records(instance, activation)
+    assert [stored.record.event_kind for stored in records] == [
+        "resolution_activation",
+        "resolution",
+    ]
+    # The retained history replays lawfully afterwards, from a cold read.
+    measurements._activation_memo.clear()  # noqa: SLF001
+    book = ProcedureResolutionBook((activation,))
+    book.replay(records, bodies=instance.body_store())
+    standing = book.latest_non_overturned(activation.contract_id)
+    assert standing is not None and standing.sequence == 1
+    later = _rows(
+        _measure(
+            instance,
+            procedure,
+            names=("rows-present",),
+            at=OBSERVE_AT + timedelta(minutes=2),
+            recorded=RECORD_AT + timedelta(minutes=2),
+        )
+    )["rows-present"]
+    assert later.resolution is not None and not later.resolution.written_now
+    assert later.resolution.resolution_id == standing.resolution_id
+
+
+def test_concurrent_evaluations_after_an_overturn_retain_one_sequence_two(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, _owner, procedure = _world(tmp_path)
+    first = _rows(_measure(instance, procedure, names=("rows-present",)))["rows-present"]
+    assert first.resolution is not None
+    activation = _activation_for(instance, procedure, "rows-present")
+    journal, stream = measurements._journal(instance)  # noqa: SLF001
+    partition = resolution_contract_partition_id(activation)
+    book = ProcedureResolutionBook((activation,))
+    book.replay(journal.all_records(stream, partition), bodies=instance.body_store())
+    standing = book.latest_non_overturned(activation.contract_id)
+    assert standing is not None
+    fenced = measurements._FencedWriter(instance, journal)  # noqa: SLF001
+    fenced.acquire(stream, partition)
+    try:
+        append_resolution_disposition(
+            fenced.writer,
+            activation=activation,
+            resolution=standing,
+            disposition=build_resolution_disposition(
+                standing,
+                sequence=1,
+                verdict="overturned",
+                reviewer_actor_context=_actor(instance, "reviewer"),
+                recorded_at=RECORD_AT + timedelta(minutes=1),
+            ),
+            stream=stream,
+        )
+    finally:
+        fenced.release()
+
+    inner, outer = _race_resolution(instance, procedure, monkeypatch, minute=5)
+    assert inner.resolution is not None and inner.resolution.sequence == 2  # type: ignore[attr-defined]
+    assert outer.resolution is not None and outer.resolution.sequence == 2
+    assert outer.resolution.resolution_id == inner.resolution.resolution_id  # type: ignore[attr-defined]
+    records = _resolution_records(instance, activation)
+    assert [stored.record.event_kind for stored in records] == [
+        "resolution_activation",
+        "resolution",
+        "resolution_disposition",
+        "resolution",
+    ]
+    replayed = ProcedureResolutionBook((activation,))
+    replayed.replay(records, bodies=instance.body_store())
+    assert [item.sequence for item in replayed.resolutions[activation.contract_id]] == [1, 2]
+
+
+@pytest.mark.parametrize(
+    ("first_stance", "second_stance", "observe_minutes", "expected"),
+    [
+        # support, then a contradiction that expires: while it stands, the
+        # principal's word is the contradiction; once expired, no current proof.
+        ("support", "contradict", 15, "indeterminate"),
+        ("support", "contradict", 30, "indeterminate"),
+        # contradiction, then a support that expires: counted while it stands,
+        # nothing once expired -- the older contradiction is not revived either.
+        ("contradict", "support", 15, "satisfied"),
+        ("contradict", "support", 30, "indeterminate"),
+    ],
+)
+def test_an_expired_standing_word_neither_counts_nor_revives_what_it_superseded(
+    tmp_path: Path,
+    first_stance: str,
+    second_stance: str,
+    observe_minutes: int,
+    expected: str,
+) -> None:
+    instance, owner, procedure = _world(tmp_path)
+    _attest(instance, owner, tmp_path, stance=first_stance, attested_at=RUN_TIME)
+    _attest(
+        instance,
+        owner,
+        tmp_path,
+        stance=second_stance,
+        attested_at=RUN_TIME + timedelta(minutes=10),
+        valid_until=RUN_TIME + timedelta(minutes=20),
+    )
+    row = _rows(
+        _measure(
+            instance,
+            procedure,
+            names=("hot-arm-attested",),
+            at=RUN_TIME + timedelta(minutes=observe_minutes),
+            recorded=RUN_TIME + timedelta(minutes=observe_minutes, seconds=1),
+        )
+    )["hot-arm-attested"]
+    assert row.resolution is not None and row.resolution.verdict == expected
+    if expected == "satisfied":
+        items = row.resolution.value["items"]  # type: ignore[index]
+        assert [item["stance"] for item in items] == ["support"]  # type: ignore[index]
+        assert items[0]["event_sequence"] == 2  # type: ignore[index]
+    else:
+        assert row.resolution.evidence_refs == ()

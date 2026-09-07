@@ -38,6 +38,7 @@ from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
 from cruxible_core.playbill.exhaust import (
+    JournalPartitionHeadV1,
     JournalStreamIdentityV1,
     ProcedureExhaustWriter,
     StoredProcedureJournalRecordV1,
@@ -1163,7 +1164,16 @@ def append_procedure_resolution(
     activation: ResolutionContractActivationV1 | ResolutionContractActivationV2,
     resolution: ProcedureResolutionV1 | ProcedureResolutionV2,
     stream: JournalStreamIdentityV1,
+    expected_head: JournalPartitionHeadV1 | None = None,
 ) -> StoredProcedureJournalRecordV1:
+    """Append one resolution; ``expected_head`` makes it a compare-and-set.
+
+    The sequence and closed-contract checks read the partition as it is now;
+    a producer that decided the sequence from an earlier read passes the head
+    of that read, so a competing resolution landed in between refuses this
+    append as a journal conflict instead of retaining a second answer.
+    """
+
     partition_id = resolution_contract_partition_id(activation)
     law = evaluate_procedure_resolution(activation, resolution)
     if law.verdict == "refused":
@@ -1190,6 +1200,7 @@ def append_procedure_resolution(
         actor_context=resolution.actor_context,
         recorded_at=resolution.recorded_at,
         payload=resolution.model_dump(mode="json"),
+        expected_head=expected_head,
     )
 
 
