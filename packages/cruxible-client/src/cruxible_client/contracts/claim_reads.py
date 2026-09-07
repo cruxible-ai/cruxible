@@ -15,7 +15,7 @@ MAX_CLAIM_READ_BATCH = 256
 
 class ClaimReadBatchRequestV1(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    at: PlaybillAcceptedCoordinate
+    at: PlaybillAcceptedCoordinate | None = None
     claim_ids: tuple[str, ...] = Field(default=(), max_length=MAX_CLAIM_READ_BATCH)
     subject_paths: tuple[str, ...] = Field(default=(), max_length=MAX_CLAIM_READ_BATCH)
     predicates: tuple[str, ...] = Field(default=(), max_length=MAX_CLAIM_READ_BATCH)
@@ -26,6 +26,8 @@ class ClaimReadBatchRequestV1(BaseModel):
 
     @model_validator(mode="after")
     def selection(self) -> ClaimReadBatchRequestV1:
+        if self.cursor is not None and self.at is None:
+            raise ValueError("cursor continuation requires the returned accepted coordinate")
         if bool(self.claim_ids) == bool(self.subject_paths):
             raise ValueError("select either Claim identities or explicit subject paths")
         if self.claim_ids and (self.predicates or self.cursor):

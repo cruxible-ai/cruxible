@@ -84,6 +84,106 @@ def test_cursor_cannot_be_reused_for_other_selection(seeded):
     assert empty.claims == () and not empty.truncated
 
 
+def test_latest_batch_resolves_once_and_returns_the_resolved_coordinate(seeded, monkeypatch):
+    from cruxible_core.service import playbill_claim_reads
+
+    earlier = seeded.coordinate_for_oid(seeded.accepted_history()[-2].oid)
+    latest = seeded.accepted_coordinate()
+    coordinates = iter((earlier, latest))
+    calls = []
+
+    def resolve(instance, at):
+        assert instance is seeded
+        calls.append(at)
+        return next(coordinates)
+
+    monkeypatch.setattr(playbill_claim_reads, "_resolve_coordinate", resolve)
+    req = ClaimReadBatchRequestV1(subject_paths=PATHS, evaluation_time=TIME)
+    first = service_read_claim_batch(seeded, request=req)
+    second = service_read_claim_batch(seeded, request=req)
+    assert calls == [None, None]
+    assert len(first.claims) == 1 and len(second.claims) == 2
+    for result, coordinate in ((first, earlier), (second, latest)):
+        assert (
+            result.coordinate.model_dump()
+            == PlaybillAcceptedCoordinate.from_internal(coordinate).model_dump()
+        )
+        assert all(view.coordinate == result.coordinate for view in result.claims)
+
+
+def test_latest_page_continuation_is_bound_to_returned_coordinate(seeded, monkeypatch):
+    from cruxible_core.service import playbill_claim_reads
+
+    req = ClaimReadBatchRequestV1(subject_paths=PATHS, evaluation_time=TIME, limit=1)
+    first = service_read_claim_batch(seeded, request=req)
+    assert first.truncated and first.cursor
+    original = playbill_claim_reads._resolve_coordinate
+
+    def pinned_only(instance, at):
+        assert at is not None, "a continuation must not discover a newer head"
+        return original(instance, at)
+
+    monkeypatch.setattr(playbill_claim_reads, "_resolve_coordinate", pinned_only)
+    continuation = req.model_copy(update={"at": first.coordinate, "cursor": first.cursor})
+    second = service_read_claim_batch(seeded, request=continuation)
+    assert second.coordinate == first.coordinate
+    assert not second.truncated
+    assert first.claims[0].envelope["identity"] != second.claims[0].envelope["identity"]
+    earlier = type(first.coordinate).model_validate(
+        PlaybillAcceptedCoordinate.from_internal(
+            seeded.coordinate_for_oid(seeded.accepted_history()[-2].oid)
+        ).model_dump()
+    )
+    with pytest.raises(PlaybillFormatError, match="cursor"):
+        service_read_claim_batch(seeded, request=continuation.model_copy(update={"at": earlier}))
+    empty = type(first.coordinate).model_validate(
+        PlaybillAcceptedCoordinate.from_internal(
+            seeded.coordinate_for_oid(seeded.accepted_history()[0].oid)
+        ).model_dump()
+    )
+    with pytest.raises(PlaybillFormatError, match="cursor"):
+        service_read_claim_batch(seeded, request=continuation.model_copy(update={"at": empty}))
+
+
+def test_cursor_without_coordinate_is_rejected_before_source_work(seeded, monkeypatch):
+    from cruxible_core.service import playbill_claim_reads
+
+    with pytest.raises(ValidationError, match="continuation requires"):
+        ClaimReadBatchRequestV1(subject_paths=PATHS, cursor="cursor")
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("invalid continuation must fail before resolving accepted state")
+
+    monkeypatch.setattr(playbill_claim_reads, "_resolve_coordinate", forbidden)
+    # Internal callers using model_copy/model_construct receive the same guard.
+    req = ClaimReadBatchRequestV1(subject_paths=PATHS).model_copy(update={"cursor": "cursor"})
+    with pytest.raises(PlaybillFormatError, match="explicit accepted coordinate"):
+        service_read_claim_batch(seeded, request=req)
+
+
+def test_latest_identity_read_matches_explicit_snapshot(seeded):
+    selected = service_read_claim_batch(seeded, request=request(seeded, subject_paths=PATHS))
+    ids = tuple(view.envelope["identity"] for view in selected.claims)
+    latest = service_read_claim_batch(
+        seeded, request=ClaimReadBatchRequestV1(claim_ids=ids, evaluation_time=TIME)
+    )
+    assert latest == selected
+
+
+def test_latest_empty_generation_returns_its_full_coordinate(tmp_path):
+    from tests.test_playbill._support import initialize_local
+
+    instance, _ = initialize_local(tmp_path)
+    result = service_read_claim_batch(
+        instance, request=ClaimReadBatchRequestV1(subject_paths=PATHS)
+    )
+    assert result.claims == () and not result.truncated and result.cursor is None
+    assert (
+        result.coordinate.model_dump()
+        == PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump()
+    )
+
+
 def test_backing_reads_use_one_blob_batch_without_admission_or_projection(seeded, monkeypatch):
     selected = service_read_claim_batch(seeded, request=request(seeded, subject_paths=PATHS))
     ids = tuple(view.envelope["identity"] for view in selected.claims)

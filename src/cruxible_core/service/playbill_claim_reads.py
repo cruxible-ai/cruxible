@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 
+from cruxible_client.contracts import PlaybillAcceptedCoordinate as ClientAcceptedCoordinate
 from cruxible_client.contracts import PlaybillClaimViewV2
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claim_reads import (
@@ -41,16 +42,23 @@ def service_read_claim_batch(
     *,
     request: ClaimReadBatchRequestV1,
 ) -> ClaimReadBatchResultV1:
+    if request.cursor is not None and request.at is None:
+        raise PlaybillFormatError("Claim batch cursor requires an explicit accepted coordinate")
     coordinate = _resolve_coordinate(
-        instance, PlaybillAcceptedCoordinate.model_validate(request.at.model_dump())
+        instance,
+        PlaybillAcceptedCoordinate.model_validate(request.at.model_dump())
+        if request.at is not None
+        else None,
     )
+    resolved_at = ClientAcceptedCoordinate.model_validate(
+        PlaybillAcceptedCoordinate.from_internal(coordinate).model_dump()
+    )
+    # A latest-head request becomes one immutable selection before any reads or
+    # cursor binding. Subsequent pages must supply this returned coordinate.
+    request = request.model_copy(update={"at": resolved_at})
     generation = next(
         item for item in instance.accepted_history() if item.oid == coordinate.git_oid
     )
-    if generation.sequence == 0:
-        if request.claim_ids:
-            raise ClaimNotFoundError("the accepted generation contains no Claims")
-        return ClaimReadBatchResultV1(coordinate=request.at, claims=())
     after = ""
     if request.cursor:
         try:
@@ -59,6 +67,10 @@ def service_read_claim_batch(
                 raise ValueError("cursor selection differs")
         except (ValueError, TypeError, UnicodeError) as exc:
             raise PlaybillFormatError("Claim batch cursor does not match this selection") from exc
+    if generation.sequence == 0:
+        if request.claim_ids:
+            raise ClaimNotFoundError("the accepted generation contains no Claims")
+        return ClaimReadBatchResultV1(coordinate=resolved_at, claims=())
     truncated = False
     with instance.bind_accepted_projection(coordinate) as projection:
         if request.claim_ids:
@@ -121,7 +133,7 @@ def service_read_claim_batch(
             json.dumps([_cursor_selection(request), identities[-1]]).encode()
         ).decode()
     return ClaimReadBatchResultV1(
-        coordinate=request.at,
+        coordinate=resolved_at,
         claims=tuple(views),
         truncated=truncated,
         cursor=cursor,

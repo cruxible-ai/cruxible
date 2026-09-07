@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-05:performance-effectful-integration",
-    "surface_digest": "sha256:c3df19a179bcd8f7ced561e4771d411dbacf30140e9dddbd781b32356402f56f"
+    "register_entry": "2026-09-07:sdk-live-accepted-reads",
+    "surface_digest": "sha256:8e076f3bcccc67c2eda83d93579a62c5d17ab5d4a079e06423ff1f4bdd60512e"
   },
   "surface": {
     "cli_leaves": [
@@ -1112,7 +1112,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/claims/read-batch",
         "request_model": "cruxible_client.contracts.claim_reads.ClaimReadBatchRequestV1",
-        "request_schema_digest": "sha256:2777311d34cdcec582d03b785426e7cd95d8bd13a0379bc779719a3323e9137a",
+        "request_schema_digest": "sha256:071805189ffaa2cd847cc7dec7d164e642766849496ee4ca89fac2430c8ea5b2",
         "response_model": "cruxible_client.contracts.claim_reads.ClaimReadBatchResultV1",
         "response_schema_digest": "sha256:b70594177157fb825c780bf3a43e7018614f8c205ba2a89e97dda4817d55c1b2"
       },
