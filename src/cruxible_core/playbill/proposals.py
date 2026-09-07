@@ -3655,6 +3655,15 @@ def _proposal_id_payload(
     ).tagged
 
 
+class ProposalHeadMovedError(ProposalAdmissionError):
+    """Accepted main moved between the coordinate a submission evaluated at and its publication.
+
+    Raised under the activation lock before any ref moves or record is written,
+    so a caller can evaluate again at the new head or refuse; nothing of the
+    stale submission reaches the ledger.
+    """
+
+
 class ProposalService:
     """Daemon-only PB-C proposal service; it never updates main or accepted state."""
 
@@ -3712,8 +3721,12 @@ class ProposalService:
         tree this submission evaluates against, after the actor is known to be
         active there and before any ref moves or record is written. A caller
         whose authority to propose lives in accepted state (a Procedure's
-        mandate) checks it there, so the state it authorized against and the
-        state the proposal is evaluated at are one read, not two.
+        mandate) checks it there. That coordinate is then verified unchanged
+        under the activation lock immediately before the first ref moves, and
+        cannot change until the last record is written: the accepted authority
+        coordinate is verified atomically with first publication, and
+        contention raises `ProposalHeadMovedError` before any effect is
+        committed so the caller can evaluate again or refuse.
         """
         self._require_writable()
         validate_candidate_timestamp(timestamp)
@@ -3789,83 +3802,97 @@ class ProposalService:
             rationale=request.rationale,
         )
 
-        existing = self.transport.read_proposal_ref(request.target_ref)
-        commit_oid, tree_oid = self.transport.create_proposal_commit(
-            validated_tree,
-            # Resubmitting the same ref EXTENDS that ref's lineage, mirroring the
-            # evaluation law below: the new admitted commit is parented on the
-            # commit the ref already holds, so the previous admitted and evaluated
-            # commits stay reachable instead of becoming proposal garbage on every
-            # ref reuse. The coordinate the tree was PROPOSED against remains
-            # `request.proposed_base_oid`; it is the admission record's and the
-            # validation base tree's, never the commit's parent.
-            base_oid=request.proposed_base_oid if existing is None else existing,
-            target_ref=request.target_ref,
-            actor_id=actor.actor_id,
-            timestamp=timestamp,
-            expected_ref_oid=existing,
-            message=message,
-        )
-
-        evaluated_tree_oid: str | None = tree_oid
-        if outcome.candidate is not None and (is_rebase or outcome.tree != validated_tree):
-            commit_oid, evaluated_tree_oid = self.transport.create_proposal_commit(
-                outcome.tree,
-                # The evaluated commit extends the admitted one on the same ref, so
-                # the tree the actor submitted stays reachable instead of becoming an
-                # unreachable object on every card-bearing proposal. The coordinate
-                # the members were evaluated at is the evaluation record's, not the
-                # commit's parent.
-                base_oid=commit_oid,
+        # Publication is one critical section under the review lock and the
+        # ledger's activation lock, in that order (the order every existing
+        # nesting uses). Activation moves accepted main only under the same
+        # activation lock, so the head this submission evaluated at -- and, for
+        # a caller that passed `authorize`, was authorized at -- is verified
+        # unchanged here and cannot change until every record below is written.
+        # Evaluation stays outside: it is a pure function of `current_tree`.
+        with self._review_projection_lock(), self.transport.activation_lock():
+            if self.transport.read_main() != current.git_oid:
+                raise ProposalHeadMovedError(
+                    "accepted main moved between evaluation and publication; evaluate again "
+                    "at the current head"
+                )
+            existing = self.transport.read_proposal_ref(request.target_ref)
+            commit_oid, tree_oid = self.transport.create_proposal_commit(
+                validated_tree,
+                # Resubmitting the same ref EXTENDS that ref's lineage, mirroring the
+                # evaluation law below: the new admitted commit is parented on the
+                # commit the ref already holds, so the previous admitted and evaluated
+                # commits stay reachable instead of becoming proposal garbage on every
+                # ref reuse. The coordinate the tree was PROPOSED against remains
+                # `request.proposed_base_oid`; it is the admission record's and the
+                # validation base tree's, never the commit's parent.
+                base_oid=request.proposed_base_oid if existing is None else existing,
                 target_ref=request.target_ref,
                 actor_id=actor.actor_id,
                 timestamp=timestamp,
-                expected_ref_oid=commit_oid,
+                expected_ref_oid=existing,
                 message=message,
             )
-        # The admission names the commit the proposal ref actually holds. Evaluation
-        # re-commits whenever it derives cards or rebases, so the record is written
-        # once, here, against the final OID: written before, it named a commit the
-        # ref no longer points at and no selector could resolve the ref back to it.
-        proposal_id = _proposal_id_payload(
-            actor_id=actor.actor_id,
-            request=request,
-            candidate_commit_oid=commit_oid,
-            candidate_tree_oid=evaluated_tree_oid or tree_oid,
-            admitted_at=timestamp,
-            limits=self.receive_limits,
-        )
-        admission = ProposalAdmissionRecord(
-            proposal_id=proposal_id,
-            actor_id=actor.actor_id,
-            target_ref=request.target_ref,
-            proposed_base_oid=request.proposed_base_oid,
-            candidate_commit_oid=commit_oid,
-            candidate_tree_oid=evaluated_tree_oid or tree_oid,
-            source_compilation_digest=request.source_compilation_digest,
-            claim_type_expansions=request.claim_type_expansions,
-            limits=self.receive_limits,
-            admitted_at=timestamp,
-            rationale=request.rationale,
-        )
-        candidate_value = outcome.candidate.candidate_digest if outcome.candidate else None
-        try:
-            evaluation = ProposalEvaluationRecord(
-                proposal_id=proposal_id,
-                verdict="candidate" if outcome.candidate is not None else "refused",
-                evaluated_base_oid=current.git_oid,
-                evaluated_tree_oid=evaluated_tree_oid if outcome.candidate is not None else None,
-                rebased=is_rebase,
-                candidate_digest=candidate_value,
-                diagnostics=outcome.diagnostics,
-                claim_admission_accounts=outcome.claim_admission_accounts,
-                evaluated_at=timestamp,
+
+            evaluated_tree_oid: str | None = tree_oid
+            if outcome.candidate is not None and (is_rebase or outcome.tree != validated_tree):
+                commit_oid, evaluated_tree_oid = self.transport.create_proposal_commit(
+                    outcome.tree,
+                    # The evaluated commit extends the admitted one on the same ref, so
+                    # the tree the actor submitted stays reachable instead of becoming an
+                    # unreachable object on every card-bearing proposal. The coordinate
+                    # the members were evaluated at is the evaluation record's, not the
+                    # commit's parent.
+                    base_oid=commit_oid,
+                    target_ref=request.target_ref,
+                    actor_id=actor.actor_id,
+                    timestamp=timestamp,
+                    expected_ref_oid=commit_oid,
+                    message=message,
+                )
+            # The admission names the commit the proposal ref actually holds. Evaluation
+            # re-commits whenever it derives cards or rebases, so the record is written
+            # once, here, against the final OID: written before, it named a commit the
+            # ref no longer points at and no selector could resolve the ref back to it.
+            proposal_id = _proposal_id_payload(
+                actor_id=actor.actor_id,
+                request=request,
+                candidate_commit_oid=commit_oid,
+                candidate_tree_oid=evaluated_tree_oid or tree_oid,
+                admitted_at=timestamp,
+                limits=self.receive_limits,
             )
-        except ValidationError as exc:
-            raise ProposalEvaluationIntegrityError(
-                "proposal evaluation record failed deterministic validation"
-            ) from exc
-        with self._review_projection_lock():
+            admission = ProposalAdmissionRecord(
+                proposal_id=proposal_id,
+                actor_id=actor.actor_id,
+                target_ref=request.target_ref,
+                proposed_base_oid=request.proposed_base_oid,
+                candidate_commit_oid=commit_oid,
+                candidate_tree_oid=evaluated_tree_oid or tree_oid,
+                source_compilation_digest=request.source_compilation_digest,
+                claim_type_expansions=request.claim_type_expansions,
+                limits=self.receive_limits,
+                admitted_at=timestamp,
+                rationale=request.rationale,
+            )
+            candidate_value = outcome.candidate.candidate_digest if outcome.candidate else None
+            try:
+                evaluation = ProposalEvaluationRecord(
+                    proposal_id=proposal_id,
+                    verdict="candidate" if outcome.candidate is not None else "refused",
+                    evaluated_base_oid=current.git_oid,
+                    evaluated_tree_oid=(
+                        evaluated_tree_oid if outcome.candidate is not None else None
+                    ),
+                    rebased=is_rebase,
+                    candidate_digest=candidate_value,
+                    diagnostics=outcome.diagnostics,
+                    claim_admission_accounts=outcome.claim_admission_accounts,
+                    evaluated_at=timestamp,
+                )
+            except ValidationError as exc:
+                raise ProposalEvaluationIntegrityError(
+                    "proposal evaluation record failed deterministic validation"
+                ) from exc
             before = ProposalNoteIndex.build(self.evidence, self.transport)
             affected = {commit_oid}
             if outcome.candidate is not None and evaluated_tree_oid is not None:
@@ -3879,10 +3906,16 @@ class ProposalService:
                     )
                 )
             previous_notes = before.validate_and_snapshot(self.transport, affected)
-            self.evidence.write_admission(admission)
-            self.evidence.write_evaluation(evaluation)
+            # The admission is written LAST and is the group's commit point: an
+            # admission on disk always has its evaluation and candidate beside
+            # it. A crash before it leaves a ref no admission names (plus
+            # content-addressed records nothing points at), which a resubmission
+            # on the same ref completes; an admission without its evaluation is
+            # not a crash state but corrupt evidence, and reads as such.
             if outcome.candidate is not None:
                 self.evidence.write_candidate(outcome.candidate)
+            self.evidence.write_evaluation(evaluation)
+            self.evidence.write_admission(admission)
             # Original and advisory aliases use the same complete group, so a
             # second admission sharing a commit cannot overwrite the first.
             after = ProposalNoteIndex.build(self.evidence, self.transport)
@@ -3919,6 +3952,7 @@ __all__ = [
     "ProposalAdmissionRequest",
     "ProposalEvaluationRecord",
     "ProposalEvidenceProtocol",
+    "ProposalHeadMovedError",
     "ProposalReceiveLimits",
     "ProposalWithdrawalRecordV1",
     "ProposalResult",

@@ -30,9 +30,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
+import structlog
 from pydantic import ValidationError
 
 from cruxible_client.contracts.canonical import CanonicalValue
+from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.procedures.results import (
     ProcedureBudgetBoundaryObservationV1,
     ProcedureRunBudgetDeclaredV1,
@@ -68,6 +70,8 @@ from cruxible_core.service.playbill_procedure_runs import (
     _journal_for_write,
     _stream,
 )
+
+_log = structlog.get_logger("cruxible.proposal_egress_recovery")
 
 RecoveredProposalEgressDisposition = Literal["delivered", "refused"]
 
@@ -182,12 +186,25 @@ def service_recover_proposal_egress(
             resolving: dict[str, CanonicalValue] | None
             if unresolved:
                 ((node_id, prepared_payload),) = unresolved.items()
-                disposition, resolving = _resolve_prepared(
-                    instance,
-                    admission=admission,
-                    prepared_payload=prepared_payload,
-                    recorded_at=recorded_at,
-                )
+                try:
+                    disposition, resolving = _resolve_prepared(
+                        instance,
+                        admission=admission,
+                        prepared_payload=prepared_payload,
+                        recorded_at=recorded_at,
+                    )
+                except (PlaybillError, OSError, ValueError) as exc:
+                    # Corrupt or contradictory evidence under the operation's
+                    # ref is not resolved by retrying; it is reported, the run
+                    # stays `running` for an operator, and every other run in
+                    # this and later partitions is still recovered.
+                    _log.warning(
+                        "proposal_egress_recovery_run_skipped",
+                        run_id=admission.run_id,
+                        node_id=node_id,
+                        reason=str(exc),
+                    )
+                    continue
                 failure = (
                     "The attempt crashed after preparing its proposal egress; recovery "
                     f"resolved the egress as {disposition}."

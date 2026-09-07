@@ -31,6 +31,7 @@ from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjec
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
+    ProposalHeadMovedError,
     ProposalResult,
     ProposalService,
 )
@@ -293,6 +294,9 @@ def _candidate_member_digest(
     return member.candidate_artifact_digest
 
 
+HEAD_CONTENTION_ATTEMPTS = 3
+
+
 class ProposalTerminalAdapter:
     """Lower one complete tree, authorize it, then call ProposalService exactly once."""
 
@@ -349,17 +353,25 @@ class ProposalTerminalAdapter:
             # no second read can disagree with the first.
             require_procedure_mandate_at_head(request, admission=admission, head_tree=head_tree)
 
-        result = self.service.submit(
-            actor=AuthenticatedActor(actor_id=actor_id),
-            request=ProposalAdmissionRequest(
-                target_ref=proposal_terminal_ref(actor_id, request.operation_key),
-                proposed_base_oid=request.accepted_coordinate.git_oid,
-                rationale=rationale,
-            ),
-            candidate_tree=candidate_tree,
-            timestamp=canonical_candidate_timestamp(request.evaluation_time),
-            authorize=_authorize_at_head,
-        )
+        for attempt in range(HEAD_CONTENTION_ATTEMPTS):
+            try:
+                result = self.service.submit(
+                    actor=AuthenticatedActor(actor_id=actor_id),
+                    request=ProposalAdmissionRequest(
+                        target_ref=proposal_terminal_ref(actor_id, request.operation_key),
+                        proposed_base_oid=request.accepted_coordinate.git_oid,
+                        rationale=rationale,
+                    ),
+                    candidate_tree=candidate_tree,
+                    timestamp=canonical_candidate_timestamp(request.evaluation_time),
+                    authorize=_authorize_at_head,
+                )
+                break
+            except ProposalHeadMovedError:
+                # Nothing was written. The next attempt reads the new head and
+                # re-establishes the mandate there before evaluating again.
+                if attempt == HEAD_CONTENTION_ATTEMPTS - 1:
+                    raise
         return proposal_terminal_receipt(
             request,
             result=result,

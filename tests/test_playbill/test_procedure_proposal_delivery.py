@@ -1102,3 +1102,216 @@ def test_an_interrupted_publication_with_other_bytes_still_refuses(
     # Nothing was published over the interrupted commit.
     assert instance.proposal_ref_target(target_ref) == interrupted_oid
     assert _admissions_for(instance, target_ref) == []
+
+
+# --- the authority boundary is the publication boundary ----------------------
+
+
+from cruxible_core.playbill import proposals as proposals_module  # noqa: E402
+
+
+def _between_authorize_and_publication(monkeypatch: pytest.MonkeyPatch, action) -> None:  # type: ignore[no-untyped-def]
+    """Run `action` inside the door, after `authorize` passed and before any ref moves."""
+
+    original = proposals_module.evaluate_proposal_tree
+    fired = {"value": False}
+
+    def evaluate_then_act(**kwargs):  # type: ignore[no-untyped-def]
+        outcome = original(**kwargs)
+        if not fired["value"]:
+            fired["value"] = True
+            action()
+        return outcome
+
+    monkeypatch.setattr(proposals_module, "evaluate_proposal_tree", evaluate_then_act)
+
+
+def test_a_mandate_retired_after_authorization_and_before_publication_creates_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The head authorized at is verified unchanged under the activation lock before any write."""
+
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    _between_authorize_and_publication(monkeypatch, lambda: _retire_mandate(instance, owner))
+
+    state = run_line(instance, root, line)
+
+    refusal = _refusal(state)
+    assert refusal.code == "procedure_mandate_superseded", refusal
+    assert _proposal_refs(instance) == []
+    assert not [
+        record
+        for record in instance.proposal_evidence().list_admissions()
+        if "/procedure-" in record.target_ref
+    ]
+    (egress,) = state.terminal_egress
+    assert egress.verdict == "refused"
+    assert egress.proposal_id is None
+    # Nothing to replay: a later sweep finds no open run and no proposal.
+    assert service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(minutes=1)) == {}
+
+
+def test_head_contention_at_publication_re_evaluates_at_the_new_head(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unrelated activation between evaluation and publication costs one re-evaluation."""
+
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    base = instance.accepted_coordinate()
+
+    def move_head() -> None:
+        filler = SubjectShell(
+            identity=ArtifactIdentity(kind="Subject", name=f"{SUBJECT_KIND}/contender"),
+            subject_kind=SUBJECT_KIND,
+            subject_id="contender",
+        )
+        fixtures._accept_more(
+            instance,
+            owner,
+            {subject_path(SUBJECT_KIND, "contender"): render_subject(filler)},
+            name="contender",
+        )
+
+    _between_authorize_and_publication(monkeypatch, move_head)
+    submits: list[str] = []
+    original_submit = proposals_module.ProposalService.submit
+
+    def counting_submit(self, **kwargs):  # type: ignore[no-untyped-def]
+        submits.append(kwargs["request"].target_ref)
+        return original_submit(self, **kwargs)
+
+    monkeypatch.setattr(proposals_module.ProposalService, "submit", counting_submit)
+
+    state = run_line(instance, root, line)
+
+    assert state.status == "succeeded", state.terminal
+    # The contender's own acceptance also went through the door; the operation
+    # itself was submitted twice under one ref: once refused at the lock, once kept.
+    operation_submits = [ref for ref in submits if "/procedure-" in ref]
+    assert len(operation_submits) == 2 and len(set(operation_submits)) == 1
+    (egress,) = state.terminal_egress
+    assert egress.verdict == "delivered"
+    inspection = service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
+    assert inspection.proposal.admission.proposed_base_oid == base.git_oid
+    head = instance.accepted_coordinate()
+    assert inspection.proposal.evaluation.evaluated_base_oid == head.git_oid
+    assert inspection.proposal.evaluation.rebased is True
+    assert len(_proposal_refs(instance)) == 1
+
+
+# --- every evidence write boundary ------------------------------------------
+
+
+def _interrupt_at(monkeypatch: pytest.MonkeyPatch, method: str) -> dict[str, str]:
+    """Die inside the door at one evidence write of the operation's own proposal."""
+
+    original_write = getattr(ProposalEvidenceStore, method)
+    original_append = ProcedureExecutor._append_event
+    seen: dict[str, str] = {}
+
+    def crash_write(self, record):  # type: ignore[no-untyped-def]
+        # Setup proposals (the world's own acceptance) write through untouched;
+        # only the terminal's operation is interrupted, once.
+        if not seen and instance_refs["procedure"]:
+            seen["method"] = method
+            raise _Crash()
+        return original_write(self, record)
+
+    def dead_append(self, admission, records, event_kind, payload):  # type: ignore[no-untyped-def]
+        if seen:
+            raise _Crash()
+        return original_append(self, admission, records, event_kind, payload)
+
+    monkeypatch.setattr(ProposalEvidenceStore, method, crash_write)
+    monkeypatch.setattr(ProcedureExecutor, "_append_event", dead_append)
+    return seen
+
+
+instance_refs: dict[str, bool] = {"procedure": False}
+
+
+@pytest.mark.parametrize("method", ["write_candidate", "write_evaluation", "write_admission"])
+def test_an_interruption_at_any_evidence_write_completes_one_proposal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+) -> None:
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    instance_refs["procedure"] = True
+    try:
+        seen = _interrupt_at(monkeypatch, method)
+        with pytest.raises(_Crash):
+            run_line(instance, root, line)
+    finally:
+        instance_refs["procedure"] = False
+    monkeypatch.undo()
+    assert seen["method"] == method
+    # Whatever was written, no admission names the ref's commit yet: the
+    # admission is the group's commit point.
+    refs = _proposal_refs(instance)
+    assert refs == []
+
+    recovered = service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(minutes=1))
+
+    ((run_id, disposition),) = recovered.items()
+    assert disposition == "delivered"
+    (ref,) = _proposal_refs(instance)
+    (admission,) = _admissions_for(instance, ref)
+    assert admission.candidate_commit_oid == instance.proposal_ref_target(ref)
+    state = service_get_playbill_procedure_run(instance, run_id=run_id)
+    assert state.status == "operational_failed"
+    (egress,) = state.terminal_egress
+    assert egress.verdict == "delivered" and egress.proposal_id == admission.proposal_id
+    inspection = service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
+    assert inspection.proposal.candidate is not None
+    assert inspection.proposal.candidate.candidate_digest == egress.candidate_digest
+    assert service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(minutes=2)) == {}
+    accept_proposal(instance, owner, inspection)
+    assert egress.children[0].path in instance.tree_at(instance.accepted_coordinate().git_oid)
+
+
+def test_corrupt_evidence_under_one_operation_does_not_stop_recovery_of_another(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An admission without its evaluation is corruption, reported and skipped, not retried."""
+
+    instance, _owner, root, line, _procedure = proposal_world(tmp_path)
+    # Run one: crash after the door, then delete its evaluation file.
+    _crash_after(monkeypatch, after_submit=True)
+    with pytest.raises(_Crash):
+        run_line(instance, root, line)
+    monkeypatch.undo()
+    (ref,) = _proposal_refs(instance)
+    evidence = instance.proposal_evidence()
+    (admission,) = [r for r in evidence.list_admissions() if r.target_ref == ref]
+    evaluation_files = [
+        path
+        for path in evidence.evaluations.glob("*.json")
+        if admission.proposal_id in path.read_text()
+    ]
+    assert len(evaluation_files) == 1
+    evaluation_files[0].unlink()
+    # Run two, a later occurrence: crash before the door.
+    _crash_after(monkeypatch, after_submit=False)
+    with pytest.raises(_Crash):
+        run_line(instance, root, line, at=NOW + timedelta(hours=1))
+    monkeypatch.undo()
+    statuses = _finalized_runs(instance)
+    assert len(statuses) == 2 and set(statuses.values()) == {"running"}
+
+    recovered = service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(hours=2))
+
+    # The healthy later run recovered; the corrupt earlier one is left for an operator.
+    assert len(recovered) == 1
+    ((recovered_run, disposition),) = recovered.items()
+    assert disposition == "delivered"
+    after = _finalized_runs(instance)
+    assert after[recovered_run] == "operational_failed"
+    (corrupt_run,) = [run_id for run_id in after if run_id != recovered_run]
+    assert after[corrupt_run] == "running"
+    assert len(_proposal_refs(instance)) == 2
+    # A second sweep neither retries the corrupt run into a duplicate nor errors.
+    assert service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(hours=3)) == {}
