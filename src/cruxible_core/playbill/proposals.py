@@ -3934,8 +3934,11 @@ class ProposalService:
                 # other aliases. Include their groups in the publication delta.
                 affected.update(after.oids_for_candidate(candidate_value))
             after.publish(self.transport, affected, previous=previous_notes)
-        if self.transport.read_main() != current.git_oid:
-            raise ProposalIntegrityError("proposal evaluation changed or raced accepted main")
+            # Prove publication while activation is still excluded. Once the
+            # lock is released, a later acceptance may legitimately move main;
+            # that cannot turn this durable submission into a failed request.
+            if self.transport.read_main() != current.git_oid:
+                raise ProposalIntegrityError("proposal evaluation changed accepted main")
         # Every byte this submission writes is durable, and the integrity proof
         # above has passed. Publishing here rather than earlier means the mirror
         # is only ever asked to carry a proposal the daemon has already kept.
