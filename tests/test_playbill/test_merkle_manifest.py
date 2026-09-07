@@ -322,3 +322,28 @@ def test_merkle_manifest_has_a_frozen_end_to_end_golden() -> None:
     )
     assert incremental.root.tagged == expected["root"]
     verify_merkle_nodes(incremental.nodes, claimed_root=expected["root"])
+
+
+def test_incremental_merkle_update_does_not_enumerate_untouched_node_map() -> None:
+    from cruxible_client._persistent import PersistentMap
+    from cruxible_client.contracts.merkle import MerkleTree
+
+    class NoEnumeration(PersistentMap[MerkleNode]):
+        def __iter__(self):
+            raise AssertionError("incremental update enumerated the whole node map")
+
+        def items(self):
+            raise AssertionError("incremental update enumerated the whole node map")
+
+        def values(self):
+            raise AssertionError("incremental update enumerated the whole node map")
+
+    original = build_merkle_manifest(MEMBERS)
+    assert isinstance(original.nodes, PersistentMap)
+    guarded = MerkleTree(original.root, NoEnumeration(original.nodes), original.domains)
+    updated = update_merkle_manifest(guarded, updated={"subjects/alpha.json": "99" * 32})
+    expected = build_merkle_manifest({**MEMBERS, "subjects/alpha.json": "99" * 32})
+    assert isinstance(updated.nodes, PersistentMap)
+    assert updated.root == expected.root
+    assert updated.nodes == expected.nodes
+    assert original.members() == MEMBERS

@@ -26,6 +26,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Generic, TypeVar, cast
 
+from cruxible_client._persistent import MapMutation, PersistentMap
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     CanonicalScalar,
@@ -256,7 +257,7 @@ def build_merkle_tree(
         nodes[prefix] = _interior_node(prefix, interior[prefix], nodes, domains)
     return MerkleTree(
         root=_root_value(nodes[ROOT_PREFIX], domains),
-        nodes=nodes,
+        nodes=PersistentMap(nodes),
         domains=domains,
     )
 
@@ -283,7 +284,7 @@ def update_merkle_tree(
 
     Untouched subtrees are carried over as the identical `MerkleNode` objects, so
     no digest outside the changed paths' root paths is recomputed. The node map
-    itself is copied, which is a pointer copy per member and never a hash.
+    uses persistent path copying, avoiding a whole-map copy per change set.
     """
 
     domains = manifest.domains
@@ -296,7 +297,7 @@ def update_merkle_tree(
     if collisions:
         raise CanonicalEncodingError(f"merkle change set both updates and removes: {collisions}")
 
-    nodes = dict(manifest.nodes)
+    nodes = MapMutation(manifest.nodes)
     dirty: dict[str, list[str]] = {}
 
     def segments_of(prefix: str) -> list[str]:
@@ -359,7 +360,7 @@ def update_merkle_tree(
         nodes[prefix] = _interior_node(prefix, dirty[prefix], nodes, domains)
     return MerkleTree(
         root=_root_value(nodes[ROOT_PREFIX], domains),
-        nodes=nodes,
+        nodes=nodes.finish(),
         domains=domains,
     )
 
