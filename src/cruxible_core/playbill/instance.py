@@ -98,6 +98,7 @@ from cruxible_core.playbill.ledger_mirror import (
     write_mirror_state,
 )
 from cruxible_core.playbill.memo import memo_get, memo_put
+from cruxible_core.playbill.prepared_evaluation import PreparedEvaluationAdapter
 from cruxible_core.playbill.producer_receipts import local_producer_receipt_resolver
 from cruxible_core.playbill.projection import (
     AcceptedCoordinate,
@@ -244,6 +245,7 @@ class PlaybillInstance:
         self._recovered = recovered
         self._state_lock = threading.RLock()
         self.derived = DerivedState()
+        self.prepared_evaluations = PreparedEvaluationAdapter(self.derived)
         self._citation_index_cache = CitationIndexCache(self.derived)
         self._claim_compilation_cache = ClaimCompilationCache()
         self._proposal_note_cache = ProposalNoteCache()
@@ -1031,6 +1033,7 @@ class PlaybillInstance:
             review_projection_lock=self.review_projection_lock,
             note_index_provider=self.proposal_note_index,
             accepted_tree_provider=self.immutable_tree_at,
+            prepared_evaluations=self.prepared_evaluations,
             current_coordinate=self.accepted_coordinate,
             promotion_verifier=self._promotion_verifier,
             producer_receipt_resolver=local_producer_receipt_resolver(

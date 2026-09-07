@@ -60,7 +60,10 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_artifact_digest,
     procedure_path,
 )
-from cruxible_client.contracts.proposal_models import ProposalReceiveLimits
+from cruxible_client.contracts.proposal_models import (
+    ProposalAdmissionRequest,
+    ProposalReceiveLimits,
+)
 from cruxible_client.contracts.query.definitions import (
     parse_query_definition,
     query_definition_digest,
@@ -74,6 +77,7 @@ from cruxible_core.playbill.authoring.lowering import (
 )
 from cruxible_core.playbill.authoring.prepared_lowering import reuse_lowering
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.prepared_evaluation import PreparedEvaluationScope
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
@@ -712,11 +716,24 @@ def _record_ceiling_diagnostic(
     )
 
 
+def authoring_operation(instance: PlaybillInstance, intent: AuthoringIntentV1) -> bytes:
+    """Exact authored revision/minted identities, excluding computed status only."""
+    return canonical_bytes(
+        {
+            "intent": intent.model_dump(
+                mode="json", exclude={"last_preflight", "candidate_status"}
+            ),
+            "descriptor": instance.descriptor.model_dump(mode="json"),
+        }
+    )
+
+
 def compute_preflight(
     instance: PlaybillInstance,
     *,
     intent: AuthoringIntentV1,
     actor: AuthenticatedActor,
+    prepared: PreparedEvaluationScope | None = None,
 ) -> ComputedPreflight:
     """Compute every independently knowable refusal and one submit-binding certificate."""
 
@@ -880,15 +897,49 @@ def compute_preflight(
                         current_tree=current_tree,
                         proposed_tree=proposed_tree,
                         current=current,
-                        bodies=instance.body_store(),
+                        bodies=(
+                            instance.body_store()
+                            if prepared is None
+                            else prepared.bodies(instance.body_store())
+                        ),
                         timestamp=intent.canonical_timestamp,
                         rebased=base.git_oid != current.git_oid,
                         actor_id=actor.actor_id,
-                        promotion_verifier=service.promotion_verifier,
-                        producer_receipt_resolver=service.producer_receipt_resolver,
-                        query_facts_provider=service.query_facts_provider,
+                        promotion_verifier=(
+                            service.promotion_verifier
+                            if prepared is None
+                            else prepared.promotion(service.promotion_verifier)
+                        ),
+                        producer_receipt_resolver=(
+                            service.producer_receipt_resolver
+                            if prepared is None
+                            else prepared.operational(service.producer_receipt_resolver)
+                        ),
+                        query_facts_provider=(
+                            service.query_facts_provider
+                            if prepared is None
+                            else prepared.operational(service.query_facts_provider)
+                        ),
                         tree_state_provider=service.tree_state_provider,
                     )
+                    if prepared is not None:
+                        prepared.retain(
+                            evaluation,
+                            operation=authoring_operation(instance, intent),
+                            current=current,
+                            actor=actor,
+                            request=ProposalAdmissionRequest(
+                                target_ref=proposal_ref,
+                                proposed_base_oid=current.git_oid,
+                                rationale=(
+                                    intent.payload.rationale
+                                    if isinstance(intent.payload, ChangeSetAuthoringPayloadV1)
+                                    else None
+                                ),
+                            ),
+                            limits=service.receive_limits,
+                            timestamp=intent.canonical_timestamp,
+                        )
                     evaluated_tree = evaluation.tree
                     diagnostics.extend(
                         _compiler_diagnostic(item, member_by_path=lowered.member_by_path)

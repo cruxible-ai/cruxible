@@ -293,6 +293,10 @@ from cruxible_core.playbill.exhaust.promotions import (
     exhaust_promotion_digest,
     parse_exhaust_promotion,
 )
+from cruxible_core.playbill.prepared_evaluation import (
+    PreparedEvaluationAdapter,
+    PreparedEvaluationScope,
+)
 from cruxible_core.playbill.principal_lifecycle import evaluate_principal_lifecycle
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.proposal_message import proposal_commit_message
@@ -3745,6 +3749,7 @@ class ProposalService:
         tree_state_provider: TreeStateProvider | None = None,
         note_index_provider: Callable[[], ProposalNoteIndex] | None = None,
         accepted_tree_provider: Callable[[str], Mapping[str, bytes]] | None = None,
+        prepared_evaluations: PreparedEvaluationAdapter | None = None,
     ) -> None:
         self.transport = transport
         self.accepted = accepted
@@ -3769,6 +3774,7 @@ class ProposalService:
         self._ledger_publisher = ledger_publisher or (lambda: None)
         self.tree_state_provider = tree_state_provider
         self._accepted_tree_provider = accepted_tree_provider or self.transport.read_tree
+        self._prepared_evaluations = prepared_evaluations
 
     def submit(
         self,
@@ -3777,6 +3783,7 @@ class ProposalService:
         request: ProposalAdmissionRequest,
         candidate_tree: Mapping[str, bytes],
         timestamp: str,
+        prepared: PreparedEvaluationScope | None = None,
     ) -> ProposalResult:
         self._require_writable()
         validate_candidate_timestamp(timestamp)
@@ -3833,21 +3840,36 @@ class ProposalService:
         # evaluated candidate knows; and an evaluation that raises now leaves
         # the actor's ref exactly where it was, instead of advancing it onto a
         # commit no admission record will ever name.
-        outcome = evaluate_proposal_tree(
-            base_tree=base_tree,
-            current_tree=current_tree,
-            proposed_tree=validated_tree,
-            current=current,
-            bodies=self.bodies,
-            timestamp=timestamp,
-            rebased=is_rebase,
-            actor_id=actor.actor_id,
-            claim_type_expansions=request.claim_type_expansions,
-            promotion_verifier=self.promotion_verifier,
-            producer_receipt_resolver=self.producer_receipt_resolver,
-            query_facts_provider=self.query_facts_provider,
-            tree_state_provider=self.tree_state_provider,
+        outcome = (
+            None
+            if prepared is None
+            else prepared.take(
+                owner=self._prepared_evaluations,
+                current=current,
+                actor=actor,
+                request=request,
+                limits=self.receive_limits,
+                timestamp=timestamp,
+                tree=validated_tree,
+                bodies=self.bodies,
+            )
         )
+        if outcome is None:
+            outcome = evaluate_proposal_tree(
+                base_tree=base_tree,
+                current_tree=current_tree,
+                proposed_tree=validated_tree,
+                current=current,
+                bodies=self.bodies,
+                timestamp=timestamp,
+                rebased=is_rebase,
+                actor_id=actor.actor_id,
+                claim_type_expansions=request.claim_type_expansions,
+                promotion_verifier=self.promotion_verifier,
+                producer_receipt_resolver=self.producer_receipt_resolver,
+                query_facts_provider=self.query_facts_provider,
+                tree_state_provider=self.tree_state_provider,
+            )
         # A refused proposal has no members to summarize, so it keeps the bare
         # subject the ledger has always written for it -- unless the author said
         # why they proposed it, which is still true of a set that did not pass.
