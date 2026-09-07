@@ -159,3 +159,21 @@ An internal prepared-evaluation result can remove redundant work within submissi
 Add operation counters to the focused replay harness: unrelated Claims parsed, whole-tree blobs/bytes read and hashed, maps detached, relation rows read/replaced, explanations rebound, full logical exports, history records traversed, and proposal evidence files opened. Benchmark fixed-D writes while independently growing unrelated artifacts, unrelated history, unrelated proposals, and a genuinely related citation/dependency group. This distinguishes accidental global work from legitimate dependency fan-out. Include per-checkpoint and attached-workspace runs separately. Exact accepted commits, receipts and cold SQLite reconstruction remain parity oracles.
 
 No production code or live project state was changed by this audit.
+
+## Maintainer direction: managed deployment and shardability
+
+Recorded from the maintainer's follow-up on 2026-09-07: centralized management of indexes is a deployment requirement for managed instances. Design for shardability; whole-instance work is a scalability problem as well as a latency problem.
+
+This updates the sequence above: establish the shared derived-state ownership and partition-aware access/update contract before adding the contender index. Implement the first indexes through that contract, initially using the local backend. Do not first build several standalone caches and defer their consolidation to cloud work.
+
+Centralization means one registry/lifecycle owner for index definitions, dependency rules, update/rebuild protocols, versions, budgets and observability. It does not require all index contents to be resident in one process. The following are proposed engineering consequences of the maintainer's requirement, not an already implemented distributed architecture:
+
+- Represent an accepted snapshot as a coordinate-bound read handle with lazy, scoped access. Callers should not require a materialized whole-instance dictionary. Candidate state is a bounded overlay over that handle.
+- Give derived records explicit ownership and stable logical keys. Keep logical partition identity separate from physical placement so partitions can move. Different access paths may require different secondary partitions: artifact identity, Claim slot and citation group are not interchangeable shard keys. Do not prematurely select one universal physical shard key.
+- Supply affected members, old/new relationship keys and dependency invalidations to each index updater from a verified transition. Support cursor-based replay, idempotent application and per-partition rebuild. Track cross-partition and negative/range dependencies explicitly; successful reads alone do not describe complete query dependencies.
+- Bind each read to an accepted coordinate and a known compiler/index version. Track partition progress and refuse, wait or reconstruct when required partitions cannot serve that coordinate. Never combine arbitrary latest partition contents and present them as one accepted snapshot.
+- Preserve the signed ledger's authority and current acceptance CAS. Partitioning derived storage and evaluation does not itself decentralize accepted-head ordering. Cross-shard acceptance, independent ledger heads and distributed transactions require a separate decision. First separate parallelizable preparation from the existing final acceptance boundary.
+- Treat warmup, memory limits/eviction, replay lag, bounded work queues, rebuild after loss, rolling index-version upgrades and recovery as shared lifecycle concerns. The local backend should exercise the same contracts without requiring a distributed service for OSS.
+- Require explicit execution plans for legitimate broad operations. Measure touched partitions, transferred bytes and affected dependency groups; route global audit/rebuild work separately from small-write paths where semantics permit it. Include skewed/hot relationship groups in scaling tests; hashing rows does not eliminate real fan-out.
+
+These requirements strengthen the rationale for delta scope and immutable ownership. They do not authorize changing stored digest rules, weakening verification or treating derived partition state as independent authority. This direction is recorded in repository documentation; it has not been activated into the live project-state instance.
