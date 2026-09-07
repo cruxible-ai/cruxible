@@ -1,0 +1,106 @@
+{
+  "authorization": "Routine reconciliation by the user-appointed instance manager during authorized acceptance/orientation performance slice; no adoption, release, ClaimType or authority changes.",
+  "source": {
+    "kind": "manager-authored implementation assessment",
+    "code_baseline": "8cfe40b6",
+    "implementation_commit": "53684b5dc7adbb5eda1c87c3121ac52e86e71f5b",
+    "status": "Self-reviewed local implementation; not merged, pushed or deployed. No independent reviewer in this slice. Adoption/release/authority fields and governed pins unchanged."
+  },
+  "source_files": [
+    {
+      "path": "docs/reviews/accept-refresh-performance-2026-09-07.md",
+      "sha256": "94a0a6880e9bb0d3cfaa42991008470ea2bf7d43092cf5ce910887e490c53608"
+    },
+    {
+      "path": "docs/reviews/accept-refresh-benchmark.json",
+      "sha256": "f1bfd3ae26a28eface9782692dc4440f81b66eeced38e82030b2a57e4a7ddda1"
+    },
+    {
+      "path": "docs/reviews/accept-refresh-code-review-2026-09-07.md",
+      "sha256": "39552249e0a451a43da68aff1312fa5856e68cfb3fd05f95e9fdd4852d35f6a0"
+    }
+  ],
+  "expected": [
+    {
+      "subject": "dev.roadmap_item/agent-followup-2026-09-05-a06",
+      "predicate": "dev.roadmap_item.reconciliation_note",
+      "role": "normative",
+      "value": "Manager checkpoint 2026-09-07: acceptance/orientation performance slice implemented locally through 53684b5d on codex/accept-refresh-deltas, based on prepared-evaluation branch 8cfe40b6. Discovery reads accepted Claim envelopes without unused full fact views, sharing parsed inputs, providers and group ClaimType lookups in one request. Mutable replay, attestations and time remain freshly evaluated. Acceptance reconstructs proposed/stored trees from the proven accepted parent and complete physical Git deltas, then retains full expected/stored equality. No new persistent cache, schema, law, digest, approval or publication-order change. 55 distinct focused cases passed, including SHA-1/SHA-256, tamper/mode checks, restart parity and freshness; affected batch/search cases repeated after a caught per-group lookup dependency. Ruff and mypy passed. Self-review only; local branch not merged/pushed/deployed. Remaining work includes incremental orientation with complete dependency/mutable-input bindings, world-sized mappings, generation construction, Git publication/advertisement and database serialization. Adoption/release fields unchanged.",
+      "previous_value": "Manager checkpoint 2026-09-07: derived-state batch 4 same-call prepared evaluation reuse implemented locally at 7165b40a on codex/prepared-evaluation-reuse, based on citation batch 3 d6f24a7b6. Eligible authoring submission reuses its own internal preflight evaluation through an instance-owned DerivedState adapter. The single-use handoff binds exact intent/descriptor, accepted coordinate/compiler, actor, request, limits, timestamp and immutable submission tree; CAS observations are rechecked with original access context. Operational query/receipt/promotion reads, unsupported body operations, writes, budget exhaustion and changed bindings fall back to full evaluation. It does not reuse an earlier SDK prepare or an approval-delayed result. Ledger authority, frozen hashes/laws and publication checks are unchanged. 127 focused cases, Ruff and mypy passed; implementation self-review only. Local branch not merged, pushed or deployed. Remaining work includes broader receive/card/Git tree work and revision-bound operational evidence. Adoption/release fields unchanged.",
+      "revises": "CLM-7be19d54b36f43ed4d229fe0e4ade39d"
+    },
+    {
+      "subject": "dev.roadmap_item/roadmap-2026-09-05-o19",
+      "predicate": "dev.roadmap_item.reconciliation_note",
+      "role": "normative",
+      "value": "Manager checkpoint 2026-09-07: measured acceptance/orientation slice at 53684b5d. Four repeated accepted-state-advancing observations per arm in before/after/after/before order, 1000-Claim SDK/Unix HTTP fixture: acceptance 2.587s to 2.119s (18.1% lower); orientation refresh 2.240s to 0.830s (63.0% lower); complete measured loop 8.042s to 6.336s (21.2% lower). The loop includes explicit pb.refresh(), which returns full orientation; live acceptance already advances its coordinate and pb.world() does not require orientation. Workflows omitting orientation mainly gain the acceptance improvement. All twelve final writes/readbacks passed; fixture Claims current/uncovered. Small local sample, not p95. An interrupted development run exposed a per-group Git lookup dependency, fixed and excluded from final timings. Full evidence in accept-refresh-performance-2026-09-07.md and accept-refresh-benchmark.json. Latency gate remains open; local code not deployed; adoption/release fields unchanged.",
+      "previous_value": "Manager checkpoint 2026-09-07: prepared evaluation reuse at 7165b40a removes one duplicate evaluator invocation within eligible submit. Four repeated observations per arm in before/after/after/before order on a 1000-Claim SDK/Unix HTTP fixture: submit median 1.842s before versus 1.622s after (11.9% lower); complete loop 8.308s versus 8.001s. Acceptance and explicit prepare are not directly changed. All twelve measured writes/readbacks succeeded; fixture claims are current/uncovered, so this is accepted-write parity rather than a supported-evidence customer proof. Small local sample, not p95; latency gate remains open. Exact timings and heads are in prepared-evaluation-benchmark.json and prepared-evaluation-performance-2026-09-07.md. No deployment or adoption/release change.",
+      "revises": "CLM-03e378a41032c2774d501ec86ab21187"
+    },
+    {
+      "subject": "dev.product_feedback/accept-refresh-2026-09-07",
+      "predicate": "dev.product_feedback.finding_text",
+      "role": "observation",
+      "value": "Agent-customer finding: profiling changed the acceptance-to-refresh hypothesis. SDK refresh is a whole-world orientation query, not merely a new-head pointer. Its largest avoidable costs were full fact/provenance views discarded by discovery and repeated provider catalog scans; request-local accepted inputs deliver a meaningful read improvement without persisting another cache. Removing a broad read also removed incidental memo warmup, exposing a per-group Git lookup dependency; measure the full dependent path and test absence of those reads. Acceptance still spends substantial time in Git processes, but complete physical delta reads reduce two broad transfers while retaining payload verification. Report optional orientation separately from the write transaction, because the live SDK and World snapshots already avoid mandatory orientation after acceptance. The next architectural step should be justified by measured remaining phase costs and complete evidence dependencies, not an assumed step change from adding indexes."
+    }
+  ],
+  "seconds": {
+    "connect": 6.602807125018444,
+    "prefetch": 0.852803457994014,
+    "prepare": 0.7732814170303755,
+    "submit": 3.264616125030443,
+    "review": 0.4542542499839328,
+    "accept_connect": 1.8729150000144728,
+    "accept": 5.052257374976762,
+    "readback": 1.272197916987352
+  },
+  "base": {
+    "tag": "playbill-accepted-coordinate-v1",
+    "git_oid": "49ede342575a2feeaec337529afb1f5f9bacc669",
+    "semantic_root": "sha256:d1e50e01f89afbabc132acee0d1bd008d48c38b017fc5dd1538c0e77bb4da732",
+    "generation_root": "sha256:79707339ee94d780d425f71d8d2e3a666436f4d5a3a2114d7dc1ec53a3c4bc7c",
+    "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+  },
+  "intent_id": "AIT-d64ba14862b086f67f7f80e98d87c195",
+  "preflight": {
+    "refused": false,
+    "diagnostics": [],
+    "warnings": []
+  },
+  "proposal_id": "sha256:5a3fb3f4a1b218fda0883946b1dfef57dd24ef752d3590735718420fb416abbe",
+  "candidate_digest": "sha256:38ce50ccb228f28ef5ab2ab854434245e2055eeb0a2d934c46dc442eee360c60",
+  "activation": {
+    "tag": "playbill-activation-receipt-v1",
+    "proposal_id": "sha256:5a3fb3f4a1b218fda0883946b1dfef57dd24ef752d3590735718420fb416abbe",
+    "activated_by": "manager",
+    "status": "accepted",
+    "accepted_coordinate": {
+      "tag": "playbill-accepted-coordinate-v1",
+      "git_oid": "222801b00a0b6977e72fe7f6cb6c4a9c3a8fce05",
+      "semantic_root": "sha256:d419836244ea0d1e03977dbee84d376ca7eeaf5c9bd449ccc5b12ba951273e93",
+      "generation_root": "sha256:fb4ac138831b699c96c5d76e53242262b44834f2398ae2db540ebe06cf5752a7",
+      "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+    },
+    "workspace_advertisement": {
+      "tag": "playbill-workspace-advertisement-v1",
+      "status": "updated",
+      "workspace_path": "/Users/robertmalone/Git/cruxible-core-0.2-stretch-goals",
+      "remote_name": "playbill",
+      "advertised_refs": [
+        "refs/remotes/playbill/accepted"
+      ],
+      "failure_code": null
+    }
+  },
+  "readback": {
+    "verified_claims": 3,
+    "all_supported": true,
+    "coordinate": {
+      "tag": "playbill-accepted-coordinate-v1",
+      "git_oid": "222801b00a0b6977e72fe7f6cb6c4a9c3a8fce05",
+      "semantic_root": "sha256:d419836244ea0d1e03977dbee84d376ca7eeaf5c9bd449ccc5b12ba951273e93",
+      "generation_root": "sha256:fb4ac138831b699c96c5d76e53242262b44834f2398ae2db540ebe06cf5752a7",
+      "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+    }
+  }
+}
