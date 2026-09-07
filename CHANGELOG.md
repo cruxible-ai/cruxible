@@ -16,10 +16,18 @@
   finalized run binds the standing resolution to the grain that run actually
   reached -- unit, node, or arm -- as one contract-grade reading keyed on the
   activation, grain, and run or Line occurrence, so retries replay and
-  attempts never double. `playbill procedure readings` inspects standing and
-  retained readings read-only, paginated. Seven closed `measurement_*`
-  refusals each carry a runnable repair. Readings and resolutions stay
-  operational exhaust.
+  attempts never double. Reading lookup and append are one compare-and-set on
+  the partition head, so concurrent credits land one reading; a retry is any
+  later request by the same principal, whatever attribution it re-mints. Claim
+  verdict observations are retained as `claim_verdict_observed` journal
+  records and cited as `journal_record` proofs; attestation evidence is
+  selected at the observation instant over the complete history, and an
+  absence of attestations never satisfies. `playbill procedure readings`
+  inspects standing and retained readings read-only, paginated; a cursor
+  carries its page's observation so a moving clock continues the same
+  selection, and every served or replayed reading is re-read through its
+  content address. Seven closed `measurement_*` refusals each carry a runnable
+  repair. Readings and resolutions stay operational exhaust.
 
 - **Shared review commits retain every proposal's notes.** Admissions whose Git
   identities collide now project deterministic evaluation groups and distinct

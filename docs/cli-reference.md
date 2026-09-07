@@ -760,12 +760,20 @@ and from a run's admission coordinate. Before `check_at` a measurement reports
 `expired`; neither writes anything. Inside the window the door gathers real
 evidence -- the exact accepted QueryDefinition run with the declared
 parameters and budgets and its receipt retained, the statement's verdict at
-that instant, or the verified attestations with a declared stance, one credit
-per independent principal -- evaluates the frozen resolution law, and appends
-one resolution per activation. A refused or truncated query resolves
-`indeterminate`; it never establishes complete or satisfied evidence. The
-latest non-overturned resolution governs: calling again returns it rather
-than re-deriving it, and only an overturned answer reopens the contract.
+that instant with the observation retained as its own journal record (which
+accepted coordinate, which Claim artifact, which verdict inputs) and cited as a
+`journal_record` proof, or the verified attestations with a declared stance,
+one credit per independent principal -- evaluates the frozen resolution law,
+and appends one resolution per activation. Attestation evidence is selected at
+the observation instant over the complete attestation history: a principal's
+later word does not erase the word that stood when observed, and no
+attestation at all resolves `indeterminate`, even against a `max_count` of 0,
+because the law demands proof for every verdict. A refused or truncated query
+resolves `indeterminate`; it never establishes complete or satisfied evidence.
+The latest non-overturned resolution governs: calling again returns the
+STANDING answer rather than re-deriving it (the observation instant on a later
+call is reported, not re-evaluated), and only an overturned answer reopens the
+contract for a fresh evaluation.
 
 With `--run-id`, the standing resolution is bound to the grain that run really
 reached as one contract-grade reading: a unit reading needs a succeeded run, a
@@ -775,17 +783,29 @@ grain reports `grain_not_occurred` and earns nothing; a run that has not
 finalized reports `run_not_final`. Readings are keyed on the activation, the
 grain, and the run -- or the Line occurrence, so a second attempt of the same
 occurrence replays the first attempt's reading -- and a retry with the same
-key returns the same record (`replayed`); the same key with a different
-payload refuses `measurement_reading_conflict`. A crash between the resolution
-append and the reading append resumes at the reading. Execution outcome and
-measurement verdict stay distinct: a completed run does not satisfy a
-measurement, and a failed run does not contradict one.
+key returns the same record (`replayed`). A retry is any later request by the
+same principal: the request attribution a fresh authenticated call re-mints
+(timestamp, operation id, request id) is not part of the reading's meaning,
+and the retained record keeps its original attribution. The same key with a
+different meaning (another resolution, verdict, or value) refuses
+`measurement_reading_conflict`. Two requests crediting the same grain at once
+land exactly one reading: lookup and append are one compare-and-set on the
+reading partition's head, so the loser replays the winner's record. A crash
+between the resolution append and the reading append resumes at the reading.
+Execution outcome and measurement verdict stay distinct: a completed run does
+not satisfy a measurement, and a failed run does not contradict one.
 
 `readings` is read-only: it reports each activation's standing (pending,
 expired, or resolved with its resolution id, verdict, value, and retrievable
-journal record) and pages through retained readings, at most 200 per page.
-Resolutions and readings are operational exhaust in the Procedure journal.
-They are not accepted state and grant no authority.
+journal record) and pages through retained readings, at most 200 per page. A
+page's `--cursor` continues that page's selection: the observation instant and
+coordinate the first page was answered at travel inside the cursor, so a later
+page with a fresh clock (every SDK call stamps one) pages the same selection;
+changing the run, measurement, or grain filter refuses the cursor. Every
+reading a page serves, and every reading a retry replays, is re-read through
+its content address, so a warm daemon refuses a missing or corrupt body
+exactly as a cold one does. Resolutions and readings are operational exhaust
+in the Procedure journal. They are not accepted state and grant no authority.
 
 A complete loop, from a run through a delayed evaluation to inspection and a
 retry:

@@ -102,7 +102,18 @@ def _clear_memos() -> None:
     measurements._reading_index_memo.clear()  # noqa: SLF001
 
 
-def _measure(instance, procedure, *, run_id, names, minute):  # type: ignore[no-untyped-def]
+def _measure(instance, procedure, *, run_id, names, minute, operation=None):  # type: ignore[no-untyped-def]
+    actor = world._actor(instance)  # noqa: SLF001
+    if operation is not None:
+        # A fresh authenticated request: new operation id, request id, and
+        # attribution instant, exactly what every real retry re-mints.
+        actor = actor.model_copy(
+            update={
+                "operation_id": f"op_{operation}",
+                "request_id": f"req-{operation}",
+                "timestamp": RECORD_AT + timedelta(minutes=minute),
+            }
+        )
     return measurements.service_measure_playbill_procedure(
         instance,
         name=procedure.identity.name,
@@ -111,7 +122,7 @@ def _measure(instance, procedure, *, run_id, names, minute):  # type: ignore[no-
             measurement_names=tuple(sorted(names)),
             evaluation_time=OBSERVE_AT + timedelta(minutes=minute),
         ),
-        actor_context=world._actor(instance),  # noqa: SLF001
+        actor_context=actor,
         recorded_at=RECORD_AT + timedelta(minutes=minute),
     )
 
@@ -177,6 +188,19 @@ def _bench_batch(tmp: Path, *, names: tuple[str, ...], history: int) -> dict[str
     # Duplicate retry: every key stands, every reading replays.
     row["credit_same_run_retry_warm"], _ = _timed(
         lambda: _measure(instance, procedure, run_id=fresh_run.run_id, names=names, minute=301)
+    )
+    # The same retry as an ordinary authenticated client makes it: each sample
+    # is a new request with its own operation id, request id, and instant.
+    counter = iter(range(1000))
+    row["credit_same_run_retry_fresh_attribution"], _ = _timed(
+        lambda: _measure(
+            instance,
+            procedure,
+            run_id=fresh_run.run_id,
+            names=names,
+            minute=302,
+            operation=next(counter),
+        )
     )
 
     # Inspection over the retained history, fresh index vs warm index.
