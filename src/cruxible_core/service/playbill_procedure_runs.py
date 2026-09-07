@@ -76,6 +76,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinitionV3,
     ProcedureDefinitionV4,
     ProcedurePinSlotRefV1,
+    ProposeChangeSetNodeV3,
     ProviderNodeV3,
     ProviderNodeV4,
     RepeatBodyNodeV4,
@@ -123,6 +124,8 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureSettlementRefusalV1,
     ProcedureSourceCaptureAssociationV1,
     ProcedureSourceObservationV1,
+    ProcedureTerminalEgressChildV1,
+    ProcedureTerminalEgressV1,
     ProcedureTerminalV1,
     ProviderBucketClassificationPlanV1,
     procedure_acquisition_plan_digest,
@@ -224,6 +227,9 @@ from cruxible_core.playbill.procedures.execution import (
     verify_line_admission_spec,
 )
 from cruxible_core.playbill.procedures.input_planes import AcceptedStateRunInputV2
+from cruxible_core.playbill.procedures.proposal_delivery import (
+    ProposalTerminalEgressSink,
+)
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.provider_local_runtime import (
@@ -620,6 +626,7 @@ class ProcedureRunStateV2(_StrictProcedureSurfaceModel):
     receipt_digest: str | None = None
     terminal: ProcedureTerminalV1 | None = None
     source_observations: tuple[ProcedureSourceObservationV1, ...] = ()
+    terminal_egress: tuple[ProcedureTerminalEgressV1, ...] = ()
 
     @property
     def coordinate(self) -> PlaybillAcceptedCoordinate:
@@ -1768,6 +1775,104 @@ def _journal_coordinate(stored) -> ProcedureJournalCoordinateV1:  # type: ignore
     )
 
 
+def _fold_terminal_egress(
+    current: ProcedureTerminalEgressV1 | None,
+    payload: Mapping[str, object],
+    *,
+    journal_coordinate: ProcedureJournalCoordinateV1,
+) -> ProcedureTerminalEgressV1:
+    """Fold one `terminal_egress` journal record into the node's served account.
+
+    A terminal writes up to three records: the closure-bound refusal or the
+    `prepared` intent, then the resolving `delivered`/`refused`/`failed`. The
+    LAST verdict is the node's verdict; identities set by an earlier record
+    (operation key, targets, mandate) carry forward, and a delivered proposal
+    receipt contributes its proposal and candidate.
+    """
+
+    def _string(key: str) -> str | None:
+        value = payload.get(key)
+        return value if isinstance(value, str) else None
+
+    raw_children = payload.get("children")
+    children: list[ProcedureTerminalEgressChildV1] = []
+    if isinstance(raw_children, list):
+        for child in raw_children:
+            if not isinstance(child, dict):
+                continue
+            children.append(
+                ProcedureTerminalEgressChildV1(
+                    child_index=int(cast(int, child.get("child_index", 0))),
+                    item_key=str(child.get("item_key")),
+                    manifest_digest=str(child.get("manifest_digest")),
+                )
+            )
+    receipt = payload.get("receipt")
+    proposal_id = None
+    candidate_digest = None
+    if isinstance(receipt, dict):
+        proposal_id = (
+            receipt.get("proposal_id") if isinstance(receipt.get("proposal_id"), str) else None
+        )
+        candidate_digest = (
+            receipt.get("candidate_digest")
+            if isinstance(receipt.get("candidate_digest"), str)
+            else None
+        )
+        handles = {
+            str(child.get("item_key")): child
+            for child in receipt.get("children", [])
+            if isinstance(child, dict)
+        }
+        children = [
+            child.model_copy(
+                update={
+                    "egress_digest": (
+                        handles[child.item_key].get("egress_digest")
+                        if child.item_key in handles
+                        else None
+                    ),
+                    "path": (
+                        handles[child.item_key].get("path") if child.item_key in handles else None
+                    ),
+                }
+            )
+            for child in children
+        ]
+    raw_targets = payload.get("target_paths")
+    target_paths = (
+        tuple(str(item) for item in raw_targets)
+        if isinstance(raw_targets, list)
+        else (() if current is None else current.target_paths)
+    )
+    verdict = _string("verdict") or "failed"
+    return ProcedureTerminalEgressV1(
+        node_id=str(payload.get("node_id")),
+        kind=cast(Any, _string("kind")),
+        verdict=cast(Any, verdict),
+        required_rung=int(cast(int, payload.get("required_rung", 0))),
+        effective_rung=(
+            int(cast(int, payload["effective_rung"]))
+            if isinstance(payload.get("effective_rung"), int)
+            else (None if current is None else current.effective_rung)
+        ),
+        limiting_term=_string("limiting_term")
+        or (None if current is None else current.limiting_term),
+        operation_key=_string("operation_key")
+        or (None if current is None else current.operation_key),
+        procedure_mandate_digest=(
+            _string("procedure_mandate_digest")
+            or (None if current is None else current.procedure_mandate_digest)
+        ),
+        target_paths=target_paths,
+        proposal_id=proposal_id,
+        candidate_digest=candidate_digest,
+        refusal_code=_string("refusal_code") if verdict in {"refused", "failed"} else None,
+        children=tuple(children) if children else (() if current is None else current.children),
+        journal_coordinate=journal_coordinate,
+    )
+
+
 def _state_from_records(
     instance: PlaybillInstance,
     *,
@@ -1799,8 +1904,16 @@ def _state_from_records(
     derived_source_requests: dict[str, ProcedureDerivedSourceRequestV1] = {}
     source_reads: dict[str, SourceReadReceiptV1] = {}
     produced_source_associations: list[ProcedureSourceCaptureAssociationV1] = []
+    terminal_egress: dict[str, ProcedureTerminalEgressV1] = {}
     for stored in records:
         payload = parse_journal_payload(bodies.read(stored.record.payload_digest, access=access))
+        if stored.record.event_kind == "terminal_egress" and isinstance(payload, dict):
+            folded = _fold_terminal_egress(
+                terminal_egress.get(str(payload.get("node_id"))),
+                payload,
+                journal_coordinate=_journal_coordinate(stored),
+            )
+            terminal_egress[folded.node_id] = folded
         if stored.record.event_kind == "admission_bound":
             admission_count += 1
             if isinstance(payload, dict) and payload.get("tag") == (
@@ -2471,6 +2584,9 @@ def _state_from_records(
         receipt_digest=receipt_digest,
         terminal=terminal,
         source_observations=observations,
+        terminal_egress=tuple(
+            sorted(terminal_egress.values(), key=lambda item: item.node_id.encode("utf-8"))
+        ),
     )
 
 
@@ -3459,6 +3575,13 @@ def service_run_playbill_line(
         procedure_mandate_rung=mandate_rung,
         caller_tier_rung=caller_rung,
     )
+    egress_sink = (
+        ProposalTerminalEgressSink(instance=instance, accepted_mandates=dict(mandates))
+        if any(
+            isinstance(node, ProposeChangeSetNodeV3) for node in accepted.procedure.definition.nodes
+        )
+        else None
+    )
     journal, root = _journal_for_write(instance)
     _activate_writer(
         journal,
@@ -3490,6 +3613,7 @@ def service_run_playbill_line(
         workspace_file_reader=workspace_file_reader,
         slot_pins=slot_pins,
         effective_rung=effective_rung,
+        egress_sink=egress_sink,
         clock=_DeterministicClock(evaluation_time),
     )
     return _state_from_records(

@@ -3573,6 +3573,31 @@ def _echo_source_observations(result: contracts.PlaybillProcedureRunState) -> No
             )
         if observation.capture_digest is not None:
             click.echo(f"Capture {where}: {observation.capture_digest}")
+    _echo_terminal_egress(result)
+
+
+def _echo_terminal_egress(result: contracts.PlaybillProcedureRunState) -> None:
+    """Print what each terminal of the run did, and the handles a manager needs.
+
+    A delivered `propose_change_set` prints the proposal id and the exact
+    candidate digest, which are the two arguments the existing proposal
+    verbs take; a refused one prints the code the run refused with.
+    """
+
+    for egress in result.terminal_egress:
+        if egress.verdict == "delivered" and egress.proposal_id is not None:
+            click.echo(
+                f"Proposal {egress.node_id}: {egress.proposal_id} "
+                f"candidate {egress.candidate_digest}"
+            )
+            for child in egress.children:
+                if child.path is not None:
+                    click.echo(f"  {child.path}")
+        elif egress.verdict == "delivered":
+            click.echo(f"Terminal {egress.node_id}: {egress.kind} delivered")
+        else:
+            code = egress.refusal_code or egress.verdict
+            click.echo(f"Terminal {egress.node_id}: {egress.kind} {egress.verdict} ({code})")
 
 
 @procedure_group.command("run")

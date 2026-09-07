@@ -83,6 +83,9 @@ from cruxible_client.authoring.workspace import (
     observe_playbill_next_workspace_with_coverage,
     refresh_workspace_floor,
 )
+from cruxible_client.contracts.acquisition_policies import (
+    SourceAcquisitionPolicyV1,
+)
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
@@ -98,6 +101,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringProgramOperationV1,
     AuthoringProgramStampV1,
     AuthoringReferenceExpectationV1,
+    CaptureContractAuthoringPayloadV1,
     ChangeSetAuthoringPayloadV1,
     ClaimAuthoringPayloadV1,
     ClaimAuthoringPayloadV2,
@@ -108,8 +112,10 @@ from cruxible_client.contracts.authoring.models import (
     ClaimTypeSuccessionDependentV1,
     ClaimTypeSuccessionMemberV1,
     ExistingCaptureCitationSourceV1,
+    LineAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
     SelfSourceBodyV1,
+    SourceAcquisitionPolicyAuthoringPayloadV1,
     SubjectAuthoringPayloadV1,
     authoring_member_identity,
     authoring_program_digest,
@@ -121,6 +127,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import (
+    CaptureContractV1,
     capture_contract_digest,
     capture_contract_path,
     foreign_source_capture_contract,
@@ -164,6 +171,10 @@ from cruxible_client.contracts.predictions import (
     PredictionRuleV1,
     PredictionThresholdRuleV1,
     TerminalSettlementEvidenceV1,
+)
+from cruxible_client.contracts.procedures.line_specs import (
+    ManualTriggerPolicyV1,
+    TriggerPolicyV1,
 )
 from cruxible_client.contracts.procedures.models import (
     ProcedureDefinitionV3,
@@ -740,6 +751,79 @@ class ChangeSetDraft:
             address=shell.identity.name,
             coordinate=self._playbill.coordinate,
         )
+
+    def capture_contract(self, contract: CaptureContractV1) -> ChangeSetDraft:
+        """Define one CaptureContract inside this changeset."""
+
+        self._members.append(
+            _ChangeSetMember(
+                payload=CaptureContractAuthoringPayloadV1(capture_contract=contract),
+                expectations=(),
+                source_map=DiagnosticSourceMap(()),
+                decisions={"kind": "capture_contract", "name": contract.identity.name},
+            )
+        )
+        return self
+
+    def acquisition_policy(self, policy: SourceAcquisitionPolicyV1) -> ChangeSetDraft:
+        """Define one SourceAcquisitionPolicy inside this changeset."""
+
+        self._members.append(
+            _ChangeSetMember(
+                payload=SourceAcquisitionPolicyAuthoringPayloadV1(acquisition_policy=policy),
+                expectations=(),
+                source_map=DiagnosticSourceMap(()),
+                decisions={"kind": "acquisition_policy", "name": policy.identity.name},
+            )
+        )
+        return self
+
+    def line(
+        self,
+        *,
+        name: str,
+        procedure: str,
+        acquisition_policy: str,
+        requested_terminal_rung: Literal[1, 2, 3],
+        trigger_policy: TriggerPolicyV1 | None = None,
+        parameters: CanonicalValue | None = None,
+        budgets: Mapping[str, int] | None = None,
+        occurrence_epoch: int = 1,
+        retire: bool = False,
+    ) -> ChangeSetDraft:
+        """Define one Line inside this changeset, naming its Procedure and policy.
+
+        Lowering resolves both names -- accepted at the base or defined earlier
+        in this same set -- into the exact pins the LineSpec carries. A Line is
+        manual unless another trigger policy is given, and inherits the
+        Procedure's hard caps as its budget unless one is given.
+
+        Lowering refuses a Procedure that is not graph-v4 and one whose Source
+        nodes leave a Provider slot open: the Line pins exactly what the
+        Procedure names, and an open slot is nothing to pin. A rung-2 Line
+        also needs a live ProcedureMandate over its target namespace before it
+        can run; that is checked at admission, not here.
+        """
+
+        self._members.append(
+            _ChangeSetMember(
+                payload=LineAuthoringPayloadV1(
+                    name=name,
+                    procedure_name=procedure,
+                    acquisition_policy_name=acquisition_policy,
+                    requested_terminal_rung=requested_terminal_rung,
+                    trigger_policy=trigger_policy or ManualTriggerPolicyV1(),
+                    parameters={} if parameters is None else parameters,
+                    budgets=None if budgets is None else dict(budgets),
+                    occurrence_epoch=occurrence_epoch,
+                    retire=retire,
+                ),
+                expectations=(),
+                source_map=DiagnosticSourceMap(()),
+                decisions={"kind": "line", "name": name, "procedure": procedure},
+            )
+        )
+        return self
 
     def claim_type(self, definition: ClaimTypeDraft | ClaimType) -> PendingClaimTypeRef:
         """Define one whole ClaimType inside this changeset, and return a ref.
@@ -2507,7 +2591,10 @@ class Playbill:
         # letting authoring succeed on a graph no run lane can admit.
         allowed = {"state_tap", "transform", "project", "guard", "repeat", "halt"}
         if isinstance(definition, ProcedureDefinitionV4):
-            allowed = allowed | {"source"}
+            # `propose_change_set` is served on the Line lane only: a direct
+            # run has no requested rung or mandate coordinate and refuses it
+            # at admission, so the SDK admits the node where a Line can run it.
+            allowed = allowed | {"source", "propose_change_set"}
         unsupported = tuple(node.node_id for node in definition.nodes if node.kind not in allowed)
         if unsupported:
             raise CapabilityNotServed(
@@ -2515,7 +2602,8 @@ class Playbill:
                 capability=f"procedure nodes {unsupported}",
                 repair=(
                     "Use only state_tap, transform, project, guard, repeat, and halt nodes "
-                    "on the served SDK lane, plus source on a graph-v4 definition."
+                    "on the served SDK lane, plus source and propose_change_set on a "
+                    "graph-v4 definition."
                 ),
             )
         payload = ProcedureAuthoringPayloadV2(

@@ -98,6 +98,49 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     # naming the path, and gets the marker refusal that path deserves.
     "source_not_projection_target": "name_this_path_explicitly_if_it_declares_a_projection_block",
     "workspace_source_catalog_invalid": "repair_the_workspace_source_catalog",
+    # A `propose_change_set` item is the Procedure author's: the template
+    # resolved to something that is not one Claim proposal item, or to a Claim
+    # no observation in the item's own closure can back.
+    "proposal_item_invalid": "resolve_each_candidate_template_to_one_claim_proposal_item",
+    "proposal_item_evidence_missing": (
+        "flow_exactly_one_source_capture_into_each_proposed_claim_item"
+    ),
+    "proposal_item_evidence_ambiguous": (
+        "flow_exactly_one_source_capture_into_each_proposed_claim_item"
+    ),
+    "proposal_lowering_refused": "repair_the_proposed_claim_the_lowering_diagnostic_names",
+    "proposal_candidate_refused": "repair_the_proposed_member_the_candidate_diagnostic_names",
+    "proposal_target_paths_mismatch": "rebind_the_terminal_from_the_exact_admitted_run",
+    "proposal_receipt_incomplete": "rebind_the_terminal_from_the_exact_admitted_run",
+    # The same operation key names another payload: the run that prepared
+    # this egress is not the run that created the proposal under it.
+    "effectful_operation_payload_mismatch": (
+        "read_the_proposal_the_operation_key_already_names_instead_of_replacing_it"
+    ),
+    # A node refusal has no served carrier for a runnable repair, so the mandate
+    # family declares its change: author the mandate the terminal request lacks,
+    # exactly as the admission-time `line_mandate_required` names.
+    "procedure_mandate_required": "accept_a_procedure_mandate_covering_this_terminal_request",
+    "procedure_mandate_superseded": "accept_a_live_successor_procedure_mandate",
+    "procedure_mandate_expired": (
+        "accept_a_procedure_mandate_whose_window_covers_the_evaluation_instant"
+    ),
+    "procedure_mandate_rung_insufficient": "accept_a_procedure_mandate_granting_the_required_rung",
+    "procedure_mandate_authority_ceiling_insufficient": (
+        "accept_a_procedure_mandate_whose_ceiling_covers_the_admitted_hard_caps"
+    ),
+    "procedure_mandate_namespace_mismatch": (
+        "accept_a_procedure_mandate_whose_namespace_covers_the_target_paths"
+    ),
+    # The attempt crashed after its proposal was created; recovery published
+    # the same proposal receipt, so the next step is to read it, not re-run.
+    "terminal_egress_recovered": "read_the_delivered_terminal_receipt_recovery_published",
+    "procedure_mandate_procedure_mismatch": (
+        "accept_a_procedure_mandate_pinning_this_exact_procedure_artifact"
+    ),
+    "procedure_mandate_not_applicable": "use_the_declared_terminal_rung",
+    "procedure_authority_admission_invalid": "rebuild_the_terminal_from_the_exact_admitted_run",
+    "procedure_authority_admission_mismatch": "rebuild_the_terminal_from_the_exact_admitted_run",
 }
 
 

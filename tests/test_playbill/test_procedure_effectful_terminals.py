@@ -7,7 +7,12 @@ import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
-from cruxible_client.contracts.procedure_mandates import procedure_mandate_digest
+from cruxible_client.contracts.procedure_mandates import (
+    procedure_mandate_digest,
+    procedure_mandate_path,
+    render_procedure_mandate,
+)
+from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_core.playbill.procedures.egress import (
     MANDATE_FREE_RUNG_CEILING,
@@ -53,6 +58,7 @@ from tests.test_playbill.test_procedure_execution import (
     _StateReader,
 )
 from tests.test_playbill.test_procedure_mandates import _mandate, _procedure
+from tests.test_playbill.test_procedure_source_runs import _accept_more
 
 NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 
@@ -367,7 +373,23 @@ def test_proposal_adapter_checks_authority_before_creating_a_ref(tmp_path) -> No
 
 
 def test_proposal_adapter_reuses_proposal_service_without_advancing_main(tmp_path) -> None:
-    instance, _owner = initialize_local(tmp_path)
+    instance, owner = initialize_local(tmp_path)
+    # The mandate the adapter is handed must be one accepted state carries: the
+    # door re-establishes it against the head tree before any ref moves.
+    (tmp_path / "shape").mkdir()
+    shape = _admission(tmp_path / "shape", actor=_actor().model_copy(update={"actor_id": "owner"}))
+    mandate = _runtime_mandate(shape, namespace=("subjects",))
+    mandate_digest = procedure_mandate_digest(mandate).tagged
+    accepted = _procedure()
+    _accept_more(
+        instance,
+        owner,
+        {
+            accepted.path: render_procedure(accepted.procedure),
+            procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
+        },
+        name="adapter-mandate",
+    )
     base = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     admission = _admission(
         tmp_path,
@@ -381,8 +403,6 @@ def test_proposal_adapter_reuses_proposal_service_without_advancing_main(tmp_pat
     )
     path = subject_path("project.work_item", "wi-2")
     candidate_tree = {**instance.tree_at(base.git_oid), path: render_subject(subject)}
-    mandate = _runtime_mandate(admission, namespace=("subjects",))
-    mandate_digest = procedure_mandate_digest(mandate).tagged
     request = _effectful_request(
         "propose_change_set",
         admission=admission,

@@ -20,6 +20,7 @@ from pydantic import (
     model_validator,
 )
 
+from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicyV1
 from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_IDENTITY,
     ApprovalPolicyV1,
@@ -33,6 +34,7 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
+from cruxible_client.contracts.captures import CaptureContractV1
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import (
@@ -53,6 +55,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     ProcedureRuntimePolicyV1,
 )
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
+from cruxible_client.contracts.procedures.line_specs import TriggerPolicyV1
 from cruxible_client.contracts.procedures.models import ProcedureHardCapsV3
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import (
@@ -94,7 +97,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:769b55177fafad0804e7fee3176a7542711a2c69efd34a8a88e16c2647cfd2a8"
+    "sha256:4deffb78ea3e576336a0ebf7215c1fc0eb80141bcd950375a358e60d5e8194e6"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -891,6 +894,58 @@ class ProcedureMandateAuthoringPayloadV1(_StrictAuthoringModel):
     retire: bool = False
 
 
+class CaptureContractAuthoringPayloadV1(_StrictAuthoringModel):
+    """One whole CaptureContract authored as a change-set definition member."""
+
+    tag: Literal["playbill-capture-contract-authoring-payload-v1"] = (
+        "playbill-capture-contract-authoring-payload-v1"
+    )
+    capture_contract: CaptureContractV1
+
+
+class SourceAcquisitionPolicyAuthoringPayloadV1(_StrictAuthoringModel):
+    """One whole SourceAcquisitionPolicy authored as a change-set definition member."""
+
+    tag: Literal["playbill-source-acquisition-policy-authoring-payload-v1"] = (
+        "playbill-source-acquisition-policy-authoring-payload-v1"
+    )
+    acquisition_policy: SourceAcquisitionPolicyV1
+
+
+class LineAuthoringPayloadV1(_StrictAuthoringModel):
+    """Decision-only Line input; lowering owns the exact Procedure and policy pins.
+
+    An author names the accepted or same-set Procedure and acquisition policy
+    by name, the way a ProcedureMandate member names its Procedure, and
+    lowering resolves both into the exact digest pins the LineSpec carries. A
+    budget left unset lowers to the Procedure's own hard caps.
+    """
+
+    tag: Literal["playbill-line-authoring-payload-v1"] = "playbill-line-authoring-payload-v1"
+    name: str
+    procedure_name: str
+    acquisition_policy_name: str
+    requested_terminal_rung: Literal[1, 2, 3]
+    trigger_policy: TriggerPolicyV1
+    parameters: object = Field(default_factory=dict)
+    budgets: dict[str, int] | None = None
+    epsilon: object = Field(default_factory=lambda: {"$decimal": "0.1"})
+    occurrence_epoch: int = Field(default=1, ge=1)
+    retire: bool = False
+
+    @field_validator("name", "procedure_name", "acquisition_policy_name")
+    @classmethod
+    def _names(cls, value: str) -> str:
+        if not value or value.strip() != value:
+            raise ValueError("Line authoring names must be nonblank and normalized")
+        return value
+
+    @field_validator("parameters", "epsilon", mode="before")
+    @classmethod
+    def _canonical(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+
 class ProcedureAuthoringPayloadV1(_StrictAuthoringModel):
     tag: Literal["playbill-procedure-authoring-payload-v1"] = (
         "playbill-procedure-authoring-payload-v1"
@@ -1181,6 +1236,9 @@ AuthoringChangeSetMemberV1: TypeAlias = Annotated[
     | ApprovalPolicyAuthoringPayloadV1
     | ProcedureRuntimePolicyAuthoringPayloadV1
     | ProcedureMandateAuthoringPayloadV1
+    | CaptureContractAuthoringPayloadV1
+    | SourceAcquisitionPolicyAuthoringPayloadV1
+    | LineAuthoringPayloadV1
     | ProcedureAuthoringPayloadV1
     | ProcedureAuthoringPayloadV2,
     Field(discriminator="tag"),
@@ -1228,6 +1286,12 @@ def authoring_member_identity(payload: AuthoringChangeSetMemberV1) -> str:
         return PROCEDURE_RUNTIME_POLICY_IDENTITY
     if isinstance(payload, ProcedureMandateAuthoringPayloadV1):
         return f"ProcedureMandate:{payload.name}"
+    if isinstance(payload, CaptureContractAuthoringPayloadV1):
+        return f"CaptureContract:{payload.capture_contract.identity.name}"
+    if isinstance(payload, SourceAcquisitionPolicyAuthoringPayloadV1):
+        return f"SourceAcquisitionPolicy:{payload.acquisition_policy.identity.name}"
+    if isinstance(payload, LineAuthoringPayloadV1):
+        return f"Line:{payload.name}"
     return f"Procedure:{payload.definition['name']}"
 
 
@@ -1311,6 +1375,9 @@ AuthoringPayloadV1 = Annotated[
     | ApprovalPolicyAuthoringPayloadV1
     | ProcedureRuntimePolicyAuthoringPayloadV1
     | ProcedureMandateAuthoringPayloadV1
+    | CaptureContractAuthoringPayloadV1
+    | SourceAcquisitionPolicyAuthoringPayloadV1
+    | LineAuthoringPayloadV1
     | ChangeSetAuthoringPayloadV1,
     Field(discriminator="tag"),
 ]

@@ -19796,6 +19796,13 @@
                 "title": "Pin Role",
                 "type": "string"
               },
+              "providers": {
+                "items": {
+                  "$ref": "#/$defs/PlaybillProviderInterfaceImplementation"
+                },
+                "title": "Providers",
+                "type": "array"
+              },
               "tag": {
                 "const": "playbill-provider-interface-entry-v1",
                 "title": "Tag",
@@ -19820,6 +19827,36 @@
               "interface_basis"
             ],
             "title": "PlaybillProviderInterfaceEntry",
+            "type": "object"
+          },
+          "PlaybillProviderInterfaceImplementation": {
+            "additionalProperties": false,
+            "properties": {
+              "implementation_digest": {
+                "title": "Implementation Digest",
+                "type": "string"
+              },
+              "provider_artifact_digest": {
+                "title": "Provider Artifact Digest",
+                "type": "string"
+              },
+              "provider_identity": {
+                "title": "Provider Identity",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-provider-interface-implementation-v1",
+                "default": "playbill-provider-interface-implementation-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider_identity",
+              "provider_artifact_digest",
+              "implementation_digest"
+            ],
+            "title": "PlaybillProviderInterfaceImplementation",
             "type": "object"
           }
         },
@@ -24756,6 +24793,19 @@
             "default": null,
             "title": "Terminal"
           }
+        },
+        "terminal_egress": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "terminal_egress",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/ProcedureTerminalEgressV1"
+            },
+            "title": "Terminal Egress",
+            "type": "array"
+          }
         }
       },
       "json_schema": {
@@ -25713,6 +25763,24 @@
                   "source_material_unavailable",
                   "terminal_not_available",
                   "terminal_egress_unverified",
+                  "proposal_item_invalid",
+                  "proposal_item_evidence_missing",
+                  "proposal_item_evidence_ambiguous",
+                  "proposal_lowering_refused",
+                  "proposal_candidate_refused",
+                  "proposal_target_paths_mismatch",
+                  "proposal_receipt_incomplete",
+                  "effectful_operation_payload_mismatch",
+                  "procedure_mandate_required",
+                  "procedure_mandate_superseded",
+                  "procedure_mandate_expired",
+                  "procedure_mandate_procedure_mismatch",
+                  "procedure_mandate_rung_insufficient",
+                  "procedure_mandate_authority_ceiling_insufficient",
+                  "procedure_mandate_namespace_mismatch",
+                  "procedure_mandate_not_applicable",
+                  "procedure_authority_admission_invalid",
+                  "procedure_authority_admission_mismatch",
                   "provider_unavailable",
                   "unclassified_input",
                   "unclaimed_bucket",
@@ -25844,6 +25912,7 @@
                   "journal_read_failed",
                   "journal_conflict",
                   "run_recovery_required",
+                  "terminal_egress_recovered",
                   "admission_material_unavailable_by_policy",
                   "replay_material_unavailable",
                   "admission_material_corrupt",
@@ -27876,6 +27945,227 @@
             "title": "ProcedureSourceObservationV1",
             "type": "object"
           },
+          "ProcedureTerminalEgressChildV1": {
+            "additionalProperties": false,
+            "description": "One fanout child of a terminal, and the handle its sink produced for it.",
+            "properties": {
+              "child_index": {
+                "minimum": 0,
+                "title": "Child Index",
+                "type": "integer"
+              },
+              "egress_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Egress Digest"
+              },
+              "item_key": {
+                "title": "Item Key",
+                "type": "string"
+              },
+              "manifest_digest": {
+                "title": "Manifest Digest",
+                "type": "string"
+              },
+              "path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Path"
+              },
+              "tag": {
+                "const": "playbill-procedure-terminal-egress-child-v1",
+                "default": "playbill-procedure-terminal-egress-child-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "child_index",
+              "item_key",
+              "manifest_digest"
+            ],
+            "title": "ProcedureTerminalEgressChildV1",
+            "type": "object"
+          },
+          "ProcedureTerminalEgressV1": {
+            "additionalProperties": false,
+            "description": "What one terminal node of a run did, reconstructed from its journal.\n\nAdditive and optional: a run with no terminal carries none. A delivered\n`propose_change_set` names the proposal and the exact candidate it produced,\nso a manager can retrieve, review and activate that candidate through the\nexisting proposal doors; producing it never activates it. A refused or\nfailed egress names the code the run refused with, so the run reads as the\nreason it stopped rather than as a bare failure.",
+            "properties": {
+              "candidate_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Candidate Digest"
+              },
+              "children": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ProcedureTerminalEgressChildV1"
+                },
+                "title": "Children",
+                "type": "array"
+              },
+              "effective_rung": {
+                "anyOf": [
+                  {
+                    "maximum": 3,
+                    "minimum": -1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Effective Rung"
+              },
+              "journal_coordinate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureJournalCoordinateV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "kind": {
+                "enum": [
+                  "emit_capture",
+                  "post_inbox",
+                  "propose_change_set",
+                  "mandate_settlement"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "limiting_term": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Limiting Term"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "operation_key": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Operation Key"
+              },
+              "procedure_mandate_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Procedure Mandate Digest"
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "refusal_code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Refusal Code"
+              },
+              "required_rung": {
+                "maximum": 3,
+                "minimum": 0,
+                "title": "Required Rung",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-procedure-terminal-egress-v1",
+                "default": "playbill-procedure-terminal-egress-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "target_paths": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Target Paths",
+                "type": "array"
+              },
+              "verdict": {
+                "enum": [
+                  "dependencies_bound_egress_pending",
+                  "refused_effective_rung",
+                  "prepared",
+                  "delivered",
+                  "refused",
+                  "failed"
+                ],
+                "title": "Verdict",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "kind",
+              "verdict",
+              "required_rung"
+            ],
+            "title": "ProcedureTerminalEgressV1",
+            "type": "object"
+          },
           "ProviderBucketClassificationPlanV1": {
             "additionalProperties": false,
             "description": "Accepted, measured-bucket-free classifier plan for one occurrence.",
@@ -28250,6 +28540,13 @@
             ],
             "default": null,
             "title": "Terminal"
+          },
+          "terminal_egress": {
+            "items": {
+              "$ref": "#/$defs/ProcedureTerminalEgressV1"
+            },
+            "title": "Terminal Egress",
+            "type": "array"
           }
         },
         "required": [
@@ -30478,6 +30775,19 @@
             "type": "string"
           }
         },
+        "providers": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "providers",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillProviderInterfaceImplementation"
+            },
+            "title": "Providers",
+            "type": "array"
+          }
+        },
         "tag": {
           "has_default": false,
           "has_default_factory": false,
@@ -30501,6 +30811,38 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "PlaybillProviderInterfaceImplementation": {
+            "additionalProperties": false,
+            "properties": {
+              "implementation_digest": {
+                "title": "Implementation Digest",
+                "type": "string"
+              },
+              "provider_artifact_digest": {
+                "title": "Provider Artifact Digest",
+                "type": "string"
+              },
+              "provider_identity": {
+                "title": "Provider Identity",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-provider-interface-implementation-v1",
+                "default": "playbill-provider-interface-implementation-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider_identity",
+              "provider_artifact_digest",
+              "implementation_digest"
+            ],
+            "title": "PlaybillProviderInterfaceImplementation",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "properties": {
           "artifact_digest": {
@@ -30551,6 +30893,13 @@
             "title": "Pin Role",
             "type": "string"
           },
+          "providers": {
+            "items": {
+              "$ref": "#/$defs/PlaybillProviderInterfaceImplementation"
+            },
+            "title": "Providers",
+            "type": "array"
+          },
           "tag": {
             "const": "playbill-provider-interface-entry-v1",
             "title": "Tag",
@@ -30589,6 +30938,89 @@
         "pin_role",
         "tag",
         "vocabulary_digest"
+      ]
+    },
+    "PlaybillProviderInterfaceImplementation": {
+      "fields": {
+        "implementation_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "implementation_digest",
+          "required": true,
+          "schema": {
+            "title": "Implementation Digest",
+            "type": "string"
+          }
+        },
+        "provider_artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "provider_artifact_digest",
+          "required": true,
+          "schema": {
+            "title": "Provider Artifact Digest",
+            "type": "string"
+          }
+        },
+        "provider_identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "provider_identity",
+          "required": true,
+          "schema": {
+            "title": "Provider Identity",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-provider-interface-implementation-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-provider-interface-implementation-v1",
+            "default": "playbill-provider-interface-implementation-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "implementation_digest": {
+            "title": "Implementation Digest",
+            "type": "string"
+          },
+          "provider_artifact_digest": {
+            "title": "Provider Artifact Digest",
+            "type": "string"
+          },
+          "provider_identity": {
+            "title": "Provider Identity",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-provider-interface-implementation-v1",
+            "default": "playbill-provider-interface-implementation-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_identity",
+          "provider_artifact_digest",
+          "implementation_digest"
+        ],
+        "title": "PlaybillProviderInterfaceImplementation",
+        "type": "object"
+      },
+      "required_fields": [
+        "implementation_digest",
+        "provider_artifact_digest",
+        "provider_identity"
       ]
     },
     "PlaybillProviderSeedResultV1": {
@@ -38566,6 +38998,24 @@
                   "source_material_unavailable",
                   "terminal_not_available",
                   "terminal_egress_unverified",
+                  "proposal_item_invalid",
+                  "proposal_item_evidence_missing",
+                  "proposal_item_evidence_ambiguous",
+                  "proposal_lowering_refused",
+                  "proposal_candidate_refused",
+                  "proposal_target_paths_mismatch",
+                  "proposal_receipt_incomplete",
+                  "effectful_operation_payload_mismatch",
+                  "procedure_mandate_required",
+                  "procedure_mandate_superseded",
+                  "procedure_mandate_expired",
+                  "procedure_mandate_procedure_mismatch",
+                  "procedure_mandate_rung_insufficient",
+                  "procedure_mandate_authority_ceiling_insufficient",
+                  "procedure_mandate_namespace_mismatch",
+                  "procedure_mandate_not_applicable",
+                  "procedure_authority_admission_invalid",
+                  "procedure_authority_admission_mismatch",
                   "provider_unavailable",
                   "unclassified_input",
                   "unclaimed_bucket",
@@ -38697,6 +39147,7 @@
                   "journal_read_failed",
                   "journal_conflict",
                   "run_recovery_required",
+                  "terminal_egress_recovered",
                   "admission_material_unavailable_by_policy",
                   "replay_material_unavailable",
                   "admission_material_corrupt",
@@ -40690,6 +41141,24 @@
                   "source_material_unavailable",
                   "terminal_not_available",
                   "terminal_egress_unverified",
+                  "proposal_item_invalid",
+                  "proposal_item_evidence_missing",
+                  "proposal_item_evidence_ambiguous",
+                  "proposal_lowering_refused",
+                  "proposal_candidate_refused",
+                  "proposal_target_paths_mismatch",
+                  "proposal_receipt_incomplete",
+                  "effectful_operation_payload_mismatch",
+                  "procedure_mandate_required",
+                  "procedure_mandate_superseded",
+                  "procedure_mandate_expired",
+                  "procedure_mandate_procedure_mismatch",
+                  "procedure_mandate_rung_insufficient",
+                  "procedure_mandate_authority_ceiling_insufficient",
+                  "procedure_mandate_namespace_mismatch",
+                  "procedure_mandate_not_applicable",
+                  "procedure_authority_admission_invalid",
+                  "procedure_authority_admission_mismatch",
                   "provider_unavailable",
                   "unclassified_input",
                   "unclaimed_bucket",
@@ -40821,6 +41290,7 @@
                   "journal_read_failed",
                   "journal_conflict",
                   "run_recovery_required",
+                  "terminal_egress_recovered",
                   "admission_material_unavailable_by_policy",
                   "replay_material_unavailable",
                   "admission_material_corrupt",
@@ -43151,6 +43621,24 @@
                   "source_material_unavailable",
                   "terminal_not_available",
                   "terminal_egress_unverified",
+                  "proposal_item_invalid",
+                  "proposal_item_evidence_missing",
+                  "proposal_item_evidence_ambiguous",
+                  "proposal_lowering_refused",
+                  "proposal_candidate_refused",
+                  "proposal_target_paths_mismatch",
+                  "proposal_receipt_incomplete",
+                  "effectful_operation_payload_mismatch",
+                  "procedure_mandate_required",
+                  "procedure_mandate_superseded",
+                  "procedure_mandate_expired",
+                  "procedure_mandate_procedure_mismatch",
+                  "procedure_mandate_rung_insufficient",
+                  "procedure_mandate_authority_ceiling_insufficient",
+                  "procedure_mandate_namespace_mismatch",
+                  "procedure_mandate_not_applicable",
+                  "procedure_authority_admission_invalid",
+                  "procedure_authority_admission_mismatch",
                   "provider_unavailable",
                   "unclassified_input",
                   "unclaimed_bucket",
@@ -43282,6 +43770,7 @@
                   "journal_read_failed",
                   "journal_conflict",
                   "run_recovery_required",
+                  "terminal_egress_recovered",
                   "admission_material_unavailable_by_policy",
                   "replay_material_unavailable",
                   "admission_material_corrupt",
@@ -45716,6 +46205,24 @@
                   "source_material_unavailable",
                   "terminal_not_available",
                   "terminal_egress_unverified",
+                  "proposal_item_invalid",
+                  "proposal_item_evidence_missing",
+                  "proposal_item_evidence_ambiguous",
+                  "proposal_lowering_refused",
+                  "proposal_candidate_refused",
+                  "proposal_target_paths_mismatch",
+                  "proposal_receipt_incomplete",
+                  "effectful_operation_payload_mismatch",
+                  "procedure_mandate_required",
+                  "procedure_mandate_superseded",
+                  "procedure_mandate_expired",
+                  "procedure_mandate_procedure_mismatch",
+                  "procedure_mandate_rung_insufficient",
+                  "procedure_mandate_authority_ceiling_insufficient",
+                  "procedure_mandate_namespace_mismatch",
+                  "procedure_mandate_not_applicable",
+                  "procedure_authority_admission_invalid",
+                  "procedure_authority_admission_mismatch",
                   "provider_unavailable",
                   "unclassified_input",
                   "unclaimed_bucket",
@@ -45847,6 +46354,7 @@
                   "journal_read_failed",
                   "journal_conflict",
                   "run_recovery_required",
+                  "terminal_egress_recovered",
                   "admission_material_unavailable_by_policy",
                   "replay_material_unavailable",
                   "admission_material_corrupt",
@@ -47208,6 +47716,548 @@
       },
       "required_fields": [
         "occurrence_path"
+      ]
+    },
+    "ProcedureTerminalEgressV1": {
+      "fields": {
+        "candidate_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "candidate_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Candidate Digest"
+          }
+        },
+        "children": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "children",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProcedureTerminalEgressChildV1"
+            },
+            "title": "Children",
+            "type": "array"
+          }
+        },
+        "effective_rung": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "effective_rung",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "maximum": 3,
+                "minimum": -1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Effective Rung"
+          }
+        },
+        "journal_coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "journal_coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProcedureJournalCoordinateV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": true,
+          "schema": {
+            "enum": [
+              "emit_capture",
+              "post_inbox",
+              "propose_change_set",
+              "mandate_settlement"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "limiting_term": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limiting_term",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limiting Term"
+          }
+        },
+        "node_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "node_id",
+          "required": true,
+          "schema": {
+            "title": "Node Id",
+            "type": "string"
+          }
+        },
+        "operation_key": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "operation_key",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Operation Key"
+          }
+        },
+        "procedure_mandate_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "procedure_mandate_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Procedure Mandate Digest"
+          }
+        },
+        "proposal_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          }
+        },
+        "refusal_code": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "refusal_code",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Refusal Code"
+          }
+        },
+        "required_rung": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "required_rung",
+          "required": true,
+          "schema": {
+            "maximum": 3,
+            "minimum": 0,
+            "title": "Required Rung",
+            "type": "integer"
+          }
+        },
+        "tag": {
+          "default": "playbill-procedure-terminal-egress-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-procedure-terminal-egress-v1",
+            "default": "playbill-procedure-terminal-egress-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "target_paths": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "target_paths",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Target Paths",
+            "type": "array"
+          }
+        },
+        "verdict": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "verdict",
+          "required": true,
+          "schema": {
+            "enum": [
+              "dependencies_bound_egress_pending",
+              "refused_effective_rung",
+              "prepared",
+              "delivered",
+              "refused",
+              "failed"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ProcedureJournalCoordinateV1": {
+            "additionalProperties": false,
+            "properties": {
+              "journal_family": {
+                "title": "Journal Family",
+                "type": "string"
+              },
+              "partition_id": {
+                "title": "Partition Id",
+                "type": "string"
+              },
+              "record_digest": {
+                "title": "Record Digest",
+                "type": "string"
+              },
+              "sequence": {
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              },
+              "stream_id": {
+                "title": "Stream Id",
+                "type": "string"
+              },
+              "stream_instance_id": {
+                "title": "Stream Instance Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-journal-coordinate-v1",
+                "default": "playbill-procedure-journal-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "stream_instance_id",
+              "journal_family",
+              "stream_id",
+              "partition_id",
+              "sequence",
+              "record_digest"
+            ],
+            "title": "ProcedureJournalCoordinateV1",
+            "type": "object"
+          },
+          "ProcedureTerminalEgressChildV1": {
+            "additionalProperties": false,
+            "description": "One fanout child of a terminal, and the handle its sink produced for it.",
+            "properties": {
+              "child_index": {
+                "minimum": 0,
+                "title": "Child Index",
+                "type": "integer"
+              },
+              "egress_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Egress Digest"
+              },
+              "item_key": {
+                "title": "Item Key",
+                "type": "string"
+              },
+              "manifest_digest": {
+                "title": "Manifest Digest",
+                "type": "string"
+              },
+              "path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Path"
+              },
+              "tag": {
+                "const": "playbill-procedure-terminal-egress-child-v1",
+                "default": "playbill-procedure-terminal-egress-child-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "child_index",
+              "item_key",
+              "manifest_digest"
+            ],
+            "title": "ProcedureTerminalEgressChildV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "What one terminal node of a run did, reconstructed from its journal.\n\nAdditive and optional: a run with no terminal carries none. A delivered\n`propose_change_set` names the proposal and the exact candidate it produced,\nso a manager can retrieve, review and activate that candidate through the\nexisting proposal doors; producing it never activates it. A refused or\nfailed egress names the code the run refused with, so the run reads as the\nreason it stopped rather than as a bare failure.",
+        "properties": {
+          "candidate_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Candidate Digest"
+          },
+          "children": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProcedureTerminalEgressChildV1"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "effective_rung": {
+            "anyOf": [
+              {
+                "maximum": 3,
+                "minimum": -1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Effective Rung"
+          },
+          "journal_coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProcedureJournalCoordinateV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "kind": {
+            "enum": [
+              "emit_capture",
+              "post_inbox",
+              "propose_change_set",
+              "mandate_settlement"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "limiting_term": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limiting Term"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "operation_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Operation Key"
+          },
+          "procedure_mandate_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Procedure Mandate Digest"
+          },
+          "proposal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          },
+          "refusal_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Refusal Code"
+          },
+          "required_rung": {
+            "maximum": 3,
+            "minimum": 0,
+            "title": "Required Rung",
+            "type": "integer"
+          },
+          "tag": {
+            "const": "playbill-procedure-terminal-egress-v1",
+            "default": "playbill-procedure-terminal-egress-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "target_paths": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Target Paths",
+            "type": "array"
+          },
+          "verdict": {
+            "enum": [
+              "dependencies_bound_egress_pending",
+              "refused_effective_rung",
+              "prepared",
+              "delivered",
+              "refused",
+              "failed"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "kind",
+          "verdict",
+          "required_rung"
+        ],
+        "title": "ProcedureTerminalEgressV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "kind",
+        "node_id",
+        "required_rung",
+        "verdict"
       ]
     },
     "ProviderLaneStatusV1": {

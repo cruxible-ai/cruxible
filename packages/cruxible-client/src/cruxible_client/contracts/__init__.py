@@ -64,6 +64,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunReceiptV5,
     ProcedureRunReceiptV6,
     ProcedureSourceObservationV1,
+    ProcedureTerminalEgressV1,
     ProcedureTerminalV1,
 )
 from cruxible_client.contracts.workspace_advertisement import (
@@ -1453,6 +1454,7 @@ class PlaybillProcedureRunState(BaseModel):
     receipt_digest: str | None = None
     terminal: ProcedureTerminalV1 | None = None
     source_observations: list[ProcedureSourceObservationV1] = Field(default_factory=list)
+    terminal_egress: list[ProcedureTerminalEgressV1] = Field(default_factory=list)
 
     @property
     def coordinate(self) -> PlaybillAcceptedCoordinate:
@@ -1797,6 +1799,17 @@ class PlaybillDiscoveryResult(BaseModel):
     vocabulary_entry_count: int
 
 
+class PlaybillProviderInterfaceImplementation(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-provider-interface-implementation-v1"] = (
+        "playbill-provider-interface-implementation-v1"
+    )
+    provider_identity: str
+    provider_artifact_digest: str
+    implementation_digest: str
+
+
 class PlaybillProviderInterfaceEntry(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -1811,6 +1824,7 @@ class PlaybillProviderInterfaceEntry(BaseModel):
     effect_class: Literal["none", "external_read", "external_mutation"]
     classifier_status: Literal["installed", "not_installed"]
     interface_basis: Literal["accepted_registration"]
+    providers: list[PlaybillProviderInterfaceImplementation] = Field(default_factory=list)
 
 
 class PlaybillInterfaceInventory(BaseModel):
