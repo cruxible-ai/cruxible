@@ -451,9 +451,15 @@ def _accepted_retirements_for_items(
     """Find first exact retirements in one bounded history/tree traversal."""
 
     history = instance.accepted_history()
+    evidence = instance.proposal_evidence()
+    admitted_ids = {record.proposal_id for record in evidence.list_admissions()}
     evaluations_by_candidate: dict[str, list[str]] = {}
-    for evaluation in instance.proposal_evidence().list_evaluations():
-        if evaluation.verdict == "candidate" and evaluation.candidate_digest is not None:
+    for evaluation in evidence.list_evaluations():
+        if (
+            evaluation.proposal_id in admitted_ids
+            and evaluation.verdict == "candidate"
+            and evaluation.candidate_digest is not None
+        ):
             evaluations_by_candidate.setdefault(evaluation.candidate_digest, []).append(
                 evaluation.proposal_id
             )

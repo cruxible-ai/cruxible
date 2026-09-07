@@ -95,6 +95,9 @@ def service_compile_playbill_sources(
 def _pending_body_digests(instance: PlaybillInstance) -> dict[str, set[str]]:
     result: dict[str, set[str]] = {}
     evidence = instance.proposal_evidence()
+    # Admission commits publication; an evaluation may survive an interrupted
+    # submission before that point and does not yet describe pending work.
+    admitted_ids = {record.proposal_id for record in evidence.list_admissions()}
     settled_candidates = {
         generation.record.candidate_digest
         for generation in instance.accepted_history()
@@ -102,7 +105,8 @@ def _pending_body_digests(instance: PlaybillInstance) -> dict[str, set[str]]:
     }
     for evaluation in evidence.list_evaluations():
         if (
-            evaluation.verdict != "candidate"
+            evaluation.proposal_id not in admitted_ids
+            or evaluation.verdict != "candidate"
             or evaluation.evaluated_tree_oid is None
             or evaluation.candidate_digest is None
             or evaluation.candidate_digest in settled_candidates
