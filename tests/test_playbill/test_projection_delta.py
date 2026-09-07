@@ -204,3 +204,72 @@ def test_parent_recovery_or_refusal_preserves_authority(tmp_path, monkeypatch, p
         assert instance.accepted_coordinate() != before
         recovered = type(instance).open(instance.root, trust_root=instance.trust_root)
         assert recovered.accepted_coordinate() == instance.accepted_coordinate()
+
+
+def test_unrelated_document_carries_nonempty_citation_relations_without_rebuild(
+    tmp_path, monkeypatch
+):
+    from cruxible_client.contracts.documents import (
+        DocumentAuthority,
+        DocumentLifecycle,
+        DocumentShell,
+        render_document,
+    )
+    from cruxible_core.playbill.serving import bind_current_projection
+    from tests.test_playbill.test_resolution_contracts import _accept_tree
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    intent = coordinator.create(
+        actor=actor, payload=_change_set(_claim()), canonical_timestamp=TIMESTAMP
+    ).intent
+    _accept(instance, owner, coordinator, intent.intent_id, actor)
+    publication = Path(instance.inspect().storage_directories["projections"])
+    with bind_current_projection(publication, expected=instance.accepted_coordinate()) as handle:
+        prior_uses = handle.semantic_facts("playbill.citation_relation.use")
+        assert prior_uses
+    body = instance.store_document_body(b"unrelated document")
+    document = DocumentShell(
+        identity="document:unrelated",
+        document_kind="note",
+        title="Unrelated",
+        media_type="text/plain",
+        body_digest=body.digest,
+        authority=DocumentAuthority(required_tier="governed_write"),
+        governance_scope=("project:test",),
+        lifecycle=DocumentLifecycle(revision=1),
+    )
+    with monkeypatch.context() as patch:
+
+        def forbidden(*args, **kwargs):
+            raise AssertionError("unrelated members cannot require citation reconstruction")
+
+        patch.setattr(delta_module, "build_citation_relation_facts", forbidden)
+        _accept_tree(
+            instance,
+            owner,
+            {
+                **instance.tree_at(instance.accepted_coordinate().git_oid),
+                "documents/unrelated.json": render_document(document),
+            },
+            timestamp=TIMESTAMP,
+            proposal_name="unrelated-document",
+        )
+    with bind_current_projection(publication, expected=instance.accepted_coordinate()) as handle:
+        assert handle.semantic_facts("playbill.citation_relation.use") == prior_uses
+        expected = _rows(handle.index_path)
+    directory = tmp_path / "cold-oracle"
+    directory.mkdir()
+    assembler = ProjectionAssembler(
+        instance._ledger,
+        accepted=instance.accepted_coordinate(),
+        publication_directory=directory,
+        bodies=instance.body_store(),
+        accepted_coordinates_by_sequence=instance._accepted_coordinates_by_sequence(),
+    )
+    rebuilt = assembler.assemble(
+        assembler.request(output_staging_directory=directory / ".stage-cold")
+    )
+    assert _rows(directory / rebuilt.manifest.pieces[0].name) == expected

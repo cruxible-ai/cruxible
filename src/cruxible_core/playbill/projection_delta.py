@@ -124,6 +124,11 @@ def populate_successor(
     if not parent_manifest.is_file():
         return None
 
+    citation_inputs_changed = any(
+        member.path.startswith(("claims/", "capture-contracts/"))
+        for member in bundle.record.members
+    )
+
     def changed_inputs() -> tuple[frozenset[str], dict[str, bytes]]:
         repository = assembler._repository
         parent_entries = {e.path: e for e in repository.list_tree_with_sizes(base.git_oid)}
@@ -140,7 +145,9 @@ def populate_successor(
             raise ProjectionIntegrityError("Git successor differs outside its changeset")
         # This validates the whole inventory's modes, paths, collisions and resource
         # bounds, but opens only affected payloads and the small contract inventory.
-        selected = members | {p for p in current_entries if p.startswith("capture-contracts/")}
+        selected = members
+        if citation_inputs_changed:
+            selected |= {p for p in current_entries if p.startswith("capture-contracts/")}
         blobs = _read_registered_entries(
             repository,
             current_inventory,
@@ -189,8 +196,14 @@ def populate_successor(
                 raise ProjectionIntegrityError("compiled delta member differs from its changeset")
         relations = None
         bodies = assembler.bodies
-        if bodies is not None and assembler.registry.supports(
-            "playbill.citation_relation.use", 1, classification="semantic"
+        # Relations depend on Claim citations and CaptureContracts, not the
+        # generation coordinate. Other member kinds carry those rows unchanged.
+        if (
+            citation_inputs_changed
+            and bodies is not None
+            and assembler.registry.supports(
+                "playbill.citation_relation.use", 1, classification="semantic"
+            )
         ):
             relations = _timed(
                 timings,
