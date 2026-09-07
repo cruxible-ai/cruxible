@@ -13,6 +13,7 @@ from cruxible_client.contracts.canonical import (
     normalize_ledger_path,
 )
 from cruxible_client.contracts.errors import ProjectionFormatError, ProposalIntegrityError
+from cruxible_core.playbill.derived_state import SnapshotTree, fork_tree
 
 CARD_RENDERER_IMPLEMENTATION = "python-reference-v2"
 _HEADER_TEMPLATE = "# {kind}: {identity}\n\n- Artifact: `{path}`\n\n"
@@ -100,27 +101,46 @@ def derive_candidate_cards(
     candidate_tree: Mapping[str, bytes],
     coordinate: str,
     artifact_kinds: ArtifactKindRegistry,
-) -> dict[str, bytes]:
+) -> SnapshotTree:
     """Return the candidate tree with exact derivative cards for semantic changes."""
 
-    result = {
-        path: content
-        for path, content in candidate_tree.items()
-        if not is_candidate_card_path(path)
-    }
-    result.update(
-        {path: content for path, content in base_tree.items() if is_candidate_card_path(path)}
+    edits = (
+        candidate_tree.edits_from(base_tree) if isinstance(candidate_tree, SnapshotTree) else None
     )
-    semantic_paths = sorted(
-        {
-            path
-            for path in {*base_tree, *candidate_tree}
-            if not is_candidate_card_path(path)
-            and not path.startswith("changesets/")
-            and (base_tree.get(path) != candidate_tree.get(path))
-        },
-        key=lambda item: item.encode("utf-8"),
-    )
+    if edits is not None:
+        result = fork_tree(candidate_tree)
+        # Cards are daemon-owned. Restore only edited cards; untouched cards
+        # already come from the exact parent root.
+        for path in edits:
+            if is_candidate_card_path(path):
+                content = base_tree.get(path)
+                if content is None:
+                    result.pop(path, None)
+                else:
+                    result[path] = content
+        semantic_paths = [
+            p for p in edits if not is_candidate_card_path(p) and not p.startswith("changesets/")
+        ]
+    else:
+        # Full external ingress retains complete physical inventory validation.
+        result = fork_tree(
+            {
+                path: content
+                for path, content in candidate_tree.items()
+                if not is_candidate_card_path(path)
+            }
+        )
+        result.update({p: b for p, b in base_tree.items() if is_candidate_card_path(p)})
+        semantic_paths = sorted(
+            {
+                p
+                for p in {*base_tree, *candidate_tree}
+                if not is_candidate_card_path(p)
+                and not p.startswith("changesets/")
+                and base_tree.get(p) != candidate_tree.get(p)
+            },
+            key=lambda p: p.encode("utf-8"),
+        )
     for path in semantic_paths:
         try:
             kind = artifact_kinds.resolve_path(path)
@@ -142,7 +162,7 @@ def derive_candidate_cards(
             # integrity error. Settlement and recovery only ever re-derive trees the
             # evaluator already accepted, where every member parses.
             continue
-    return result
+    return result.snapshot()
 
 
 __all__ = [

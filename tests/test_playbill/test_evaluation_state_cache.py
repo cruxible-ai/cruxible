@@ -69,10 +69,13 @@ def test_inputs_and_returned_nested_state_cannot_mutate_cached_derivations():
     expected = build_tree_state(tree)
     result = cache.derive(tree)
     tree.clear()
-    result.members.clear()
+    with pytest.raises(AttributeError):
+        result.members.clear()
     result.dependencies.states[_path("anchor")].identity.__dict__["name"] = "forged"
-    result.dependencies.paths_by_identity.clear()
-    result.merkle.nodes.clear()
+    with pytest.raises(AttributeError):
+        result.dependencies.paths_by_identity.clear()
+    with pytest.raises(AttributeError):
+        result.merkle.nodes.clear()
     assert cache.derive(_tree()) == expected
 
 

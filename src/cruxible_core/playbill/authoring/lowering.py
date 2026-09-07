@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import NoReturn, TypeAlias
@@ -172,6 +172,7 @@ from cruxible_core.playbill.compiler import (
     artifact_kinds_for_compiler,
     projection_registry_for_compiler,
 )
+from cruxible_core.playbill.derived_state import CandidateTree, SnapshotTree, fork_tree
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.producer_receipts import local_producer_receipt_resolver
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -194,7 +195,7 @@ class AuthoringLoweringError(ValueError):
 
 @dataclass(frozen=True)
 class LoweredAuthoring:
-    proposed_tree: dict[str, bytes]
+    proposed_tree: Mapping[str, bytes]
     resolved_authoring: dict[str, object]
     changed_members: tuple[tuple[str, bytes], ...]
     idempotent: bool = False
@@ -206,6 +207,13 @@ class LoweredAuthoring:
     cardinality, evidence admission -- address the artifact path they refused,
     not the member the author wrote. This is the map back. Empty for a singular
     intent, which owns every path it writes."""
+
+    def __post_init__(self) -> None:
+        # A lowered result may outlive the member's mutable candidate builder.
+        # Seal only the tree; public explanatory containers retain their existing
+        # ownership and are detached by prepared-result retention.
+        if not isinstance(self.proposed_tree, SnapshotTree):
+            object.__setattr__(self, "proposed_tree", fork_tree(self.proposed_tree).snapshot())
 
 
 @dataclass(frozen=True)
@@ -334,7 +342,7 @@ def _observed_at(timestamp: str) -> datetime:
 
 
 def _referent(
-    tree: dict[str, bytes],
+    tree: Mapping[str, bytes],
     address: SemanticAddress,
     *,
     descriptor: bool,
@@ -391,7 +399,7 @@ def _exact_object(
 
 
 def _same_predicate_claims(
-    tree: dict[str, bytes], statement: ClaimStatement
+    tree: Mapping[str, bytes], statement: ClaimStatement
 ) -> tuple[ClaimArtifactAny, ...]:
     """Return every live Claim on this statement's (subject, predicate).
 
@@ -413,7 +421,7 @@ def _same_predicate_claims(
 
 
 def _same_slot_claims(
-    tree: dict[str, bytes], statement: ClaimStatement
+    tree: Mapping[str, bytes], statement: ClaimStatement
 ) -> tuple[ClaimArtifactAny, ...]:
     """Return the live Claims contending for this statement's own slot.
 
@@ -438,17 +446,21 @@ def _same_slot_claims(
 
 
 class _ClaimPredicateIndex:
-    """Live contenders in one staged tree; never shared between candidates.
+    """Compatibility cursor over live contenders in one exact staged tree.
 
-    Build at the first contender lookup, after the ordinary referent checks.
-    Every subsequent staged member supplies its changed paths, including the
+    Immutable snapshots own shared memberships; ordinary Mapping callers retain
+    the scan oracle. Both build at the first contender lookup, after ordinary
+    referent checks. Every staged member advances to its new tree, including
     closure paths written by retirements and ClaimType successions.
     """
 
-    def __init__(self, tree: dict[str, bytes]) -> None:
+    def __init__(self, tree: Mapping[str, bytes]) -> None:
         self._tree = tree
         self._claims: dict[tuple[SemanticAddress, str], dict[str, ClaimArtifactAny]] | None = None
         self._keys: dict[str, tuple[SemanticAddress, str]] = {}
+        # Models belong to this lowering only. Shared roots retain immutable
+        # bytes; repeated siblings avoid parsing the same requested bytes again.
+        self._parsed: dict[str, tuple[bytes, ClaimArtifactAny]] = {}
 
     def _replace(self, path: str) -> None:
         if not path.startswith("claims/"):
@@ -470,13 +482,32 @@ class _ClaimPredicateIndex:
         self._keys[path] = key
         self._claims.setdefault(key, {})[path] = claim
 
-    def advance(self, tree: dict[str, bytes], changed_paths: Iterable[str]) -> None:
+    def advance(self, tree: Mapping[str, bytes], changed_paths: Iterable[str]) -> None:
         self._tree = tree
+        if isinstance(tree, SnapshotTree | CandidateTree):
+            # The structurally shared tree owns exactly its changed memberships.
+            # Do not rebuild a parallel candidate-local index on every member.
+            self._claims = None
+            self._keys = {}
+            for path in changed_paths:
+                self._parsed.pop(path, None)
+            return
         if self._claims is not None:
             for path in sorted(set(changed_paths), key=lambda item: item.encode("utf-8")):
                 self._replace(path)
 
     def claims_for(self, statement: ClaimStatement) -> tuple[ClaimArtifactAny, ...]:
+        if isinstance(self._tree, SnapshotTree | CandidateTree):
+            requested: list[ClaimArtifactAny] = []
+            for path, content in self._tree.claim_items(statement):
+                cached = self._parsed.get(path)
+                if cached is None or cached[0] != content:
+                    claim = parse_claim(content, path=path)
+                    self._parsed[path] = (content, claim)
+                else:
+                    claim = cached[1]
+                requested.append(claim)
+            return tuple(requested)
         if self._claims is None:
             self._claims = {}
             for path in sorted(self._tree, key=lambda item: item.encode("utf-8")):
@@ -504,8 +535,8 @@ def _merge_mappings(*groups: tuple[SourceMapping, ...]) -> tuple[SourceMapping, 
 def _install_claim_dependencies(
     payload: ClaimAuthoringPayloadV1,
     *,
-    base_tree: dict[str, bytes],
-) -> tuple[dict[str, bytes], set[str]]:
+    base_tree: Mapping[str, bytes],
+) -> tuple[MutableMapping[str, bytes], set[str]]:
     """Install a Claim's Subject and ClaimType drafts against the tree it lowers on.
 
     `base_tree` is the STAGED tree, so a sibling member that defines the Subject
@@ -517,7 +548,7 @@ def _install_claim_dependencies(
     it installs nothing.
     """
 
-    candidate_tree = dict(base_tree)
+    candidate_tree = fork_tree(base_tree)
     changed_paths: set[str] = set()
     if not isinstance(payload, ClaimAuthoringPayloadV2 | ClaimAuthoringPayloadV3):
         return candidate_tree, changed_paths
@@ -737,7 +768,7 @@ def _lower_claim(
     intent: AuthoringIntentV1,
     actor_id: str,
     base: AcceptedProjectionCoordinate,
-    base_tree: dict[str, bytes],
+    base_tree: Mapping[str, bytes],
     payload: ClaimAuthoringPayloadV1 | None = None,
     claim_identity: str | None = None,
     claim_index: _ClaimPredicateIndex | None = None,
@@ -860,11 +891,9 @@ def _lower_claim(
     # Demanded: the claims contending for this exact slot. Accepted-if-offered:
     # every live claim on the same (subject, predicate), so an author may still
     # take a position on a sibling in another qualifier's slot voluntarily.
-    existing = (
-        _same_predicate_claims(candidate_base_tree, statement)
-        if claim_index is None
-        else claim_index.claims_for(statement)
-    )
+    if claim_index is None:
+        claim_index = _ClaimPredicateIndex(candidate_base_tree)
+    existing = claim_index.claims_for(statement)
     slot_claims = tuple(
         claim for claim in existing if claim.statement.qualifier == statement.qualifier
     )
@@ -1230,7 +1259,7 @@ def _lower_claim(
                     ),
                 },
             )
-    candidate_tree = dict(candidate_base_tree)
+    candidate_tree = fork_tree(candidate_base_tree)
     contract_member_path = capture_contract_path(contract.identity.name)
     contract_bytes = render_capture_contract(contract)
     claim_bytes = render_claim(claim)
@@ -1258,7 +1287,7 @@ def _lower_claim(
         and not dependency_paths
     )
     if idempotent:
-        candidate_tree = dict(candidate_base_tree)
+        candidate_tree = fork_tree(candidate_base_tree)
         changed = ()
     resolved_artifact_digest = (
         claim_artifact_digest(predecessor).tagged
@@ -1504,7 +1533,7 @@ def _resolve_authoring_references(
 
 def _parse_reference_tree(
     instance: PlaybillInstance,
-    tree: dict[str, bytes],
+    tree: Mapping[str, bytes],
     *,
     base: AcceptedProjectionCoordinate,
 ) -> ParsedProjectionTree:
@@ -1546,8 +1575,8 @@ def _lower_procedure(
     *,
     intent: AuthoringIntentV1,
     base: AcceptedProjectionCoordinate,
-    base_tree: dict[str, bytes],
-    accepted_reference_tree: dict[str, bytes] | None = None,
+    base_tree: Mapping[str, bytes],
+    accepted_reference_tree: Mapping[str, bytes] | None = None,
     candidate_identities: frozenset[str] = frozenset(),
 ) -> LoweredAuthoring:
     payload = intent.payload
@@ -1739,7 +1768,7 @@ def _lower_procedure(
                 "Repair the Procedure definition or its owned Contract declarations."
             ),
         )
-    candidate_tree = dict(base_tree)
+    candidate_tree = fork_tree(base_tree)
     procedure_bytes = render_procedure(procedure)
     candidate_tree[path] = procedure_bytes
     changed = () if base_tree.get(path) == procedure_bytes else ((path, procedure_bytes),)
@@ -1847,10 +1876,10 @@ def _lower_non_procedure(
     | QueryDefinitionAuthoringPayloadV1
     | ApprovalPolicyAuthoringPayloadV1
     | ProcedureRuntimePolicyAuthoringPayloadV1,
-    base_tree: dict[str, bytes],
+    base_tree: Mapping[str, bytes],
 ) -> LoweredAuthoring:
     path, content, digest = _render_non_procedure_member(payload)
-    candidate_tree = dict(base_tree)
+    candidate_tree = fork_tree(base_tree)
     candidate_tree[path] = content
     changed = () if base_tree.get(path) == content else ((path, content),)
     return LoweredAuthoring(
@@ -2018,7 +2047,7 @@ def _lower_change_set(
     intent: AuthoringIntentV1,
     actor_id: str,
     base: AcceptedProjectionCoordinate,
-    base_tree: dict[str, bytes],
+    base_tree: Mapping[str, bytes],
 ) -> LoweredAuthoring:
     payload = intent.payload
     assert isinstance(payload, ChangeSetAuthoringPayloadV1)
@@ -2071,7 +2100,7 @@ def _lower_change_set(
     }
     sibling_resolved: dict[int, dict[str, object]] = {}
 
-    staged_tree = dict(base_tree)
+    staged_tree: MutableMapping[str, bytes] = fork_tree(base_tree)
     claim_index = _ClaimPredicateIndex(staged_tree)
     member_paths: set[str] = set()
     installed_by: dict[str, set[int]] = {}
@@ -2164,7 +2193,7 @@ def _lower_change_set(
 
 
 StagedMember: TypeAlias = tuple[
-    dict[str, bytes],
+    MutableMapping[str, bytes],
     dict[str, object],
     set[str],
     dict[int, dict[str, object]],
@@ -2180,8 +2209,8 @@ def _stage_change_set_member(
     intent: AuthoringIntentV1,
     actor_id: str,
     base: AcceptedProjectionCoordinate,
-    base_tree: dict[str, bytes],
-    staged_tree: dict[str, bytes],
+    base_tree: Mapping[str, bytes],
+    staged_tree: Mapping[str, bytes],
     claim_index: _ClaimPredicateIndex,
     path: str,
     members: tuple[AuthoringChangeSetMemberV1, ...],
@@ -2206,7 +2235,7 @@ def _stage_change_set_member(
         member_resolved = dict(lowered.resolved_authoring)
         member_resolved["claim_id"] = claim_id
         extra = {member_path for member_path, _content in lowered.changed_members}
-        return dict(lowered.proposed_tree), member_resolved, extra, {}
+        return fork_tree(lowered.proposed_tree), member_resolved, extra, {}
     if isinstance(member, ClaimTypeSuccessionMemberV1):
         return _stage_claim_type_succession(
             instance,
@@ -2238,16 +2267,16 @@ def _stage_change_set_member(
             accepted_reference_tree=base_tree,
             candidate_identities=candidate_identities,
         )
-        return dict(lowered.proposed_tree), dict(lowered.resolved_authoring), set(), {}
+        return fork_tree(lowered.proposed_tree), dict(lowered.resolved_authoring), set(), {}
     if isinstance(member, ProcedureMandateAuthoringPayloadV1):
         mandate_path, content, digest = _render_procedure_mandate_member(member, tree=staged_tree)
-        staged_tree = dict(staged_tree)
-        staged_tree[mandate_path] = content
-        return staged_tree, {"artifact_digest": digest}, set(), {}
+        candidate_tree = fork_tree(staged_tree)
+        candidate_tree[mandate_path] = content
+        return candidate_tree, {"artifact_digest": digest}, set(), {}
     _path, content, digest = _render_non_procedure_member(member)
-    staged_tree = dict(staged_tree)
-    staged_tree[path] = content
-    return staged_tree, {"artifact_digest": digest}, set(), {}
+    candidate_tree = fork_tree(staged_tree)
+    candidate_tree[path] = content
+    return candidate_tree, {"artifact_digest": digest}, set(), {}
 
 
 def _resolve_re_author_siblings(
@@ -2435,7 +2464,7 @@ def _stage_claim_type_succession(
     intent: AuthoringIntentV1,
     actor_id: str,
     base: AcceptedProjectionCoordinate,
-    staged_tree: dict[str, bytes],
+    staged_tree: Mapping[str, bytes],
     path: str,
     members: tuple[AuthoringChangeSetMemberV1, ...],
     claim_identities: Mapping[str, str],
@@ -2553,9 +2582,9 @@ def _stage_claim_type_succession(
     # judged by the ClaimType this set is replacing. The builder, meanwhile,
     # takes the tree with the PREDECESSOR still installed: what it migrates
     # every dependent away from is exactly the digest it reads there.
-    lowering_tree = dict(staged_tree)
+    lowering_tree = fork_tree(staged_tree)
     lowering_tree[type_path] = render_claim_type(successor)
-    working = dict(staged_tree)
+    working = fork_tree(staged_tree)
     authored: dict[str, bytes] = {}
     sibling_resolved: dict[int, dict[str, object]] = {}
     extra: set[str] = set()
@@ -2631,15 +2660,21 @@ def _stage_claim_type_succession(
                 "Re-read the closure this succession owes and disposition it exactly."
             ),
         )
+    # The migration builder still materializes its closure result. Reattach
+    # only its changed members to the shared parent, preserving unaffected
+    # contender memberships for the following ordinary Claim members.
+    shared_candidate = fork_tree(working)
     for changed_path, content in candidate_tree.items():
-        if changed_path != path and working.get(changed_path) != content:
-            extra.add(changed_path)
+        if working.get(changed_path) != content:
+            shared_candidate[changed_path] = content
+            if changed_path != path:
+                extra.add(changed_path)
     resolved: dict[str, object] = {
         "artifact_digest": claim_type_digest(successor).tagged,
         "predecessor_digest": claim_type_digest(predecessor).tagged,
         "dependents": [item.model_dump(mode="json") for item in normalized],
     }
-    return candidate_tree, resolved, extra, sibling_resolved
+    return shared_candidate, resolved, extra, sibling_resolved
 
 
 def _stage_claim_retirement(
@@ -2647,9 +2682,9 @@ def _stage_claim_retirement(
     *,
     member: ClaimRetirementMemberV1,
     base: AcceptedProjectionCoordinate,
-    staged_tree: dict[str, bytes],
+    staged_tree: Mapping[str, bytes],
     path: str,
-) -> tuple[dict[str, bytes], dict[str, object], set[str]]:
+) -> tuple[MutableMapping[str, bytes], dict[str, object], set[str]]:
     """Retire one Claim and its live closure inside the same change set."""
 
     content = staged_tree.get(path)
@@ -2736,8 +2771,11 @@ def _stage_claim_retirement(
         for item in retirements
         if item.artifact_identity.qualified == claim.identity.qualified
     )
+    shared_candidate = fork_tree(staged_tree)
+    for changed_path in {path, *extra}:
+        shared_candidate[changed_path] = candidate_tree[changed_path]
     return (
-        dict(candidate_tree),
+        shared_candidate,
         {
             "artifact_digest": successor,
             "claim_id": claim.identity.name,
@@ -2772,7 +2810,7 @@ def lower_authoring(
         semantic_root=intent.base_coordinate.semantic_root,
         generation_root=intent.base_coordinate.generation_root,
     )
-    base_tree = instance.tree_at(base.git_oid)
+    base_tree = instance.immutable_tree_at(base.git_oid)
     if isinstance(intent.payload, ClaimAuthoringPayloadV1):
         return _lower_claim(
             instance,
@@ -2788,7 +2826,7 @@ def lower_authoring(
             intent.payload,
             tree=base_tree,
         )
-        candidate_tree = dict(base_tree)
+        candidate_tree = fork_tree(base_tree)
         candidate_tree[path] = content
         changed = () if base_tree.get(path) == content else ((path, content),)
         return LoweredAuthoring(

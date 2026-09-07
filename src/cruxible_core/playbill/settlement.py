@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Annotated, Final, Literal, Protocol
 
@@ -719,6 +719,7 @@ def prepare_generation(
     query_facts_provider: ClaimQueryFactsProvider | None = None,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
     tree_state_provider: TreeStateProvider | None = None,
+    accepted_tree_provider: Callable[[str], Mapping[str, bytes]] | None = None,
 ) -> VerifiedGenerationBundle:
     """Build and verify a generation bundle without mutating main or serving state."""
 
@@ -730,7 +731,7 @@ def prepare_generation(
         raise SettlementIntegrityError("settlement base object format differs from ledger")
     if ledger.read_main() != base.git_oid:
         raise SettlementIntegrityError("settlement base is not the current main ref")
-    base_tree = ledger.read_tree(base.git_oid)
+    base_tree = (accepted_tree_provider or ledger.read_tree)(base.git_oid)
     reevaluated = evaluate_proposal_tree(
         base_tree=base_tree,
         current_tree=base_tree,

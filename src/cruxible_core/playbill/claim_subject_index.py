@@ -12,7 +12,7 @@ from cruxible_client.contracts.claims import parse_claim
 CLAIM_PATH_RE = re.compile(r"^claims/[0-9a-f]{2}/CLM-[0-9a-f]{32}\.json$")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ClaimSubjectIndex:
     """Exact statement membership, including retired and future-effective Claims.
 

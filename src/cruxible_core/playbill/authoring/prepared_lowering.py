@@ -9,9 +9,6 @@ from __future__ import annotations
 
 import copy
 import hashlib
-import threading
-import weakref
-from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Callable
 
@@ -34,6 +31,8 @@ from cruxible_client.contracts.proposal_models import (
     ProposalReceiveLimits,
 )
 from cruxible_core.playbill.authoring.lowering import LoweredAuthoring
+from cruxible_core.playbill.derived_runtime import BoundedCache
+from cruxible_core.playbill.derived_state import SnapshotTree
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate
 
@@ -49,10 +48,10 @@ class _Entry:
     weight: int
 
 
-_caches: weakref.WeakKeyDictionary[PlaybillInstance, OrderedDict[str, _Entry]] = (
-    weakref.WeakKeyDictionary()
-)
-_lock = threading.Lock()
+def _cache(instance: PlaybillInstance) -> BoundedCache[_Entry]:
+    return instance.derived.memo(
+        "prepared_lowering", max_entries=MAX_ENTRIES, max_bytes=MAX_RETAINED_BYTES
+    )
 
 
 def _eligible(payload: object) -> bool:
@@ -125,11 +124,9 @@ def reuse_lowering(
         }
     )
     key = hashlib.sha256(inputs).hexdigest()
-    with _lock:
-        cache = _caches.setdefault(instance, OrderedDict())
-        entry = cache.get(key)
-        if entry is not None:
-            cache.move_to_end(key)
+    cache = _cache(instance)
+    generation = cache.generation
+    entry = cache.get(key)
     if entry is not None:
         store = instance.body_store()
         if all(store.verify(digest) for digest in entry.bodies):
@@ -137,23 +134,17 @@ def reuse_lowering(
             return copy.deepcopy(entry.lowered)
         # Missing generated bodies are recreated by normal lowering. Corrupt CAS
         # bytes raise exactly as storing those bodies during lowering would.
-        with _lock:
-            cache.pop(key, None)
+        cache.pop(key)
     lowered = compute()
     bodies = _generated_bodies(intent.payload, lowered)
+    assert isinstance(lowered.proposed_tree, SnapshotTree)  # LoweredAuthoring seals its tree.
     weight = (
         len(inputs)
-        + sum(len(path.encode()) + len(content) for path, content in lowered.proposed_tree.items())
+        + lowered.proposed_tree._input_bytes
         + len(canonical_bytes(lowered.resolved_authoring))
         + sum(len(path.encode()) + len(content) for path, content in lowered.changed_members)
     )
     if weight <= MAX_RETAINED_BYTES:
         entry = _Entry(copy.deepcopy(lowered), bodies, weight)
-        with _lock:
-            cache[key] = entry
-            cache.move_to_end(key)
-            while len(cache) > MAX_ENTRIES or sum(item.weight for item in cache.values()) > (
-                MAX_RETAINED_BYTES
-            ):
-                cache.popitem(last=False)
+        cache.put(key, entry, weight=weight, expected_generation=generation)
     return lowered

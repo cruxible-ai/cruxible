@@ -375,7 +375,7 @@ def manifest_for_tree_carrying(
     tree: Mapping[str, bytes],
     *,
     previous_tree: Mapping[str, bytes],
-    previous_manifest: Manifest,
+    previous_manifest: Mapping[str, str],
 ) -> Manifest:
     """Build `manifest_for_tree(tree)` without re-hashing byte-identical members.
 
@@ -415,7 +415,7 @@ def manifest_for_tree_carrying(
     return manifest
 
 
-def manifest_root_from_members(manifest: Manifest) -> SemanticManifestRoot:
+def manifest_root_from_members(manifest: Mapping[str, str]) -> SemanticManifestRoot:
     """Hash one already-built path-to-member-digest manifest."""
 
     entries: list[CanonicalValue] = [
@@ -461,8 +461,8 @@ def semantic_projection(tree: Mapping[str, bytes]) -> dict[str, bytes]:
 
 
 def semantic_diff_from_members(
-    base: Manifest,
-    candidate: Manifest,
+    base: Mapping[str, str],
+    candidate: Mapping[str, str],
 ) -> tuple[SemanticDiffDigest, tuple[str, ...]]:
     """Diff two already-built semantic manifests, never Git object IDs.
 

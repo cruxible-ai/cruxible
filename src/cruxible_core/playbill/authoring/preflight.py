@@ -88,7 +88,7 @@ class ComputedPreflight:
     result: PreflightResultV1
     status: CandidateStatusV1
     lowered: LoweredAuthoring | None
-    evaluated_tree: dict[str, bytes]
+    evaluated_tree: Mapping[str, bytes]
     evaluation: CandidateEvaluation | None
 
 
@@ -219,7 +219,7 @@ def _reference_diagnostics(
     instance: PlaybillInstance,
     *,
     intent: AuthoringIntentV1,
-    base_tree: dict[str, bytes],
+    base_tree: Mapping[str, bytes],
 ) -> tuple[AuthoringDiagnosticV1, ...]:
     if not isinstance(intent, AuthoringIntentV2):
         return ()
@@ -515,8 +515,8 @@ def _ordered_diagnostics(
 
 def _encoded_changes(
     *,
-    base_tree: dict[str, bytes],
-    candidate_tree: dict[str, bytes],
+    base_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
 ) -> list[dict[str, object]]:
     paths = sorted(
         {
@@ -726,21 +726,21 @@ def compute_preflight(
         diagnostics.extend(_claim_surface_diagnostics(claim, prefix=prefix))
     current = instance.accepted_coordinate()
     current_public = AcceptedCoordinate.from_internal(current)
-    current_tree = instance.tree_at(current.git_oid)
+    current_tree = instance.immutable_tree_at(current.git_oid)
     base = instance.resolve_accepted_coordinate(
         git_oid=intent.base_coordinate.git_oid,
         semantic_root=intent.base_coordinate.semantic_root,
         generation_root=intent.base_coordinate.generation_root,
         compiler_digest=intent.base_coordinate.compiler_digest,
     )
-    base_tree = instance.tree_at(base.git_oid)
+    base_tree = instance.immutable_tree_at(base.git_oid)
     diagnostics.extend(_reference_diagnostics(instance, intent=intent, base_tree=base_tree))
     service = instance.proposal_service()
     proposal_ref = f"refs/proposals/{actor.actor_id}/intent-{intent.intent_id[4:]}"
     proposal_ref_oid = service.transport.read_proposal_ref(proposal_ref)
     lowered: LoweredAuthoring | None = None
     evaluation: CandidateEvaluation | None = None
-    evaluated_tree = current_tree
+    evaluated_tree: Mapping[str, bytes] = current_tree
     resolved_payload: object
 
     authored_members = _authored_member_count(intent.payload)

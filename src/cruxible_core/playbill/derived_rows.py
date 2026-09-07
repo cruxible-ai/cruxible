@@ -16,7 +16,7 @@ from cruxible_client._persistent import MapMutation, PersistentMap
 T = TypeVar("T")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class CanonicalRows(Mapping[str, T], Generic[T]):
     rows: Mapping[str, bytes]
     encode: Callable[[T], bytes]

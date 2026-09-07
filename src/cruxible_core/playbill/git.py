@@ -1249,6 +1249,29 @@ class GitLedger:
             return ancestry[1]
         raise PlaybillGitError("Playbill refuses merge commits on main")
 
+    def changed_tree_paths(self, before: str, after: str) -> tuple[str, ...]:
+        """Exact physical path delta between two caller-verified accepted commits.
+
+        Rename detection is disabled: moves are a removal and an insertion.
+        Mode changes are included and the blob reader checks successor modes.
+        """
+        self._validate_oid(before)
+        self._validate_oid(after)
+        raw = self._git(
+            [
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                "--no-renames",
+                "-z",
+                before,
+                after,
+                "--",
+            ]
+        )
+        return tuple(path.decode("utf-8") for path in raw.split(b"\0") if path)
+
     def read_tree(self, oid: str) -> dict[str, bytes]:
         entries = _proven_blob_entries(self.list_tree(oid))
         # One batched read keeps whole-tree cost independent of the artifact count.

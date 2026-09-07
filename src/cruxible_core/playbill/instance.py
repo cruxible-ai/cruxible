@@ -73,6 +73,12 @@ from cruxible_core.playbill.compiler import (
     SUPPORTED_COMPILERS,
     current_compiler_coordinate,
 )
+from cruxible_core.playbill.derived_state import (
+    DerivedState,
+    IndexDefinition,
+    SnapshotTree,
+    advance_accepted_tree,
+)
 from cruxible_core.playbill.evaluation_state_cache import EvaluationStateCache
 from cruxible_core.playbill.git import GitLedger
 from cruxible_core.playbill.keys import (
@@ -236,9 +242,28 @@ class PlaybillInstance:
         self._verified_genesis = verified_genesis
         self._recovered = recovered
         self._state_lock = threading.RLock()
+        self.derived = DerivedState()
         self._claim_compilation_cache = ClaimCompilationCache()
         self._proposal_note_cache = ProposalNoteCache()
-        self._evaluation_state_cache = EvaluationStateCache()
+        self._evaluation_state_cache = EvaluationStateCache(build_context=self.derived.build)
+        for name, namespace, adapter, source in (
+            ("accepted-artifacts", "accepted", self.derived, "verified-ledger-tree-v1"),
+            ("claim-contenders", "accepted/candidate", self.derived, "live-subject-predicate-v1"),
+            (
+                "evaluation",
+                "accepted/candidate",
+                self._evaluation_state_cache,
+                "exact-semantic-bytes-v1",
+            ),
+            (
+                "claim-compilation",
+                "accepted",
+                self._claim_compilation_cache,
+                "exact-claim-inputs-v1",
+            ),
+            ("proposal-notes", "operational", self._proposal_note_cache, "fresh-note-bytes-v1"),
+        ):
+            self.derived.register(IndexDefinition(name, namespace, "1", source), adapter)
         self._history_lookup: (
             tuple[RecoveredInstanceState, dict[str, RecoveredGeneration | None] | None] | None
         ) = None
@@ -1003,6 +1028,7 @@ class PlaybillInstance:
             evidence=ProposalEvidenceStore(paths["exhaust"]),
             review_projection_lock=self.review_projection_lock,
             note_index_provider=self.proposal_note_index,
+            accepted_tree_provider=self.immutable_tree_at,
             current_coordinate=self.accepted_coordinate,
             promotion_verifier=self._promotion_verifier,
             producer_receipt_resolver=local_producer_receipt_resolver(
@@ -1328,6 +1354,27 @@ class PlaybillInstance:
             )
         return matches[0]
 
+    def immutable_tree_at(self, oid: str) -> SnapshotTree:
+        """Return an owned immutable root after verifying the full accepted binding."""
+        coordinate = self.coordinate_for_oid(oid)
+        binding = canonical_bytes(
+            {
+                "coordinate": coordinate.model_dump(mode="json", exclude={"repository_path"}),
+                "genesis": self._verified_genesis.generation_root.tagged,
+            }
+        )
+
+        def advance(previous_binding: bytes, previous: SnapshotTree) -> SnapshotTree:
+            import json
+
+            previous_oid = json.loads(previous_binding)["coordinate"]["git_oid"]
+            self.coordinate_for_oid(previous_oid)
+            paths = self._ledger.changed_tree_paths(previous_oid, oid)
+            blobs = self._ledger.blobs_at(oid, paths)
+            return advance_accepted_tree(previous, {path: blobs.get(path) for path in paths})
+
+        return self.derived.accepted_tree(binding, lambda: self.tree_at(oid), advance)
+
     def tree_at(self, oid: str) -> dict[str, bytes]:
         """Read an exact Git tree only after proving the OID is accepted history.
 
@@ -1438,6 +1485,7 @@ class PlaybillInstance:
         paths = self._validated_paths(self.root, self.descriptor.storage)
         bodies = ContentAddressedBodyStore(paths["cas"])
         self._tree_memo.clear()
+        self.derived.clear()
         self.claim_read_history_memo.clear()
         self._claim_compilation_cache.clear()
         self._evaluation_state_cache.clear()
@@ -1519,6 +1567,7 @@ class PlaybillInstance:
             ),
             query_facts_provider=lambda coordinate: self._accepted_query_facts(self, coordinate),
             tree_state_provider=self._evaluation_state_cache.derive,
+            accepted_tree_provider=self.immutable_tree_at,
         )
 
     def settle_and_activate(

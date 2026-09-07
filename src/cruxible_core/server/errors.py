@@ -70,6 +70,7 @@ from cruxible_core.errors import (
 )
 from cruxible_core.playbill.authoring.insertions import InsertionProtocolError
 from cruxible_core.playbill.claim_attestation_store import ClaimAttestationStoreError
+from cruxible_core.playbill.derived_runtime import BuildCapacityError
 from cruxible_core.playbill.review_operational import (
     ReviewOperationalConcurrentChangeError,
     ReviewOperationalStoreError,
@@ -165,6 +166,8 @@ def _repair_for_error(exc: CoreError) -> ServedRepairV1:
 
 
 def _status_for_error(exc: CoreError) -> int:
+    if isinstance(exc, BuildCapacityError):
+        return 503
     if isinstance(exc, ProcedureSurfaceError):
         # A served Procedure/Line surface refusal is a request fault the caller
         # can repair, never a daemon fault: the class declares its own 4xx so
@@ -281,6 +284,8 @@ def _status_for_error(exc: CoreError) -> int:
 def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
     """Convert a CoreError into an HTTP status code and structured payload."""
     context: dict[str, Any] = {}
+    if isinstance(exc, BuildCapacityError):
+        context["retryable"] = True
     errors: list[str] = []
     error_code = getattr(exc, "error_code", None)
     if error_code is None and isinstance(exc, InsertionProtocolError):
@@ -430,6 +435,6 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         errors=errors,
         context=context,
         mutation_receipt_id=exc.mutation_receipt_id,
-        repair=_repair_for_error(exc),
+        repair=None if isinstance(exc, BuildCapacityError) else _repair_for_error(exc),
     )
     return _status_for_error(exc), body
