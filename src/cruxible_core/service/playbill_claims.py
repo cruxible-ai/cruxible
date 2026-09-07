@@ -740,8 +740,16 @@ def resolve_playbill_claim_group(
         service_evaluate_playbill_claim_verdict,
     )
 
+    if read_context is not None and (
+        read_context.instance is not instance or read_context.coordinate != coordinate
+    ):
+        raise ProposalIntegrityError("Claim group read context differs from accepted state")
     type_path = claim_type_path(predicate)
-    content = instance.blob_at(coordinate.git_oid, type_path)
+    content = (
+        instance.blob_at(coordinate.git_oid, type_path)
+        if read_context is None
+        else read_context.tree.get(type_path)
+    )
     if content is None:
         raise ClaimNotFoundError(f"ClaimType:{predicate}")
     claim_type = parse_claim_type(content, path=type_path)

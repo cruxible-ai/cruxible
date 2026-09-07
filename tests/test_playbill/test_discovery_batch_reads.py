@@ -35,6 +35,7 @@ def test_discovery_matches_full_view_inputs_without_building_them(tmp_path, monk
         pytest.fail("discovery must not materialize full Claim fact views")
 
     monkeypatch.setattr(playbill_claims, "projected_playbill_claim_views", unused)
+    monkeypatch.setattr(instance, "blob_at", unused)
     calls = []
     providers = playbill_evidence.accepted_claim_providers
 
