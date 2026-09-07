@@ -798,3 +798,28 @@ def test_an_admission_written_before_the_record_ceiling_reads_and_rewrites(
     # The repeat an idempotent re-submission makes: same record, same bytes.
     store.write_admission(admission)
     assert store.read_admission(proposal_id) == admission
+
+
+def test_submission_reads_equal_current_and_proposed_base_once(tmp_path, monkeypatch):
+    instance, _ = initialize_local(tmp_path)
+    body = instance.store_document_body(b"one verified base read")
+    service = instance.proposal_service()
+    request = _request(instance)
+    tree = _proposal_tree(instance, _shell(body.digest))
+    original = service.transport.read_tree
+    reads = []
+
+    def counted(oid):
+        reads.append(oid)
+        return original(oid)
+
+    monkeypatch.setattr(service.transport, "read_tree", counted)
+    result = service.submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=request,
+        candidate_tree=tree,
+        timestamp=TIMESTAMP,
+    )
+    assert result.candidate is not None
+    assert not result.evaluation.rebased
+    assert reads == [request.proposed_base_oid]

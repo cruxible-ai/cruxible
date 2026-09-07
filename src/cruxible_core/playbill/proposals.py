@@ -3745,7 +3745,13 @@ class ProposalService:
                 "resolve to an active Principal at the accepted coordinate"
             ) from exc
 
-        base_tree = self.transport.read_tree(request.proposed_base_oid)
+        # No rebase means both roles name the exact tree just read. Keep this
+        # operation-local proof instead of transferring every blob a second time.
+        base_tree = (
+            current_tree
+            if request.proposed_base_oid == current.git_oid
+            else self.transport.read_tree(request.proposed_base_oid)
+        )
         validated_tree = validate_proposal_tree(
             candidate_tree,
             limits=self.receive_limits,
