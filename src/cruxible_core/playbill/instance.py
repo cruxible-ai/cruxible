@@ -100,6 +100,7 @@ from cruxible_core.playbill.projection import (
 )
 from cruxible_core.playbill.projection_claim_cache import ClaimCompilationCache
 from cruxible_core.playbill.proposal_evidence import ProposalEvidenceStore
+from cruxible_core.playbill.proposal_note_cache import ProposalNoteCache
 from cruxible_core.playbill.proposal_note_projection import ProposalNoteIndex
 from cruxible_core.playbill.proposals import (
     ExhaustPromotionVerifierProtocol,
@@ -236,6 +237,7 @@ class PlaybillInstance:
         self._recovered = recovered
         self._state_lock = threading.RLock()
         self._claim_compilation_cache = ClaimCompilationCache()
+        self._proposal_note_cache = ProposalNoteCache()
         self._evaluation_state_cache = EvaluationStateCache()
         self._history_lookup: (
             tuple[RecoveredInstanceState, dict[str, RecoveredGeneration | None] | None] | None
@@ -1000,6 +1002,7 @@ class PlaybillInstance:
             bodies=bodies,
             evidence=ProposalEvidenceStore(paths["exhaust"]),
             review_projection_lock=self.review_projection_lock,
+            note_index_provider=self.proposal_note_index,
             current_coordinate=self.accepted_coordinate,
             promotion_verifier=self._promotion_verifier,
             producer_receipt_resolver=local_producer_receipt_resolver(
@@ -1093,7 +1096,7 @@ class PlaybillInstance:
             if generation.record is not None
         }
         evidence = self.proposal_evidence()
-        index = ProposalNoteIndex.build(evidence, self._ledger)
+        index = self.proposal_note_index(evidence=evidence)
         dependencies: dict[str, str] = {}
         for proposal_id in index.review_oids:
             evaluation = index.evaluations[proposal_id]
@@ -1169,7 +1172,7 @@ class PlaybillInstance:
     ) -> None:
         """Restate one proposal's evidence onto the commit a reviewer receives."""
 
-        grouped = index or ProposalNoteIndex.build(evidence, self._ledger)
+        grouped = index or self.proposal_note_index(evidence=evidence)
         if proposal_id not in grouped.proposal_ids_by_oid.get(review_oid, ()):
             raise ProposalIntegrityError("review note target does not belong to the proposal")
         with ExitStack() as locks:
@@ -1181,6 +1184,12 @@ class PlaybillInstance:
                 object_presence=object_presence,
                 stored_notes=stored_notes,
             )
+
+    def proposal_note_index(
+        self, *, evidence: ProposalEvidenceStore | None = None
+    ) -> ProposalNoteIndex:
+        """Return fresh evidence-derived review relationships under the review lock."""
+        return self._proposal_note_cache.load(evidence or self.proposal_evidence(), self._ledger)
 
     def proposal_evidence(self) -> ProposalEvidenceStore:
         """Return the immutable non-authoritative proposal/approval evidence store."""

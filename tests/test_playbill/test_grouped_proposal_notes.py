@@ -23,13 +23,14 @@ from tests.test_playbill.test_proposal_notes import TIMESTAMP
 from tests.test_playbill.test_proposals import _proposal_tree, _shell
 
 
-def _submit(instance, name, *, timestamp=TIMESTAMP, tree=None):
+def _submit(instance, name, *, timestamp=TIMESTAMP, tree=None, rationale=None):
     body = instance.store_document_body(b"shared tree\n")
     return instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="owner"),
         request=ProposalAdmissionRequest(
             target_ref=f"refs/proposals/owner/{name}",
             proposed_base_oid=instance.accepted_coordinate().git_oid,
+            rationale=rationale,
         ),
         candidate_tree=_proposal_tree(instance, _shell(body.digest)) if tree is None else tree,
         timestamp=timestamp,

@@ -369,8 +369,22 @@ class ProposalEvidenceStore:
             raise ProposalIntegrityError(f"{label} evidence is missing or not a regular file")
         try:
             raw = path.read_bytes()
+        except OSError as exc:
+            raise ProposalIntegrityError(f"{label} evidence is malformed") from exc
+        return ProposalEvidenceStore.parse_model_bytes(raw, model, label=label, render=render)
+
+    @staticmethod
+    def parse_model_bytes(
+        raw: bytes,
+        model: type[_EvidenceModelT],
+        *,
+        label: str,
+        render: Callable[[Any], bytes] | None = None,
+    ) -> _EvidenceModelT:
+        """Apply the ordinary evidence validation to already read bytes."""
+        try:
             value = model.model_validate_json(raw)
-        except (OSError, ValidationError, ValueError) as exc:
+        except (ValidationError, ValueError) as exc:
             raise ProposalIntegrityError(f"{label} evidence is malformed") from exc
         expected = (
             canonical_bytes(value.model_dump(mode="json")) + b"\n"

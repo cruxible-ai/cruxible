@@ -3675,12 +3675,16 @@ class ProposalService:
         require_writable: Callable[[], None] | None = None,
         ledger_publisher: Callable[[], object] | None = None,
         tree_state_provider: TreeStateProvider | None = None,
+        note_index_provider: Callable[[], ProposalNoteIndex] | None = None,
     ) -> None:
         self.transport = transport
         self.accepted = accepted
         self.bodies = bodies
         self.evidence = evidence
         self._review_projection_lock = review_projection_lock
+        self._note_index = note_index_provider or (
+            lambda: ProposalNoteIndex.build(self.evidence, self.transport)
+        )
         self.receive_limits = receive_limits
         self._current_coordinate = current_coordinate or (lambda: accepted)
         self.promotion_verifier = promotion_verifier
@@ -3853,7 +3857,7 @@ class ProposalService:
                 "proposal evaluation record failed deterministic validation"
             ) from exc
         with self._review_projection_lock():
-            before = ProposalNoteIndex.build(self.evidence, self.transport)
+            before = self._note_index()
             affected = {commit_oid}
             if outcome.candidate is not None and evaluated_tree_oid is not None:
                 affected.add(
@@ -3872,7 +3876,11 @@ class ProposalService:
                 self.evidence.write_candidate(outcome.candidate)
             # Original and advisory aliases use the same complete group, so a
             # second admission sharing a commit cannot overwrite the first.
-            after = ProposalNoteIndex.build(self.evidence, self.transport)
+            after = self._note_index()
+            if candidate_value is not None:
+                # The candidate can complete older interrupted admissions with
+                # other aliases. Include their groups in the publication delta.
+                affected.update(after.oids_for_candidate(candidate_value))
             after.publish(self.transport, affected, previous=previous_notes)
         if self.transport.read_main() != current.git_oid:
             raise ProposalIntegrityError("proposal evaluation changed or raced accepted main")

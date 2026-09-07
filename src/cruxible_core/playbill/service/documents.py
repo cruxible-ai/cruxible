@@ -40,7 +40,6 @@ from cruxible_core.playbill.cas import BodyAccessContext, CasObjectMetadata
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.projection_documents import DocumentProjectionView
-from cruxible_core.playbill.proposal_note_projection import ProposalNoteIndex
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
@@ -354,7 +353,7 @@ def service_submit_playbill_approval(
     # this Git commit; compilation and network publication stay outside it.
     with instance.review_projection_lock():
         with instance.approval_note_lock(candidate.candidate_digest):
-            grouped = ProposalNoteIndex.build(evidence, instance._ledger)
+            grouped = instance.proposal_note_index()
             affected = grouped.oids_for_candidate(candidate.candidate_digest)
             previous_notes = grouped.validate_and_snapshot(instance._ledger, affected)
             evidence.write_approval(candidate.candidate_digest, submission)
@@ -414,11 +413,10 @@ def _reconcile_proposal_notes(
     second approver arriving on time.
     """
 
-    evidence = instance.proposal_evidence()
     oid = proposal.admission.candidate_commit_oid
     with instance.review_projection_lock():
         with instance.approval_note_lock(candidate.candidate_digest):
-            grouped = ProposalNoteIndex.build(evidence, instance._ledger)
+            grouped = instance.proposal_note_index()
             # Human review uses the advisory alias, which may differ from the
             # original admission commit. Both must agree with their complete
             # evidence group before settlement; neither is trusted as authority.

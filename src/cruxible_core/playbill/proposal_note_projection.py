@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from cruxible_client.contracts.attestations import ApprovalSubmission
@@ -42,6 +42,14 @@ class ProposalNoteIndex:
     candidates: dict[str, CandidateReviewSummary]
     review_oids: dict[str, str]
     proposal_ids_by_oid: dict[str, set[str]]
+
+    proposal_ids_by_candidate: dict[str, set[str]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for proposal_id in self.admissions:
+            digest = self.evaluations[proposal_id].candidate_digest
+            if digest is not None:
+                self.proposal_ids_by_candidate.setdefault(digest, set()).add(proposal_id)
 
     @classmethod
     def build(
@@ -88,11 +96,12 @@ class ProposalNoteIndex:
         return cls(evidence, admissions, evaluations, candidates, review_oids, groups)
 
     def oids_for_candidate(self, digest: str) -> set[str]:
-        return {
-            oid
-            for oid, ids in self.proposal_ids_by_oid.items()
-            if any(self.evaluations[item].candidate_digest == digest for item in ids)
-        }
+        oids = set()
+        for proposal_id in self.proposal_ids_by_candidate.get(digest, ()):
+            oids.add(self.admissions[proposal_id].candidate_commit_oid)
+            if proposal_id in self.review_oids:
+                oids.add(self.review_oids[proposal_id])
+        return oids
 
     def candidate_digests(self, oid: str) -> tuple[str, ...]:
         return tuple(
