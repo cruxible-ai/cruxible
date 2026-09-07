@@ -93,8 +93,7 @@ def main():
     assert source.count(marker) == 1
     source = source.replace(
         marker,
-        marker
-        + f"    import sys\n    sys.path.insert(0, {str(probe_directory)!r})\n"
+        marker + f"    import sys\n    sys.path.insert(0, {str(probe_directory)!r})\n"
         "    from publication_phase_probe import install\n    install(profile_prefix)\n",
         1,
     )
