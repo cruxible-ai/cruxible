@@ -1,0 +1,106 @@
+{
+  "authorization": "Routine reconciliation by the user-appointed instance manager during authorized citation batch 3; no adoption, release, ClaimType or authority changes.",
+  "source": {
+    "kind": "manager-authored implementation assessment",
+    "code_baseline": "5a8ab4fce",
+    "implementation_commit": "75d64f50e7e2eabbb4446febfa5109825ee72cbd",
+    "status": "Self-reviewed local implementation; not merged, pushed or deployed. No independent reviewer in this slice. Adoption/release/authority fields and governed pins unchanged."
+  },
+  "source_files": [
+    {
+      "path": "docs/reviews/citation-deltas-performance-2026-09-07.md",
+      "sha256": "b2c28aa85538ce9efc075911cd67686641db1496428ddc17fb50b0663e565e61"
+    },
+    {
+      "path": "docs/reviews/citation-deltas-scope-benchmark.json",
+      "sha256": "f412b0704f6a0ee4cb302e97a4d21e5b86ee13ddca0bb02a5ca715f61ed8beef"
+    },
+    {
+      "path": "docs/reviews/citation-deltas-code-review-2026-09-07.md",
+      "sha256": "a40f5a4614d732320f71c2516f4a3c7bd5b73171f6e19b030f80be38f2b26761"
+    }
+  ],
+  "expected": [
+    {
+      "subject": "dev.roadmap_item/agent-followup-2026-09-05-a06",
+      "predicate": "dev.roadmap_item.reconciliation_note",
+      "role": "normative",
+      "value": "Manager checkpoint 2026-09-07: derived-state batch 3 citation owner/group adapter implemented locally at 75d64f50 on codex/citation-deltas, based on batch 2 5a8ab4fce. Complete verified changeset members drive old/new group membership and exact SQL row deltas. Instance registry owns bounded immutable citation roots; warm successors avoid global citation relation reads and preserve untouched groups. Raw conflicts retain suppressed alternatives so capture-precedence removal can restore weaker source/span conflicts; old lossy parent slices select cold reconstruction. Governed pins, ledger authority, SQLite/fact formats and acceptance order unchanged. 101 distinct focused cases passed across runs; self-review, Ruff and mypy passed. No independent review or code rollout this slice. Prepared-evaluation reuse is next; Git inventories, database copies/export, explanation rebinding and managed resource accounting remain later work. Adoption/release fields unchanged.",
+      "previous_value": "Manager checkpoint 2026-09-07: batch 2 implemented and independently reviewed on codex/derived-state-batch2 at dbf613d3, based on merged playbill ae5f7a75. Instance-owned immutable accepted roots, isolated sealed candidate deltas, shared Claim contender lookup, persistent member/dependency/reverse/Merkle maps, detached row models, bounded builds and owned prepared-lowering memo are wired through authoring, submission and settlement. Exact governed pins and ledger authority are preserved. Named 223-case scope passed after updating an obsolete Git-read assertion; separate resource/error and installed-wheel HTTP/recovery checks passed. Code is local, not merged, pushed or deployed. Memory numbers are conservative input-byte estimates; exact shared-allocation budgets, caller-held-root caps, bounded reclamation and complete legacy adapter/version lifecycle migration remain follow-ups. Next domain batches remain citation groups, prepared evaluation handoff, Git/export/history/evidence scope. Adoption/release fields unchanged.",
+      "revises": "CLM-7be19d54b36f43ed4d229fe0e4ade39d"
+    },
+    {
+      "subject": "dev.roadmap_item/roadmap-2026-09-05-o19",
+      "predicate": "dev.roadmap_item.reconciliation_note",
+      "role": "normative",
+      "value": "Manager checkpoint 2026-09-07: citation batch 3 local 75d64f50 removes unrelated-world citation maintenance, but no clear end-to-end latency improvement was established. Fixed three-use group among 100/1000/10000 citation uses: phase medians 11.920/115.322/1310.577ms before versus 0.454/0.475/0.625ms after. At 10000 uses citation SQL plan changes from 30002 deletes and 29997 inserts to five deletes; cold index bootstrap remains 3.55s in the synthetic external-source workload. Actual 1000-Claim SDK/Unix HTTP runs in before/after/after/before order have overlapping repeated acceptance ranges, aggregate medians 2.756s before versus 2.705s after; full loop 8.565s versus 8.839s. Four repeated observations per arm, not p95; submit was not directly changed. Exact readbacks and committed-run fresh recovery passed. Latency gate remains open. Branch is local, not merged/pushed/deployed. Full evidence in citation-deltas-performance-2026-09-07.md at ebb63fe0. Adoption/release fields unchanged.",
+      "previous_value": "Manager checkpoint 2026-09-07: batch 2 local dbf613d3 improves scoped computation without changing frozen commitment formats. Matched 1000-Claim source-SDK/Unix HTTP workload, 2 history steps, 4 authored Claims/write, 8 orphan proposals, attached disposable Git workspace: repeated prepare 0.528s -> 0.319s; submit 2.237s -> 1.855s; accept 3.383s -> 2.630s; complete loop 10.084s -> 8.338s. Two writes per arm, not p95 and not comparable to the prior seven-member program benchmark. At 100/1000/10000 unrelated Claims, fresh bounded contender lookup is 0.574/0.551/0.611ms versus 15.116/155.621/1857.743ms; cold initialization is slightly slower. Wide flat Merkle ancestors still cause hashing fan-out. Both wheel packages validated, Core absent from separate client environment, installed HTTP writes and exact recovery passed. Branch is not merged/deployed; latency/scaling gate and subsequent batches remain open. Full evidence: docs/reviews/derived-state-batch2-2026-09-07.md. Adoption/release fields unchanged.",
+      "revises": "CLM-03e378a41032c2774d501ec86ab21187"
+    },
+    {
+      "subject": "dev.product_feedback/citation-deltas-2026-09-07",
+      "predicate": "dev.product_feedback.finding_text",
+      "role": "observation",
+      "value": "Agent-customer finding from citation batch 3: scoped computation is a verified scalability improvement even when aggregate latency is dominated by broader stages and host variation. A first timing pair suggested faster acceptance, but reversing run order did not reproduce a clear end-to-end win. Keep scope counters and cold parity alongside latency, and do not attribute unchanged submit timing variation to citation maintenance. Retain raw alternatives when a policy suppresses derived rows, otherwise removing a stronger conflict cannot restore a weaker one without reconstruction. Warm owner/group delta work scales with affected groups; bootstrap, large shared groups and cache capacity remain real costs. Next target is reusing exact prepared evaluation in submission. This manager assessment is sourced in the committed implementation and local measurement report, not a claim of deployed improvement."
+    }
+  ],
+  "seconds": {
+    "connect": 6.7742268340080045,
+    "prefetch": 0.8185359589988366,
+    "prepare": 1.025393999996595,
+    "submit": 2.9190226669888943,
+    "review": 0.45512429100926965,
+    "accept_connect": 1.8581831670016982,
+    "accept": 5.4433063750038855,
+    "readback": 1.1075748750008643
+  },
+  "base": {
+    "tag": "playbill-accepted-coordinate-v1",
+    "git_oid": "e20ae3b9046aae07146f34b60a537aba3067b3a6",
+    "semantic_root": "sha256:ee3662b4f79013f43c7329d4babcce2da3e7bce7f2d1b47e1a92779b71ad7394",
+    "generation_root": "sha256:3e074e7191d886b7de1efed4e67b80cc178db9b322b795e1669dc0a353e8e24b",
+    "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+  },
+  "intent_id": "AIT-120b42fb043c405f77e24ab0f4e9fb41",
+  "preflight": {
+    "refused": false,
+    "diagnostics": [],
+    "warnings": []
+  },
+  "proposal_id": "sha256:4e8fd26e08bbd5f9649d9c7b99e8ff77efc430e08bcaedd019eb251390abe4d2",
+  "candidate_digest": "sha256:5e8d3b43980a211f0e6116becef4d0403e240cbdc7055931bcd6b3ffa4a8f8aa",
+  "activation": {
+    "tag": "playbill-activation-receipt-v1",
+    "proposal_id": "sha256:4e8fd26e08bbd5f9649d9c7b99e8ff77efc430e08bcaedd019eb251390abe4d2",
+    "activated_by": "manager",
+    "status": "accepted",
+    "accepted_coordinate": {
+      "tag": "playbill-accepted-coordinate-v1",
+      "git_oid": "6c60fca1ccaff72b1e5c0cc276a6a3b610dc3021",
+      "semantic_root": "sha256:decfcc0082aa86a8d05e3f56f05391ca645e337a48f76048ef710d78c1781e12",
+      "generation_root": "sha256:7521759d6f29312c98623075c522f812e88431fc021b7b7a902c3e407a89c8a9",
+      "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+    },
+    "workspace_advertisement": {
+      "tag": "playbill-workspace-advertisement-v1",
+      "status": "updated",
+      "workspace_path": "/Users/robertmalone/Git/cruxible-core-0.2-stretch-goals",
+      "remote_name": "playbill",
+      "advertised_refs": [
+        "refs/remotes/playbill/accepted"
+      ],
+      "failure_code": null
+    }
+  },
+  "readback": {
+    "verified_claims": 3,
+    "all_supported": true,
+    "coordinate": {
+      "tag": "playbill-accepted-coordinate-v1",
+      "git_oid": "6c60fca1ccaff72b1e5c0cc276a6a3b610dc3021",
+      "semantic_root": "sha256:decfcc0082aa86a8d05e3f56f05391ca645e337a48f76048ef710d78c1781e12",
+      "generation_root": "sha256:7521759d6f29312c98623075c522f812e88431fc021b7b7a902c3e407a89c8a9",
+      "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+    }
+  }
+}
