@@ -10,6 +10,7 @@ from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
 from cruxible_client import Playbill
+from cruxible_client import contracts as api
 from cruxible_client.authoring.sdk_types import (
     AbsentSubject,
     Cardinality,
@@ -111,7 +112,7 @@ def _approve_and_activate(
     instance_id: str,
     private_key_path: Path,
     proposal_id: str,
-) -> None:
+) -> api.PlaybillActivationReceipt:
     challenge = client.post(
         f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge",
         json={"signer_id": "reviewer"},
@@ -133,6 +134,7 @@ def _approve_and_activate(
     activated = client.post(f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate")
     assert activated.status_code == 200, activated.text
     assert activated.json()["status"] == "accepted"
+    return api.PlaybillActivationReceipt.model_validate(activated.json())
 
 
 @pytest.fixture
@@ -229,13 +231,20 @@ def test_a_same_set_definition_lands_with_the_claim_that_reads_it_in_one_generat
     assert submitted._candidate_status is not None
     proposal_id = submitted._candidate_status.proposal_id
     assert proposal_id is not None
-    _approve_and_activate(http, instance_id, private_key_path, proposal_id)
-    playbill.refresh()
-
-    landed = playbill.world()
+    receipt = _approve_and_activate(http, instance_id, private_key_path, proposal_id)
+    assert receipt.accepted_coordinate is not None
+    # Another client accepted. The live connection has not refreshed or read
+    # the new head, and its old World still has no Claims at the vocabulary base.
+    assert playbill.coordinate == world.coordinate
+    assert world.sec.vulnerability["cve-2026-69247"].severity == ()
+    landed = playbill.at(receipt.accepted_coordinate).world()
     assert landed.sec.package["click"].address == "sec.package/click"
     claims = landed.sec.vulnerability["cve-2026-69247"].claims
     assert {claim.predicate for claim in claims} == {AFFECTS, SEVERITY}
+    assert playbill.coordinate == world.coordinate
+    latest = playbill.claim_views([claim.claim_id for claim in claims])
+    assert {claim.predicate for claim in latest} == {AFFECTS, SEVERITY}
+    assert playbill.coordinate.git_oid == receipt.accepted_coordinate.git_oid
     assert landed.sec.vulnerability["cve-2026-69247"].severity[0].value == "high"
 
 

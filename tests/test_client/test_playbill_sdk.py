@@ -324,7 +324,7 @@ def test_sdk_curation_list_uses_the_existing_explicit_workspace_scanner(
     assert isinstance(client.coverage_observations, list)
 
 
-def test_sdk_audit_uses_orientation_scope_and_explicit_time(tmp_path: Path) -> None:
+def test_sdk_audit_uses_current_head_and_explicit_time(tmp_path: Path) -> None:
     _workspace(tmp_path)
     client = _Client()
     pb = Playbill._from_client(  # type: ignore[arg-type]
@@ -343,7 +343,7 @@ def test_sdk_audit_uses_orientation_scope_and_explicit_time(tmp_path: Path) -> N
 
     assert result.audited_through_generation == 4
     assert client.audit_request is not None
-    assert client.audit_request["at"] == _COORDINATE
+    assert client.audit_request["at"] is None
     assert client.audit_request["claim_type_identities"] == ("ClaimType:status",)
     assert client.audit_request["subject_kinds"] == ("work_item",)
 
@@ -1282,6 +1282,7 @@ def test_claim_view_mints_capture_refs_from_typed_admission_accounts(tmp_path: P
             self,
             _instance_id: str,
             _identity: str,
+            **_values: Any,
         ) -> api.PlaybillClaimViewV2:
             return api.PlaybillClaimViewV2(
                 tag="playbill-claim-read-v2",

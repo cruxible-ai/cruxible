@@ -16,7 +16,7 @@ import shutil
 import subprocess
 import tempfile
 import unicodedata
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from tempfile import NamedTemporaryFile
 from typing import Any, Literal, Protocol, cast
@@ -1330,6 +1330,7 @@ def observe_playbill_next_workspace_with_coverage(
     observation: Mapping[str, object] | None = None,
     coordinate: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
     access_profile: Mapping[str, Any] | None = None,
+    resolve_coordinate: Callable[[], contracts.PlaybillAcceptedCoordinate] | None = None,
 ) -> tuple[dict[str, object], contracts.PlaybillAcceptedCoordinate | None]:
     """Enrich next with one existing, coordinate-bound coverage-scanner read.
 
@@ -1352,10 +1353,11 @@ def observe_playbill_next_workspace_with_coverage(
                     coordinate
                 )
             else:
-                resolved_coordinate = client.search_playbill(
-                    instance_id,
-                    mode="orient",
-                ).coordinate
+                resolved_coordinate = (
+                    resolve_coordinate()
+                    if resolve_coordinate is not None
+                    else client.search_playbill(instance_id, mode="orient").coordinate
+                )
         if resolved_coordinate is not None:
             projection = observe_playbill_projection_coverage(
                 workspace,

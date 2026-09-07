@@ -157,7 +157,7 @@ class _WorldClient:
         )
         return api.PlaybillSearchResult(
             mode=values["mode"],
-            coordinate=self.coordinate,
+            coordinate=values.get("at") or self.coordinate,
             evaluation_time=str(values["evaluation_time"]),
             rows=rows,
             orientation={"state": "empty"} if values["mode"] == "orient" else None,
@@ -172,7 +172,7 @@ class _WorldClient:
         self.claim_type_list_calls += 1
         self.claim_type_coordinates.append(at)
         return api.PlaybillClaimTypeList(
-            coordinate=self.coordinate,
+            coordinate=at or self.coordinate,
             claim_types=[
                 _claim_type(
                     SEVERITY,
@@ -197,7 +197,7 @@ class _WorldClient:
     ) -> api.PlaybillSubjectList:
         self.subject_list_calls += 1
         return api.PlaybillSubjectList(
-            coordinate=self.coordinate,
+            coordinate=at or self.coordinate,
             subjects=[
                 _subject_view("sec.package", "cryptography"),
                 _subject_view("sec.vulnerability", "cve-2026-69247"),
@@ -212,7 +212,7 @@ class _WorldClient:
         return api.PlaybillClaimViewV2(
             tag="playbill-claim-read-v2",
             coordinate_kind="canonical",
-            coordinate=self.coordinate,
+            coordinate=_values.get("at") or self.coordinate,
             envelope={"identity": identity, "revision": 1},
             admission_evaluation_time="2026-09-07T12:00:00Z",
             statement=api.ClaimStatementCardV1(
@@ -419,7 +419,7 @@ def test_a_kind_loads_its_subjects_only_when_one_is_first_asked_for(
         world.dev.batch["retired_batch"]
 
 
-def test_the_facade_stops_answering_once_the_orientation_moves(
+def test_the_facade_remains_pinned_when_the_live_orientation_moves(
     connection: tuple[Playbill, _WorldClient],
 ) -> None:
     """A name that resolved at one coordinate may name something else at the next."""
@@ -441,11 +441,11 @@ def test_the_facade_stops_answering_once_the_orientation_moves(
         lambda: world.claim_type(SEVERITY),
         lambda: world.stub(),
     ):
-        with pytest.raises(ValueError, match="differs from the active orientation"):
-            read()
+        read()
 
-    # `repr` deliberately stays outside the law: a debugger holding a stale
-    # world must still be able to see what it was.
+    # An uncached read after head movement must still use the original snapshot.
+    assert world.sec.vulnerability["cve-2026-69247"].severity
+    assert client.searches[-1]["at"] == _COORDINATE
     assert repr(world).startswith(f"<World at {'a' * 40} ")
 
 
@@ -985,8 +985,8 @@ def test_a_world_is_built_at_the_instances_current_coordinate(
     assert world.coordinate.git_oid == "b" * 40
     assert playbill.coordinate.git_oid == "b" * 40
     assert client.claim_type_coordinates == [None, None]
-    with pytest.raises(ValueError, match="differs from the active orientation"):
-        previous_world.kind("sec.package")
+    assert previous_world.kind("sec.package").subject_kind == "sec.package"
+    assert previous_world.coordinate.git_oid == "a" * 40
 
 
 def test_a_read_only_connection_needs_no_workspace_source_catalog(

@@ -1257,6 +1257,8 @@ class Playbill:
         self._access_profile = access_profile
         self._clock = clock
         self._coordinate: AcceptedCoordinate | None = None
+        self._pinned = False
+        self._owns_client = True
         self._retirement_submissions: OrderedDict[str, tuple[ClaimRetireRequestV1, str]] = (
             OrderedDict()
         )
@@ -1271,6 +1273,7 @@ class Playbill:
         token: SecretStr | None = None,
         workspace: Path | None = None,
         access_profile: AccessProfile | None = None,
+        at: AcceptedCoordinate | api.PlaybillAcceptedCoordinate | None = None,
     ) -> Playbill:
         context_path = (
             Path(context).expanduser().resolve()
@@ -1337,7 +1340,13 @@ class Playbill:
             # budget (CRUXIBLE_CLIENT_CONNECT_TIMEOUT_S) so a healthy but large
             # instance cannot read as an unreachable server.
             with connect_orientation_budget(client):
-                result.refresh()
+                if at is None:
+                    result.refresh()
+                else:
+                    result._coordinate = AcceptedCoordinate.model_validate(
+                        at.model_dump(mode="json")
+                    )
+                    result._pinned = True
         except BaseException:
             client.close()
             raise
@@ -1369,7 +1378,8 @@ class Playbill:
         return result
 
     def close(self) -> None:
-        self._client.close()
+        if self._owns_client:
+            self._client.close()
 
     def __enter__(self) -> Playbill:
         return self
@@ -1393,9 +1403,54 @@ class Playbill:
 
     @property
     def coordinate(self) -> AcceptedCoordinate:
+        """The pinned coordinate, or the live client's last observed coordinate.
+
+        This property performs no I/O. Live reads resolve current head in their
+        own request, so this value is not a freshness check.
+        """
         if self._coordinate is None:
             raise ValueError("Playbill has not installed an orientation coordinate")
         return self._coordinate
+
+    def at(self, coordinate: AcceptedCoordinate | api.PlaybillAcceptedCoordinate) -> Playbill:
+        """Borrow an explicitly pinned reading/authoring context, without I/O.
+
+        Accepted reads, including World construction, stay at this coordinate.
+        Writes still undergo current daemon admission and may reject stale input.
+        The owning connection must remain open; closing this borrowed context
+        does not close its parent's transport. Operational queues remain live.
+        """
+        result = Playbill(
+            client=self._client,
+            instance_id=self._instance_id,
+            workspace=self._workspace,
+            access_profile=self._access_profile,
+            clock=self._clock,
+        )
+        result._coordinate = AcceptedCoordinate.model_validate(coordinate.model_dump(mode="json"))
+        result._pinned = True
+        result._owns_client = False
+        return result
+
+    def _read_at(
+        self, coordinate: AcceptedCoordinate | None = None
+    ) -> api.PlaybillAcceptedCoordinate | None:
+        if coordinate is not None:
+            if self._pinned:
+                self._assert_coordinate(coordinate)
+            return _api_coordinate(coordinate)
+        return _api_coordinate(self.coordinate) if self._pinned else None
+
+    def _observe_read(
+        self,
+        coordinate: AcceptedCoordinate,
+        *,
+        expected: api.PlaybillAcceptedCoordinate | None,
+    ) -> None:
+        if expected is not None and coordinate != _coordinate(expected):
+            raise ValueError("accepted read returned a different requested coordinate")
+        if not self._pinned:
+            self._coordinate = coordinate
 
     @property
     def block(self) -> ProjectionBlocks:
@@ -1412,7 +1467,11 @@ class Playbill:
         """
 
         identity = _address(claim, RefKind.CLAIM) if isinstance(claim, ClaimRef) else claim
-        view = self._client.get_playbill_claim(self._instance_id, identity)
+        requested = self._read_at(claim.coordinate if isinstance(claim, ClaimRef) else None)
+        view = self._client.get_playbill_claim(
+            self._instance_id, identity, at=requested, evaluation_time=self._evaluation_time()
+        )
+        self._observe_read(_coordinate(view.coordinate), expected=requested)
         return self._typed_claim_view(view, identity)
 
     @staticmethod
@@ -1471,18 +1530,19 @@ class Playbill:
         )
 
     def claim_views(self, claims: Sequence[str | ClaimRef]) -> tuple[ClaimView, ...]:
-        """Read up to 256 exact or prefix identities at this connection's coordinate.
+        """Read up to 256 identities at one current or explicitly pinned coordinate.
 
         The complete batch preserves input order and all single-view fields.
         Use explicit batches for larger selections; no population read is implied.
         """
         from cruxible_client.contracts.claim_reads import ClaimReadBatchRequestV1
 
-        for claim in claims:
-            if isinstance(claim, ClaimRef):
-                self._assert_coordinate(claim.coordinate)
+        coordinates = [claim.coordinate for claim in claims if isinstance(claim, ClaimRef)]
+        if coordinates and any(value != coordinates[0] for value in coordinates):
+            raise ValueError("Claim references in a batch must share one coordinate")
+        requested = self._read_at(coordinates[0] if coordinates else None)
         request = ClaimReadBatchRequestV1(
-            at=_api_coordinate(self.coordinate),
+            at=requested,
             claim_ids=tuple(
                 _address(claim, RefKind.CLAIM) if isinstance(claim, ClaimRef) else claim
                 for claim in claims
@@ -1490,15 +1550,17 @@ class Playbill:
             evaluation_time=datetime.fromisoformat(self._evaluation_time()),
         )
         result = self._client.read_playbill_claim_batch(self._instance_id, request=request)
-        self._assert_coordinate(_coordinate(result.coordinate))
+        result_coordinate = _coordinate(result.coordinate)
         if result.truncated or result.cursor is not None or len(result.claims) != len(claims):
             raise ValueError("identity batch did not return a complete Claim selection")
         for identity, view in zip(request.claim_ids, result.claims, strict=True):
-            self._assert_coordinate(_coordinate(view.coordinate))
+            if _coordinate(view.coordinate) != result_coordinate:
+                raise ValueError("Claim batch mixed accepted coordinates")
             bare = identity.removeprefix("Claim:")
             returned = str(view.envelope.get("identity", "")).removeprefix("Claim:")
             if not returned.startswith(bare):
                 raise ValueError("identity batch returned a Claim outside its requested position")
+        self._observe_read(result_coordinate, expected=requested)
         return tuple(self._typed_claim_view(view) for view in result.claims)
 
     def predict(
@@ -1638,12 +1700,15 @@ class Playbill:
 
         The daemon's publication, recovery and workspace-advertisement protocol
         is unchanged. This call performs no client floor export or block check.
-        The returned accepted_coordinate identifies the result; this connection
-        and existing World snapshots retain their prior read coordinates. Call
-        refresh() explicitly to orient this connection to the current head.
+        The receipt's coordinate becomes this live connection's last observation.
+        Subsequent live reads select current head; use at(receipt.accepted_coordinate)
+        for exact readback. Explicitly pinned contexts and World snapshots stay fixed.
         """
 
-        return self._client.activate_playbill_proposal(self._instance_id, proposal_id)
+        receipt = self._client.activate_playbill_proposal(self._instance_id, proposal_id)
+        if receipt.status == "accepted" and receipt.accepted_coordinate is not None:
+            self._observe_read(_coordinate(receipt.accepted_coordinate), expected=None)
+        return receipt
 
     def refresh_workspace(
         self,
@@ -1673,16 +1738,20 @@ class Playbill:
         Convenience path: accepts, exports the floor at the accepted coordinate,
         then checks blocks against the server's current head unless no_sync is
         set. Use accept() and refresh_workspace() to schedule maintenance
-        separately. Neither path advances this connection's read coordinate.
+        separately. A live connection remembers the acceptance coordinate; pinned
+        contexts and existing World snapshots stay fixed.
         """
 
-        return activate_with_workspace_refresh(
+        result = activate_with_workspace_refresh(
             self._client,
             self._instance_id,
             proposal_id,
             workspace=self._workspace,
             sync=not no_sync,
         )
+        if result.status == "accepted" and result.accepted_coordinate is not None:
+            self._observe_read(_coordinate(result.accepted_coordinate), expected=None)
+        return result
 
     def refresh(self) -> SearchPage:
         page = self._search(
@@ -1690,7 +1759,7 @@ class Playbill:
             query=None,
             kinds=("claim", "demand", "procedure"),
             statuses=(),
-            at_active_coordinate=False,
+            at_active_coordinate=self._pinned,
         )
         self._coordinate = page.coordinate
         return page
@@ -1826,11 +1895,12 @@ class Playbill:
         Strings are the one place the SDK gave away what it knows. The daemon
         already publishes the accepted ClaimTypes, so this reads them once and
         hands back a tree of kinds, predicates and admissible values, every ref
-        stamped with this connection's orientation.
+        stamped with the coordinate selected for this World.
 
-        The vocabulary listing selects the current accepted coordinate and
-        updates this connection to that snapshot, without fetching an orientation
-        page. No Subject is read here. The first Subject access of any kind
+        A live client's vocabulary listing selects current head. An explicitly
+        pinned context uses its coordinate. The returned World owns a separate
+        pinned context and remains readable when the live client moves, without
+        fetching an orientation page. No Subject is read here. The first Subject access of any kind
         reads every Subject of every kind in one list, because the served verb
         takes neither a kind filter nor a cursor; a world with a thousand
         Subjects therefore costs the vocabulary at `world()` and that one list
@@ -1839,11 +1909,13 @@ class Playbill:
 
         from cruxible_client.authoring.world import build_world
 
-        listing = self._client.list_playbill_claim_types(self._instance_id)
-        self._coordinate = _coordinate(listing.coordinate)
+        requested = self._read_at()
+        listing = self._client.list_playbill_claim_types(self._instance_id, at=requested)
+        coordinate = _coordinate(listing.coordinate)
+        self._observe_read(coordinate, expected=requested)
         return build_world(
-            self,
-            coordinate=self.coordinate,
+            self.at(coordinate),
+            coordinate=coordinate,
             claim_type_envelopes=tuple(view.envelope for view in listing.claim_types),
         )
 
@@ -1852,10 +1924,12 @@ class Playbill:
 
         `pb.claim(...)` still authors exactly one Claim. This is the same
         authoring surface for an intent that carries more than one: it lowers
-        once, proposes once, and admits or refuses whole.
+        once, proposes once, and admits or refuses whole. The draft retains the
+        last observed coordinate for its vocabulary lookups and typed references;
+        current daemon admission still checks whether its inputs are stale.
         """
 
-        return ChangeSetDraft(self, rationale)
+        return ChangeSetDraft(self.at(self.coordinate), rationale)
 
     def claim(
         self,
@@ -2480,9 +2554,10 @@ class Playbill:
 
     def accepted_procedure(self, procedure: str | ProcedureRef) -> Procedure:
         name = _address(procedure, RefKind.PROCEDURE)
-        if isinstance(procedure, ProcedureRef):
-            self._assert_coordinate(procedure.coordinate)
-        return Procedure(self, name, self.coordinate)
+        requested = self._read_at(
+            procedure.coordinate if isinstance(procedure, ProcedureRef) else None
+        )
+        return Procedure(self, name, None if requested is None else _coordinate(requested))
 
     def run_line(
         self,
@@ -2501,6 +2576,8 @@ class Playbill:
         return ProcedureRun(self, result)
 
     def get(self, ref: str | TypedRef) -> KnowledgeCard:
+        if isinstance(ref, TypedRef):
+            self._read_at(ref.coordinate)
         if isinstance(ref, SubjectRef):
             kind, identifier = _subject_parts(ref.address)
             subject_view = self._client.get_playbill_subject(
@@ -2549,16 +2626,20 @@ class Playbill:
                 query_view,
             )
         if isinstance(ref, ProcedureRef):
-            self._assert_coordinate(ref.coordinate)
             return KnowledgeCard(
                 RefKind.PROCEDURE,
                 ref.address,
-                self.coordinate,
-                self.search(query=ref.address, kinds=("procedure",), statuses=()),
+                ref.coordinate,
+                self.at(ref.coordinate).search(
+                    query=ref.address, kinds=("procedure",), statuses=()
+                ),
             )
         if isinstance(ref, SourceRef):
-            self._assert_coordinate(ref.coordinate)
             context = self._client.playbill_source_context(self._instance_id)
+            if _coordinate(context.accepted_coordinate) != ref.coordinate:
+                raise ValueError(
+                    "source context no longer matches the explicit reference coordinate"
+                )
             matches = [item for item in context.documents if item.get("source_id") == ref.address]
             if len(matches) != 1:
                 raise ValueError(f"source {ref.address!r} did not resolve uniquely")
@@ -2640,12 +2721,12 @@ class Playbill:
             statuses=tuple(statuses),
             subject=None if subject is None else dict(subject),
             cursor=None if cursor is None else dict(cursor),
-            at=(
-                None
-                if self._coordinate is None or not at_active_coordinate
-                else _api_coordinate(self.coordinate)
-            ),
+            at=(None if not at_active_coordinate else self._read_at()),
             evaluation_time=self._evaluation_time(),
+        )
+        self._observe_read(
+            _coordinate(result.coordinate),
+            expected=self._read_at() if at_active_coordinate else None,
         )
         return SearchPage(
             coordinate=_coordinate(result.coordinate),
@@ -2658,17 +2739,21 @@ class Playbill:
         )
 
     def explain(self, ref: str | TypedRef) -> object:
-        if isinstance(ref, ClaimRef) or (isinstance(ref, str) and ref.startswith("CLM-")):
+        if isinstance(ref, ClaimRef) or (
+            isinstance(ref, str) and ref.removeprefix("Claim:").startswith("CLM-")
+        ):
             identity = ref.address if isinstance(ref, ClaimRef) else ref
-            return self._client.explain_playbill_claim(
+            requested = self._read_at(ref.coordinate if isinstance(ref, ClaimRef) else None)
+            result = self._client.explain_playbill_claim(
                 self._instance_id,
                 identity,
-                at=_api_coordinate(
-                    ref.coordinate if isinstance(ref, ClaimRef) else self.coordinate
-                ),
+                at=requested,
                 evaluation_time=self._evaluation_time(),
             )
+            self._observe_read(_coordinate(result.coordinate), expected=requested)
+            return result
         if isinstance(ref, SubjectRef):
+            self._read_at(ref.coordinate)
             return self._client.explain_playbill_subject(
                 self._instance_id,
                 subject=_subject_address(ref.address).model_dump(mode="json"),
@@ -2706,7 +2791,13 @@ class Playbill:
                 claim_id=identity.removeprefix("Claim:"),
                 attestation_basis="examined_existing",
                 stance=stance,
-                referent_coordinate=claim.coordinate if isinstance(claim, ClaimRef) else None,
+                referent_coordinate=(
+                    claim.coordinate
+                    if isinstance(claim, ClaimRef)
+                    else self.coordinate
+                    if self._pinned
+                    else None
+                ),
                 attested_at=datetime.fromisoformat(self._evaluation_time()),
                 valid_until=valid_until,
                 note=note,
@@ -2727,7 +2818,7 @@ class Playbill:
         return self._append_attestation(prepared=request, signer=signer)
 
     def next(self, *, expiring_within: Duration) -> NextPage:
-        requested_coordinate = _api_coordinate(self.coordinate)
+        requested_coordinate = self._read_at()
         access_profile = self._access_profile.model_dump()
         observation, scanned_coordinate = observe_playbill_next_workspace_with_coverage(
             self._client,
@@ -2736,6 +2827,9 @@ class Playbill:
             observation=observe_playbill_next_workspace(self._workspace),
             coordinate=requested_coordinate,
             access_profile=access_profile,
+            # Only procedure-projection-only workspaces need a separate head
+            # binding. Resolve metadata, not a whole-world orientation page.
+            resolve_coordinate=lambda: self._client.playbill_whoami(self._instance_id).coordinate,
         )
         result = self._client.next_playbill(
             self._instance_id,
@@ -2744,6 +2838,9 @@ class Playbill:
             at=scanned_coordinate or requested_coordinate,
             expiring_within=expiring_within.model_dump(),
             workspace_observation=observation,
+        )
+        self._observe_read(
+            _coordinate(result.coordinate), expected=scanned_coordinate or requested_coordinate
         )
         return NextPage(
             coordinate=_coordinate(result.coordinate),
@@ -2763,17 +2860,19 @@ class Playbill:
         max_bytes: int = 65_536,
         cursor: api.PlaybillSinceCursor | Mapping[str, object] | None = None,
     ) -> api.PlaybillSinceResult:
-        """Read accepted ChangeSet members after one generation at this orientation."""
+        """Read accepted changes at current head, a pinned context, or the cursor's snapshot."""
 
-        return self._client.since_playbill(
+        result = self._client.since_playbill(
             self._instance_id,
             generation=generation,
             access_profile=self._access_profile.model_dump(),
-            at=None if cursor is not None else _api_coordinate(self.coordinate),
+            at=self._read_at(),
             max_rows=max_rows,
             max_bytes=max_bytes,
             cursor=cursor,
         )
+        self._observe_read(_coordinate(result.coordinate), expected=self._read_at())
+        return result
 
     def curation_list(self) -> api.PlaybillCurationListResult:
         """Read the curation queue with one explicit attributed workspace scan."""
@@ -2804,17 +2903,19 @@ class Playbill:
     ) -> api.PlaybillAuditResult:
         """Rank visible Claim verification work without changing governed state."""
 
-        return self._client.audit_playbill(
+        result = self._client.audit_playbill(
             self._instance_id,
             evaluation_time=self._evaluation_time(),
             access_profile=self._access_profile.model_dump(),
-            at=None if cursor is not None else _api_coordinate(self.coordinate),
+            at=self._read_at(),
             claim_type_identities=claim_type_identities,
             subject_kinds=subject_kinds,
             max_rows=max_rows,
             max_bytes=max_bytes,
             cursor=cursor,
         )
+        self._observe_read(_coordinate(result.coordinate), expected=self._read_at())
+        return result
 
     def curation_overrule(
         self,
@@ -2991,33 +3092,45 @@ class ProjectionBlocks:
 
 
 class Procedure:
-    def __init__(self, playbill: Playbill, name: str, coordinate: AcceptedCoordinate) -> None:
+    def __init__(
+        self, playbill: Playbill, name: str, coordinate: AcceptedCoordinate | None
+    ) -> None:
         self._playbill = playbill
         self._name = name
         self._coordinate = coordinate
 
     @property
     def ref(self) -> ProcedureRef:
-        return ProcedureRef(self._name, self._coordinate)
+        coordinate = self._coordinate or _coordinate(self.readiness().coordinate)
+        return ProcedureRef(self._name, coordinate)
 
     def readiness(self) -> api.PlaybillProcedureReadiness:
-        return self._playbill._client.playbill_procedure_readiness(
+        requested = self._playbill._read_at(self._coordinate)
+        result = self._playbill._client.playbill_procedure_readiness(
             self._playbill._instance_id,
             self._name,
             evaluation_time=self._playbill._evaluation_time(),
-            at=_api_coordinate(self._coordinate),
+            at=requested,
         )
+        self._playbill._observe_read(_coordinate(result.coordinate), expected=requested)
+        return result
 
     def bind(
         self, *, bindings: Mapping[str | SlotRef, TypedRef]
     ) -> api.PlaybillProcedureBindResult:
-        self._playbill._assert_coordinate(self._coordinate)
+        # Binding is a current-state write with the existing daemon admission
+        # contract, not a snapshot read. Preserve its observed-reference guard.
+        coordinate = self._coordinate or self._playbill.coordinate
+        self._playbill._assert_coordinate(coordinate)
         rows: list[dict[str, object]] = []
         for key, value in bindings.items():
             slot = key if isinstance(key, str) else _address(key, RefKind.SLOT)
+            if isinstance(key, SlotRef) and key.coordinate != coordinate:
+                raise ValueError("procedure binding references must match its observed coordinate")
             if isinstance(value, SlotRef):
                 raise ReferenceKindError("a slot cannot be bound to another slot")
-            self._playbill._assert_coordinate(value.coordinate)
+            if value.coordinate != coordinate:
+                raise ValueError("procedure binding references must match its observed coordinate")
             target_kind = _REFERENCE_KINDS.get(value.kind)
             if target_kind is None:
                 raise ReferenceKindError(f"cannot bind {value.kind.value} to a procedure slot")
@@ -3039,13 +3152,14 @@ class Procedure:
         at: AcceptedCoordinate | None = None,
         **inputs: CanonicalValue,
     ) -> ProcedureRun:
-        self._playbill._assert_coordinate(self._coordinate)
+        if at is not None and self._coordinate is not None and at != self._coordinate:
+            raise ValueError("run coordinate differs from the pinned Procedure")
         normalized = normalize_canonical(inputs)
         result = self._playbill._client.run_playbill_procedure(
             self._playbill._instance_id,
             self._name,
             evaluation_time=self._playbill._evaluation_time(),
-            at=None if at is None else _api_coordinate(at),
+            at=self._playbill._read_at(at or self._coordinate),
             input=normalized,
         )
         return ProcedureRun(self._playbill, result)

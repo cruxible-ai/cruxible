@@ -39,11 +39,34 @@ with Playbill.connect(
     print(world.coordinate)
 ```
 
-Worlds are accepted-coordinate snapshots. `pb.accept(proposal_id)` requests
-acceptance and returns its coordinate; it does not refresh the connection,
-export a workspace floor, or approve the proposal. Call `pb.world()` to acquire
-the current vocabulary snapshot, or `pb.refresh()` when you need full orientation.
-Do not reuse old typed references after moving the connection's coordinate.
+Accepted reads on `pb` use the current head by default. Each request resolves
+one coordinate on the daemon; pagination retains that coordinate. `pb.coordinate`
+reports the last observed coordinate without performing I/O. Typed references
+carry explicit coordinates and remain pinned. Mixed-coordinate Claim batches
+refuse rather than silently moving a reference.
+
+Use `snapshot = pb.at(coordinate)` (or `Playbill.connect(..., at=coordinate)`)
+for a fixed context. `snapshot.world()` and its lazy reads stay at that coordinate.
+`pb.world()` returns an independent snapshot that remains readable after the live
+client advances. `refresh()` on a pinned context refreshes that same snapshot.
+Borrowed contexts share the original connection's lifetime; closing one does not
+close the original transport.
+
+`pb.accept(proposal_id)` requests acceptance and returns its exact coordinate;
+it does not export a workspace floor or approve the proposal. For exact readback,
+even if another writer has advanced the head again:
+
+```python
+receipt = pb.accept(proposal_id)
+if receipt.accepted_coordinate is not None:
+    accepted = pb.at(receipt.accepted_coordinate)
+    claims = accepted.claim_views(claim_ids)
+```
+
+Drafts retain their observed vocabulary/reference coordinate; admission still
+checks current state and reports stale inputs. Operational queues, signing and
+write admission retain their current authority/evidence checks; a pinned reading
+context does not rewind operational state.
 
 World attributes return live Claim contenders rather than silently selecting a
 scalar. Use `world.prefetch(subjects=(...), predicates=(...))` for bounded reads

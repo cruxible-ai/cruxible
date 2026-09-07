@@ -497,11 +497,9 @@ class KindNamespace:
 class World:
     """The accepted ontology of one instance, as objects rather than strings.
 
-    Every name here answers at exactly one coordinate and refuses once the
-    connection's orientation moves -- `kinds`, `predicates`, attribute access,
-    `kind()`, `claim_type()`, `stub()` and every read a ref reaches. Only
-    `repr()` and the immutable fields of a ref already held answer stale, so a
-    debugger can still see what a stale world was.
+    Every name here answers at exactly one coordinate through a borrowed pinned
+    context. Moving the live client's head does not move or invalidate this
+    World. Vocabulary, lazy reads, pagination and caches share its coordinate.
 
     `kind()` and `claim_type()` are the escapes for a dotted name attribute
     access cannot spell: a Python keyword segment, or a kind a predicate of the
@@ -702,6 +700,8 @@ class World:
             playbill._instance_id,
             at=_api_coordinate(self._coordinate),
         )
+        if listing.coordinate.model_dump(mode="json") != self._coordinate.model_dump(mode="json"):
+            raise WorldStructureError("Subject listing returned a different accepted coordinate")
         for view in listing.subjects:
             facts = {
                 str(fact.get("schema_id")): fact.get("value")

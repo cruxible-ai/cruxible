@@ -1,4 +1,4 @@
-"""Acceptance leaves read snapshots alone; floor maintenance pins its target."""
+"""Live acceptance remembers its receipt; explicit snapshots and floor targets stay pinned."""
 
 from pathlib import Path
 from typing import Any, Literal
@@ -55,7 +55,7 @@ def _sdk(client: Any, workspace: Path) -> Playbill:
 
 
 @pytest.mark.parametrize("status", ["accepted", "lost_cas"])
-def test_accept_only_calls_daemon_and_retains_read_coordinate(
+def test_accept_only_calls_daemon_and_remembers_successful_receipt(
     tmp_path: Path, status: Literal["accepted", "lost_cas"]
 ) -> None:
     client = _Client(status)
@@ -66,8 +66,23 @@ def test_accept_only_calls_daemon_and_retains_read_coordinate(
 
     assert receipt.status == status
     assert client.events == [("accept", "inst_test", "proposal-1")]
-    assert pb.coordinate == before
+    expected = (
+        AcceptedCoordinate.model_validate(receipt.accepted_coordinate.model_dump())
+        if receipt.accepted_coordinate
+        else before
+    )
+    assert pb.coordinate == expected
     assert list(tmp_path.iterdir()) == []
+
+
+def test_accept_through_explicit_snapshot_does_not_move_it(tmp_path: Path) -> None:
+    client = _Client()
+    pb = _sdk(client, tmp_path)
+    snapshot = pb.at(pb.coordinate)
+    receipt = snapshot.accept("proposal-1")
+    assert receipt.accepted_coordinate is not None
+    assert snapshot.coordinate == pb.coordinate
+    assert snapshot.coordinate.git_oid != receipt.accepted_coordinate.git_oid
 
 
 def test_explicit_refresh_pins_target_reports_floor_and_retains_snapshot(tmp_path: Path) -> None:
