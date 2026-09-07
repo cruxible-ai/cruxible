@@ -47,9 +47,19 @@ def test_successor_matches_every_cold_row_across_create_revise_and_retire(tmp_pa
     monkeypatch.setattr(delta_module, "parse_projection_tree", bounded_parse)
 
     def checked(assembler, request, *, crash_hook=None, delta=None):
-        result = assemble(assembler, request, crash_hook=crash_hook, delta=delta)
+        inventories = []
+        listing = assembler._repository.list_tree_with_sizes
+
+        def counted(oid):
+            inventories.append(oid)
+            return listing(oid)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(assembler._repository, "list_tree_with_sizes", counted)
+            result = assemble(assembler, request, crash_hook=crash_hook, delta=delta)
         if delta is None:
             return result
+        assert inventories.count(request.git_oid) == 1
         directory = tmp_path / f"cold-{len(seen)}"
         directory.mkdir()
         # Candidate citation maintenance also binds its exact immutable parent.

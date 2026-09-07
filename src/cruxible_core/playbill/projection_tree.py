@@ -13,6 +13,7 @@ from cruxible_client.contracts.canonical import (
     normalize_manifest_paths,
 )
 from cruxible_client.contracts.errors import ProjectionFormatError
+from cruxible_core.playbill.git import GitTreeEntry
 from cruxible_core.playbill.projection_artifacts import registered_path_kind
 from cruxible_core.playbill.protocols import LedgerRepositoryProtocol
 
@@ -73,7 +74,24 @@ def read_registered_tree(
 ) -> tuple[GitTreeBlob, ...]:
     """Read regular registered blobs only, with all metadata gates first."""
 
-    entries = repository.list_tree_with_sizes(oid)
+    return _read_registered_entries(
+        repository,
+        repository.list_tree_with_sizes(oid),
+        limits=limits,
+        artifact_kinds=artifact_kinds,
+        include_paths=include_paths,
+    )
+
+
+def _read_registered_entries(
+    repository: LedgerRepositoryProtocol,
+    entries: tuple[GitTreeEntry, ...],
+    *,
+    limits: TreeReadLimits,
+    artifact_kinds: ArtifactKindRegistry,
+    include_paths: frozenset[str] | None = None,
+) -> tuple[GitTreeBlob, ...]:
+    """Consume this operation's exact Git inventory; apply every reader gate."""
     if len(entries) > limits.max_files:
         raise ProjectionFormatError(
             f"ledger tree exceeds file-count limit ({len(entries)} > {limits.max_files})"

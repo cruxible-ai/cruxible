@@ -23,7 +23,7 @@ from cruxible_core.playbill.projection import (
     projection_manifest_name,
 )
 from cruxible_core.playbill.projection_artifacts import parse_projection_tree
-from cruxible_core.playbill.projection_tree import read_registered_tree
+from cruxible_core.playbill.projection_tree import _read_registered_entries
 from cruxible_core.playbill.settlement import (
     ChangeSetRecordAnyVersion,
     ChangeSetRecordV2,
@@ -127,7 +127,8 @@ def populate_successor(
     def changed_inputs() -> tuple[frozenset[str], dict[str, bytes]]:
         repository = assembler._repository
         parent_entries = {e.path: e for e in repository.list_tree_with_sizes(base.git_oid)}
-        current_entries = {e.path: e for e in repository.list_tree_with_sizes(request.git_oid)}
+        current_inventory = repository.list_tree_with_sizes(request.git_oid)
+        current_entries = {entry.path: entry for entry in current_inventory}
         changed = frozenset(
             path
             for path in parent_entries.keys() | current_entries.keys()
@@ -140,9 +141,9 @@ def populate_successor(
         # This validates the whole inventory's modes, paths, collisions and resource
         # bounds, but opens only affected payloads and the small contract inventory.
         selected = members | {p for p in current_entries if p.startswith("capture-contracts/")}
-        blobs = read_registered_tree(
+        blobs = _read_registered_entries(
             repository,
-            request.git_oid,
+            current_inventory,
             limits=request.limits,
             artifact_kinds=assembler.artifact_kinds,
             include_paths=selected,
