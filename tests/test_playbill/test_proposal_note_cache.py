@@ -173,3 +173,50 @@ def test_git_encoding_change_invalidates_aliases_without_changing_evidence(tmp_p
     _assert_oracle(instance, after)
     instance._ledger._git(["config", "--unset", "i18n.commitEncoding"])
     assert _current(instance).review_oids == before.review_oids
+
+
+def test_duplicate_admission_fallback_preserves_every_candidate_alias(tmp_path):
+    from cruxible_core.playbill.proposal_notes import admission_bytes
+
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "first")
+    before = _current(instance)
+    digest = first.evaluation.candidate_digest
+    assert digest is not None
+    original_alias = before.review_oids[first.admission.proposal_id]
+    duplicate = first.admission.model_copy(
+        update={
+            "candidate_commit_oid": instance.accepted_coordinate().git_oid,
+            "rationale": "Another retained alias for the same admission ID",
+        }
+    )
+    # Historical inventories permit foreign filenames. This name sorts after
+    # the ordinary hexadecimal filename and replaces the final admission map.
+    path = instance.proposal_evidence().proposals / "zzz-duplicate.json"
+    path.write_bytes(admission_bytes(duplicate))
+    actual = _current(instance)
+    _assert_oracle(instance, actual)
+    assert actual.admissions[first.admission.proposal_id] == duplicate
+    expected = {
+        oid
+        for oid, ids in actual.proposal_ids_by_oid.items()
+        if any(actual.evaluations[pid].candidate_digest == digest for pid in ids)
+    }
+    assert len(expected) == 4
+    assert original_alias in expected
+    assert first.admission.candidate_commit_oid in expected
+    assert actual.oids_for_candidate(digest) == expected
+    actual.oids_for_candidate(digest).clear()
+    assert actual.oids_for_candidate(digest) == expected
+    assert instance._proposal_note_cache._index is None
+
+
+def test_candidate_alias_inverse_is_detached_from_retained_cache(tmp_path):
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "first")
+    actual = _current(instance)
+    digest = first.evaluation.candidate_digest
+    assert digest is not None
+    expected = actual.oids_for_candidate(digest)
+    actual._oids_by_candidate[digest].clear()
+    assert _current(instance).oids_for_candidate(digest) == expected

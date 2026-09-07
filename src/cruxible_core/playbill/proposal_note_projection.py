@@ -44,12 +44,21 @@ class ProposalNoteIndex:
     proposal_ids_by_oid: dict[str, set[str]]
 
     proposal_ids_by_candidate: dict[str, set[str]] = field(default_factory=dict)
+    _oids_by_candidate: dict[str, set[str]] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         for proposal_id in self.admissions:
             digest = self.evaluations[proposal_id].candidate_digest
             if digest is not None:
                 self.proposal_ids_by_candidate.setdefault(digest, set()).add(proposal_id)
+        # The cold builder tolerates duplicate admission IDs under foreign
+        # filenames. Earlier aliases remain in its groups even when a later
+        # record replaces the admission, so invert the groups themselves.
+        for oid, proposal_ids in self.proposal_ids_by_oid.items():
+            for proposal_id in proposal_ids:
+                digest = self.evaluations[proposal_id].candidate_digest
+                if digest is not None:
+                    self._oids_by_candidate.setdefault(digest, set()).add(oid)
 
     @classmethod
     def build(
@@ -96,12 +105,7 @@ class ProposalNoteIndex:
         return cls(evidence, admissions, evaluations, candidates, review_oids, groups)
 
     def oids_for_candidate(self, digest: str) -> set[str]:
-        oids = set()
-        for proposal_id in self.proposal_ids_by_candidate.get(digest, ()):
-            oids.add(self.admissions[proposal_id].candidate_commit_oid)
-            if proposal_id in self.review_oids:
-                oids.add(self.review_oids[proposal_id])
-        return oids
+        return set(self._oids_by_candidate.get(digest, ()))
 
     def candidate_digests(self, oid: str) -> tuple[str, ...]:
         return tuple(
