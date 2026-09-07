@@ -18,8 +18,9 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Final, Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, TypeAdapter, field_validator, model_validator
 
+from cruxible_client._persistent import MapMutation, PersistentMap
 from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicyError,
     acquisition_policy_digest,
@@ -107,6 +108,7 @@ from cruxible_client.contracts.subjects import (
     parse_subject,
     subject_digest,
 )
+from cruxible_core.playbill.derived_rows import CanonicalRows
 from cruxible_core.playbill.exhaust.promotions import (
     ExhaustPromotionError,
     exhaust_promotion_digest,
@@ -165,24 +167,21 @@ class ArtifactDependencyStateV1(_StrictClosureModel):
         return SemanticAddress.whole_artifact(self.path)
 
 
-@lru_cache(maxsize=_PARSE_MEMO_ENTRIES)
 def parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyStateV1 | None:
-    """Parse only artifact kinds participating in PC-A2 dependency closure.
+    """Parse a caller-owned row; the bounded memo retains only canonical bytes."""
 
-    The result is a pure function of the exact path and the exact bytes -- every
-    parser below reads nothing else -- and the state it returns is frozen, so a
-    bounded content-addressed memo is observationally identical to reparsing and
-    is safe to share between callers.
+    encoded = _dependency_artifact_bytes(path, content)
+    return None if encoded is None else ArtifactDependencyStateV1.model_validate_json(encoded)
 
-    The memo is load bearing rather than decorative. One proposal evaluation
-    parses the parent tree and the candidate tree, then evaluates closure over
-    both again, so an unmemoized evaluation re-derives every member of the whole
-    tree four times for a change that touched a handful of them. Replay
-    compounds that by the length of history while handing the identical `bytes`
-    objects forward from generation to generation. Format failures are raised
-    rather than memoized, so a malformed member is re-derived and re-refused on
-    every look.
-    """
+
+@lru_cache(maxsize=_PARSE_MEMO_ENTRIES)
+def _dependency_artifact_bytes(path: str, content: bytes) -> bytes | None:
+    parsed = _parse_dependency_artifact(path, content)
+    return None if parsed is None else canonical_bytes(parsed.model_dump(mode="json"))
+
+
+def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyStateV1 | None:
+    """Derive metadata from exact artifact bytes, preserving parser refusals."""
 
     try:
         if path.startswith("documents/"):
@@ -823,6 +822,35 @@ def _grouped_edges(
     return {path: _sorted_edges(items) for path, items in grouped.items()}
 
 
+_EDGE_ROWS = TypeAdapter(tuple[DependencyProofReferenceV1, ...])
+
+
+def _encode_state(value: ArtifactDependencyStateV1) -> bytes:
+    return canonical_bytes(value.model_dump(mode="json"))
+
+
+def _encode_edges(value: tuple[DependencyProofReferenceV1, ...]) -> bytes:
+    return canonical_bytes([edge.model_dump(mode="json") for edge in value])
+
+
+def _state_rows(
+    values: Mapping[str, ArtifactDependencyStateV1],
+) -> CanonicalRows[ArtifactDependencyStateV1]:
+    if isinstance(values, CanonicalRows):
+        return values
+    return CanonicalRows.build(
+        values, encode=_encode_state, decode=ArtifactDependencyStateV1.model_validate_json
+    )
+
+
+def _edge_rows(
+    values: Mapping[str, tuple[DependencyProofReferenceV1, ...]],
+) -> CanonicalRows[tuple[DependencyProofReferenceV1, ...]]:
+    if isinstance(values, CanonicalRows):
+        return values
+    return CanonicalRows.build(values, encode=_encode_edges, decode=_EDGE_ROWS.validate_json)
+
+
 def build_dependency_index(tree: Mapping[str, bytes]) -> DependencyIndexV1:
     """Build one tree's complete dependency index by parsing every member.
 
@@ -834,13 +862,13 @@ def build_dependency_index(tree: Mapping[str, bytes]) -> DependencyIndexV1:
     artifacts = dependency_artifacts(tree)
     edges = _edges(artifacts)
     return DependencyIndexV1(
-        states={item.path: item for item in artifacts},
-        paths_by_identity={item.identity.qualified: item.path for item in artifacts},
-        sources_by_pinned_identity={
-            identity: frozenset(paths) for identity, paths in _pin_sources(artifacts).items()
-        },
-        edges_by_source=_grouped_edges(edges, key="source_path"),
-        edges_by_target=_grouped_edges(edges, key="target_path"),
+        states=_state_rows({item.path: item for item in artifacts}),
+        paths_by_identity=PersistentMap({item.identity.qualified: item.path for item in artifacts}),
+        sources_by_pinned_identity=PersistentMap(
+            {identity: frozenset(paths) for identity, paths in _pin_sources(artifacts).items()}
+        ),
+        edges_by_source=_edge_rows(_grouped_edges(edges, key="source_path")),
+        edges_by_target=_edge_rows(_grouped_edges(edges, key="target_path")),
         edge_tree=build_dependency_edge_tree(edges),
     )
 
@@ -861,12 +889,18 @@ def update_dependency_index(
     would have returned for `tree`.
     """
 
-    touched = sorted(set(changed))
-    states = dict(index.states)
-    paths_by_identity = dict(index.paths_by_identity)
-    pin_sources = {
-        identity: set(paths) for identity, paths in index.sources_by_pinned_identity.items()
-    }
+    touched_set = set(changed)
+    touched = sorted(touched_set)
+    states = _state_rows(index.states).mutate()
+    paths_by_identity = MapMutation(index.paths_by_identity)
+    pin_sources = MapMutation(index.sources_by_pinned_identity)
+    touched_buckets: dict[str, set[str]] = {}
+
+    def pin_bucket(identity: str) -> set[str]:
+        if identity not in touched_buckets:
+            touched_buckets[identity] = set(pin_sources.get(identity, ()))
+        return touched_buckets[identity]
+
     touched_identities: set[str] = set()
 
     for path in touched:
@@ -876,11 +910,7 @@ def update_dependency_index(
             if paths_by_identity.get(previous.identity.qualified) == path:
                 del paths_by_identity[previous.identity.qualified]
             for pin in previous.pins:
-                holders = pin_sources.get(pin.target.qualified)
-                if holders is not None:
-                    holders.discard(path)
-                    if not holders:
-                        del pin_sources[pin.target.qualified]
+                pin_bucket(pin.target.qualified).discard(path)
 
     for path in touched:
         content = tree.get(path)
@@ -896,7 +926,13 @@ def update_dependency_index(
         paths_by_identity[identity] = path
         touched_identities.add(identity)
         for pin in parsed.pins:
-            pin_sources.setdefault(pin.target.qualified, set()).add(path)
+            pin_bucket(pin.target.qualified).add(path)
+
+    for identity, holders in touched_buckets.items():
+        if holders:
+            pin_sources[identity] = frozenset(holders)
+        else:
+            pin_sources.pop(identity, None)
 
     # Every touched member is re-resolved, including one that left the tree: its
     # own outgoing edges leave with it, and nothing else in the change set is
@@ -905,9 +941,9 @@ def update_dependency_index(
     for identity in touched_identities:
         affected.update(index.sources_by_pinned_identity.get(identity, frozenset()))
         affected.update(pin_sources.get(identity, set()))
-    affected &= set(states) | set(touched)
+    affected = {path for path in affected if path in states or path in touched_set}
 
-    edges_by_source = dict(index.edges_by_source)
+    edges_by_source = _edge_rows(index.edges_by_source).mutate()
     affected_targets: set[str] = set()
     updates: dict[str, tuple[DependencyProofReferenceV1, ...]] = {}
     for path in sorted(affected):
@@ -927,7 +963,7 @@ def update_dependency_index(
         else:
             edges_by_source.pop(path, None)
 
-    edges_by_target = dict(index.edges_by_target)
+    edges_by_target = _edge_rows(index.edges_by_target).mutate()
     for target in sorted(affected_targets):
         incoming = _sorted_edges(
             edge
@@ -944,13 +980,11 @@ def update_dependency_index(
             edges_by_target.pop(target, None)
 
     return DependencyIndexV1(
-        states=states,
-        paths_by_identity=paths_by_identity,
-        sources_by_pinned_identity={
-            identity: frozenset(paths) for identity, paths in pin_sources.items()
-        },
-        edges_by_source=edges_by_source,
-        edges_by_target=edges_by_target,
+        states=states.finish(),
+        paths_by_identity=paths_by_identity.finish(),
+        sources_by_pinned_identity=pin_sources.finish(),
+        edges_by_source=edges_by_source.finish(),
+        edges_by_target=edges_by_target.finish(),
         edge_tree=update_dependency_edge_tree(index.edge_tree, updated=updates),
     )
 

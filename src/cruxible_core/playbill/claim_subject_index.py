@@ -6,6 +6,7 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
+from cruxible_client._persistent import MapMutation, PersistentMap
 from cruxible_client.contracts.claims import parse_claim
 
 CLAIM_PATH_RE = re.compile(r"^claims/[0-9a-f]{2}/CLM-[0-9a-f]{32}\.json$")
@@ -25,14 +26,16 @@ class ClaimSubjectIndex:
 
 
 def build_claim_subject_index(tree: Mapping[str, bytes]) -> ClaimSubjectIndex:
-    return update_claim_subject_index(ClaimSubjectIndex({}, {}), tree=tree, changed=tree)
+    return update_claim_subject_index(
+        ClaimSubjectIndex(PersistentMap(), PersistentMap()), tree=tree, changed=tree
+    )
 
 
 def update_claim_subject_index(
     index: ClaimSubjectIndex, *, tree: Mapping[str, bytes], changed: Iterable[str]
 ) -> ClaimSubjectIndex:
-    by_claim = dict(index.subject_by_claim)
-    by_subject = dict(index.claims_by_subject)
+    by_claim = MapMutation(index.subject_by_claim)
+    by_subject = MapMutation(index.claims_by_subject)
     touched: dict[str, set[str]] = {}
 
     def bucket(subject: str) -> set[str]:
@@ -57,4 +60,4 @@ def update_claim_subject_index(
             by_subject[subject] = frozenset(paths)
         else:
             by_subject.pop(subject, None)
-    return ClaimSubjectIndex(by_claim, by_subject)
+    return ClaimSubjectIndex(by_claim.finish(), by_subject.finish())

@@ -267,6 +267,29 @@ def test_subject_index_remains_detached_in_shared_evaluation_cache():
     tree = _tree(_make_claim(1))
     cache = EvaluationStateCache()
     state = cache.derive(tree)
-    state.claim_subjects.subject_by_claim.clear()
-    state.claim_subjects.claims_by_subject.clear()
+    with pytest.raises((TypeError, AttributeError)):
+        state.claim_subjects.subject_by_claim.clear()
+    with pytest.raises((TypeError, AttributeError)):
+        state.claim_subjects.claims_by_subject.clear()
     assert cache.derive(tree).claim_subjects == build_claim_subject_index(tree)
+
+
+def test_warm_subject_update_does_not_iterate_retained_maps(monkeypatch):
+    from cruxible_client._persistent import PersistentMap
+
+    first, second = _make_claim(1), _at_subject(_make_claim(2), OTHER)
+    tree = _tree(first, second)
+    index = build_claim_subject_index(tree)
+    revised = _tree(_at_subject(first, OTHER), second)
+    expected = build_claim_subject_index(revised)
+
+    def refuse_iteration(self):
+        raise AssertionError("warm Subject update iterated an unrelated retained map")
+
+    with monkeypatch.context() as guarded:
+        guarded.setattr(PersistentMap, "__iter__", refuse_iteration)
+        result = update_claim_subject_index(
+            index, tree=revised, changed=(claim_path(first.identity.name),)
+        )
+    assert result == expected
+    assert index == build_claim_subject_index(tree)
