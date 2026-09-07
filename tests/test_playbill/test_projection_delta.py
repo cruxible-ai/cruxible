@@ -246,7 +246,7 @@ def test_unrelated_document_carries_nonempty_citation_relations_without_rebuild(
         def forbidden(*args, **kwargs):
             raise AssertionError("unrelated members cannot require citation reconstruction")
 
-        patch.setattr(delta_module, "build_citation_relation_facts", forbidden)
+        patch.setattr(delta_module.CitationIndex, "advance", forbidden)
         _accept_tree(
             instance,
             owner,
@@ -273,3 +273,36 @@ def test_unrelated_document_carries_nonempty_citation_relations_without_rebuild(
         assembler.request(output_staging_directory=directory / ".stage-cold")
     )
     assert _rows(directory / rebuilt.manifest.pieces[0].name) == expected
+
+
+def test_warm_citation_successor_reads_no_global_relation_slice(tmp_path, monkeypatch):
+    from cruxible_core.storage.playbill_projection import ProjectionHandle
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    first = coordinator.create(
+        actor=actor, payload=_change_set(_claim(qualifier="first")), canonical_timestamp=TIMESTAMP
+    ).intent
+    _accept(instance, owner, coordinator, first.intent_id, actor)
+    before = instance.accepted_coordinate()
+    assert instance._citation_index_cache.peek(before) is not None
+    original = ProjectionHandle.semantic_facts
+    reads = []
+
+    def bounded(handle, schema, **kwargs):
+        if schema.startswith("playbill.citation_relation.") and not kwargs:
+            reads.append(schema)
+            raise AssertionError("warm citation apply cannot enumerate prior relations")
+        return original(handle, schema, **kwargs)
+
+    second = coordinator.create(
+        actor=actor, payload=_change_set(_claim(qualifier="second")), canonical_timestamp=TIMESTAMP
+    ).intent
+    with monkeypatch.context() as patch:
+        patch.setattr(ProjectionHandle, "semantic_facts", bounded)
+        _accept(instance, owner, coordinator, second.intent_id, actor)
+    assert reads == []
+    assert instance._citation_index_cache.peek(instance.accepted_coordinate()) is not None
+    assert instance._citation_index_cache.peek(before) is not None

@@ -69,6 +69,7 @@ from cruxible_core.playbill.checkpoints import (
     CHECKPOINT_DIRECTORY,
     DEFAULT_CHECKPOINT_INTERVAL,
 )
+from cruxible_core.playbill.citation_index import CitationIndexCache
 from cruxible_core.playbill.compiler import (
     SUPPORTED_COMPILERS,
     current_compiler_coordinate,
@@ -243,6 +244,7 @@ class PlaybillInstance:
         self._recovered = recovered
         self._state_lock = threading.RLock()
         self.derived = DerivedState()
+        self._citation_index_cache = CitationIndexCache(self.derived)
         self._claim_compilation_cache = ClaimCompilationCache()
         self._proposal_note_cache = ProposalNoteCache()
         self._evaluation_state_cache = EvaluationStateCache(build_context=self.derived.build)
@@ -1528,6 +1530,7 @@ class PlaybillInstance:
             checkpoint_interval=DEFAULT_CHECKPOINT_INTERVAL,
             genesis=self.descriptor.genesis,
             claim_compilation_cache=self._claim_compilation_cache,
+            citation_index_cache=self._citation_index_cache,
             verified_change_sets=tuple(
                 (f"changesets/cs-{generation.record.sequence:020d}.json", generation.record)
                 for generation in self._recovered.history

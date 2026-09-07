@@ -136,23 +136,7 @@ def _same_version_span_key(use: Mapping[str, object]) -> tuple[str, int, int] | 
     return version_key, start, end
 
 
-def build_citation_relation_facts(
-    tree: Mapping[str, bytes],
-    *,
-    bodies: BodyProjectionProtocol,
-    previous_use_facts: tuple[ProjectionFact, ...] = (),
-    previous_conflict_facts: tuple[ProjectionFact, ...] = (),
-    changed_claim_paths: frozenset[str] | None = None,
-) -> tuple[ProjectionFact, ...]:
-    """Derive a coordinate-bound relation slice, re-reading changed Claims only.
-
-    A normal candidate activation supplies the previous immutable use rows plus
-    the exact changed Claim paths. Explicit rebuild/recovery omits both and is
-    the deliberately global fallback. Derived conflict rows are regenerated
-    deterministically from the carried use set; Capture bodies for untouched
-    Claims are never reopened.
-    """
-
+def _contract_facts(tree: Mapping[str, bytes]) -> list[ProjectionFact]:
     facts: list[ProjectionFact] = []
     for path in sorted(tree, key=lambda value: value.encode("utf-8")):
         if not path.startswith("capture-contracts/"):
@@ -176,25 +160,16 @@ def build_citation_relation_facts(
             )
         )
 
+    return facts
+
+
+def _claim_uses(
+    tree: Mapping[str, bytes], *, bodies: BodyProjectionProtocol
+) -> list[dict[str, object]]:
     uses: list[dict[str, object]] = []
-    replaced_uses: list[dict[str, object]] = []
-    changed_uses: list[dict[str, object]] = []
-    if changed_claim_paths is not None:
-        for fact in previous_use_facts:
-            if fact.schema_id != RELATION_USE_SCHEMA or not isinstance(fact.value, dict):
-                raise ProjectionFormatError("previous citation use fact is malformed")
-            previous_path = fact.value.get("claim_path")
-            if not isinstance(previous_path, str):
-                raise ProjectionFormatError("previous citation use fact has no Claim path")
-            if previous_path in changed_claim_paths:
-                replaced_uses.append(dict(fact.value))
-            else:
-                uses.append(dict(fact.value))
     envelopes_by_digest: dict[str, CaptureEnvelopeAny] = {}
     for path in sorted(tree, key=lambda value: value.encode("utf-8")):
         if not path.startswith("claims/"):
-            continue
-        if changed_claim_paths is not None and path not in changed_claim_paths:
             continue
         claim = parse_claim(tree[path], path=path)
         claim_digest = claim_artifact_digest(claim).tagged
@@ -224,37 +199,12 @@ def build_citation_relation_facts(
                 "source": envelope.source.model_dump(mode="json"),
             }
             uses.append(use)
-            changed_uses.append(use)
 
-    touched_relation_keys: set[str] | None = None
-    if changed_claim_paths is not None:
-        touched_relation_keys = set()
-        for use in (*replaced_uses, *changed_uses):
-            capture = use.get("capture_digest")
-            if isinstance(capture, dict) and isinstance(capture.get("$digest"), str):
-                touched_relation_keys.add(_relation_group_key("capture", capture["$digest"]))
-            source = use.get("source")
-            if isinstance(source, dict) and source.get("kind") == "external":
-                external = ExternalSourceReferenceV1.model_validate(source)
-                touched_relation_keys.add(
-                    _relation_group_key(
-                        "exact_external",
-                        external_source_relation_subject(external),
-                    )
-                )
-                span = _same_version_span_key(use)
-                if span is not None:
-                    touched_relation_keys.add(_relation_group_key("same_version_span", span[0]))
+    return uses
 
-        for fact in previous_conflict_facts:
-            if not isinstance(fact.value, dict):
-                raise ProjectionFormatError("previous citation conflict fact is malformed")
-            relation_key = fact.value.get("relation_key")
-            if not isinstance(relation_key, str):
-                raise ProjectionFormatError("previous citation conflict has no relation key")
-            if relation_key not in touched_relation_keys:
-                facts.append(fact)
 
+def _use_facts(uses: list[dict[str, object]]) -> list[ProjectionFact]:
+    facts: list[ProjectionFact] = []
     for use in uses:
         capture = use.get("capture_digest")
         citation_id = use.get("citation_id")
@@ -300,6 +250,14 @@ def build_citation_relation_facts(
                 )
             )
 
+    return facts
+
+
+def _conflict_facts(
+    uses: list[dict[str, object]], touched_relation_keys: set[str] | None = None
+) -> list[ProjectionFact]:
+    """Retain raw conflicts; capture precedence is applied at the Claim boundary."""
+    facts: list[ProjectionFact] = []
     capture_groups: dict[str, list[dict[str, object]]] = defaultdict(list)
     external_groups: dict[str, list[dict[str, object]]] = defaultdict(list)
     for use in uses:
@@ -431,6 +389,81 @@ def build_citation_relation_facts(
             else:
                 active_live[citation_id] = event_use
                 emit(event_use)
+    return facts
+
+
+def build_citation_relation_facts(
+    tree: Mapping[str, bytes],
+    *,
+    bodies: BodyProjectionProtocol,
+    previous_use_facts: tuple[ProjectionFact, ...] = (),
+    previous_conflict_facts: tuple[ProjectionFact, ...] = (),
+    changed_claim_paths: frozenset[str] | None = None,
+) -> tuple[ProjectionFact, ...]:
+    """Derive a coordinate-bound relation slice, re-reading changed Claims only.
+
+    Explicit rebuild/recovery omits prior rows and is the full reference path.
+    The legacy partial-rebuild arguments are retained for internal callers; they
+    do not preserve suppressed conflicts. Production successor maintenance uses
+    the citation owner/group adapter, retaining raw conflicts and applying exact
+    row deltas. That adapter falls back here when an old parent is lossy.
+    """
+
+    facts = _contract_facts(tree)
+
+    uses: list[dict[str, object]] = []
+    replaced_uses: list[dict[str, object]] = []
+    if changed_claim_paths is not None:
+        for fact in previous_use_facts:
+            if fact.schema_id != RELATION_USE_SCHEMA or not isinstance(fact.value, dict):
+                raise ProjectionFormatError("previous citation use fact is malformed")
+            previous_path = fact.value.get("claim_path")
+            if not isinstance(previous_path, str):
+                raise ProjectionFormatError("previous citation use fact has no Claim path")
+            if previous_path in changed_claim_paths:
+                replaced_uses.append(dict(fact.value))
+            else:
+                uses.append(dict(fact.value))
+    changed_uses = _claim_uses(
+        tree
+        if changed_claim_paths is None
+        else {path: tree[path] for path in changed_claim_paths if path in tree},
+        bodies=bodies,
+    )
+    uses.extend(changed_uses)
+
+    touched_relation_keys: set[str] | None = None
+    if changed_claim_paths is not None:
+        touched_relation_keys = set()
+        for use in (*replaced_uses, *changed_uses):
+            capture = use.get("capture_digest")
+            if isinstance(capture, dict) and isinstance(capture.get("$digest"), str):
+                touched_relation_keys.add(_relation_group_key("capture", capture["$digest"]))
+            source = use.get("source")
+            if isinstance(source, dict) and source.get("kind") == "external":
+                external = ExternalSourceReferenceV1.model_validate(source)
+                touched_relation_keys.add(
+                    _relation_group_key(
+                        "exact_external",
+                        external_source_relation_subject(external),
+                    )
+                )
+                span = _same_version_span_key(use)
+                if span is not None:
+                    touched_relation_keys.add(_relation_group_key("same_version_span", span[0]))
+
+        for fact in previous_conflict_facts:
+            if not isinstance(fact.value, dict):
+                raise ProjectionFormatError("previous citation conflict fact is malformed")
+            relation_key = fact.value.get("relation_key")
+            if not isinstance(relation_key, str):
+                raise ProjectionFormatError("previous citation conflict has no relation key")
+            if relation_key not in touched_relation_keys:
+                facts.append(fact)
+
+    facts.extend(_use_facts(uses))
+
+    facts.extend(_conflict_facts(uses, touched_relation_keys))
     capture_precedence_subjects = {
         str(fact.value["live_claim_identity"])
         for fact in facts

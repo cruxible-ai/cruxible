@@ -267,9 +267,13 @@ def test_relation_delta_reopens_only_the_changed_claim_captures(
     tmp_path: Path,
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
+    from cruxible_core.playbill.citation_index import CitationIndex
+
+    citation_contract_schema = "playbill.citation_relation.capture_contract"
     instance, owner, _actor, first, second, *_rest = shared_capture_world(tmp_path)
     before = instance.accepted_coordinate()
     with instance.bind_accepted_projection(before) as projection:
+        previous_contracts = projection.semantic_facts(citation_contract_schema)
         previous_uses = projection.semantic_facts(RELATION_USE_SCHEMA)
         previous_conflicts = projection.semantic_facts(RELATION_RETIRED_CONFLICT_SCHEMA)
 
@@ -340,6 +344,16 @@ def test_relation_delta_reopens_only_the_changed_claim_captures(
         return fact.schema_id, fact.subject_identity, fact.fact_key
 
     assert sorted(incremental, key=key) == sorted(full, key=key)
+    assert parse_calls == 1
+
+    prior_index = CitationIndex.rebuild((*previous_contracts, *previous_uses, *previous_conflicts))
+    parse_calls = 0
+    scoped, _delta = prior_index.advance(
+        {claim_path(first): tree[claim_path(first)]},
+        changed_paths=frozenset((claim_path(first),)),
+        bodies=instance.body_store(),
+    )
+    assert sorted(scoped.facts(), key=key) == sorted(full, key=key)
     assert parse_calls == 1
 
 
