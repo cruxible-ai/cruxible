@@ -1,0 +1,68 @@
+{
+  "scope": "Warm daemon-index condition; same seven-member authoring input and accepted parent on separate private copies. Each replay independently mints Claim identities, so accepted coordinates differ. Cold index startup reported separately. Open/create/setup excluded. Both arms use changeset-driven accepted indexes. Full/incremental/incremental/full order; no profiler, HTTP or attached workspace.",
+  "members": 7,
+  "all_note_groups_equal": true,
+  "samples": [
+    {
+      "kind": "full",
+      "cold_index_seconds": 4.394625165965408,
+      "warm_index_seconds": 0.6898754589492455,
+      "submit_seconds": 5.784439375041984,
+      "accept_seconds": 5.311952791991644,
+      "accepted_coordinate": {
+        "tag": "playbill-accepted-coordinate-v1",
+        "git_oid": "e3d600402909469371e2207493f643f0fe114aec",
+        "semantic_root": "sha256:bdcd819288164a8e1153fb698e6b74d409991263ccb68641df16c2822c8974a4",
+        "generation_root": "sha256:d3b68f0a7fc6d3a813dc0be07e83c97873ae7386439d460777d2da572aa03e0f",
+        "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+      },
+      "group_count": 94
+    },
+    {
+      "kind": "incremental",
+      "cold_index_seconds": 4.409754750027787,
+      "warm_index_seconds": 0.019591832999140024,
+      "submit_seconds": 4.271476500027347,
+      "accept_seconds": 4.508714166993741,
+      "accepted_coordinate": {
+        "tag": "playbill-accepted-coordinate-v1",
+        "git_oid": "a57dbda3316d18cd99b348b937af293e7e93f1de",
+        "semantic_root": "sha256:599088015a5166a20ed13f4ea95956414c02740ed04dbf16b6629c79246dd0cb",
+        "generation_root": "sha256:0d69304659441afb2c02129ecf50fe1b36e72eff4b4d8c93f52b40a98611ad40",
+        "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+      },
+      "group_count": 94
+    },
+    {
+      "kind": "incremental",
+      "cold_index_seconds": 4.607382416026667,
+      "warm_index_seconds": 0.01954920805292204,
+      "submit_seconds": 4.262779999990016,
+      "accept_seconds": 4.82727700000396,
+      "accepted_coordinate": {
+        "tag": "playbill-accepted-coordinate-v1",
+        "git_oid": "ec4fac0044ac8cac2740a06494fb870bf92663e6",
+        "semantic_root": "sha256:024eb02d78ca027eaf742450702098b63aa8789f177e88d578510abd401e821c",
+        "generation_root": "sha256:b41ac12d5f87856d04483a6bf1679b7db67be2530340d408b0eb4af17e9e7c84",
+        "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+      },
+      "group_count": 94
+    },
+    {
+      "kind": "full",
+      "cold_index_seconds": 4.484951333026402,
+      "warm_index_seconds": 0.7922715839813463,
+      "submit_seconds": 5.880740624968894,
+      "accept_seconds": 5.372633499966469,
+      "accepted_coordinate": {
+        "tag": "playbill-accepted-coordinate-v1",
+        "git_oid": "fee1655c94a7c1d432add5513dded5d53c08be87",
+        "semantic_root": "sha256:c8166bce61ac8026e4ecb8f9be3fc09931d8d7af72fe5af7266e64be5d5b1223",
+        "generation_root": "sha256:0c2c6da962e8eb08e1ceb79faf4109b0e489e95cd6eb138de2f58eed83ea6795",
+        "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+      },
+      "group_count": 94
+    }
+  ],
+  "parity": "For each replay, cached membership, advisory aliases and every rendered note group were compared with a fresh full builder over that replay's evidence."
+}
