@@ -1425,10 +1425,13 @@ class PlaybillInstance:
             return {path: cached[path] for path in dict.fromkeys(paths) if path in cached}
         return self._ledger.blobs_at(oid, paths)
 
-    def proposal_tree(self, oid: str) -> dict[str, bytes]:
-        """Read one proposal commit tree for evidence-bound settlement."""
+    def proposal_tree(self, oid: str, *, base_oid: str | None = None) -> dict[str, bytes]:
+        """Read an exact proposal tree, optionally carrying a proven accepted base."""
 
-        return self._ledger.read_tree(oid)
+        if base_oid is None:
+            return self._ledger.read_tree(oid)
+        parent = self.immutable_tree_at(base_oid)
+        return self._ledger.read_tree_delta(base_oid, oid, parent_tree=parent)
 
     def resolve_accepted_coordinate(
         self,

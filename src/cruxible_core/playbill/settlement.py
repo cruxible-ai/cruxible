@@ -826,7 +826,7 @@ def prepare_generation(
     )
     if ledger.parent_of(oid) != binding.base_oid or not ledger.verify_commit(oid):
         raise SettlementIntegrityError("generation parent or daemon signature failed")
-    stored_tree = ledger.read_tree(oid)
+    stored_tree = ledger.read_tree_delta(base.git_oid, oid, parent_tree=base_tree)
     if stored_tree != generation_tree:
         raise SettlementIntegrityError("stored generation tree differs from verified payload")
 
