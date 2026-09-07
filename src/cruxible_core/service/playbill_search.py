@@ -43,11 +43,10 @@ from cruxible_core.playbill.search import (
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.playbill_claims import (
     PlaybillClaimGroupResolution,
-    _claim_from_view,
     _resolve_coordinate,
     resolve_playbill_claim_group,
-    service_list_playbill_claims,
 )
+from cruxible_core.service.playbill_evidence import ClaimVerdictReadContext
 from cruxible_core.service.playbill_verdict_memo import (
     MEMO_CAPACITY,
     claim_set_digest,
@@ -109,6 +108,7 @@ def claim_resolution_statuses(
     at: PlaybillAcceptedCoordinate,
     evaluation_time: datetime,
     verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
+    read_context: ClaimVerdictReadContext | None = None,
 ) -> dict[str, SearchStatus]:
     """Derive each Claim's resolution status at one accepted coordinate.
 
@@ -167,6 +167,7 @@ def claim_resolution_statuses(
             live_groups[_resolution_key(claim)].append(claim)
 
     coordinate = _resolve_coordinate(instance, at)
+    read_context = read_context or ClaimVerdictReadContext(instance, coordinate)
     for group in live_groups.values():
         first = group[0]
         resolution = resolve_playbill_claim_group(
@@ -178,6 +179,7 @@ def claim_resolution_statuses(
             claims=tuple(group),
             verdicts_by_identity=verdicts,
             time_boundaries=boundaries if remember else None,
+            read_context=read_context,
         )
         groups_by_qualifier: dict[str | None, list[ClaimArtifactAny]] = defaultdict(list)
         for claim in group:
@@ -237,17 +239,19 @@ def _claim_rows(
     *,
     request: PlaybillSearchRequestV1,
 ) -> tuple[PlaybillSearchRowV1, ...]:
-    listed = service_list_playbill_claims(
-        instance,
-        at=_accepted_coordinate(request),
-        include_retired=True,
-    )
-    claims = tuple(_claim_from_view(view) for view in listed.claims)
+    if "claim" not in request.kinds:
+        return ()
+    coordinate = _resolve_coordinate(instance, _accepted_coordinate(request))
+    read_context = ClaimVerdictReadContext(instance, coordinate)
+    # Discovery needs Claim envelopes and current status, not the full fact
+    # projection (including provenance/explanation payloads) for every row.
+    claims = read_context.claims()
     statuses = claim_resolution_statuses(
         instance,
         claims=claims,
         at=_accepted_coordinate(request),
         evaluation_time=request.evaluation_time,
+        read_context=read_context,
     )
     rows: list[PlaybillSearchRowV1] = []
     for claim in claims:
@@ -512,7 +516,7 @@ def service_search_playbill(
         raise
     except Exception as exc:  # pragma: no cover - backend normalization boundary
         raise ProposalIntegrityError("search requires a verified accepted coordinate") from exc
-    tree = instance.tree_at(coordinate.git_oid)
+    tree = instance.immutable_tree_at(coordinate.git_oid)
     rows = (*_claim_rows(instance, request=request), *_procedure_rows(tree, request=request))
     if demand_provider is not None and "demand" in request.kinds:
         demand_rows = demand_provider.rows(instance, request)
