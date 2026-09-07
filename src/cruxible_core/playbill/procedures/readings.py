@@ -29,6 +29,7 @@ from cruxible_core.playbill.exhaust import (
     StoredProcedureJournalRecordV1,
     parse_journal_payload,
 )
+from cruxible_core.playbill.exhaust.records import JournalPartitionHeadV1
 from cruxible_core.playbill.procedures.execution import accepted_procedure_pin_set_digest
 from cruxible_core.playbill.procedures.graph_digests import cached_node_digests
 from cruxible_core.playbill.procedures.resolution import (
@@ -532,6 +533,7 @@ def append_procedure_reading(
         ReadingReplayKey, tuple[StoredProcedureJournalRecordV1, ProcedureReadingV1]
     ]
     | None = None,
+    expected_head: JournalPartitionHeadV1 | None = None,
 ) -> StoredProcedureJournalRecordV1:
     """Append idempotently in the frozen instance/Procedure/actor/key domain.
 
@@ -539,6 +541,9 @@ def append_procedure_reading(
     over its keyed readings, so a batch of appends does not replay and re-parse
     the whole partition once per record. The index must describe the partition
     as the writer will see it; the fallback scans it from the journal.
+    ``expected_head`` is the partition head that index was read at: the append
+    is then a compare-and-set, refusing as a journal conflict when another
+    writer landed a record after the index was taken.
     """
 
     partition_id = procedure_reading_partition_id(accepted)
@@ -581,6 +586,7 @@ def append_procedure_reading(
         recorded_at=reading.recorded_at,
         payload=reading.model_dump(mode="json"),
         run_id=reading.run_id,
+        expected_head=expected_head,
     )
 
 

@@ -3143,8 +3143,15 @@ class Procedure:
         measurements: Sequence[str] = (),
         limit: int = 50,
         cursor: str | None = None,
+        at: AcceptedCoordinate | None = None,
     ) -> api.PlaybillProcedureReadingsResultV1:
-        """Inspect measurement standing and retained readings. Never writes."""
+        """Inspect measurement standing and retained readings. Never writes.
+
+        A page's ``cursor`` continues that page's selection: the observation
+        instant and coordinate the first page was answered at travel inside
+        it, so passing the cursor back with the same ``run``/``measurements``
+        pages the same selection even though this call stamps a fresh clock.
+        """
 
         run_id = run.run_id if isinstance(run, ProcedureRun) else run
         return self._playbill._client.list_playbill_procedure_readings(
@@ -3154,6 +3161,7 @@ class Procedure:
                 run_id=run_id,
                 measurement_names=tuple(sorted(set(measurements), key=lambda item: item.encode())),
                 evaluation_time=self._playbill._clock(),
+                at=at,
                 limit=limit,
                 cursor=cursor,
             ),

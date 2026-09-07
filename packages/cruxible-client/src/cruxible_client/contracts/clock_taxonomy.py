@@ -360,6 +360,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ReplayCheckpointBodyV2", "sequence"): "SETTLEMENT ORDER",
     ("ReplayCheckpointFileV2", "written_at"): "ASSERTION TIME",
     ("MeasurementActivationBasisV1", "activated_at"): "ASSERTION TIME",
+    ("ClaimVerdictObservationV1", "observation_time"): "EVALUATION INSTANT",
+    ("_Continuation", "observation_time"): "EVALUATION INSTANT",
     ("PlaybillProcedureMeasureRequestV1", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillProcedureMeasureResultV1", "observation_time"): "EVALUATION INSTANT",
     ("PlaybillProcedureReadingsRequestV1", "evaluation_time"): "EVALUATION INSTANT",

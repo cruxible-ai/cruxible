@@ -33,12 +33,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, cast
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
 from cruxible_client.contracts.claim_attestation_store import ClaimAttestationEventPayloadV1
 from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
-from cruxible_client.contracts.claim_verdicts import claim_verdict_v1_compat
+from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultV1, claim_verdict_v1_compat
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     claim_artifact_digest,
@@ -47,6 +47,7 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.errors import (
     ClaimNotFoundError,
+    PlaybillCasError,
     PlaybillError,
     PlaybillExecutionError,
     PlaybillFormatError,
@@ -81,7 +82,7 @@ from cruxible_client.contracts.procedures.readings import (
     ProcedureReadingSummaryV1,
 )
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
-from cruxible_client.contracts.temporal import ensure_utc
+from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.exhaust import (
@@ -90,8 +91,10 @@ from cruxible_core.playbill.exhaust import (
     LocalJournalBackend,
 )
 from cruxible_core.playbill.exhaust.records import (
+    CLAIM_VERDICT_OBSERVATION_EVENT_KIND,
     QUERY_RECEIPT_EVENT_KIND,
     QUERY_RECEIPT_JOURNAL_FAMILY,
+    JournalPartitionHeadV1,
     StoredProcedureJournalRecordV1,
     parse_journal_payload,
 )
@@ -152,6 +155,13 @@ _ACTIVATION_MEMO_CAPACITY = 32
 _READING_INDEX_MEMO_CAPACITY = 16
 MEASUREMENT_QUERY_EVIDENCE_TAG = "playbill-measurement-query-evidence-v1"
 MEASUREMENT_ATTESTATION_EVIDENCE_TAG = "playbill-measurement-attestation-evidence-v1"
+MEASUREMENT_CLAIM_VERDICT_OBSERVATION_TAG = "playbill-measurement-claim-verdict-observation-v1"
+# A reading append is a compare-and-set on the partition head; a head that
+# keeps moving under one request is reported, never spun on.
+_APPEND_ATTEMPTS = 3
+# Request attribution a fresh authenticated retry legitimately re-mints. The
+# principal (actor_type, actor_id, org_id) stays part of the reading's meaning.
+_VOLATILE_ACTOR_FIELDS = ("timestamp", "operation_id", "request_id")
 
 
 class ProcedureMeasurementRefused(ProcedureSurfaceError):
@@ -658,6 +668,38 @@ def _accepted_claim_at(
     return claim
 
 
+class ClaimVerdictObservationV1(BaseModel):
+    """The retained account of one Claim verdict evaluated as measurement evidence.
+
+    The frozen resolution law pins a Claim-statement resolution's value to the
+    verdict string, so the observation that produced it -- which accepted
+    state, which Claim artifact, at what instant, with which verdict inputs --
+    is retained as its own journal record and cited as a ``journal_record``
+    proof, exactly as a query receipt is.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-measurement-claim-verdict-observation-v1"] = (
+        "playbill-measurement-claim-verdict-observation-v1"
+    )
+    observation_coordinate: AcceptedCoordinate
+    observation_time: datetime
+    claim_identity: str
+    claim_artifact_path: str
+    claim_artifact_digest: str
+    claim_statement_digest: str
+    verdict_result: ClaimVerdictResultV1
+
+
+@dataclass(frozen=True)
+class RetainedClaimVerdictObservationV1:
+    """One retained Claim verdict observation and the record that retains it."""
+
+    stored: StoredProcedureJournalRecordV1
+    observation: ClaimVerdictObservationV1
+
+
 def _evaluate_claim_statement(
     instance: PlaybillInstance,
     *,
@@ -665,6 +707,9 @@ def _evaluate_claim_statement(
     observation: AcceptedProjectionCoordinate,
     observation_time: datetime,
     tree: Mapping[str, bytes],
+    fenced_receipts: _FencedWriter,
+    actor_context: GovernedActorContext,
+    recorded_at: datetime,
 ) -> _Evidence:
     claim = _accepted_claim_at(instance, tree=tree, measurement=measurement)
     verdict_query = service_evaluate_playbill_claim_verdict(
@@ -674,12 +719,40 @@ def _evaluate_claim_statement(
         at=PlaybillAcceptedCoordinate.from_internal(observation),
     )
     verdict = claim_verdict_v1_compat(verdict_query.verdict)
-    proofs = (
-        ProcedureProofReferenceV1(
-            kind="claim_statement",
-            digest=measurement.claim_statement_digest,
-            subject=measurement.claim_statement,
-        ),
+    account = ClaimVerdictObservationV1(
+        observation_coordinate=AcceptedCoordinate.from_internal(observation),
+        observation_time=observation_time,
+        claim_identity=claim.identity.qualified,
+        claim_artifact_path=measurement.claim_statement.artifact_path,
+        claim_artifact_digest=claim_artifact_digest(claim).tagged,
+        claim_statement_digest=measurement.claim_statement_digest,
+        verdict_result=verdict,
+    )
+    _receipt_backend, receipt_stream = _query_receipt_journal(instance)
+    fenced_receipts.acquire(receipt_stream, _QUERY_RECEIPT_PARTITION)
+    retained = fenced_receipts.writer.append(
+        stream=receipt_stream,
+        partition_id=_QUERY_RECEIPT_PARTITION,
+        event_kind=CLAIM_VERDICT_OBSERVATION_EVENT_KIND,
+        accepted_coordinate=account.observation_coordinate,
+        definition_digest=account.claim_artifact_digest,
+        actor_context=actor_context,
+        recorded_at=recorded_at,
+        payload=account.model_dump(mode="json"),
+    )
+    proofs = _sorted_proofs(
+        [
+            ProcedureProofReferenceV1(
+                kind="claim_statement",
+                digest=measurement.claim_statement_digest,
+                subject=measurement.claim_statement,
+            ),
+            ProcedureProofReferenceV1(
+                kind="journal_record",
+                digest=retained.record_digest,
+                subject=measurement.claim_statement,
+            ),
+        ]
     )
     holds = verdict.verdict in measurement.acceptable_verdicts
     return _Evidence(
@@ -724,8 +797,14 @@ def _evaluate_claim_attestation(
     )
     store = instance.claim_attestation_evidence_store()
     attestation_head = store.head()
-    door_events = store.fold_events(at_head=attestation_head)
+    # The COMPLETE event history up to the head, not the fold: the fold keeps
+    # each principal's latest word only, and the word that stood at an earlier
+    # observation instant may be exactly the one it dropped.
+    door_events = store.events(at_head=attestation_head)
     artifact_digest = claim_artifact_digest(claim).tagged
+    # Eligibility at the OBSERVATION instant is decided per event, before the
+    # latest-per-principal reduction: a principal's later word cannot erase
+    # the word that stood at the instant being observed.
     latest_door: dict[str, tuple[int, ClaimAttestationEventPayloadV1]] = {}
     for event, payload in door_events:
         statement = payload.attestation.statement
@@ -734,6 +813,9 @@ def _evaluate_claim_attestation(
             or statement.claim_artifact_digest != artifact_digest
             or statement.claim_statement_digest != measurement.claim_statement_digest
             or statement.attestation_basis != "examined_existing"
+            or not payload.current_at_append
+            or statement.attested_at > observation_time
+            or (statement.valid_until is not None and observation_time >= statement.valid_until)
         ):
             continue
         previous = latest_door.get(payload.attesting_principal_id)
@@ -742,14 +824,11 @@ def _evaluate_claim_attestation(
     items: list[dict[str, CanonicalValue]] = []
     digests: set[str] = set()
     principals: set[str] = set()
-    for _sequence, payload in latest_door.values():
+    for sequence, payload in latest_door.values():
         statement = payload.attestation.statement
-        if (
-            not payload.current_at_append
-            or statement.stance not in stances
-            or statement.attested_at > observation_time
-            or (statement.valid_until is not None and observation_time >= statement.valid_until)
-        ):
+        if statement.stance not in stances:
+            # The principal's standing word at the observation carries another
+            # stance: it stands, it is simply not counted toward this one.
             continue
         digests.add(payload.envelope_digest)
         principals.add(payload.attesting_principal_id)
@@ -759,6 +838,7 @@ def _evaluate_claim_attestation(
                 "stance": statement.stance,
                 "attestation_digest": payload.envelope_digest,
                 "source": "evidence_door",
+                "event_sequence": sequence,
             }
         )
     for item in accepted_attestations:
@@ -797,6 +877,11 @@ def _evaluate_claim_attestation(
         "count": len(principals),
         "items": cast(list[CanonicalValue], ordered_items),
         "attestation_head": attestation_head,
+        "observation_coordinate": AcceptedCoordinate.from_internal(observation).model_dump(
+            mode="json"
+        ),
+        "observation_time": format_datetime(observation_time),
+        "claim_artifact_digest": artifact_digest,
     }
     proofs = _sorted_proofs(
         [
@@ -808,6 +893,16 @@ def _evaluate_claim_attestation(
             for digest in ordered_digests
         ]
     )
+    if not proofs:
+        # The frozen law demands proof for any verdict, satisfied included: an
+        # absence of attestations is an honest indeterminate, never a proof-less
+        # satisfaction (a `max_count` of 0 met by nothing) or a fabricated proof.
+        return _Evidence(
+            verdict="indeterminate",
+            value=value,
+            evidence_refs=(),
+            note="no verified attestation with a declared stance stands at the observation",
+        )
     holds = _expectation_holds(measurement.expect, value=value, evidence_count=len(proofs))
     if holds:
         return _Evidence(
@@ -816,15 +911,6 @@ def _evaluate_claim_attestation(
             evidence_refs=proofs,
             note=None,
             claim_attestation_digests=ordered_digests,
-        )
-    if not proofs:
-        # The frozen law demands proof for a contradiction; an absence of
-        # attestations is an honest indeterminate, never a fabricated proof.
-        return _Evidence(
-            verdict="indeterminate",
-            value=value,
-            evidence_refs=(),
-            note="no verified attestation with a declared stance stands at the observation",
         )
     return _Evidence(
         verdict="contradicted",
@@ -848,6 +934,7 @@ def _evaluate_evidence(
     receipts: PlaybillQueryReceiptJournal | None,
     fenced_receipts: _FencedWriter,
     actor_context: GovernedActorContext,
+    recorded_at: datetime,
 ) -> tuple[_Evidence, PlaybillQueryReceiptJournal | None]:
     measurement = declaration.measurement
     if isinstance(measurement, AcceptedQueryProcedureMeasurementV1):
@@ -875,6 +962,9 @@ def _evaluate_evidence(
                 observation=observation,
                 observation_time=observation_time,
                 tree=tree,
+                fenced_receipts=fenced_receipts,
+                actor_context=actor_context,
+                recorded_at=recorded_at,
             ),
             receipts,
         )
@@ -914,6 +1004,7 @@ class _ReadingPartitionIndex:
     digests: tuple[str, ...]
     entries: tuple[_IndexedReading, ...]
     by_key: dict[ReadingReplayKey, _IndexedReading]
+    head: JournalPartitionHeadV1
 
 
 _reading_index_memo: OrderedDict[tuple[str, str], _ReadingPartitionIndex] = OrderedDict()
@@ -940,7 +1031,11 @@ def reading_partition_index(
     stream: JournalStreamIdentityV1,
     partition_id: str,
 ) -> _ReadingPartitionIndex:
-    records = journal.all_records(stream, partition_id)
+    # The head is read first and the record list trimmed to it, so the index
+    # describes exactly the partition prefix that head commits: an append
+    # keyed on this head is a compare-and-set against what was indexed.
+    head = journal.read_head(stream, partition_id)
+    records = journal.all_records(stream, partition_id)[: head.sequence]
     digests = tuple(stored.record_digest for stored in records)
     key = (str(instance.root), partition_id)
     cached = _reading_index_memo.get(key)
@@ -958,12 +1053,31 @@ def reading_partition_index(
         replay = reading_replay_key(entry.reading)
         if replay is not None:
             by_key.setdefault(replay, entry)
-    index = _ReadingPartitionIndex(digests=digests, entries=tuple(entries), by_key=by_key)
+    index = _ReadingPartitionIndex(
+        digests=digests, entries=tuple(entries), by_key=by_key, head=head
+    )
     _reading_index_memo[key] = index
     _reading_index_memo.move_to_end(key)
     while len(_reading_index_memo) > _READING_INDEX_MEMO_CAPACITY:
         _reading_index_memo.popitem(last=False)
     return index
+
+
+def _verify_retained(instance: PlaybillInstance, entry: _IndexedReading) -> _IndexedReading:
+    """Re-read a reading's body through CAS before serving it from the warm index.
+
+    The journal frame authenticates the record; it does not prove the body
+    those bytes address is still present and intact. Every reading this
+    service returns or replays against is re-verified against its content
+    address, so a warm process answers exactly as a cold one would.
+    """
+
+    try:
+        instance.body_store().read(entry.stored.record.payload_digest, access=_ACCESS)
+    except PlaybillCasError:
+        _reading_index_memo.pop((str(instance.root), entry.stored.record.partition_id), None)
+        raise
+    return entry
 
 
 def _reading_summary(entry: _IndexedReading) -> ProcedureReadingSummaryV1:
@@ -1046,8 +1160,24 @@ def measurement_reading_idempotency_key(
 
 
 def _semantic_reading_payload(reading: ProcedureReadingV1) -> CanonicalValue:
+    """What a retry must agree on: the reading's meaning, not its request.
+
+    ``recorded_at`` and the per-request actor attribution (timestamp,
+    operation id, request id) are re-minted by every authenticated call; the
+    principal is not. A Line occurrence is credited once, so which attempt
+    carried it (``run_id``, ``run_receipt_digest``) is attempt identity, not
+    reading identity, when ``episode_ref`` names the occurrence.
+    """
+
     payload = reading.model_dump(mode="json")
     payload.pop("recorded_at", None)
+    actor = payload.get("actor_context")
+    if isinstance(actor, dict):
+        for field in _VOLATILE_ACTOR_FIELDS:
+            actor.pop(field, None)
+    if payload.get("episode_ref") is not None:
+        payload.pop("run_id", None)
+        payload.pop("run_receipt_digest", None)
     return normalize_canonical(payload)
 
 
@@ -1141,22 +1271,18 @@ def service_measure_playbill_procedure(
     receipts: PlaybillQueryReceiptJournal | None = None
     rows: list[ProcedureMeasurementRowV1] = []
     try:
-        # Recover append-window leases on the partitions this request writes.
-        # Every active lease is released unless a record references it twice,
-        # exactly as the run and settlement writers do; scoping the records to
-        # our partitions keeps that check from walking every run's history.
+        # Recover append-window leases exactly as the run and settlement
+        # writers do, over the COMPLETE journal: recovery releases every active
+        # lease a scan does not reference, so a partial scan would release
+        # another partition's crashed lease on the strength of not looking.
         recovery_records = tuple(
             stored
-            for partition_id in (
-                reading_partition,
-                *(resolution_contract_partition_id(item) for item in activations),
-            )
+            for partition_id in journal.partition_ids(stream)
             for stored in journal.all_records(stream, partition_id)
         )
         ProcedureMaterialReservationStore(
             instance.body_store().reservation_root
         ).recover_run_material(recovery_records, bodies=instance.body_store())
-        reading_index: _ReadingPartitionIndex | None = None
         for activation in activations:
             eligibility = _eligibility(
                 activation,
@@ -1175,6 +1301,7 @@ def service_measure_playbill_procedure(
                     receipts=receipts,
                     fenced_receipts=fenced_receipts,
                     actor_context=actor_context,
+                    recorded_at=recorded_at,
                 )
                 resolution = build_procedure_resolution(
                     activation,
@@ -1258,14 +1385,7 @@ def service_measure_playbill_procedure(
                         reading_status = "grain_not_occurred"
                         detail = reason
                     else:
-                        if reading_index is None:
-                            reading_index = reading_partition_index(
-                                instance,
-                                journal=journal,
-                                stream=stream,
-                                partition_id=reading_partition,
-                            )
-                        reading_status, reading_summary, reading_index = _credit_reading(
+                        reading_status, reading_summary = _credit_reading(
                             instance,
                             accepted=accepted,
                             activation=activation,
@@ -1278,7 +1398,6 @@ def service_measure_playbill_procedure(
                             journal=journal,
                             stream=stream,
                             partition_id=reading_partition,
-                            index=reading_index,
                         )
             rows.append(
                 ProcedureMeasurementRowV1(
@@ -1331,8 +1450,16 @@ def _credit_reading(
     journal: LocalJournalBackend,
     stream: JournalStreamIdentityV1,
     partition_id: str,
-    index: _ReadingPartitionIndex,
-) -> tuple[ProcedureReadingStatusV1, ProcedureReadingSummaryV1, _ReadingPartitionIndex]:
+) -> tuple[ProcedureReadingStatusV1, ProcedureReadingSummaryV1]:
+    """Credit one grain exactly once.
+
+    Lookup and append are one compare-and-set: the partition is indexed at a
+    head, the keyed reading is looked up in that index, and the append is
+    keyed on that same head, so a competing writer that lands the same
+    reading in between turns this append into a conflict and this request
+    into a replay of what landed -- never a second credit.
+    """
+
     run_id = cast(str, grain.state.run_id)
     if grain.state.receipt_digest is None:
         raise PlaybillFormatError("a finalized run carries no receipt digest")
@@ -1370,56 +1497,120 @@ def _credit_reading(
         idempotency_key=measurement_reading_idempotency_key(activation, grain),
     )
     replay = reading_replay_key(reading)
-    existing = None if replay is None else index.by_key.get(replay)
-    if existing is not None:
-        if _semantic_reading_payload(existing.reading) != _semantic_reading_payload(reading):
-            raise _refuse(
-                "measurement_reading_conflict",
-                "A reading already stands for this key with a different payload.",
-                reading_id=existing.reading.reading_id,
-                existing_resolution_id=existing.reading.resolution_id,
-                requested_resolution_id=reading.resolution_id,
-            )
-        return "replayed", _reading_summary(existing), index
     fenced.acquire(stream, partition_id)
-    try:
-        stored = append_procedure_reading(
-            fenced.writer,
-            reading=reading,
-            accepted=accepted,
-            accepted_coordinate=activation.subject.accepted_coordinate,
-            stream=stream,
-            bodies=instance.body_store(),
-            activations=(activation,),
-            resolution_book=book,
-            replay_index={
-                key: (entry.stored, entry.reading) for key, entry in index.by_key.items()
-            },
+    for _attempt in range(_APPEND_ATTEMPTS):
+        index = reading_partition_index(
+            instance, journal=journal, stream=stream, partition_id=partition_id
         )
-    except PlaybillJournalConflictError as exc:
-        raise _refuse(
-            "measurement_resolution_conflict",
-            "Another writer moved the reading partition; retry.",
-            reading_id=reading.reading_id,
-        ) from exc
-    refreshed = reading_partition_index(
-        instance, journal=journal, stream=stream, partition_id=partition_id
+        existing = None if replay is None else index.by_key.get(replay)
+        if existing is not None:
+            _verify_retained(instance, existing)
+            if _semantic_reading_payload(existing.reading) != _semantic_reading_payload(reading):
+                raise _refuse(
+                    "measurement_reading_conflict",
+                    "A reading already stands for this key with a different payload.",
+                    reading_id=existing.reading.reading_id,
+                    existing_resolution_id=existing.reading.resolution_id,
+                    requested_resolution_id=reading.resolution_id,
+                )
+            return "replayed", _reading_summary(existing)
+        try:
+            stored = append_procedure_reading(
+                fenced.writer,
+                reading=reading,
+                accepted=accepted,
+                accepted_coordinate=activation.subject.accepted_coordinate,
+                stream=stream,
+                bodies=instance.body_store(),
+                activations=(activation,),
+                resolution_book=book,
+                replay_index={
+                    key: (entry.stored, entry.reading) for key, entry in index.by_key.items()
+                },
+                expected_head=index.head,
+            )
+        except PlaybillJournalConflictError:
+            # Another writer moved the partition after it was indexed. Index
+            # it again: if the competing record is this very reading, the
+            # next pass replays it; otherwise the append is retried on the
+            # new head.
+            continue
+        refreshed = reading_partition_index(
+            instance, journal=journal, stream=stream, partition_id=partition_id
+        )
+        entry = next(
+            (
+                item
+                for item in refreshed.entries
+                if item.stored.record_digest == stored.record_digest
+            ),
+            None,
+        )
+        if entry is None:  # pragma: no cover - the append just landed
+            raise PlaybillFormatError("appended reading is absent from its partition")
+        return "recorded", _reading_summary(entry)
+    raise _refuse(
+        "measurement_resolution_conflict",
+        "The reading partition kept moving under this request; retry.",
+        reading_id=reading.reading_id,
     )
-    entry = next(
-        (item for item in refreshed.entries if item.stored.record_digest == stored.record_digest),
-        None,
-    )
-    if entry is None:  # pragma: no cover - the append just landed
-        raise PlaybillFormatError("appended reading is absent from its partition")
-    return "recorded", _reading_summary(entry), refreshed
 
 
-def _cursor(selection: str, sequence: int) -> str:
-    return base64.urlsafe_b64encode(json.dumps([selection, sequence]).encode()).decode()
+def _cursor(
+    selection: str,
+    *,
+    observation_time: datetime,
+    at: AcceptedCoordinate,
+    sequence: int,
+) -> str:
+    """A page handle that carries the selection it continues.
+
+    The observation instant and coordinate the first page was answered at
+    travel inside the cursor, so a client whose clock has moved on (every SDK
+    call stamps a fresh instant) continues the SAME selection rather than a
+    drifted one, and a cursor never silently re-selects.
+    """
+
+    return base64.urlsafe_b64encode(
+        canonical_json(
+            {
+                "selection": selection,
+                "observation_time": format_datetime(observation_time),
+                "at": at.model_dump(mode="json"),
+                "after": sequence,
+            }
+        ).encode()
+    ).decode()
+
+
+@dataclass(frozen=True)
+class _Continuation:
+    observation_time: datetime
+    at: AcceptedCoordinate
+    after: int
+
+
+def _parse_cursor(cursor: str, *, selection: str) -> _Continuation:
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(cursor))
+        if not isinstance(payload, dict) or payload.get("selection") != selection:
+            raise ValueError("cursor selection differs")
+        after = payload.get("after")
+        observation_time = parse_datetime(payload.get("observation_time"))
+        if not isinstance(after, int) or observation_time is None:
+            raise ValueError("cursor continuation is malformed")
+        at = AcceptedCoordinate.model_validate(payload.get("at"))
+    except (ValueError, TypeError, UnicodeError, ValidationError) as exc:
+        raise PlaybillFormatError("reading cursor does not match this selection") from exc
+    return _Continuation(observation_time=ensure_utc(observation_time), at=at, after=after)
 
 
 def _selection_digest(request: PlaybillProcedureReadingsRequestV1) -> str:
-    return canonical_json(request.model_dump(mode="json", exclude={"cursor", "limit"}))
+    # The instant and coordinate are the continuation's, carried by the
+    # cursor; the rest of the request must not change between pages.
+    return canonical_json(
+        request.model_dump(mode="json", exclude={"cursor", "limit", "evaluation_time", "at"})
+    )
 
 
 def service_list_playbill_procedure_readings(
@@ -1431,10 +1622,18 @@ def service_list_playbill_procedure_readings(
 ) -> PlaybillProcedureReadingsResultV1:
     """Bounded, read-only inspection of contract standing and retained readings."""
 
-    observation_time = ensure_utc(
-        request.evaluation_time if request.evaluation_time is not None else evaluation_time
+    selection = _selection_digest(request)
+    continuation = (
+        None if not request.cursor else _parse_cursor(request.cursor, selection=selection)
     )
-    observation = _resolve_observation(instance, request.at)
+    if continuation is not None:
+        observation_time = continuation.observation_time
+        observation = _resolve_observation(instance, continuation.at)
+    else:
+        observation_time = ensure_utc(
+            request.evaluation_time if request.evaluation_time is not None else evaluation_time
+        )
+        observation = _resolve_observation(instance, request.at)
     accepted = _accepted_procedure(instance, name=name, coordinate=observation)
     basis = measurement_activation_basis(instance, accepted=accepted, observation=observation)
     activations = _selected_activations(basis, request.measurement_names)
@@ -1460,19 +1659,21 @@ def service_list_playbill_procedure_readings(
         if request.subject_grain is not None and reading.subject_grain != request.subject_grain:
             continue
         matching.append(entry)
-    after = 0
-    if request.cursor:
-        try:
-            selection, after = json.loads(base64.urlsafe_b64decode(request.cursor))
-            if selection != _selection_digest(request) or not isinstance(after, int):
-                raise ValueError("cursor selection differs")
-        except (ValueError, TypeError, UnicodeError) as exc:
-            raise PlaybillFormatError("reading cursor does not match this selection") from exc
+    after = 0 if continuation is None else continuation.after
     page = [entry for entry in matching if entry.stored.record.sequence > after]
     truncated = len(page) > request.limit
     page = page[: request.limit]
+    # Only what this page serves is re-read through CAS: bounded by the page,
+    # and enough that a warm index never vouches for a body it cannot show.
+    for entry in page:
+        _verify_retained(instance, entry)
     cursor = (
-        _cursor(_selection_digest(request), page[-1].stored.record.sequence)
+        _cursor(
+            selection,
+            observation_time=observation_time,
+            at=public_observation,
+            sequence=page[-1].stored.record.sequence,
+        )
         if truncated and page
         else None
     )
@@ -1558,6 +1759,32 @@ def load_retained_query_receipt(
             raise PlaybillFormatError("retained query receipt does not reproduce") from exc
         return RetainedQueryEvidenceV1(stored=stored, receipt=receipt)
     raise PlaybillFormatError("query receipt evidence is not retained under that digest")
+
+
+def load_retained_claim_verdict_observation(
+    instance: PlaybillInstance,
+    *,
+    record_digest: str,
+) -> RetainedClaimVerdictObservationV1:
+    """Resolve a Claim-statement resolution's ``journal_record`` proof to its account."""
+
+    journal, stream = _query_receipt_journal(instance)
+    for stored in journal.all_records(stream, _QUERY_RECEIPT_PARTITION):
+        if stored.record_digest != record_digest:
+            continue
+        if stored.record.event_kind != CLAIM_VERDICT_OBSERVATION_EVENT_KIND:
+            break
+        payload = parse_journal_payload(
+            instance.body_store().read(stored.record.payload_digest, access=_ACCESS)
+        )
+        try:
+            account = ClaimVerdictObservationV1.model_validate(payload)
+        except ValidationError as exc:
+            raise PlaybillFormatError(
+                "retained Claim verdict observation does not reproduce"
+            ) from exc
+        return RetainedClaimVerdictObservationV1(stored=stored, observation=account)
+    raise PlaybillFormatError("Claim verdict observation is not retained under that digest")
 
 
 def reconstruct_query_evidence(
