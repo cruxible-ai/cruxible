@@ -17,17 +17,25 @@
   retry recovers the same proposal and receipt, and other member bytes under
   the same key refuse `effectful_operation_payload_mismatch`. The mandate
   admission bound is re-established inside the proposal door against the exact
-  head tree the proposal is evaluated at, so a mandate retired or replaced
-  after admission refuses `procedure_mandate_superseded` before any ref moves;
-  replaying an operation the door already kept needs no live mandate. A
-  `prepared` journal record precedes the door and a resolving record follows
-  it. Daemon startup recovers each admitted run on its own account, whichever
-  boundary it died at: an unresolved preparation is driven through the same
-  idempotent door, a run whose egress already resolved is finalized from that
-  durable record without redelivery, and a publication the door left half
-  written (ref moved, no admission) is completed on the same ref when its
-  bytes are the operation's own. Every recovered attempt reads
-  `terminal_egress_recovered` with its receipt intact.
+  head tree the proposal is evaluated at, and that head is verified unchanged
+  under the ledger's activation lock before the first ref moves, so the
+  accepted coordinate a submission was authorized at is the one it is
+  published at: a mandate retired or replaced after admission refuses
+  `procedure_mandate_superseded` with nothing written, and head contention at
+  publication re-evaluates at the new head (bounded) instead of committing a
+  stale effect. Replaying an operation the door already kept needs no live
+  mandate. The proposal door writes a proposal's admission last, after its
+  candidate and evaluation, so an admission on disk always has its group
+  beside it. A `prepared` journal record precedes the door and a resolving
+  record follows it. Daemon startup recovers each admitted run on its own
+  account, whichever boundary it died at: an unresolved preparation is driven
+  through the same idempotent door, a run whose egress already resolved is
+  finalized from that durable record without redelivery, and a publication the
+  door left half written (ref moved, records without their admission) is
+  completed on the same ref when its bytes are the operation's own. Corrupt
+  evidence under one operation is reported and skipped; every other run still
+  recovers. Every recovered attempt reads `terminal_egress_recovered` with its
+  receipt intact.
   Mandate, item, evidence, and lowering refusals reach the run as typed node
   refusals with the door's real limiting code. The direct lane is unchanged:
   it has no requested rung, occurrence, or mandate coordinate, and still names
