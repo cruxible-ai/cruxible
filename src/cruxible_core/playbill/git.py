@@ -797,6 +797,10 @@ class GitLedger:
             "GIT_COMMITTER_DATE": timestamp,
         }
 
+    def review_commit_context(self) -> bytes:
+        """Read the mutable Git configuration that affects review commit bytes."""
+        return self._git(["config", "--default", "UTF-8", "--get", "i18n.commitencoding"])
+
     def proposal_review_commit_oid(
         self, *, tree_oid: str, base_oid: str, actor_id: str, timestamp: str, message: str
     ) -> str:

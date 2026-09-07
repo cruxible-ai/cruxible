@@ -160,3 +160,16 @@ def test_budget_and_cold_restart_reconstruct_same_groups(tmp_path, monkeypatch):
     _assert_oracle(instance, _current(instance))
     assert instance._proposal_note_cache._index is None
     _assert_oracle(instance, _current(instance))
+
+
+def test_git_encoding_change_invalidates_aliases_without_changing_evidence(tmp_path):
+    instance, _ = initialize_local(tmp_path)
+    _submit(instance, "first")
+    before = _current(instance)
+    instance._ledger._git(["config", "i18n.commitEncoding", "ISO-8859-1"])
+    after = _current(instance)
+    assert before.admissions == after.admissions
+    assert before.review_oids != after.review_oids
+    _assert_oracle(instance, after)
+    instance._ledger._git(["config", "--unset", "i18n.commitEncoding"])
+    assert _current(instance).review_oids == before.review_oids

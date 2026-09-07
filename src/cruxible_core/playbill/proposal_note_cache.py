@@ -23,13 +23,13 @@ from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.proposal_models import (
     ProposalAdmissionRecord,
     ProposalEvaluationRecord,
-    ProposalTransportProtocol,
 )
 from cruxible_core.playbill.candidate_review_summary import CandidateReviewSummary
 from cruxible_core.playbill.proposal_note_projection import ProposalNoteIndex
 from cruxible_core.playbill.proposal_notes import admission_bytes
 
 if TYPE_CHECKING:
+    from cruxible_core.playbill.git import GitLedger
     from cruxible_core.playbill.proposal_evidence import ProposalEvidenceStore
 
 # Bounds account for source bytes and record count, not Python heap overhead.
@@ -67,14 +67,14 @@ class ProposalNoteCache:
     def __init__(self) -> None:
         self._records: dict[Path, _Record] = {}
         self._index: ProposalNoteIndex | None = None
+        self._context: bytes | None = None
 
     def clear(self) -> None:
         self._records = {}
         self._index = None
+        self._context = None
 
-    def load(
-        self, evidence: ProposalEvidenceStore, transport: ProposalTransportProtocol
-    ) -> ProposalNoteIndex:
+    def load(self, evidence: ProposalEvidenceStore, transport: GitLedger) -> ProposalNoteIndex:
         records: dict[Path, _Record] = {}
 
         def inventory(
@@ -99,6 +99,7 @@ class ProposalNoteCache:
             return tuple(values)
 
         try:
+            context = transport.review_commit_context()
             admissions = inventory(evidence.proposals, ProposalAdmissionRecord, admission_bytes)
             evaluations = inventory(evidence.evaluations, ProposalEvaluationRecord)
             by_id = {r.proposal_id: r for r in evaluations}
@@ -127,7 +128,9 @@ class ProposalNoteCache:
             candidates = {
                 key: value for key, value in observed_candidates.items() if value is not None
             }
-            previous = self._index
+            # Alias derivation also depends on Git's commit encoding. A local
+            # config change must not leave otherwise identical evidence stale.
+            previous = self._index if self._context == context else None
             aliases = {} if previous is None else dict(previous.review_oids)
             groups = (
                 {}
@@ -187,6 +190,7 @@ class ProposalNoteCache:
             ):
                 self._records = records
                 self._index = index
+                self._context = context
             else:
                 self.clear()
             # Models contain nested mutable values. A caller cannot poison the
