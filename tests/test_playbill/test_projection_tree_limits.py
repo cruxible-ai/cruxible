@@ -65,3 +65,42 @@ def test_a_blob_one_byte_over_the_ceiling_is_still_refused(tmp_path: Path) -> No
 
     with pytest.raises(ProjectionFormatError, match="per-file byte limit"):
         _read(over, limits=TreeReadLimits(max_blob_bytes=len(body) - 1))
+
+
+@pytest.mark.parametrize("mode", ["100644", "120000"])
+def test_selection_reads_only_members_but_checks_unselected_metadata(tmp_path, mode):
+    other = "documents/unchanged.json"
+    repository = MemoryLedger(
+        tmp_path / "ledger",
+        {CAPTURE_PATH: b"changed", other: b"unchanged"},
+        modes={other: (mode, "blob")},
+    )
+    original = repository.read_blobs
+    requested = []
+
+    def read(oids):
+        result = original(oids)
+        requested.extend(result.values())
+        return result
+
+    repository.read_blobs = read
+    if mode == "120000":
+        with pytest.raises(ProjectionFormatError, match="symlink"):
+            read_registered_tree(
+                repository,
+                repository.oid,
+                limits=TreeReadLimits(),
+                artifact_kinds=P2_C_ARTIFACT_KINDS,
+                include_paths=frozenset({CAPTURE_PATH}),
+            )
+        assert requested == []
+    else:
+        blobs = read_registered_tree(
+            repository,
+            repository.oid,
+            limits=TreeReadLimits(),
+            artifact_kinds=P2_C_ARTIFACT_KINDS,
+            include_paths=frozenset({CAPTURE_PATH}),
+        )
+        assert [b.path for b in blobs] == [CAPTURE_PATH]
+        assert requested == [b"changed"]

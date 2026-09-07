@@ -69,6 +69,7 @@ def read_registered_tree(
     *,
     limits: TreeReadLimits,
     artifact_kinds: ArtifactKindRegistry,
+    include_paths: frozenset[str] | None = None,
 ) -> tuple[GitTreeBlob, ...]:
     """Read regular registered blobs only, with all metadata gates first."""
 
@@ -121,6 +122,9 @@ def read_registered_tree(
                 "ledger tree exceeds total-byte limit "
                 f"({declared_total} > {limits.max_total_bytes})"
             )
+
+    if include_paths is not None:
+        ordered_paths = [path for path in ordered_paths if path in include_paths]
 
     blobs: list[GitTreeBlob] = []
     cached = repository.read_blobs(

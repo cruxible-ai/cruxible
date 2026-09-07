@@ -7,7 +7,7 @@ import sys
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Final, Protocol, TypeVar
+from typing import TYPE_CHECKING, Final, Protocol, TypeVar
 
 from cruxible_client.contracts.errors import (
     ProjectionCoordinateError,
@@ -48,6 +48,9 @@ from cruxible_core.storage.playbill_projection import (
     physical_file_digest,
     projection_logical_digest,
 )
+
+if TYPE_CHECKING:
+    from cruxible_core.playbill.projection_delta import GenerationDelta
 
 try:  # `resource` is absent on Windows; instrumentation is optional there.
     import resource as _resource
@@ -261,6 +264,7 @@ class ProjectionAssembler:
         request: AssemblerRequest,
         *,
         crash_hook: ProjectionCrashHook | None = None,
+        delta: GenerationDelta | None = None,
     ) -> AssemblerResult:
         """Build, verify, and publish a complete one-piece projection manifest."""
 
@@ -273,71 +277,9 @@ class ProjectionAssembler:
         _fsync_directory(self.publication_directory)
         _checkpoint(PROJECTION_PREBUILD, "after", crash_hook)
 
-        blobs = _timed(
-            timings,
-            "git_traversal",
-            lambda: read_registered_tree(
-                self._repository,
-                request.git_oid,
-                limits=request.limits,
-                artifact_kinds=self.artifact_kinds,
-            ),
-        )
-        blob_map = {blob.path: blob.content for blob in blobs}
-        parsed = _timed(
-            timings,
-            "parse_normalize",
-            lambda: parse_projection_tree(
-                blob_map,
-                registry=self.registry,
-                artifact_kinds=self.artifact_kinds,
-                artifact_codec=self.artifact_codec,
-                bodies=self.bodies,
-                coordinate=request,
-                accepted_coordinates_by_sequence=self.accepted_coordinates_by_sequence,
-                claim_compilation_cache=self.claim_compilation_cache,
-            ),
-        )
-        if self.bodies is not None and self.registry.supports(
-            "playbill.citation_relation.use",
-            1,
-            classification="semantic",
-        ):
-            previous_uses, previous_conflicts, changed_claim_paths = self._citation_relation_delta(
-                request,
-                current_blob_oids={blob.path: blob.oid for blob in blobs},
-            )
-            parsed = parsed.__class__(
-                envelopes=parsed.envelopes,
-                pins=parsed.pins,
-                retired_identities=parsed.retired_identities,
-                semantic_facts=(
-                    *parsed.semantic_facts,
-                    *build_citation_relation_facts(
-                        blob_map,
-                        bodies=self.bodies,
-                        previous_use_facts=previous_uses,
-                        previous_conflict_facts=previous_conflicts,
-                        changed_claim_paths=changed_claim_paths,
-                    ),
-                ),
-                presentation_facts=parsed.presentation_facts,
-            )
-        parsed = _timed(timings, "sort", lambda: _sorted_projection_tree(parsed))
-
         piece_name = projection_piece_name(request)
         staged_piece = staging / piece_name
-        row_counts = _timed(
-            timings,
-            "sqlite_load",
-            lambda: initialize_projection_database(
-                staged_piece,
-                request=request,
-                parsed=parsed,
-                registry=self.registry,
-                assembler_implementation=PYTHON_REFERENCE_ASSEMBLER,
-            ),
-        )
+        row_counts = self._populate_database(request, staged_piece, timings, delta)
         os.chmod(staged_piece, 0o400)
 
         def fsync_piece() -> None:
@@ -432,6 +374,89 @@ class ProjectionAssembler:
             ),
         )
 
+    def _populate_database(
+        self,
+        request: AssemblerRequest,
+        staged_piece: Path,
+        timings: dict[str, int],
+        delta: GenerationDelta | None,
+    ) -> dict[str, int]:
+        if delta is not None:
+            from cruxible_core.playbill.projection_delta import populate_successor
+
+            result = populate_successor(
+                self,
+                request=request,
+                destination=staged_piece,
+                delta=delta,
+                timings=timings,
+            )
+            if result is not None:
+                return result
+        blobs = _timed(
+            timings,
+            "git_traversal",
+            lambda: read_registered_tree(
+                self._repository,
+                request.git_oid,
+                limits=request.limits,
+                artifact_kinds=self.artifact_kinds,
+            ),
+        )
+        blob_map = {blob.path: blob.content for blob in blobs}
+        parsed = _timed(
+            timings,
+            "parse_normalize",
+            lambda: parse_projection_tree(
+                blob_map,
+                registry=self.registry,
+                artifact_kinds=self.artifact_kinds,
+                artifact_codec=self.artifact_codec,
+                bodies=self.bodies,
+                coordinate=request,
+                accepted_coordinates_by_sequence=self.accepted_coordinates_by_sequence,
+                claim_compilation_cache=self.claim_compilation_cache,
+            ),
+        )
+        if self.bodies is not None and self.registry.supports(
+            "playbill.citation_relation.use",
+            1,
+            classification="semantic",
+        ):
+            previous_uses, previous_conflicts, changed_claim_paths = self._citation_relation_delta(
+                request,
+                current_blob_oids={blob.path: blob.oid for blob in blobs},
+            )
+            parsed = parsed.__class__(
+                envelopes=parsed.envelopes,
+                pins=parsed.pins,
+                retired_identities=parsed.retired_identities,
+                semantic_facts=(
+                    *parsed.semantic_facts,
+                    *build_citation_relation_facts(
+                        blob_map,
+                        bodies=self.bodies,
+                        previous_use_facts=previous_uses,
+                        previous_conflict_facts=previous_conflicts,
+                        changed_claim_paths=changed_claim_paths,
+                    ),
+                ),
+                presentation_facts=parsed.presentation_facts,
+            )
+        parsed = _timed(timings, "sort", lambda: _sorted_projection_tree(parsed))
+
+        return _timed(
+            timings,
+            "sqlite_load",
+            lambda: initialize_projection_database(
+                staged_piece,
+                request=request,
+                parsed=parsed,
+                registry=self.registry,
+                assembler_implementation=PYTHON_REFERENCE_ASSEMBLER,
+            ),
+        )
+
     def _citation_relation_delta(
         self,
         request: AssemblerRequest,
@@ -494,11 +519,9 @@ class ProjectionAssembler:
             path: oid for path, oid in current_blob_oids.items() if path.startswith("claims/")
         }
         if not parent_manifest.is_file():
-            if not parent_blob_oids:
-                return (), (), frozenset(current_claim_oids)
-            raise ProjectionIntegrityError(
-                "candidate relation projection requires its published accepted parent"
-            )
+            # A missing derivative is recoverable from the full candidate tree.
+            # None asks the relation compiler to visit every Claim and Capture.
+            return (), (), None
         with bind_projection(parent_manifest, expected=parent_coordinate) as projection:
             previous = projection.semantic_facts("playbill.citation_relation.use")
             previous_conflicts = projection.semantic_facts(

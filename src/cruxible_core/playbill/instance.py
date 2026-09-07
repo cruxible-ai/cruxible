@@ -1471,6 +1471,11 @@ class PlaybillInstance:
             checkpoint_interval=DEFAULT_CHECKPOINT_INTERVAL,
             genesis=self.descriptor.genesis,
             claim_compilation_cache=self._claim_compilation_cache,
+            verified_change_sets=tuple(
+                (f"changesets/cs-{generation.record.sequence:020d}.json", generation.record)
+                for generation in self._recovered.history
+                if generation.record is not None
+            ),
         )
 
     def prepare_generation(

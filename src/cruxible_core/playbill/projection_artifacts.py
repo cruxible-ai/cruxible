@@ -774,6 +774,7 @@ def parse_projection_tree(
     coordinate: ProjectionCoordinateContext | None = None,
     accepted_coordinates_by_sequence: Mapping[int, AcceptedCoordinate] | None = None,
     claim_compilation_cache: ClaimCompilationCache | None = None,
+    verified_change_sets: tuple[tuple[str, ChangeSetRecordAnyVersion], ...] | None = None,
 ) -> ParsedProjectionTree:
     """Parse all registered blobs and produce one sorted, typed row stream."""
 
@@ -801,23 +802,28 @@ def parse_projection_tree(
     identities: dict[str, str] = {}
     change_sets: list[tuple[str, ChangeSetRecordAnyVersion]] = []
 
-    for path in sorted(blobs, key=lambda item: item.encode("utf-8")):
-        if is_candidate_card_path(path):
-            continue
-        if registered_path_kind(path, artifact_kinds=artifact_kinds) != "changeset":
-            continue
-        content = blobs[path]
-        payload = _load_object(content, path=path)
-        try:
-            record = parse_change_set_record(content, path=path)
-        except SettlementIntegrityError as exc:
-            raise ProjectionFormatError(
-                f"change-set record failed strict validation: {path}"
-            ) from exc
-        expected_path = f"changesets/cs-{record.sequence:020d}.json"
-        if path != expected_path:
-            raise ProjectionFormatError("change-set sequence differs from its canonical path")
-        change_sets.append((path, record))
+    if verified_change_sets is not None:
+        # Internal activation supplies the already verified parent prefix plus
+        # its verified successor. Public/recovery parsing always uses blob bytes.
+        change_sets = list(verified_change_sets)
+    else:
+        for path in sorted(blobs, key=lambda item: item.encode("utf-8")):
+            if is_candidate_card_path(path):
+                continue
+            if registered_path_kind(path, artifact_kinds=artifact_kinds) != "changeset":
+                continue
+            content = blobs[path]
+            payload = _load_object(content, path=path)
+            try:
+                record = parse_change_set_record(content, path=path)
+            except SettlementIntegrityError as exc:
+                raise ProjectionFormatError(
+                    f"change-set record failed strict validation: {path}"
+                ) from exc
+            expected_path = f"changesets/cs-{record.sequence:020d}.json"
+            if path != expected_path:
+                raise ProjectionFormatError("change-set sequence differs from its canonical path")
+            change_sets.append((path, record))
     if [record.sequence for _path, record in change_sets] != list(range(1, len(change_sets) + 1)):
         raise ProjectionFormatError("change-set history must be contiguous from sequence one")
     accepted_change_sets = tuple(change_sets)

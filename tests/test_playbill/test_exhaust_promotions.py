@@ -221,7 +221,9 @@ def test_only_accepted_promotion_produces_canonical_track_record_fact(tmp_path) 
     assert facts[0].value["output"] == output
 
 
-def test_promotion_passes_proposal_replay_and_projects_canonical_output(tmp_path) -> None:
+def test_promotion_passes_proposal_replay_and_projects_canonical_output(
+    tmp_path, monkeypatch
+) -> None:
     instance, owner = initialize_local(tmp_path)
     base_procedure = _accepted().procedure.model_copy(update={})
     accepted_procedure = AcceptedProcedureV1(
@@ -360,3 +362,66 @@ def test_promotion_passes_proposal_replay_and_projects_canonical_output(tmp_path
     projected = json.loads(row[0])
     assert projected["output"] == output
     assert projected["output_digest"] == {"$digest": output_digest}
+
+    # An unrelated delta must preserve this promotion's output and its original
+    # accepting coordinate. Compare all rows against a ledger-only rebuild.
+    from cruxible_core.playbill import projection_delta as delta_module
+    from cruxible_core.playbill.assembler import ProjectionAssembler
+    from tests.test_playbill.test_projection_delta import _rows
+
+    update = delta_module.update_projection_database
+    updates = []
+
+    def tracked(*args, **kwargs):
+        result = update(*args, **kwargs)
+        updates.append(kwargs["changed_paths"])
+        return result
+
+    monkeypatch.setattr(delta_module, "update_projection_database", tracked)
+    from cruxible_client.contracts.documents import (
+        DocumentAuthority,
+        DocumentLifecycle,
+        DocumentShell,
+        render_document,
+    )
+
+    body = instance.store_document_body(b"unrelated accepted state\n")
+    document = DocumentShell(
+        identity="document:unrelated",
+        document_kind="note",
+        title="Unrelated",
+        media_type="text/plain",
+        body_digest=body.digest,
+        authority=DocumentAuthority(required_tier="governed_write"),
+        governance_scope=("project:test",),
+        lifecycle=DocumentLifecycle(revision=1),
+    )
+    _accept_tree(
+        instance,
+        owner,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            "documents/unrelated.json": render_document(document),
+        },
+        timestamp="2026-08-17T17:00:00.000000Z",
+        proposal_name="unrelated-document",
+    )
+    assert updates == [frozenset({"documents/unrelated.json"})]
+    with bind_current_projection(publication, expected=instance.accepted_coordinate()) as handle:
+        facts = handle.semantic_facts("playbill.procedure.track_record")
+        assert len(facts) == 1
+        assert facts[0].value == projected
+        expected_rows = _rows(handle.index_path)
+    cold_directory = tmp_path / "cold-rebuild"
+    cold_directory.mkdir()
+    assembler = ProjectionAssembler(
+        instance._ledger,
+        accepted=instance.accepted_coordinate(),
+        publication_directory=cold_directory,
+        bodies=instance.body_store(),
+        accepted_coordinates_by_sequence=instance._accepted_coordinates_by_sequence(),
+    )
+    cold = assembler.assemble(
+        assembler.request(output_staging_directory=cold_directory / ".stage-cold")
+    )
+    assert _rows(cold_directory / cold.manifest.pieces[0].name) == expected_rows

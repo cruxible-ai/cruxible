@@ -29,6 +29,7 @@ from cruxible_core.playbill.serving import (
     remove_exact_projection_build,
 )
 from cruxible_core.playbill.settlement import (
+    ChangeSetRecordAnyVersion,
     VerifiedGenerationBundle,
     render_generation_descriptor,
 )
@@ -83,6 +84,7 @@ class ActivationPublisher:
         checkpoint_interval: int = DEFAULT_CHECKPOINT_INTERVAL,
         genesis: GenesisCoordinate | None = None,
         claim_compilation_cache: ClaimCompilationCache | None = None,
+        verified_change_sets: tuple[tuple[str, ChangeSetRecordAnyVersion], ...] | None = None,
     ) -> None:
         if checkpoint_interval < 1:
             raise SettlementIntegrityError("checkpoint interval must be at least one generation")
@@ -95,6 +97,7 @@ class ActivationPublisher:
         self.checkpoint_interval = checkpoint_interval
         self.genesis = genesis
         self.claim_compilation_cache = claim_compilation_cache
+        self.verified_change_sets = verified_change_sets
 
     def prebuild(
         self,
@@ -129,9 +132,17 @@ class ActivationPublisher:
             claim_compilation_cache=self.claim_compilation_cache,
         )
         stage = self.publication_directory / f".stage-{secrets.token_hex(12)}"
+        from cruxible_core.playbill.projection_delta import GenerationDelta
+
+        delta = (
+            GenerationDelta(base, bundle, self.verified_change_sets)
+            if self.verified_change_sets is not None
+            else None
+        )
         return assembler.assemble(
             assembler.request(output_staging_directory=stage),
             crash_hook=crash_hook,
+            delta=delta,
         )
 
     def activate(

@@ -309,6 +309,201 @@ def _canonical_json_text(value: object) -> str:
     return canonical_bytes(value).decode("utf-8")
 
 
+def update_projection_database(
+    path: Path,
+    *,
+    parent: ProjectionHandle,
+    request: AssemblerRequest,
+    parsed: ParsedProjectionTree,
+    changed_paths: frozenset[str],
+    relation_facts: tuple[ProjectionFact, ...] | None,
+) -> dict[str, int]:
+    """Copy a verified immutable parent and replace only changeset-owned rows.
+
+    Coordinate-bearing explanation facts retain their frozen wire shape. Their
+    binding is rewritten explicitly; arbitrary embedded evidence is never searched
+    and replaced. The source database and all historical readers remain untouched.
+    """
+    connection = sqlite3.connect(path)
+    try:
+        parent._connection.backup(connection)
+        connection.execute("PRAGMA journal_mode=DELETE")
+        connection.execute("PRAGMA synchronous=FULL")
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("BEGIN IMMEDIATE")
+        old_identities = [
+            row[0]
+            for artifact_path in sorted(changed_paths)
+            for row in connection.execute(
+                "SELECT identity FROM artifact_envelopes WHERE path=?", (artifact_path,)
+            )
+        ]
+        for identity in old_identities:
+            for table, column in (
+                ("semantic_facts", "subject_identity"),
+                ("presentation_facts", "subject_identity"),
+                ("pins", "source_identity"),
+                ("live_identities", "identity"),
+                ("artifact_envelopes", "identity"),
+            ):
+                if table == "semantic_facts":
+                    # Track records belong to an ExhaustPromotion, even though
+                    # their query subject is the affected Procedure or Line.
+                    connection.execute(
+                        "DELETE FROM semantic_facts WHERE subject_identity=? AND "
+                        "schema_id NOT IN ('playbill.procedure.track_record', "
+                        "'playbill.line.track_record')",
+                        (identity,),
+                    )
+                else:
+                    connection.execute(f"DELETE FROM {table} WHERE {column}=?", (identity,))
+
+        def binding(
+            coordinate: AcceptedProjectionCoordinate | AssemblerRequest,
+        ) -> dict[str, object]:
+            compiler = (
+                coordinate.compiler.rule_digest
+                if isinstance(coordinate, AcceptedProjectionCoordinate)
+                else coordinate.compiler_digest
+            )
+            return {
+                "compiler_digest": {"$digest": compiler},
+                "generation_root": {"$digest": coordinate.generation_root},
+                "git_object_format": coordinate.git_object_format,
+                "git_oid": coordinate.git_oid,
+                "instance_id": coordinate.instance_id,
+                "semantic_root": {"$digest": coordinate.semantic_root},
+            }
+
+        old_binding, new_binding = binding(parent.accepted), binding(request)
+
+        def rebind(raw: str) -> str:
+            value = json.loads(raw)
+            proofs = [item["proof_ref"] for item in value.get("basis", [])]
+            if "proof_ref" in value:
+                proofs.append(value["proof_ref"])
+            if "coverage_binding" in value:
+                proofs.append(value["coverage_binding"]["proof_ref"])
+            for proof in proofs:
+                if proof["accepted_coordinate"] != old_binding:
+                    raise ProjectionIntegrityError("carried explanation has another coordinate")
+                proof["accepted_coordinate"] = new_binding
+            # Input is previously normalized compiler output; only typed coordinate
+            # fields changed. Preserve canonical text without re-normalizing evidence.
+            return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+        connection.create_function("playbill_rebind", 1, rebind)
+        for family in (
+            "document",
+            "subject",
+            "claim_type",
+            "procedure",
+            "line",
+            "query_definition",
+            "claim",
+        ):
+            for suffix in ("governance", "provenance", "attestation_coverage", "history"):
+                connection.execute(
+                    "UPDATE semantic_facts SET value_json=playbill_rebind(value_json) "
+                    "WHERE schema_id=? AND schema_version=1",
+                    (f"playbill.{family}.{suffix}",),
+                )
+        connection.executemany(
+            "INSERT INTO artifact_envelopes VALUES (?,?,?,?,?,?,?)",
+            [
+                (
+                    r.identity,
+                    r.kind,
+                    r.format_tag,
+                    r.path,
+                    r.artifact_digest,
+                    r.predecessor_digest,
+                    r.revision,
+                )
+                for r in parsed.envelopes
+            ],
+        )
+        retired = frozenset(parsed.retired_identities)
+        connection.executemany(
+            "INSERT INTO live_identities VALUES (?,?,?)",
+            [
+                (r.identity, r.artifact_digest, r.path)
+                for r in parsed.envelopes
+                if r.identity not in retired
+            ],
+        )
+        connection.executemany(
+            "INSERT INTO pins VALUES (?,?,?)",
+            [(r.source_identity, r.target_identity, r.target_digest) for r in parsed.pins],
+        )
+        for table, facts in (
+            ("semantic_facts", parsed.semantic_facts),
+            ("presentation_facts", parsed.presentation_facts),
+        ):
+            connection.executemany(
+                f"INSERT INTO {table} VALUES (?,?,?,?,?)",
+                [
+                    (
+                        f.schema_id,
+                        f.schema_version,
+                        f.subject_identity,
+                        f.fact_key,
+                        _canonical_json_text(f.value),
+                    )
+                    for f in facts
+                ],
+            )
+        if relation_facts is not None:
+            connection.execute(
+                "DELETE FROM semantic_facts WHERE schema_id IN (?,?,?,?,?)",
+                (
+                    "playbill.citation_relation.capture_contract",
+                    "playbill.citation_relation.source_use",
+                    "playbill.citation_relation.external_use",
+                    "playbill.citation_relation.use",
+                    "playbill.citation_relation.retired_conflict",
+                ),
+            )
+            connection.executemany(
+                "INSERT INTO semantic_facts VALUES (?,?,?,?,?)",
+                [
+                    (
+                        f.schema_id,
+                        f.schema_version,
+                        f.subject_identity,
+                        f.fact_key,
+                        _canonical_json_text(f.value),
+                    )
+                    for f in relation_facts
+                ],
+            )
+        connection.execute(
+            "UPDATE generation_metadata SET instance_id=?,git_object_format=?,git_oid=?,"
+            "semantic_root=?,generation_root=? WHERE singleton=1",
+            (
+                request.instance_id,
+                request.git_object_format,
+                request.git_oid,
+                request.semantic_root,
+                request.generation_root,
+            ),
+        )
+        connection.commit()
+        _verify_projection_schema(connection)
+        if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
+            raise ProjectionIntegrityError("successor projection failed SQLite integrity_check")
+        return dict(
+            sorted(
+                (spec.name, connection.execute(f"SELECT COUNT(*) FROM {spec.name}").fetchone()[0])
+                for spec in _TABLE_SPECS
+            )
+        )
+    except sqlite3.DatabaseError as exc:
+        raise ProjectionIntegrityError("failed to update the SQLite projection") from exc
+    finally:
+        connection.close()
+
+
 def initialize_projection_database(
     path: Path,
     *,
