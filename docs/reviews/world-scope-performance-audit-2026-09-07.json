@@ -1,0 +1,710 @@
+{
+  "code_head": "0e39fea7f866fb83ae2bca644cdf018b63422c6a",
+  "method": "cProfile attribution in private program replay; review and evaluation caches warm, fresh common draft; no attachment/HTTP. Profiling perturbs Python costs disproportionately: cumulative times overlap and must not be summed or treated as unprofiled latency percentages. Initial lowering is per fresh intent, not a repeat lowering-cache hit.",
+  "operations": {
+    "seven_member_submit_s": {
+      "profile_total_seconds": 4.574779580000005,
+      "selected_functions": [
+        {
+          "file": "src/cruxible_core/playbill/authoring/preflight.py",
+          "line": 715,
+          "function": "compute_preflight",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.000304247,
+          "cumulative_seconds": 1.9003291670000002
+        },
+        {
+          "file": "src/cruxible_core/playbill/proposals.py",
+          "line": 3463,
+          "function": "evaluate_proposal_tree",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.001096084,
+          "cumulative_seconds": 1.657628126
+        },
+        {
+          "file": "src/cruxible_core/playbill/evaluation_state_cache.py",
+          "line": 40,
+          "function": "derive",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.0032489560000000003,
+          "cumulative_seconds": 0.952498167
+        },
+        {
+          "file": "copy.py",
+          "line": 119,
+          "function": "deepcopy",
+          "primitive_calls": 13,
+          "total_calls": 675659,
+          "self_seconds": 0.40706279700000003,
+          "cumulative_seconds": 0.934470083
+        },
+        {
+          "file": "src/cruxible_client/contracts/claims.py",
+          "line": 699,
+          "function": "parse_claim",
+          "primitive_calls": 1734,
+          "total_calls": 1734,
+          "self_seconds": 0.003870731,
+          "cumulative_seconds": 0.9129228490000001
+        },
+        {
+          "file": "src/cruxible_core/playbill/authoring/lowering.py",
+          "line": 453,
+          "function": "_replace",
+          "primitive_calls": 4318,
+          "total_calls": 4318,
+          "self_seconds": 0.004822367,
+          "cumulative_seconds": 0.872636551
+        },
+        {
+          "file": "src/cruxible_core/playbill/authoring/lowering.py",
+          "line": 479,
+          "function": "claims_for",
+          "primitive_calls": 5,
+          "total_calls": 5,
+          "self_seconds": 0.0007297400000000001,
+          "cumulative_seconds": 0.87044171
+        },
+        {
+          "file": "src/cruxible_core/playbill/git.py",
+          "line": 335,
+          "function": "_write_tree",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.006673170000000001,
+          "cumulative_seconds": 0.7546572920000001
+        },
+        {
+          "file": "src/cruxible_core/playbill/git.py",
+          "line": 1252,
+          "function": "read_tree",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.000966178,
+          "cumulative_seconds": 0.439417292
+        },
+        {
+          "file": "src/cruxible_core/playbill/proposals.py",
+          "line": 400,
+          "function": "validate_proposal_tree",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.008459887000000001,
+          "cumulative_seconds": 0.20355170900000003
+        },
+        {
+          "file": "src/cruxible_core/playbill/proposals.py",
+          "line": 2720,
+          "function": "_resolved_artifacts",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.001960713,
+          "cumulative_seconds": 0.1590245
+        },
+        {
+          "file": "src/cruxible_client/contracts/canonical.py",
+          "line": 451,
+          "function": "semantic_projection",
+          "primitive_calls": 8,
+          "total_calls": 8,
+          "self_seconds": 0.015575108,
+          "cumulative_seconds": 0.145718081
+        },
+        {
+          "file": "src/cruxible_client/contracts/claim_attestations.py",
+          "line": 192,
+          "function": "accepted_referent_coordinates_from_tree",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.010795794000000001,
+          "cumulative_seconds": 0.12795383300000002
+        },
+        {
+          "file": "src/cruxible_core/playbill/proposal_note_cache.py",
+          "line": 77,
+          "function": "load",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.0007400070000000001,
+          "cumulative_seconds": 0.122398375
+        },
+        {
+          "file": "src/cruxible_core/playbill/proposals.py",
+          "line": 1422,
+          "function": "advance_tree_members",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 9.3751e-05,
+          "cumulative_seconds": 0.118547542
+        },
+        {
+          "file": "src/cruxible_core/playbill/closure.py",
+          "line": 848,
+          "function": "update_dependency_index",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.0008863710000000001,
+          "cumulative_seconds": 0.046875166
+        },
+        {
+          "file": "src/cruxible_core/playbill/claim_subject_index.py",
+          "line": 31,
+          "function": "update_claim_subject_index",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.000120958,
+          "cumulative_seconds": 0.008614166000000001
+        },
+        {
+          "file": "src/cruxible_client/contracts/merkle.py",
+          "line": 276,
+          "function": "update_merkle_tree",
+          "primitive_calls": 4,
+          "total_calls": 4,
+          "self_seconds": 0.000234001,
+          "cumulative_seconds": 0.0066353340000000005
+        }
+      ]
+    },
+    "seven_member_accept_s": {
+      "profile_total_seconds": 6.468481697999993,
+      "selected_functions": [
+        {
+          "file": "src/cruxible_core/playbill/projection_delta.py",
+          "line": 85,
+          "function": "populate_successor",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.00023467300000000002,
+          "cumulative_seconds": 2.3733781250000003
+        },
+        {
+          "file": "src/cruxible_core/playbill/git.py",
+          "line": 1252,
+          "function": "read_tree",
+          "primitive_calls": 3,
+          "total_calls": 3,
+          "self_seconds": 0.002846949,
+          "cumulative_seconds": 1.2950867080000001
+        },
+        {
+          "file": "src/cruxible_core/playbill/proposals.py",
+          "line": 3463,
+          "function": "evaluate_proposal_tree",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.0013565,
+          "cumulative_seconds": 0.831564708
+        },
+        {
+          "file": "src/cruxible_core/playbill/citation_relations.py",
+          "line": 139,
+          "function": "build_citation_relation_facts",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.012800584,
+          "cumulative_seconds": 0.820098167
+        },
+        {
+          "file": "src/cruxible_core/storage/playbill_projection.py",
+          "line": 312,
+          "function": "update_projection_database",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.002601859,
+          "cumulative_seconds": 0.8027583340000001
+        },
+        {
+          "file": "src/cruxible_core/storage/playbill_projection.py",
+          "line": 709,
+          "function": "projection_logical_digest",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.008535333,
+          "cumulative_seconds": 0.756114999
+        },
+        {
+          "file": "src/cruxible_core/playbill/evaluation_state_cache.py",
+          "line": 40,
+          "function": "derive",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.0021348350000000003,
+          "cumulative_seconds": 0.482510625
+        },
+        {
+          "file": "src/cruxible_core/storage/playbill_projection.py",
+          "line": 1067,
+          "function": "bind_projection",
+          "primitive_calls": 3,
+          "total_calls": 3,
+          "self_seconds": 0.00022717600000000002,
+          "cumulative_seconds": 0.474011208
+        },
+        {
+          "file": "copy.py",
+          "line": 119,
+          "function": "deepcopy",
+          "primitive_calls": 6,
+          "total_calls": 332055,
+          "self_seconds": 0.19988671300000002,
+          "cumulative_seconds": 0.46811141700000003
+        },
+        {
+          "file": "src/cruxible_core/playbill/git.py",
+          "line": 335,
+          "function": "_write_tree",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.0029726,
+          "cumulative_seconds": 0.353206958
+        },
+        {
+          "file": "src/cruxible_core/storage/playbill_projection.py",
+          "line": 783,
+          "function": "semantic_facts",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.00045550500000000004,
+          "cumulative_seconds": 0.26327712600000003
+        },
+        {
+          "file": "src/cruxible_core/storage/playbill_projection.py",
+          "line": 380,
+          "function": "rebind",
+          "primitive_calls": 8448,
+          "total_calls": 8448,
+          "self_seconds": 0.012086581,
+          "cumulative_seconds": 0.168196279
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'backup' of 'sqlite3.Connection' objects>",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.09400604200000001,
+          "cumulative_seconds": 0.09400604200000001
+        },
+        {
+          "file": "src/cruxible_core/playbill/proposals.py",
+          "line": 2720,
+          "function": "_resolved_artifacts",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.000938536,
+          "cumulative_seconds": 0.080402375
+        },
+        {
+          "file": "src/cruxible_client/contracts/canonical.py",
+          "line": 451,
+          "function": "semantic_projection",
+          "primitive_calls": 4,
+          "total_calls": 4,
+          "self_seconds": 0.007565303000000001,
+          "cumulative_seconds": 0.07235274900000001
+        },
+        {
+          "file": "src/cruxible_client/contracts/claim_attestations.py",
+          "line": 192,
+          "function": "accepted_referent_coordinates_from_tree",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.005195282000000001,
+          "cumulative_seconds": 0.062037542
+        },
+        {
+          "file": "src/cruxible_core/playbill/proposals.py",
+          "line": 1422,
+          "function": "advance_tree_members",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 4.5792000000000005e-05,
+          "cumulative_seconds": 0.058221292
+        },
+        {
+          "file": "src/cruxible_core/playbill/proposal_note_cache.py",
+          "line": 77,
+          "function": "load",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.00045707600000000005,
+          "cumulative_seconds": 0.047399541
+        },
+        {
+          "file": "src/cruxible_core/storage/playbill_projection.py",
+          "line": 717,
+          "function": "physical_file_digest",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 7.8201e-05,
+          "cumulative_seconds": 0.041930958000000004
+        },
+        {
+          "file": "src/cruxible_client/contracts/claims.py",
+          "line": 699,
+          "function": "parse_claim",
+          "primitive_calls": 34,
+          "total_calls": 34,
+          "self_seconds": 0.000126329,
+          "cumulative_seconds": 0.029975458000000003
+        },
+        {
+          "file": "src/cruxible_core/playbill/closure.py",
+          "line": 848,
+          "function": "update_dependency_index",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.00042858400000000003,
+          "cumulative_seconds": 0.022840958
+        },
+        {
+          "file": "src/cruxible_core/playbill/claim_subject_index.py",
+          "line": 31,
+          "function": "update_claim_subject_index",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 6.1462e-05,
+          "cumulative_seconds": 0.004370958
+        },
+        {
+          "file": "src/cruxible_client/contracts/merkle.py",
+          "line": 276,
+          "function": "update_merkle_tree",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.00010442100000000001,
+          "cumulative_seconds": 0.003215667
+        }
+      ]
+    },
+    "document_submit_s": {
+      "profile_total_seconds": 3.1868506519999964,
+      "selected_functions": [
+        {
+          "file": "src/cruxible_core/playbill/git.py",
+          "line": 1252,
+          "function": "read_tree",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.001959569,
+          "cumulative_seconds": 0.901268708
+        },
+        {
+          "file": "src/cruxible_core/playbill/git.py",
+          "line": 335,
+          "function": "_write_tree",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.00917481,
+          "cumulative_seconds": 0.834205375
+        },
+        {
+          "file": "src/cruxible_core/playbill/proposals.py",
+          "line": 3463,
+          "function": "evaluate_proposal_tree",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.00037521,
+          "cumulative_seconds": 0.818961959
+        },
+        {
+          "file": "src/cruxible_core/playbill/evaluation_state_cache.py",
+          "line": 40,
+          "function": "derive",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.001601874,
+          "cumulative_seconds": 0.5563322500000001
+        },
+        {
+          "file": "copy.py",
+          "line": 119,
+          "function": "deepcopy",
+          "primitive_calls": 3,
+          "total_calls": 336738,
+          "self_seconds": 0.20428169300000001,
+          "cumulative_seconds": 0.47199262500000005
+        },
+        {
+          "file": "src/cruxible_core/playbill/proposals.py",
+          "line": 400,
+          "function": "validate_proposal_tree",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.006107401,
+          "cumulative_seconds": 0.12016916700000001
+        },
+        {
+          "file": "src/cruxible_core/playbill/proposal_note_cache.py",
+          "line": 77,
+          "function": "load",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.000698768,
+          "cumulative_seconds": 0.10837125
+        },
+        {
+          "file": "src/cruxible_client/contracts/canonical.py",
+          "line": 451,
+          "function": "semantic_projection",
+          "primitive_calls": 7,
+          "total_calls": 7,
+          "self_seconds": 0.011223458,
+          "cumulative_seconds": 0.100411832
+        },
+        {
+          "file": "src/cruxible_core/playbill/proposals.py",
+          "line": 1422,
+          "function": "advance_tree_members",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 6.741700000000001e-05,
+          "cumulative_seconds": 0.09702300000000001
+        },
+        {
+          "file": "src/cruxible_core/playbill/proposals.py",
+          "line": 2720,
+          "function": "_resolved_artifacts",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.001793438,
+          "cumulative_seconds": 0.083515375
+        },
+        {
+          "file": "src/cruxible_client/contracts/claim_attestations.py",
+          "line": 192,
+          "function": "accepted_referent_coordinates_from_tree",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.005381734,
+          "cumulative_seconds": 0.06591158300000001
+        },
+        {
+          "file": "src/cruxible_core/playbill/closure.py",
+          "line": 848,
+          "function": "update_dependency_index",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.00113238,
+          "cumulative_seconds": 0.023955459000000002
+        },
+        {
+          "file": "src/cruxible_core/playbill/claim_subject_index.py",
+          "line": 31,
+          "function": "update_claim_subject_index",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 9.6372e-05,
+          "cumulative_seconds": 0.004438500000000001
+        },
+        {
+          "file": "src/cruxible_client/contracts/claims.py",
+          "line": 699,
+          "function": "parse_claim",
+          "primitive_calls": 5,
+          "total_calls": 5,
+          "self_seconds": 2.1877e-05,
+          "cumulative_seconds": 0.004323792
+        },
+        {
+          "file": "src/cruxible_client/contracts/merkle.py",
+          "line": 276,
+          "function": "update_merkle_tree",
+          "primitive_calls": 4,
+          "total_calls": 4,
+          "self_seconds": 0.000265328,
+          "cumulative_seconds": 0.0036776660000000004
+        }
+      ]
+    },
+    "document_accept_s": {
+      "profile_total_seconds": 4.657426832999997,
+      "selected_functions": [
+        {
+          "file": "src/cruxible_core/playbill/git.py",
+          "line": 1252,
+          "function": "read_tree",
+          "primitive_calls": 3,
+          "total_calls": 3,
+          "self_seconds": 0.0031780650000000003,
+          "cumulative_seconds": 1.3087496250000001
+        },
+        {
+          "file": "src/cruxible_core/storage/playbill_projection.py",
+          "line": 709,
+          "function": "projection_logical_digest",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.008541334000000001,
+          "cumulative_seconds": 0.758451042
+        },
+        {
+          "file": "src/cruxible_core/playbill/projection_delta.py",
+          "line": 85,
+          "function": "populate_successor",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 7.292500000000001e-05,
+          "cumulative_seconds": 0.7404810000000001
+        },
+        {
+          "file": "src/cruxible_core/playbill/proposals.py",
+          "line": 3463,
+          "function": "evaluate_proposal_tree",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.001146583,
+          "cumulative_seconds": 0.7395587090000001
+        },
+        {
+          "file": "src/cruxible_core/storage/playbill_projection.py",
+          "line": 1067,
+          "function": "bind_projection",
+          "primitive_calls": 3,
+          "total_calls": 3,
+          "self_seconds": 0.00016100200000000001,
+          "cumulative_seconds": 0.49069341600000005
+        },
+        {
+          "file": "src/cruxible_core/playbill/evaluation_state_cache.py",
+          "line": 40,
+          "function": "derive",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.002027709,
+          "cumulative_seconds": 0.478091792
+        },
+        {
+          "file": "copy.py",
+          "line": 119,
+          "function": "deepcopy",
+          "primitive_calls": 6,
+          "total_calls": 332600,
+          "self_seconds": 0.20281241000000003,
+          "cumulative_seconds": 0.46348374900000006
+        },
+        {
+          "file": "src/cruxible_core/storage/playbill_projection.py",
+          "line": 312,
+          "function": "update_projection_database",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 7.238000000000001e-05,
+          "cumulative_seconds": 0.36193162500000003
+        },
+        {
+          "file": "src/cruxible_core/playbill/git.py",
+          "line": 335,
+          "function": "_write_tree",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.004397366000000001,
+          "cumulative_seconds": 0.352734541
+        },
+        {
+          "file": "src/cruxible_core/storage/playbill_projection.py",
+          "line": 380,
+          "function": "rebind",
+          "primitive_calls": 8476,
+          "total_calls": 8476,
+          "self_seconds": 0.011888568,
+          "cumulative_seconds": 0.168303546
+        },
+        {
+          "file": "src/cruxible_core/playbill/proposals.py",
+          "line": 2720,
+          "function": "_resolved_artifacts",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.0008999440000000001,
+          "cumulative_seconds": 0.07951962500000001
+        },
+        {
+          "file": "src/cruxible_client/contracts/canonical.py",
+          "line": 451,
+          "function": "semantic_projection",
+          "primitive_calls": 4,
+          "total_calls": 4,
+          "self_seconds": 0.007149905000000001,
+          "cumulative_seconds": 0.07189625000000001
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'backup' of 'sqlite3.Connection' objects>",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.071393833,
+          "cumulative_seconds": 0.071393833
+        },
+        {
+          "file": "src/cruxible_client/contracts/claim_attestations.py",
+          "line": 192,
+          "function": "accepted_referent_coordinates_from_tree",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.005259901,
+          "cumulative_seconds": 0.064603042
+        },
+        {
+          "file": "src/cruxible_core/playbill/proposals.py",
+          "line": 1422,
+          "function": "advance_tree_members",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 4.2793e-05,
+          "cumulative_seconds": 0.056656167
+        },
+        {
+          "file": "src/cruxible_core/playbill/proposal_note_cache.py",
+          "line": 77,
+          "function": "load",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.000301958,
+          "cumulative_seconds": 0.044326250000000005
+        },
+        {
+          "file": "src/cruxible_core/storage/playbill_projection.py",
+          "line": 717,
+          "function": "physical_file_digest",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 7.2124e-05,
+          "cumulative_seconds": 0.042231418
+        },
+        {
+          "file": "src/cruxible_core/playbill/closure.py",
+          "line": 848,
+          "function": "update_dependency_index",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 0.000375917,
+          "cumulative_seconds": 0.00042962500000000005
+        },
+        {
+          "file": "src/cruxible_client/contracts/merkle.py",
+          "line": 276,
+          "function": "update_merkle_tree",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 4.6004e-05,
+          "cumulative_seconds": 0.000246625
+        },
+        {
+          "file": "src/cruxible_core/playbill/claim_subject_index.py",
+          "line": 31,
+          "function": "update_claim_subject_index",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 1.9375e-05,
+          "cumulative_seconds": 2.1416000000000003e-05
+        }
+      ]
+    }
+  }
+}
