@@ -3321,6 +3321,9 @@ class Procedure:
         replays the same reading.
         """
 
+        if at is not None and self._coordinate is not None and at != self._coordinate:
+            raise ValueError("measurement coordinate differs from the pinned Procedure")
+        requested = self._playbill._read_at(at or self._coordinate)
         run_id = run.run_id if isinstance(run, ProcedureRun) else run
         if isinstance(run, ProcedureRun) and run_id is None:
             raise ValueError(
@@ -3332,10 +3335,11 @@ class Procedure:
             request=api.PlaybillProcedureMeasureRequestV1(
                 run_id=run_id,
                 measurement_names=tuple(sorted(set(measurements), key=lambda item: item.encode())),
-                evaluation_time=self._playbill._clock(),
-                at=at,
+                evaluation_time=datetime.fromisoformat(self._playbill._evaluation_time()),
+                at=None if requested is None else _coordinate(requested),
             ),
         )
+        self._playbill._observe_read(result.observation_coordinate, expected=requested)
         return _measurement_batch(result)
 
     def readings(
@@ -3355,19 +3359,24 @@ class Procedure:
         pages the same selection even though this call stamps a fresh clock.
         """
 
+        if at is not None and self._coordinate is not None and at != self._coordinate:
+            raise ValueError("readings coordinate differs from the pinned Procedure")
+        requested = self._playbill._read_at(at or self._coordinate)
         run_id = run.run_id if isinstance(run, ProcedureRun) else run
-        return self._playbill._client.list_playbill_procedure_readings(
+        result = self._playbill._client.list_playbill_procedure_readings(
             self._playbill._instance_id,
             self._name,
             request=api.PlaybillProcedureReadingsRequestV1(
                 run_id=run_id,
                 measurement_names=tuple(sorted(set(measurements), key=lambda item: item.encode())),
-                evaluation_time=self._playbill._clock(),
-                at=at,
+                evaluation_time=datetime.fromisoformat(self._playbill._evaluation_time()),
+                at=None if requested is None else _coordinate(requested),
                 limit=limit,
                 cursor=cursor,
             ),
         )
+        self._playbill._observe_read(result.observation_coordinate, expected=requested)
+        return result
 
 
 class ProcedureRun:
@@ -3430,16 +3439,9 @@ class ProcedureRun:
                 "a run without a run_id was refused at admission and cannot be measured"
             )
         name = str(self._raw.procedure_identity.get("name", ""))
-        result = self._playbill._client.measure_playbill_procedure(
-            self._playbill._instance_id,
-            name,
-            request=api.PlaybillProcedureMeasureRequestV1(
-                run_id=self.run_id,
-                measurement_names=tuple(sorted(set(measurements), key=lambda item: item.encode())),
-                evaluation_time=self._playbill._clock(),
-            ),
-        )
-        return _measurement_batch(result)
+        # Observation follows the owning live/pinned context, independently of
+        # the run's admission coordinate. The daemon verifies the run revision.
+        return Procedure(self._playbill, name, None).measure(run=self, measurements=measurements)
 
 
 __all__ = [
