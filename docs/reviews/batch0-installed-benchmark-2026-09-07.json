@@ -1,0 +1,307 @@
+{
+  "before_source_commit": "caa174dde80677a9bffab245a23b2bd33eb15016",
+  "after_source_commit": "4b72c3bafde9b38f845232121c682aabd3a3539b",
+  "method": "Sequential before/after/after/before authenticated Unix HTTP replays using matching installed wheels, isolated client-only Python, private copies of one prepared program draft, attached private Git workspaces, no remote mirrors. Prepare is measured first and then repeated before submit. No profiler or concurrent tests. Accepted sequence 32 does not trigger the default 50-generation checkpoint. Setup/copy/wheel installation excluded; SDK connect and restart connect separately timed. Filesystem caches uncontrolled.",
+  "member_count": 7,
+  "claim_count": 5,
+  "coordinate_candidate_and_readback_parity": true,
+  "samples": [
+    {
+      "label": "before-1",
+      "seconds": {
+        "run_connect": 14.734224209038075,
+        "run_resume": 0.006915875012055039,
+        "prepare_first": 1.4974328330135904,
+        "prepare_repeat": 0.3777919579879381,
+        "submit": 11.767939457960892,
+        "review": 0.46351858298294246,
+        "accept": 13.195524792012293,
+        "refresh": 7.561424832965713,
+        "readback": 0.9562403330346569,
+        "floor_first": 7.015057583979797,
+        "floor_repeat": 0.13721079198876396,
+        "restart_connect": 15.52918408298865,
+        "restart_resume": 0.014795374998357147,
+        "restart_status": 0.0031170420115813613
+      },
+      "startup_s": 1.3985483750002459,
+      "restart_startup_s": 1.3548682920518331,
+      "candidate_digest": "sha256:4fa1ca0a9ae700e6ad9eef64d54795765038acb64f1814633765781bbb3ca0e1",
+      "accepted_coordinate": {
+        "tag": "playbill-accepted-coordinate-v1",
+        "git_oid": "0a5b4030b22fe82994121f158b30c6567dbab66d",
+        "semantic_root": "sha256:47bbb6f55ffa57cf88b6100c14b8533900b61dd41dec691e464b755868f04a29",
+        "generation_root": "sha256:272b5b1dc3b66dcde4567d6a40283a904afa9318b0dfc4d7eb7c198c26ff4e71",
+        "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+      },
+      "restart_accepted_coordinate": {
+        "tag": "playbill-accepted-coordinate-v1",
+        "git_oid": "0a5b4030b22fe82994121f158b30c6567dbab66d",
+        "semantic_root": "sha256:47bbb6f55ffa57cf88b6100c14b8533900b61dd41dec691e464b755868f04a29",
+        "generation_root": "sha256:272b5b1dc3b66dcde4567d6a40283a904afa9318b0dfc4d7eb7c198c26ff4e71",
+        "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+      },
+      "advertisement_status": "updated",
+      "readback": [
+        {
+          "claim_id": "Claim:CLM-0c6c2d13d348a728da79a0ed63558dc8",
+          "value_sha256": "ba4285bb95808c9ce594efe030c5d3fd26921813cd6829bbca7610ecfb85d1dc",
+          "verdict": "supported"
+        },
+        {
+          "claim_id": "Claim:CLM-ee6b342d737e2f14ffec9c7c5be7f5a4",
+          "value_sha256": "7c9f57eb9df16d7d3da6f7a099b4753e585a4667cac2a355c8b0439f223cdb7b",
+          "verdict": "supported"
+        },
+        {
+          "claim_id": "Claim:CLM-03e378a41032c2774d501ec86ab21187",
+          "value_sha256": "3e7293ca4e02b19582e3bd9c0c2026c65c0987e0700e3998f37fd2e3d0bdbc8c",
+          "verdict": "supported"
+        },
+        {
+          "claim_id": "Claim:CLM-43a80874a974f2b31ba3e0b22fd5fedd",
+          "value_sha256": "5731ff1b4e4d057c78bddd07dcb8684b873480105afa9819a872175fceaae1bf",
+          "verdict": "supported"
+        },
+        {
+          "claim_id": "Claim:CLM-877438f58ee7ce4703fd17217de2cb53",
+          "value_sha256": "387b1d7d90d9606865078ae5411de15fdbbc4f2f7ed5f9b926947dc8c2af7898",
+          "verdict": "supported"
+        }
+      ],
+      "client_only": true,
+      "completed": true
+    },
+    {
+      "label": "after-1",
+      "seconds": {
+        "run_connect": 14.633120790997054,
+        "run_resume": 0.006731915986165404,
+        "prepare_first": 1.4901078330003656,
+        "prepare_repeat": 0.3755328750121407,
+        "submit": 9.01053570798831,
+        "review": 0.46253595798043534,
+        "accept": 5.5391999160056,
+        "refresh": 7.330764792044647,
+        "readback": 0.9033126659924164,
+        "floor_first": 7.162746166985016,
+        "floor_repeat": 0.13688020803965628,
+        "restart_connect": 15.155983707983978,
+        "restart_resume": 0.011368207982741296,
+        "restart_status": 0.0027220830088481307
+      },
+      "startup_s": 2.5107074169791304,
+      "restart_startup_s": 1.3142352079739794,
+      "candidate_digest": "sha256:4fa1ca0a9ae700e6ad9eef64d54795765038acb64f1814633765781bbb3ca0e1",
+      "accepted_coordinate": {
+        "tag": "playbill-accepted-coordinate-v1",
+        "git_oid": "0a5b4030b22fe82994121f158b30c6567dbab66d",
+        "semantic_root": "sha256:47bbb6f55ffa57cf88b6100c14b8533900b61dd41dec691e464b755868f04a29",
+        "generation_root": "sha256:272b5b1dc3b66dcde4567d6a40283a904afa9318b0dfc4d7eb7c198c26ff4e71",
+        "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+      },
+      "restart_accepted_coordinate": {
+        "tag": "playbill-accepted-coordinate-v1",
+        "git_oid": "0a5b4030b22fe82994121f158b30c6567dbab66d",
+        "semantic_root": "sha256:47bbb6f55ffa57cf88b6100c14b8533900b61dd41dec691e464b755868f04a29",
+        "generation_root": "sha256:272b5b1dc3b66dcde4567d6a40283a904afa9318b0dfc4d7eb7c198c26ff4e71",
+        "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+      },
+      "advertisement_status": "updated",
+      "readback": [
+        {
+          "claim_id": "Claim:CLM-0c6c2d13d348a728da79a0ed63558dc8",
+          "value_sha256": "ba4285bb95808c9ce594efe030c5d3fd26921813cd6829bbca7610ecfb85d1dc",
+          "verdict": "supported"
+        },
+        {
+          "claim_id": "Claim:CLM-ee6b342d737e2f14ffec9c7c5be7f5a4",
+          "value_sha256": "7c9f57eb9df16d7d3da6f7a099b4753e585a4667cac2a355c8b0439f223cdb7b",
+          "verdict": "supported"
+        },
+        {
+          "claim_id": "Claim:CLM-03e378a41032c2774d501ec86ab21187",
+          "value_sha256": "3e7293ca4e02b19582e3bd9c0c2026c65c0987e0700e3998f37fd2e3d0bdbc8c",
+          "verdict": "supported"
+        },
+        {
+          "claim_id": "Claim:CLM-43a80874a974f2b31ba3e0b22fd5fedd",
+          "value_sha256": "5731ff1b4e4d057c78bddd07dcb8684b873480105afa9819a872175fceaae1bf",
+          "verdict": "supported"
+        },
+        {
+          "claim_id": "Claim:CLM-877438f58ee7ce4703fd17217de2cb53",
+          "value_sha256": "387b1d7d90d9606865078ae5411de15fdbbc4f2f7ed5f9b926947dc8c2af7898",
+          "verdict": "supported"
+        }
+      ],
+      "client_only": true,
+      "completed": true
+    },
+    {
+      "label": "after-2",
+      "seconds": {
+        "run_connect": 14.932853167003486,
+        "run_resume": 0.010344667010940611,
+        "prepare_first": 1.529165666026529,
+        "prepare_repeat": 0.3814387500169687,
+        "submit": 9.212954249989707,
+        "review": 0.4521802499657497,
+        "accept": 5.644173374981619,
+        "refresh": 7.35922737501096,
+        "readback": 0.9533892080071382,
+        "floor_first": 7.021577333041932,
+        "floor_repeat": 0.13852420804323629,
+        "restart_connect": 15.069542458979413,
+        "restart_resume": 0.011780375032685697,
+        "restart_status": 0.003129958000499755
+      },
+      "startup_s": 1.2342592499917373,
+      "restart_startup_s": 1.4117909170454368,
+      "candidate_digest": "sha256:4fa1ca0a9ae700e6ad9eef64d54795765038acb64f1814633765781bbb3ca0e1",
+      "accepted_coordinate": {
+        "tag": "playbill-accepted-coordinate-v1",
+        "git_oid": "0a5b4030b22fe82994121f158b30c6567dbab66d",
+        "semantic_root": "sha256:47bbb6f55ffa57cf88b6100c14b8533900b61dd41dec691e464b755868f04a29",
+        "generation_root": "sha256:272b5b1dc3b66dcde4567d6a40283a904afa9318b0dfc4d7eb7c198c26ff4e71",
+        "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+      },
+      "restart_accepted_coordinate": {
+        "tag": "playbill-accepted-coordinate-v1",
+        "git_oid": "0a5b4030b22fe82994121f158b30c6567dbab66d",
+        "semantic_root": "sha256:47bbb6f55ffa57cf88b6100c14b8533900b61dd41dec691e464b755868f04a29",
+        "generation_root": "sha256:272b5b1dc3b66dcde4567d6a40283a904afa9318b0dfc4d7eb7c198c26ff4e71",
+        "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+      },
+      "advertisement_status": "updated",
+      "readback": [
+        {
+          "claim_id": "Claim:CLM-0c6c2d13d348a728da79a0ed63558dc8",
+          "value_sha256": "ba4285bb95808c9ce594efe030c5d3fd26921813cd6829bbca7610ecfb85d1dc",
+          "verdict": "supported"
+        },
+        {
+          "claim_id": "Claim:CLM-ee6b342d737e2f14ffec9c7c5be7f5a4",
+          "value_sha256": "7c9f57eb9df16d7d3da6f7a099b4753e585a4667cac2a355c8b0439f223cdb7b",
+          "verdict": "supported"
+        },
+        {
+          "claim_id": "Claim:CLM-03e378a41032c2774d501ec86ab21187",
+          "value_sha256": "3e7293ca4e02b19582e3bd9c0c2026c65c0987e0700e3998f37fd2e3d0bdbc8c",
+          "verdict": "supported"
+        },
+        {
+          "claim_id": "Claim:CLM-43a80874a974f2b31ba3e0b22fd5fedd",
+          "value_sha256": "5731ff1b4e4d057c78bddd07dcb8684b873480105afa9819a872175fceaae1bf",
+          "verdict": "supported"
+        },
+        {
+          "claim_id": "Claim:CLM-877438f58ee7ce4703fd17217de2cb53",
+          "value_sha256": "387b1d7d90d9606865078ae5411de15fdbbc4f2f7ed5f9b926947dc8c2af7898",
+          "verdict": "supported"
+        }
+      ],
+      "client_only": true,
+      "completed": true
+    },
+    {
+      "label": "before-2",
+      "seconds": {
+        "run_connect": 15.088908291014377,
+        "run_resume": 0.006786582991480827,
+        "prepare_first": 1.5196958750020713,
+        "prepare_repeat": 0.37843916699057445,
+        "submit": 12.845093582989648,
+        "review": 0.6493800000171177,
+        "accept": 14.402107916015666,
+        "refresh": 7.293505458976142,
+        "readback": 0.8794371669646353,
+        "floor_first": 6.9429922089912,
+        "floor_repeat": 0.13837716600392014,
+        "restart_connect": 15.235395500028972,
+        "restart_resume": 0.011353458045050502,
+        "restart_status": 0.002569874981418252
+      },
+      "startup_s": 1.3465962079935707,
+      "restart_startup_s": 1.3710832499782555,
+      "candidate_digest": "sha256:4fa1ca0a9ae700e6ad9eef64d54795765038acb64f1814633765781bbb3ca0e1",
+      "accepted_coordinate": {
+        "tag": "playbill-accepted-coordinate-v1",
+        "git_oid": "0a5b4030b22fe82994121f158b30c6567dbab66d",
+        "semantic_root": "sha256:47bbb6f55ffa57cf88b6100c14b8533900b61dd41dec691e464b755868f04a29",
+        "generation_root": "sha256:272b5b1dc3b66dcde4567d6a40283a904afa9318b0dfc4d7eb7c198c26ff4e71",
+        "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+      },
+      "restart_accepted_coordinate": {
+        "tag": "playbill-accepted-coordinate-v1",
+        "git_oid": "0a5b4030b22fe82994121f158b30c6567dbab66d",
+        "semantic_root": "sha256:47bbb6f55ffa57cf88b6100c14b8533900b61dd41dec691e464b755868f04a29",
+        "generation_root": "sha256:272b5b1dc3b66dcde4567d6a40283a904afa9318b0dfc4d7eb7c198c26ff4e71",
+        "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+      },
+      "advertisement_status": "updated",
+      "readback": [
+        {
+          "claim_id": "Claim:CLM-0c6c2d13d348a728da79a0ed63558dc8",
+          "value_sha256": "ba4285bb95808c9ce594efe030c5d3fd26921813cd6829bbca7610ecfb85d1dc",
+          "verdict": "supported"
+        },
+        {
+          "claim_id": "Claim:CLM-ee6b342d737e2f14ffec9c7c5be7f5a4",
+          "value_sha256": "7c9f57eb9df16d7d3da6f7a099b4753e585a4667cac2a355c8b0439f223cdb7b",
+          "verdict": "supported"
+        },
+        {
+          "claim_id": "Claim:CLM-03e378a41032c2774d501ec86ab21187",
+          "value_sha256": "3e7293ca4e02b19582e3bd9c0c2026c65c0987e0700e3998f37fd2e3d0bdbc8c",
+          "verdict": "supported"
+        },
+        {
+          "claim_id": "Claim:CLM-43a80874a974f2b31ba3e0b22fd5fedd",
+          "value_sha256": "5731ff1b4e4d057c78bddd07dcb8684b873480105afa9819a872175fceaae1bf",
+          "verdict": "supported"
+        },
+        {
+          "claim_id": "Claim:CLM-877438f58ee7ce4703fd17217de2cb53",
+          "value_sha256": "387b1d7d90d9606865078ae5411de15fdbbc4f2f7ed5f9b926947dc8c2af7898",
+          "verdict": "supported"
+        }
+      ],
+      "client_only": true,
+      "completed": true
+    }
+  ],
+  "wheel_provenance": {
+    "before": {
+      "core_wheel_sha256": "1519609d1485539152556f55840480b259f173c64fe4dbe97c1337c298adf1e4",
+      "verified_core_source_files": 197
+    },
+    "after": {
+      "core_wheel_sha256": "914e4615ac00da080c87484a42a3f98d948b5c87eee081b4114f3a8980a909b8",
+      "verified_core_source_files": 199
+    },
+    "sdk": {
+      "wheel_sha256": "23af8a1ec115801e4a745b5df25ba290d14587d0c87a3d16e526c63e2f52cd52",
+      "verified_source_files": 102,
+      "unchanged_between_arms": true
+    }
+  },
+  "periodic_checkpoint_component": {
+    "kind": "isolated periodic-checkpoint component cost over already-read accepted tree",
+    "accepted_sequence": 32,
+    "normal_checkpoint_interval": 50,
+    "not_an_actual_50th_acceptance_latency": true,
+    "samples": [
+      {
+        "build_s": 0.04895112500526011,
+        "write_s": 0.006078749953303486,
+        "total_s": 0.055029874958563596
+      },
+      {
+        "build_s": 0.04811424994841218,
+        "write_s": 0.004932500014547259,
+        "total_s": 0.05304674996295944
+      }
+    ]
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "before": {
+    "instance_count": 3,
+    "heads": {
+      "inst_5bef642b4a3043ff": "61b9f39d4a3b317c47ef9d93850e14e5e6e40c8a",
+      "inst_78a1edc2c8614ea6": "3eb9bf2929a71e9bec44068c9e22657849d33cef",
+      "inst_ebe8a0b27e50487d": "4ec38100e4359bbba90fdd3d1a4a62c39bb367bc"
+    },
+    "daemon_build": "caa174dde80677a9bffab245a23b2bd33eb15016"
+  },
+  "after": {
+    "instance_count": 3,
+    "heads": {
+      "inst_5bef642b4a3043ff": "61b9f39d4a3b317c47ef9d93850e14e5e6e40c8a",
+      "inst_78a1edc2c8614ea6": "3eb9bf2929a71e9bec44068c9e22657849d33cef",
+      "inst_ebe8a0b27e50487d": "4ec38100e4359bbba90fdd3d1a4a62c39bb367bc"
+    },
+    "daemon_build": "4b72c3bafde9b38f845232121c682aabd3a3539b"
+  },
+  "all_accepted_heads_preserved": true,
+  "live_installed_sdk": {
+    "seconds": {
+      "connect_after_deployment": 6.598180542001501,
+      "resume_accepted_intent": 0.009281000006012619,
+      "accepted_status": 0.0021436670213006437,
+      "readback": 0.9529467500397004
+    },
+    "accepted_coordinate": {
+      "tag": "playbill-accepted-coordinate-v1",
+      "git_oid": "4ec38100e4359bbba90fdd3d1a4a62c39bb367bc",
+      "semantic_root": "sha256:b982b8570faf08a9cfd2d62647bfb67ca6d5350f4ec0b6101e81e50c8e240282",
+      "generation_root": "sha256:02f7ba403e55bd0e3c569495a2c0cba5d678c4bfee90c8bccf5d5312319ce1ab",
+      "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+    },
+    "accepted_intent_recovered": true,
+    "readback_supported": true,
+    "governed_writes_performed": false
+  },
+  "installed_private_replay_evidence": "batch0-installed-benchmark-2026-09-07.json",
+  "deployment_type": "existing editable daemon checkout, graceful stop/start onto exact reviewed commit; existing storage and credentials retained"
+}
