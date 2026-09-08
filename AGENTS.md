@@ -50,6 +50,10 @@ uv run mypy src
   known failures, and review context. Reviewers should put requested changes and
   approval notes in `ReviewRequest.review_notes`.
 
+## State-write dogfooding
+
+For the foreseeable future, follow [the state-write timing and friction protocol](docs/dogfooding/state-write-friction.md) whenever writing project state. Record operational timings alongside the checkpoint and carry the previous observation into the next meaningful update; do not create recursive measurement-only writes.
+
 ## Versioning
 
 Version lives in two places — keep them in sync:

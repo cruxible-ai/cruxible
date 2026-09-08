@@ -1,0 +1,113 @@
+{
+  "authorization": "Explicit user instruction to record the agreed performance pause, managed-track follow-ups and standing state-write dogfooding protocol; no release, adoption-field, ClaimType or authority changes.",
+  "source": {
+    "kind": "manager-authored record of maintainer direction and dogfooding protocol",
+    "code_head": "6ff49a45f67649c0c92ea3922446cd7a118e34c2",
+    "status": "User authorized this scheduling direction and standing measurement protocol. Local improvements are not asserted deployed. No production changes or release/authority changes."
+  },
+  "source_files": [
+    {
+      "path": "docs/dogfooding/state-write-friction.md",
+      "sha256": "3289d85836f4e1478a16c071bdf81bdf8d3d6ff08cfb728b9229703b7105f337"
+    }
+  ],
+  "expected": [
+    {
+      "subject": "dev.roadmap_item/agent-followup-2026-09-05-a06",
+      "predicate": "dev.roadmap_item.reconciliation_note",
+      "role": "normative",
+      "value": "Maintainer direction 2026-09-07: pause speculative local performance optimization for now and proceed with unfinished v1 product loops. First review/integrate accumulated local performance work and measure the real project instance after rollout; the latest local benchmark is not deployed performance. Keep recording latency and qualitative friction on every meaningful project-state write for the foreseeable future, and address observed disruptive friction. Latest production slice remains acceptance/discovery through 53684b5d; publication audit 321e84c1 made no production changes. This checkpoint records the accepted scheduling direction, not completion, merge, deployment, release approval or authority changes. Protocol: docs/dogfooding/state-write-friction.md.",
+      "previous_value": "Manager checkpoint 2026-09-07: the acceptance/orientation implementation remains at 53684b5d, with checkpoint 6ff49a45. A follow-up publication-cost audit at 321e84c1 (diagnostic formatting 9b87aa5b) on codex/accept-publication-costs made no production changes. Fresh profiling and wall-clock counters found distributed remaining costs rather than another large bounded reconstruction target. Recommend pausing additional production performance changes for v1 and returning to unfinished product loops; this is a manager recommendation, not adoption of priorities. Retain measured follow-ups for delta-based generation/inventory work, database digest verification handoff or streaming, Git execution batching, and an explicit product decision before asynchronous workspace advertisement. Prior implementation remains local/not merged or deployed; ledger, law, digest, approval and authority policies unchanged.",
+      "revises": "CLM-7be19d54b36f43ed4d229fe0e4ade39d"
+    },
+    {
+      "subject": "dev.roadmap_item/roadmap-2026-09-05-o19",
+      "predicate": "dev.roadmap_item.reconciliation_note",
+      "role": "normative",
+      "value": "Maintainer direction 2026-09-07: move remaining architectural performance work to the managed-instances track, before managed scale testing. Batch 5 is partial: finish parent/delta generation-tree writing and physical inventory validation, measuring both submit and accept. Batch 6 remains: trustworthy completed-verification handoff and normalized explanation binding; full SQLite copying and frozen flat exports/digests still cost world-sized work. Batches 7/8 remain: central-owner migration of history/query/evidence with complete dependency observations and source revision protocols. Complete managed resource budgets/reclamation, partition serving/replay and rolling index upgrades. Batched Git execution, asynchronous workspace advertisement and broader database/commitment layouts remain measured options with separate contract decisions. Six-second local complete-loop latency is accepted provisionally as a reason to resume product work, not a production SLA or closure of the latency/scaling gate. Warm hosting alone will not fix world-sized work. Before v1, integrate/review and measure the actual project instance. Preserve exact governed pins, signed ledger authority and reconstructibility; no release/adoption fields or authority artifacts changed.",
+      "previous_value": "Manager checkpoint 2026-09-07: remaining-publication audit, no new performance improvement claimed. Fresh 1000-Claim SDK/Unix HTTP workload, 3 complete writes/readbacks, two repeated observations: acceptance 2.093-2.139s (median 2.116s), full loop with explicit orientation 6.334-6.429s. Nested warm phases: generation-tree writing 0.222s (including 0.089s blob presence), two full inventories 0.188s, database update 0.174s, build logical digest 0.141s and bind-verification digest 0.104s, workspace advertisement 0.421s. Forty-five ledger commands plus thirteen workspace commands occupy about 65% of worker wall time; this includes necessary execution/I/O and is not all removable startup overhead. Rows overlap and must not be summed. Small local diagnostic sample, not p95. The latency and scaling gates remain open, but no further bounded production change was selected this pass. Evidence in publication-cost-audit-2026-09-07.md and publication-cost-audit-data.json at 321e84c1. Adoption/release fields unchanged.",
+      "revises": "CLM-03e378a41032c2774d501ec86ab21187"
+    },
+    {
+      "subject": "dev.product_feedback/state-write-dogfooding-2026-09-07",
+      "predicate": "dev.product_feedback.finding_text",
+      "role": "observation",
+      "value": "Standing dogfooding instruction from maintainer, 2026-09-07: record time and friction whenever writing project state for the foreseeable future. Measure connect, reads, authoring/capture, prepare, submit, review/approval, accept and receipt-coordinate readback separately, plus active SDK elapsed time, workload, errors and setup/reconnection/glue friction. Keep local operational timing logs alongside receipts; carry the prior observation into the next meaningful state update, avoiding recursive measurement-only governed writes. First prior live observation: publication-audit checkpoint had 3 Claims + 1 Subject; connect 8.548s, prefetch 1.126s, prepare 1.336s, submit 4.402s, review 0.484s, second connect 2.491s, acceptance 6.150s, verified readback 1.739s. These stages omit some authoring/verification work and are not a complete-loop measurement. Split scripts caused an extra connection. Local benchmark full loop 6.33-6.43s is a different workload/deployment and must not be presented as live performance. This checkpoint exercises the protocol; its completion timings will be in docs/reviews/write-dogfood-state-checkpoint-2026-09-07.json and can enter the next meaningful state update. Protocol is docs/dogfooding/state-write-friction.md, referenced from AGENTS.md. No current-write timing is invented in advance."
+    }
+  ],
+  "seconds": {
+    "connect": 8.428523125010543,
+    "world": 0.0152280000038445,
+    "prefetch": 1.0832681250176392,
+    "authoring_capture": 0.012926709023304284,
+    "prepare": 1.4189185419818386,
+    "submit": 4.515059249999467,
+    "review": 0.4911977080046199,
+    "accept_connect": 2.601698665996082,
+    "preaccept_review_check": 0.8139289999962784,
+    "accept": 6.4844174169702455,
+    "readback": 1.4584123750100844
+  },
+  "base": {
+    "tag": "playbill-accepted-coordinate-v1",
+    "git_oid": "3e58a5e16ad4731d95b90e8d0b65820a17e91eb8",
+    "semantic_root": "sha256:e7a1981a2741cbde13b05d3d7fe96fe1a9bd33f56960772308b91020062fd94b",
+    "generation_root": "sha256:a31570446648c62f3be7e7f9c8c6851c56e04ae9a1e222ce8695ed6fc250992d",
+    "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+  },
+  "intent_id": "AIT-84b1d60c4a0d10d458bf75865ba6d4a2",
+  "preflight": {
+    "refused": false,
+    "diagnostics": [],
+    "warnings": []
+  },
+  "proposal_id": "sha256:f3b58ca1f9d933a61722b5132153d27676e18c0b75f96a3f6f6becfa417e9d1c",
+  "candidate_digest": "sha256:e341ba6ac970116bac5ada150b4c478c9fda1c8eb7dd8a54f1f2affc4d7628e0",
+  "prepare_submit_active_seconds": 16.240756417042576,
+  "activation": {
+    "tag": "playbill-activation-receipt-v1",
+    "proposal_id": "sha256:f3b58ca1f9d933a61722b5132153d27676e18c0b75f96a3f6f6becfa417e9d1c",
+    "activated_by": "manager",
+    "status": "accepted",
+    "accepted_coordinate": {
+      "tag": "playbill-accepted-coordinate-v1",
+      "git_oid": "78cbe2200f5eee67b2ab29a2fb144f30b6eaf154",
+      "semantic_root": "sha256:c03def09508335c6ecbdae2d9f949ad0906cce58381473893427ee020c3856f7",
+      "generation_root": "sha256:733f2cb228f1f1195343b0c3c347868140d00e9f1ef2ce5c61c4fa85d3baca22",
+      "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+    },
+    "workspace_advertisement": {
+      "tag": "playbill-workspace-advertisement-v1",
+      "status": "updated",
+      "workspace_path": "/Users/robertmalone/Git/cruxible-core-0.2-stretch-goals",
+      "remote_name": "playbill",
+      "advertised_refs": [
+        "refs/remotes/playbill/accepted"
+      ],
+      "failure_code": null
+    }
+  },
+  "readback": {
+    "verified_claims": 3,
+    "all_supported": true,
+    "coordinate": {
+      "tag": "playbill-accepted-coordinate-v1",
+      "git_oid": "78cbe2200f5eee67b2ab29a2fb144f30b6eaf154",
+      "semantic_root": "sha256:c03def09508335c6ecbdae2d9f949ad0906cce58381473893427ee020c3856f7",
+      "generation_root": "sha256:733f2cb228f1f1195343b0c3c347868140d00e9f1ef2ce5c61c4fa85d3baca22",
+      "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+    }
+  },
+  "accept_readback_active_seconds": 11.3661369580077,
+  "total_active_sdk_seconds": 27.606893375050277,
+  "friction": [
+    "Reused an existing manager script, but still needed request-specific source and claim text plus an exact-candidate review helper.",
+    "Two active client sessions preserve the manual review boundary but add a second connect; this is workflow overhead, not intrinsically required.",
+    "No full orientation refresh after acceptance; readback uses the explicit receipt coordinate.",
+    "Total active SDK time excludes agent composition, tool approval waiting and the offline review pause; exact review/check calls are included."
+  ],
+  "omitted_stages": [
+    "approval: current served snapshot policy requires no approval attestation",
+    "explicit orientation refresh: not needed for receipt-coordinate readback"
+  ]
+}
