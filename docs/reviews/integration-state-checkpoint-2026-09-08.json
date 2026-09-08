@@ -1,0 +1,121 @@
+{
+  "authorization": "Routine manager reconciliation during explicitly authorized branch integration; records the latest maintainer pre-release-redesign ruling and prior measured dogfooding friction, without release/adoption-field/ClaimType/authority changes.",
+  "source": {
+    "kind": "manager-authored record of maintainer direction and dogfooding protocol",
+    "code_head": "9184d98650f43e6488de36e82f3a97160c665dc6",
+    "status": "User authorized this scheduling direction and standing measurement protocol. Local improvements are not asserted deployed. No production changes or release/authority changes."
+  },
+  "source_files": [
+    {
+      "path": "docs/reviews/performance-procedure-integration-2026-09-08.md",
+      "sha256": "8e6cf3a991c355cc0cfbf870ef632c8d54f3c012519ac0eae41f23f84095103c"
+    },
+    {
+      "path": "docs/reviews/write-dogfood-observation-2026-09-07.md",
+      "sha256": "c9c1b909486c829a54a70e1725d0209a76966ae6415bd52ee0651dfb2ea2aa10"
+    },
+    {
+      "path": "docs/dogfooding/state-write-friction.md",
+      "sha256": "2bd0a322807d468ba04b07209c6823527df654ab609e980517cf50f13fe623b2"
+    }
+  ],
+  "expected": [
+    {
+      "subject": "dev.roadmap_item/agent-followup-2026-09-05-a06",
+      "predicate": "dev.roadmap_item.reconciliation_note",
+      "role": "normative",
+      "value": "Manager checkpoint 2026-09-08: procedure integration 094bff30 and performance branch 12a89853 are now combined and reviewed locally at 9184d98650f43e6488de36e82f3a97160c665dc6. Conflicts in authoring/lowering and proposals were resolved by retaining fresh mandate authorization and publication-lock/head checks alongside same-call prepared evaluation, and using persistent candidate forks for the new Line paths. Focused integration evidence is in performance-procedure-integration-2026-09-08.md. No new latency reduction is claimed, no production daemon rollout occurred, and source-branch tests do not establish deployed parity. Next: aligned SDK/daemon rollout and real combined customer-loop/live latency verification. Latest maintainer ruling supersedes the earlier managed-track deferral: further write-path redesign is required before OSS v1 release; the current pause is temporary. No release/adoption fields or authority policies changed.",
+      "previous_value": "Maintainer direction 2026-09-07: pause speculative local performance optimization for now and proceed with unfinished v1 product loops. First review/integrate accumulated local performance work and measure the real project instance after rollout; the latest local benchmark is not deployed performance. Keep recording latency and qualitative friction on every meaningful project-state write for the foreseeable future, and address observed disruptive friction. Latest production slice remains acceptance/discovery through 53684b5d; publication audit 321e84c1 made no production changes. This checkpoint records the accepted scheduling direction, not completion, merge, deployment, release approval or authority changes. Protocol: docs/dogfooding/state-write-friction.md.",
+      "revises": "CLM-7be19d54b36f43ed4d229fe0e4ade39d"
+    },
+    {
+      "subject": "dev.roadmap_item/roadmap-2026-09-05-o19",
+      "predicate": "dev.roadmap_item.reconciliation_note",
+      "role": "normative",
+      "value": "Maintainer correction 2026-09-08: the live write experience is not sufficient for release. Pause performance execution temporarily while integrating and exercising the procedure work, but retain write-path redesign as an OSS v1 prerequisite. Earlier movement of all remaining performance work to managed is superseded. Batch 5 generation/inventory scope and batch 6 verification/explanation binding remain candidates for that redesign; complete-loop measurements, including connection/setup and actual project state, determine priorities. Managed partition orchestration, fleet/resource budgets, rolling upgrades and broader source-revision deployment remain managed work. Do not silently change frozen pins/digests, weaken verification or substitute derived state for ledger authority. Previous dogfood observation: 3 Claims + 1 Subject; prepare 1.419s, submit 4.515s, accept 6.484s, readback 1.458s; total active SDK work 27.607s, excluding two connects 16.577s. Includes reviews and reads, excludes composition/offline review/tool approval waits; one live observation, not a benchmark. Integration does not close the latency gate.",
+      "previous_value": "Maintainer direction 2026-09-07: move remaining architectural performance work to the managed-instances track, before managed scale testing. Batch 5 is partial: finish parent/delta generation-tree writing and physical inventory validation, measuring both submit and accept. Batch 6 remains: trustworthy completed-verification handoff and normalized explanation binding; full SQLite copying and frozen flat exports/digests still cost world-sized work. Batches 7/8 remain: central-owner migration of history/query/evidence with complete dependency observations and source revision protocols. Complete managed resource budgets/reclamation, partition serving/replay and rolling index upgrades. Batched Git execution, asynchronous workspace advertisement and broader database/commitment layouts remain measured options with separate contract decisions. Six-second local complete-loop latency is accepted provisionally as a reason to resume product work, not a production SLA or closure of the latency/scaling gate. Warm hosting alone will not fix world-sized work. Before v1, integrate/review and measure the actual project instance. Preserve exact governed pins, signed ledger authority and reconstructibility; no release/adoption fields or authority artifacts changed.",
+      "revises": "CLM-03e378a41032c2774d501ec86ab21187"
+    },
+    {
+      "subject": "dev.product_feedback/performance-procedure-integration-2026-09-08",
+      "predicate": "dev.product_feedback.finding_text",
+      "role": "observation",
+      "value": "Integration dogfooding observation 2026-09-08: newer SDK live Claim reads against the running older daemon were refused because body.at required an explicit coordinate. Reading with pb.at(pb.coordinate) succeeded at the same accepted head; no state mutation was retried. This reinforces aligning deployed SDK/Core versions and testing actual ordinary live reads before claiming parity. The performance/procedure source merge does not deploy either package. Continue the standing write-time/friction protocol. The preceding checkpoint spent 27.607s in active SDK work, 11.030s of it in two connections; split submit/review/accept scripts and bespoke source/Claim glue remain friction. This checkpoint uses the same receipt-first, explicit-coordinate readback approach; its completion timings are persisted locally and should be carried into the next meaningful update, avoiding recursive measurement-only writes."
+    }
+  ],
+  "seconds": {
+    "connect": 2.324641667015385,
+    "world": 0.015839166997466236,
+    "prefetch": 0.9719037500326522,
+    "authoring_capture": 0.01252154097892344,
+    "prepare": 1.2554051249753684,
+    "submit": 4.378424416005146,
+    "review": 0.48349683301057667,
+    "accept_connect": 2.2790527090546675,
+    "preaccept_review_check": 0.7892342919949442,
+    "accept": 5.899022249970585,
+    "readback": 1.1891642499831505
+  },
+  "base": {
+    "tag": "playbill-accepted-coordinate-v1",
+    "git_oid": "78cbe2200f5eee67b2ab29a2fb144f30b6eaf154",
+    "semantic_root": "sha256:c03def09508335c6ecbdae2d9f949ad0906cce58381473893427ee020c3856f7",
+    "generation_root": "sha256:733f2cb228f1f1195343b0c3c347868140d00e9f1ef2ce5c61c4fa85d3baca22",
+    "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+  },
+  "intent_id": "AIT-495289f38fd2cebc61d0c9b7587630c1",
+  "preflight": {
+    "refused": false,
+    "diagnostics": [],
+    "warnings": []
+  },
+  "proposal_id": "sha256:f0c80d7e7317c991859245eec89df0ea67b658bc162e63bcde9ae97b8d5f6972",
+  "candidate_digest": "sha256:c8b32d7d22302cfdc97b1cd8573a036f565be8fa8954533cc976e0996fb0d2a8",
+  "prepare_submit_active_seconds": 9.693816790997516,
+  "activation": {
+    "tag": "playbill-activation-receipt-v1",
+    "proposal_id": "sha256:f0c80d7e7317c991859245eec89df0ea67b658bc162e63bcde9ae97b8d5f6972",
+    "activated_by": "manager",
+    "status": "accepted",
+    "accepted_coordinate": {
+      "tag": "playbill-accepted-coordinate-v1",
+      "git_oid": "0f4d7005e41a3be328320b3c3ae303e48f1540aa",
+      "semantic_root": "sha256:fd4e790a264933da8196f6c3ebc24abba7cddab7dee79797701e07d9ac9e258f",
+      "generation_root": "sha256:6712a020d6ffe70c4d6656b6f2353bea154851b41aee2fb87ec6c132a699006e",
+      "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+    },
+    "workspace_advertisement": {
+      "tag": "playbill-workspace-advertisement-v1",
+      "status": "updated",
+      "workspace_path": "/Users/robertmalone/Git/cruxible-core-0.2-stretch-goals",
+      "remote_name": "playbill",
+      "advertised_refs": [
+        "refs/remotes/playbill/accepted"
+      ],
+      "failure_code": null
+    }
+  },
+  "readback": {
+    "verified_claims": 3,
+    "all_supported": true,
+    "coordinate": {
+      "tag": "playbill-accepted-coordinate-v1",
+      "git_oid": "0f4d7005e41a3be328320b3c3ae303e48f1540aa",
+      "semantic_root": "sha256:fd4e790a264933da8196f6c3ebc24abba7cddab7dee79797701e07d9ac9e258f",
+      "generation_root": "sha256:6712a020d6ffe70c4d6656b6f2353bea154851b41aee2fb87ec6c132a699006e",
+      "compiler_digest": "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
+    }
+  },
+  "accept_readback_active_seconds": 10.163798291003332,
+  "total_active_sdk_seconds": 19.857615082000848,
+  "friction": [
+    "Reused an existing manager script, but still needed request-specific source and claim text plus an exact-candidate review helper.",
+    "Two active client sessions preserve the manual review boundary but add a second connect; this is workflow overhead, not intrinsically required.",
+    "No full orientation refresh after acceptance; readback uses the explicit receipt coordinate.",
+    "Total active SDK time excludes agent composition, tool approval waiting and the offline review pause; exact review/check calls are included."
+  ],
+  "omitted_stages": [
+    "approval: current served snapshot policy requires no approval attestation",
+    "explicit orientation refresh: not needed for receipt-coordinate readback"
+  ]
+}
