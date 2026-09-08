@@ -1,0 +1,592 @@
+{
+  "scope": "In-process evaluation and contender phases; no HTTP, Git, CAS or acceptance",
+  "fixture": "N Subjects for evaluation; N Claims on distinct Subject groups for contenders; one changed row and one matching contender.",
+  "repeats": 5,
+  "limits": [
+    "Cold clears derivation and dependency-parser caches; process and OS remain warm.",
+    "Fresh updates use one warmed parent; baseline restoration is outside timing.",
+    "All raw map copy or persistent fork/seal costs are inside fresh-update timing.",
+    "Cold full-state and scan parity checks and instrumentation are outside timing.",
+    "Flat directory Merkle ancestor hashing remains proportional to sibling fan-out.",
+    "Workers run sequentially; concurrent root checks and host load affect latency.",
+    "Deterministic test artifacts only; no governed production instance accessed."
+  ],
+  "comparisons": [
+    {
+      "workload": "evaluation",
+      "population": 100,
+      "before_update_median_s": 0.0028842920437455177,
+      "after_update_median_s": 0.0007416249718517065,
+      "cross_version_parity": true
+    },
+    {
+      "workload": "contenders",
+      "population": 100,
+      "before_update_median_s": 0.015116000024136156,
+      "after_update_median_s": 0.0005740000051446259,
+      "cross_version_parity": true
+    },
+    {
+      "workload": "evaluation",
+      "population": 1000,
+      "before_update_median_s": 0.025769250001758337,
+      "after_update_median_s": 0.003545624960679561,
+      "cross_version_parity": true
+    },
+    {
+      "workload": "contenders",
+      "population": 1000,
+      "before_update_median_s": 0.1556205420056358,
+      "after_update_median_s": 0.0005509170005097985,
+      "cross_version_parity": true
+    },
+    {
+      "workload": "evaluation",
+      "population": 10000,
+      "before_update_median_s": 0.26937749999342486,
+      "after_update_median_s": 0.034648625005502254,
+      "cross_version_parity": true
+    },
+    {
+      "workload": "contenders",
+      "population": 10000,
+      "before_update_median_s": 1.8577425829716958,
+      "after_update_median_s": 0.0006108750239945948,
+      "cross_version_parity": true
+    }
+  ],
+  "runs": [
+    {
+      "mode": "before",
+      "repo": "/private/tmp/playbill-sdk-live-snapshots",
+      "source_sha256": {
+        "src/cruxible_core/playbill/authoring/lowering.py": "da0bdd9df9e759db0b7d3beba561b39c8ea1a85203539957b86439e346274b98",
+        "src/cruxible_core/playbill/evaluation_state_cache.py": "080779b39d06264be2bb752d3359b88082d1ad194fcf2555620a453e534980df",
+        "src/cruxible_core/playbill/proposals.py": "ad70c2473869f367fa94648a933a892c50bda168b2de92c8fc532d3ffd5281dc",
+        "src/cruxible_core/playbill/closure.py": "16a12f914343509d52755ac7d525d77e672d984f89fed1c3fe538300d9d3c52a",
+        "src/cruxible_core/playbill/claim_subject_index.py": "ec7665e41c6bc99e4f3435ac5bb9b5e34619a2fe1a20adf4aaf929b72a1a8e36",
+        "packages/cruxible-client/src/cruxible_client/contracts/merkle.py": "76c9634f7c11a146aad785378ce30c1719c6141266bd3fdaa3b31baee851338b"
+      },
+      "head": "17849d77226f55d34bf702161da98bbb3841b8f5",
+      "python": "3.13.3 (main, Apr  8 2025, 13:54:08) [Clang 17.0.0 (clang-1700.0.13.3)]",
+      "rows": [
+        {
+          "workload": "evaluation",
+          "population": 100,
+          "cold_bootstrap": {
+            "samples_s": [
+              0.007657292007934302,
+              0.0074741250136867166,
+              0.00757925002835691,
+              0.0076112920069135725,
+              0.007903083984274417
+            ],
+            "median_s": 0.0076112920069135725,
+            "min_s": 0.0074741250136867166,
+            "max_s": 0.007903083984274417
+          },
+          "fresh_parent_update": {
+            "samples_s": [
+              0.0029779999749734998,
+              0.0030085829785093665,
+              0.002859583997633308,
+              0.0028842920437455177,
+              0.0028694170177914202
+            ],
+            "median_s": 0.0028842920437455177,
+            "min_s": 0.002859583997633308,
+            "max_s": 0.0030085829785093665
+          },
+          "untimed_counters": {
+            "dependency_parser_calls": 1,
+            "semantic_projection_input_members": 400
+          },
+          "parity": {
+            "full_cold_state_equal_each_sample": true,
+            "sample_state_sha256": [
+              "ea8a7db2b099033be0b4e852585648893d2368cf1df9335282affd3cc5a33f1d",
+              "fa51ee7a856ef6859cc755b44bd46c82b2fc110e3c2f989b3bd81a05808a89de",
+              "caa3df533086bffcd44f975e18821912b4fdb4d1d2911df563264cdc53e27362",
+              "aacc0d2d255b3164b0495aefc58c419965df0e02d3ef8b8614bfedc3d45b55d7",
+              "2db96fa453da23a54d46a4ec81baa25b4f4e2fd5a879a4c2547a7d8b38fc151c"
+            ]
+          }
+        },
+        {
+          "workload": "contenders",
+          "population": 100,
+          "cold_bootstrap": {
+            "samples_s": [
+              0.01656604203162715,
+              0.01519695803290233,
+              0.015127249993383884,
+              0.015183000010438263,
+              0.015104000049177557
+            ],
+            "median_s": 0.015183000010438263,
+            "min_s": 0.015104000049177557,
+            "max_s": 0.01656604203162715
+          },
+          "fresh_parent_update": {
+            "samples_s": [
+              0.015917457989417017,
+              0.015116000024136156,
+              0.01515866699628532,
+              0.015073499991558492,
+              0.015112332999706268
+            ],
+            "median_s": 0.015116000024136156,
+            "min_s": 0.015073499991558492,
+            "max_s": 0.015917457989417017
+          },
+          "untimed_counters": {
+            "claim_parser_calls": 100
+          },
+          "parity": {
+            "full_scan_equal_each_sample": true,
+            "sample_claim_sha256": [
+              "e1473e227fcfaebf1e394f2310b4694a34263c605d8229883b0100461e4ee533",
+              "748fa84d44fce7b14c432af758840f880efed5b1206e004e16130fffac1cd7c5",
+              "9ada8f11656485a6cd2232fb7bd514f7266742d4ceb9a62e1aea66cf9f1b16e8",
+              "df546b61e0336204d2629af21481f31ea5f95cf79352f86ccaac23be1099ad74",
+              "c40698eb4f762e25782059b224af813f290e6dc968567454732c02a198231985"
+            ]
+          }
+        },
+        {
+          "workload": "evaluation",
+          "population": 1000,
+          "cold_bootstrap": {
+            "samples_s": [
+              0.07514733303105459,
+              0.07437545800348744,
+              0.07429704198148102,
+              0.07392599998274818,
+              0.0741898330161348
+            ],
+            "median_s": 0.07429704198148102,
+            "min_s": 0.07392599998274818,
+            "max_s": 0.07514733303105459
+          },
+          "fresh_parent_update": {
+            "samples_s": [
+              0.02704095799708739,
+              0.02543579100165516,
+              0.027873000013642013,
+              0.025468832987826318,
+              0.025769250001758337
+            ],
+            "median_s": 0.025769250001758337,
+            "min_s": 0.02543579100165516,
+            "max_s": 0.027873000013642013
+          },
+          "untimed_counters": {
+            "dependency_parser_calls": 1,
+            "semantic_projection_input_members": 4000
+          },
+          "parity": {
+            "full_cold_state_equal_each_sample": true,
+            "sample_state_sha256": [
+              "de03378ed131c7dd8ee3ca1597200aa7a2af2156ef89f9b721ec788f6a540568",
+              "5c34db16a322d9bfca4091971a305b37e1b31313f96ce32bfb8f2f40aead46f5",
+              "c17a1ae6b9233a3b0bc95e4f12fd44215770514751acb7b92a801393e58e1750",
+              "4e4b85de6ed1b125d20c3e4b1244d9429de3480e39b2af968237af20ef8b3a48",
+              "22569da70ee32fd5d894cd4844344082ceb077f646fb1720016e1416a93d1cc8"
+            ]
+          }
+        },
+        {
+          "workload": "contenders",
+          "population": 1000,
+          "cold_bootstrap": {
+            "samples_s": [
+              0.15306995902210474,
+              0.16083337500458583,
+              0.1585510000004433,
+              0.15194320800947025,
+              0.1547738749650307
+            ],
+            "median_s": 0.1547738749650307,
+            "min_s": 0.15194320800947025,
+            "max_s": 0.16083337500458583
+          },
+          "fresh_parent_update": {
+            "samples_s": [
+              0.16314070898806676,
+              0.1591896660393104,
+              0.1556205420056358,
+              0.15217479201965034,
+              0.1514026249642484
+            ],
+            "median_s": 0.1556205420056358,
+            "min_s": 0.1514026249642484,
+            "max_s": 0.16314070898806676
+          },
+          "untimed_counters": {
+            "claim_parser_calls": 1000
+          },
+          "parity": {
+            "full_scan_equal_each_sample": true,
+            "sample_claim_sha256": [
+              "e1473e227fcfaebf1e394f2310b4694a34263c605d8229883b0100461e4ee533",
+              "748fa84d44fce7b14c432af758840f880efed5b1206e004e16130fffac1cd7c5",
+              "9ada8f11656485a6cd2232fb7bd514f7266742d4ceb9a62e1aea66cf9f1b16e8",
+              "df546b61e0336204d2629af21481f31ea5f95cf79352f86ccaac23be1099ad74",
+              "c40698eb4f762e25782059b224af813f290e6dc968567454732c02a198231985"
+            ]
+          }
+        },
+        {
+          "workload": "evaluation",
+          "population": 10000,
+          "cold_bootstrap": {
+            "samples_s": [
+              1.1483685839921236,
+              1.1540364589891396,
+              1.1504353340133093,
+              1.1584144170046784,
+              1.1605259589850903
+            ],
+            "median_s": 1.1540364589891396,
+            "min_s": 1.1483685839921236,
+            "max_s": 1.1605259589850903
+          },
+          "fresh_parent_update": {
+            "samples_s": [
+              0.2647509580128826,
+              0.26904841704526916,
+              0.27129816595697775,
+              0.26937749999342486,
+              0.28902745799859986
+            ],
+            "median_s": 0.26937749999342486,
+            "min_s": 0.2647509580128826,
+            "max_s": 0.28902745799859986
+          },
+          "untimed_counters": {
+            "dependency_parser_calls": 1,
+            "semantic_projection_input_members": 40000
+          },
+          "parity": {
+            "full_cold_state_equal_each_sample": true,
+            "sample_state_sha256": [
+              "0d649c578ebc971ab697afeeefd6d5f64a97d3db9ba2e79a9dcf683fc7f91165",
+              "8916896a7fc4038183dd42afdc4c7bd17a580172d8dc6d3b00bbf3086f34937b",
+              "1cdb5f0497dcd9441cdab42aa1049e4a1e23cb05192ede2b11fbc7bffadd7a2e",
+              "011bee95294aa5f23c7321d22c6ab20563ab39edd706a0e980ae5697d79c4613",
+              "45ca7edf1c400e86efff5530aeae32d0d06a463fc9b96807f82878cbe5f0f221"
+            ]
+          }
+        },
+        {
+          "workload": "contenders",
+          "population": 10000,
+          "cold_bootstrap": {
+            "samples_s": [
+              1.9557697089621797,
+              1.8576077920151874,
+              1.9224938330007717,
+              1.9401244170148857,
+              1.8608627500361763
+            ],
+            "median_s": 1.9224938330007717,
+            "min_s": 1.8576077920151874,
+            "max_s": 1.9557697089621797
+          },
+          "fresh_parent_update": {
+            "samples_s": [
+              1.8577425829716958,
+              1.8561510419822298,
+              1.8542903329944238,
+              1.9647140000015497,
+              1.9734338329872116
+            ],
+            "median_s": 1.8577425829716958,
+            "min_s": 1.8542903329944238,
+            "max_s": 1.9734338329872116
+          },
+          "untimed_counters": {
+            "claim_parser_calls": 10000
+          },
+          "parity": {
+            "full_scan_equal_each_sample": true,
+            "sample_claim_sha256": [
+              "e1473e227fcfaebf1e394f2310b4694a34263c605d8229883b0100461e4ee533",
+              "748fa84d44fce7b14c432af758840f880efed5b1206e004e16130fffac1cd7c5",
+              "9ada8f11656485a6cd2232fb7bd514f7266742d4ceb9a62e1aea66cf9f1b16e8",
+              "df546b61e0336204d2629af21481f31ea5f95cf79352f86ccaac23be1099ad74",
+              "c40698eb4f762e25782059b224af813f290e6dc968567454732c02a198231985"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "mode": "after",
+      "repo": "/private/tmp/playbill-derived-state-batch2",
+      "source_sha256": {
+        "src/cruxible_core/playbill/authoring/lowering.py": "8c0b60c6e3196d36ebd0f6cc27e6239abf375fd8421dd1c512577aba5dfc91dc",
+        "src/cruxible_core/playbill/evaluation_state_cache.py": "507dc67f70378935feaa2f92d6e647aacb3a161ae8f3d6b8ca25d4f74fdd384b",
+        "src/cruxible_core/playbill/derived_state.py": "3191d8a375e012d7dafa597b129095fea6f54d094d5b0ed5a5ddd975ea444c91",
+        "src/cruxible_core/playbill/proposals.py": "e8c579d521a0503f3cc513a8ee9fe67ad85ba31d80949b2b5ee80ed594cff3e0",
+        "src/cruxible_core/playbill/closure.py": "64f2e8d508bf12c6c53ce159134e33a5668c09eff8325f48d9bb2dcf7f7b0a7b",
+        "src/cruxible_core/playbill/claim_subject_index.py": "b5db7527b3e45d0fe31afb90be6954d65b7cceea76ebe5254eb4d66ac463c9af",
+        "packages/cruxible-client/src/cruxible_client/contracts/merkle.py": "7784f510285ba3a83851d5810b97751a25bf007cc10b0b9a46f03ad2cd28472f",
+        "packages/cruxible-client/src/cruxible_client/_persistent.py": "d59b46fcdc9aec8eeb511ea3c72c41286858db6584440f4d50daa1be23aa7121"
+      },
+      "head": "438956cd69b4e92261485b759f4f2c871c4a055e",
+      "python": "3.13.3 (main, Apr  8 2025, 13:54:08) [Clang 17.0.0 (clang-1700.0.13.3)]",
+      "rows": [
+        {
+          "workload": "evaluation",
+          "population": 100,
+          "cold_bootstrap": {
+            "samples_s": [
+              0.009081083000637591,
+              0.009068624989595264,
+              0.009023874998092651,
+              0.008998292032629251,
+              0.009013792034238577
+            ],
+            "median_s": 0.009023874998092651,
+            "min_s": 0.008998292032629251,
+            "max_s": 0.009081083000637591
+          },
+          "fresh_parent_update": {
+            "samples_s": [
+              0.0008225410128943622,
+              0.0007416249718517065,
+              0.0007303340244106948,
+              0.0007377089932560921,
+              0.0007594999624416232
+            ],
+            "median_s": 0.0007416249718517065,
+            "min_s": 0.0007303340244106948,
+            "max_s": 0.0008225410128943622
+          },
+          "untimed_counters": {
+            "dependency_parser_calls": 1,
+            "semantic_projection_input_members": 0
+          },
+          "parity": {
+            "full_cold_state_equal_each_sample": true,
+            "sample_state_sha256": [
+              "ea8a7db2b099033be0b4e852585648893d2368cf1df9335282affd3cc5a33f1d",
+              "fa51ee7a856ef6859cc755b44bd46c82b2fc110e3c2f989b3bd81a05808a89de",
+              "caa3df533086bffcd44f975e18821912b4fdb4d1d2911df563264cdc53e27362",
+              "aacc0d2d255b3164b0495aefc58c419965df0e02d3ef8b8614bfedc3d45b55d7",
+              "2db96fa453da23a54d46a4ec81baa25b4f4e2fd5a879a4c2547a7d8b38fc151c"
+            ]
+          }
+        },
+        {
+          "workload": "contenders",
+          "population": 100,
+          "cold_bootstrap": {
+            "samples_s": [
+              0.018509000015910715,
+              0.018365666968747973,
+              0.01924595795571804,
+              0.018659125023987144,
+              0.018467500049155205
+            ],
+            "median_s": 0.018509000015910715,
+            "min_s": 0.018365666968747973,
+            "max_s": 0.01924595795571804
+          },
+          "fresh_parent_update": {
+            "samples_s": [
+              0.0006401669816114008,
+              0.0005740000051446259,
+              0.0005500410334207118,
+              0.0006054170080460608,
+              0.0005370419821701944
+            ],
+            "median_s": 0.0005740000051446259,
+            "min_s": 0.0005370419821701944,
+            "max_s": 0.0006401669816114008
+          },
+          "untimed_counters": {
+            "claim_parser_calls": 2
+          },
+          "parity": {
+            "full_scan_equal_each_sample": true,
+            "sample_claim_sha256": [
+              "e1473e227fcfaebf1e394f2310b4694a34263c605d8229883b0100461e4ee533",
+              "748fa84d44fce7b14c432af758840f880efed5b1206e004e16130fffac1cd7c5",
+              "9ada8f11656485a6cd2232fb7bd514f7266742d4ceb9a62e1aea66cf9f1b16e8",
+              "df546b61e0336204d2629af21481f31ea5f95cf79352f86ccaac23be1099ad74",
+              "c40698eb4f762e25782059b224af813f290e6dc968567454732c02a198231985"
+            ]
+          }
+        },
+        {
+          "workload": "evaluation",
+          "population": 1000,
+          "cold_bootstrap": {
+            "samples_s": [
+              0.09168316703289747,
+              0.09223250002833083,
+              0.09209787502186373,
+              0.09166116698179394,
+              0.09153500001411885
+            ],
+            "median_s": 0.09168316703289747,
+            "min_s": 0.09153500001411885,
+            "max_s": 0.09223250002833083
+          },
+          "fresh_parent_update": {
+            "samples_s": [
+              0.0035953749902546406,
+              0.003539874975103885,
+              0.003541833022609353,
+              0.0035541250254027545,
+              0.003545624960679561
+            ],
+            "median_s": 0.003545624960679561,
+            "min_s": 0.003539874975103885,
+            "max_s": 0.0035953749902546406
+          },
+          "untimed_counters": {
+            "dependency_parser_calls": 1,
+            "semantic_projection_input_members": 0
+          },
+          "parity": {
+            "full_cold_state_equal_each_sample": true,
+            "sample_state_sha256": [
+              "de03378ed131c7dd8ee3ca1597200aa7a2af2156ef89f9b721ec788f6a540568",
+              "5c34db16a322d9bfca4091971a305b37e1b31313f96ce32bfb8f2f40aead46f5",
+              "c17a1ae6b9233a3b0bc95e4f12fd44215770514751acb7b92a801393e58e1750",
+              "4e4b85de6ed1b125d20c3e4b1244d9429de3480e39b2af968237af20ef8b3a48",
+              "22569da70ee32fd5d894cd4844344082ceb077f646fb1720016e1416a93d1cc8"
+            ]
+          }
+        },
+        {
+          "workload": "contenders",
+          "population": 1000,
+          "cold_bootstrap": {
+            "samples_s": [
+              0.1907266670023091,
+              0.18749712500721216,
+              0.1876250000204891,
+              0.18747908301884308,
+              0.18817966699134558
+            ],
+            "median_s": 0.1876250000204891,
+            "min_s": 0.18747908301884308,
+            "max_s": 0.1907266670023091
+          },
+          "fresh_parent_update": {
+            "samples_s": [
+              0.000557082996238023,
+              0.0005421249661594629,
+              0.0005509170005097985,
+              0.0005538749974220991,
+              0.0005473330384120345
+            ],
+            "median_s": 0.0005509170005097985,
+            "min_s": 0.0005421249661594629,
+            "max_s": 0.000557082996238023
+          },
+          "untimed_counters": {
+            "claim_parser_calls": 2
+          },
+          "parity": {
+            "full_scan_equal_each_sample": true,
+            "sample_claim_sha256": [
+              "e1473e227fcfaebf1e394f2310b4694a34263c605d8229883b0100461e4ee533",
+              "748fa84d44fce7b14c432af758840f880efed5b1206e004e16130fffac1cd7c5",
+              "9ada8f11656485a6cd2232fb7bd514f7266742d4ceb9a62e1aea66cf9f1b16e8",
+              "df546b61e0336204d2629af21481f31ea5f95cf79352f86ccaac23be1099ad74",
+              "c40698eb4f762e25782059b224af813f290e6dc968567454732c02a198231985"
+            ]
+          }
+        },
+        {
+          "workload": "evaluation",
+          "population": 10000,
+          "cold_bootstrap": {
+            "samples_s": [
+              1.277150709007401,
+              1.2657779580331407,
+              1.2325069170328788,
+              1.2303429580060765,
+              1.227710208040662
+            ],
+            "median_s": 1.2325069170328788,
+            "min_s": 1.227710208040662,
+            "max_s": 1.277150709007401
+          },
+          "fresh_parent_update": {
+            "samples_s": [
+              0.036624624975956976,
+              0.03446879202965647,
+              0.035265999962575734,
+              0.03423341701272875,
+              0.034648625005502254
+            ],
+            "median_s": 0.034648625005502254,
+            "min_s": 0.03423341701272875,
+            "max_s": 0.036624624975956976
+          },
+          "untimed_counters": {
+            "dependency_parser_calls": 1,
+            "semantic_projection_input_members": 0
+          },
+          "parity": {
+            "full_cold_state_equal_each_sample": true,
+            "sample_state_sha256": [
+              "0d649c578ebc971ab697afeeefd6d5f64a97d3db9ba2e79a9dcf683fc7f91165",
+              "8916896a7fc4038183dd42afdc4c7bd17a580172d8dc6d3b00bbf3086f34937b",
+              "1cdb5f0497dcd9441cdab42aa1049e4a1e23cb05192ede2b11fbc7bffadd7a2e",
+              "011bee95294aa5f23c7321d22c6ab20563ab39edd706a0e980ae5697d79c4613",
+              "45ca7edf1c400e86efff5530aeae32d0d06a463fc9b96807f82878cbe5f0f221"
+            ]
+          }
+        },
+        {
+          "workload": "contenders",
+          "population": 10000,
+          "cold_bootstrap": {
+            "samples_s": [
+              1.9944299579947256,
+              1.9643271249951795,
+              1.973192041972652,
+              1.9783776249969378,
+              1.9599389579962008
+            ],
+            "median_s": 1.973192041972652,
+            "min_s": 1.9599389579962008,
+            "max_s": 1.9944299579947256
+          },
+          "fresh_parent_update": {
+            "samples_s": [
+              0.0006043339963071048,
+              0.0006261669914238155,
+              0.0006222500232979655,
+              0.0006108750239945948,
+              0.0006021250155754387
+            ],
+            "median_s": 0.0006108750239945948,
+            "min_s": 0.0006021250155754387,
+            "max_s": 0.0006261669914238155
+          },
+          "untimed_counters": {
+            "claim_parser_calls": 2
+          },
+          "parity": {
+            "full_scan_equal_each_sample": true,
+            "sample_claim_sha256": [
+              "e1473e227fcfaebf1e394f2310b4694a34263c605d8229883b0100461e4ee533",
+              "748fa84d44fce7b14c432af758840f880efed5b1206e004e16130fffac1cd7c5",
+              "9ada8f11656485a6cd2232fb7bd514f7266742d4ceb9a62e1aea66cf9f1b16e8",
+              "df546b61e0336204d2629af21481f31ea5f95cf79352f86ccaac23be1099ad74",
+              "c40698eb4f762e25782059b224af813f290e6dc968567454732c02a198231985"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

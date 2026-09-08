@@ -26,7 +26,9 @@ from cruxible_client.contracts.merkle import (
     MERKLE_ROOT_DOMAIN,
     ROOT_PREFIX,
     MerkleNode,
+    _MerkleNodes,
     build_merkle_manifest,
+    detach_merkle_tree,
     merkle_manifest_root,
     update_merkle_manifest,
     verify_merkle_manifest,
@@ -156,19 +158,21 @@ def test_node_verification_refuses_unreachable_and_misfiled_nodes() -> None:
         verify_merkle_nodes(truncated, claimed_root=manifest.root.tagged)
 
 
-def test_incremental_update_reuses_every_untouched_node_object() -> None:
+def test_incremental_update_reuses_every_untouched_scalar_node_row() -> None:
     manifest = build_merkle_manifest(MEMBERS)
     updated = update_merkle_manifest(manifest, updated={"subjects/alpha.json": "99" * 32})
 
+    assert isinstance(manifest.nodes, _MerkleNodes)
+    assert isinstance(updated.nodes, _MerkleNodes)
     changed_paths = {ROOT_PREFIX, "subjects", "subjects/alpha.json"}
     recomputed = {
         prefix
-        for prefix, node in updated.nodes.items()
-        if manifest.nodes.get(prefix) is not node  # identity, not equality
+        for prefix, row in updated.nodes._rows.items()
+        if manifest.nodes._rows.get(prefix) is not row  # immutable payload sharing
     }
     assert recomputed == changed_paths
     for prefix in set(manifest.nodes) - changed_paths:
-        assert updated.nodes[prefix] is manifest.nodes[prefix]
+        assert updated.nodes._rows[prefix] is manifest.nodes._rows[prefix]
     assert updated.root == build_merkle_manifest({**MEMBERS, "subjects/alpha.json": "99" * 32}).root
 
 
@@ -179,9 +183,9 @@ def test_removal_prunes_emptied_directories_and_leaves_siblings_untouched() -> N
     assert "documents/nested/deep" not in pruned.nodes
     assert (
         pruned.nodes["documents/playbill-design.json"]
-        is (manifest.nodes["documents/playbill-design.json"])
+        == manifest.nodes["documents/playbill-design.json"]
     )
-    assert pruned.nodes["principals"] is manifest.nodes["principals"]
+    assert pruned.nodes["principals"] == manifest.nodes["principals"]
     expected = {k: v for k, v in MEMBERS.items() if k != "documents/nested/deep/leaf.json"}
     assert pruned.root == build_merkle_manifest(expected).root
     assert pruned.nodes == build_merkle_manifest(expected).nodes
@@ -322,3 +326,69 @@ def test_merkle_manifest_has_a_frozen_end_to_end_golden() -> None:
     )
     assert incremental.root.tagged == expected["root"]
     verify_merkle_nodes(incremental.nodes, claimed_root=expected["root"])
+
+
+def test_incremental_merkle_update_does_not_enumerate_untouched_node_map() -> None:
+    from cruxible_client.contracts.merkle import MerkleTree
+
+    class NoEnumeration(_MerkleNodes):
+        def __iter__(self):
+            raise AssertionError("incremental update enumerated the whole node map")
+
+        def items(self):
+            raise AssertionError("incremental update enumerated the whole node map")
+
+        def values(self):
+            raise AssertionError("incremental update enumerated the whole node map")
+
+    original = build_merkle_manifest(MEMBERS)
+    assert isinstance(original.nodes, _MerkleNodes)
+    guarded = MerkleTree(original.root, NoEnumeration(original.nodes._rows), original.domains)
+    detached = detach_merkle_tree(guarded)
+    assert isinstance(detached.nodes, _MerkleNodes)
+    assert detached.nodes._rows is original.nodes._rows
+    updated = update_merkle_manifest(guarded, updated={"subjects/alpha.json": "99" * 32})
+    expected = build_merkle_manifest({**MEMBERS, "subjects/alpha.json": "99" * 32})
+    assert isinstance(updated.nodes, _MerkleNodes)
+    assert updated.root == expected.root
+    assert updated.nodes == expected.nodes
+    assert original.members() == MEMBERS
+
+
+def test_returned_merkle_nodes_and_digests_cannot_poison_retained_rows() -> None:
+    original = build_merkle_manifest(MEMBERS)
+    retained = detach_merkle_tree(original)
+    advanced = update_merkle_manifest(original, updated={"subjects/alpha.json": "99" * 32})
+    path = "documents/playbill-design.json"
+    expected = retained.nodes[path]
+    poisoned = original.nodes[path]
+    poisoned.__dict__["prefix"] = "poison"
+    poisoned.__dict__["segments"] = ("poison",)
+    poisoned.digest.__dict__["value"] = "ff" * 32
+    assert original.nodes[path] == expected
+    assert retained.nodes[path] == expected
+    assert advanced.nodes[path] == expected
+    assert original.nodes.get(path) is not original.nodes.get(path)
+    assert original.nodes[path].digest is not original.nodes[path].digest
+    verify_merkle_nodes(retained.nodes, claimed_root=retained.root.tagged)
+
+
+def test_merkle_handoff_detaches_root_domain_and_legacy_node_shells() -> None:
+    from cruxible_client.contracts.merkle import MerkleTree
+
+    built = build_merkle_manifest(MEMBERS)
+    legacy = MerkleTree(built.root, dict(built.nodes), built.domains)
+    retained = detach_merkle_tree(legacy)
+    returned = detach_merkle_tree(retained)
+    assert isinstance(retained.nodes, _MerkleNodes)
+    assert isinstance(returned.nodes, _MerkleNodes)
+    assert returned.nodes._rows is retained.nodes._rows
+    legacy.root.__dict__["value"] = "ff" * 32
+    legacy.domains.__dict__["leaf"] = "poison"
+    legacy.nodes["subjects/alpha.json"].digest.__dict__["value"] = "ff" * 32
+    returned.root.__dict__["value"] = "ee" * 32
+    returned.domains.__dict__["root"] = "poison"
+    assert retained.root == build_merkle_manifest(MEMBERS).root
+    assert retained.domains.leaf == MERKLE_LEAF_DOMAIN
+    assert retained.domains.root == MERKLE_ROOT_DOMAIN
+    verify_merkle_nodes(retained.nodes, claimed_root=retained.root.tagged)

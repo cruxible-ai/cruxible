@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import cruxible_core.playbill.authoring.lowering as lowering
+import cruxible_core.playbill.derived_state as derived_state
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
     AuthoringExistingClaimDispositionV1,
@@ -200,6 +201,7 @@ def _compare_lowering(monkeypatch, instance, intent):
 
         with monkeypatch.context() as patch:
             patch.setattr(lowering, "parse_claim", counted)
+            patch.setattr(derived_state, "parse_claim", counted)
             patch.setattr(lowering, "_ClaimPredicateIndex", make_index)
             try:
                 result = lowering.lower_authoring(instance, intent=intent, actor_id="owner")

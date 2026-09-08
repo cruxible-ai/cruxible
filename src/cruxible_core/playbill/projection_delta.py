@@ -9,13 +9,18 @@ shapes deliberately use the existing full assembler.
 from __future__ import annotations
 
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, TypeVar
 
 from cruxible_client.contracts.canonical import is_candidate_card_path
 from cruxible_client.contracts.errors import ProjectionIntegrityError
-from cruxible_core.playbill.citation_relations import build_citation_relation_facts
+from cruxible_core.playbill.citation_index import (
+    CitationDelta,
+    CitationIndex,
+    rebuild_citation_index,
+)
 from cruxible_core.playbill.projection import (
     AcceptedProjectionCoordinate,
     AssemblerRequest,
@@ -58,11 +63,6 @@ _LOCAL_KINDS = frozenset(
         "procedure-runtime-policy",
         "principal",
     }
-)
-_RELATIONS = (
-    "playbill.citation_relation.capture_contract",
-    "playbill.citation_relation.use",
-    "playbill.citation_relation.retired_conflict",
 )
 T = TypeVar("T")
 
@@ -143,11 +143,8 @@ def populate_successor(
         extra = {p for p in changed - members if not is_candidate_card_path(p)}
         if extra != {bundle.record_path}:
             raise ProjectionIntegrityError("Git successor differs outside its changeset")
-        # This validates the whole inventory's modes, paths, collisions and resource
-        # bounds, but opens only affected payloads and the small contract inventory.
+        # Validate the whole inventory boundary, but read only changeset members.
         selected = members
-        if citation_inputs_changed:
-            selected |= {p for p in current_entries if p.startswith("capture-contracts/")}
         blobs = _read_registered_entries(
             repository,
             current_inventory,
@@ -195,6 +192,9 @@ def populate_successor(
             ):
                 raise ProjectionIntegrityError("compiled delta member differs from its changeset")
         relations = None
+        successor_relations = None
+        relation_cache = assembler.citation_index_cache
+        cache_epoch = relation_cache.cache.generation if relation_cache is not None else 0
         bodies = assembler.bodies
         # Relations depend on Claim citations and CaptureContracts, not the
         # generation coordinate. Other member kinds carry those rows unchanged.
@@ -205,19 +205,33 @@ def populate_successor(
                 "playbill.citation_relation.use", 1, classification="semantic"
             )
         ):
-            relations = _timed(
-                timings,
-                "parse_normalize",
-                lambda: build_citation_relation_facts(
-                    inputs,
-                    bodies=bodies,
-                    previous_use_facts=parent.semantic_facts(_RELATIONS[1]),
-                    previous_conflict_facts=parent.semantic_facts(_RELATIONS[2]),
-                    changed_claim_paths=frozenset(p for p in members if p.startswith("claims/")),
-                ),
+
+            def citation_delta() -> tuple[CitationIndex, CitationDelta] | None:
+                prior = (
+                    relation_cache.parent(parent)
+                    if relation_cache is not None
+                    else rebuild_citation_index(parent)
+                )
+                if prior is None:
+                    return None
+                with (
+                    relation_cache.owner.build(("citation-delta", request.git_oid))
+                    if relation_cache is not None
+                    else nullcontext()
+                ):
+                    return prior.advance(inputs, changed_paths=members, bodies=bodies)
+
+            planned = _timed(timings, "parse_normalize", citation_delta)
+            if planned is None:
+                return None
+            successor_relations, relations = planned
+            assembler.registry.validate(
+                tuple(f.materialize() for f in relations.inserts), classification="semantic"
             )
-            relations = assembler.registry.validate(relations, classification="semantic")
-        return _timed(
+        elif relation_cache is not None:
+            # Carry a warm root over unrelated edits without bootstrapping a cold one.
+            successor_relations = relation_cache.peek(base)
+        result = _timed(
             timings,
             "sqlite_load",
             lambda: update_projection_database(
@@ -226,6 +240,9 @@ def populate_successor(
                 request=request,
                 parsed=parsed,
                 changed_paths=members,
-                relation_facts=relations,
+                relation_delta=relations,
             ),
         )
+        if relation_cache is not None and successor_relations is not None:
+            relation_cache.remember(request, successor_relations, epoch=cache_epoch)
+        return result

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import MutableMapping, MutableSet
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -94,6 +94,9 @@ from cruxible_core.playbill.query.cards import (
 from cruxible_core.playbill.query.semantic_discovery import DiscoveryEntryV1
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.playbill.settlement import ChangeSetRecord
+
+if TYPE_CHECKING:
+    from cruxible_core.service.playbill_evidence import ClaimVerdictReadContext
 
 
 class _StrictClaimServiceModel(BaseModel):
@@ -719,6 +722,7 @@ def resolve_playbill_claim_group(
     claims: tuple[ClaimArtifactAny, ...],
     verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
     time_boundaries: MutableSet[datetime] | None = None,
+    read_context: ClaimVerdictReadContext | None = None,
 ) -> PlaybillClaimGroupResolution:
     """Resolve one already-listed (Subject, predicate) slot without re-listing.
 
@@ -736,8 +740,16 @@ def resolve_playbill_claim_group(
         service_evaluate_playbill_claim_verdict,
     )
 
+    if read_context is not None and (
+        read_context.instance is not instance or read_context.coordinate != coordinate
+    ):
+        raise ProposalIntegrityError("Claim group read context differs from accepted state")
     type_path = claim_type_path(predicate)
-    content = instance.blob_at(coordinate.git_oid, type_path)
+    content = (
+        instance.blob_at(coordinate.git_oid, type_path)
+        if read_context is None
+        else read_context.tree.get(type_path)
+    )
     if content is None:
         raise ClaimNotFoundError(f"ClaimType:{predicate}")
     claim_type = parse_claim_type(content, path=type_path)
@@ -757,6 +769,7 @@ def resolve_playbill_claim_group(
                 evaluation_time=evaluated_at,
                 at=public_coordinate,
                 time_boundaries=time_boundaries,
+                read_context=read_context,
             ).verdict
             if verdicts_by_identity is not None:
                 verdicts_by_identity[claim.identity.qualified] = shared

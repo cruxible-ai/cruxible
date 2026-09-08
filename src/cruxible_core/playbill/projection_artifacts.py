@@ -765,7 +765,7 @@ def _claim_static_facts(
 
 
 def parse_projection_tree(
-    blobs: dict[str, bytes],
+    blobs: Mapping[str, bytes],
     *,
     registry: ProjectionExtensionRegistry,
     artifact_kinds: ArtifactKindRegistry = P2_C_ARTIFACT_KINDS,

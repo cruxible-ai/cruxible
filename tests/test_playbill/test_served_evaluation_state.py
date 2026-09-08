@@ -29,7 +29,7 @@ def test_served_writes_reuse_dependency_state_and_match_cold_evaluation_and_reop
     actor = AuthenticatedActor(actor_id="owner")
     coordinator = _coordinator(instance)
     base = instance.accepted_coordinate()
-    instance._evaluation_state_cache.derive(instance.tree_at(base.git_oid))
+    instance._evaluation_state_cache.derive(instance.immutable_tree_at(base.git_oid))
 
     def unexpected(*args, **kwargs):
         pytest.fail("warm served write rebuilt all accepted dependencies")

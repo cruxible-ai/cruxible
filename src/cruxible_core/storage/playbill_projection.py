@@ -25,6 +25,7 @@ from cruxible_client.contracts.projection_extensions import (
     ProjectionFact,
 )
 from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.citation_index import CitationDelta
 from cruxible_core.playbill.memo import memo_get, memo_put
 from cruxible_core.playbill.projection import (
     PROJECTION_SCHEMA_VERSION,
@@ -316,7 +317,7 @@ def update_projection_database(
     request: AssemblerRequest,
     parsed: ParsedProjectionTree,
     changed_paths: frozenset[str],
-    relation_facts: tuple[ProjectionFact, ...] | None,
+    relation_delta: CitationDelta | None,
 ) -> dict[str, int]:
     """Copy a verified immutable parent and replace only changeset-owned rows.
 
@@ -453,16 +454,11 @@ def update_projection_database(
                     for f in facts
                 ],
             )
-        if relation_facts is not None:
-            connection.execute(
-                "DELETE FROM semantic_facts WHERE schema_id IN (?,?,?,?,?)",
-                (
-                    "playbill.citation_relation.capture_contract",
-                    "playbill.citation_relation.source_use",
-                    "playbill.citation_relation.external_use",
-                    "playbill.citation_relation.use",
-                    "playbill.citation_relation.retired_conflict",
-                ),
+        if relation_delta is not None:
+            connection.executemany(
+                "DELETE FROM semantic_facts WHERE schema_id=? AND schema_version=? "
+                "AND subject_identity=? AND fact_key=?",
+                relation_delta.deletes,
             )
             connection.executemany(
                 "INSERT INTO semantic_facts VALUES (?,?,?,?,?)",
@@ -472,9 +468,9 @@ def update_projection_database(
                         f.schema_version,
                         f.subject_identity,
                         f.fact_key,
-                        _canonical_json_text(f.value),
+                        f.value_json.decode("utf-8"),
                     )
-                    for f in relation_facts
+                    for f in relation_delta.inserts
                 ],
             )
         connection.execute(

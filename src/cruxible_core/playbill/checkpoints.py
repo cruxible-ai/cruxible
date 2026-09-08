@@ -284,7 +284,7 @@ def checkpoint_body(
     generation_root: str,
     parent_generation_root: str,
     tree: Mapping[str, bytes],
-    members: Manifest | None = None,
+    members: Mapping[str, str] | None = None,
 ) -> ReplayCheckpointBodyV2:
     """Summarize one already-verified accepted coordinate.
 
@@ -311,7 +311,7 @@ def checkpoint_body(
         parent_generation_root=parent_generation_root,
         manifest_root=manifest_root_from_members(resolved).tagged,
         merkle_root=build_merkle_manifest(resolved).root.tagged,
-        members=resolved,
+        members=dict(resolved),
         principals=principals,
     )
 

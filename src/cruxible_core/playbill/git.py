@@ -1249,11 +1249,61 @@ class GitLedger:
             return ancestry[1]
         raise PlaybillGitError("Playbill refuses merge commits on main")
 
+    def changed_tree_paths(self, before: str, after: str) -> tuple[str, ...]:
+        """Exact physical path delta between two caller-verified accepted commits.
+
+        Rename detection is disabled: moves are a removal and an insertion.
+        Mode changes are included and the blob reader checks successor modes.
+        """
+        self._validate_oid(before)
+        self._validate_oid(after)
+        raw = self._git(
+            [
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                "--no-renames",
+                "-z",
+                before,
+                after,
+                "--",
+            ]
+        )
+        return tuple(path.decode("utf-8") for path in raw.split(b"\0") if path)
+
     def read_tree(self, oid: str) -> dict[str, bytes]:
         entries = _proven_blob_entries(self.list_tree(oid))
         # One batched read keeps whole-tree cost independent of the artifact count.
         blobs = self.read_blobs(tuple(entry.oid for entry in entries))
         return {entry.path: blobs[entry.oid] for entry in entries}
+
+    def read_tree_delta(
+        self, parent_oid: str, oid: str, *, parent_tree: Mapping[str, bytes]
+    ) -> dict[str, bytes]:
+        """Read a physical successor from an already-proven exact parent tree.
+
+        The caller owns the proof that parent_tree is the complete regular-file
+        tree at parent_oid. Git's complete mode/object diff proves the unchanged
+        complement; only new/changed blobs are read. This does not infer physical
+        changes from semantic candidate scope, which omits derivative/daemon files.
+        """
+        changes = self.changed_entries(parent_oid, oid)
+        for change in changes:
+            if change.oid is not None and change.mode != "100644":
+                raise PlaybillGitError(
+                    f"ledger tree contains unsupported {change.mode} member: {change.path}"
+                )
+            if (change.status == "A") != (change.path not in parent_tree):
+                raise PlaybillGitError(f"tree delta differs from its proven parent: {change.path}")
+        blobs = self.read_blobs([c.oid for c in changes if c.oid is not None])
+        result = dict(parent_tree)
+        for change in changes:
+            if change.oid is None:
+                del result[change.path]
+            else:
+                result[change.path] = blobs[change.oid]
+        return {path: result[path] for path in sorted(result, key=lambda p: p.encode("utf-8"))}
 
     def paths_at(self, oid: str) -> tuple[str, ...]:
         """List one commit's paths under the same proof ``read_tree`` applies.

@@ -63,7 +63,11 @@ from cruxible_core.playbill.authoring.insertions import (
     mark_publication_claim_accepted,
     mark_publication_terminal,
 )
-from cruxible_core.playbill.authoring.preflight import ComputedPreflight, compute_preflight
+from cruxible_core.playbill.authoring.preflight import (
+    ComputedPreflight,
+    authoring_operation,
+    compute_preflight,
+)
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.candidate_cards import is_candidate_card_path
 from cruxible_core.playbill.citation_relations import (
@@ -71,6 +75,7 @@ from cruxible_core.playbill.citation_relations import (
     capture_contract_relation_subject,
 )
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.prepared_evaluation import PreparedEvaluationScope
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.projection_artifacts import projected_revision
 from cruxible_core.playbill.proposals import (
@@ -465,9 +470,10 @@ class AuthoringIntentCoordinator:
         intent_id: str,
         *,
         actor: AuthenticatedActor,
+        prepared: PreparedEvaluationScope | None = None,
     ) -> tuple[ComputedPreflight, AuthoringIntentV1]:
         current = self.store.get(intent_id, actor_id=actor.actor_id)
-        computed = compute_preflight(self.instance, intent=current, actor=actor)
+        computed = compute_preflight(self.instance, intent=current, actor=actor, prepared=prepared)
         operation_key = computed.result.certificate.certificate_digest
 
         def bind_preflight(intent: AuthoringIntentV1) -> AuthoringIntentV1:
@@ -727,6 +733,16 @@ class AuthoringIntentCoordinator:
         *,
         actor: AuthenticatedActor,
     ) -> AuthoringSubmitResultV1:
+        with self.instance.prepared_evaluations.scope() as prepared:
+            return self._submit(intent_id, actor=actor, prepared=prepared)
+
+    def _submit(
+        self,
+        intent_id: str,
+        *,
+        actor: AuthenticatedActor,
+        prepared: PreparedEvaluationScope,
+    ) -> AuthoringSubmitResultV1:
         self.instance.require_writable()
         current = self._refresh_protocol(
             self.store.get(intent_id, actor_id=actor.actor_id),
@@ -766,7 +782,9 @@ class AuthoringIntentCoordinator:
                     workspace_advertisement=self.instance.advertise_workspace(),
                 )
 
-        computed, preflighted = self._compute_and_bind_preflight(intent_id, actor=actor)
+        computed, preflighted = self._compute_and_bind_preflight(
+            intent_id, actor=actor, prepared=prepared
+        )
         if computed.result.verdict == "refused":
             status = computed.status
             if current.candidate_status.proposal_id is not None:
@@ -817,6 +835,7 @@ class AuthoringIntentCoordinator:
             raise RuntimeError("passing preflight omitted its evaluated candidate")
 
         certificate = computed.result.certificate
+        handoff = prepared.handoff(authoring_operation(self.instance, preflighted))
         result = self.instance.proposal_service().submit(
             actor=actor,
             request=ProposalAdmissionRequest(
@@ -832,12 +851,15 @@ class AuthoringIntentCoordinator:
                     else None
                 ),
             ),
-            candidate_tree={
+            candidate_tree=handoff.submission_tree
+            if handoff is not None and handoff.submission_tree is not None
+            else {
                 path: content
                 for path, content in computed.evaluated_tree.items()
                 if not is_candidate_card_path(path)
             },
             timestamp=current.canonical_timestamp,
+            prepared=handoff,
         )
         if result.candidate is None:
             latest = AcceptedCoordinate.from_internal(self.instance.accepted_coordinate())

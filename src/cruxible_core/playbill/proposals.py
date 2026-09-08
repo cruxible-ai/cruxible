@@ -15,6 +15,7 @@ from pydantic import (
     field_validator,
 )
 
+from cruxible_client._persistent import PersistentMap
 from cruxible_client.contracts.acquisition_policies import (
     AcceptedSourceAcquisitionPolicyV1,
     SourceAcquisitionPolicyError,
@@ -55,7 +56,6 @@ from cruxible_client.contracts.candidates import (
     validate_candidate_timestamp,
 )
 from cruxible_client.contracts.canonical import (
-    Manifest,
     ProposalDigest,
     SemanticDiffDigest,
     Sha256Value,
@@ -283,6 +283,7 @@ from cruxible_core.playbill.compiler import (
     candidate_card_renderer_digest_for_compiler,
     projection_registry_for_compiler,
 )
+from cruxible_core.playbill.derived_state import SnapshotTree, snapshot_against
 from cruxible_core.playbill.exhaust.promotions import (
     AcceptedExhaustPromotionV1,
     ExhaustPromotionError,
@@ -291,6 +292,10 @@ from cruxible_core.playbill.exhaust.promotions import (
     evaluate_exhaust_promotion_acceptance,
     exhaust_promotion_digest,
     parse_exhaust_promotion,
+)
+from cruxible_core.playbill.prepared_evaluation import (
+    PreparedEvaluationAdapter,
+    PreparedEvaluationScope,
 )
 from cruxible_core.playbill.principal_lifecycle import evaluate_principal_lifecycle
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -402,7 +407,7 @@ def validate_proposal_tree(
     *,
     limits: ProposalReceiveLimits,
     base_tree: Mapping[str, bytes] | None = None,
-) -> dict[str, bytes]:
+) -> Mapping[str, bytes]:
     if len(tree) > limits.max_files:
         raise ProposalAdmissionError("proposal exceeds its file-count limit")
     if base_tree is not None:
@@ -451,7 +456,7 @@ def validate_proposal_tree(
             raise ProposalAdmissionError(
                 f"proposal removed a daemon-controlled or unregistered path: {path}"
             )
-    return result
+    return tree if isinstance(tree, SnapshotTree) else result
 
 
 @dataclass(frozen=True)
@@ -465,7 +470,7 @@ class CandidateEvaluation:
     refused evaluation has no tree worth carrying forward.
     """
 
-    tree: dict[str, bytes]
+    tree: Mapping[str, bytes]
     candidate: CandidateRecordAnyVersion | None
     diagnostics: tuple[CompilerDiagnostic, ...]
     rebased: bool
@@ -1380,10 +1385,26 @@ class EvaluatedTreeState:
     and is the oracle the second is tested against.
     """
 
-    members: Manifest
+    members: Mapping[str, str]
     merkle: MerkleManifest
     dependencies: DependencyIndexV1
     claim_subjects: ClaimSubjectIndex
+
+
+def detach_tree_state(state: EvaluatedTreeState) -> EvaluatedTreeState:
+    """Detach small wrappers; retained row/node stores expose detached values."""
+    from dataclasses import replace
+
+    from cruxible_client.contracts.merkle import detach_merkle_tree
+
+    return replace(
+        state,
+        merkle=detach_merkle_tree(state.merkle),
+        claim_subjects=replace(state.claim_subjects),
+        dependencies=replace(
+            state.dependencies, edge_tree=detach_merkle_tree(state.dependencies.edge_tree)
+        ),
+    )
 
 
 TreeStateProvider = Callable[[Mapping[str, bytes]], EvaluatedTreeState]
@@ -1393,7 +1414,7 @@ def build_tree_state(tree: Mapping[str, bytes]) -> EvaluatedTreeState:
     """Derive one tree's whole state by hashing and parsing every member."""
 
     projected = semantic_projection(tree)
-    members = manifest_for_tree(projected)
+    members = PersistentMap(manifest_for_tree(projected))
     return EvaluatedTreeState(
         members=members,
         merkle=build_merkle_manifest(members),
@@ -1413,7 +1434,7 @@ class AdvancedMembers:
     as a parse failure from a cache update the caller never asked for.
     """
 
-    members: Manifest
+    members: Mapping[str, str]
     merkle: MerkleManifest
     diff_digest: SemanticDiffDigest
     scope: tuple[str, ...]
@@ -1434,12 +1455,56 @@ def advance_tree_members(
     scope equal `semantic_diff(previous_tree, tree)` by construction.
     """
 
-    members = manifest_for_tree_carrying(
-        semantic_projection(tree),
-        previous_tree=semantic_projection(previous_tree),
-        previous_manifest=state.members,
+    edits = tree.edits_from(previous_tree) if isinstance(tree, SnapshotTree) else None
+    if edits is None:
+        members = PersistentMap(
+            manifest_for_tree_carrying(
+                semantic_projection(tree),
+                previous_tree=semantic_projection(previous_tree),
+                previous_manifest=state.members,
+            )
+        )
+        diff_digest, scope = semantic_diff_from_members(state.members, members)
+    else:
+        try:
+            return advance_member_delta(state, edits)
+        except (PlaybillError, ValueError):
+            # Invalid path combinations retain the cold validator's exact
+            # refusal and ordering; valid deltas never enumerate this fallback.
+            return advance_tree_members(state, previous_tree=dict(previous_tree), tree=dict(tree))
+    return AdvancedMembers(
+        members=members,
+        merkle=update_merkle_manifest(
+            state.merkle,
+            updated={path: members[path] for path in scope if path in members},
+            removed=[path for path in scope if path not in members],
+        ),
+        diff_digest=diff_digest,
+        scope=scope,
     )
-    diff_digest, scope = semantic_diff_from_members(state.members, members)
+
+
+def advance_member_delta(
+    state: EvaluatedTreeState, edits: Mapping[str, bytes | None]
+) -> AdvancedMembers:
+    """Commit a complete internal prospective or verified physical delta."""
+    # Complete private prospective edits, including generated dispositions.
+    # Raw bytes are committed before any changed artifact is parsed.
+    members = PersistentMap(state.members)
+    changed = []
+    for path, content in edits.items():
+        if path.startswith("changesets/") or is_candidate_card_path(path):
+            continue
+        digest = None if content is None else file_digest(content).value
+        if members.get(path) == digest:
+            continue
+        changed.append(path)
+        members = members.delete(path) if digest is None else members.set(path, digest)
+    # Preserve the frozen diff encoding using only the proven complete scope.
+    diff_digest, scope = semantic_diff_from_members(
+        {p: state.members[p] for p in changed if p in state.members},
+        {p: members[p] for p in changed if p in members},
+    )
     return AdvancedMembers(
         members=members,
         merkle=update_merkle_manifest(
@@ -1465,7 +1530,7 @@ def advance_tree_state(
         merkle=advanced.merkle,
         dependencies=update_dependency_index(
             state.dependencies,
-            tree=semantic_projection(tree),
+            tree=tree,
             changed=advanced.scope,
         ),
         claim_subjects=update_claim_subject_index(
@@ -2879,7 +2944,7 @@ def _procedure_mandate_pair_diagnostics(
 def _evaluate_scoped_members(
     *,
     current_tree: Mapping[str, bytes],
-    candidate_tree: dict[str, bytes],
+    candidate_tree: Mapping[str, bytes],
     current: AcceptedProjectionCoordinate,
     bodies: BodyVerifierProtocol,
     timestamp: str,
@@ -3500,7 +3565,13 @@ def evaluate_proposal_tree(
     bodies, approvals and current-coordinate query facts are never cached here.
     """
 
-    candidate_tree = dict(proposed_tree)
+    candidate_tree = (
+        snapshot_against(proposed_tree, current_tree)
+        if not rebased and isinstance(current_tree, SnapshotTree)
+        else proposed_tree
+        if isinstance(proposed_tree, SnapshotTree)
+        else SnapshotTree(proposed_tree)
+    )
     if rebased:
         _original_diff, original_scope = semantic_diff(base_tree, proposed_tree)
         if len(original_scope) > 1 or any(
@@ -3512,7 +3583,7 @@ def evaluate_proposal_tree(
                 new_parent_tree=current_tree,
                 proposed_tree=proposed_tree,
             )
-            candidate_tree = result.tree
+            candidate_tree = SnapshotTree(result.tree)
             if result.conflicts:
                 return CandidateEvaluation(
                     candidate_tree,
@@ -3528,11 +3599,12 @@ def evaluate_proposal_tree(
                     True,
                 )
         else:
-            candidate_tree, conflicts = deterministic_rebase(
+            rebased_tree, conflicts = deterministic_rebase(
                 base_tree=base_tree,
                 current_tree=current_tree,
                 proposed_tree=proposed_tree,
             )
+            candidate_tree = SnapshotTree(rebased_tree)
             if conflicts:
                 return CandidateEvaluation(
                     candidate_tree,
@@ -3685,6 +3757,8 @@ class ProposalService:
         ledger_publisher: Callable[[], object] | None = None,
         tree_state_provider: TreeStateProvider | None = None,
         note_index_provider: Callable[[], ProposalNoteIndex] | None = None,
+        accepted_tree_provider: Callable[[str], Mapping[str, bytes]] | None = None,
+        prepared_evaluations: PreparedEvaluationAdapter | None = None,
     ) -> None:
         self.transport = transport
         self.accepted = accepted
@@ -3708,6 +3782,8 @@ class ProposalService:
         # submission, and by contract it never raises.
         self._ledger_publisher = ledger_publisher or (lambda: None)
         self.tree_state_provider = tree_state_provider
+        self._accepted_tree_provider = accepted_tree_provider or self.transport.read_tree
+        self._prepared_evaluations = prepared_evaluations
 
     def submit(
         self,
@@ -3718,6 +3794,7 @@ class ProposalService:
         timestamp: str,
         authorize: Callable[[AcceptedProjectionCoordinate, Mapping[str, bytes]], None]
         | None = None,
+        prepared: PreparedEvaluationScope | None = None,
     ) -> ProposalResult:
         """Admit one candidate tree under the actor's ref.
 
@@ -3731,6 +3808,9 @@ class ProposalService:
         coordinate is verified atomically with first publication, and
         contention raises `ProposalHeadMovedError` before any effect is
         committed so the caller can evaluate again or refuse.
+
+        `prepared` may reuse a same-call evaluation; it never replaces the
+        fresh authorization callback or the publication head check.
         """
         self._require_writable()
         validate_candidate_timestamp(timestamp)
@@ -3757,7 +3837,7 @@ class ProposalService:
             raise ProposalAdmissionError("current coordinate contradicts the verified base")
         if self.transport.read_main() != current.git_oid:
             raise ProposalAdmissionError("current coordinate is not the accepted main ref")
-        current_tree = self.transport.read_tree(current.git_oid)
+        current_tree = self._accepted_tree_provider(current.git_oid)
         try:
             principal_registry_from_tree(
                 current_tree,
@@ -3789,21 +3869,36 @@ class ProposalService:
         # evaluated candidate knows; and an evaluation that raises now leaves
         # the actor's ref exactly where it was, instead of advancing it onto a
         # commit no admission record will ever name.
-        outcome = evaluate_proposal_tree(
-            base_tree=base_tree,
-            current_tree=current_tree,
-            proposed_tree=validated_tree,
-            current=current,
-            bodies=self.bodies,
-            timestamp=timestamp,
-            rebased=is_rebase,
-            actor_id=actor.actor_id,
-            claim_type_expansions=request.claim_type_expansions,
-            promotion_verifier=self.promotion_verifier,
-            producer_receipt_resolver=self.producer_receipt_resolver,
-            query_facts_provider=self.query_facts_provider,
-            tree_state_provider=self.tree_state_provider,
+        outcome = (
+            None
+            if prepared is None
+            else prepared.take(
+                owner=self._prepared_evaluations,
+                current=current,
+                actor=actor,
+                request=request,
+                limits=self.receive_limits,
+                timestamp=timestamp,
+                tree=validated_tree,
+                bodies=self.bodies,
+            )
         )
+        if outcome is None:
+            outcome = evaluate_proposal_tree(
+                base_tree=base_tree,
+                current_tree=current_tree,
+                proposed_tree=validated_tree,
+                current=current,
+                bodies=self.bodies,
+                timestamp=timestamp,
+                rebased=is_rebase,
+                actor_id=actor.actor_id,
+                claim_type_expansions=request.claim_type_expansions,
+                promotion_verifier=self.promotion_verifier,
+                producer_receipt_resolver=self.producer_receipt_resolver,
+                query_facts_provider=self.query_facts_provider,
+                tree_state_provider=self.tree_state_provider,
+            )
         # A refused proposal has no members to summarize, so it keeps the bare
         # subject the ledger has always written for it -- unless the author said
         # why they proposed it, which is still true of a set that did not pass.

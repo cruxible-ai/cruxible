@@ -279,3 +279,56 @@ def test_a_seeded_multi_generation_walk_never_diverges_from_the_oracle() -> None
     assert sum(1 for a, b in zip(steps, steps[1:]) if a != b) >= 30
     assert any(build_dependency_index(step).edges() for step in steps)
     _walk(steps)
+
+
+def test_retained_dependency_rows_and_parse_memo_cannot_be_poisoned() -> None:
+    from cruxible_core.playbill.closure import parse_dependency_artifact
+
+    anchor = _subject("anchor")
+    dependent = _subject("dependent", pins=(_pin_to(anchor),))
+    tree = {_path("anchor"): render_subject(anchor), _path("dependent"): render_subject(dependent)}
+    index = build_dependency_index(tree)
+    expected = build_dependency_index(tree)
+    retained = index.states[_path("dependent")]
+    # Frozen Pydantic models do not freeze the dictionaries beneath them.
+    retained.identity.__dict__["name"] = "poisoned"
+    retained.pins[0].target.__dict__["name"] = "poisoned"
+    retained.lifecycle.__dict__["state"] = "retired"
+    retained.__dict__["artifact_digest"] = "poisoned"
+    index.edges_by_source[_path("dependent")][0].__dict__["target_path"] = "poisoned"
+    index.edges_by_target[_path("anchor")][0].__dict__["source_path"] = "poisoned"
+    parsed = parse_dependency_artifact(_path("dependent"), tree[_path("dependent")])
+    assert parsed is not None
+    parsed.pins[0].target.__dict__["name"] = "poisoned"
+    parsed.__dict__["pins"] = ()
+    _assert_same_index(index, expected)
+    _assert_same_index(build_dependency_index(tree), expected)
+    revised = {**tree, _path("anchor"): render_subject(_subject("anchor", revision=1))}
+    _assert_same_index(
+        update_dependency_index(index, tree=revised, changed=(_path("anchor"),)),
+        build_dependency_index(revised),
+    )
+    _assert_same_index(index, expected)
+
+
+def test_warm_dependency_update_does_not_iterate_unrelated_maps(monkeypatch) -> None:
+    from cruxible_client._persistent import PersistentMap
+    from cruxible_core.playbill.derived_rows import CanonicalRows
+
+    anchor = _subject("anchor")
+    tree = {_path(f"unrelated-{i}"): render_subject(_subject(f"unrelated-{i}")) for i in range(100)}
+    tree[_path("anchor")] = render_subject(anchor)
+    tree[_path("dependent")] = render_subject(_subject("dependent", pins=(_pin_to(anchor),)))
+    index = build_dependency_index(tree)
+    revised = {**tree, _path("anchor"): render_subject(_subject("anchor", revision=1))}
+    expected = build_dependency_index(revised)
+
+    def refuse_iteration(self):
+        raise AssertionError("warm dependency update iterated a whole retained map")
+
+    with monkeypatch.context() as guarded:
+        guarded.setattr(PersistentMap, "__iter__", refuse_iteration)
+        guarded.setattr(CanonicalRows, "__iter__", refuse_iteration)
+        result = update_dependency_index(index, tree=revised, changed=(_path("anchor"),))
+    _assert_same_index(result, expected)
+    _assert_same_index(index, build_dependency_index(tree))

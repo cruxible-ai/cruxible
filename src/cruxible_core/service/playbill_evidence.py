@@ -6,6 +6,7 @@ import hashlib
 from collections import OrderedDict
 from collections.abc import Mapping, MutableSet
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
 from typing import Literal, Protocol
 
@@ -184,12 +185,62 @@ def _accepted_claim(tree: Mapping[str, bytes], identity: str) -> AcceptedClaim:
     if content is None:
         raise ClaimNotFoundError(identity)
     claim = parse_claim(content, path=path)
+    return _accepted_claim_artifact(claim)
+
+
+def _accepted_claim_artifact(claim: ClaimArtifactAny) -> AcceptedClaim:
     return AcceptedClaim(
-        path=path,
+        path=claim_path(claim.identity.name),
         claim=claim,
         statement_digest=claim_statement_digest(claim.statement).tagged,
         artifact_digest=claim_artifact_digest(claim).tagged,
     )
+
+
+@dataclass(frozen=True)
+class ClaimVerdictReadContext:
+    """One request's immutable accepted inputs; never retains current evidence.
+
+    Shares the instance-owned immutable root, parsed Claim inputs and provider
+    catalog across a batch. CAS availability, attestations and time-dependent
+    verdicts are still evaluated by the ordinary service for each Claim.
+    """
+
+    instance: PlaybillInstance
+    coordinate: AcceptedProjectionCoordinate
+    _claims: dict[str, ClaimArtifactAny] = dataclass_field(default_factory=dict, init=False)
+    _providers: dict[str, ProviderV1] | None = dataclass_field(default=None, init=False)
+    _tree: Mapping[str, bytes] = dataclass_field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_tree", self.instance.immutable_tree_at(self.coordinate.git_oid))
+
+    @property
+    def tree(self) -> Mapping[str, bytes]:
+        return self._tree
+
+    def claims(self) -> tuple[ClaimArtifactAny, ...]:
+        for path in self._tree:
+            if path.startswith("claims/") and path.endswith(".json"):
+                identity = "Claim:" + path.rsplit("/", 1)[-1].removesuffix(".json")
+                self.claim(identity)
+        return tuple(self._claims.values())
+
+    def claim(self, identity: str) -> ClaimArtifactAny:
+        identity = "Claim:" + identity.removeprefix("Claim:")
+        if identity not in self._claims:
+            path = claim_path(identity.removeprefix("Claim:"))
+            content = self._tree.get(path)
+            if content is None:
+                raise ClaimNotFoundError(identity)
+            self._claims[identity] = parse_claim(content, path=path)
+        return self._claims[identity]
+
+    def providers(self) -> dict[str, ProviderV1]:
+        if self._providers is None:
+            object.__setattr__(self, "_providers", accepted_claim_providers(self._tree))
+        assert self._providers is not None
+        return self._providers
 
 
 def accepted_claim_providers(tree: Mapping[str, bytes]) -> dict[str, ProviderV1]:
@@ -705,6 +756,7 @@ def service_evaluate_playbill_claim_verdict(
     at: PlaybillAcceptedCoordinate | None = None,
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
     time_boundaries: MutableSet[datetime] | None = None,
+    read_context: ClaimVerdictReadContext | None = None,
 ) -> PlaybillClaimVerdictQueryAny:
     """Recompute currency/verdict from accepted evidence at one explicit time.
 
@@ -716,8 +768,16 @@ def service_evaluate_playbill_claim_verdict(
     if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
         raise ProposalIntegrityError("Claim verdict evaluation_time must be timezone-aware")
     coordinate = _resolve_coordinate(instance, at)
-    tree = instance.tree_at(coordinate.git_oid)
-    accepted = _accepted_claim(tree, claim_identity)
+    if read_context is not None and (
+        read_context.instance is not instance or read_context.coordinate != coordinate
+    ):
+        raise ProposalIntegrityError("Claim read context differs from requested accepted state")
+    tree = instance.tree_at(coordinate.git_oid) if read_context is None else read_context.tree
+    accepted = (
+        _accepted_claim(tree, claim_identity)
+        if read_context is None
+        else _accepted_claim_artifact(read_context.claim(claim_identity))
+    )
     history = _claim_read_history_index(instance, coordinate=coordinate)
     evidence = history.law_evidence.get(accepted.path)
     if evidence is None:
@@ -772,7 +832,9 @@ def service_evaluate_playbill_claim_verdict(
         evaluation_time=evaluation_time,
         captures=captures,
         attestations=attestations,
-        providers=accepted_claim_providers(tree),
+        providers=(
+            accepted_claim_providers(tree) if read_context is None else read_context.providers()
+        ),
         claim_effective_from=accepted.claim.statement.effective_from,
         claim_effective_until=accepted.claim.statement.effective_until,
         referent_current=referent_current,

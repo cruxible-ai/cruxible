@@ -171,7 +171,7 @@ def test_duplicate_edges_are_preserved_exactly_as_the_flat_edge_list_kept_them()
     assert dependency_edge_members(duplicated) != dependency_edge_members(EDGES)
 
 
-def test_incremental_update_reuses_every_untouched_node_object() -> None:
+def test_incremental_update_preserves_every_untouched_node_value() -> None:
     tree = build_dependency_edge_tree(EDGES)
     replacement = (_edge("claims/alpha.json", "providers/feed.json", role="provider", target="f1"),)
     updated = update_dependency_edge_tree(tree, updated={"claims/alpha.json": replacement})
@@ -180,11 +180,11 @@ def test_incremental_update_reuses_every_untouched_node_object() -> None:
     recomputed = {
         prefix
         for prefix, node in updated.nodes.items()
-        if tree.nodes.get(prefix) is not node  # identity, not equality
+        if tree.nodes.get(prefix) != node  # public nodes are detached immutable-row views
     }
     assert recomputed == changed
     for prefix in set(tree.nodes) - changed:
-        assert updated.nodes[prefix] is tree.nodes[prefix]
+        assert updated.nodes[prefix] == tree.nodes[prefix]
 
     expected = tuple(edge for edge in EDGES if edge.source_path != "claims/alpha.json")
     assert updated.root == build_dependency_edge_tree((*expected, *replacement)).root
@@ -195,7 +195,7 @@ def test_removal_prunes_emptied_directories_and_leaves_siblings_untouched() -> N
     pruned = update_dependency_edge_tree(tree, removed=["claims/nested/deep/beta.json"])
     assert "claims/nested" not in pruned.nodes
     assert "claims/nested/deep" not in pruned.nodes
-    assert pruned.nodes["documents"] is tree.nodes["documents"]
+    assert pruned.nodes["documents"] == tree.nodes["documents"]
 
     expected = tuple(edge for edge in EDGES if edge.source_path != "claims/nested/deep/beta.json")
     assert pruned.root == build_dependency_edge_tree(expected).root

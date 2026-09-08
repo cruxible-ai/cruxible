@@ -806,14 +806,14 @@ def test_submission_reads_equal_current_and_proposed_base_once(tmp_path, monkeyp
     service = instance.proposal_service()
     request = _request(instance)
     tree = _proposal_tree(instance, _shell(body.digest))
-    original = service.transport.read_tree
+    original = service._accepted_tree_provider
     reads = []
 
     def counted(oid):
         reads.append(oid)
         return original(oid)
 
-    monkeypatch.setattr(service.transport, "read_tree", counted)
+    monkeypatch.setattr(service, "_accepted_tree_provider", counted)
     result = service.submit(
         actor=AuthenticatedActor(actor_id="owner"),
         request=request,

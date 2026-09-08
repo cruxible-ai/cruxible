@@ -22,8 +22,8 @@ use matching instrumentation on both sides of a comparison. The default batch
 has nine in-place revisions and nine creates. Forty-eight unsigned, unreferenced
 review commits exercise recovery's handling of real proposal leftovers.
 Use --no-server-profile for plain latency, or --profile-write-phases to also
-profile compile/preflight, submit, and readback inside service worker calls. Readback
-grades are recorded. Under this fixture's admission policy, the SDK's coordinator
+profile compile/preflight, submit, search/refresh, and readback inside service workers.
+Readback grades are recorded. Under this fixture's admission policy, the SDK's coordinator
 self-source does not support the claim: the diagnostic returns current, uncovered
 claims. This measures lawful accepted writes and readback, not a supported-evidence
 customer proof.
@@ -117,6 +117,9 @@ def serve(socket: str, profile_prefix: str, scope: str) -> None:
             "accept", playbill_api.service_activate_playbill_proposal
         )
     if scope == "write":
+        playbill_api.service_search_playbill = traced(
+            "search", playbill_api.service_search_playbill
+        )
         from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 
         for name in ("compile", "compile_input", "submit"):

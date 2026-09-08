@@ -11,14 +11,13 @@ from typing import TYPE_CHECKING, Final, Protocol, TypeVar
 
 from cruxible_client.contracts.errors import (
     ProjectionCoordinateError,
-    ProjectionIntegrityError,
     ProjectionPublicationError,
 )
 from cruxible_client.contracts.projection_extensions import (
     ProjectionExtensionRegistry,
-    ProjectionFact,
 )
 from cruxible_core.playbill.cas import BodyProjectionProtocol
+from cruxible_core.playbill.citation_index import CitationIndexCache
 from cruxible_core.playbill.citation_relations import build_citation_relation_facts
 from cruxible_core.playbill.compiler import (
     artifact_codec_for_compiler,
@@ -43,7 +42,6 @@ from cruxible_core.playbill.projection_claim_cache import ClaimCompilationCache
 from cruxible_core.playbill.projection_tree import read_registered_tree
 from cruxible_core.playbill.protocols import LedgerRepositoryProtocol
 from cruxible_core.storage.playbill_projection import (
-    bind_projection,
     initialize_projection_database,
     physical_file_digest,
     projection_logical_digest,
@@ -167,6 +165,7 @@ class ProjectionAssembler:
         bodies: BodyProjectionProtocol | None = None,
         accepted_coordinates_by_sequence: Mapping[int, AcceptedCoordinate] | None = None,
         claim_compilation_cache: ClaimCompilationCache | None = None,
+        citation_index_cache: CitationIndexCache | None = None,
     ) -> None:
         if publication_directory.is_symlink() or not publication_directory.is_dir():
             raise ProjectionPublicationError(
@@ -176,6 +175,7 @@ class ProjectionAssembler:
         self.accepted = accepted
         self.publication_directory = publication_directory.resolve(strict=True)
         self.claim_compilation_cache = claim_compilation_cache
+        self.citation_index_cache = citation_index_cache
         self.registry = registry or projection_registry_for_compiler(accepted.compiler)
         self.artifact_kinds = artifact_kinds_for_compiler(accepted.compiler)
         self.artifact_codec = artifact_codec_for_compiler(accepted.compiler)
@@ -423,10 +423,6 @@ class ProjectionAssembler:
             1,
             classification="semantic",
         ):
-            previous_uses, previous_conflicts, changed_claim_paths = self._citation_relation_delta(
-                request,
-                current_blob_oids={blob.path: blob.oid for blob in blobs},
-            )
             parsed = parsed.__class__(
                 envelopes=parsed.envelopes,
                 pins=parsed.pins,
@@ -436,9 +432,6 @@ class ProjectionAssembler:
                     *build_citation_relation_facts(
                         blob_map,
                         bodies=self.bodies,
-                        previous_use_facts=previous_uses,
-                        previous_conflict_facts=previous_conflicts,
-                        changed_claim_paths=changed_claim_paths,
                     ),
                 ),
                 presentation_facts=parsed.presentation_facts,
@@ -456,90 +449,6 @@ class ProjectionAssembler:
                 assembler_implementation=PYTHON_REFERENCE_ASSEMBLER,
             ),
         )
-
-    def _citation_relation_delta(
-        self,
-        request: AssemblerRequest,
-        *,
-        current_blob_oids: Mapping[str, str],
-    ) -> tuple[
-        tuple[ProjectionFact, ...],
-        tuple[ProjectionFact, ...],
-        frozenset[str] | None,
-    ]:
-        """Carry accepted use rows and name the exact changed Claim members.
-
-        Candidate activation is the normal incremental path. Accepted-coordinate
-        assembly is the explicit rebuild/recovery path and intentionally returns
-        the global sentinel.
-        """
-
-        if not isinstance(self.accepted, CandidateGenerationProjectionCoordinate):
-            return (), (), None
-        parent = next(
-            (
-                coordinate
-                for coordinate in self.accepted_coordinates_by_sequence.values()
-                if coordinate.git_oid == self.accepted.base_git_oid
-            ),
-            None,
-        )
-        if parent is None or parent.compiler_digest != self.accepted.compiler.rule_digest:
-            raise ProjectionIntegrityError(
-                "candidate relation projection cannot bind its accepted parent coordinate"
-            )
-        parent_coordinate = AcceptedProjectionCoordinate(
-            instance_id=self.accepted.instance_id,
-            repository_path=self.accepted.repository_path,
-            git_object_format=self.accepted.git_object_format,
-            git_oid=parent.git_oid,
-            semantic_root=parent.semantic_root,
-            generation_root=parent.generation_root,
-            compiler=self.accepted.compiler,
-        )
-        parent_request = AssemblerRequest(
-            instance_id=parent_coordinate.instance_id,
-            repository_path=parent_coordinate.repository_path,
-            git_object_format=parent_coordinate.git_object_format,
-            git_oid=parent_coordinate.git_oid,
-            semantic_root=parent_coordinate.semantic_root,
-            generation_root=parent_coordinate.generation_root,
-            compiler_digest=parent_coordinate.compiler.rule_digest,
-            schema_version=parent_coordinate.compiler.schema_version,
-            output_staging_directory=str(self.publication_directory / ".stage-parent-relation"),
-            limits=request.limits,
-        )
-        parent_manifest = self.publication_directory / projection_manifest_name(parent_request)
-        parent_blob_oids = {
-            entry.path: entry.oid
-            for entry in self._repository.list_tree_with_sizes(parent_coordinate.git_oid)
-            if entry.path.startswith("claims/")
-        }
-        current_claim_oids = {
-            path: oid for path, oid in current_blob_oids.items() if path.startswith("claims/")
-        }
-        if not parent_manifest.is_file():
-            # A missing derivative is recoverable from the full candidate tree.
-            # None asks the relation compiler to visit every Claim and Capture.
-            return (), (), None
-        with bind_projection(parent_manifest, expected=parent_coordinate) as projection:
-            previous = projection.semantic_facts("playbill.citation_relation.use")
-            previous_conflicts = projection.semantic_facts(
-                "playbill.citation_relation.retired_conflict"
-            )
-        if any(
-            not isinstance(fact.value, dict) or not isinstance(fact.value.get("claim_path"), str)
-            for fact in previous
-        ):
-            raise ProjectionIntegrityError(
-                "accepted parent citation relation cannot be incrementally continued"
-            )
-        changed = frozenset(
-            path
-            for path in parent_blob_oids.keys() | current_claim_oids.keys()
-            if parent_blob_oids.get(path) != current_claim_oids.get(path)
-        )
-        return previous, previous_conflicts, changed
 
 
 def _sorted_projection_tree(parsed: ParsedProjectionTree) -> ParsedProjectionTree:

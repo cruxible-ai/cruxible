@@ -1,0 +1,399 @@
+{
+  "order": "before/after/after/before",
+  "repeated_observations_per_arm": 4,
+  "excluded": "An interrupted development run at d422c08c exposed a per-group Git lookup dependency; fixed at 53684b5d and excluded from final measurements.",
+  "runs": [
+    {
+      "arm": "before",
+      "ordinal": 1,
+      "head": "8cfe40b6b4dbd4da34dbccb6c9c31d9eb35a8fd6",
+      "working_tree": [],
+      "population": 1000,
+      "history": 2,
+      "claims_per_write": 4,
+      "orphan_proposals": 8,
+      "server_profile": false,
+      "success": true,
+      "rows": [
+        {
+          "iteration": 0,
+          "temperature": "cold",
+          "seconds": {
+            "draft": 0.032180916983634233,
+            "prepare": 0.8310774999554269,
+            "submit": 2.02853958401829,
+            "submitted_status": 0.011597541975788772,
+            "approval_challenge": 0.2672461670008488,
+            "sign": 0.001472833042498678,
+            "approval_submit": 0.6507951669627801,
+            "accept": 2.647897999966517,
+            "readback": 0.24345758295385167,
+            "refresh": 2.2015408750157803
+          },
+          "total_seconds": 8.91582529101288,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        },
+        {
+          "iteration": 1,
+          "temperature": "warm",
+          "seconds": {
+            "draft": 0.032309249974787235,
+            "prepare": 0.31777758401585743,
+            "submit": 1.6377319170278497,
+            "submitted_status": 0.012094874982722104,
+            "approval_challenge": 0.2881392079871148,
+            "sign": 0.0006013330421410501,
+            "approval_submit": 0.6774865420302376,
+            "accept": 2.5723187910043634,
+            "readback": 0.25859845901140943,
+            "refresh": 2.2468776250025257
+          },
+          "total_seconds": 8.044138166005723,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        },
+        {
+          "iteration": 2,
+          "temperature": "warm",
+          "seconds": {
+            "draft": 0.03238562500337139,
+            "prepare": 0.324981999990996,
+            "submit": 1.6497255829744972,
+            "submitted_status": 0.011041999969165772,
+            "approval_challenge": 0.28875762497773394,
+            "sign": 0.0005839170189574361,
+            "approval_submit": 0.6908401250257157,
+            "accept": 2.521958499972243,
+            "readback": 0.28747941699111834,
+            "refresh": 2.2319248749990948
+          },
+          "total_seconds": 8.039889458043035,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        }
+      ]
+    },
+    {
+      "arm": "after",
+      "ordinal": 1,
+      "head": "53684b5dc7adbb5eda1c87c3121ac52e86e71f5b",
+      "working_tree": [
+        " M docs/benchmarks/write-loop-served.py",
+        "?? docs/reviews/accept-refresh-code-review-2026-09-07.md",
+        "?? docs/reviews/accept-refresh-profile.json"
+      ],
+      "population": 1000,
+      "history": 2,
+      "claims_per_write": 4,
+      "orphan_proposals": 8,
+      "server_profile": false,
+      "success": true,
+      "rows": [
+        {
+          "iteration": 0,
+          "temperature": "cold",
+          "seconds": {
+            "draft": 0.032359791977796704,
+            "prepare": 0.8258624169975519,
+            "submit": 2.0482650830526836,
+            "submitted_status": 0.01157983299344778,
+            "approval_challenge": 0.2656205830280669,
+            "sign": 0.0010498329647816718,
+            "approval_submit": 0.6645855419919826,
+            "accept": 2.243676542013418,
+            "readback": 0.2431137920357287,
+            "refresh": 0.8170160420122556
+          },
+          "total_seconds": 7.153164332965389,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        },
+        {
+          "iteration": 1,
+          "temperature": "warm",
+          "seconds": {
+            "draft": 0.03112104197498411,
+            "prepare": 0.2638525830116123,
+            "submit": 1.592440499982331,
+            "submitted_status": 0.010954542027320713,
+            "approval_challenge": 0.5311366670066491,
+            "sign": 0.0006014590035192668,
+            "approval_submit": 0.6790039999759756,
+            "accept": 2.1099166669882834,
+            "readback": 0.2550723750027828,
+            "refresh": 0.8331793749821372
+          },
+          "total_seconds": 6.307485666999128,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        },
+        {
+          "iteration": 2,
+          "temperature": "warm",
+          "seconds": {
+            "draft": 0.031590000027790666,
+            "prepare": 0.27094258298166096,
+            "submit": 1.621401207987219,
+            "submitted_status": 0.011053624970372766,
+            "approval_challenge": 0.5375867920229211,
+            "sign": 0.0006164160440675914,
+            "approval_submit": 0.6790448329993524,
+            "accept": 2.1881993749993853,
+            "readback": 0.2797860419959761,
+            "refresh": 0.8326036670478061
+          },
+          "total_seconds": 6.453038125007879,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        }
+      ]
+    },
+    {
+      "arm": "after",
+      "ordinal": 2,
+      "head": "53684b5dc7adbb5eda1c87c3121ac52e86e71f5b",
+      "working_tree": [
+        " M docs/benchmarks/write-loop-served.py",
+        "?? docs/reviews/accept-refresh-code-review-2026-09-07.md",
+        "?? docs/reviews/accept-refresh-profile.json"
+      ],
+      "population": 1000,
+      "history": 2,
+      "claims_per_write": 4,
+      "orphan_proposals": 8,
+      "server_profile": false,
+      "success": true,
+      "rows": [
+        {
+          "iteration": 0,
+          "temperature": "cold",
+          "seconds": {
+            "draft": 0.03184220800176263,
+            "prepare": 0.8415407079737633,
+            "submit": 2.033699457999319,
+            "submitted_status": 0.011616999981924891,
+            "approval_challenge": 0.2640427910373546,
+            "sign": 0.001477167010307312,
+            "approval_submit": 0.6723204159643501,
+            "accept": 2.3267939159995876,
+            "readback": 0.24085629201726988,
+            "refresh": 0.8309268340235576
+          },
+          "total_seconds": 7.2551387079874985,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        },
+        {
+          "iteration": 1,
+          "temperature": "warm",
+          "seconds": {
+            "draft": 0.03114049998112023,
+            "prepare": 0.26664408296346664,
+            "submit": 1.5956265830318443,
+            "submitted_status": 0.010963458975311369,
+            "approval_challenge": 0.5316593339666724,
+            "sign": 0.0005982499569654465,
+            "approval_submit": 0.658961208013352,
+            "accept": 2.12856974999886,
+            "readback": 0.2698545000166632,
+            "refresh": 0.8264376249862835
+          },
+          "total_seconds": 6.320661207952071,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        },
+        {
+          "iteration": 2,
+          "temperature": "warm",
+          "seconds": {
+            "draft": 0.030978832975961268,
+            "prepare": 0.2785312499618158,
+            "submit": 1.5983843330177478,
+            "submitted_status": 0.011079707997851074,
+            "approval_challenge": 0.5328548750258051,
+            "sign": 0.0005881249671801925,
+            "approval_submit": 0.6826975409639999,
+            "accept": 2.1021322089945897,
+            "readback": 0.2871292919735424,
+            "refresh": 0.8272461249725893
+          },
+          "total_seconds": 6.351826999976765,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        }
+      ]
+    },
+    {
+      "arm": "before",
+      "ordinal": 2,
+      "head": "8cfe40b6b4dbd4da34dbccb6c9c31d9eb35a8fd6",
+      "working_tree": [],
+      "population": 1000,
+      "history": 2,
+      "claims_per_write": 4,
+      "orphan_proposals": 8,
+      "server_profile": false,
+      "success": true,
+      "rows": [
+        {
+          "iteration": 0,
+          "temperature": "cold",
+          "seconds": {
+            "draft": 0.03182645799824968,
+            "prepare": 0.8366592499660328,
+            "submit": 2.024102875031531,
+            "submitted_status": 0.011649292020592839,
+            "approval_challenge": 0.2691897079930641,
+            "sign": 0.0008977910038083792,
+            "approval_submit": 0.6584789590560831,
+            "accept": 2.733085834013764,
+            "readback": 0.2697309579816647,
+            "refresh": 2.1909832499804907
+          },
+          "total_seconds": 9.026623500045389,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        },
+        {
+          "iteration": 1,
+          "temperature": "warm",
+          "seconds": {
+            "draft": 0.03216729196719825,
+            "prepare": 0.3147193330223672,
+            "submit": 1.5956275829812512,
+            "submitted_status": 0.010939333005808294,
+            "approval_challenge": 0.28455970803042874,
+            "sign": 0.0005941669805906713,
+            "approval_submit": 0.6708901670062914,
+            "accept": 2.6025375419994816,
+            "readback": 0.2591783329844475,
+            "refresh": 2.2528074169531465
+          },
+          "total_seconds": 8.02423533302499,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        },
+        {
+          "iteration": 2,
+          "temperature": "warm",
+          "seconds": {
+            "draft": 0.03243504196871072,
+            "prepare": 0.32620329200290143,
+            "submit": 1.6351619169581681,
+            "submitted_status": 0.011361624987330288,
+            "approval_challenge": 0.2892661250079982,
+            "sign": 0.0006503339973278344,
+            "approval_submit": 0.6885115000186488,
+            "accept": 2.6365448749857023,
+            "readback": 0.28935583401471376,
+            "refresh": 2.2333673340035602
+          },
+          "total_seconds": 8.14309658302227,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        }
+      ]
+    }
+  ],
+  "summary_seconds": {
+    "before": {
+      "prepare": {
+        "median": 0.3213797920034267,
+        "range": [
+          0.3147193330223672,
+          0.32620329200290143
+        ]
+      },
+      "submit": {
+        "median": 1.636446916993009,
+        "range": [
+          1.5956275829812512,
+          1.6497255829744972
+        ]
+      },
+      "accept": {
+        "median": 2.5874281665019225,
+        "range": [
+          2.521958499972243,
+          2.6365448749857023
+        ]
+      },
+      "refresh": {
+        "median": 2.240122479503043,
+        "range": [
+          2.2319248749990948,
+          2.2528074169531465
+        ]
+      },
+      "total": {
+        "median": 8.04201381202438,
+        "range": [
+          8.02423533302499,
+          8.14309658302227
+        ]
+      }
+    },
+    "after": {
+      "prepare": {
+        "median": 0.2687933329725638,
+        "range": [
+          0.2638525830116123,
+          0.2785312499618158
+        ]
+      },
+      "submit": {
+        "median": 1.597005458024796,
+        "range": [
+          1.592440499982331,
+          1.621401207987219
+        ]
+      },
+      "accept": {
+        "median": 2.1192432084935717,
+        "range": [
+          2.1021322089945897,
+          2.1881993749993853
+        ]
+      },
+      "refresh": {
+        "median": 0.8299248960101977,
+        "range": [
+          0.8264376249862835,
+          0.8331793749821372
+        ]
+      },
+      "total": {
+        "median": 6.336244103964418,
+        "range": [
+          6.307485666999128,
+          6.453038125007879
+        ]
+      }
+    }
+  }
+}

@@ -17,6 +17,7 @@ from cruxible_core.playbill.checkpoints import (
     checkpoint_body,
     write_checkpoint,
 )
+from cruxible_core.playbill.citation_index import CitationIndexCache
 from cruxible_core.playbill.git import GitLedger
 from cruxible_core.playbill.projection import (
     AcceptedCoordinate,
@@ -84,6 +85,7 @@ class ActivationPublisher:
         checkpoint_interval: int = DEFAULT_CHECKPOINT_INTERVAL,
         genesis: GenesisCoordinate | None = None,
         claim_compilation_cache: ClaimCompilationCache | None = None,
+        citation_index_cache: CitationIndexCache | None = None,
         verified_change_sets: tuple[tuple[str, ChangeSetRecordAnyVersion], ...] | None = None,
     ) -> None:
         if checkpoint_interval < 1:
@@ -97,6 +99,7 @@ class ActivationPublisher:
         self.checkpoint_interval = checkpoint_interval
         self.genesis = genesis
         self.claim_compilation_cache = claim_compilation_cache
+        self.citation_index_cache = citation_index_cache
         self.verified_change_sets = verified_change_sets
 
     def prebuild(
@@ -130,6 +133,7 @@ class ActivationPublisher:
             bodies=self.bodies,
             accepted_coordinates_by_sequence=accepted_coordinates,
             claim_compilation_cache=self.claim_compilation_cache,
+            citation_index_cache=self.citation_index_cache,
         )
         stage = self.publication_directory / f".stage-{secrets.token_hex(12)}"
         from cruxible_core.playbill.projection_delta import GenerationDelta

@@ -87,7 +87,7 @@ def test_missing_generated_body_recovers_and_corruption_refuses(tmp_path: Path) 
         preflight_module, "lower_authoring", wraps=preflight_module.lower_authoring
     ) as lowering:
         first = coordinator.preflight(intent.intent_id, actor=actor)
-        entry = next(iter(prepared_lowering._caches[instance].values()))
+        entry = next(iter(prepared_lowering._cache(instance).values()))
         digest = entry.bodies[0]
         assert instance.body_store().erase(digest)
         assert coordinator.preflight(intent.intent_id, actor=actor) == first
@@ -103,7 +103,7 @@ def test_clear_or_eviction_rebuilds_identical_result(
 ) -> None:
     instance, coordinator, actor, intent = _setup(tmp_path)
     first = coordinator.preflight(intent.intent_id, actor=actor)
-    prepared_lowering._caches.pop(instance)
+    instance.derived.clear()
     with patch.object(
         preflight_module, "lower_authoring", wraps=preflight_module.lower_authoring
     ) as lowering:
@@ -113,7 +113,7 @@ def test_clear_or_eviction_rebuilds_identical_result(
             actor=actor, payload=_claim(qualifier="other"), canonical_timestamp=TIMESTAMP
         ).intent
         coordinator.preflight(another.intent_id, actor=actor)
-        assert len(prepared_lowering._caches[instance]) == 1
+        assert len(prepared_lowering._cache(instance)) == 1
         assert coordinator.preflight(intent.intent_id, actor=actor) == first
         assert lowering.call_count == 3
 
@@ -170,7 +170,8 @@ def test_cached_containers_and_nested_input_values_are_not_shared(tmp_path: Path
     instance, coordinator, actor, intent = _setup(tmp_path)
     first = preflight_module.compute_preflight(instance, intent=intent, actor=actor)
     assert first.lowered is not None
-    first.lowered.proposed_tree.clear()
+    with pytest.raises((AttributeError, TypeError)):
+        first.lowered.proposed_tree.clear()
     first.lowered.resolved_authoring.clear()
     second = preflight_module.compute_preflight(instance, intent=intent, actor=actor)
     assert second.result == first.result

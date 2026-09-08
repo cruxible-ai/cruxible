@@ -1,0 +1,394 @@
+{
+  "order": "before/after/after/before",
+  "repeated_observations_per_arm": 4,
+  "runs": [
+    {
+      "arm": "before",
+      "ordinal": 1,
+      "head": "d6f24a7b6b7720e17acb2bc5ce8f3362639c6f64",
+      "working_tree": [],
+      "population": 1000,
+      "history": 2,
+      "claims_per_write": 4,
+      "orphan_proposals": 8,
+      "server_profile": false,
+      "success": true,
+      "rows": [
+        {
+          "iteration": 0,
+          "temperature": "cold",
+          "seconds": {
+            "draft": 0.03261999995447695,
+            "prepare": 0.8362742079771124,
+            "submit": 2.1912521669873968,
+            "submitted_status": 0.01146587502444163,
+            "approval_challenge": 0.26165420800680295,
+            "sign": 0.0018681249930523336,
+            "approval_submit": 0.6686645000008866,
+            "accept": 2.635803167009726,
+            "readback": 0.30780587502522394,
+            "refresh": 2.1488519590348005
+          },
+          "total_seconds": 9.096313333022408,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        },
+        {
+          "iteration": 1,
+          "temperature": "warm",
+          "seconds": {
+            "draft": 0.032004459004383534,
+            "prepare": 0.32185754203237593,
+            "submit": 1.8725302499951795,
+            "submitted_status": 0.01091070898110047,
+            "approval_challenge": 0.2835848329705186,
+            "sign": 0.0006020829896442592,
+            "approval_submit": 0.685629790998064,
+            "accept": 2.489717375021428,
+            "readback": 0.3675286659854464,
+            "refresh": 2.279903832997661
+          },
+          "total_seconds": 8.34449033299461,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        },
+        {
+          "iteration": 2,
+          "temperature": "warm",
+          "seconds": {
+            "draft": 0.030925333965569735,
+            "prepare": 0.35245383298024535,
+            "submit": 1.819806042010896,
+            "submitted_status": 0.013454042025841773,
+            "approval_challenge": 0.30177849996834993,
+            "sign": 0.0009399169939570129,
+            "approval_submit": 0.6995083750225604,
+            "accept": 2.6134697910165414,
+            "readback": 0.3950389579986222,
+            "refresh": 2.140730084036477
+          },
+          "total_seconds": 8.368365417001769,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        }
+      ]
+    },
+    {
+      "arm": "after",
+      "ordinal": 1,
+      "head": "7165b40a379345f284fdd9055594ce334ac9c902",
+      "working_tree": [
+        "?? docs/reviews/prepared-evaluation-code-review-2026-09-07.md"
+      ],
+      "population": 1000,
+      "history": 2,
+      "claims_per_write": 4,
+      "orphan_proposals": 8,
+      "server_profile": false,
+      "success": true,
+      "rows": [
+        {
+          "iteration": 0,
+          "temperature": "cold",
+          "seconds": {
+            "draft": 0.0313839580048807,
+            "prepare": 0.8353250419604592,
+            "submit": 2.0352469999925233,
+            "submitted_status": 0.011530292045790702,
+            "approval_challenge": 0.26505874999566004,
+            "sign": 0.0010247910395264626,
+            "approval_submit": 0.6579739589942619,
+            "accept": 2.6803278340375982,
+            "readback": 0.23380166699644178,
+            "refresh": 2.198289708001539
+          },
+          "total_seconds": 8.949985457991716,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        },
+        {
+          "iteration": 1,
+          "temperature": "warm",
+          "seconds": {
+            "draft": 0.031135792029090226,
+            "prepare": 0.32249125000089407,
+            "submit": 1.612620167026762,
+            "submitted_status": 0.01093179197050631,
+            "approval_challenge": 0.28090850001899526,
+            "sign": 0.0006087080109864473,
+            "approval_submit": 0.6773772499873303,
+            "accept": 2.554966166964732,
+            "readback": 0.2526377079775557,
+            "refresh": 2.216121541976463
+          },
+          "total_seconds": 7.960009416972753,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        },
+        {
+          "iteration": 2,
+          "temperature": "warm",
+          "seconds": {
+            "draft": 0.031099624990019947,
+            "prepare": 0.32481695798924193,
+            "submit": 1.6345653330208734,
+            "submitted_status": 0.01109929196536541,
+            "approval_challenge": 0.2849417499965057,
+            "sign": 0.0005992910009808838,
+            "approval_submit": 0.7107296250178479,
+            "accept": 2.593092125025578,
+            "readback": 0.2765320829930715,
+            "refresh": 2.2274471250129864
+          },
+          "total_seconds": 8.095128249959089,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        }
+      ]
+    },
+    {
+      "arm": "after",
+      "ordinal": 2,
+      "head": "7165b40a379345f284fdd9055594ce334ac9c902",
+      "working_tree": [
+        "?? docs/reviews/prepared-evaluation-code-review-2026-09-07.md"
+      ],
+      "population": 1000,
+      "history": 2,
+      "claims_per_write": 4,
+      "orphan_proposals": 8,
+      "server_profile": false,
+      "success": true,
+      "rows": [
+        {
+          "iteration": 0,
+          "temperature": "cold",
+          "seconds": {
+            "draft": 0.03276945900870487,
+            "prepare": 0.8432819579611532,
+            "submit": 2.131131458969321,
+            "submitted_status": 0.011723499977961183,
+            "approval_challenge": 0.26420500001404434,
+            "sign": 0.0014837500057183206,
+            "approval_submit": 0.6595098749967292,
+            "accept": 2.6175636250409298,
+            "readback": 0.23771429195767269,
+            "refresh": 2.235799791989848
+          },
+          "total_seconds": 9.035207375010941,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        },
+        {
+          "iteration": 1,
+          "temperature": "warm",
+          "seconds": {
+            "draft": 0.032472040969878435,
+            "prepare": 0.3190480830380693,
+            "submit": 1.6002287499723025,
+            "submitted_status": 0.011074709007516503,
+            "approval_challenge": 0.28193654102506116,
+            "sign": 0.0006002500304020941,
+            "approval_submit": 0.6733452079934068,
+            "accept": 2.586359959037509,
+            "readback": 0.26245983300032094,
+            "refresh": 2.2278136250097305
+          },
+          "total_seconds": 7.995552083943039,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        },
+        {
+          "iteration": 2,
+          "temperature": "warm",
+          "seconds": {
+            "draft": 0.030841332976706326,
+            "prepare": 0.3263465409982018,
+            "submit": 1.6315644169808365,
+            "submitted_status": 0.01112562499474734,
+            "approval_challenge": 0.2860826249816455,
+            "sign": 0.0006985000218264759,
+            "approval_submit": 0.6902508750208654,
+            "accept": 2.5064339579548687,
+            "readback": 0.2783904169918969,
+            "refresh": 2.2443933750037104
+          },
+          "total_seconds": 8.006341375003103,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        }
+      ]
+    },
+    {
+      "arm": "before",
+      "ordinal": 2,
+      "head": "d6f24a7b6b7720e17acb2bc5ce8f3362639c6f64",
+      "working_tree": [],
+      "population": 1000,
+      "history": 2,
+      "claims_per_write": 4,
+      "orphan_proposals": 8,
+      "server_profile": false,
+      "success": true,
+      "rows": [
+        {
+          "iteration": 0,
+          "temperature": "cold",
+          "seconds": {
+            "draft": 0.03201050002826378,
+            "prepare": 0.8340518749901094,
+            "submit": 2.198179250000976,
+            "submitted_status": 0.011730041005648673,
+            "approval_challenge": 0.26357258297502995,
+            "sign": 0.0015549579984508455,
+            "approval_submit": 0.6574156659771688,
+            "accept": 2.598962542018853,
+            "readback": 0.31669966696063057,
+            "refresh": 2.1401502499938942
+          },
+          "total_seconds": 9.05435316596413,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        },
+        {
+          "iteration": 1,
+          "temperature": "warm",
+          "seconds": {
+            "draft": 0.03194362495560199,
+            "prepare": 0.3156079999753274,
+            "submit": 1.8360633340198547,
+            "submitted_status": 0.010865915974136442,
+            "approval_challenge": 0.2820812499849126,
+            "sign": 0.000624749984126538,
+            "approval_submit": 0.6666848340537399,
+            "accept": 2.4736755829653703,
+            "readback": 0.27811966702574864,
+            "refresh": 2.2666911670239642
+          },
+          "total_seconds": 8.162555124959908,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        },
+        {
+          "iteration": 2,
+          "temperature": "warm",
+          "seconds": {
+            "draft": 0.030816499958746135,
+            "prepare": 0.3192352080368437,
+            "submit": 1.847286415984854,
+            "submitted_status": 0.010983666987158358,
+            "approval_challenge": 0.2819937080494128,
+            "sign": 0.0005765410023741424,
+            "approval_submit": 0.741307666990906,
+            "accept": 2.5442940419889055,
+            "readback": 0.3573147499701008,
+            "refresh": 2.136650374974124
+          },
+          "total_seconds": 8.270666000025813,
+          "readback_count": 4,
+          "verdicts": [
+            "uncovered"
+          ]
+        }
+      ]
+    }
+  ],
+  "summary_seconds": {
+    "before": {
+      "prepare": {
+        "median": 0.3205463750346098,
+        "range": [
+          0.3156079999753274,
+          0.35245383298024535
+        ]
+      },
+      "submit": {
+        "median": 1.8416748750023544,
+        "range": [
+          1.819806042010896,
+          1.8725302499951795
+        ]
+      },
+      "accept": {
+        "median": 2.5170057085051667,
+        "range": [
+          2.4736755829653703,
+          2.6134697910165414
+        ]
+      },
+      "refresh": {
+        "median": 2.2037106255302206,
+        "range": [
+          2.136650374974124,
+          2.279903832997661
+        ]
+      },
+      "total": {
+        "median": 8.307578166510211,
+        "range": [
+          8.162555124959908,
+          8.368365417001769
+        ]
+      }
+    },
+    "after": {
+      "prepare": {
+        "median": 0.323654103995068,
+        "range": [
+          0.3190480830380693,
+          0.3263465409982018
+        ]
+      },
+      "submit": {
+        "median": 1.6220922920037992,
+        "range": [
+          1.6002287499723025,
+          1.6345653330208734
+        ]
+      },
+      "accept": {
+        "median": 2.5706630630011205,
+        "range": [
+          2.5064339579548687,
+          2.593092125025578
+        ]
+      },
+      "refresh": {
+        "median": 2.2276303750113584,
+        "range": [
+          2.216121541976463,
+          2.2443933750037104
+        ]
+      },
+      "total": {
+        "median": 8.000946729473071,
+        "range": [
+          7.960009416972753,
+          8.095128249959089
+        ]
+      }
+    }
+  }
+}

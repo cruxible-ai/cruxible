@@ -22,10 +22,19 @@ re-hashes only the touched leaves and the interior nodes above them.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import (
+    ItemsView,
+    Iterable,
+    Iterator,
+    Mapping,
+    MutableMapping,
+    Sequence,
+    ValuesView,
+)
 from dataclasses import dataclass
 from typing import Final, Generic, TypeVar, cast
 
+from cruxible_client._persistent import MapMutation, PersistentMap
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     CanonicalScalar,
@@ -102,6 +111,91 @@ class MerkleNode:
         return self.member_digest is not None
 
 
+# Frozen public dataclasses still have writable __dict__ values. Retain only
+# scalar tuples internally and detach public node/digest objects on each read.
+_NodeRow = tuple[str, str, str | None, tuple[str, ...]]
+
+
+def _node_row(node: MerkleNode) -> _NodeRow:
+    return (node.prefix, node.digest.value, node.member_digest, tuple(node.segments))
+
+
+def _row_node(row: _NodeRow) -> MerkleNode:
+    return MerkleNode(row[0], MerkleNodeDigest(row[1]), row[2], row[3])
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class _MerkleNodes(Mapping[str, MerkleNode]):
+    _rows: PersistentMap[_NodeRow]
+
+    @classmethod
+    def from_nodes(cls, nodes: Mapping[str, MerkleNode]) -> _MerkleNodes:
+        if isinstance(nodes, cls):
+            return cls(nodes._rows)
+        return cls(PersistentMap((key, _node_row(node)) for key, node in nodes.items()))
+
+    def __getitem__(self, key: str) -> MerkleNode:
+        return _row_node(self._rows[key])
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._rows)
+
+    def __len__(self) -> int:
+        return len(self._rows)
+
+    def items(self) -> ItemsView[str, MerkleNode]:
+        return _MerkleItemsView(self)
+
+    def values(self) -> ValuesView[MerkleNode]:
+        return _MerkleValuesView(self)
+
+    def __deepcopy__(self, memo: dict[int, object]) -> _MerkleNodes:
+        # Both the map structure and every retained scalar row are immutable.
+        memo[id(self)] = self
+        return self
+
+
+class _MerkleItemsView(ItemsView[str, MerkleNode]):
+    def __init__(self, nodes: _MerkleNodes) -> None:
+        super().__init__(nodes)
+        self._nodes = nodes
+
+    def __iter__(self) -> Iterator[tuple[str, MerkleNode]]:
+        return ((key, _row_node(row)) for key, row in self._nodes._rows.items())
+
+
+class _MerkleValuesView(ValuesView[MerkleNode]):
+    def __init__(self, nodes: _MerkleNodes) -> None:
+        super().__init__(nodes)
+        self._nodes = nodes
+
+    def __iter__(self) -> Iterator[MerkleNode]:
+        return (_row_node(row) for row in self._nodes._rows.values())
+
+
+class _MerkleMutation(MutableMapping[str, MerkleNode]):
+    def __init__(self, nodes: Mapping[str, MerkleNode]) -> None:
+        self._rows = MapMutation(_MerkleNodes.from_nodes(nodes)._rows)
+
+    def __getitem__(self, key: str) -> MerkleNode:
+        return _row_node(self._rows[key])
+
+    def __setitem__(self, key: str, node: MerkleNode) -> None:
+        self._rows[key] = _node_row(node)
+
+    def __delitem__(self, key: str) -> None:
+        del self._rows[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._rows)
+
+    def __len__(self) -> int:
+        return len(self._rows)
+
+    def finish(self) -> _MerkleNodes:
+        return _MerkleNodes(self._rows.finish())
+
+
 @dataclass(frozen=True)
 class MerkleTree(Generic[RootT]):
     """A merkle root plus every node needed to update it without a full rebuild."""
@@ -124,6 +218,23 @@ class MerkleTree(Generic[RootT]):
             for node in sorted(self.nodes.values(), key=lambda item: item.prefix.encode("utf-8"))
             if node.is_leaf
         }
+
+
+def _copy_domains(domains: MerkleDomainFamily[RootT]) -> MerkleDomainFamily[RootT]:
+    return MerkleDomainFamily(domains.leaf, domains.node, domains.root, domains.root_type)
+
+
+def detach_merkle_tree(tree: MerkleTree[RootT]) -> MerkleTree[RootT]:
+    """Detach mutable public shells, sharing immutable scalar node rows in O(1).
+
+    A legacy caller-supplied Mapping is normalized once. Current cold builds and
+    incremental trees already carry scalar rows and require no enumeration.
+    """
+    return MerkleTree(
+        root=type(tree.root)(tree.root.value),
+        nodes=_MerkleNodes.from_nodes(tree.nodes),
+        domains=_copy_domains(tree.domains),
+    )
 
 
 MerkleManifest = MerkleTree[SemanticMerkleRoot]
@@ -256,8 +367,8 @@ def build_merkle_tree(
         nodes[prefix] = _interior_node(prefix, interior[prefix], nodes, domains)
     return MerkleTree(
         root=_root_value(nodes[ROOT_PREFIX], domains),
-        nodes=nodes,
-        domains=domains,
+        nodes=_MerkleNodes.from_nodes(nodes),
+        domains=_copy_domains(domains),
     )
 
 
@@ -281,9 +392,10 @@ def update_merkle_tree(
 ) -> MerkleTree[RootT]:
     """Apply one change set, rehashing only touched leaves and their ancestors.
 
-    Untouched subtrees are carried over as the identical `MerkleNode` objects, so
-    no digest outside the changed paths' root paths is recomputed. The node map
-    itself is copied, which is a pointer copy per member and never a hash.
+    Untouched scalar node rows are carried over by identity; public MerkleNode
+    objects are detached on read. No digest outside the changed paths' root
+    paths is recomputed. The node map
+    uses persistent path copying, avoiding a whole-map copy per change set.
     """
 
     domains = manifest.domains
@@ -296,7 +408,7 @@ def update_merkle_tree(
     if collisions:
         raise CanonicalEncodingError(f"merkle change set both updates and removes: {collisions}")
 
-    nodes = dict(manifest.nodes)
+    nodes = _MerkleMutation(manifest.nodes)
     dirty: dict[str, list[str]] = {}
 
     def segments_of(prefix: str) -> list[str]:
@@ -359,8 +471,8 @@ def update_merkle_tree(
         nodes[prefix] = _interior_node(prefix, dirty[prefix], nodes, domains)
     return MerkleTree(
         root=_root_value(nodes[ROOT_PREFIX], domains),
-        nodes=nodes,
-        domains=domains,
+        nodes=nodes.finish(),
+        domains=_copy_domains(domains),
     )
 
 
@@ -481,6 +593,7 @@ __all__ = [
     "ROOT_PREFIX",
     "build_merkle_manifest",
     "build_merkle_tree",
+    "detach_merkle_tree",
     "merkle_manifest_root",
     "normalize_member_manifest",
     "update_merkle_manifest",
