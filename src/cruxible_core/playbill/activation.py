@@ -299,6 +299,7 @@ class ActivationPublisher:
             generation_root=bundle.generation_root.tagged,
             parent_generation_root=parent.generation_root,
             tree=bundle.tree,
+            members=bundle.members,
         )
         write_checkpoint(self.checkpoint_directory, body)
 

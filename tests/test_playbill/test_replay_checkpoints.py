@@ -393,7 +393,9 @@ def test_a_tampered_checkpoint_on_disk_falls_back_to_genesis(tmp_path: Path) -> 
     assert rewritten.body.semantic_root != tampered.semantic_root
 
 
-def test_activation_writes_a_checkpoint_on_its_configured_stride(tmp_path: Path) -> None:
+def test_activation_writes_a_checkpoint_on_its_configured_stride(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The daemon's own acceptance path leaves the summary a reopen then loads."""
 
     from cruxible_core.playbill.activation import ActivationPublisher
@@ -426,14 +428,25 @@ def test_activation_writes_a_checkpoint_on_its_configured_stride(tmp_path: Path)
         checkpoint_interval=1,
         genesis=instance.descriptor.genesis,
     )
+    from cruxible_core.playbill import checkpoints
+
+    expected_members = checkpoints.members_for_tree(bundle.tree)
+    assert bundle.members == expected_members
+
+    def no_rehash(_tree):
+        pytest.fail("activation checkpoint must reuse verified semantic members")
+
+    monkeypatch.setattr(checkpoints, "members_for_tree", no_rehash)
     projection = publisher.prebuild(bundle, base=base)
     assert publisher.activate(bundle, projection, base=base).status == "accepted"
 
     record = load_checkpoint_file(_checkpoints(instance))
     assert record is not None
+    assert record.body.members == expected_members
     assert record.body.sequence == 1
     assert record.body.git_oid == bundle.oid
     assert record.body.semantic_root == bundle.semantic_root.tagged
 
+    monkeypatch.undo()
     reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     assert reopened.accepted_coordinate().git_oid == bundle.oid

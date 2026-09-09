@@ -675,6 +675,7 @@ class VerifiedGenerationBundle:
     record: ChangeSetRecordAnyVersion
     record_path: str
     tree: dict[str, bytes]
+    members: Mapping[str, str]
     oid: str
     semantic_root: SemanticRoot
     descriptor: GenerationDescriptor
@@ -848,6 +849,8 @@ def prepare_generation(
         record=record,
         record_path=record_path,
         tree=generation_tree,
+        # Generation records and review cards are outside the semantic manifest.
+        members=reevaluated.state.members,
         oid=oid,
         semantic_root=semantic_root,
         descriptor=descriptor,
