@@ -654,7 +654,7 @@ def _accepted_procedure(
     coordinate: AcceptedProjectionCoordinate,
 ) -> AcceptedProcedureV1:
     path = procedure_path(name)
-    content = instance.tree_at(coordinate.git_oid).get(path)
+    content = instance.blob_at(coordinate.git_oid, path)
     if content is None:
         raise ProcedureNotFound(f"{ProcedureNotFound.code}: {name}")
     procedure = parse_procedure(content, path=path)
@@ -1645,7 +1645,7 @@ class _CurrentProcedureAuthority:
         del coordinate
         current = self.instance.accepted_coordinate()
         path = procedure_path(identity.name)
-        content = self.instance.tree_at(current.git_oid).get(path)
+        content = self.instance.blob_at(current.git_oid, path)
         if content is None:
             return None
         procedure = parse_procedure(content, path=path)

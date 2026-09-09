@@ -740,7 +740,9 @@ def test_direct_receipt_reducer_identity_is_stable() -> None:
     assert QUERY_NAME
 
 
-def test_explicit_historical_coordinate_obeys_live_activation_policy(tmp_path: Path) -> None:
+def test_explicit_historical_coordinate_obeys_live_activation_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     instance, owner, procedure = _world(tmp_path)
     historical = instance.accepted_coordinate()
     successor = procedure.model_copy(
@@ -760,6 +762,24 @@ def test_explicit_historical_coordinate_obeys_live_activation_policy(tmp_path: P
         sequence=5,
         timestamp="2026-08-24T17:00:00.000000Z",
     )
+
+    def no_whole_tree(*_args):
+        pytest.fail("one Procedure read must not fetch the whole tree")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(instance, "tree_at", no_whole_tree)
+        loaded = procedure_run_service._accepted_procedure(
+            instance, name=procedure.identity.name, coordinate=historical
+        )
+        assert loaded.procedure == procedure
+        authority = procedure_run_service._CurrentProcedureAuthority(instance)
+        assert (
+            authority.current_procedure_digest(
+                procedure.identity, coordinate=AcceptedCoordinate.from_internal(historical)
+            )
+            == procedure_artifact_digest(successor).tagged
+        )
+
     journal_root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
     assert not journal_root.exists()
 
