@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
+from cruxible_client.contracts.canonical import is_candidate_card_path
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.proposal_models import (
     ProposalAdmissionRequest,
@@ -342,3 +345,29 @@ def test_prepared_submission_preserves_authorization_and_publication_fence(
             assert scope.consumed == (publication == "head_moved")
         assert authorized == [args["current"]]
         assert original_main() == args["current"].git_oid
+
+
+@pytest.mark.parametrize("has_parent", [False, True])
+def test_card_stripping_preserves_parent_edits_and_original_outcome(world, has_parent):
+    parent = SnapshotTree({"documents/keep.md": b"keep", "cards/old.md": b"old"})
+    candidate = parent.fork()
+    candidate["documents/new.md"] = b"new"
+    candidate["cards/new.md"] = b"generated"
+    tree = candidate.snapshot() if has_parent else SnapshotTree(dict(candidate))
+    expected = {p: b for p, b in tree.items() if not is_candidate_card_path(p)}
+    adapter = PreparedEvaluationAdapter(DerivedState())
+    with adapter.scope() as scope:
+        args = retained(world, adapter, scope)
+        fields = {k: v for k, v in args.items() if k not in {"owner", "tree", "bodies"}}
+        scope.retain(replace(world[-1].evaluation, tree=tree), operation=b"cards", **fields)
+        submission = scope.submission_tree
+        assert dict(submission) == expected
+        assert tree["cards/old.md"] == b"old"
+        assert tree["cards/new.md"] == b"generated"
+        if has_parent:
+            assert submission.edits_from(parent) == {
+                "documents/new.md": b"new",
+                "cards/old.md": None,
+            }
+        else:
+            assert submission.edits_from(tree) == {"cards/old.md": None, "cards/new.md": None}

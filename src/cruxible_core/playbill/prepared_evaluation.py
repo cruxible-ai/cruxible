@@ -175,9 +175,11 @@ class PreparedEvaluationScope:
         tree = (
             outcome.tree if isinstance(outcome.tree, SnapshotTree) else SnapshotTree(outcome.tree)
         )
-        self.submission_tree = SnapshotTree(
-            {p: b for p, b in tree.items() if not is_candidate_card_path(p)}
-        )
+        submission = tree.fork()
+        for path in tree:
+            if is_candidate_card_path(path):
+                del submission[path]
+        self.submission_tree = submission.snapshot()
         self._outcome = CandidateEvaluation(
             tree,
             copy.deepcopy(outcome.candidate),
