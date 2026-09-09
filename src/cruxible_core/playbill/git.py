@@ -661,8 +661,9 @@ class GitLedger:
         retry after uncertain outcomes. Missing state is recoverable only with
         local ancestry or exact settlement proof. Main always fast-forwards.
         Unknown nonempty remote values otherwise refuse publication. Success
-        acknowledges this snapshot, never later local refs. Each remote command
-        has a deadline; failure never undoes the already durable local ledger.
+        acknowledges this snapshot, never later local refs. Only differing refs
+        are sent; advertisement and divergence checks still cover the inventory.
+        Each remote command has a deadline; failure never undoes the already durable local ledger.
         """
         try:
             desired = self._validate_mirror_snapshot(
@@ -675,14 +676,6 @@ class GitLedger:
                 {} if previous_attempt is None else previous_attempt, require_main=False
             )
             owned = set(desired) | set(expected) | set(attempted)
-            # Refuse rather than split the atomic update across commands.
-            planned = [f"{desired.get(ref, '')}:{ref}" for ref in owned]
-            planned += [f"--force-with-lease={ref}:{'0' * 64}" for ref in owned]
-            if (
-                sum(len(arg.encode()) + 1 for arg in [url, str(self.path), *planned])
-                > _MIRROR_ARG_BYTES
-            ):
-                raise PlaybillGitError("mirror snapshot exceeds the atomic push argument limit")
             with self._retain_mirror_snapshot(desired):
                 result = _command(
                     [
@@ -739,9 +732,15 @@ class GitLedger:
                 leases: list[str] = []
                 refspecs: list[str] = []
                 for ref in sorted(owned, key=str.encode):
+                    if remote.get(ref) == desired.get(ref):
+                        continue
                     if ref != _MIRROR_MAIN:
                         leases.append(f"--force-with-lease={ref}:{remote.get(ref, '')}")
                     refspecs.append(f"{desired.get(ref, '')}:{ref}")
+                if not refspecs:
+                    return None
+                # Limit the actual delta, never the accumulated archive. Large
+                # initial syncs still refuse rather than split an atomic update.
                 if (
                     sum(len(arg.encode()) + 1 for arg in [url, str(self.path), *leases, *refspecs])
                     > _MIRROR_ARG_BYTES

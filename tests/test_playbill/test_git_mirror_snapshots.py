@@ -195,7 +195,7 @@ def test_transport_failure_cleans_pins_without_remote_mutation(repos, monkeypatc
     assert not remote._ref_exists(MAIN)
 
 
-def test_limits_and_unowned_ref_refuse_before_transport(repos, monkeypatch):
+def test_limits_and_unowned_ref_refuse_before_push(repos, monkeypatch):
     local, remote = repos
     first = commit(local, "first")
     refs(local, **{MAIN: first})
@@ -246,4 +246,36 @@ def test_lost_uncertain_attempt_recovers_from_ancestry_and_exact_settlement(repo
         is None
     )
     assert remote.mirror_refs() == desired
+    assert not pins(local)
+
+
+def test_archive_growth_does_not_expand_routine_push_arguments(repos, monkeypatch):
+    local, remote = repos
+    first = commit(local, "first")
+    archive = {f"refs/settled/{i:064x}": first for i in range(300)}
+    refs(local, **{MAIN: first})
+    # Model an already-synchronized archive, larger than the push argument cap.
+    assert local.push_mirror(str(remote.path)) is None
+    for ledger in (local, remote):
+        commands = "".join(f"create {ref} {oid}\n" for ref, oid in archive.items())
+        ledger._git(["update-ref", "--stdin"], input_bytes=commands.encode())
+    before = local.mirror_refs()
+    later = commit(local, "later", first)
+    refs(local, **{MAIN: later})
+    original = git_module._command
+    pushes = []
+
+    def inspect(args, **kwargs):
+        if "push" in args:
+            pushes.append(args)
+        return original(args, **kwargs)
+
+    monkeypatch.setattr(git_module, "_command", inspect)
+    assert local.push_mirror(str(remote.path), expected_remote=before) is None
+    assert remote.mirror_refs() == local.mirror_refs()
+    assert len(pushes) == 1
+    assert pushes[0][-1] == f"{later}:{MAIN}"
+    assert not any("refs/settled/" in arg for arg in pushes[0])
+    assert local.push_mirror(str(remote.path)) is None
+    assert len(pushes) == 1  # Idempotent refresh only verifies the advertisement.
     assert not pins(local)
