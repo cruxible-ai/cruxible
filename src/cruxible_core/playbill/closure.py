@@ -733,13 +733,16 @@ def reverse_pin_closure(
     root: ArtifactIdentity,
     include: Callable[[ArtifactDependencyStateV1], bool],
     claim_identity_by_digest: Mapping[str, ArtifactIdentity] | None = None,
+    resolve_claim_digest: Callable[[str], ArtifactIdentity | None] | None = None,
 ) -> tuple[ReversePinClosureItem, ...]:
     """Return the complete included reverse-dependency closure of ``root``.
 
     Claim dependencies have two accepted representations: ordinary Claim-target
     pins and historical ``backing.input_claim_digests``. The optional digest
     index joins the latter back to lineage identity without rewriting their
-    historical bytes. Current Claim digests are always indexed locally.
+    historical bytes. A resolver can instead fetch only the missing input
+    digests through a cutoff-bound history index. Current Claim digests are
+    always indexed locally.
 
     Inclusion controls both membership and traversal. That is deliberate: a
     mutation operation may only walk through artifact families it can
@@ -760,6 +763,10 @@ def reverse_pin_closure(
     for path, claim in claims_by_path.items():
         for digest in claim.backing.input_claim_digests:
             identity = digest_identities.get(digest)
+            if identity is None and resolve_claim_digest is not None:
+                identity = resolve_claim_digest(digest)
+                if identity is not None:
+                    digest_identities[digest] = identity
             if identity is not None:
                 input_sources.setdefault(identity.qualified, set()).add(path)
     pending = [root.qualified]

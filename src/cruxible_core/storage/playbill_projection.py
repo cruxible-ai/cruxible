@@ -776,6 +776,27 @@ class ProjectionHandle:
             raise ProjectionIntegrityError("PB-B can query exactly one physical piece")
         return self.piece_paths[0]
 
+    def artifact_envelopes(
+        self, *, paths: tuple[str, ...] | None = None
+    ) -> tuple[ArtifactEnvelopeRow, ...]:
+        """Read typed artifact metadata, optionally for an exact changed-path set."""
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
+        columns = "identity,kind,format_tag,path,artifact_digest,predecessor_digest,revision"
+        if paths is None:
+            rows = self._connection.execute(
+                f"SELECT {columns} FROM artifact_envelopes ORDER BY identity"
+            ).fetchall()
+        else:
+            rows = []
+            for path in dict.fromkeys(paths):
+                rows.extend(
+                    self._connection.execute(
+                        f"SELECT {columns} FROM artifact_envelopes WHERE path=?", (path,)
+                    ).fetchall()
+                )
+        return tuple(ArtifactEnvelopeRow(*row) for row in rows)
+
     def semantic_facts(
         self,
         schema_id: str,

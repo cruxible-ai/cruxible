@@ -131,40 +131,6 @@ def _generation_timestamp(instance: PlaybillInstance) -> str:
     return record.candidate.timestamp
 
 
-def _claim_identity_by_digest(
-    instance: PlaybillInstance,
-    *,
-    coordinate: AcceptedCoordinate,
-) -> dict[str, ArtifactIdentity]:
-    """Join every accepted historical Claim digest to its stable lineage identity."""
-
-    history = instance.accepted_history()
-    target_sequence = next(item.sequence for item in history if item.oid == coordinate.git_oid)
-    identities: dict[str, ArtifactIdentity] = {}
-    for generation in history[1:]:
-        if generation.sequence > target_sequence:
-            break
-        record = generation.record
-        if record is None:
-            continue
-        paths = tuple(
-            member.path for member in record.members if str(member.path).startswith("claims/")
-        )
-        if not paths:
-            continue
-        tree = instance.tree_at(generation.oid)
-        for path in paths:
-            content = tree.get(path)
-            if content is None:
-                continue
-            claim = parse_claim(content, path=path)
-            digest = claim_artifact_digest(claim).tagged
-            previous = identities.setdefault(digest, claim.identity)
-            if previous != claim.identity:
-                raise ClaimRetireError("one accepted Claim digest names multiple identities")
-    return identities
-
-
 def _operation_digest(
     *,
     actor_id: str,
@@ -319,12 +285,28 @@ def claim_retirement_inventory(
     tree the retirement is being written onto.
     """
 
-    closure = reverse_pin_closure(
-        tree,
-        root=claim.identity,
-        include=lambda state: state.lifecycle.state == "live",
-        claim_identity_by_digest=_claim_identity_by_digest(instance, coordinate=coordinate),
-    )
+    with instance.accepted_history_reader(at=coordinate) as history:
+
+        def resolve(digest: str) -> ArtifactIdentity | None:
+            try:
+                location = history.artifact(digest)
+            except PlaybillFormatError as exc:
+                raise ClaimRetireError(
+                    "one accepted Claim digest names multiple identities"
+                ) from exc
+            if location is None:
+                return None
+            kind, name = location.identity.split(":", 1)
+            if kind != "Claim":
+                raise ClaimRetireError("accepted Claim input digest names another artifact kind")
+            return ArtifactIdentity(kind="Claim", name=name)
+
+        closure = reverse_pin_closure(
+            tree,
+            root=claim.identity,
+            include=lambda state: state.lifecycle.state == "live",
+            resolve_claim_digest=resolve,
+        )
     unsupported = tuple(item for item in closure if item.state.artifact_kind != "claim")
     if unsupported:
         names = tuple(item.state.identity.qualified for item in unsupported)
