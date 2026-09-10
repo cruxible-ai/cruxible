@@ -2,14 +2,18 @@
 
 ## Integration status — September 10, 2026
 
-The maintainer authorized integrating all four reviewed fixes, and `playbill` was
-fast-forwarded to `7f7448e6`. No push or deployment was performed as part of this
-integration. The independent review's F-001 mirror concurrency regression remains
-unresolved; the implementation report below is historical, and its claim of
-preserving all-ref concurrency protection is superseded by that finding.
-See [the independent review](scoped-hotpath-independent-review-2026-09-09.md).
-The other three fixes had no independent-review findings. Existing verification
-was reused because integration introduced no production changes.
+The maintainer authorized integrating all four reviewed fixes, then authorized reverting
+only the mirror optimization. Commit `918c1d7e` reverts `7e0cc9d7`; the mirror production
+module and its test module exactly match the pre-batch baseline. This removes the F-001
+regression by restoring the previous refspec and lease behavior. The original argument-size
+and inventory limits remain open; no replacement mirror protocol was implemented.
+Checkpoint manifest reuse, prepared-handoff ancestry preservation and both exact-path
+Procedure readers remain integrated. No push or deployment was performed.
+
+The report below describes the original implementation and measurements, not the current
+mirror behavior. See [the independent review](scoped-hotpath-independent-review-2026-09-09.md)
+for the finding that led to the revert. Post-revert verification: both mirror test modules passed (40 tests, 60.67 seconds);
+`git diff --check` passed. Mirror source and tests match the pre-batch baseline exactly.
 
 ## Verdict
 

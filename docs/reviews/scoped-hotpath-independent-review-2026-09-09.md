@@ -1,5 +1,14 @@
 # Code Review
 
+## Follow-up — September 10, 2026
+
+After local integration, the maintainer authorized reverting the mirror optimization.
+Commit `918c1d7e` restores the mirror module and test module exactly to the pre-batch
+baseline, removing F-001's introduced regression. The original size limits remain and
+any future optimization must preserve the required concurrency behavior. The original
+review below remains the record of the reviewed change; its merge-blocking verdict
+applies to that now-reverted optimization. The other three fixes remain integrated.
+
 ## Verdict
 
 Changes requested.
