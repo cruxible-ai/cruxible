@@ -1,5 +1,16 @@
 # Code Review
 
+## Integration status — September 10, 2026
+
+The maintainer authorized integrating all four reviewed fixes, and `playbill` was
+fast-forwarded to `7f7448e6`. No push or deployment was performed as part of this
+integration. The independent review's F-001 mirror concurrency regression remains
+unresolved; the implementation report below is historical, and its claim of
+preserving all-ref concurrency protection is superseded by that finding.
+See [the independent review](scoped-hotpath-independent-review-2026-09-09.md).
+The other three fixes had no independent-review findings. Existing verification
+was reused because integration introduced no production changes.
+
 ## Verdict
 
 Approved with comments (implementer self-review; independent review still required before merge).
