@@ -921,6 +921,7 @@ def compute_preflight(
                             else prepared.operational(service.query_facts_provider)
                         ),
                         tree_state_provider=service.tree_state_provider,
+                        principal_registry_provider=service.principal_registry_provider,
                     )
                     if prepared is not None:
                         prepared.retain(

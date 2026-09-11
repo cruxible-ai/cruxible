@@ -1,7 +1,7 @@
 """Isolated proposal-door publication ordering, without accepted-world setup."""
 
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from unittest.mock import Mock
 
 import pytest
@@ -74,6 +74,7 @@ def test_publication_integrity_check_finishes_before_activation_unlock(
     transport.create_proposal_commit.return_value = ("66" * 20, "77" * 20)
     transport.activation_lock.side_effect = activation_lock
     evidence = Mock()
+    evidence.publication.side_effect = nullcontext
     evidence.write_evaluation.side_effect = lambda _record: writes.append("evaluation")
     evidence.write_admission.side_effect = lambda _record: writes.append("admission")
     notes = Mock()

@@ -34,7 +34,11 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
     parse_claim,
 )
-from cruxible_client.contracts.errors import PlaybillCasError, PlaybillFormatError
+from cruxible_client.contracts.errors import (
+    PlaybillCasError,
+    PlaybillFormatError,
+    ProjectionIntegrityError,
+)
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandateV1,
     procedure_mandate_path,
@@ -959,7 +963,7 @@ def test_no_measurement_fast_path_writes_nothing(tmp_path: Path) -> None:
     assert journal.partition_ids(stream) == before
 
 
-def test_activation_memo_is_keyed_on_revision_and_observation(tmp_path: Path) -> None:
+def test_activation_reads_exact_history_without_a_private_memo(tmp_path: Path, monkeypatch) -> None:
     instance, _owner, procedure = _world(tmp_path)
     accepted = AcceptedProcedureV1(
         path=procedure_path(procedure.identity.name),
@@ -972,12 +976,23 @@ def test_activation_memo_is_keyed_on_revision_and_observation(tmp_path: Path) ->
     )
     assert basis.activated_at == ACTIVATED_AT
     assert isinstance(basis.activations[0], ResolutionContractActivationV1)
+
+    def unexpected_scan(*args, **kwargs):
+        pytest.fail("warm measurement activation must not scan accepted history or whole trees")
+
+    monkeypatch.setattr(instance, "accepted_history", unexpected_scan)
+    monkeypatch.setattr(instance, "tree_at", unexpected_scan)
     assert (
         measurements.measurement_activation_basis(
             instance, accepted=accepted, observation=observation
         )
-        is basis
+        == basis
     )
+    monkeypatch.setattr(instance, "blob_at", lambda *args: None)
+    with pytest.raises(ProjectionIntegrityError, match="source record is unavailable"):
+        measurements.measurement_activation_basis(
+            instance, accepted=accepted, observation=observation
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1517,7 +1532,6 @@ def test_concurrent_first_evaluations_retain_one_lawful_resolution(
         "resolution",
     ]
     # The retained history replays lawfully afterwards, from a cold read.
-    measurements._activation_memo.clear()  # noqa: SLF001
     book = ProcedureResolutionBook((activation,))
     book.replay(records, bodies=instance.body_store())
     standing = book.latest_non_overturned(activation.contract_id)
