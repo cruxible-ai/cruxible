@@ -81,6 +81,19 @@ def test_claim_history_mapping_is_owned_and_bounded_to_its_coordinate(
     assert len(_claim_law_evidence_index(instance, at=previous)) == 1
 
 
+def test_short_claim_id_resolves_from_typed_owner_rows(tmp_path: Path, monkeypatch) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    identity = str(service_list_playbill_claims(instance).claims[0].envelope["identity"])
+    prefix = identity.removeprefix("Claim:")[:12]
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Claim prefix selection must not enumerate accepted Git files")
+
+    monkeypatch.setattr(instance, "tree_at", forbidden)
+    monkeypatch.setattr(instance, "paths_at", forbidden)
+    assert service_get_playbill_claim(instance, identity=prefix).envelope["identity"] == identity
+
+
 def test_claim_reads_rebuild_history_after_refresh(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
