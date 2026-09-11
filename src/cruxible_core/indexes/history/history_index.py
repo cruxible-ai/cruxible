@@ -269,6 +269,15 @@ class HistoryReader:
             raise ProjectionIntegrityError("accepted Claim law evidence is missing or ambiguous")
         return matches[0]
 
+    def identities_for_digest(self, artifact_digest: str) -> tuple[str, ...]:
+        """Locate all identities for an exact version within this reader's prefix."""
+        rows = self._connection.execute(
+            "SELECT DISTINCT identity FROM artifact_versions "
+            "WHERE artifact_digest=? AND occurrence_sequence<=? ORDER BY identity",
+            (artifact_digest, self.sequence),
+        ).fetchall()
+        return tuple(row[0] for row in rows)
+
     def artifact(
         self, artifact_digest: str, *, identity: str | None = None
     ) -> ArtifactVersionLocation | None:

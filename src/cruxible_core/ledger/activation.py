@@ -83,6 +83,7 @@ class ActivationPublisher:
         checkpoint_interval: int = DEFAULT_CHECKPOINT_INTERVAL,
         genesis: GenesisCoordinate | None = None,
         verified_change_sets: tuple[tuple[str, ChangeSetRecordAnyVersion], ...] | None = None,
+        resolve_claim_digest: Callable[[str], tuple[str, ...]] | None = None,
     ) -> None:
         if checkpoint_interval < 1:
             raise SettlementIntegrityError("checkpoint interval must be at least one generation")
@@ -95,6 +96,7 @@ class ActivationPublisher:
         self.checkpoint_interval = checkpoint_interval
         self.genesis = genesis
         self.verified_change_sets = verified_change_sets
+        self.resolve_claim_digest = resolve_claim_digest
 
     def prebuild(
         self,
@@ -126,6 +128,7 @@ class ActivationPublisher:
             publication_directory=self.publication_directory,
             bodies=self.bodies,
             accepted_coordinates_by_sequence=accepted_coordinates,
+            resolve_claim_digest=self.resolve_claim_digest,
         )
         stage = self.publication_directory / f".stage-{secrets.token_hex(12)}"
         from cruxible_core.compiler.projection_delta import GenerationDelta

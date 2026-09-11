@@ -196,5 +196,6 @@ def populate_successor(
                 changed_paths=members,
                 sources=inputs,
                 bodies=assembler.bodies,
+                resolve_digest=assembler.resolve_claim_digest,
             ),
         )
