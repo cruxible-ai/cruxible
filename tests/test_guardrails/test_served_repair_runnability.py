@@ -12,7 +12,7 @@ from cruxible_client.contracts.repairs import (
     ServedRepairEnvelopeV1,
 )
 from cruxible_core.cli.main import CLI_COMMANDS, LazyCommandSpec
-from cruxible_core.service.playbill_refusal_catalog import (
+from cruxible_core.service.refusals import (
     ALL_SERVED_REFUSAL_CODES,
     CLOSED_SERVED_REFUSAL_VOCABULARIES,
     RUNNABLE_REFUSAL_REPAIRS,
@@ -150,7 +150,7 @@ def _block_sync_repair(code: str) -> RepairOperationV1 | HandEditRepairV1:
 
 def _prediction_refusal_repair(code: str) -> object:
     from cruxible_core.server.errors import error_to_response
-    from cruxible_core.service.playbill_predictions import _refuse
+    from cruxible_core.service.procedures.predictions import _refuse
 
     _status, response = error_to_response(_refuse(code, "refused"))  # type: ignore[arg-type]
     return response.repair
@@ -158,7 +158,7 @@ def _prediction_refusal_repair(code: str) -> object:
 
 def _measurement_refusal_repair(code: str) -> object:
     from cruxible_core.server.errors import error_to_response
-    from cruxible_core.service.playbill_measurements import ProcedureMeasurementRefused
+    from cruxible_core.service.procedures.measurements import ProcedureMeasurementRefused
 
     _status, response = error_to_response(ProcedureMeasurementRefused(code, "refused"))  # type: ignore[arg-type]
     return response.repair
@@ -167,7 +167,7 @@ def _measurement_refusal_repair(code: str) -> object:
 def test_every_runnable_repair_reaches_a_live_wire_response() -> None:
     """A declared runnable repair that never reaches a served payload is prose."""
 
-    from cruxible_core.service.playbill_next import _repair_command
+    from cruxible_core.service.discovery.next import _repair_command
 
     seen: dict[str, str] = {}
     for code, declared in RUNNABLE_REFUSAL_REPAIRS.items():

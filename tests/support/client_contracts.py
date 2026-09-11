@@ -111,7 +111,7 @@ def _public_models() -> dict[str, Any]:
     `contracts/types.py`, which the namespace does not re-export, so the model
     is reachable by importing the submodule but is not published and moves no
     pin here. `PlaybillSearchOrientationV1` is not a client contract at all --
-    it is `cruxible_core.playbill.search`, server-side, and this snapshot has
+    it is `cruxible_core.query.search`, server-side, and this snapshot has
     never had an opinion about it.
 
     The namespace is the law, and it is the WHOLE law: what it publishes is

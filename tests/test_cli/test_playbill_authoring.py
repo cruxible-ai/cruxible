@@ -25,19 +25,19 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionClaimBackingV1,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_core.cli.main import cli
-from cruxible_core.playbill.authoring.lowering import CHANGE_SET_SINGLETON_ONLY_MEMBERS
-from cruxible_core.playbill.claim_type_inputs import (
+from cruxible_core.authoring.lowering import CHANGE_SET_SINGLETON_ONLY_MEMBERS
+from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputV1,
     claim_type_input_template,
     lower_claim_type_input,
 )
-from cruxible_core.playbill.keys import generate_client_principal_key
+from cruxible_core.cli.main import cli
+from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.registry import get_registry, reset_registry
-from tests.test_playbill._claim_type_support import claim_type_input_example
+from tests.core_support._claim_type_support import claim_type_input_example
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
     git_oid="1" * 64,

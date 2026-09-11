@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cruxible_core.playbill.review_operational import (
+from cruxible_core.curation.review_operational import (
     ReviewOperationalConcurrentChangeError,
     ReviewOperationalStoreError,
 )

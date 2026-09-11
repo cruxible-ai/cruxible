@@ -77,35 +77,40 @@ from cruxible_client.contracts.types import (
     OperatingProfile,
     PrincipalRecord,
 )
-from cruxible_core.errors import AuthenticationError, ConfigError, DataValidationError
-from cruxible_core.playbill.actor_context import GovernedActorContext
-from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.claim_retirement import (
+from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.claims.claim_retirement import (
     ClaimRetireResponse,
     service_retire_claim,
 )
-from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1, lint_claim_type_input
-from cruxible_core.playbill.claim_type_migrations import (
+from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1, lint_claim_type_input
+from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeMigrationRequest,
     lint_claim_type_successors,
     service_migrate_claim_type,
 )
-from cruxible_core.playbill.consumption import (
+from cruxible_core.coverage.adapter import WorkingSourceObservationV1
+from cruxible_core.coverage.contracts import CoverageCardBudgetV1
+from cruxible_core.coverage.indexes import CoverageScanBudgetV1
+from cruxible_core.documents.workspace_file import WorkspaceFileReadRefused
+from cruxible_core.errors import AuthenticationError, ConfigError, DataValidationError
+from cruxible_core.exhaust.consumption import (
     ConsumptionContextV1,
     ConsumptionOperation,
     consumption_artifacts_for_dependency_closure,
     consumption_artifacts_for_paths,
     record_consumption,
 )
-from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
-from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
-from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
-from cruxible_core.playbill.ledger_mirror import LedgerMirrorStateV1
-from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
-from cruxible_core.playbill.proposals import AuthenticatedActor
-from cruxible_core.playbill.provider_classifiers import PROVIDER_BUCKET_CLASSIFIER_REGISTRY
-from cruxible_core.playbill.search import (
+from cruxible_core.floor.workspace_advertisement import workspace_git_object_format
+from cruxible_core.governance.actor_context import GovernedActorContext
+from cruxible_core.governance.seed_artifacts.workspace_file import (
+    WORKSPACE_FILE_PROVIDER_ID,
+    WORKSPACE_FILE_SEED_MANIFEST,
+)
+from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.ledger.ledger_mirror import LedgerMirrorStateV1
+from cruxible_core.proposals.proposals import AuthenticatedActor
+from cruxible_core.providers.provider_classifiers import PROVIDER_BUCKET_CLASSIFIER_REGISTRY
+from cruxible_core.query.search import (
     SEARCH_KINDS,
     PlaybillSearchBudgetsV1,
     PlaybillSearchCursorV1,
@@ -114,52 +119,6 @@ from cruxible_core.playbill.search import (
     SearchMode,
     SearchStatus,
 )
-from cruxible_core.playbill.seed_artifacts.workspace_file import (
-    WORKSPACE_FILE_PROVIDER_ID,
-    WORKSPACE_FILE_SEED_MANIFEST,
-)
-from cruxible_core.playbill.service.claim_types import (
-    service_get_playbill_claim_type,
-    service_list_playbill_claim_types,
-    service_propose_playbill_claim_type,
-    service_propose_playbill_claim_type_input,
-)
-from cruxible_core.playbill.service.documents import (
-    service_activate_playbill_proposal,
-    service_dereference_playbill_document,
-    service_get_playbill_document,
-    service_inspect_playbill_proposal,
-    service_inspect_playbill_refusal,
-    service_list_playbill_documents,
-    service_list_playbill_principals,
-    service_playbill_document_history,
-    service_propose_playbill_document,
-    service_propose_playbill_principal_change,
-    service_store_playbill_body,
-    service_submit_playbill_approval,
-)
-from cruxible_core.playbill.service.explain import service_explain_playbill_subject
-from cruxible_core.playbill.service.provider_seed import service_seed_workspace_file_provider
-from cruxible_core.playbill.service.query_definitions import (
-    service_get_playbill_query_definition,
-    service_list_playbill_query_definitions,
-)
-from cruxible_core.playbill.service.review import (
-    service_prepare_playbill_approval,
-    service_review_playbill_proposal,
-)
-from cruxible_core.playbill.service.source_catalog import (
-    service_check_playbill_source_bundle,
-    service_playbill_source_context,
-    service_propose_playbill_source_bundle,
-)
-from cruxible_core.playbill.service.subjects import (
-    service_get_playbill_subject,
-    service_list_playbill_subjects,
-    service_playbill_subject_history,
-)
-from cruxible_core.playbill.workspace_advertisement import workspace_git_object_format
-from cruxible_core.playbill.workspace_file import WorkspaceFileReadRefused
 from cruxible_core.runtime.execution_policy import (
     enforce_customer_code_execution_supported,
 )
@@ -176,28 +135,56 @@ from cruxible_core.server.auth import (
 )
 from cruxible_core.server.config import is_server_auth_enabled
 from cruxible_core.server.registry import get_registry
-from cruxible_core.service.playbill_audit import (
-    PlaybillAuditRequestV1,
-    service_playbill_audit,
-    validate_playbill_audit_request,
+from cruxible_core.service.authoring.documents import (
+    service_activate_playbill_proposal,
+    service_dereference_playbill_document,
+    service_get_playbill_document,
+    service_inspect_playbill_proposal,
+    service_inspect_playbill_refusal,
+    service_list_playbill_documents,
+    service_list_playbill_principals,
+    service_playbill_document_history,
+    service_propose_playbill_document,
+    service_propose_playbill_principal_change,
+    service_store_playbill_body,
+    service_submit_playbill_approval,
 )
-from cruxible_core.service.playbill_claim_attestations import service_append_claim_attestation
-from cruxible_core.service.playbill_claim_reads import (
+from cruxible_core.service.authoring.projection_sync import (
+    service_read_playbill_block_sync_backing,
+)
+from cruxible_core.service.claims.claim_reads import (
     service_read_claim_backings,
     service_read_claim_batch,
 )
-from cruxible_core.service.playbill_claims import (
+from cruxible_core.service.claims.claim_types import (
+    service_get_playbill_claim_type,
+    service_list_playbill_claim_types,
+    service_propose_playbill_claim_type,
+    service_propose_playbill_claim_type_input,
+)
+from cruxible_core.service.claims.claims import (
     service_expand_playbill_semantic,
     service_explain_playbill_claim,
     service_get_playbill_claim,
     service_list_playbill_claims,
     service_playbill_claim_history,
 )
-from cruxible_core.service.playbill_coverage import (
+from cruxible_core.service.claims.policies import list_playbill_policies_in_force
+from cruxible_core.service.claims.subjects import (
+    service_get_playbill_subject,
+    service_list_playbill_subjects,
+    service_playbill_subject_history,
+)
+from cruxible_core.service.discovery.audit import (
+    PlaybillAuditRequestV1,
+    service_playbill_audit,
+    validate_playbill_audit_request,
+)
+from cruxible_core.service.discovery.coverage import (
     coverage_access_profile,
     service_resolve_playbill_coverage,
 )
-from cruxible_core.service.playbill_curation import (
+from cruxible_core.service.discovery.curation import (
     PlaybillCurationAcceptFixedRequestV1,
     PlaybillCurationError,
     PlaybillCurationListRequestV1,
@@ -209,26 +196,42 @@ from cruxible_core.service.playbill_curation import (
     service_suppress_playbill_curation,
     validate_playbill_curation_list_request,
 )
-from cruxible_core.service.playbill_discovery import (
+from cruxible_core.service.discovery.discovery import (
     PlaybillDiscoveryResultV1,
     service_discover_playbill_semantic,
 )
-from cruxible_core.service.playbill_floor import MANIFEST_PATH, service_export_playbill_floor
-from cruxible_core.service.playbill_measurements import (
-    service_list_playbill_procedure_readings,
-    service_measure_playbill_procedure,
-)
-from cruxible_core.service.playbill_next import (
+from cruxible_core.service.discovery.explain import service_explain_playbill_subject
+from cruxible_core.service.discovery.next import (
     PlaybillNextRequestV1,
     service_playbill_next,
     validate_playbill_next_request,
 )
-from cruxible_core.service.playbill_policies import list_playbill_policies_in_force
-from cruxible_core.service.playbill_predictions import (
+from cruxible_core.service.discovery.query import service_run_playbill_query
+from cruxible_core.service.discovery.query_definitions import (
+    service_get_playbill_query_definition,
+    service_list_playbill_query_definitions,
+)
+from cruxible_core.service.discovery.search import service_search_playbill
+from cruxible_core.service.discovery.since import (
+    service_playbill_since,
+    validate_playbill_since_request,
+)
+from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
+from cruxible_core.service.evidence.source_catalog import (
+    service_check_playbill_source_bundle,
+    service_playbill_source_context,
+    service_propose_playbill_source_bundle,
+)
+from cruxible_core.service.floor.floor import MANIFEST_PATH, service_export_playbill_floor
+from cruxible_core.service.procedures.measurements import (
+    service_list_playbill_procedure_readings,
+    service_measure_playbill_procedure,
+)
+from cruxible_core.service.procedures.predictions import (
     service_predict_playbill,
     service_settle_playbill_prediction,
 )
-from cruxible_core.service.playbill_procedure_runs import (
+from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequestV1,
     ProcedureBindRequestV1,
     ProcedureReadinessRequestV1,
@@ -239,10 +242,8 @@ from cruxible_core.service.playbill_procedure_runs import (
     service_run_playbill_line,
     service_run_playbill_procedure,
 )
-from cruxible_core.service.playbill_projection_sync import (
-    service_read_playbill_block_sync_backing,
-)
-from cruxible_core.service.playbill_proposals import (
+from cruxible_core.service.procedures.provider_seed import service_seed_workspace_file_provider
+from cruxible_core.service.proposals.proposals import (
     ProposalInventoryStatus,
     service_list_playbill_proposals,
     service_playbill_whoami,
@@ -250,16 +251,15 @@ from cruxible_core.service.playbill_proposals import (
     service_resolve_playbill_proposal_selector,
     service_withdraw_playbill_proposal,
 )
-from cruxible_core.service.playbill_publications import (
+from cruxible_core.service.proposals.publications import (
     service_declare_playbill_block,
     service_depublish_playbill_block,
 )
-from cruxible_core.service.playbill_query import service_run_playbill_query
-from cruxible_core.service.playbill_search import service_search_playbill
-from cruxible_core.service.playbill_since import (
-    service_playbill_since,
-    validate_playbill_since_request,
+from cruxible_core.service.proposals.review import (
+    service_prepare_playbill_approval,
+    service_review_playbill_proposal,
 )
+from cruxible_core.storage.cas import BodyAccessContext
 
 _ProposalResultT = TypeVar("_ProposalResultT")
 _CurationRequestT = TypeVar("_CurationRequestT")

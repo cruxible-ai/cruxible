@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 
 from cruxible_client import CruxibleClient
 from cruxible_core.cli.main import cli
-from cruxible_core.playbill.instance import DESCRIPTOR_FILE
+from cruxible_core.runtime.instance import DESCRIPTOR_FILE
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 
 DECOMMISSION_ROUTE = "/api/v1/{instance_id}/playbill/instance/decommission"

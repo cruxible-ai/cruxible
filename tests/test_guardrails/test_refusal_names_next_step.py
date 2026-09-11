@@ -19,8 +19,8 @@ import ast
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PREFLIGHT = REPO_ROOT / "src/cruxible_core/playbill/authoring/preflight.py"
-LOWERING = REPO_ROOT / "src/cruxible_core/playbill/authoring/lowering.py"
+PREFLIGHT = REPO_ROOT / "src/cruxible_core/authoring/preflight.py"
+LOWERING = REPO_ROOT / "src/cruxible_core/authoring/lowering.py"
 
 # An actionable message names an operation the caller can perform. These are the
 # verbs the existing good refusals use; a message carrying none of them states a

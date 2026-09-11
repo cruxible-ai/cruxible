@@ -14,9 +14,9 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-import cruxible_core.playbill.procedures.execution as execution_module
+import cruxible_core.procedures.execution as execution_module
 import cruxible_core.runtime.playbill_manager as playbill_manager_module
-import cruxible_core.service.playbill_procedure_runs as procedure_run_service
+import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.acquisition_policies import (
     acquisition_policy_digest,
     acquisition_policy_path,
@@ -75,30 +75,29 @@ from cruxible_client.contracts.providers import (
     provider_path,
     render_provider,
 )
-from cruxible_core.playbill.bootstrap import seeded_procedure_runtime_policy
-from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.exhaust.records import parse_journal_payload
-from cruxible_core.playbill.procedures.execution import (
+from cruxible_core.exhaust.records import parse_journal_payload
+from cruxible_core.governance.seed_artifacts.workspace_file import (
+    WORKSPACE_FILE_INTERFACE_ID,
+    workspace_file_interface_registration,
+)
+from cruxible_core.ledger.bootstrap import seeded_procedure_runtime_policy
+from cruxible_core.procedures.execution import (
     PreparedProcedureRunV5,
     ProcedureRunAdmissionV5,
     procedure_admission_digest,
     procedure_line_run_id,
     procedure_semantic_replay_key_digest,
 )
-from cruxible_core.playbill.provider_classifiers import ProviderBucketClassifierRegistry
-from cruxible_core.playbill.provider_local_runtime import LocalProviderDeploymentV1
-from cruxible_core.playbill.provider_process_leases import (
+from cruxible_core.providers.provider_classifiers import ProviderBucketClassifierRegistry
+from cruxible_core.providers.provider_local_runtime import LocalProviderDeploymentV1
+from cruxible_core.providers.provider_process_leases import (
     ProviderLocalRuntimeRefused,
     ProviderProcessRecoveryFailureV1,
     ProviderProcessRecoveryResultV1,
 )
-from cruxible_core.playbill.provider_runtime_contract import (
+from cruxible_core.providers.provider_runtime_contract import (
     ProviderRuntimeBudgetsV1,
     ProviderRuntimeRunContextV1,
-)
-from cruxible_core.playbill.seed_artifacts.workspace_file import (
-    WORKSPACE_FILE_INTERFACE_ID,
-    workspace_file_interface_registration,
 )
 from cruxible_core.runtime.playbill_manager import PlaybillInstanceManager, get_playbill_manager
 from cruxible_core.runtime.provider_runtime import (
@@ -106,24 +105,25 @@ from cruxible_core.runtime.provider_runtime import (
     ProviderRuntimeOperator,
 )
 from cruxible_core.server.config import get_server_state_root
-from cruxible_core.service.playbill_procedure_runs import ProcedureRunRecoveryRequired
-from cruxible_core.service.playbill_procedures import service_execute_direct_procedure
-from tests.test_playbill._p2b1_support import (
+from cruxible_core.service.procedures.procedure_runs import ProcedureRunRecoveryRequired
+from cruxible_core.service.procedures.procedures import service_execute_direct_procedure
+from cruxible_core.storage.cas import BodyAccessContext
+from tests.core_support._p2b1_support import (
     accepted_interface,
     install_demo_classifier,
     provider_v2,
 )
-from tests.test_playbill._provider_seal_support import write_test_provider_seal_v2
-from tests.test_playbill.test_procedure_execution import (
+from tests.core_support._provider_seal_support import write_test_provider_seal_v2
+from tests.test_procedures.test_procedure_execution import (
     _accepted_line_for_admission,
 )
-from tests.test_playbill.test_provider_invocation_journal import (
+from tests.test_providers.test_provider_invocation_journal import (
     _accepted_one_provider,
     _Authority,
     _Contracts,
     _prepared_v5,
 )
-from tests.test_playbill.test_provider_local_driver import _fake_interpreter
+from tests.test_providers.test_provider_local_driver import _fake_interpreter
 from tests.test_server.test_playbill_line_run_refusals import (
     _accept_members,
     _acquisition_policy,

@@ -72,8 +72,8 @@ def test_every_production_capture_verifier_injects_a_producer_receipt_resolver()
     calls = _verify_capture_calls()
     assert tuple(path for path, _line, _keywords, _literal_none in calls) == (
         "packages/cruxible-client/src/cruxible_client/contracts/claims.py",
-        "src/cruxible_core/playbill/authoring/lowering.py",
-        "src/cruxible_core/service/playbill_claim_attestations.py",
+        "src/cruxible_core/authoring/lowering.py",
+        "src/cruxible_core/service/evidence/claim_attestations.py",
     )
     assert all(
         "producer_receipt_resolver" in keywords and not literal_none

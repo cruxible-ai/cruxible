@@ -21,8 +21,8 @@ from cruxible_client.contracts.claim_reads import (
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequest
-from cruxible_core.playbill.projection import AcceptedCoordinate
+from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
+from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime import playbill_api
 from cruxible_core.server.config import resolve_server_settings
 from cruxible_core.server.playbill_request_models import (
@@ -76,7 +76,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillStoreBodyRequest,
 )
 from cruxible_core.server.routes import resolve_server_instance_id
-from cruxible_core.service.playbill_procedure_runs import (
+from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequestV1,
     ProcedureBindRequestV1,
     ProcedureReadinessRequestV1,

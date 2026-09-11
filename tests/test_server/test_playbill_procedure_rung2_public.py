@@ -57,20 +57,20 @@ from cruxible_client.contracts.workspace_file import (
     WorkspaceFileSourceRequestV1,
 )
 from cruxible_client.transport.http import CruxibleClient
-from cruxible_core.playbill.keys import generate_client_principal_key
-from cruxible_core.playbill.provider_classifiers import (
+from cruxible_core.governance.keys import generate_client_principal_key
+from cruxible_core.governance.seed_artifacts.workspace_file import WORKSPACE_FILE_INTERFACE_ID
+from cruxible_core.providers.provider_classifiers import (
     install_compiler_owned_provider_classifier,
 )
-from cruxible_core.playbill.seed_artifacts.workspace_file import WORKSPACE_FILE_INTERFACE_ID
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
+from tests.core_support._pc_c_support import capture_contract
 from tests.support.provider_seed import workspace_provider_checkout, write_workspace_seed_config
-from tests.test_playbill import test_procedure_source_runs as fixtures
-from tests.test_playbill._pc_c_support import capture_contract
-from tests.test_playbill.test_procedure_source_runs import _contracts
+from tests.test_procedures import test_procedure_source_runs as fixtures
+from tests.test_procedures.test_procedure_source_runs import _contracts
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
 SUBJECT_KIND = "security.advisory"
@@ -337,7 +337,7 @@ def _authored(definition: ProcedureDefinitionV4, *, same_set_kinds: set[str]) ->
 
 
 def _binding_digest(workspace: Path) -> str:
-    from cruxible_core.playbill.workspace_file import workspace_binding_digest
+    from cruxible_core.documents.workspace_file import workspace_binding_digest
 
     return workspace_binding_digest(
         instance_id="inst_rung2_public",

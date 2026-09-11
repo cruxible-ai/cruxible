@@ -20,8 +20,8 @@ from cruxible_client.contracts.documents import (
     DocumentShell,
 )
 from cruxible_client.contracts.types import PrincipalRecord
-from cruxible_core.playbill.proposals import ProposalAdmissionRequest
-from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
+from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
+from cruxible_core.proposals.proposals import ProposalAdmissionRequest
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager

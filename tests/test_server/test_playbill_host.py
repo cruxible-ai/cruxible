@@ -26,19 +26,15 @@ from cruxible_client.contracts.errors import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.workspace_file import WorkspaceFileSourceRequestV1
-from cruxible_core.errors import ConfigError
-from cruxible_core.playbill.keys import (
-    GeneratedKeyMaterial,
-    generate_client_principal_key,
-)
-from cruxible_core.playbill.service.documents import (
-    service_activate_playbill_proposal,
-    service_submit_playbill_approval,
-)
-from cruxible_core.playbill.workspace_file import (
+from cruxible_core.documents.workspace_file import (
     WorkspaceFileReader,
     WorkspaceFileReadRefused,
     workspace_binding_digest,
+)
+from cruxible_core.errors import ConfigError
+from cruxible_core.governance.keys import (
+    GeneratedKeyMaterial,
+    generate_client_principal_key,
 )
 from cruxible_core.runtime import host_api, playbill_api
 from cruxible_core.runtime import playbill_manager as playbill_manager_module
@@ -48,9 +44,13 @@ from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry, reset_registry
 from cruxible_core.server.routes.playbill import append_claim_attestation, run_procedure
-from cruxible_core.service.playbill_procedure_runs import ProcedureRunRequestV2
+from cruxible_core.service.authoring.documents import (
+    service_activate_playbill_proposal,
+    service_submit_playbill_approval,
+)
+from cruxible_core.service.procedures.procedure_runs import ProcedureRunRequestV2
 from tests.support.provider_seed import write_workspace_seed_config
-from tests.test_playbill.test_activation import _sign
+from tests.test_ledger.test_activation import _sign
 
 
 @pytest.fixture
@@ -1463,8 +1463,8 @@ def test_a_detach_refuses_while_the_host_still_registers_a_published_block(
     refusal has to keep reading it.
     """
 
-    from cruxible_core.service.playbill_publications import service_depublish_playbill_block
-    from tests.test_playbill.test_authoring_insertions_v2 import (
+    from cruxible_core.service.proposals.publications import service_depublish_playbill_block
+    from tests.test_authoring.test_authoring_insertions_v2 import (
         _registered_publication,
         _submitted_publication,
     )

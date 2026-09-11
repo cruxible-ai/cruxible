@@ -43,7 +43,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "src"
 GATE_NAMES = frozenset({"require_writable", "_require_writable"})
 
-COORDINATOR = "cruxible_core/playbill/authoring/coordinator.py"
+COORDINATOR = "cruxible_core/authoring/coordinator.py"
 COORDINATOR_CLASS = "AuthoringIntentCoordinator"
 # The three store calls that put a row in the authoring intent log. Reaching one
 # of these, however many private helpers deep, is what makes a door PERSIST.
@@ -67,7 +67,7 @@ DECLARED_ROLL_FORWARD_DOORS = frozenset(
 
 # module path -> the qualified names that refuse a decommissioned instance.
 DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
-    "cruxible_core/playbill/instance.py": frozenset(
+    "cruxible_core/runtime/instance.py": frozenset(
         {
             "PlaybillInstance.decommission",
             "PlaybillInstance.store_document_body",
@@ -80,7 +80,7 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
             "PlaybillInstance.set_ledger_mirror",
         }
     ),
-    "cruxible_core/playbill/authoring/coordinator.py": frozenset(
+    "cruxible_core/authoring/coordinator.py": frozenset(
         {
             "AuthoringIntentCoordinator.create",
             "AuthoringIntentCoordinator.create_input",
@@ -95,31 +95,31 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
     ),
     # Both roads that register a block are writes: declaring one records that
     # this instance stands behind a marker, and releasing one withdraws that.
-    "cruxible_core/service/playbill_publications.py": frozenset(
+    "cruxible_core/service/proposals/publications.py": frozenset(
         {
             "service_declare_playbill_block",
             "service_depublish_playbill_block",
         }
     ),
-    "cruxible_core/playbill/proposals.py": frozenset({"ProposalService.submit"}),
-    "cruxible_core/playbill/service/documents.py": frozenset({"service_submit_playbill_approval"}),
-    "cruxible_core/service/playbill_claim_attestations.py": frozenset(
+    "cruxible_core/proposals/proposals.py": frozenset({"ProposalService.submit"}),
+    "cruxible_core/service/authoring/documents.py": frozenset({"service_submit_playbill_approval"}),
+    "cruxible_core/service/evidence/claim_attestations.py": frozenset(
         {"service_append_claim_attestation"}
     ),
-    "cruxible_core/service/playbill_curation.py": frozenset(
+    "cruxible_core/service/discovery/curation.py": frozenset(
         {
             "service_overrule_playbill_curation",
             "service_suppress_playbill_curation",
             "service_accept_fixed_playbill_curation",
         }
     ),
-    "cruxible_core/service/playbill_measurements.py": frozenset(
+    "cruxible_core/service/procedures/measurements.py": frozenset(
         {"service_measure_playbill_procedure"}
     ),
-    "cruxible_core/service/playbill_predictions.py": frozenset(
+    "cruxible_core/service/procedures/predictions.py": frozenset(
         {"service_predict_playbill", "service_settle_playbill_prediction"}
     ),
-    "cruxible_core/service/playbill_procedure_runs.py": frozenset(
+    "cruxible_core/service/procedures/procedure_runs.py": frozenset(
         {
             "service_bind_playbill_procedure",
             "service_run_playbill_procedure",

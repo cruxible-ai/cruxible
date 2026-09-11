@@ -18,10 +18,10 @@ from cruxible_client.contracts.authoring.models import (
     InsertionPrepareResultV2,
     insertion_expectation_v2_digest,
 )
-from cruxible_core.playbill.projection import AcceptedCoordinate
-from tests.test_playbill.test_authoring_insertions_v2 import _target
-from tests.test_playbill.test_authoring_intents import TIMESTAMP, _coordinator, _payload
-from tests.test_playbill.test_authoring_reference_expectations import _expectation
+from cruxible_core.indexes.projection import AcceptedCoordinate
+from tests.test_authoring.test_authoring_insertions_v2 import _target
+from tests.test_authoring.test_authoring_intents import TIMESTAMP, _coordinator, _payload
+from tests.test_authoring.test_authoring_reference_expectations import _expectation
 
 
 @pytest.mark.parametrize("version", [1, 2])

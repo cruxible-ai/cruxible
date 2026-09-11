@@ -8,9 +8,9 @@ import pytest
 
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.server import create_server
+from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 from tests.test_client._attestation_support import ServiceAttestationClient
 from tests.test_mcp.test_playbill_protocol_curation import _protocol_session, _run
-from tests.test_playbill.test_claim_type_migrations import _accepted_claim_world
 
 
 def test_mcp_examined_existing_signs_with_real_key_and_appends(

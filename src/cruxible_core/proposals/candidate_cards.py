@@ -1,0 +1,178 @@
+"""Deterministic, authority-free Markdown cards for candidate artifact changes."""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Mapping
+
+from cruxible_client.contracts.artifacts import ArtifactKindRegistry
+from cruxible_client.contracts.canonical import (
+    CARD_NAMESPACE,
+    canonical_digest,
+    is_candidate_card_path,
+    normalize_ledger_path,
+)
+from cruxible_client.contracts.errors import ProjectionFormatError, ProposalIntegrityError
+from cruxible_core.derived.derived_state import SnapshotTree, fork_tree
+
+CARD_RENDERER_IMPLEMENTATION = "python-reference-v2"
+_HEADER_TEMPLATE = "# {kind}: {identity}\n\n- Artifact: `{path}`\n\n"
+_BODY_TEMPLATE = "```json\n{body}\n```\n"
+_REMOVAL_TEMPLATE = "removed at {coordinate}\n"
+CARD_TEMPLATE_DIGESTS = tuple(
+    f"sha256:{canonical_digest('playbill-card-template-v1', {'template': template})}"
+    for template in (_HEADER_TEMPLATE, _BODY_TEMPLATE, _REMOVAL_TEMPLATE)
+)
+CARD_RENDERER_DIGEST = "sha256:" + canonical_digest(
+    "playbill-card-renderer-v1",
+    {
+        "implementation": CARD_RENDERER_IMPLEMENTATION,
+        "template_digests": list(CARD_TEMPLATE_DIGESTS),
+    },
+)
+
+
+def candidate_card_path(artifact_path: str) -> str:
+    """Map one canonical JSON artifact path to its fixed Markdown sidecar."""
+
+    path = normalize_ledger_path(artifact_path)
+    if not path.endswith(".json") or path.startswith(CARD_NAMESPACE):
+        raise ProposalIntegrityError("candidate cards require a canonical JSON artifact path")
+    return f"{CARD_NAMESPACE}{path[:-5]}.md"
+
+
+def _identity(payload: Mapping[str, object], *, path: str) -> str:
+    """Return the artifact's name for the card heading.
+
+    The heading template already prefixes the registered kind, so returning the
+    kind-qualified identity here rendered it twice ("# procedure: Procedure:x").
+    Human readability is the whole point of a card, so the heading carries the
+    kind once and the name once.
+    """
+
+    raw = payload.get("identity")
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, Mapping):
+        name = raw.get("name")
+        if isinstance(name, str):
+            return name
+    for key in ("principal_id", "artifact_id", "name", "predicate", "tag"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            return value
+    return path
+
+
+def render_candidate_card(
+    artifact_path: str,
+    content: bytes,
+    *,
+    artifact_kinds: ArtifactKindRegistry,
+) -> bytes:
+    """Render one compiler-recognized canonical JSON artifact as stable Markdown."""
+
+    path = normalize_ledger_path(artifact_path)
+    try:
+        kind = artifact_kinds.resolve_path(path)
+        payload = json.loads(content)
+    except (ProjectionFormatError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ProposalIntegrityError(
+            f"candidate card source is not a registered artifact: {path}"
+        ) from exc
+    if kind in {"changeset", "presentation"} or not isinstance(payload, dict):
+        raise ProposalIntegrityError(f"candidate card source has no floor card: {path}")
+    body = json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True)
+    return (
+        _HEADER_TEMPLATE.format(kind=kind, identity=_identity(payload, path=path), path=path)
+        + _BODY_TEMPLATE.format(body=body)
+    ).encode("utf-8")
+
+
+def render_removal_card(*, coordinate: str) -> bytes:
+    """Render the ruled one-line tombstone for an artifact removal."""
+
+    return _REMOVAL_TEMPLATE.format(coordinate=coordinate).encode("utf-8")
+
+
+def derive_candidate_cards(
+    *,
+    base_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+    coordinate: str,
+    artifact_kinds: ArtifactKindRegistry,
+) -> SnapshotTree:
+    """Return the candidate tree with exact derivative cards for semantic changes."""
+
+    edits = (
+        candidate_tree.edits_from(base_tree) if isinstance(candidate_tree, SnapshotTree) else None
+    )
+    if edits is not None:
+        result = fork_tree(candidate_tree)
+        # Cards are daemon-owned. Restore only edited cards; untouched cards
+        # already come from the exact parent root.
+        for path in edits:
+            if is_candidate_card_path(path):
+                content = base_tree.get(path)
+                if content is None:
+                    result.pop(path, None)
+                else:
+                    result[path] = content
+        semantic_paths = [
+            p for p in edits if not is_candidate_card_path(p) and not p.startswith("changesets/")
+        ]
+    else:
+        # Full external ingress retains complete physical inventory validation.
+        result = fork_tree(
+            {
+                path: content
+                for path, content in candidate_tree.items()
+                if not is_candidate_card_path(path)
+            }
+        )
+        result.update({p: b for p, b in base_tree.items() if is_candidate_card_path(p)})
+        semantic_paths = sorted(
+            {
+                p
+                for p in {*base_tree, *candidate_tree}
+                if not is_candidate_card_path(p)
+                and not p.startswith("changesets/")
+                and base_tree.get(p) != candidate_tree.get(p)
+            },
+            key=lambda p: p.encode("utf-8"),
+        )
+    for path in semantic_paths:
+        try:
+            kind = artifact_kinds.resolve_path(path)
+        except ProjectionFormatError:
+            continue
+        if kind in {"changeset", "presentation"} or not path.endswith(".json"):
+            continue
+        card_path = candidate_card_path(path)
+        content = candidate_tree.get(path)
+        if content is None:
+            result[card_path] = render_removal_card(coordinate=coordinate)
+            continue
+        try:
+            result[card_path] = render_candidate_card(path, content, artifact_kinds=artifact_kinds)
+        except ProposalIntegrityError:
+            # Derivation runs before member evaluation, so a member whose bytes the
+            # evaluator is about to refuse typed must not abort it first: the caller
+            # is owed the format diagnostic and its inventory row, not an untyped
+            # integrity error. Settlement and recovery only ever re-derive trees the
+            # evaluator already accepted, where every member parses.
+            continue
+    return result.snapshot()
+
+
+__all__ = [
+    "CARD_NAMESPACE",
+    "CARD_RENDERER_DIGEST",
+    "CARD_RENDERER_IMPLEMENTATION",
+    "CARD_TEMPLATE_DIGESTS",
+    "candidate_card_path",
+    "derive_candidate_cards",
+    "is_candidate_card_path",
+    "render_candidate_card",
+    "render_removal_card",
+]

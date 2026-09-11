@@ -14,8 +14,8 @@ from cruxible_client.authoring.attestations import (
     LocalEd25519ClaimAttestationSigner,
     local_attestation_signer_from_environment,
 )
+from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 from tests.test_client._attestation_support import ServiceAttestationClient
-from tests.test_playbill.test_claim_type_migrations import _accepted_claim_world
 from tests.test_server.test_playbill_sdk_demo_world import _catalog
 
 

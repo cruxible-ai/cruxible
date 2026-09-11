@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from cruxible_core.playbill.provider_runtime_contract import (
+from cruxible_core.providers.provider_runtime_contract import (
     PROVIDER_RUNTIME_CONTRACT_COMMIT,
     PROVIDER_RUNTIME_DYNAMIC_ENDPOINT_FORMS,
     PROVIDER_RUNTIME_PROTOCOL,

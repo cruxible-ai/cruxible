@@ -151,13 +151,13 @@ ever grants the working material a governance fact.
 
 ## The full-fidelity path
 
-`cruxible_core.playbill.coverage.middleware` is the vendor-neutral adapter for a
+`cruxible_core.coverage.middleware` is the vendor-neutral adapter for a
 harness that owns its tool executor:
 
 ```python
 from pathlib import Path
 
-from cruxible_core.playbill.coverage.middleware import (
+from cruxible_core.coverage.middleware import (
     HarnessToolEventV1,
     coverage_middleware,
 )

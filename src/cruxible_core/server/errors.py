@@ -25,6 +25,12 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_client.contracts.repairs import RepairOperationV1, ServedRepairV1, hand_edit_repair
 from cruxible_client.errors import ErrorResponse, response_to_error
+from cruxible_core.authoring.insertions import InsertionProtocolError
+from cruxible_core.curation.review_operational import (
+    ReviewOperationalConcurrentChangeError,
+    ReviewOperationalStoreError,
+)
+from cruxible_core.derived.derived_runtime import BuildCapacityError
 from cruxible_core.errors import (
     AuthenticationError,
     BindingNotFoundError,
@@ -68,22 +74,16 @@ from cruxible_core.errors import (
     TerminalLifecycleWriteRefusedError,
     TraceNotFoundError,
 )
-from cruxible_core.playbill.authoring.insertions import InsertionProtocolError
-from cruxible_core.playbill.claim_attestation_store import ClaimAttestationStoreError
-from cruxible_core.playbill.derived_runtime import BuildCapacityError
-from cruxible_core.playbill.review_operational import (
-    ReviewOperationalConcurrentChangeError,
-    ReviewOperationalStoreError,
-)
-from cruxible_core.service.playbill_audit import PlaybillAuditError
-from cruxible_core.service.playbill_curation import PlaybillCurationError
-from cruxible_core.service.playbill_next import PlaybillNextError
-from cruxible_core.service.playbill_procedure_runs import ProcedureSurfaceError
-from cruxible_core.service.playbill_refusal_catalog import (
+from cruxible_core.evidence.claim_attestation_store import ClaimAttestationStoreError
+from cruxible_core.service.discovery.audit import PlaybillAuditError
+from cruxible_core.service.discovery.curation import PlaybillCurationError
+from cruxible_core.service.discovery.next import PlaybillNextError
+from cruxible_core.service.discovery.since import PlaybillSinceError
+from cruxible_core.service.procedures.procedure_runs import ProcedureSurfaceError
+from cruxible_core.service.refusals import (
     ALL_SERVED_REFUSAL_CODES,
     repair_for_refusal,
 )
-from cruxible_core.service.playbill_since import PlaybillSinceError
 
 STANDARD_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     400: {"model": ErrorResponse, "description": "Bad request error envelope"},

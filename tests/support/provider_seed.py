@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.seed_artifacts.workspace_file import (
+from cruxible_core.governance.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_PROVIDER_ID,
     WORKSPACE_FILE_SEED_MANIFEST,
 )

@@ -1303,7 +1303,7 @@ attached workspace after explicit flags and environment and before remembered
 global context.
 
 For a harness that owns its tool executor, the vendor-neutral middleware in
-`cruxible_core.playbill.coverage.middleware` is the full-fidelity path and
+`cruxible_core.coverage.middleware` is the full-fidelity path and
 covers all four tool kinds, including same-turn edit drift.
 
 ## playbill proposal

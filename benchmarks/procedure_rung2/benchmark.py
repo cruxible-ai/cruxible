@@ -134,12 +134,13 @@ def _timed(phase: str, original):  # type: ignore[no-untyped-def]
 def _instrument() -> None:
     """Wrap the exact seams the bridge runs through; nothing changes what they do."""
 
-    from cruxible_core.playbill import proposals
-    from cruxible_core.playbill.authoring import lowering
-    from cruxible_core.playbill.git import GitLedger
-    from cruxible_core.playbill.procedures import execution
-    from cruxible_core.playbill.workspace_file import WorkspaceFileReader
-    from cruxible_core.service import playbill_procedure_runs, playbill_procedures
+    from cruxible_core.authoring import lowering
+    from cruxible_core.documents.workspace_file import WorkspaceFileReader
+    from cruxible_core.ledger.git import GitLedger
+    from cruxible_core.procedures import execution
+    from cruxible_core.proposals import proposals
+    from cruxible_core.service.procedures import procedure_runs as playbill_procedure_runs
+    from cruxible_core.service.procedures import procedures as playbill_procedures
 
     original_git = GitLedger._git
     original_blobs = GitLedger.read_blobs
@@ -204,7 +205,7 @@ def _instrument() -> None:
 
     lowering.lower_authoring = counted_lower  # type: ignore[assignment]
     try:
-        from cruxible_core.playbill.procedures import proposal_delivery
+        from cruxible_core.procedures import proposal_delivery
 
         if hasattr(proposal_delivery, "lower_authoring"):
             proposal_delivery.lower_authoring = counted_lower  # type: ignore[attr-defined]
@@ -301,8 +302,8 @@ def _item_template(index: int = 0) -> dict[str, object]:
 def _build_world(root: Path, *, population: int, history: int, items: int):  # type: ignore[no-untyped-def]
     """Accept the fixed workload plus the requested population and history."""
 
-    from tests.test_playbill import test_procedure_source_runs as fixtures
-    from tests.test_playbill._pc_c_support import capture_contract
+    from tests.core_support._pc_c_support import capture_contract
+    from tests.test_procedures import test_procedure_source_runs as fixtures
 
     from cruxible_client.contracts.artifacts import ArtifactIdentity
     from cruxible_client.contracts.captures import capture_contract_digest
@@ -397,10 +398,10 @@ def _build_world(root: Path, *, population: int, history: int, items: int):  # t
 def _seed_population(instance, owner, population: int) -> None:  # type: ignore[no-untyped-def]
     """Accept `population` foreign-source work-item Claims, one generation each."""
 
-    from tests.test_playbill import _knowledge_loop_support as loop
-    from tests.test_playbill import test_procedure_source_runs as fixtures
-    from tests.test_playbill._claim_authoring_support import service_propose_playbill_claim
-    from tests.test_playbill.test_claims import _claim_type
+    from tests.core_support import _knowledge_loop_support as loop
+    from tests.core_support._claim_authoring_support import service_propose_playbill_claim
+    from tests.test_claims.test_claims import _claim_type
+    from tests.test_procedures import test_procedure_source_runs as fixtures
 
     from cruxible_client.contracts.captures import (
         DirectForeignSourceSelectionV1,
@@ -479,10 +480,10 @@ def _manager_loop(instance, owner, state, *, activate: bool) -> dict[str, float]
     ]
     if not delivered:
         return {}
-    from tests.test_playbill._knowledge_loop_support import accept_proposal
+    from tests.core_support._knowledge_loop_support import accept_proposal
 
     from cruxible_client.contracts.claims import parse_claim
-    from cruxible_core.playbill.service.documents import service_inspect_playbill_proposal
+    from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
 
     receipt = delivered[0]
     timings: dict[str, float] = {}
@@ -511,10 +512,10 @@ def _manager_loop(instance, owner, state, *, activate: bool) -> dict[str, float]
 
 
 def _sample(instance, owner, workspace_root, line, *, clock, activate) -> dict[str, Any]:  # type: ignore[no-untyped-def]
-    from tests.test_playbill import test_procedure_source_runs as fixtures
+    from tests.test_procedures import test_procedure_source_runs as fixtures
 
     from cruxible_client.contracts.procedures.line_specs import line_identity_digest
-    from cruxible_core.service.playbill_procedure_runs import (
+    from cruxible_core.service.procedures.procedure_runs import (
         LineRunRequestV1,
         service_run_playbill_line,
     )
@@ -558,7 +559,7 @@ def _sample(instance, owner, workspace_root, line, *, clock, activate) -> dict[s
 
 def cell(args: argparse.Namespace) -> None:
     _instrument()
-    from tests.test_playbill import test_procedure_source_runs as fixtures
+    from tests.test_procedures import test_procedure_source_runs as fixtures
 
     root = Path(args.root)
     root.mkdir(parents=True, exist_ok=True)

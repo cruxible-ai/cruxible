@@ -16,15 +16,15 @@ from cruxible_client.contracts.procedures.readings import (
     PlaybillProcedureReadingsResultV1,
 )
 from cruxible_client.transport.http import CruxibleClient
-from cruxible_core.playbill.keys import GeneratedKeyMaterial, generate_client_principal_key
+from cruxible_core.governance.keys import GeneratedKeyMaterial, generate_client_principal_key
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
-from tests.test_playbill._knowledge_loop_support import seed_claims_into
-from tests.test_playbill.test_procedure_measurement_readings import _world_on as measured_world_on
-from tests.test_playbill.test_procedure_run_surface import _slotless_procedure
+from tests.core_support._knowledge_loop_support import seed_claims_into
+from tests.test_procedures.test_procedure_measurement_readings import _world_on as measured_world_on
+from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
 from tests.test_server.test_playbill_line_run_refusals import _accept_members
 
 

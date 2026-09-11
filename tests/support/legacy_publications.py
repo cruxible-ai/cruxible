@@ -135,7 +135,7 @@ def apply_playbill_publication(
 # ---------------------------------------------------------------------------
 # The removed publication road, kept only so a test can write the records an
 # instance that already published holds. Copied verbatim from
-# cruxible_core.playbill.authoring.insertions at the commit that deleted
+# cruxible_core.authoring.insertions at the commit that deleted
 # them; no product code may call any of it again.
 # ---------------------------------------------------------------------------
 
@@ -169,7 +169,7 @@ from cruxible_client.contracts.declared_blocks import (  # noqa: E402
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate  # noqa: E402
 from cruxible_client.contracts.temporal import ensure_utc  # noqa: E402
-from cruxible_core.playbill.authoring.insertions import (  # noqa: E402
+from cruxible_core.authoring.insertions import (  # noqa: E402
     InsertionProtocolError,
     _raise,
     _terminal_v2,

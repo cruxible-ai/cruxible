@@ -39,16 +39,16 @@ from cruxible_client.contracts.types import (
     PrincipalRecord,
     validate_decommission_prose,
 )
-from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
-from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
-from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
-from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
-from cruxible_core.playbill.curation_calibration import (
+from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1
+from cruxible_core.coverage.adapter import WorkingSourceObservationV1
+from cruxible_core.coverage.contracts import CoverageCardBudgetV1
+from cruxible_core.coverage.indexes import CoverageScanBudgetV1
+from cruxible_core.curation.curation_calibration import (
     AUDIT_BUDGET_DEFAULT_MAX_BYTES,
     AUDIT_BUDGET_DEFAULT_MAX_ROWS,
 )
-from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.search import (
+from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.query.search import (
     SEARCH_KINDS,
     PlaybillSearchBudgetsV1,
     PlaybillSearchCursorV1,

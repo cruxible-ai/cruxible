@@ -12,10 +12,10 @@ from cruxible_client.authoring.examples import claim_flow_a_example, procedure_e
 from cruxible_client.contracts.authoring.inputs import CarriedContractInput, lower_authoring_input
 from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayloadV2
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-from cruxible_core.playbill.claim_type_inputs import (
+from cruxible_core.claims.claim_type_inputs import (
     lower_claim_type_input,
 )
-from tests.test_playbill._claim_type_support import claim_type_input_example
+from tests.core_support._claim_type_support import claim_type_input_example
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
     git_oid="1" * 64,
@@ -119,7 +119,7 @@ def test_http_compile_renders_a_lowering_fault_typed_instead_of_a_bare_500(
     def refusing(*_args: object, **_kwargs: object) -> object:
         raise ValueError("source coordinates/selectors cannot carry locators at $.selector")
 
-    monkeypatch.setattr("cruxible_core.playbill.authoring.preflight.lower_authoring", refusing)
+    monkeypatch.setattr("cruxible_core.authoring.preflight.lower_authoring", refusing)
     payload = {
         "tag": "playbill-claim-authoring-payload-v1",
         "statement": {
@@ -674,8 +674,8 @@ def test_http_proposal_selector_resolves_against_a_live_instance(
         DocumentLifecycle,
         DocumentShell,
     )
-    from cruxible_core.playbill.service.documents import service_propose_playbill_document
     from cruxible_core.runtime.playbill_manager import get_playbill_manager
+    from cruxible_core.service.authoring.documents import service_propose_playbill_document
 
     client, instance_id, _private_key = playbill_http
     proposed = service_propose_playbill_document(

@@ -6,7 +6,7 @@ import pytest
 
 from cruxible_client import contracts
 from cruxible_core.mcp import handlers
-from cruxible_core.service.playbill_next import PlaybillNextWorkspaceObservationInvalid
+from cruxible_core.service.discovery.next import PlaybillNextWorkspaceObservationInvalid
 
 
 def _action_result(item_id: str) -> contracts.PlaybillCurationActionResult:

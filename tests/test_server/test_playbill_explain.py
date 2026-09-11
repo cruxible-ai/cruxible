@@ -13,7 +13,7 @@ from cruxible_client.contracts.documents import (
     DocumentLifecycle,
     DocumentShell,
 )
-from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
+from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
 
 
 def _accept_document(client: TestClient, instance_id: str, key_path: Path) -> dict[str, str]:

@@ -16,7 +16,7 @@ from cruxible_client.contracts.declared_blocks import (
     projection_manifest,
     stamped_projection_windows,
 )
-from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1, observed_commitment
+from cruxible_core.coverage.adapter import WorkingSourceObservationV1, observed_commitment
 from tests.test_client.test_playbill_block_sync import OLD_BODY, _stamp
 from tests.test_client.test_playbill_projection_repin import NOW, _RepinClient, _workspace
 

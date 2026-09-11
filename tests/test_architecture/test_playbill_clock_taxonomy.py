@@ -19,7 +19,7 @@ from cruxible_core.cli.commands.playbill import (
     run_line,
     run_procedure,
 )
-from cruxible_core.service.playbill_procedure_runs import (
+from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequestV1,
     ProcedureReadinessRequestV1,
     ProcedureRunRequestV2,
@@ -28,8 +28,11 @@ from cruxible_core.service.playbill_procedure_runs import (
 ROOT = Path(__file__).resolve().parents[2]
 SCAN_ROOTS = (
     ROOT / "packages" / "cruxible-client" / "src" / "cruxible_client" / "contracts",
-    ROOT / "src" / "cruxible_core" / "playbill",
-    ROOT / "src" / "cruxible_core" / "service",
+    *(ROOT / "src" / "cruxible_core" / name for name in (
+        "ledger", "compiler", "claims", "documents", "evidence", "proposals",
+        "governance", "providers", "curation", "query", "derived", "exhaust",
+        "floor", "storage", "indexes", "authoring", "coverage", "procedures", "service",
+    )),
 )
 
 
@@ -38,7 +41,10 @@ def _discovered_fields() -> tuple[tuple[str, str, str, str, str], ...]:
 
     rows: list[tuple[str, str, str, str, str]] = []
     for scan_root in SCAN_ROOTS:
-        for path in sorted(scan_root.rglob("*.py")):
+        for path in sorted(scan_root.rglob("*.py")) + (
+            [ROOT / "src/cruxible_core/runtime/instance.py"]
+            if scan_root.name == "ledger" else []
+        ):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             for class_node in (item for item in ast.walk(tree) if isinstance(item, ast.ClassDef)):
                 for item in class_node.body:

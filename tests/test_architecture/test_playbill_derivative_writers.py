@@ -19,7 +19,7 @@ from cruxible_client.authoring.blocks import (
     _apply_projection_restamps,
     repin_projection_block,
 )
-from cruxible_core.playbill.candidate_cards import derive_candidate_cards
+from cruxible_core.proposals.candidate_cards import derive_candidate_cards
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PRIMITIVE_DEFINITION = (
@@ -37,7 +37,7 @@ CARD_PRIMITIVE_DEFINITION: Path | None = None
 # candidate card as the body it would rewrite a block to; nothing renders a block
 # any more, so that caller is gone with the rendering.
 SANCTIONED_CARD_CALLERS = {
-    "src/cruxible_core/playbill/candidate_cards.py::derive_candidate_cards",
+    "src/cruxible_core/proposals/candidate_cards.py::derive_candidate_cards",
 }
 _BLOCKS = "packages/cruxible-client/src/cruxible_client/authoring/blocks.py"
 SANCTIONED_CALLERS = {
@@ -62,7 +62,7 @@ SANCTIONED_WRITERS: dict[str, tuple[Callable[..., object], str, tuple[str, ...]]
     ),
 }
 CARD_DERIVATIVE_WRITERS: dict[str, tuple[Callable[..., object], tuple[str, ...]]] = {
-    "src/cruxible_core/playbill/candidate_cards.py::derive_candidate_cards": (
+    "src/cruxible_core/proposals/candidate_cards.py::derive_candidate_cards": (
         derive_candidate_cards,
         (
             "render changed artifact cards through render_candidate_card",
@@ -201,7 +201,7 @@ def test_candidate_card_derivative_writer_is_the_only_one_in_the_tree() -> None:
     """
 
     assert set(CARD_DERIVATIVE_WRITERS) == {
-        "src/cruxible_core/playbill/candidate_cards.py::derive_candidate_cards"
+        "src/cruxible_core/proposals/candidate_cards.py::derive_candidate_cards"
     }
     assert _card_primitive_callers() == SANCTIONED_CARD_CALLERS
     writer, operations = next(iter(CARD_DERIVATIVE_WRITERS.values()))

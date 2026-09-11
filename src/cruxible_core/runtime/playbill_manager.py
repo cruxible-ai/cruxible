@@ -23,25 +23,25 @@ from cruxible_client.contracts.types import (
     PlaybillTrustRoot,
     PrincipalRecord,
 )
+from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.errors import InstanceNotFoundError
-from cruxible_core.playbill.instance import DEFAULT_GIT_OBJECT_FORMAT, PlaybillInstance
-from cruxible_core.playbill.provider_process_leases import ProviderProcessRecoveryResultV1
-from cruxible_core.playbill.workspace_advertisement import (
+from cruxible_core.floor.workspace_advertisement import (
     advertise_workspace_refs,
     workspace_git_object_format,
 )
-from cruxible_core.playbill.workspace_file import WorkspaceFileReader
+from cruxible_core.providers.provider_process_leases import ProviderProcessRecoveryResultV1
+from cruxible_core.runtime.instance import DEFAULT_GIT_OBJECT_FORMAT, PlaybillInstance
 from cruxible_core.runtime.provider_runtime import (
     ProviderRecoveryFoldDisposition,
     ProviderRuntimeOperator,
 )
 from cruxible_core.server.config import get_server_state_root
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
-from cruxible_core.service.playbill_procedure_runs import (
+from cruxible_core.service.procedures.procedure_runs import (
     ProcedureRunOperationalConfigV1,
     load_procedure_run_config,
 )
-from cruxible_core.service.playbill_proposal_receive import load_proposal_receive_config
+from cruxible_core.service.proposals.proposal_receive import load_proposal_receive_config
 
 _log = structlog.get_logger("cruxible.provider_runtime")
 
@@ -349,7 +349,7 @@ class PlaybillInstanceManager:
         finalized. Nothing here activates a proposal.
         """
 
-        from cruxible_core.service.playbill_proposal_egress import (
+        from cruxible_core.service.proposals.proposal_egress import (
             service_recover_proposal_egress,
         )
 
@@ -404,7 +404,7 @@ class PlaybillInstanceManager:
         }
         if not invocation_ids and not recovery_failures:
             return {}
-        from cruxible_core.service.playbill_procedure_runs import (
+        from cruxible_core.service.procedures.procedure_runs import (
             ProcedureRunRecoveryRequired,
             service_recover_provider_invocations,
         )

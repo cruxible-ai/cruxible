@@ -20,8 +20,8 @@ from cruxible_client.contracts.documents import (
     DocumentLifecycle,
     DocumentShell,
 )
+from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.mcp.permissions import reset_permissions
-from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server import request_logging as request_logging_module

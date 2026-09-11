@@ -52,7 +52,11 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRuleV1,
 )
 from cruxible_core.cli.main import cli
-from cruxible_core.playbill.coverage.render import BATCH_SUMMARY_PREFIX
+from cruxible_core.coverage.render import BATCH_SUMMARY_PREFIX
+from tests.core_support._knowledge_loop_support import (
+    subject_shell,
+)
+from tests.test_claims.test_claims import _claim_type
 from tests.test_cli.test_playbill_knowledge_loop_smoke import (  # noqa: F401
     _author_and_accept,
     _Cli,
@@ -60,10 +64,6 @@ from tests.test_cli.test_playbill_knowledge_loop_smoke import (  # noqa: F401
     _write,
     served_cli,
 )
-from tests.test_playbill._knowledge_loop_support import (
-    subject_shell,
-)
-from tests.test_playbill.test_claims import _claim_type
 
 GOVERNED_BYTES = (
     b"# Migration handbook\n\nThe reviewer accepted the migration plan on the second reading.\n"

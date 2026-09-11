@@ -13,7 +13,7 @@ import importlib.util
 from pathlib import Path
 
 import cruxible_client.contracts.captures as capture_contracts
-import cruxible_core.playbill.compiler as compiler_module
+import cruxible_core.compiler.compiler as compiler_module
 from cruxible_client.contracts.canonical import AcceptanceLawDigest, canonical_digest, typed_digest
 from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_ACCEPTANCE_LAW,
@@ -46,8 +46,7 @@ from cruxible_client.contracts.laws import (
     SUBJECT_ACCEPTANCE_LAW,
     InstalledAcceptanceLaw,
 )
-from cruxible_core.playbill.candidate_cards import CARD_RENDERER_DIGEST
-from cruxible_core.playbill.compiler import (
+from cruxible_core.compiler.compiler import (
     P2_B0_COMPILER,
     P2_B1_COMPILER,
     P2_B2_COMPILER,
@@ -62,6 +61,7 @@ from cruxible_core.playbill.compiler import (
     candidate_card_renderer_digest_for_compiler,
     current_compiler_coordinate,
 )
+from cruxible_core.proposals.candidate_cards import CARD_RENDERER_DIGEST
 
 LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],
@@ -496,7 +496,7 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
 
 
 def test_installed_compiler_revision_labels_are_exact_and_complete() -> None:
-    from cruxible_core.playbill.compiler import (
+    from cruxible_core.compiler.compiler import (
         COMPILER_REVISION_LABELS,
         SUPPORTED_COMPILERS,
         current_compiler_coordinate,
@@ -542,7 +542,7 @@ def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
     Until then, a failure here is the guardrail working.
     """
 
-    from cruxible_core.playbill.compiler import (
+    from cruxible_core.compiler.compiler import (
         COMPILER_REVISION_LABELS,
         current_compiler_coordinate,
     )

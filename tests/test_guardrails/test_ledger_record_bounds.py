@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from cruxible_client.contracts.proposal_models import ProposalReceiveLimits
-from cruxible_core.playbill.projection_tree import TreeReadLimits
+from cruxible_core.compiler.projection_tree import TreeReadLimits
 
 
 def test_the_advertised_record_ceiling_is_the_ceiling_that_fires() -> None:

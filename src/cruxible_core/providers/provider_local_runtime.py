@@ -1,0 +1,1432 @@
+"""Daemon-local Provider binding, custody, budget, and invocation driver."""
+
+from __future__ import annotations
+
+import base64
+import contextlib
+import csv
+import hashlib
+import json
+import os
+import selectors
+import signal
+import stat
+import subprocess
+import tempfile
+import threading
+import time
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal, Protocol, cast
+
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+
+from cruxible_client.contracts.canonical import (
+    Sha256Value,
+    canonical_bytes,
+    normalize_ledger_path,
+)
+from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
+from cruxible_client.contracts.procedures.models import ProcedureBudgetV3, ProcedureHardCapsV3
+from cruxible_client.contracts.provider_execution import (
+    ProviderBudgetTranslationV1,
+    ProviderEgressObservationV1,
+    ProviderExternalOccurrencePlanV1,
+    ProviderSecretBindingIdentityV1,
+    ProviderSecretReferenceV1,
+    ProviderSecretResolutionPlanV1,
+    VerifiedProviderBindingV1,
+    provider_secret_binding_identity_digest,
+)
+from cruxible_client.contracts.provider_interfaces import (
+    AcceptedProviderInterfaceRegistrationV1,
+)
+from cruxible_client.contracts.providers import (
+    AcceptedProviderV1,
+    ProviderImplementationManifestV1,
+    ProviderV2,
+)
+from cruxible_core.providers.provider_process_leases import (
+    ProviderDescendantProcessV1,
+    ProviderLocalRuntimeRefused,
+    ProviderProcessLeaseStore,
+    descendant_is_live,
+    kill_descendants,
+    snapshot_provider_descendants,
+)
+from cruxible_core.providers.provider_runtime_contract import (
+    MAX_PROVIDER_SECRET_BUNDLE_BYTES,
+    PROVIDER_RUNTIME_DYNAMIC_ENDPOINT_FORMS,
+    PROVIDER_RUNTIME_PROTOCOL,
+    ProviderRuntimeBudgetsV1,
+    ProviderRuntimeResultEnvelopeV1,
+    ProviderRuntimeRunContextV1,
+    ProviderRuntimeSecretChannelSpecV1,
+    ProviderRuntimeSecretRefV1,
+    ProviderRuntimeWireError,
+    parse_provider_runtime_result,
+)
+from cruxible_core.runtime.execution_policy import (
+    enforce_customer_code_execution_supported,
+)
+
+_READ_CHUNK = 65_536
+
+
+def _sha256(content: bytes) -> str:
+    return "sha256:" + hashlib.sha256(content).hexdigest()
+
+
+class ProviderMaterializationSealFileV2(BaseModel):
+    """One normalized environment-relative byte commitment read from a v2 seal."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    path: str
+    sha256: str
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        try:
+            normalized = normalize_ledger_path(value)
+        except Exception as exc:
+            raise ValueError("seal file path must be normalized and environment-relative") from exc
+        if normalized != value:
+            raise ValueError("seal file path must already be normalized")
+        return value
+
+    @field_validator("sha256")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+
+class ProviderMaterializationSealV2(BaseModel):
+    """Provider-repository-produced file manifest consumed by the core binder."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["cruxible.provider.seal.v2"]
+    materialization_digest: str
+    lock_sha256: str
+    installed_distributions: dict[str, str]
+    files: tuple[ProviderMaterializationSealFileV2, ...]
+
+    @field_validator("materialization_digest", "lock_sha256")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _files(self) -> "ProviderMaterializationSealV2":
+        ordered = tuple(sorted(self.files, key=lambda item: item.path.encode("utf-8")))
+        if self.files != ordered or len({item.path for item in self.files}) != len(self.files):
+            raise ValueError("seal files must be byte-sorted and unique")
+        return self
+
+
+@dataclass(frozen=True)
+class LocalProviderDeploymentV1:
+    """Operator-owned paths whose bytes must reproduce an accepted local pin."""
+
+    deployment_digest: str
+    distribution_path: Path
+    lock_path: Path
+    environment_path: Path
+    environment_manifest_path: Path
+    environment_pin_key: str
+    interpreter_path: Path
+    provider_runtime_version: str
+
+
+@dataclass(frozen=True)
+class BoundLocalProviderV1:
+    binding: VerifiedProviderBindingV1
+    interpreter_path: Path
+
+
+@dataclass(frozen=True)
+class ProviderDriverOutcomeV1:
+    """Local result whose ``duration_seconds`` reads VALIDITY WINDOW."""
+
+    envelope: ProviderRuntimeResultEnvelopeV1
+    stderr: str
+    duration_seconds: float
+    egress: ProviderEgressObservationV1
+    verified_binding: VerifiedProviderBindingV1
+
+
+class ProviderSecretResolverProtocol(Protocol):
+    resolver_kind: str
+
+    def resolve(self, reference: ProviderSecretReferenceV1) -> str: ...
+
+
+class EnvironmentProviderSecretResolver:
+    resolver_kind = "environment"
+
+    def __init__(self, values: Mapping[str, str] | None = None) -> None:
+        self._values = os.environ if values is None else values
+
+    def resolve(self, reference: ProviderSecretReferenceV1) -> str:
+        key = provider_environment_secret_key(reference)
+        try:
+            return self._values[key]
+        except KeyError as exc:
+            raise ProviderLocalRuntimeRefused(
+                "secret_epoch_unavailable", f"environment secret epoch {reference.epoch!r} absent"
+            ) from exc
+
+
+def provider_environment_secret_key(reference: ProviderSecretReferenceV1) -> str:
+    """Return a collision-free daemon custody key for one secret epoch."""
+
+    identity_digest = provider_secret_binding_identity_digest(
+        ProviderSecretBindingIdentityV1(realm=reference.realm, name=reference.name)
+    ).removeprefix("sha256:")
+    epoch = reference.epoch.encode("utf-8")
+    return f"CRUXIBLE_PROVIDER_SECRET_{identity_digest}_{len(epoch)}_{epoch.hex()}"
+
+
+class FileProviderSecretStore:
+    """Local-operator-only, file-backed custody. It has no served management API."""
+
+    resolver_kind = "file"
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(root, 0o700)
+
+    def put(self, reference: ProviderSecretReferenceV1, material: str) -> None:
+        if reference.resolver_kind != self.resolver_kind:
+            raise ProviderLocalRuntimeRefused(
+                "secret_reference_invalid", "file store received a non-file reference"
+            )
+        target = self._path(reference)
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(target.parent, 0o700)
+        descriptor, temporary = tempfile.mkstemp(dir=target.parent, prefix=".secret-", text=True)
+        try:
+            os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(material)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, target)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temporary)
+
+    def resolve(self, reference: ProviderSecretReferenceV1) -> str:
+        try:
+            return self._path(reference).read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ProviderLocalRuntimeRefused(
+                "secret_epoch_unavailable", f"file secret epoch {reference.epoch!r} absent"
+            ) from exc
+
+    def _path(self, reference: ProviderSecretReferenceV1) -> Path:
+        return self.root / reference.realm / reference.name / reference.epoch
+
+
+class ProviderSecretResolverRegistry:
+    def __init__(self, resolvers: tuple[ProviderSecretResolverProtocol, ...]) -> None:
+        self._resolvers = {resolver.resolver_kind: resolver for resolver in resolvers}
+
+    def validate_plan(self, plan: ProviderSecretResolutionPlanV1) -> None:
+        for reference in plan.references:
+            if reference.resolver_kind not in self._resolvers:
+                raise ProviderLocalRuntimeRefused(
+                    "secret_resolver_not_installed",
+                    f"secret resolver {reference.resolver_kind!r} is not installed",
+                )
+
+    def resolve(self, plan: ProviderSecretResolutionPlanV1) -> dict[str, str]:
+        self.validate_plan(plan)
+        result = {
+            reference.ref: self._resolvers[reference.resolver_kind].resolve(reference)
+            for reference in plan.references
+        }
+        payload = canonical_bytes(result)
+        if len(payload) > MAX_PROVIDER_SECRET_BUNDLE_BYTES:
+            raise ProviderLocalRuntimeRefused(
+                "secret_bundle_too_large",
+                f"secret bundle exceeds {MAX_PROVIDER_SECRET_BUNDLE_BYTES} bytes",
+            )
+        return result
+
+
+class ProviderLocalRuntimeInvoker:
+    """Operator-wired adapter from an admitted occurrence plan to the local child."""
+
+    def __init__(
+        self,
+        *,
+        deployments_by_digest: Mapping[str, LocalProviderDeploymentV1],
+        accepted_providers_by_digest: Mapping[str, AcceptedProviderV1],
+        accepted_interfaces_by_digest: Mapping[str, AcceptedProviderInterfaceRegistrationV1],
+        secret_resolvers: ProviderSecretResolverRegistry,
+        process_leases: ProviderProcessLeaseStore,
+        driver: LocalProviderExecutionDriver | None = None,
+    ) -> None:
+        self._deployments = dict(deployments_by_digest)
+        self._accepted_providers = dict(accepted_providers_by_digest)
+        self._accepted_interfaces = dict(accepted_interfaces_by_digest)
+        self._secret_resolvers = secret_resolvers
+        self._process_leases = process_leases
+        self._driver = driver or LocalProviderExecutionDriver()
+
+    def bind_provider(
+        self,
+        *,
+        occurrence: ProviderExternalOccurrencePlanV1,
+    ) -> BoundLocalProviderV1:
+        try:
+            deployment = self._deployments[occurrence.local_execution.deployment_digest]
+        except KeyError as exc:
+            raise ProviderLocalRuntimeRefused(
+                "no_compatible_artifact",
+                "the admitted local deployment is not installed by this operator",
+            ) from exc
+        try:
+            accepted_provider = self._accepted_providers[occurrence.provider_artifact_digest]
+        except KeyError as exc:
+            raise ProviderLocalRuntimeRefused(
+                "unaccepted_provider",
+                "the admitted Provider artifact is unavailable at the bound coordinate",
+            ) from exc
+        try:
+            accepted_interface = self._accepted_interfaces[occurrence.interface_artifact_digest]
+        except KeyError as exc:
+            raise ProviderLocalRuntimeRefused(
+                "unknown_interface",
+                "the admitted Provider interface is unavailable at the bound coordinate",
+            ) from exc
+        bound = self._driver.bind(
+            accepted_provider,
+            accepted_interface,
+            occurrence.implementation_digest,
+            deployment,
+        )
+        if bound.binding != occurrence.local_execution:
+            raise ProviderLocalRuntimeRefused(
+                "acceptance_divergence",
+                "spawn-time Provider binding differs from the admitted binding",
+            )
+        return bound
+
+    def invoke_provider(
+        self,
+        *,
+        occurrence: ProviderExternalOccurrencePlanV1,
+        context: ProviderRuntimeRunContextV1,
+        invocation_id: str,
+        bound: BoundLocalProviderV1,
+    ) -> ProviderDriverOutcomeV1:
+        # Rebind immediately before every spawn. The earlier bound value is
+        # journal-before-progress evidence. The remaining verify-to-exec window
+        # after this second read is intentionally RAT-2 attribution, not a
+        # filesystem sandbox guarantee; any later observed drift is a refusal.
+        fresh = self.bind_provider(occurrence=occurrence)
+        if fresh != bound:
+            raise ProviderLocalRuntimeRefused(
+                "environment_divergence",
+                "Provider binding changed after the durable invocation start",
+            )
+        return self._driver.invoke(
+            fresh,
+            context,
+            secret_plan=occurrence.secret_plan,
+            secret_resolvers=self._secret_resolvers,
+            invocation_id=invocation_id,
+            process_leases=self._process_leases,
+        )
+
+
+def translate_provider_budget(
+    *,
+    budget: ProcedureBudgetV3,
+    hard_caps: ProcedureHardCapsV3,
+    runtime_policy: ProcedureRuntimePolicyV1,
+    remaining_wall_clock_microseconds: int,
+    result_bytes_cap: int,
+    produces_capture: bool,
+) -> ProviderBudgetTranslationV1:
+    remaining = min(
+        remaining_wall_clock_microseconds,
+        budget.wall_clock.microseconds,
+        hard_caps.max_wall_clock.microseconds,
+    )
+    runtime_seconds = remaining // 1_000_000
+    if runtime_seconds < 1:
+        raise ProviderLocalRuntimeRefused(
+            "budget_wall_clock", "less than one whole second remains before provider spawn"
+        )
+    if budget.max_provider_calls < 1 or hard_caps.max_provider_calls < 1:
+        raise ProviderLocalRuntimeRefused(
+            "budget_max_provider_calls_exceeded", "provider-call budget is exhausted"
+        )
+    procedure_output_cap = budget.max_capture_bytes if produces_capture else None
+    if produces_capture and procedure_output_cap == 0:
+        raise ProviderLocalRuntimeRefused(
+            "budget_output_size", "Capture-producing provider has a zero-byte output budget"
+        )
+    hard_output_cap = hard_caps.max_capture_bytes if produces_capture else None
+    if produces_capture and hard_output_cap == 0:
+        raise ProviderLocalRuntimeRefused(
+            "budget_output_size", "Procedure hard cap allows no provider output bytes"
+        )
+    candidates = [runtime_policy.provider_output_bytes_cap]
+    if hard_output_cap is not None:
+        candidates.append(hard_output_cap)
+    if procedure_output_cap is not None:
+        candidates.append(procedure_output_cap)
+    return ProviderBudgetTranslationV1(
+        remaining_wall_clock_microseconds=remaining_wall_clock_microseconds,
+        procedure_wall_clock_microseconds=budget.wall_clock.microseconds,
+        hard_cap_wall_clock_microseconds=hard_caps.max_wall_clock.microseconds,
+        runtime_wall_clock_seconds=runtime_seconds,
+        procedure_output_bytes_cap=procedure_output_cap,
+        hard_output_bytes_cap=hard_output_cap,
+        policy_output_bytes_cap=runtime_policy.provider_output_bytes_cap,
+        runtime_output_bytes_cap=min(candidates),
+        max_provider_calls=min(budget.max_provider_calls, hard_caps.max_provider_calls),
+        max_items=(
+            hard_caps.max_items
+            if budget.max_items is None
+            else min(budget.max_items, hard_caps.max_items)
+        ),
+        result_bytes_cap=result_bytes_cap,
+    )
+
+
+class LocalProviderExecutionDriver:
+    """Verify a pre-materialized local environment and invoke its runtime child."""
+
+    def bind(
+        self,
+        accepted_provider: AcceptedProviderV1,
+        accepted_interface: AcceptedProviderInterfaceRegistrationV1,
+        implementation_digest: str,
+        deployment: LocalProviderDeploymentV1,
+    ) -> BoundLocalProviderV1:
+        provider = accepted_provider.provider
+        if not isinstance(provider, ProviderV2):
+            raise ProviderLocalRuntimeRefused(
+                "unaccepted_provider", "local execution requires an accepted Provider v2"
+            )
+        if provider.runtime_artifact.status != "accepted":
+            raise ProviderLocalRuntimeRefused(
+                "acceptance_divergence", "Provider runtime artifact is not accepted"
+            )
+        registration = accepted_interface.registration
+        implementation_record = next(
+            (
+                item
+                for item in provider.implementations
+                if item.implementation_digest == implementation_digest
+            ),
+            None,
+        )
+        manifest = next(
+            (
+                item
+                for item in provider.runtime_artifact.manifest.implementations
+                if item.interface_id == registration.interface_id
+                and item.interface_digest == registration.interface_digest
+                and self._implementation_digest(provider, item) == implementation_digest
+            ),
+            None,
+        )
+        if implementation_record is None or manifest is None:
+            raise ProviderLocalRuntimeRefused(
+                "ambiguous_implementation", "implementation is absent from accepted closure"
+            )
+        local_ref = next(
+            (
+                item
+                for item in implementation_record.materialization_references
+                if item.kind == "local_env"
+                and item.environment_pin_key == deployment.environment_pin_key
+            ),
+            None,
+        )
+        if local_ref is None:
+            raise ProviderLocalRuntimeRefused(
+                "no_compatible_artifact", "accepted Provider has no matching local environment"
+            )
+        self._verify_file(
+            deployment.distribution_path,
+            provider.runtime_artifact.distribution.sha256,
+            "artifact_hash_mismatch",
+        )
+        if provider.runtime_artifact.local_env is None:
+            raise ProviderLocalRuntimeRefused(
+                "unsupported_backend", "accepted Provider has no local environment pin"
+            )
+        self._verify_file(
+            deployment.lock_path,
+            provider.runtime_artifact.local_env.lock_sha256,
+            "lock_bytes_mismatch",
+        )
+        environment_manifest, environment_manifest_bytes = self._read_environment_manifest(
+            deployment.environment_manifest_path
+        )
+        if environment_manifest.materialization_digest != local_ref.materialization_digest:
+            raise ProviderLocalRuntimeRefused(
+                "environment_divergence", "environment seal names another materialization"
+            )
+        if environment_manifest.lock_sha256 != provider.runtime_artifact.local_env.lock_sha256:
+            raise ProviderLocalRuntimeRefused(
+                "environment_divergence", "environment seal names another lock"
+            )
+        installed = environment_manifest.installed_distributions
+        if "cruxible-provider-runtime" not in installed:
+            raise ProviderLocalRuntimeRefused(
+                "provider_runtime_not_in_materialization",
+                "verified environment does not contain cruxible-provider-runtime",
+            )
+        if installed["cruxible-provider-runtime"] != deployment.provider_runtime_version:
+            raise ProviderLocalRuntimeRefused(
+                "provider_runtime_not_in_materialization",
+                "verified environment contains another cruxible-provider-runtime version",
+            )
+        if not deployment.interpreter_path.is_file():
+            raise ProviderLocalRuntimeRefused(
+                "environment_divergence", "verified environment interpreter is absent"
+            )
+        try:
+            environment_root = deployment.environment_path.resolve(strict=True)
+            interpreter_path = deployment.interpreter_path.resolve(strict=True)
+            manifest_path = deployment.environment_manifest_path.resolve(strict=True)
+        except OSError as exc:
+            raise ProviderLocalRuntimeRefused(
+                "environment_divergence", "verified environment paths are unavailable"
+            ) from exc
+        if (
+            not environment_root.is_dir()
+            or not interpreter_path.is_relative_to(environment_root)
+            or not manifest_path.is_relative_to(environment_root)
+        ):
+            raise ProviderLocalRuntimeRefused(
+                "environment_divergence",
+                "interpreter and environment seal must remain inside the verified environment",
+            )
+        self._verify_environment_files(
+            environment_manifest,
+            environment_root=environment_root,
+            interpreter_path=interpreter_path,
+            entrypoint=manifest.entrypoint,
+            runtime_version=deployment.provider_runtime_version,
+        )
+        provider_artifact_digest = accepted_provider.artifact_digest
+        interface_pin = next(
+            (
+                pin
+                for pin in provider.pins
+                if pin.target.kind == "ProviderInterface"
+                and pin.target.name == registration.interface_id
+            ),
+            None,
+        )
+        if (
+            interface_pin is None
+            or interface_pin.artifact_digest != accepted_interface.artifact_digest
+        ):
+            raise ProviderLocalRuntimeRefused(
+                "undeclared_interface", "Provider does not pin this accepted interface"
+            )
+        return BoundLocalProviderV1(
+            binding=VerifiedProviderBindingV1(
+                provider_artifact_digest=provider_artifact_digest,
+                interface_artifact_digest=accepted_interface.artifact_digest,
+                interface_id=registration.interface_id,
+                interface_digest=registration.interface_digest,
+                implementation_digest=implementation_digest,
+                deployment_digest=deployment.deployment_digest,
+                materialization_digest=local_ref.materialization_digest,
+                environment_manifest_digest=_sha256(environment_manifest_bytes),
+                entrypoint=manifest.entrypoint,
+                declared_endpoints=tuple(
+                    sorted(set(manifest.declared_endpoints), key=lambda item: item.encode())
+                ),
+            ),
+            interpreter_path=deployment.interpreter_path,
+        )
+
+    def invoke(
+        self,
+        binding: BoundLocalProviderV1,
+        context: ProviderRuntimeRunContextV1,
+        *,
+        secret_plan: ProviderSecretResolutionPlanV1,
+        secret_resolvers: ProviderSecretResolverRegistry,
+        invocation_id: str,
+        process_leases: ProviderProcessLeaseStore,
+    ) -> ProviderDriverOutcomeV1:
+        # Before any tenant secret is resolved, not merely before the spawn: a
+        # run this profile will refuse must not decrypt customer secret material
+        # into the daemon on its way to the refusal.
+        enforce_customer_code_execution_supported()
+        if context.implementation_digest != binding.binding.implementation_digest:
+            raise ProviderLocalRuntimeRefused(
+                "provider_protocol_violation", "run context names another implementation"
+            )
+        if context.protocol_version != PROVIDER_RUNTIME_PROTOCOL:
+            raise ProviderLocalRuntimeRefused(
+                "unsupported_protocol", "run context protocol is unsupported"
+            )
+        unknown_dynamic = tuple(
+            endpoint
+            for endpoint in binding.binding.declared_endpoints
+            if endpoint.startswith("dynamic:")
+            and endpoint not in PROVIDER_RUNTIME_DYNAMIC_ENDPOINT_FORMS
+        )
+        if unknown_dynamic:
+            raise ProviderLocalRuntimeRefused(
+                "undeclared_egress",
+                "verified Provider binding contains an unknown dynamic endpoint form",
+            )
+        secrets = secret_resolvers.resolve(secret_plan)
+        with _open_secret_channel(
+            secrets,
+            join_timeout_seconds=process_leases.secret_writer_join_timeout_seconds,
+        ) as secret_fd:
+            channel = (
+                ProviderRuntimeSecretChannelSpecV1(
+                    fd=secret_fd,
+                    refs=tuple(
+                        ProviderRuntimeSecretRefV1(ref=item.ref, purpose=item.purpose)
+                        for item in secret_plan.references
+                    ),
+                )
+                if secret_fd is not None
+                else None
+            )
+            actual_context = context.model_copy(update={"secret_channel": channel})
+            # The external runtime wire law permits finite floats (the wall-clock
+            # budget is one), so use its exact model-order JSON spelling rather
+            # than Playbill's narrower governed-artifact canonical value law.
+            context_bytes = actual_context.to_json()
+            _assert_no_secret(context_bytes, secrets, where="run context")
+            process = _run_child(
+                binding.interpreter_path,
+                entrypoint=binding.binding.entrypoint,
+                context=context_bytes,
+                budgets=actual_context.budgets,
+                secret_fd=secret_fd,
+                invocation_id=invocation_id,
+                process_leases=process_leases,
+            )
+        _assert_no_secret(process.stdout, secrets, where="provider stdout")
+        _assert_no_secret(process.stderr, secrets, where="provider stderr")
+        try:
+            envelope = parse_provider_runtime_result(process.stdout)
+        except ProviderRuntimeWireError:
+            raise
+        if envelope.run_id != context.run_id:
+            raise ProviderLocalRuntimeRefused(
+                "provider_protocol_violation", "provider envelope names another run"
+            )
+        dynamic = cast(
+            tuple[Literal["dynamic:target-from-run-input"], ...],
+            tuple(
+                value
+                for value in binding.binding.declared_endpoints
+                if value == "dynamic:target-from-run-input"
+            ),
+        )
+        declared = tuple(
+            value
+            for value in binding.binding.declared_endpoints
+            if not value.startswith("dynamic:")
+        )
+        observed = tuple(
+            sorted(set(envelope.trace.endpoints_contacted), key=lambda item: item.encode())
+        )
+        return ProviderDriverOutcomeV1(
+            envelope=envelope,
+            stderr=process.stderr.decode("utf-8", "replace"),
+            duration_seconds=round(process.duration_seconds, 4),
+            egress=ProviderEgressObservationV1(
+                declared_endpoints=declared,
+                observed_endpoints=observed,
+                dynamic_endpoint_forms=dynamic,
+                observer_backend="child-self-report",
+                observer_grade="attribution",
+            ),
+            verified_binding=binding.binding,
+        )
+
+    @staticmethod
+    def _implementation_digest(
+        provider: ProviderV2, manifest: ProviderImplementationManifestV1
+    ) -> str:
+        return next(
+            item.implementation_digest
+            for item in provider.implementations
+            if item.interface_id == manifest.interface_id and item.entrypoint == manifest.entrypoint
+        )
+
+    @staticmethod
+    def _verify_file(path: Path, expected: str, code: str) -> None:
+        try:
+            actual = _sha256(path.read_bytes())
+        except OSError as exc:
+            raise ProviderLocalRuntimeRefused(
+                code, f"required file {path.name!r} is absent"
+            ) from exc
+        if actual != expected:
+            raise ProviderLocalRuntimeRefused(code, f"{path.name!r} digest does not reproduce")
+
+    @staticmethod
+    def _read_environment_manifest(path: Path) -> tuple[ProviderMaterializationSealV2, bytes]:
+        """Read the cached seal before anything is compared against running code.
+
+        This is the materialization CACHE boundary, and its failures are cache
+        facts: the seal file the daemon wrote into the environment directory is
+        absent, unreadable, non-canonical, or not a seal at all. Nothing has yet
+        been compared with anything, so there is no divergence to name -- there
+        is one artifact and it is unusable. `environment_divergence` is reserved
+        for the manifest-verification branches below, where a seal really does
+        disagree with the code that would run.
+        """
+
+        try:
+            raw = path.read_bytes()
+            parsed = json.loads(raw)
+        except (OSError, ValueError, UnicodeDecodeError) as exc:
+            raise ProviderLocalRuntimeRefused(
+                "cache_integrity", "environment seal is absent or malformed"
+            ) from exc
+        if not isinstance(parsed, dict) or canonical_bytes(parsed) != raw:
+            raise ProviderLocalRuntimeRefused(
+                "cache_integrity", "environment seal is not canonical JSON"
+            )
+        try:
+            return ProviderMaterializationSealV2.model_validate(parsed), raw
+        except ValueError as exc:
+            raise ProviderLocalRuntimeRefused(
+                "cache_integrity", "environment seal v2 is invalid"
+            ) from exc
+
+    @staticmethod
+    def _verify_environment_files(
+        seal: ProviderMaterializationSealV2,
+        *,
+        environment_root: Path,
+        interpreter_path: Path,
+        entrypoint: str,
+        runtime_version: str,
+    ) -> None:
+        """Verify the seal's exact runtime, interpreter, and entrypoint byte closure."""
+
+        record_candidates = tuple(
+            path
+            for path in environment_root.rglob("RECORD")
+            if path.parent.name.startswith(
+                ("cruxible_provider_runtime-", "cruxible-provider-runtime-")
+            )
+        )
+        if len(record_candidates) != 1:
+            raise ProviderLocalRuntimeRefused(
+                "environment_divergence",
+                "environment must contain exactly one cruxible-provider-runtime RECORD",
+            )
+        record_path = record_candidates[0]
+        if runtime_version not in record_path.parent.name:
+            raise ProviderLocalRuntimeRefused(
+                "environment_divergence",
+                "runtime RECORD version differs from the declared installation",
+            )
+        site_root = record_path.parent.parent
+        try:
+            rows = tuple(csv.reader(record_path.read_text(encoding="utf-8").splitlines()))
+        except (OSError, UnicodeDecodeError, csv.Error) as exc:
+            raise ProviderLocalRuntimeRefused(
+                "environment_divergence", "runtime RECORD is unreadable"
+            ) from exc
+        required: set[str] = {
+            record_path.relative_to(environment_root).as_posix(),
+            interpreter_path.relative_to(environment_root).as_posix(),
+        }
+        for row in rows:
+            if not row or not row[0]:
+                raise ProviderLocalRuntimeRefused(
+                    "environment_divergence", "runtime RECORD contains an empty path"
+                )
+            # A RECORD path is relative to site-packages and a real wheel spells
+            # console scripts and `.data` payloads with `..`, so the join has to
+            # be normalized before it is compared. `Path.relative_to` is purely
+            # lexical: without this an entry like `../../../bin/x` produced a
+            # path no seal could ever declare, and the bind refused
+            # `environment_divergence` naming no cause at all.
+            target = Path(os.path.normpath(site_root / row[0]))
+            try:
+                required.add(target.relative_to(environment_root).as_posix())
+            except ValueError as exc:
+                raise ProviderLocalRuntimeRefused(
+                    "environment_divergence",
+                    f"runtime RECORD entry {row[0]!r} resolves outside the environment",
+                ) from exc
+
+        module_name = entrypoint.partition(":")[0]
+        module_parts = module_name.split(".")
+        module_relative = Path(*module_parts)
+        module_candidates = tuple(environment_root.rglob(f"{module_relative.as_posix()}.py"))
+        package_candidates = tuple(environment_root.rglob(module_relative.as_posix()))
+        candidates = tuple(
+            path for path in (*module_candidates, *package_candidates) if path.exists()
+        )
+        if len(candidates) != 1:
+            raise ProviderLocalRuntimeRefused(
+                "environment_divergence", "entrypoint module tree is missing or ambiguous"
+            )
+        module_path = candidates[0]
+        if module_path.is_dir():
+            entrypoint_files = tuple(path for path in module_path.rglob("*") if path.is_file())
+        else:
+            entrypoint_files = (module_path,)
+        cursor = module_path.parent
+        while cursor != environment_root and cursor.is_relative_to(environment_root):
+            init = cursor / "__init__.py"
+            if init.exists():
+                entrypoint_files = (*entrypoint_files, init)
+            cursor = cursor.parent
+        required.update(path.relative_to(environment_root).as_posix() for path in entrypoint_files)
+
+        declared = {item.path: item.sha256 for item in seal.files}
+        if set(declared) != required:
+            raise ProviderLocalRuntimeRefused(
+                "environment_divergence",
+                "environment seal file manifest does not cover the exact running-code closure",
+            )
+        for relative_path, expected_digest in declared.items():
+            current = environment_root
+            for component in Path(relative_path).parts:
+                current = current / component
+                try:
+                    metadata = os.lstat(current)
+                except OSError as exc:
+                    raise ProviderLocalRuntimeRefused(
+                        "environment_divergence", "sealed environment file is absent"
+                    ) from exc
+                if stat.S_ISLNK(metadata.st_mode):
+                    raise ProviderLocalRuntimeRefused(
+                        "environment_divergence", "sealed environment path contains a symlink"
+                    )
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise ProviderLocalRuntimeRefused(
+                    "environment_divergence",
+                    "sealed environment member must be a singly-linked regular file",
+                )
+            try:
+                observed = _sha256(current.read_bytes())
+            except OSError as exc:
+                raise ProviderLocalRuntimeRefused(
+                    "environment_divergence", "sealed environment file is unreadable"
+                ) from exc
+            if observed != expected_digest:
+                raise ProviderLocalRuntimeRefused(
+                    "environment_divergence", "sealed environment file digest does not reproduce"
+                )
+
+
+@dataclass(frozen=True)
+class _ProcessOutcome:
+    """Child-process result whose ``duration_seconds`` reads VALIDITY WINDOW."""
+
+    stdout: bytes
+    stderr: bytes
+    duration_seconds: float
+
+
+class _DescendantTracker:
+    """Best-effort snapshots outside the child's exact group.
+
+    The forced kill-point observation closes ordinary escapes; a process that
+    both appears and exits between snapshots is an inherent observation-window
+    limit of this rebuildable local fence.
+    """
+
+    def __init__(
+        self,
+        pid: int,
+        *,
+        invocation_id: str,
+        poll_interval_seconds: float,
+    ) -> None:
+        self.pid = pid
+        self.invocation_id = invocation_id
+        self.poll_interval_seconds = poll_interval_seconds
+        try:
+            self.root_session_id = os.getsid(pid)
+            self.root_process_group_id = os.getpgid(pid)
+        except OSError as exc:
+            raise ProviderLocalRuntimeRefused(
+                "provider_process_lease_invalid",
+                "provider root process identity is unavailable",
+            ) from exc
+        self._observed: dict[tuple[int, str], ProviderDescendantProcessV1] = {}
+        self._failure: ProviderLocalRuntimeRefused | None = None
+        self._successful_observation_count = 0
+        self._observation_lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._track, daemon=True)
+        self._thread.start()
+
+    def observe(self) -> None:
+        with self._observation_lock:
+            try:
+                observed = snapshot_provider_descendants(
+                    self.pid,
+                    invocation_id=self.invocation_id,
+                    root_session_id=self.root_session_id,
+                    root_process_group_id=self.root_process_group_id,
+                )
+            except ProviderLocalRuntimeRefused as exc:
+                self._failure = exc
+                raise
+            self._successful_observation_count += 1
+            for item in observed:
+                self._observed[(item.pid, item.process_start_time)] = item
+
+    def snapshot(self) -> tuple[ProviderDescendantProcessV1, ...]:
+        if self._failure is not None:
+            raise self._failure
+        self.observe()
+        return tuple(sorted(self._observed.values(), key=lambda item: item.pid))
+
+    def retained(self) -> tuple[ProviderDescendantProcessV1, ...]:
+        """Return identities retained before a later observation failure."""
+
+        with self._observation_lock:
+            return tuple(sorted(self._observed.values(), key=lambda item: item.pid))
+
+    def has_successful_observation(self) -> bool:
+        """Return whether the host process table has ever been read successfully."""
+
+        with self._observation_lock:
+            return self._successful_observation_count > 0
+
+    def close(self, *, timeout_seconds: float) -> None:
+        self._stop.set()
+        self._thread.join(timeout=timeout_seconds)
+
+    def _track(self) -> None:
+        while not self._stop.wait(self.poll_interval_seconds):
+            try:
+                self.observe()
+            except ProviderLocalRuntimeRefused as exc:
+                self._failure = exc
+                return
+
+
+@contextmanager
+def _open_secret_channel(
+    secrets: Mapping[str, str],
+    *,
+    join_timeout_seconds: float,
+) -> Iterator[int | None]:
+    if not secrets:
+        yield None
+        return
+    payload = canonical_bytes(dict(secrets))
+    if len(payload) > MAX_PROVIDER_SECRET_BUNDLE_BYTES:
+        raise ProviderLocalRuntimeRefused("secret_bundle_too_large", "secret bundle too large")
+    read_fd, write_fd = os.pipe()
+    os.set_inheritable(read_fd, True)
+
+    def write() -> None:
+        try:
+            offset = 0
+            while offset < len(payload):
+                offset += os.write(write_fd, payload[offset:])
+        except OSError:
+            pass
+        finally:
+            with contextlib.suppress(OSError):
+                os.close(write_fd)
+
+    writer = threading.Thread(target=write, daemon=True)
+    writer.start()
+    try:
+        yield read_fd
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(read_fd)
+        writer.join(timeout=join_timeout_seconds)
+
+
+def _assert_no_secret(payload: bytes, secrets: Mapping[str, str], *, where: str) -> None:
+    leaked = sorted(
+        ref
+        for ref, value in secrets.items()
+        if value
+        and any(
+            variant in payload
+            for raw in (value.encode("utf-8"),)
+            for variant in (raw, raw[::-1], base64.b64encode(raw))
+        )
+    )
+    if leaked:
+        raise ProviderLocalRuntimeRefused("secret_leak", f"secret material leaked in {where}")
+
+
+def _observe_descendants_best_effort(
+    observe_descendants: Callable[[], None],
+    *,
+    diagnostic_sink: Callable[[ProviderLocalRuntimeRefused], None] | None,
+) -> None:
+    """Record a forced observation failure without changing invocation outcome."""
+
+    try:
+        observe_descendants()
+    except ProviderLocalRuntimeRefused as failure:
+        if diagnostic_sink is not None:
+            with contextlib.suppress(Exception):
+                diagnostic_sink(failure)
+
+
+def _process_table_unavailable_refusal() -> ProviderLocalRuntimeRefused:
+    return ProviderLocalRuntimeRefused(
+        "provider_process_lease_invalid",
+        "Provider process table is unavailable; install ps or fix procfs permissions",
+    )
+
+
+def _require_initial_descendant_observation(
+    descendants: _DescendantTracker,
+    *,
+    timeout_seconds: float,
+    diagnostic_sink: Callable[[ProviderLocalRuntimeRefused], None] | None,
+) -> None:
+    """Prove the descendant fence before releasing Provider input."""
+
+    if descendants.has_successful_observation():
+        return
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        _observe_descendants_best_effort(
+            descendants.observe,
+            diagnostic_sink=diagnostic_sink,
+        )
+        if descendants.has_successful_observation():
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise _process_table_unavailable_refusal()
+        time.sleep(min(descendants.poll_interval_seconds, remaining))
+
+
+def _run_child(
+    interpreter: Path,
+    *,
+    entrypoint: str,
+    context: bytes,
+    budgets: ProviderRuntimeBudgetsV1,
+    secret_fd: int | None,
+    invocation_id: str,
+    process_leases: ProviderProcessLeaseStore,
+) -> _ProcessOutcome:
+    """Run one child; ``started``/``deadline``/elapsed duration read VALIDITY WINDOW.
+
+    This is the ONLY place the daemon spawns a Provider child, so the hosted
+    execution policy is enforced here: a shared hosted profile with no isolated
+    execution backend refuses before the process exists, not after. Served verbs
+    gate earlier so the operator sees a clean refusal; this gate is what makes
+    "no customer code runs" true of every path, including ones added later.
+    """
+
+    enforce_customer_code_execution_supported()
+    started = time.monotonic()
+    environment = {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    with tempfile.TemporaryDirectory(prefix=".child-", dir=process_leases.root.parent) as scratch:
+        os.chmod(scratch, 0o700)
+        environment["HOME"] = scratch
+        environment["TMPDIR"] = scratch
+        control_path = process_leases.prepare_control_path(invocation_id)
+        wrapper = Path(scratch) / "provider_child_fence.py"
+        wrapper.write_text(_CHILD_FENCE_WRAPPER, encoding="utf-8")
+        command = [
+            str(interpreter),
+            str(wrapper),
+            invocation_id,
+            str(control_path),
+            entrypoint,
+            str(-1 if secret_fd is None else secret_fd),
+        ]
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            pass_fds=(() if secret_fd is None else (secret_fd,)),
+            cwd=scratch,
+            env=environment,
+            start_new_session=True,
+            close_fds=True,
+        )
+        try:
+            descendants = _DescendantTracker(
+                process.pid,
+                invocation_id=invocation_id,
+                poll_interval_seconds=process_leases.descendant_tracker_poll_interval_seconds,
+            )
+        except BaseException as exc:
+            try:
+                _terminate_process_group(
+                    process,
+                    process_leases.process_group_termination_timeout_seconds,
+                    descendants=None,
+                )
+            except ProviderLocalRuntimeRefused as fence:
+                raise fence from exc
+            if isinstance(exc, ProviderLocalRuntimeRefused):
+                raise
+            raise ProviderLocalRuntimeRefused(
+                "provider_process_lease_invalid",
+                "provider descendant tracker could not start",
+            ) from exc
+        try:
+            # Establish the first observation while the root still owns any
+            # already-spawned descendants.  Every later kill point forces
+            # another snapshot before signalling the group.
+            _observe_descendants_best_effort(
+                descendants.observe,
+                diagnostic_sink=process_leases.record_diagnostic,
+            )
+            process_leases.publish(
+                invocation_id,
+                pid=process.pid,
+                process_group_id=process.pid,
+            )
+            lease = process_leases.require(invocation_id)
+        except ProviderLocalRuntimeRefused as lease_refusal:
+            # A child that cannot prove its own lease must not outlive the
+            # failed invocation boundary.
+            try:
+                _terminate_process_group(
+                    process,
+                    process_leases.process_group_termination_timeout_seconds,
+                    descendants=descendants,
+                    diagnostic_sink=process_leases.record_diagnostic,
+                )
+            except ProviderLocalRuntimeRefused as fence:
+                lease_refusal.details["process_fence_failure"] = {
+                    "code": fence.code,
+                    "message": str(fence),
+                }
+            finally:
+                descendants.close(
+                    timeout_seconds=process_leases.descendant_tracker_join_timeout_seconds
+                )
+            record_path, control_path = process_leases.paths(invocation_id)
+            for path in (record_path, control_path):
+                with contextlib.suppress(FileNotFoundError, OSError):
+                    path.unlink()
+            raise
+
+        refusal: ProviderLocalRuntimeRefused | None = None
+        try:
+            _require_initial_descendant_observation(
+                descendants,
+                timeout_seconds=min(
+                    process_leases.acquisition_timeout_seconds,
+                    max(started + budgets.wall_clock_seconds - time.monotonic(), 0.0),
+                ),
+                diagnostic_sink=process_leases.record_diagnostic,
+            )
+            outcome = _collect_child_output(
+                process,
+                context=context,
+                budgets=budgets,
+                started=started,
+                writer_join_timeout_seconds=process_leases.stdin_writer_join_timeout_seconds,
+                observe_descendants=descendants.observe,
+                observation_diagnostic_sink=process_leases.record_diagnostic,
+            )
+            return outcome
+        except ProviderLocalRuntimeRefused as exc:
+            refusal = exc
+            raise
+        finally:
+            try:
+                _terminate_process_group(
+                    process,
+                    process_leases.process_group_termination_timeout_seconds,
+                    descendants=descendants,
+                    diagnostic_sink=process_leases.record_diagnostic,
+                )
+            except ProviderLocalRuntimeRefused as fence:
+                if refusal is None:
+                    raise
+                refusal.details["process_fence_failure"] = {
+                    "code": fence.code,
+                    "message": str(fence),
+                }
+            else:
+                process_leases.release(lease)
+            finally:
+                descendants.close(
+                    timeout_seconds=process_leases.descendant_tracker_join_timeout_seconds
+                )
+
+
+def _collect_child_output(
+    process: subprocess.Popen[bytes],
+    *,
+    context: bytes,
+    budgets: ProviderRuntimeBudgetsV1,
+    started: float,
+    writer_join_timeout_seconds: float,
+    observe_descendants: Callable[[], None] | None = None,
+    observation_diagnostic_sink: Callable[[ProviderLocalRuntimeRefused], None] | None = None,
+) -> _ProcessOutcome:
+    def observe_best_effort() -> None:
+        if observe_descendants is None:
+            return
+        _observe_descendants_best_effort(
+            observe_descendants,
+            diagnostic_sink=observation_diagnostic_sink,
+        )
+
+    def write_stdin() -> None:
+        try:
+            assert process.stdin is not None
+            process.stdin.write(context)
+            process.stdin.flush()
+            if observe_descendants is not None:
+                # The child cannot finish a whole-document input read until
+                # EOF. Snapshot after the bytes are delivered but before
+                # closing stdin so fast cross-session escapes are observable.
+                observe_best_effort()
+            process.stdin.close()
+        except (BrokenPipeError, OSError, ValueError):
+            pass
+
+    writer = threading.Thread(target=write_stdin, daemon=True)
+    writer.start()
+    assert process.stdout is not None and process.stderr is not None
+    streams = (process.stdout, process.stderr)
+    buffers = {stream.fileno(): bytearray() for stream in streams}
+    selector = selectors.DefaultSelector()
+    try:
+        for stream in streams:
+            selector.register(stream, selectors.EVENT_READ)
+        deadline = started + budgets.wall_clock_seconds
+        open_streams = len(streams)
+        refusal: tuple[str, str] | None = None
+        child_activity_observed = False
+        while open_streams and refusal is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                refusal = ("budget_wall_clock", "provider exceeded wall-clock budget")
+                break
+            for key, _ in selector.select(timeout=min(remaining, 0.1)):
+                total = sum(len(value) for value in buffers.values())
+                chunk = os.read(key.fd, min(_READ_CHUNK, budgets.output_bytes - total + 1))
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    open_streams -= 1
+                    continue
+                if total + len(chunk) > budgets.output_bytes:
+                    refusal = ("budget_output_size", "provider exceeded aggregate output budget")
+                    break
+                buffers[key.fd].extend(chunk)
+                if not child_activity_observed and observe_descendants is not None:
+                    # A successful provider must emit its envelope after its
+                    # work. Capture one event-driven snapshot while the root
+                    # still owns cross-session descendants, independently of
+                    # the configured background polling cadence.
+                    observe_best_effort()
+                    child_activity_observed = True
+        if refusal is not None:
+            raise ProviderLocalRuntimeRefused(*refusal)
+        while True:
+            if _process_exited_without_reaping(process.pid):
+                if observe_descendants is not None:
+                    observe_best_effort()
+                break
+            if time.monotonic() >= deadline:
+                raise ProviderLocalRuntimeRefused(
+                    "budget_wall_clock", "provider exceeded wall-clock budget"
+                )
+            time.sleep(0.005)
+        return _ProcessOutcome(
+            stdout=bytes(buffers[process.stdout.fileno()]),
+            stderr=bytes(buffers[process.stderr.fileno()]),
+            duration_seconds=time.monotonic() - started,
+        )
+    finally:
+        selector.close()
+        if process.stdin is not None:
+            with contextlib.suppress(BrokenPipeError, OSError, ValueError):
+                process.stdin.close()
+        writer.join(timeout=writer_join_timeout_seconds)
+
+
+def _process_exited_without_reaping(pid: int) -> bool:
+    """Observe child exit without releasing its pid for reuse."""
+
+    try:
+        waitid = getattr(os, "waitid")
+        result = waitid(
+            os.P_PID,
+            pid,
+            os.WEXITED | os.WNOHANG | os.WNOWAIT,
+        )
+    except ChildProcessError:
+        return True
+    return result is not None
+
+
+def _terminate_process_group(
+    process: subprocess.Popen[bytes],
+    timeout_seconds: float,
+    *,
+    descendants: _DescendantTracker | None,
+    diagnostic_sink: Callable[[ProviderLocalRuntimeRefused], None] | None = None,
+) -> None:
+    """Kill an unreaped group, reap its leader, then sweep exact descendants."""
+
+    snapshot_failure: ProviderLocalRuntimeRefused | None = None
+    observed_descendants: tuple[ProviderDescendantProcessV1, ...]
+    if descendants is None:
+        observed_descendants = ()
+    else:
+        try:
+            observed_descendants = descendants.snapshot()
+        except ProviderLocalRuntimeRefused as exc:
+            observed_descendants = descendants.retained()
+            snapshot_failure = exc
+    if process.returncode is None:
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(process.pid, signal.SIGKILL)
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            process.wait(timeout=min(0.05, max(deadline - time.monotonic(), 0.001)))
+        except subprocess.TimeoutExpired:
+            continue
+        kill_descendants(observed_descendants)
+        if snapshot_failure is not None:
+            if diagnostic_sink is not None:
+                with contextlib.suppress(Exception):
+                    diagnostic_sink(snapshot_failure)
+            snapshot_failure = None
+        try:
+            os.killpg(process.pid, 0)
+            group_alive = True
+        except ProcessLookupError:
+            group_alive = False
+        except PermissionError:
+            group_alive = True
+        except OSError as exc:
+            raise ProviderLocalRuntimeRefused(
+                "provider_process_lease_invalid",
+                "provider process-group identity cannot be verified",
+            ) from exc
+        if not group_alive and not any(descendant_is_live(item) for item in observed_descendants):
+            if descendants is not None and not descendants.has_successful_observation():
+                raise _process_table_unavailable_refusal()
+            return
+    raise ProviderLocalRuntimeRefused(
+        "provider_process_group_survived_recovery",
+        "provider process group survived its configured termination deadline",
+    )
+
+
+_CHILD_FENCE_WRAPPER = """\
+import os
+import runpy
+import signal
+import socket
+import subprocess
+import sys
+import threading
+
+invocation_id, control_path, entrypoint, secret_fd_text = sys.argv[1:5]
+secret_fd = int(secret_fd_text)
+if secret_fd >= 0:
+    os.set_inheritable(secret_fd, False)
+server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+server.bind(control_path)
+os.chmod(control_path, 0o600)
+server.listen(2)
+
+def echo():
+    while True:
+        try:
+            connection, _ = server.accept()
+        except OSError:
+            return
+        with connection:
+            data = connection.recv(4096).decode("utf-8")
+            connection.sendall(invocation_id.encode("utf-8") if data == invocation_id else b"")
+
+threading.Thread(target=echo, daemon=True).start()
+sys.argv = ["cruxible_provider_runtime.child", "--entrypoint", entrypoint]
+
+def sweep_descendants():
+    rows = []
+    completed = subprocess.run(
+        ["ps", "-Ao", "pid=,ppid=,pgid=,sess="], capture_output=True, text=True, check=False
+    )
+    for line in completed.stdout.splitlines():
+        try:
+            pid, ppid, pgid, sid = (int(item) for item in line.split())
+        except (TypeError, ValueError):
+            continue
+        rows.append((pid, ppid, pgid, sid))
+    children = {}
+    for row in rows:
+        children.setdefault(row[1], []).append(row)
+    root = os.getpid()
+    root_group = os.getpgid(root)
+    root_session = os.getsid(root)
+    pending = [root]
+    while pending:
+        parent = pending.pop()
+        for pid, _ppid, pgid, sid in children.get(parent, []):
+            pending.append(pid)
+            if sid != root_session or pgid != root_group:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+
+try:
+    runpy.run_module("cruxible_provider_runtime.child", run_name="__main__")
+finally:
+    sweep_descendants()
+"""
+
+
+__all__ = [
+    "BoundLocalProviderV1",
+    "EnvironmentProviderSecretResolver",
+    "FileProviderSecretStore",
+    "LocalProviderDeploymentV1",
+    "LocalProviderExecutionDriver",
+    "ProviderDriverOutcomeV1",
+    "ProviderLocalRuntimeRefused",
+    "ProviderLocalRuntimeInvoker",
+    "ProviderMaterializationSealFileV2",
+    "ProviderMaterializationSealV2",
+    "ProviderSecretResolverRegistry",
+    "provider_environment_secret_key",
+    "translate_provider_budget",
+]

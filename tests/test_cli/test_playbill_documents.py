@@ -9,7 +9,7 @@ from click.testing import CliRunner
 
 from cruxible_client import contracts
 from cruxible_core.cli.main import cli
-from cruxible_core.playbill.coverage.middleware import CoverageWorkspaceConfigV2
+from cruxible_core.coverage.middleware import CoverageWorkspaceConfigV2
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
     git_oid="1" * 64,

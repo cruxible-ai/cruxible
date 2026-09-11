@@ -113,12 +113,12 @@ def test_claim_attestation_evidence_append_has_one_served_gateway() -> None:
     }
     assert _store_gateway_calls() == {
         (
-            "src/cruxible_core/service/playbill_claim_attestations.py::"
+            "src/cruxible_core/service/evidence/claim_attestations.py::"
             "service_append_claim_attestation",
             "duplicate",
         ),
         (
-            "src/cruxible_core/service/playbill_claim_attestations.py::"
+            "src/cruxible_core/service/evidence/claim_attestations.py::"
             "service_append_claim_attestation",
             "append",
         ),
@@ -127,7 +127,7 @@ def test_claim_attestation_evidence_append_has_one_served_gateway() -> None:
 
 def test_claim_attestation_store_is_constructed_only_by_the_instance() -> None:
     assert _scoped_calls(called_name="ClaimAttestationEvidenceStore") == {
-        "src/cruxible_core/playbill/instance.py::claim_attestation_evidence_store"
+        "src/cruxible_core/runtime/instance.py::claim_attestation_evidence_store"
     }
 
 

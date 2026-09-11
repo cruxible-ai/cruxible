@@ -24,11 +24,10 @@ from cruxible_client.contracts.providers import (
     parse_provider,
     provider_digest,
 )
-from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.provider_classifiers import (
+from cruxible_core.providers.provider_classifiers import (
     install_compiler_owned_provider_classifier,
 )
-from cruxible_core.playbill.provider_local_runtime import (
+from cruxible_core.providers.provider_local_runtime import (
     EnvironmentProviderSecretResolver,
     FileProviderSecretStore,
     LocalProviderDeploymentV1,
@@ -36,7 +35,7 @@ from cruxible_core.playbill.provider_local_runtime import (
     ProviderLocalRuntimeInvoker,
     ProviderSecretResolverRegistry,
 )
-from cruxible_core.playbill.provider_process_leases import (
+from cruxible_core.providers.provider_process_leases import (
     DEFAULT_PROVIDER_DESCENDANT_TRACKER_JOIN_TIMEOUT_SECONDS,
     DEFAULT_PROVIDER_DESCENDANT_TRACKER_POLL_INTERVAL_SECONDS,
     DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS,
@@ -52,6 +51,7 @@ from cruxible_core.playbill.provider_process_leases import (
     ProviderProcessRecoveryFailureV1,
     ProviderProcessRecoveryResultV1,
 )
+from cruxible_core.runtime.instance import PlaybillInstance
 
 PROVIDER_RUNTIME_CONFIG_PATH = Path("daemon/provider-runtime.json")
 ProviderRecoveryFoldDisposition = Literal["handled", "unclaimed", "fold_failed"]

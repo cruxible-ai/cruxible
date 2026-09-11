@@ -13,9 +13,9 @@ from cruxible_client.contracts.errors import (
     PlaybillBootstrapError,
     PlaybillObjectFormatConflict,
 )
-from cruxible_core.playbill.instance import DEFAULT_GIT_OBJECT_FORMAT, PlaybillInstance
-from cruxible_core.playbill.keys import generate_client_principal_key
+from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.runtime import host_api, playbill_api
+from cruxible_core.runtime.instance import DEFAULT_GIT_OBJECT_FORMAT, PlaybillInstance
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
@@ -185,7 +185,7 @@ def test_the_object_format_conflict_is_typed_on_the_wire_and_in_the_client() -> 
 def test_a_sha256_instance_reopens_unchanged(tmp_path: Path) -> None:
     """A descriptor written before this ruling keeps its pinned format."""
 
-    from tests.test_playbill._support import initialize_local
+    from tests.core_support._support import initialize_local
 
     instance, _owner_material = initialize_local(tmp_path, object_format="sha256")
     assert instance.descriptor.git_object_format == "sha256"

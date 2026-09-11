@@ -4,19 +4,14 @@ from __future__ import annotations
 
 import ast
 import json
-import re
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
-
-from packaging.requirements import Requirement
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 CORE = SRC / "cruxible_core"
 GOLDENS = ROOT / "tests" / "goldens" / "playbill"
-REVIEW_GUIDE = ROOT / "docs" / "dp0-review-guide.md"
 
 FACADE = CORE / "runtime" / "playbill_api.py"
 HTTP_ROUTES = CORE / "server" / "routes" / "playbill.py"
@@ -48,27 +43,27 @@ SERVED_ROOTS = (
     "cruxible_core.server.routes.instances",
     "cruxible_core.server.routes.playbill",
     "cruxible_core.server.routes.runtime_credentials",
-    "cruxible_core.playbill.service.documents",
-    "cruxible_core.playbill.service.explain",
-    "cruxible_core.playbill.service.review",
-    "cruxible_core.playbill.service.source_catalog",
+    "cruxible_core.service.authoring.documents",
+    "cruxible_core.service.discovery.explain",
+    "cruxible_core.service.proposals.review",
+    "cruxible_core.service.evidence.source_catalog",
 )
 
 FORBIDDEN_MODULE_PREFIXES = (
+    "cruxible_core.playbill",
+    "cruxible_core.query.executor",
+    "cruxible_core.providers.registry",
+    "cruxible_core.governance.store",
     "cruxible_core.runtime.api",
-    "cruxible_core.runtime.instance",
     "cruxible_core.runtime.instance_manager",
     "cruxible_core.instance_protocol",
     "cruxible_core.graph",
     "cruxible_core.procedure",
-    "cruxible_core.query",
     "cruxible_core.predicate",
     "cruxible_core.receipt_tree",
     "cruxible_core.workflow",
     "cruxible_core.provider",
-    "cruxible_core.providers",
     "cruxible_core.client",
-    "cruxible_core.governance",
     "cruxible_core.config.schema",
     "cruxible_core.service.mutations",
     "cruxible_core.service.execution",
@@ -135,12 +130,6 @@ def _playbill_facade_calls(path: Path) -> tuple[str, ...]:
         and node.func.attr.startswith("playbill_")
     }
     return tuple(sorted(calls))
-
-
-def _fenced_inventory(document: str, heading: str) -> set[str]:
-    section = document.split(f"## {heading}\n", maxsplit=1)[1].split("\n## ", maxsplit=1)[0]
-    block = section.split("```text\n", maxsplit=1)[1].split("\n```", maxsplit=1)[0]
-    return {line.strip() for line in block.splitlines() if line.strip()}
 
 
 def _facade_operations() -> tuple[str, ...]:
@@ -531,7 +520,6 @@ def test_pc_e1_retired_storage_authorities_and_executor_are_absent() -> None:
     for retired_harness in (
         CORE / "storage" / "sqlite.py",
         CORE / "instance_protocol.py",
-        CORE / "runtime" / "instance.py",
     ):
         assert not retired_harness.exists()
 
@@ -542,7 +530,6 @@ def test_pc_del1_retired_old_core_families_are_absent() -> None:
         CORE / "instance_protocol.py",
         CORE / "sqlite_ddl.py",
         CORE / "cli" / "instance.py",
-        CORE / "runtime" / "instance.py",
         CORE / "server" / "auth_managed_entities.py",
         CORE / "storage" / "protocols.py",
         CORE / "storage" / "sqlite.py",
@@ -573,12 +560,9 @@ def test_pc_del1_retired_old_core_families_are_absent() -> None:
     for package in (
         "client",
         "config",
-        "governance",
         "graph",
         "procedure",
         "provider",
-        "providers",
-        "query",
         "receipt_tree",
         "workflow",
     ):
@@ -600,7 +584,7 @@ def test_pc_f2_coverage_delivery_adds_no_authority() -> None:
     propose, compile, accept, activate, settle, or touch the ledger.
     """
 
-    package = CORE / "playbill" / "coverage"
+    package = CORE / "coverage"
     modules = sorted(path.stem for path in package.glob("*.py"))
     assert modules == [
         "__init__",
@@ -617,38 +601,36 @@ def test_pc_f2_coverage_delivery_adds_no_authority() -> None:
 
     permitted = {
         "cruxible_core",
-        "cruxible_core.playbill",
+        "cruxible_core.indexes",
         "cruxible_client.contracts.artifacts",
         "cruxible_client.contracts.canonical",
         "cruxible_client.contracts.captures",
         "cruxible_client.contracts.claims",
         "cruxible_client.contracts.claim_verdicts",
-        "cruxible_core.playbill.coverage",
-        "cruxible_core.playbill.coverage.adapter",
-        "cruxible_core.playbill.coverage.contracts",
-        "cruxible_core.playbill.coverage.indexes",
-        "cruxible_core.playbill.coverage.manifest",
-        "cruxible_core.playbill.coverage.middleware",
-        "cruxible_core.playbill.coverage.render",
-        "cruxible_core.playbill.coverage.resolver",
-        "cruxible_core.playbill.coverage.workspace",
+        "cruxible_core.coverage",
+        "cruxible_core.coverage.adapter",
+        "cruxible_core.coverage.contracts",
+        "cruxible_core.coverage.indexes",
+        "cruxible_core.coverage.manifest",
+        "cruxible_core.coverage.middleware",
+        "cruxible_core.coverage.render",
+        "cruxible_core.coverage.resolver",
+        "cruxible_core.coverage.workspace",
         "cruxible_client.contracts.discovery",
         "cruxible_client.contracts.errors",
-        "cruxible_core.playbill.projection",
-        "cruxible_core.playbill.query",
+        "cruxible_core.indexes.projection",
+        "cruxible_core.query",
         "cruxible_client.contracts.query.grammar",
-        "cruxible_core.playbill.query.semantic_discovery",
+        "cruxible_core.query.semantic_discovery",
         "cruxible_client.contracts.semantic",
         "cruxible_client.contracts.source_references",
     }
     forbidden = (
-        "cruxible_core.playbill.activation",
-        "cruxible_core.playbill.compiler",
-        "cruxible_core.playbill.git",
-        "cruxible_core.playbill.instance",
-        "cruxible_core.playbill.proposals",
-        "cruxible_core.playbill.service",
-        "cruxible_core.playbill.settlement",
+        "cruxible_core.ledger.activation",
+        "cruxible_core.compiler.compiler",
+        "cruxible_core.ledger.git",
+            "cruxible_core.proposals.proposals",
+        "cruxible_core.proposals.settlement",
         "cruxible_core.server",
         "cruxible_core.service",
         "cruxible_core.storage",
@@ -669,54 +651,3 @@ def test_destructive_pass_oracles_are_exact_and_immutable() -> None:
         assert len(commit) == 40
         assert commit == commit.lower()
         assert all(character in "0123456789abcdef" for character in commit)
-
-
-def test_dp0_review_guide_matches_surviving_inventories() -> None:
-    from cruxible_core.cli.main import cli
-    from cruxible_core.runtime.permissions import TOOL_PERMISSIONS
-    from cruxible_core.server.app import create_app
-
-    document = REVIEW_GUIDE.read_text(encoding="utf-8")
-
-    cli_leaves: set[str] = set()
-
-    def collect_leaves(command: object, path: tuple[str, ...]) -> None:
-        children = getattr(command, "commands", None)
-        if children:
-            for name, child in children.items():
-                collect_leaves(child, (*path, name))
-            return
-        cli_leaves.add(" ".join(path))
-
-    collect_leaves(cli, ())
-    assert _fenced_inventory(document, "Surviving public command inventory") == cli_leaves
-    assert _fenced_inventory(document, "Surviving public MCP tool inventory") == set(
-        TOOL_PERMISSIONS
-    )
-
-    documented_routes = {
-        tuple(line.split(maxsplit=1))
-        for line in _fenced_inventory(document, "Surviving public route inventory")
-    }
-    served_routes = {
-        (method, route.path)
-        for route in create_app().routes
-        if getattr(route, "include_in_schema", False)
-        for method in route.methods
-    }
-    assert documented_routes == served_routes
-
-    tracked_goldens = {
-        path.relative_to(ROOT).as_posix()
-        for path in (ROOT / "tests" / "goldens").rglob("*")
-        if path.is_file()
-    }
-    assert _fenced_inventory(document, "Exact frozen goldens retained") == tracked_goldens
-
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
-    retained_requirements = list(project["dependencies"])
-    for extra in ("mcp",):
-        retained_requirements.extend(project["optional-dependencies"][extra])
-    for requirement in retained_requirements:
-        name = Requirement(requirement).name
-        assert re.search(rf"\| `{re.escape(name)}`(?: \([^|]+\))? \|", document, re.IGNORECASE)

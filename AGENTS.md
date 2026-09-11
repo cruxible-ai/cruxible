@@ -23,7 +23,7 @@ uv run pytest
 CRUXIBLE_RUN_DOCKER_TESTS=1 uv run pytest tests/test_image -m docker
 
 # Run single test file
-uv run pytest tests/test_playbill/test_claims.py -v
+uv run pytest tests/test_claims/test_claims.py -v
 
 # Lint
 uv run ruff check src tests
@@ -83,13 +83,13 @@ forever, including by the frozen verifiers of retired formats.
 
 ## Architecture
 
-### Four Surfaces, One Playbill Core
+### Four Surfaces, One Cruxible Core
 
-All interfaces delegate to the Playbill service layer. Never duplicate orchestration logic in handlers or transports.
+All interfaces delegate to the shared service layer. Never duplicate orchestration logic in handlers or transports.
 
 ```
 SDK (cruxible_client.authoring) ─┐
-MCP (mcp/)                       ├──▶ playbill/service/ (documents, explain, review, source_catalog orchestration) and service/playbill_*.py ──▶ playbill/
+MCP (mcp/)                       ├──▶ service/<domain>/ ──▶ domain packages (ledger, claims, procedures, evidence, ...)
 CLI (cli/)                       │
 HTTP (server/)                  ─┘
 ```
@@ -99,7 +99,7 @@ HTTP (server/)                  ─┘
 - **CLI** (`cli/`) — Click commands; Playbill commands live in `cli/commands/playbill.py`.
 - **HTTP** (`server/`) — FastAPI routes with bearer-token authentication.
 
-### Playbill service layer (`service/playbill_*.py`)
+### Service layer (`service/<domain>/`)
 
 The source of truth for served orchestration. It is organized by concern:
 
@@ -112,7 +112,7 @@ Service functions accept a `PlaybillInstance` and return typed Pydantic results.
 
 ### Playbill instance and accepted state
 
-`PlaybillInstance` in `playbill/instance.py` manages the daemon-owned repository and stores:
+`PlaybillInstance` in `runtime/instance.py` manages the daemon-owned repository and stores:
 
 ```
 <managed-root>/
@@ -128,7 +128,7 @@ Service functions accept a `PlaybillInstance` and return typed Pydantic results.
 The signed generation ledger and accepted Git tree are authority. Projections,
 file floors, and operational stores are derived or explicitly non-governed.
 
-### Procedure system (`playbill/procedures/`)
+### Procedure system (`procedures/`)
 
 Procedures compile to the frozen graph-v3 representation and execute
 deterministically. Admission binds inputs and coordinates before execution;
@@ -167,7 +167,8 @@ refusals are typed in `cruxible_client.contracts.errors`.
 
 ### Test Organization
 
-Tests mirror the live surfaces under `tests/test_playbill`, `test_client`,
+Tests mirror domain ownership under `tests/test_ledger`, `test_claims`,
+`test_procedures`, `test_indexes`, and the other domain directories, plus `test_client`,
 `test_server`, `test_cli`, and `test_mcp`. `tests/test_architecture` and
 `tests/test_guardrails` pin DP-0 boundaries, public snapshots, and contract
 catalogs. Golden journal-corpus tests are intentionally expensive and should

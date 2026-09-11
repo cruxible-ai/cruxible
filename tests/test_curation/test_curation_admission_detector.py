@@ -1,0 +1,238 @@
+"""Admission clustering reads both durable proposal attempt identities."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
+from cruxible_client.contracts.claims import LiteralClaimObject, parse_claim, render_claim
+from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.curation.curation_detectors import _attempt_subject_from_path
+from cruxible_core.governance.actor_context import GovernedActorContext
+from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+from cruxible_core.service.discovery.curation import (
+    PlaybillCurationListRequestV1,
+    service_list_playbill_curation,
+)
+from cruxible_core.service.discovery.next import PlaybillNextWorkspaceObservationV1
+from tests.core_support._claim_authoring_support import service_propose_playbill_claim
+from tests.core_support._knowledge_loop_support import TIMESTAMP, authoring, seed_claims
+
+NOW = datetime(2026, 8, 26, 17, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("artifact_kind", "identity_kind", "expected_direction"),
+    (
+        ("claim", "Claim", "payload_side"),
+        ("document", "Document", "payload_side"),
+        ("subject", "Subject", "payload_side"),
+        ("claim-type", "ClaimType", "schema_side"),
+        ("procedure", "Procedure", "schema_side"),
+        ("query-definition", "QueryDefinition", "schema_side"),
+        ("capture-contract", "CaptureContract", "schema_side"),
+        ("standing-mandate", "StandingMandate", "schema_side"),
+        ("source-acquisition-policy", "SourceAcquisitionPolicy", "schema_side"),
+        ("provider", "Provider", "schema_side"),
+        ("line", "Line", "unclassified"),
+        ("exhaust-promotion", "ExhaustPromotion", "unclassified"),
+    ),
+)
+def test_attempt_subject_direction_is_honest_for_every_closure_kind(
+    artifact_kind: str,
+    identity_kind: str,
+    expected_direction: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity = ArtifactIdentity(kind=identity_kind, name="example")  # type: ignore[arg-type]
+    monkeypatch.setattr(
+        "cruxible_core.curation.curation_detectors.parse_dependency_artifact",
+        lambda _path, _content: SimpleNamespace(
+            artifact_kind=artifact_kind,
+            identity=identity,
+        ),
+    )
+    claim_type = ArtifactIdentity(kind="ClaimType", name="project.work_item.status")
+    monkeypatch.setattr(
+        "cruxible_core.curation.curation_detectors.parse_claim",
+        lambda _content, *, path: SimpleNamespace(statement=SimpleNamespace(claim_type=claim_type)),
+    )
+
+    result = _attempt_subject_from_path(tree={"example": b"{}"}, path="example")
+
+    assert result == (
+        claim_type if artifact_kind == "claim" else identity,
+        expected_direction,
+    )
+
+
+def test_two_distinct_refused_proposals_cluster_by_claim_type_and_code(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    valid = service_propose_playbill_claim(
+        instance,
+        authoring=authoring("wi-44", "ready", with_claim_type=False),
+        actor_id="owner",
+        proposal_name="invalid-claim-template",
+        timestamp=TIMESTAMP,
+    )
+    evaluated_oid = valid.proposal.proposal.evaluation.evaluated_tree_oid
+    assert evaluated_oid is not None
+    tree = instance.proposal_tree(evaluated_oid)
+    claim = parse_claim(tree[valid.claim_path], path=valid.claim_path)
+    tree[valid.claim_path] = render_claim(
+        claim.model_copy(
+            update={
+                "statement": claim.statement.model_copy(
+                    update={"object": LiteralClaimObject(value=1)}
+                )
+            }
+        )
+    )
+    refused = []
+    base = instance.accepted_coordinate()
+    for suffix in ("one", "two"):
+        refused.append(
+            instance.proposal_service().submit(
+                actor=AuthenticatedActor(actor_id="owner"),
+                request=ProposalAdmissionRequest(
+                    target_ref=f"refs/proposals/owner/refused-{suffix}",
+                    proposed_base_oid=base.git_oid,
+                ),
+                candidate_tree=tree,
+                timestamp=TIMESTAMP,
+            )
+        )
+    assert all(item.evaluation.verdict == "refused" for item in refused)
+
+    result = service_list_playbill_curation(
+        instance,
+        request=PlaybillCurationListRequestV1(
+            evaluation_time=NOW,
+            access_profile=CoverageAccessProfileV1(profile_id="test-curation"),
+        ),
+        actor_context=GovernedActorContext(
+            actor_type="human_user",
+            actor_id="curator",
+            org_id="org-test",
+            operation_id="op-list",
+            timestamp=NOW,
+        ),
+    )
+
+    clusters = [
+        item
+        for item in result.items
+        if item.pattern_kind == "playbill.curation.admission_failure_cluster.v1"
+    ]
+    assert len(clusters) == 1
+    assert clusters[0].subject.qualified == "ClaimType:project.work_item.status"
+    assert clusters[0].detail == {
+        "diagnostic_code": "playbill.claim.literal_schema_invalid",
+        "refusal_direction": "payload_side",
+    }
+    attempts = [ref for ref in clusters[0].latest_evidence_refs if ref.kind == "proposal_attempt"]
+    assert len(attempts) == 2
+    assert len({ref.identity for ref in attempts}) == 2
+
+
+def test_claim_type_refusals_are_labeled_schema_side(tmp_path: Path) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    base = instance.accepted_coordinate()
+    path = claim_type_path("project.work_item.status")
+    tree = instance.tree_at(base.git_oid)
+    payload = parse_claim_type(tree[path], path=path).model_dump(mode="json")
+    payload["artifact_format"] = "playbill-claim-type-v3"
+    payload["evidence_freshness"] = {
+        "tag": "playbill-claim-evidence-freshness-v1",
+        "stale_after": {"tag": "playbill-duration-v1", "microseconds": 0},
+    }
+    tree[path] = canonical_bytes(payload) + b"\n"
+    for suffix in ("one", "two"):
+        result = instance.proposal_service().submit(
+            actor=AuthenticatedActor(actor_id="owner"),
+            request=ProposalAdmissionRequest(
+                target_ref=f"refs/proposals/owner/schema-refusal-{suffix}",
+                proposed_base_oid=base.git_oid,
+            ),
+            candidate_tree=tree,
+            timestamp="2026-08-26T17:00:00.000000Z",
+        )
+        assert result.evaluation.diagnostics[0].code == (
+            "playbill.claim_type.freshness_horizon_invalid"
+        )
+
+    result = service_list_playbill_curation(
+        instance,
+        request=PlaybillCurationListRequestV1(
+            evaluation_time=NOW,
+            access_profile=CoverageAccessProfileV1(profile_id="test-curation"),
+        ),
+        actor_context=GovernedActorContext(
+            actor_type="human_user",
+            actor_id="curator",
+            org_id="org-test",
+            operation_id="op-schema-list",
+            timestamp=NOW,
+        ),
+    )
+
+    schema = next(
+        item
+        for item in result.items
+        if item.detail.get("diagnostic_code") == "playbill.claim_type.freshness_horizon_invalid"
+    )
+    assert schema.subject.qualified == "ClaimType:project.work_item.status"
+    assert schema.detail["refusal_direction"] == "schema_side"
+
+
+def test_restricted_curation_profile_short_circuits_without_count_leakage(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    instance, _owner = seed_claims(tmp_path)
+
+    def must_not_run(*args: object, **kwargs: object) -> None:
+        raise AssertionError("restricted curation read reached detectors")
+
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.curation.run_curation_detectors",
+        must_not_run,
+    )
+    result = service_list_playbill_curation(
+        instance,
+        request=PlaybillCurationListRequestV1(
+            evaluation_time=NOW,
+            access_profile=CoverageAccessProfileV1(
+                profile_id="public-only",
+                permitted_access_classes=("public",),
+                disclose_restricted_existence=False,
+            ),
+            workspace_observation=PlaybillNextWorkspaceObservationV1(source_observations=()),
+        ),
+        actor_context=GovernedActorContext(
+            actor_type="human_user",
+            actor_id="curator",
+            org_id="org-test",
+            operation_id="op-restricted-list",
+            timestamp=NOW,
+        ),
+    )
+
+    assert result.items == ()
+    assert result.detector_coverage == ()
+    assert result.observation_coverage.model_dump(mode="json") == {
+        "tag": "playbill-curation-observation-coverage-v1",
+        "source_count": 0,
+        "observed_block_count": 0,
+        "omitted_source_count": 0,
+        "omissions": [],
+    }
+    assert instance.review_operational_store().events() == ()

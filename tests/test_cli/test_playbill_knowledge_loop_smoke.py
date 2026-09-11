@@ -46,14 +46,14 @@ from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.registry import reset_registry
-from tests.test_playbill._knowledge_loop_support import (
+from tests.core_support._knowledge_loop_support import (
     PREDICATE,
     QUERY_NAME,
     SUBJECT_KIND,
     subject_shell,
     work_item_query,
 )
-from tests.test_playbill.test_claims import _claim_type
+from tests.test_claims.test_claims import _claim_type
 
 CREATOR_ID = "operator"
 RECOVERY_ID = "recovery"

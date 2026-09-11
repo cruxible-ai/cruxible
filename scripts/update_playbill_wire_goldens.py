@@ -59,12 +59,12 @@ from cruxible_client.contracts.query.definitions import (
 from cruxible_client.contracts.source_references import SourceHandleV1, source_handle_digest
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_digest
 from cruxible_client.contracts.types import PrincipalRecord
-from cruxible_core.playbill.bootstrap import bootstrap_root, genesis_semantic_root, genesis_tree
-from cruxible_core.playbill.closure import (
+from cruxible_core.claims.closure import (
     build_dependency_edge_tree,
     dependency_edge_members,
 )
-from cruxible_core.playbill.settlement import (
+from cruxible_core.ledger.bootstrap import bootstrap_root, genesis_semantic_root, genesis_tree
+from cruxible_core.proposals.settlement import (
     ChangeSetRecordV3,
     change_set_digest,
     parse_change_set_record,

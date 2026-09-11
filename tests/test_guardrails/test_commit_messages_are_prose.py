@@ -135,7 +135,7 @@ def test_only_one_call_reads_a_raw_commit_object_and_it_reads_only_identities() 
 
 
 def test_the_ledger_exposes_no_commit_message_reader() -> None:
-    from cruxible_core.playbill.git import GitLedger
+    from cruxible_core.ledger.git import GitLedger
 
     named = [name for name in dir(GitLedger) if "message" in name.lower()]
     assert named == []

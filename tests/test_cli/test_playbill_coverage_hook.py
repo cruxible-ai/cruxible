@@ -38,16 +38,16 @@ from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_core.cli.commands import _common
 from cruxible_core.cli.context import load_cli_context
 from cruxible_core.cli.main import cli
-from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
-from cruxible_core.playbill.coverage.claude_code import (
+from cruxible_core.coverage.adapter import WorkingSourceObservationV1
+from cruxible_core.coverage.claude_code import (
     ANNOTATABLE_TOOLS,
     ENVELOPE_VERSION,
     HOOK_EVENT_NAME,
     TOOL_KINDS,
     read_post_tool_use_event,
 )
-from cruxible_core.playbill.coverage.contracts import CoverageResultV3
-from cruxible_core.playbill.coverage.middleware import (
+from cruxible_core.coverage.contracts import CoverageResultV3
+from cruxible_core.coverage.middleware import (
     CONFIG_RELATIVE_PATH,
     CoverageMiddlewareV1,
     HarnessLineRangeV1,
@@ -55,7 +55,7 @@ from cruxible_core.playbill.coverage.middleware import (
     ResolveCoverage,
     coverage_middleware,
 )
-from cruxible_core.playbill.coverage.render import (
+from cruxible_core.coverage.render import (
     BATCH_SUMMARY_PREFIX,
     UNAVAILABLE_NOTE_PREFIX,
     render_coverage_result,

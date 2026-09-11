@@ -1,7 +1,7 @@
 """The bounded read surface reaches the shared service through HTTP."""
 
-from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
+from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 
 
 def test_http_bound_empty_selection_and_missing_backing(playbill_http):

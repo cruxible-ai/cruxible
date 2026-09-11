@@ -15,7 +15,7 @@ from cruxible_core.actor_vocabulary import LOCAL_OPERATOR_ORG_ID as LOCAL_OPERAT
 from cruxible_core.actor_vocabulary import (
     LOCAL_OPERATOR_STATUS as LOCAL_OPERATOR_STATUS,
 )
-from cruxible_core.playbill.actor_context import GovernedActorContext
+from cruxible_core.governance.actor_context import GovernedActorContext
 
 
 def local_operator_actor_context(*, request_id: str | None = None) -> GovernedActorContext:

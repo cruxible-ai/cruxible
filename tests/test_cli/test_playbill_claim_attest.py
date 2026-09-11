@@ -10,8 +10,8 @@ from click.testing import CliRunner
 
 from cruxible_client.errors import InstanceScopeError
 from cruxible_core.cli.main import cli
+from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 from tests.test_client._attestation_support import ServiceAttestationClient
-from tests.test_playbill.test_claim_type_migrations import _accepted_claim_world
 
 
 def test_cli_claim_attest_uses_the_real_local_key_path(

@@ -15,7 +15,7 @@ CORE_ROOT = ROOT / "src" / "cruxible_core"
 # G7 may rebuild them over the public SDK. They are deliberately excluded from
 # the daemon half of D2; the closed list prevents that exception from spreading.
 CLIENT_ADAPTER_PREFIXES = ("cli/", "client/", "mcp/")
-LEGACY_CLIENT_SIGNING_BRIDGES = {"playbill/signing.py"}
+LEGACY_CLIENT_SIGNING_BRIDGES = {"ledger/signing.py"}
 LEGACY_ERROR_BRIDGES = {"errors.py", "server/errors.py"}
 
 
@@ -108,7 +108,7 @@ def _import_targets(tree: ast.AST, relative: Path) -> tuple[str, ...]:
 def test_daemon_domain_never_imports_client_signing_custody() -> None:
     # One legacy caller-side bridge preserves old imports. Neither the bridge
     # nor the client implementation may enter the daemon's dependency graph.
-    forbidden = {"cruxible_core.playbill.signing", "cruxible_client.authoring.signing"}
+    forbidden = {"cruxible_core.ledger.signing", "cruxible_client.authoring.signing"}
     violations = []
     for path in _python_sources(CORE_ROOT):
         relative = path.relative_to(CORE_ROOT)
@@ -128,25 +128,25 @@ def test_daemon_domain_never_imports_client_signing_custody() -> None:
     "statement,relative,target",
     [
         (
-            "import cruxible_core.playbill.signing",
-            "playbill/domain.py",
-            "cruxible_core.playbill.signing",
+            "import cruxible_core.ledger.signing",
+            "ledger/domain.py",
+            "cruxible_core.ledger.signing",
         ),
         (
-            "from cruxible_core.playbill import signing",
-            "playbill/domain.py",
-            "cruxible_core.playbill.signing",
+            "from cruxible_core.ledger import signing",
+            "ledger/domain.py",
+            "cruxible_core.ledger.signing",
         ),
         (
             "from .signing import LocalEd25519ApprovalSigner",
-            "playbill/domain.py",
-            "cruxible_core.playbill.signing",
+            "ledger/domain.py",
+            "cruxible_core.ledger.signing",
         ),
-        ("from . import signing", "playbill/__init__.py", "cruxible_core.playbill.signing"),
-        ("from .. import signing", "playbill/service/domain.py", "cruxible_core.playbill.signing"),
+        ("from . import signing", "ledger/__init__.py", "cruxible_core.ledger.signing"),
+        ("from .. import signing", "ledger/service/domain.py", "cruxible_core.ledger.signing"),
         (
             "from cruxible_client.authoring import signing",
-            "playbill/domain.py",
+            "ledger/domain.py",
             "cruxible_client.authoring.signing",
         ),
     ],

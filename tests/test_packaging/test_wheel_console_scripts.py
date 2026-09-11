@@ -206,7 +206,7 @@ def test_installed_wheel_carries_the_procedure_runtime_policy_seed(
             str(python),
             "-c",
             (
-                "from cruxible_core.playbill.bootstrap import "
+                "from cruxible_core.ledger.bootstrap import "
                 "seeded_procedure_runtime_policy; "
                 "print(seeded_procedure_runtime_policy().provider_output_bytes_cap)"
             ),

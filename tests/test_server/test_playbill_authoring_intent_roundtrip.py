@@ -7,10 +7,10 @@ from fastapi.testclient import TestClient
 
 from cruxible_client import contracts
 from cruxible_client.contracts.authoring.models import AuthoringIntentV1, AuthoringIntentV2
-from cruxible_core.playbill.projection import AcceptedCoordinate
+from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
-from tests.test_playbill.test_authoring_preflight import _self_source_payload
-from tests.test_playbill.test_authoring_reference_expectations import _expectation
+from tests.test_authoring.test_authoring_preflight import _self_source_payload
+from tests.test_authoring.test_authoring_reference_expectations import _expectation
 
 
 @pytest.mark.parametrize("version", [1, 2])

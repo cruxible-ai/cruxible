@@ -49,25 +49,25 @@ from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.errors import ServerUnreachableError
+from cruxible_core.claims.claim_type_inputs import (
+    ClaimTypeInputV1,
+)
+from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
+from cruxible_core.coverage.adapter import WorkingSourceObservationV1
+from cruxible_core.coverage.contracts import CoverageCardBudgetV1
+from cruxible_core.coverage.indexes import CoverageScanBudgetV1
+from cruxible_core.coverage.workspace import (
+    bindings_from_mapping,
+    observe_workspace,
+)
 from cruxible_core.errors import ConfigError, DataValidationError
+from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.mcp.workspace import (
     mcp_git_workspace_root,
     mcp_workspace_root,
     resolve_workspace_path,
 )
-from cruxible_core.playbill.claim_type_inputs import (
-    ClaimTypeInputV1,
-)
-from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequest
-from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
-from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
-from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
-from cruxible_core.playbill.coverage.workspace import (
-    bindings_from_mapping,
-    observe_workspace,
-)
-from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.search import (
+from cruxible_core.query.search import (
     SEARCH_KINDS,
     PlaybillSearchBudgetsV1,
     PlaybillSearchCursorV1,
@@ -101,13 +101,13 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillStoreBodyRequest,
 )
 from cruxible_core.server.request_models import PlaybillHostCreateRequest
-from cruxible_core.service.playbill_procedure_runs import (
+from cruxible_core.service.discovery.since import validate_playbill_since_request
+from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequestV1,
     ProcedureBindRequestV1,
     ProcedureReadinessRequestV1,
     ProcedureRunRequestV2,
 )
-from cruxible_core.service.playbill_since import validate_playbill_since_request
 
 _client_cache: CruxibleClient | None = None
 _client_cache_key: tuple[str | None, str | None, str | None] | None = None

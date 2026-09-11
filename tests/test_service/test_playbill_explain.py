@@ -8,20 +8,20 @@ import pytest
 
 from cruxible_client.contracts.errors import PlaybillFormatError, SubjectNotFoundError
 from cruxible_client.contracts.semantic import SemanticAddress, SemanticSelector
-from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.service.documents import (
+from cruxible_core.service.authoring.documents import (
     PlaybillAcceptedCoordinate,
     service_activate_playbill_proposal,
     service_propose_playbill_document,
     service_store_playbill_body,
     service_submit_playbill_approval,
 )
-from cruxible_core.playbill.service.explain import (
+from cruxible_core.service.discovery.explain import (
     PlaybillExplainResult,
     PlaybillExplainUnsupportedDetail,
     service_explain_playbill_subject,
 )
-from tests.test_playbill.test_activation import _sign
+from cruxible_core.storage.cas import BodyAccessContext
+from tests.test_ledger.test_activation import _sign
 from tests.test_service.test_playbill_documents import TIMESTAMP, _instance, _shell
 
 

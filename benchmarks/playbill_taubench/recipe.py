@@ -71,9 +71,9 @@ from cruxible_client.authoring.seed import (  # noqa: E402
 from cruxible_core.cli.commands import _common  # noqa: E402
 from cruxible_core.cli.context import load_cli_context  # noqa: E402
 from cruxible_core.cli.main import cli  # noqa: E402
-from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1  # noqa: E402
-from cruxible_core.playbill.coverage.contracts import CoverageResultV3  # noqa: E402
-from cruxible_core.playbill.coverage.middleware import (  # noqa: E402
+from cruxible_core.coverage.adapter import WorkingSourceObservationV1  # noqa: E402
+from cruxible_core.coverage.contracts import CoverageResultV3  # noqa: E402
+from cruxible_core.coverage.middleware import (  # noqa: E402
     CONFIG_RELATIVE_PATH,
     CoverageMiddlewareV1,
     CoverageWorkspaceConfigV2,
@@ -85,7 +85,7 @@ from cruxible_core.playbill.coverage.middleware import (  # noqa: E402
     coverage_middleware,
     grep_event,
 )
-from cruxible_core.playbill.projection import AcceptedCoordinate  # noqa: E402
+from cruxible_core.indexes.projection import AcceptedCoordinate  # noqa: E402
 
 BUNDLE_DIR = Path(__file__).resolve().parent / "seed-example"
 CREATOR_ID = "operator"

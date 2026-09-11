@@ -13,7 +13,7 @@ from cruxible_client.authoring.context import resolve_playbill_context
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 ALLOWED_DEVELOPER_PATHS = {
-    "tests/test_playbill/test_family1_dogfood.py",
+    "tests/test_storage/test_family1_dogfood.py",
 }
 
 

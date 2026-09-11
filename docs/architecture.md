@@ -1,4 +1,4 @@
-# Playbill architecture
+# Cruxible architecture
 
 Playbill separates accepted authority from storage, projections, and high-rate
 exhaust. That separation is the core invariant.
@@ -98,10 +98,22 @@ Scaling work is demand-gated. Initial cloud witnesses can be ordinary VMs with
 Git and SQLite. Query accelerators or graph databases may later project accepted
 state, but they remain disposable indexes.
 
-## Donor island
+## Repository ownership
 
-The development branch temporarily retains old Procedure, workflow, query,
-graph, receipt, attestation, provider, instance, and SQLite code. It exists only
-to preserve deterministic semantics and frozen oracles during transplantation.
-The served Playbill dependency closure cannot import it except through named
-Playbill donor adapters, enforced by architecture tests.
+The daemon implementation lives directly under `src/cruxible_core/`, grouped by
+responsibility. `ledger/` owns Git publication and accepted generations;
+`compiler/` owns deterministic compilation; `indexes/` owns rebuildable SQLite
+read models. Claims, evidence, documents, procedures, providers, governance,
+coverage, and curation each have their own package.
+
+`service/<domain>/` is the single home for served orchestration. CLI, HTTP, MCP,
+and SDK-facing runtime adapters delegate there. `runtime/` owns instance
+lifecycle and process configuration; `derived/` coordinates derived reads;
+`exhaust/` retains operational records; `storage/` contains body storage and
+staging primitives. The separately packaged SDK and typed contracts remain in
+`packages/cruxible-client/`.
+
+Tests follow the same ownership under `tests/test_<domain>/`; shared fixtures
+live in `tests/core_support/`. Frozen format fixtures remain in `tests/goldens/`.
+Internal package relocation does not rename wire operations, managed-state
+paths, or signed format identifiers.

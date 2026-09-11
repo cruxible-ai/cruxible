@@ -17,15 +17,15 @@ from cruxible_client.contracts.declared_blocks import (
 from cruxible_client.contracts.errors import PlaybillKeyError
 from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.projection import AcceptedCoordinate as ClientAcceptedCoordinate
-from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.service.documents import (
+from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
+from cruxible_core.service.authoring.documents import (
     service_propose_playbill_document,
     service_propose_playbill_principal_change,
     service_store_playbill_body,
     service_submit_playbill_approval,
 )
-from cruxible_core.playbill.service.review import (
+from cruxible_core.service.proposals.review import (
     PlaybillProjectionAdvisory,
     PlaybillReviewedMember,
     _projection_advisory,
@@ -34,12 +34,12 @@ from cruxible_core.playbill.service.review import (
     service_prepare_playbill_approval,
     service_review_playbill_proposal,
 )
-from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
-from tests.test_playbill._claim_authoring_support import service_propose_playbill_claim
-from tests.test_playbill._knowledge_loop_support import activate, authoring
-from tests.test_playbill._support import generate_client
-from tests.test_playbill.test_authoring_preflight import _seed_claim_surface
-from tests.test_playbill.test_graph_v4_provider_closure import _accepted_procedure
+from cruxible_core.storage.cas import BodyAccessContext
+from tests.core_support._claim_authoring_support import service_propose_playbill_claim
+from tests.core_support._knowledge_loop_support import activate, authoring
+from tests.core_support._support import generate_client
+from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
+from tests.test_integration.test_graph_v4_provider_closure import _accepted_procedure
 from tests.test_service.test_playbill_documents import TIMESTAMP, _instance, _shell
 
 CLAIM_PROJECTION_POLICY = PlaybillPresentationPolicyV2(

@@ -19,9 +19,8 @@ from cruxible_client.contracts.errors import (
     PlaybillFormatError,
     SettlementIntegrityError,
 )
-from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.service.documents import (
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.authoring.documents import (
     PlaybillAcceptedCoordinate,
     service_activate_playbill_proposal,
     service_dereference_playbill_document,
@@ -36,10 +35,11 @@ from cruxible_core.playbill.service.documents import (
     service_store_playbill_body,
     service_submit_playbill_approval,
 )
-from cruxible_core.playbill.service.review import service_prepare_playbill_approval
-from tests.test_playbill._support import FIXED_TIMESTAMP, generate_client
-from tests.test_playbill.test_activation import _sign
-from tests.test_playbill.test_principal_history import _cloud_instance, _replacement_key
+from cruxible_core.service.proposals.review import service_prepare_playbill_approval
+from cruxible_core.storage.cas import BodyAccessContext
+from tests.core_support._support import FIXED_TIMESTAMP, generate_client
+from tests.test_governance.test_principal_history import _cloud_instance, _replacement_key
+from tests.test_ledger.test_activation import _sign
 
 TIMESTAMP = "2026-08-13T12:00:00.000000Z"
 

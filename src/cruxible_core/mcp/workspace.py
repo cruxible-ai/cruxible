@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 
 from cruxible_core.errors import ConfigError, DataValidationError
-from cruxible_core.playbill.workspace_advertisement import containing_git_workspace_root
+from cruxible_core.floor.workspace_advertisement import containing_git_workspace_root
 
 MCP_WORKSPACE_ROOT_ENV = "CRUXIBLE_MCP_WORKSPACE_ROOT"
 

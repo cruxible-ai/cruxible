@@ -19,7 +19,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.cli.main import cli
-from cruxible_core.service.playbill_curation import PlaybillCurationListRequestV1
+from cruxible_core.service.discovery.curation import PlaybillCurationListRequestV1
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
     git_oid="1" * 64,

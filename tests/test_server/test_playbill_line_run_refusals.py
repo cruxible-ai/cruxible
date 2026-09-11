@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-import cruxible_core.service.playbill_procedure_runs as procedure_run_service
+import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.acquisition_policies import (
     IndependentCoherenceV1,
     InputAcquisitionRuleV1,
@@ -41,19 +41,19 @@ from cruxible_client.contracts.repairs import (
     DECLARED_HAND_EDIT_CHANGES,
     RUNNABLE_REFUSAL_REPAIRS,
 )
-from cruxible_core.playbill.closure import DEFERRED_PIN_TARGET_KINDS
-from cruxible_core.playbill.keys import GeneratedKeyMaterial
-from cruxible_core.playbill.procedures.execution import procedure_line_partition
-from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
-from cruxible_core.playbill.settlement import ChangeActorBinding
+from cruxible_core.claims.closure import DEFERRED_PIN_TARGET_KINDS
+from cruxible_core.governance.keys import GeneratedKeyMaterial
+from cruxible_core.procedures.execution import procedure_line_partition
+from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.config import get_server_state_root
-from cruxible_core.service.playbill_procedure_runs import (
+from cruxible_core.service.procedures.procedure_runs import (
     PROCEDURE_RUN_CONFIG_PATH,
     ProcedureRunOperationalConfigV1,
 )
-from tests.test_playbill.test_activation import _sign
-from tests.test_playbill.test_procedure_run_surface import _slotless_procedure
+from tests.test_ledger.test_activation import _sign
+from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
 
 
 def _acquisition_policy(name: str) -> SourceAcquisitionPolicyV1:

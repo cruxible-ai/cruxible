@@ -17,13 +17,13 @@ from cruxible_client.contracts.errors import (
     PlaybillReseedRequired,
 )
 from cruxible_core import __version__
-from cruxible_core.errors import ConfigError
-from cruxible_core.playbill.compiler import (
+from cruxible_core.compiler.compiler import (
     COMPILER_REVISION_LABELS,
     PC_HR_ARTIFACT_CODEC_COMPILERS,
     current_compiler_coordinate,
 )
-from cruxible_core.playbill.workspace_advertisement import workspace_git_object_format
+from cruxible_core.errors import ConfigError
+from cruxible_core.floor.workspace_advertisement import workspace_git_object_format
 from cruxible_core.runtime.execution_policy import registered_isolated_executors
 from cruxible_core.runtime.permissions import (
     check_permission,
@@ -320,7 +320,7 @@ def _refuse_detach_with_registered_blocks(instance_id: str) -> None:
     """
 
     from cruxible_client.contracts.errors import PlaybillBootstrapError, PlaybillError
-    from cruxible_core.service.playbill_publications import registered_projection_blocks
+    from cruxible_core.service.proposals.publications import registered_projection_blocks
 
     try:
         instance = get_playbill_manager().get(instance_id)

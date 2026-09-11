@@ -21,9 +21,9 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-RUNTIME = ROOT / "src/cruxible_core/playbill/provider_local_runtime.py"
-SEED = ROOT / "src/cruxible_core/playbill/service/provider_seed.py"
-LEASES = ROOT / "src/cruxible_core/playbill/provider_process_leases.py"
+RUNTIME = ROOT / "src/cruxible_core/providers/provider_local_runtime.py"
+SEED = ROOT / "src/cruxible_core/service/procedures/provider_seed.py"
+LEASES = ROOT / "src/cruxible_core/providers/provider_process_leases.py"
 FACADE = ROOT / "src/cruxible_core/runtime/playbill_api.py"
 ENFORCER = "enforce_customer_code_execution_supported"
 PERMISSION_CHECK = "check_permission"

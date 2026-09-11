@@ -226,6 +226,17 @@ def _handler_facade_operations(path: Path = MCP_HANDLERS) -> dict[str, list[str]
     return operations
 
 
+# The ratified surface records these Python labels alongside resolved wire schemas.
+# Preserve the labels across internal package moves; they are not import aliases.
+# Request/response schemas and all other surface fields are still compared exactly.
+_FROZEN_MODEL_MODULE_LABELS = {
+    "cruxible_core.claims.claim_type_migrations": "cruxible_core.playbill.claim_type_migrations",
+    "cruxible_core.service.procedures.procedure_runs": (
+        "cruxible_core.service.playbill_procedure_runs"
+    ),
+}
+
+
 def _type_name(annotation: object) -> str | None:
     if annotation is None:
         return None
@@ -240,7 +251,8 @@ def _type_name(annotation: object) -> str | None:
     module = getattr(annotation, "__module__", None)
     qualname = getattr(annotation, "__qualname__", None)
     if isinstance(module, str) and isinstance(qualname, str):
-        return qualname if module == "builtins" else f"{module}.{qualname}"
+        label = _FROZEN_MODEL_MODULE_LABELS.get(module, module)
+        return qualname if module == "builtins" else f"{label}.{qualname}"
     return str(annotation)
 
 

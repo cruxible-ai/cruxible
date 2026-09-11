@@ -126,7 +126,7 @@ submit the frozen path-free bundle. The daemon never dereferences a client path.
 ## Verify the branch
 
 ~~~bash
-uv run pytest -q tests/test_playbill tests/test_architecture/test_playbill_dp0_boundaries.py
-uv run mypy src/cruxible_core/playbill src/cruxible_core/service
+uv run pytest -q tests/test_ledger tests/test_claims tests/test_procedures tests/test_architecture
+uv run mypy src
 uv run ruff check src packages/cruxible-client/src tests
 ~~~

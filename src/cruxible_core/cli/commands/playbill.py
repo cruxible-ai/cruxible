@@ -76,6 +76,8 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
 from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
 from cruxible_client.errors import DataValidationError
+from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1, claim_type_input_template
+from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.cli.commands._common import (
     _activate_server_instance,
     _dispatch_cli,
@@ -91,28 +93,19 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.deprecation import (
-    BLOCK_SYNC_DISCARD_LOCAL_FLAG,
-    REVIEW_CLOSE_WORKTREE,
-    REVIEW_OPEN_WORKTREE,
-    DeprecationNotice,
-    emit_cli_deprecation,
-)
-from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1, claim_type_input_template
-from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequest
-from cruxible_core.playbill.coverage.adapter import (
+from cruxible_core.coverage.adapter import (
     WorkingPathBindingsV1,
     WorkingSourceObservationV1,
 )
-from cruxible_core.playbill.coverage.claude_code import (
+from cruxible_core.coverage.claude_code import (
     PostToolUseResponseError,
     annotated_tool_output,
     post_tool_use_response,
     read_post_tool_use_event,
 )
-from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1, CoverageResultV3
-from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
-from cruxible_core.playbill.coverage.middleware import (
+from cruxible_core.coverage.contracts import CoverageAccessProfileV1, CoverageResultV3
+from cruxible_core.coverage.indexes import CoverageScanBudgetV1
+from cruxible_core.coverage.middleware import (
     CoverageRuleTagError,
     CoverageWorkspaceConfig,
     FloorGenerationPairV1,
@@ -121,12 +114,12 @@ from cruxible_core.playbill.coverage.middleware import (
     coverage_middleware,
     load_coverage_config,
 )
-from cruxible_core.playbill.coverage.render import (
+from cruxible_core.coverage.render import (
     render_coverage_manifest,
     render_coverage_result,
 )
-from cruxible_core.playbill.coverage.workspace import bindings_from_mapping, observe_workspace
-from cruxible_core.playbill.curation_calibration import (
+from cruxible_core.coverage.workspace import bindings_from_mapping, observe_workspace
+from cruxible_core.curation.curation_calibration import (
     AUDIT_BUDGET_DEFAULT_MAX_BYTES,
     AUDIT_BUDGET_DEFAULT_MAX_ROWS,
     AUDIT_BUDGET_MAX_MAX_BYTES,
@@ -134,28 +127,35 @@ from cruxible_core.playbill.curation_calibration import (
     AUDIT_BUDGET_MIN_MAX_BYTES,
     AUDIT_BUDGET_MIN_MAX_ROWS,
 )
-from cruxible_core.playbill.keys import (
+from cruxible_core.deprecation import (
+    BLOCK_SYNC_DISCARD_LOCAL_FLAG,
+    REVIEW_CLOSE_WORKTREE,
+    REVIEW_OPEN_WORKTREE,
+    DeprecationNotice,
+    emit_cli_deprecation,
+)
+from cruxible_core.floor.workspace_advertisement import (
+    close_proposal_review_worktree,
+    containing_git_workspace_root,
+    open_proposal_review_worktree,
+)
+from cruxible_core.governance.keys import (
     ClientPrincipalKeyTarget,
     GeneratedKeyMaterial,
     adopt_client_principal_key,
     generate_client_principal_key,
     validate_client_principal_key_target,
 )
-from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.service.review import (
+from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
+from cruxible_core.service.procedures.procedure_runs import (
+    LineRunRequestV1,
+    ProcedureBindRequestV1,
+)
+from cruxible_core.service.proposals.review import (
     PlaybillProposalReview,
     render_playbill_proposal_review,
     render_playbill_proposal_review_pointer,
-)
-from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
-from cruxible_core.playbill.workspace_advertisement import (
-    close_proposal_review_worktree,
-    containing_git_workspace_root,
-    open_proposal_review_worktree,
-)
-from cruxible_core.service.playbill_procedure_runs import (
-    LineRunRequestV1,
-    ProcedureBindRequestV1,
 )
 
 ResultT = TypeVar("ResultT")

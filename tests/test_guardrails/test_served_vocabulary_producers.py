@@ -28,9 +28,9 @@ _SOURCE_ROOT = Path(__file__).resolve().parents[2] / "src" / "cruxible_core"
 # catalog, the provider refusal wire vocabulary, and the outcome map that
 # translates one vocabulary into another.
 _DECLARATION_ONLY = {
-    "service/playbill_refusal_catalog.py",
-    "playbill/provider_runtime_contract.py",
-    "playbill/provider_outcomes.py",
+    "service/refusals.py",
+    "providers/provider_runtime_contract.py",
+    "providers/provider_outcomes.py",
 }
 
 

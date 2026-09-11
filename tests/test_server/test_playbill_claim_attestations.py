@@ -7,16 +7,16 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cruxible_core.playbill.claim_attestation_store import ClaimAttestationStoreError
+from cruxible_core.evidence.claim_attestation_store import ClaimAttestationStoreError
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.errors import error_to_response
 from cruxible_core.server.registry import get_registry, reset_registry
-from cruxible_core.service.playbill_claim_attestations import service_append_claim_attestation
-from tests.test_playbill.test_claim_attestation_service import _request
-from tests.test_playbill.test_claim_type_migrations import _accepted_claim_world
+from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
+from tests.test_claims.test_claim_attestation_service import _request
+from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 
 
 @pytest.fixture

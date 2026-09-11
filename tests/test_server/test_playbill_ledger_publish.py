@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from cruxible_client import contracts
 from cruxible_client.contracts.ledger_mirror import PlaybillLedgerMirrorUnset
 from cruxible_core.errors import PermissionDeniedError
-from cruxible_core.playbill.ledger_mirror import LedgerMirrorStateV1
+from cruxible_core.ledger.ledger_mirror import LedgerMirrorStateV1
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.permissions import PermissionMode, request_permission_scope
 from cruxible_core.server.playbill_request_models import PlaybillLedgerPublishRequest

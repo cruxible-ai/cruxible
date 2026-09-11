@@ -13,8 +13,7 @@ from cruxible_core.errors import (
     HostedProfileUnknownError,
     IsolatedExecutorDiscoveryError,
 )
-from cruxible_core.playbill import provider_local_runtime as runtime_module
-from cruxible_core.playbill.service import provider_seed as seed_module
+from cruxible_core.providers import provider_local_runtime as runtime_module
 from cruxible_core.runtime import execution_policy as policy_module
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.execution_policy import (
@@ -25,6 +24,7 @@ from cruxible_core.runtime.execution_policy import (
     register_isolated_executor,
     registered_isolated_executors,
 )
+from cruxible_core.service.procedures import provider_seed as seed_module
 
 PROFILE = "CRUXIBLE_HOSTED_SERVER_PROFILE"
 BACKEND = "CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND"

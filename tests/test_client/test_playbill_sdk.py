@@ -1028,7 +1028,7 @@ def test_address_shaped_string_on_an_exact_content_type_defers_to_the_daemon(
     The SDK cannot author an ExactContentClaimObject, so it builds the literal
     shape and lets the daemon answer with the typed
     `playbill.claim.object_kind_mismatch` refusal
-    (tests/test_playbill/test_authoring_preflight.py::
+    (tests/test_authoring/test_authoring_preflight.py::
     test_claim_object_kind_mismatch_is_a_typed_preflight_refusal).
     """
 

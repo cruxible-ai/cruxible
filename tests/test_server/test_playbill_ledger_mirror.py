@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from cruxible_core.playbill.keys import generate_client_principal_key
+from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.server.registry import get_registry
 
 

@@ -21,8 +21,8 @@ from cruxible_client.contracts.attestations import (
     approval_digest,
     approval_statement_bytes,
 )
-from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner as CoreSigner
-from tests.test_playbill.test_approval_attestations import ROOT, _candidate
+from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner as CoreSigner
+from tests.test_integration.test_approval_attestations import ROOT, _candidate
 
 
 class Signer:

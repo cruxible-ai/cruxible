@@ -18,10 +18,8 @@ from cruxible_client.contracts.claim_attestations import (
 )
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_core import __version__
-from cruxible_core.mcp import handlers
-from cruxible_core.mcp.tool_prompts import tool_description
-from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
-from cruxible_core.playbill.curation_calibration import (
+from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1
+from cruxible_core.curation.curation_calibration import (
     AUDIT_BUDGET_DEFAULT_MAX_BYTES,
     AUDIT_BUDGET_DEFAULT_MAX_ROWS,
     AUDIT_BUDGET_MAX_MAX_BYTES,
@@ -29,6 +27,8 @@ from cruxible_core.playbill.curation_calibration import (
     AUDIT_BUDGET_MIN_MAX_BYTES,
     AUDIT_BUDGET_MIN_MAX_ROWS,
 )
+from cruxible_core.mcp import handlers
+from cruxible_core.mcp.tool_prompts import tool_description
 
 
 def register_tools(

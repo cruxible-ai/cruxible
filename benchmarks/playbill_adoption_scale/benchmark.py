@@ -39,7 +39,7 @@ for candidate in (REPOSITORY_ROOT, REPOSITORY_ROOT / "src"):
     if str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
-from tests.test_playbill._adoption_fixture import (  # noqa: E402
+from tests.core_support._adoption_fixture import (  # noqa: E402
     TIER_1,
     TRUST_ROOT_FILE,
     AdoptionFixtureProfile,
@@ -47,15 +47,15 @@ from tests.test_playbill._adoption_fixture import (  # noqa: E402
 )
 
 from cruxible_client.contracts.types import PlaybillTrustRoot  # noqa: E402
-from cruxible_core.playbill.checkpoints import (  # noqa: E402
+from cruxible_core.indexes.serving import SERVING_MANIFEST_FILE  # noqa: E402
+from cruxible_core.ledger.checkpoints import (  # noqa: E402
     CHECKPOINT_DIRECTORY,
     checkpoint_body,
     checkpoint_path,
     render_checkpoint,
 )
-from cruxible_core.playbill.git import GitLedger  # noqa: E402
-from cruxible_core.playbill.instance import PlaybillInstance  # noqa: E402
-from cruxible_core.playbill.serving import SERVING_MANIFEST_FILE  # noqa: E402
+from cruxible_core.ledger.git import GitLedger  # noqa: E402
+from cruxible_core.runtime.instance import PlaybillInstance  # noqa: E402
 
 FIXTURE_FILE = "fixture.json"
 

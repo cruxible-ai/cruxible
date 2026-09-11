@@ -12,13 +12,13 @@ from cruxible_client import contracts
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.documents import DocumentAuthority, DocumentLifecycle, DocumentShell
 from cruxible_core.cli.main import cli
-from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.service.documents import (
+from cruxible_core.service.authoring.documents import (
     service_propose_playbill_document,
     service_store_playbill_body,
     service_submit_playbill_approval,
 )
-from cruxible_core.playbill.service.review import service_prepare_playbill_approval
+from cruxible_core.service.proposals.review import service_prepare_playbill_approval
+from cruxible_core.storage.cas import BodyAccessContext
 from tests.test_service.test_playbill_documents import TIMESTAMP, _instance
 
 

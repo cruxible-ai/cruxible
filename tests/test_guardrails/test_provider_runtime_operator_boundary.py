@@ -13,7 +13,7 @@ import pytest
 
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import PlaybillFormatError, PlaybillGitError
-from cruxible_core.playbill.provider_process_leases import ProviderLocalRuntimeRefused
+from cruxible_core.providers.provider_process_leases import ProviderLocalRuntimeRefused
 from cruxible_core.runtime.playbill_manager import PlaybillInstanceManager
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
 

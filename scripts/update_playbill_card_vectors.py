@@ -7,14 +7,14 @@ import json
 from pathlib import Path
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_core.playbill.candidate_cards import (
+from cruxible_core.compiler.projection_artifacts import P2_C_ARTIFACT_KINDS
+from cruxible_core.proposals.candidate_cards import (
     CARD_RENDERER_DIGEST,
     CARD_TEMPLATE_DIGESTS,
     candidate_card_path,
     render_candidate_card,
     render_removal_card,
 )
-from cruxible_core.playbill.projection_artifacts import P2_C_ARTIFACT_KINDS
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "tests/goldens/playbill/card-renderer-v1.json"

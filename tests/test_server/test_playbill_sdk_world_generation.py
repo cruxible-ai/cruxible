@@ -31,7 +31,7 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.cli.main import cli
-from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
+from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
 
 PACKAGE_KIND = "sec.package"
 VULNERABILITY_KIND = "sec.vulnerability"

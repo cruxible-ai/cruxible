@@ -7,8 +7,7 @@ from typing import Any
 
 import pytest
 
-from cruxible_core.mcp.server import create_server
-from cruxible_core.playbill.curation_calibration import (
+from cruxible_core.curation.curation_calibration import (
     AUDIT_BUDGET_DEFAULT_MAX_BYTES,
     AUDIT_BUDGET_DEFAULT_MAX_ROWS,
     AUDIT_BUDGET_MAX_MAX_BYTES,
@@ -16,6 +15,7 @@ from cruxible_core.playbill.curation_calibration import (
     AUDIT_BUDGET_MIN_MAX_BYTES,
     AUDIT_BUDGET_MIN_MAX_ROWS,
 )
+from cruxible_core.mcp.server import create_server
 from cruxible_core.runtime.permissions import TOOL_PERMISSIONS
 
 

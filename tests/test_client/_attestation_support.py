@@ -11,15 +11,15 @@ from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendResultV1,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.service.documents import service_list_playbill_principals
-from cruxible_core.playbill.service.subjects import service_get_playbill_subject
+from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.permissions import PermissionMode
-from cruxible_core.service.playbill_claim_attestations import (
+from cruxible_core.service.authoring.documents import service_list_playbill_principals
+from cruxible_core.service.claims.claims import service_get_playbill_claim
+from cruxible_core.service.claims.subjects import service_get_playbill_subject
+from cruxible_core.service.evidence.claim_attestations import (
     service_append_claim_attestation,
 )
-from cruxible_core.service.playbill_claims import service_get_playbill_claim
-from cruxible_core.service.playbill_proposals import service_playbill_whoami
+from cruxible_core.service.proposals.proposals import service_playbill_whoami
 
 
 class ServiceAttestationClient:
