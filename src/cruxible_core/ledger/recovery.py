@@ -44,6 +44,7 @@ from cruxible_client.contracts.types import (
     GitObjectFormat,
 )
 from cruxible_core.compiler.assembler import ProjectionAssembler
+from cruxible_core.compiler.compiler import PC_HR_ARTIFACT_CODEC_COMPILERS
 from cruxible_core.indexes.projection import (
     AcceptedCoordinate,
     AcceptedProjectionCoordinate,
@@ -1006,21 +1007,24 @@ def recover_instance(
                     generation.oid,
                     render_generation_descriptor(generation.descriptor),
                 )
-    # Genesis has accepted principals and policy owners too. Bring every
-    # accepted head into service before opening typed readers, including a
-    # newly initialized instance or a rebuild after deleting its projections.
-    projection = _projection_for_head(
-        ledger,
-        coordinate=coordinate,
-        history=recovered_history,
-        publication_directory=publication_directory,
-        bodies=bodies,
-    )
-    _repair_serving(
-        publication_directory,
-        coordinate=coordinate,
-        projection=projection,
-    )
+    projection: AssemblerResult | None = None
+    # Current genesis has typed principal/policy readers too. Frozen compact
+    # compilers predate that publication contract: their separately verified
+    # bootstrap paths need not fit their artifact registry. Preserve their
+    # original genesis recovery; their write gate already requires reseeding.
+    if head.sequence > 0 or compiler in PC_HR_ARTIFACT_CODEC_COMPILERS:
+        projection = _projection_for_head(
+            ledger,
+            coordinate=coordinate,
+            history=recovered_history,
+            publication_directory=publication_directory,
+            bodies=bodies,
+        )
+        _repair_serving(
+            publication_directory,
+            coordinate=coordinate,
+            projection=projection,
+        )
     if witness is not None:
         _repair_witness(
             recovered_history,

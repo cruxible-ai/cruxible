@@ -186,7 +186,9 @@ def parse_static_owners(sources: Mapping[str, bytes], *, accepted: Any) -> Parse
                 raise ProjectionIntegrityError(
                     "one artifact pins the same dependency identity at conflicting digests"
                 )
-            pins[key] = PinRow(fixture.artifact_id, fixture_pin.target_identity, fixture_pin.target_digest)
+            pins[key] = PinRow(
+                fixture.artifact_id, fixture_pin.target_identity, fixture_pin.target_digest
+            )
     return replace(
         parsed,
         envelopes=tuple(sorted(envelopes, key=lambda row: row.identity)),
@@ -240,9 +242,12 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
             info = expected.execute(f"PRAGMA table_info({table})").fetchall()
             keys = [row[1] for row in sorted(info, key=lambda row: row[5]) if row[5]]
             sql = f"SELECT * FROM {table} ORDER BY {','.join(keys)}"
-            if [tuple(row) for row in projection._connection.execute(sql)] != expected.execute(
-                sql
-            ).fetchall():
+            if [
+                tuple(row)
+                for row in projection._connection.execute(
+                    sql.replace(f"FROM {table}", f"FROM main.{table}")
+                )
+            ] != expected.execute(sql).fetchall():
                 raise ProjectionIntegrityError(
                     f"typed projection {table} rows differ from accepted source"
                 )

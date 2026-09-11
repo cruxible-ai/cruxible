@@ -9,11 +9,11 @@ candidate owns temporary changed rows and never mutates its accepted base.
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Generic, TypeVar
 
 from cruxible_client.contracts.canonical import canonical_bytes, file_digest, is_candidate_card_path
@@ -85,7 +85,7 @@ class EvaluationRows:
         self.projection = projection
         self.connection = projection._connection
         self.reader = projection.typed
-        self.prefix = ""
+        self.prefix = "main."
         self.parent: EvaluationRows | None = None
         self.changed: Mapping[str, bytes | None] = {}
         self.children: list[EvaluationRows] = []
@@ -230,6 +230,16 @@ class EvaluationRows:
             SelectedRows(claims, lambda: self.keys("claims", "subject_path")),
         )
 
+    def claim_type_items(self, identity: str) -> tuple[tuple[str, bytes], ...]:
+        paths = self.connection.execute(
+            f"SELECT DISTINCT c.path FROM {self.table('pins')} p "
+            f"JOIN {self.table('claims')} c ON c.identity=p.source_identity "
+            "WHERE p.edge_kind='required_pin' AND p.target_identity=? "
+            "AND c.claim_type_identity=? ORDER BY c.path",
+            (identity, identity),
+        )
+        return tuple((row[0], self.source_bytes(row[0])) for row in paths)
+
     def claim_items(self, statement: ClaimStatement) -> tuple[tuple[str, bytes], ...]:
         subject = statement.subject
         paths = self.connection.execute(
@@ -263,14 +273,14 @@ class EvaluationRows:
 
     def overlay(self, edits: Mapping[str, bytes | None]) -> EvaluationRows:
         """Create a bound changed-row selection; exact source identity suppresses edges."""
+        if self.parent is not None or self.children:
+            raise ProjectionIntegrityError("each candidate selection requires its own accepted handle")
         candidate = EvaluationRows(self.projection)
         candidate.parent = self
-        candidate.connection = sqlite3.connect(":memory:")
+        # TEMP rows live on the already authenticated SQLite connection. Reopening
+        # its pathname could bind a replacement inode between authentication and
+        # ATTACH, even while the original verified connection remains sound.
         self.children.append(candidate)
-        candidate.connection.row_factory = sqlite3.Row
-        candidate.connection.execute(
-            "ATTACH DATABASE ? AS accepted", (f"file:{self.projection.index_path}?mode=ro",)
-        )
         candidate.connection.executescript(
             schema_sql()
             .replace("CREATE TABLE", "CREATE TEMP TABLE")
@@ -298,7 +308,7 @@ class EvaluationRows:
             "INSERT INTO changed_paths VALUES (?)", ((path,) for path in edits)
         )
         candidate.connection.execute(
-            "INSERT INTO changed_sources SELECT identity FROM accepted.artifact_lookup WHERE path IN (SELECT path FROM changed_paths)"
+            "INSERT INTO changed_sources SELECT identity FROM main.artifact_lookup WHERE path IN (SELECT path FROM changed_paths)"
         )
         blobs = {path: content for path, content in edits.items() if content is not None}
         insert_members(candidate.connection, blobs, self.reader.accepted.git_object_format)
@@ -307,10 +317,9 @@ class EvaluationRows:
         parsed = parse_static_owners(blobs, accepted=self.reader.accepted)
         for row in parsed.envelopes:
             old = candidate.connection.execute(
-                "SELECT path FROM accepted.artifact_lookup WHERE identity=?", (row.identity,)
+                "SELECT path FROM main.artifact_lookup WHERE identity=?", (row.identity,)
             ).fetchone()
             if old is not None and old[0] not in edits and old[0] != row.path:
-                candidate.connection.close()
                 raise ValueError("candidate tree contains a duplicate semantic artifact identity")
         insert_owners(
             candidate.connection,
@@ -324,7 +333,7 @@ class EvaluationRows:
         )
         for table in ("members", *(owner.table for owner in OWNER_CODECS)):
             candidate.connection.execute(
-                f"CREATE TEMP VIEW selected_{table} AS SELECT * FROM accepted.{table} WHERE path NOT IN (SELECT path FROM changed_paths) UNION ALL SELECT * FROM temp.{table}"
+                f"CREATE TEMP VIEW selected_{table} AS SELECT * FROM main.{table} WHERE path NOT IN (SELECT path FROM changed_paths) UNION ALL SELECT * FROM temp.{table}"
             )
         branches = [
             f"SELECT identity,'{owner.kind}' AS kind,format_tag,path,artifact_digest,predecessor_digest,revision,{('lifecycle' if owner.lifecycle else 'NULL AS lifecycle')} FROM selected_{owner.table}"
@@ -334,7 +343,7 @@ class EvaluationRows:
             "CREATE TEMP VIEW selected_artifact_lookup AS " + " UNION ALL ".join(branches)
         )
         candidate.connection.execute(
-            "CREATE TEMP VIEW selected_pins AS SELECT * FROM accepted.pins WHERE source_identity NOT IN (SELECT identity FROM changed_sources) UNION ALL SELECT * FROM temp.pins"
+            "CREATE TEMP VIEW selected_pins AS SELECT * FROM main.pins WHERE source_identity NOT IN (SELECT identity FROM changed_sources) UNION ALL SELECT * FROM temp.pins"
         )
         candidate.prefix = "selected_"
         return candidate
@@ -373,8 +382,6 @@ class EvaluationRows:
             child.close()
         if self.parent is None:
             self.projection.close()
-        else:
-            self.connection.close()
 
     def advanced_dependencies(
         self, previous: DependencyIndexV1, changed: Iterable[str]
@@ -442,28 +449,32 @@ class ChangedMembers(Mapping[str, str]):
         return sum(1 for _ in self)
 
 
-_ACTIVE_SELECTIONS: ContextVar[tuple[ExitStack, dict[int, EvaluationRows]] | None] = ContextVar(
+_ACTIVE_SELECTIONS: ContextVar[tuple[ExitStack, dict[SelectionSpec, EvaluationRows]] | None] = ContextVar(
     "evaluation_selections", default=None
 )
 
 
-@dataclass(eq=False)
+@dataclass(eq=False, frozen=True)
 class SelectionSpec:
     """Detached selection recipe: no connection, compiled owner map or result cache."""
 
     reader_factory: Callable[[], Any]
     edits: Mapping[str, bytes | None] | None = None
 
+    def __post_init__(self) -> None:
+        if self.edits is not None:
+            object.__setattr__(self, "edits", MappingProxyType(dict(self.edits)))
+
     def call(self, operation: Callable[[EvaluationRows], T]) -> T:
         active = _ACTIVE_SELECTIONS.get()
         if active is not None:
             stack, selections = active
-            selected = selections.get(id(self))
+            selected = selections.get(self)
             if selected is None:
                 base = EvaluationRows(self.reader_factory())
                 stack.callback(base.close)
                 selected = base if self.edits is None else base.overlay(self.edits)
-                selections[id(self)] = selected
+                selections[self] = selected
             return operation(selected)
         base = EvaluationRows(self.reader_factory())
         try:
@@ -573,14 +584,21 @@ def _derive_indexed_state(tree: Any) -> Any:
     if getattr(tree, "_accepted_reader", None) is None:
         return build_tree_state(tree)
     selection = SelectionSpec(tree._accepted_reader)
+    if tree._parent is not None:
+        selection = selection.overlay(tree._edits)
     with selection.scope(), tree._lock:
         proofs = tree._proofs
         if proofs is None:
-            if tree._proof_seed is None:
+            seed = tree._proof_seed
+            if seed is None and tree._parent is not None:
+                with tree._parent._lock:
+                    if tree._parent._proofs is not None:
+                        seed = (tree._parent._proofs, tree._accepted_reader, tree._edits)
+            if seed is None:
                 dependencies = selection.call(lambda rows: rows.dependencies())
                 merkle = selection.call(lambda rows: build_merkle_manifest(rows.members))
             else:
-                previous_proofs, previous_reader, edits = tree._proof_seed
+                previous_proofs, previous_reader, edits = seed
                 previous = SelectionSpec(previous_reader)
                 dependencies = selection.call(
                     lambda rows: rows.advanced_dependencies(

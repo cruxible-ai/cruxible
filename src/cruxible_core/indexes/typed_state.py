@@ -599,7 +599,7 @@ class TypedStateReader:
         from cruxible_client.contracts.canonical import file_digest
 
         row = self.connection.execute(
-            "SELECT git_blob_oid,file_digest,byte_length FROM members WHERE path=?", (path,)
+            "SELECT git_blob_oid,file_digest,byte_length FROM main.members WHERE path=?", (path,)
         ).fetchone()
         if row is None:
             raise ProjectionIntegrityError(f"accepted member is absent: {path}")

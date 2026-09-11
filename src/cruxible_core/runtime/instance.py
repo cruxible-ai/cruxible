@@ -64,6 +64,7 @@ from cruxible_client.contracts.workspace_advertisement import (
 )
 from cruxible_core.compiler.assembler import ProjectionAssembler, ProjectionCrashHook
 from cruxible_core.compiler.compiler import (
+    PC_HR_ARTIFACT_CODEC_COMPILERS,
     SUPPORTED_COMPILERS,
     current_compiler_coordinate,
 )
@@ -1356,6 +1357,14 @@ class PlaybillInstance:
             raise ProjectionIntegrityError("history index storage binding changed")
 
         def envelopes(sequence: int) -> tuple[ArtifactEnvelopeRow, ...]:
+            if (
+                sequence == 0
+                and recovered.coordinate.compiler not in PC_HR_ARTIFACT_CODEC_COMPILERS
+            ):
+                # Frozen bootstrap was verified separately, before typed owner
+                # publication existed. Record its generation binding without
+                # interpreting those bytes under a different artifact codec.
+                return ()
             generation = recovered.history[sequence]
             coordinate = recovered.coordinate.model_copy(
                 update={

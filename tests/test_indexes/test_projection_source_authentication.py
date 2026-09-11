@@ -113,3 +113,152 @@ def test_bound_file_identity_change_invalidates_source_authentication(tmp_path):
         os.chmod(projection.index_path, 0o600)
         with pytest.raises(ProjectionIntegrityError, match="file identity changed"):
             projection.require_source_authentication(repository=repository)
+
+
+@pytest.mark.parametrize("descriptor_namespace", ["native", "canonicalized", "absent"])
+@pytest.mark.parametrize("swap_count", [1, 3])
+def test_warm_bind_cannot_open_a_swapped_directory_then_certify_restored_path(
+    tmp_path, monkeypatch, descriptor_namespace, swap_count
+):
+    import shutil
+
+    repository, coordinate, result = _publication(tmp_path)
+    manifest = Path(result.manifest_path)
+    publication = manifest.parent
+    replacement = tmp_path / "forged-publication"
+    original = tmp_path / "original-publication"
+    shutil.copytree(publication, replacement)
+    forged_piece = replacement / result.manifest.pieces[0].name
+    os.chmod(forged_piece, 0o600)
+    with sqlite3.connect(forged_piece) as connection:
+        connection.execute("DELETE FROM pins")
+    connect = sqlite3.connect
+    opened = []
+    connections = []
+    descriptors = []
+    original_open = os.open
+
+    def capture_open(*args, **kwargs):
+        descriptor = original_open(*args, **kwargs)
+        descriptors.append(descriptor)
+        return descriptor
+
+    def swapped(database, *args, **kwargs):
+        if database == ":memory:":
+            return connect(database, *args, **kwargs)
+        if len(opened) >= swap_count:
+            return connect(database, *args, **kwargs)
+        publication.rename(original)
+        replacement.rename(publication)
+        try:
+            connection = connect(database, *args, **kwargs)
+            connections.append(connection)
+            opened.append(connection.execute("SELECT COUNT(*) FROM pins").fetchone()[0])
+            return connection
+        finally:
+            publication.rename(replacement)
+            original.rename(publication)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sqlite3, "connect", swapped)
+        patch.setattr(os, "open", capture_open)
+        if descriptor_namespace == "absent":
+            patch.setattr(storage, "_descriptor_uri", lambda descriptor: None)
+        elif descriptor_namespace == "canonicalized":
+            # Linux's unix VFS can resolve a descriptor symlink back to the
+            # published path. Simulate that resolution without assuming Darwin's
+            # descriptor namespace proves behavior on other platforms.
+            patch.setattr(
+                storage,
+                "_descriptor_uri",
+                lambda descriptor: f"{(publication / result.manifest.pieces[0].name).as_uri()}"
+                "?mode=ro&immutable=1",
+            )
+        if swap_count == 3:
+            with pytest.raises(ProjectionIntegrityError, match="namespace changed"):
+                storage.bind_projection(manifest, expected=coordinate)
+        else:
+            with storage.bind_projection(manifest, expected=coordinate) as projection:
+                projection.require_source_authentication(repository=repository)
+                descriptor = projection._source_descriptor
+                assert descriptor is not None
+                os.fstat(descriptor)
+                assert (
+                    projection._connection.execute("SELECT COUNT(*) FROM pins").fetchone()[0] == 1
+                )
+    assert len(opened) == swap_count
+    if descriptor_namespace != "native":
+        assert opened == [0] * swap_count
+    for connection in connections:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            connection.execute("SELECT 1")
+    for descriptor in descriptors:
+        with pytest.raises(OSError):
+            os.fstat(descriptor)
+
+
+def test_descriptor_fallback_verifies_opened_snapshot_and_failure_closes_fd(tmp_path, monkeypatch):
+    _repository, coordinate, result = _publication(tmp_path)
+    manifest = Path(result.manifest_path)
+    with monkeypatch.context() as patch:
+        patch.setattr(storage, "_descriptor_uri", lambda descriptor: None)
+        with storage.bind_projection(manifest, expected=coordinate) as projection:
+            assert projection._connection.execute("SELECT COUNT(*) FROM pins").fetchone()[0] == 1
+    descriptors = []
+    original_open = os.open
+
+    def capture_open(*args, **kwargs):
+        descriptor = original_open(*args, **kwargs)
+        descriptors.append(descriptor)
+        return descriptor
+
+    def fail_connect(*args, **kwargs):
+        raise sqlite3.OperationalError("forced open failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "open", capture_open)
+        patch.setattr(sqlite3, "connect", fail_connect)
+        with pytest.raises(ProjectionIntegrityError, match="valid PB-B SQLite"):
+            storage.bind_projection(manifest, expected=coordinate)
+    assert descriptors
+    for descriptor in descriptors:
+        with pytest.raises(OSError):
+            os.fstat(descriptor)
+
+
+def test_cold_binder_exports_only_the_opened_snapshot(tmp_path, monkeypatch):
+    _repository, coordinate, result = _publication(tmp_path)
+    manifest = Path(result.manifest_path)
+    storage.reset_projection_verification_memo()
+    connect = sqlite3.connect
+    opens = []
+
+    def record_open(database, *args, **kwargs):
+        opens.append(str(database))
+        return connect(database, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sqlite3, "connect", record_open)
+        with storage.bind_projection(manifest, expected=coordinate) as projection:
+            assert (
+                storage.projection_logical_digest(projection._connection).tagged
+                == result.logical_digest
+            )
+    assert len([path for path in opens if path != ":memory:"]) == 1
+
+
+def test_cold_logical_scan_does_not_hold_namespace_acquisition_guard(tmp_path, monkeypatch):
+    _repository, coordinate, result = _publication(tmp_path)
+    manifest = Path(result.manifest_path)
+    storage.reset_projection_verification_memo()
+    logical_digest = storage.projection_logical_digest
+
+    def concurrent_unrelated_entry(source):
+        # Cold export can be long. An unrelated entry in an ancestor directory
+        # after acquisition must not invalidate the already acquired snapshot.
+        (tmp_path / "unrelated-entry").write_bytes(b"unrelated")
+        return logical_digest(source)
+
+    monkeypatch.setattr(storage, "projection_logical_digest", concurrent_unrelated_entry)
+    with storage.bind_projection(manifest, expected=coordinate) as projection:
+        assert projection._connection.execute("SELECT COUNT(*) FROM pins").fetchone()[0] == 1
