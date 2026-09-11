@@ -195,3 +195,24 @@ def test_descriptor_fallback_verifies_opened_snapshot_and_failure_closes_fd(tmp_
     for descriptor in descriptors:
         with pytest.raises(OSError):
             os.fstat(descriptor)
+
+
+def test_cold_binder_exports_only_the_opened_snapshot(tmp_path, monkeypatch):
+    _repository, coordinate, result = _publication(tmp_path)
+    manifest = Path(result.manifest_path)
+    storage.reset_projection_verification_memo()
+    connect = sqlite3.connect
+    opens = []
+
+    def record_open(database, *args, **kwargs):
+        opens.append(str(database))
+        return connect(database, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sqlite3, "connect", record_open)
+        with storage.bind_projection(manifest, expected=coordinate) as projection:
+            assert (
+                storage.projection_logical_digest(projection._connection).tagged
+                == result.logical_digest
+            )
+    assert len([path for path in opens if path != ":memory:"]) == 1

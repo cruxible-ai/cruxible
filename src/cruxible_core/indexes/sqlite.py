@@ -362,43 +362,47 @@ def _verify_projection_schema(connection: sqlite3.Connection) -> None:
         raise ProjectionIntegrityError("projection SQLite schema differs from the PB-B registry")
 
 
-def canonical_logical_export(path: Path) -> dict[str, object]:
-    """Export logical tables independent of page layout and binding metadata."""
+def _canonical_connection_export(connection: sqlite3.Connection) -> dict[str, object]:
+    _verify_projection_schema(connection)
+    if connection.execute("PRAGMA user_version").fetchone()[0] == 2:
+        from cruxible_core.indexes.typed_sqlite import logical_export
 
-    try:
-        connection = sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True)
-        try:
-            _verify_projection_schema(connection)
-            if connection.execute("PRAGMA user_version").fetchone()[0] == 2:
-                from cruxible_core.indexes.typed_sqlite import logical_export
-
-                return logical_export(connection)
-            tables: list[dict[str, object]] = []
-            for spec in sorted(_TABLE_SPECS, key=lambda item: item.name.encode("utf-8")):
-                if not spec.logical:
-                    continue
-                order = ",".join(spec.primary_key)
-                rows = connection.execute(f"SELECT * FROM {spec.name} ORDER BY {order}").fetchall()
-                tables.append(
-                    {
-                        "name": spec.name,
-                        "columns": [
-                            {"name": name, "type": sql_type, "nullable": nullable}
-                            for name, sql_type, nullable in spec.columns
-                        ],
-                        "primary_key": list(spec.primary_key),
-                        "constraints": list(spec.constraints),
-                        "indexes": [
-                            {"name": name, "columns": columns.split(",")}
-                            for name, columns in spec.indexes
-                        ],
-                        "rows": [list(row) for row in rows],
-                    }
-                )
-            return {
-                "schema_version": PROJECTION_SCHEMA_VERSION,
-                "tables": tables,
+        return logical_export(connection)
+    tables: list[dict[str, object]] = []
+    for spec in sorted(_TABLE_SPECS, key=lambda item: item.name.encode("utf-8")):
+        if not spec.logical:
+            continue
+        order = ",".join(spec.primary_key)
+        rows = connection.execute(f"SELECT * FROM {spec.name} ORDER BY {order}").fetchall()
+        tables.append(
+            {
+                "name": spec.name,
+                "columns": [
+                    {"name": name, "type": sql_type, "nullable": nullable}
+                    for name, sql_type, nullable in spec.columns
+                ],
+                "primary_key": list(spec.primary_key),
+                "constraints": list(spec.constraints),
+                "indexes": [
+                    {"name": name, "columns": columns.split(",")} for name, columns in spec.indexes
+                ],
+                "rows": [list(row) for row in rows],
             }
+        )
+    return {
+        "schema_version": PROJECTION_SCHEMA_VERSION,
+        "tables": tables,
+    }
+
+
+def canonical_logical_export(source: Path | sqlite3.Connection) -> dict[str, object]:
+    """Export logical tables independent of page layout and binding metadata."""
+    try:
+        if isinstance(source, sqlite3.Connection):
+            return _canonical_connection_export(source)
+        connection = sqlite3.connect(f"{source.as_uri()}?mode=ro&immutable=1", uri=True)
+        try:
+            return _canonical_connection_export(connection)
         finally:
             connection.close()
     except (OSError, sqlite3.DatabaseError) as exc:
@@ -407,8 +411,8 @@ def canonical_logical_export(path: Path) -> dict[str, object]:
         ) from exc
 
 
-def projection_logical_digest(path: Path) -> LogicalDigest:
-    exported = canonical_logical_export(path)
+def projection_logical_digest(source: Path | sqlite3.Connection) -> LogicalDigest:
+    exported = canonical_logical_export(source)
     return typed_digest(
         LogicalDigest,
         "playbill-projection-logical-v2"
@@ -1165,7 +1169,7 @@ def bind_projection(
             raise ProjectionIntegrityError("projection row counts differ from the manifest")
         if (
             not already_verified
-            and projection_logical_digest(index_path).tagged != manifest.logical_digest
+            and projection_logical_digest(connection).tagged != manifest.logical_digest
         ):
             raise ProjectionIntegrityError("projection canonical logical digest mismatch")
         final_identity = _verified_piece_identity(
