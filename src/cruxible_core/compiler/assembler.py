@@ -45,6 +45,7 @@ from cruxible_core.indexes.sqlite import (
     initialize_projection_database,
     physical_file_digest,
     projection_logical_digest,
+    record_source_built_piece,
 )
 from cruxible_core.ledger.protocols import LedgerRepositoryProtocol
 from cruxible_core.storage.cas import BodyProjectionProtocol
@@ -367,6 +368,9 @@ class ProjectionAssembler:
         staged_piece.unlink()
         staging.rmdir()
         _fsync_directory(self.publication_directory)
+
+        if typed_storage:
+            record_source_built_piece(final_piece, accepted=self.accepted, manifest=manifest)
 
         result_type: type[AssemblerResult] = AssemblerResultV2 if typed_storage else AssemblerResult
         return result_type(

@@ -267,3 +267,14 @@ def test_line_identity_lookup_and_role_sensitive_dependency_read(tmp_path):
         selected_procedure = reader.dependency_state(procedure.identity.qualified)
         assert selected_procedure.pins == procedure.pins
         assert reader.dependency_state("Procedure:missing") is None
+        assert [
+            (row.identity, row.path, row.lifecycle, row.directly_runnable)
+            for row in reader.procedure_inventory()
+        ] == [
+            (
+                procedure.identity.qualified,
+                selected_procedure.path,
+                procedure.lifecycle.state,
+                procedure.directly_runnable,
+            )
+        ]

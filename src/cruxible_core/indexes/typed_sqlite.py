@@ -105,6 +105,119 @@ def cold_claim_digest_resolver(
     return resolve
 
 
+def parse_static_owners(sources: Mapping[str, bytes], *, accepted: Any) -> ParsedProjectionTree:
+    """Parse exact owner contracts without making CAS availability an index authority."""
+    from dataclasses import replace
+
+    from cruxible_client.contracts.documents import document_digest, parse_document
+    from cruxible_core.compiler.compiler import (
+        artifact_codec_for_compiler,
+        artifact_kinds_for_compiler,
+        projection_registry_for_compiler,
+    )
+    from cruxible_core.compiler.projection_artifacts import (
+        ArtifactEnvelopeRow,
+        PinRow,
+        parse_projection_tree,
+    )
+
+    kinds = artifact_kinds_for_compiler(accepted.compiler)
+    codec = artifact_codec_for_compiler(accepted.compiler)
+    documents = {
+        path: body for path, body in sources.items() if kinds.resolve_path(path) == "document"
+    }
+    parsed = parse_projection_tree(
+        {path: body for path, body in sources.items() if path not in documents},
+        registry=projection_registry_for_compiler(accepted.compiler),
+        artifact_kinds=kinds,
+        artifact_codec=codec,
+    )
+    envelopes = list(parsed.envelopes)
+    pins = {(pin.source_identity, pin.target_identity): pin for pin in parsed.pins}
+    for path, content in documents.items():
+        document = parse_document(content, path=path, codec=codec)
+        envelopes.append(
+            ArtifactEnvelopeRow(
+                document.identity,
+                document.kind,
+                document.tag,
+                path,
+                document_digest(document).tagged,
+                document.predecessor_digest,
+                document.lifecycle.revision,
+            )
+        )
+        for pin in document.pins:
+            key = (document.identity, pin.target_identity)
+            previous = pins.get(key)
+            if previous is not None and previous.target_digest != pin.target_digest:
+                raise ProjectionIntegrityError(
+                    "one artifact pins the same dependency identity at conflicting digests"
+                )
+            pins[key] = PinRow(document.identity, pin.target_identity, pin.target_digest)
+    return replace(
+        parsed,
+        envelopes=tuple(sorted(envelopes, key=lambda row: row.identity)),
+        pins=tuple(pins[key] for key in sorted(pins)),
+    )
+
+
+def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
+    """Cold completeness proof for static owner selection; requires no live CAS.
+
+    Covers all member commitments, every registered typed owner field, principal
+    rows and both pin kinds. Citation envelope availability and presentation
+    outputs are evaluated under their own live/source rules, outside this proof.
+    """
+    from cruxible_core.compiler.compiler import (
+        artifact_codec_for_compiler,
+        artifact_kinds_for_compiler,
+    )
+    from cruxible_core.compiler.projection_tree import TreeReadLimits, read_registered_tree
+
+    accepted = projection.accepted
+    sources = {
+        blob.path: blob.content
+        for blob in read_registered_tree(
+            repository,
+            accepted.git_oid,
+            limits=TreeReadLimits(),
+            artifact_kinds=artifact_kinds_for_compiler(accepted.compiler),
+        )
+    }
+    codec = artifact_codec_for_compiler(accepted.compiler)
+    parsed = parse_static_owners(sources, accepted=accepted)
+    expected = sqlite3.connect(":memory:")
+    try:
+        expected.executescript(schema_sql())
+        insert_members(expected, sources, accepted.git_object_format)
+        insert_owners(
+            expected,
+            parsed=parsed,
+            blobs=sources,
+            codec=codec,
+            resolve_digest=cold_claim_digest_resolver(
+                sources,
+                repository=repository,
+                head_oid=accepted.git_oid,
+                codec=codec,
+                coordinates={},
+            ),
+        )
+        for table in ("members", "principals", "pins", *(owner.table for owner in OWNER_CODECS)):
+            info = expected.execute(f"PRAGMA table_info({table})").fetchall()
+            keys = [row[1] for row in sorted(info, key=lambda row: row[5]) if row[5]]
+            sql = f"SELECT * FROM {table} ORDER BY {','.join(keys)}"
+            if [tuple(row) for row in projection._connection.execute(sql)] != expected.execute(
+                sql
+            ).fetchall():
+                raise ProjectionIntegrityError(
+                    f"typed projection {table} rows differ from accepted source"
+                )
+    finally:
+        expected.close()
+
+
 def complete_schema_sql() -> str:
     specs = [spec for spec in _TABLE_SPECS if spec.name in (*_METADATA_TABLES, *_EXTENSION_TABLES)]
     statements = [schema_sql(), SCHEMA_SQL]
