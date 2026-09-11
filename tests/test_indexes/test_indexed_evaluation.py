@@ -301,3 +301,111 @@ def test_frozen_storage_uses_full_source_oracle_and_closes_handle():
         )
     )
     assert len(closed) == 2
+
+
+def test_migration_claim_type_inventory_uses_required_pin_selection(tmp_path, monkeypatch):
+    from cruxible_client.contracts.claims import claim_path, render_claim
+    from cruxible_core.claims.claim_type_migrations import _current_dependents
+    from tests.test_authoring.test_authoring_disposition_slots import _claim_in_slot
+
+    claim = _claim_in_slot(claim_id="CLM-" + "1" * 32, qualifier=None)
+    sources = {**_tree(), claim_path(claim.identity.name): render_claim(claim)}
+    tree, counts, _ = _fixture(tmp_path, sources)
+    expected = _current_dependents(sources, identity=claim.statement.claim_type.qualified)
+    with monkeypatch.context() as patch:
+        patch.setattr(SnapshotTree, "__iter__", lambda self: pytest.fail("enumerated source tree"))
+        result = _current_dependents(tree, identity=claim.statement.claim_type.qualified)
+    assert result == expected
+    assert counts["opened"] == counts["closed"]
+    assert counts["blobs"] == 1
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_direct_candidate_derivation_uses_complete_edits_and_parent_proofs(
+    tmp_path, monkeypatch, nested
+):
+    tree, counts, _ = _fixture(tmp_path, _tree())
+    derive_indexed_state(tree)
+    candidate = tree.fork()
+    candidate[_path("dependent")] = render_subject(_subject("dependent"))
+    sealed = candidate.snapshot()
+    if nested:
+        candidate = sealed.fork()
+        del candidate[_path("anchor")]
+        candidate[_path("new")] = render_subject(_subject("new"))
+        sealed = candidate.snapshot()
+    counts["blobs"] = 0
+    with monkeypatch.context() as patch:
+        patch.setattr(SnapshotTree, "__iter__", lambda self: pytest.fail("enumerated source tree"))
+        result = derive_indexed_state(sealed)
+    assert counts["blobs"] < 20
+    assert counts["opened"] == counts["closed"]
+    _same(result, build_tree_state(sealed))
+    _same(derive_indexed_state(tree), build_tree_state(tree))
+
+
+def test_request_scope_owns_exact_selection_objects_until_close(tmp_path):
+    import gc
+    import weakref
+
+    from cruxible_core.indexes.evaluated_state import SelectionSpec
+
+    tree, counts, _ = _fixture(tmp_path, _tree())
+    refs = []
+    with SelectionSpec(tree._accepted_reader).scope():
+        for revision in range(1, 30):
+            body = render_subject(_subject("dependent", revision=revision))
+            selected = SelectionSpec(tree._accepted_reader, {_path("dependent"): body})
+            refs.append(weakref.ref(selected))
+            assert selected.call(lambda rows: rows.source_bytes(_path("dependent"))) == body
+            del selected
+        gc.collect()
+        assert all(ref() is not None for ref in refs)
+    gc.collect()
+    assert all(ref() is None for ref in refs)
+    assert counts["opened"] == counts["closed"]
+
+
+def test_selection_recipe_detaches_changed_bytes_from_input_mapping(tmp_path):
+    from cruxible_core.indexes.evaluated_state import SelectionSpec
+
+    tree, counts, _ = _fixture(tmp_path, _tree())
+    body = render_subject(_subject("dependent", revision=1))
+    edits = {_path("dependent"): body}
+    selected = SelectionSpec(tree._accepted_reader, edits)
+    edits[_path("dependent")] = render_subject(_subject("dependent", revision=2))
+    assert selected.call(lambda rows: rows.source_bytes(_path("dependent"))) == body
+    assert counts["opened"] == counts["closed"]
+
+
+def test_overlay_keeps_authenticated_connection_when_piece_path_is_replaced(tmp_path, monkeypatch):
+    import os
+    import shutil
+
+    from cruxible_core.indexes.evaluated_state import EvaluationRows
+
+    tree, counts, _ = _fixture(tmp_path, _tree())
+    projection = tree._accepted_reader()
+    base = EvaluationRows(projection)
+    path = _path("anchor")
+    expected = base.incoming(path)
+    replacement = tmp_path / "forged.sqlite"
+    shutil.copyfile(projection.index_path, replacement)
+    with sqlite3.connect(replacement) as connection:
+        connection.execute("DELETE FROM pins")
+    # Simulate replacement immediately after authentication returns; the bound
+    # SQLite connection must remain the source of the candidate's accepted rows.
+    projection.require_source_authentication = lambda: os.replace(
+        replacement, projection.index_path
+    )
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                sqlite3, "connect", lambda *a, **k: pytest.fail("overlay reopened source")
+            )
+            candidate = base.overlay({})
+            assert candidate.incoming(path) == expected
+            assert base.incoming(path) == expected
+    finally:
+        base.close()
+    assert counts["opened"] == counts["closed"]
