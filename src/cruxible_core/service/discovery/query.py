@@ -266,7 +266,7 @@ class _AcceptedQueryFactsRead:
             rows.append(row)
         assembled = next(iter(self._results.values()), None)
         if assembled is None:
-            providers = accepted_claim_providers(tree)
+            providers = accepted_claim_providers(self._instance, coordinate=self._coordinate)
             subjects = _accepted_subjects(tree)
             ordered_providers = tuple(
                 providers[key] for key in sorted(providers, key=lambda item: item.encode("utf-8"))
