@@ -354,7 +354,9 @@ def service_submit_playbill_approval(
     # this Git commit; compilation and network publication stay outside it.
     with instance.review_projection_lock():
         with instance.approval_note_lock(candidate.candidate_digest):
-            grouped = instance.proposal_note_index()
+            grouped = instance.proposal_note_index(
+                oids=(), candidate_digests=(candidate.candidate_digest,)
+            )
             affected = grouped.oids_for_candidate(candidate.candidate_digest)
             previous_notes = grouped.validate_and_snapshot(instance._ledger, affected)
             evidence.write_approval(candidate.candidate_digest, submission)
@@ -417,7 +419,9 @@ def _reconcile_proposal_notes(
     oid = proposal.admission.candidate_commit_oid
     with instance.review_projection_lock():
         with instance.approval_note_lock(candidate.candidate_digest):
-            grouped = instance.proposal_note_index()
+            grouped = instance.proposal_note_index(
+                oids=(oid,), candidate_digests=(candidate.candidate_digest,)
+            )
             # Human review uses the advisory alias, which may differ from the
             # original admission commit. Both must agree with their complete
             # evidence group before settlement; neither is trusted as authority.

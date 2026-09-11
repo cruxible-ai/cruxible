@@ -3795,7 +3795,7 @@ class ProposalService:
         require_writable: Callable[[], None] | None = None,
         ledger_publisher: Callable[[], object] | None = None,
         tree_state_provider: TreeStateProvider | None = None,
-        note_index_provider: Callable[[], ProposalNoteIndex] | None = None,
+        note_index_provider: Callable[..., ProposalNoteIndex] | None = None,
         accepted_tree_provider: Callable[[str], Mapping[str, bytes]] | None = None,
         prepared_evaluations: PreparedEvaluationAdapter | None = None,
         principal_registry_provider: Callable[
@@ -3811,7 +3811,7 @@ class ProposalService:
         self.evidence = evidence
         self._review_projection_lock = review_projection_lock
         self._note_index = note_index_provider or (
-            lambda: ProposalNoteIndex.build(self.evidence, self.transport)
+            lambda **_: ProposalNoteIndex.build(self.evidence, self.transport)
         )
         self.receive_limits = receive_limits
         self._current_coordinate = current_coordinate or (lambda: accepted)
@@ -4048,7 +4048,6 @@ class ProposalService:
                 raise ProposalEvaluationIntegrityError(
                     "proposal evaluation record failed deterministic validation"
                 ) from exc
-            before = self._note_index()
             affected = {commit_oid}
             if outcome.candidate is not None and evaluated_tree_oid is not None:
                 affected.add(
@@ -4060,6 +4059,7 @@ class ProposalService:
                         message=message,
                     )
                 )
+            before = self._note_index(oids=affected)
             previous_notes = before.validate_and_snapshot(self.transport, affected)
             # The admission is written LAST and is the group's commit point: an
             # admission on disk always has its evaluation and candidate beside
@@ -4074,7 +4074,10 @@ class ProposalService:
                 self.evidence.write_admission(admission)
             # Original and advisory aliases use the same complete group, so a
             # second admission sharing a commit cannot overwrite the first.
-            after = self._note_index()
+            after = self._note_index(
+                oids=affected,
+                candidate_digests=() if candidate_value is None else (candidate_value,),
+            )
             if candidate_value is not None:
                 # The candidate can complete older interrupted admissions with
                 # other aliases. Include their groups in the publication delta.

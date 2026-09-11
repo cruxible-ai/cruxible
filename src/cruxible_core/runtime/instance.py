@@ -11,7 +11,7 @@ import stat
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -98,7 +98,7 @@ from cruxible_core.indexes.projection import (
     projection_manifest_name,
 )
 from cruxible_core.indexes.proposals.proposal_note_projection import ProposalNoteIndex
-from cruxible_core.indexes.proposals.proposal_note_reader import IndexedProposalNotes
+from cruxible_core.indexes.proposals.proposal_note_reader import proposal_note_snapshot
 from cruxible_core.indexes.serving import bind_current_projection
 from cruxible_core.indexes.sqlite import ProjectionHandle, bind_projection
 from cruxible_core.indexes.typed_sqlite import parse_static_owners
@@ -1239,7 +1239,7 @@ class PlaybillInstance:
     ) -> None:
         """Restate one proposal's evidence onto the commit a reviewer receives."""
 
-        grouped = index or self.proposal_note_index(evidence=evidence)
+        grouped = index or self.proposal_note_index(evidence=evidence, oids=(review_oid,))
         if proposal_id not in grouped.proposal_ids_by_oid.get(review_oid, ()):
             raise ProposalIntegrityError("review note target does not belong to the proposal")
         with ExitStack() as locks:
@@ -1253,10 +1253,16 @@ class PlaybillInstance:
             )
 
     def proposal_note_index(
-        self, *, evidence: ProposalEvidenceStore | None = None
+        self,
+        *,
+        evidence: ProposalEvidenceStore | None = None,
+        oids: Iterable[str] | None = None,
+        candidate_digests: Iterable[str] = (),
     ) -> ProposalNoteIndex:
-        """Return fresh evidence-derived review relationships under the review lock."""
-        return IndexedProposalNotes(evidence or self.proposal_evidence())
+        """Materialize this request's review groups from one verified snapshot."""
+        return proposal_note_snapshot(
+            evidence or self.proposal_evidence(), oids=oids, candidate_digests=candidate_digests
+        )
 
     def proposal_evidence(self) -> ProposalEvidenceStore:
         """Return the immutable non-authoritative proposal/approval evidence store."""

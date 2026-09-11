@@ -97,7 +97,7 @@ def test_publication_integrity_check_finishes_before_activation_unlock(
         bodies=Mock(),
         evidence=evidence,
         review_projection_lock=review_lock,
-        note_index_provider=lambda: notes,
+        note_index_provider=lambda **_: notes,
         ledger_publisher=mirror,
     )
     request = proposals.ProposalAdmissionRequest(
