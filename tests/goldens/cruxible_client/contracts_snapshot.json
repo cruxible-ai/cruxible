@@ -26870,8 +26870,7 @@
                     "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                     "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                     "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
-                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1",
-                    "playbill-procedure-settlement-refusal-v1": "#/$defs/ProcedureSettlementRefusalV1"
+                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
                   },
                   "propertyName": "tag"
                 },
@@ -26887,9 +26886,6 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedureInternalFailureV1"
-                  },
-                  {
-                    "$ref": "#/$defs/ProcedureSettlementRefusalV1"
                   },
                   {
                     "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
@@ -28756,8 +28752,7 @@
                         "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                         "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                         "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
-                        "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1",
-                        "playbill-procedure-settlement-refusal-v1": "#/$defs/ProcedureSettlementRefusalV1"
+                        "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
                       },
                       "propertyName": "tag"
                     },
@@ -28773,9 +28768,6 @@
                       },
                       {
                         "$ref": "#/$defs/ProcedureInternalFailureV1"
-                      },
-                      {
-                        "$ref": "#/$defs/ProcedureSettlementRefusalV1"
                       },
                       {
                         "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
@@ -29052,8 +29044,7 @@
                         "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                         "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                         "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
-                        "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1",
-                        "playbill-procedure-settlement-refusal-v1": "#/$defs/ProcedureSettlementRefusalV1"
+                        "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
                       },
                       "propertyName": "tag"
                     },
@@ -29069,9 +29060,6 @@
                       },
                       {
                         "$ref": "#/$defs/ProcedureInternalFailureV1"
-                      },
-                      {
-                        "$ref": "#/$defs/ProcedureSettlementRefusalV1"
                       },
                       {
                         "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
@@ -29369,8 +29357,7 @@
                         "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                         "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                         "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
-                        "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1",
-                        "playbill-procedure-settlement-refusal-v1": "#/$defs/ProcedureSettlementRefusalV1"
+                        "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
                       },
                       "propertyName": "tag"
                     },
@@ -29386,9 +29373,6 @@
                       },
                       {
                         "$ref": "#/$defs/ProcedureInternalFailureV1"
-                      },
-                      {
-                        "$ref": "#/$defs/ProcedureSettlementRefusalV1"
                       },
                       {
                         "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
@@ -29718,8 +29702,7 @@
                         "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                         "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                         "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
-                        "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1",
-                        "playbill-procedure-settlement-refusal-v1": "#/$defs/ProcedureSettlementRefusalV1"
+                        "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
                       },
                       "propertyName": "tag"
                     },
@@ -29735,9 +29718,6 @@
                       },
                       {
                         "$ref": "#/$defs/ProcedureInternalFailureV1"
-                      },
-                      {
-                        "$ref": "#/$defs/ProcedureSettlementRefusalV1"
                       },
                       {
                         "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
@@ -29856,83 +29836,6 @@
               "decisions"
             ],
             "title": "ProcedureSelectionDecisionV1",
-            "type": "object"
-          },
-          "ProcedureSettlementRefusalV1": {
-            "additionalProperties": false,
-            "properties": {
-              "classification": {
-                "const": "settlement_refusal",
-                "default": "settlement_refusal",
-                "title": "Classification",
-                "type": "string"
-              },
-              "code": {
-                "enum": [
-                  "settlement_proposal_id_mismatch",
-                  "settlement_candidate_mismatch",
-                  "settlement_base_semantic_root_mismatch",
-                  "settlement_activation_coordinate_changed",
-                  "settlement_actor_principal_invalid",
-                  "settlement_candidate_scope_mismatch",
-                  "settlement_receipt_mismatch",
-                  "settlement_lost_cas"
-                ],
-                "title": "Code",
-                "type": "string"
-              },
-              "details": {
-                "title": "Details"
-              },
-              "journal_coordinate": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ProcedureJournalCoordinateV1"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "message": {
-                "title": "Message",
-                "type": "string"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "repair": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/RepairOperationV1"
-                  },
-                  {
-                    "$ref": "#/$defs/HandEditRepairV1"
-                  }
-                ],
-                "title": "Repair"
-              },
-              "retryable": {
-                "default": false,
-                "title": "Retryable",
-                "type": "boolean"
-              },
-              "tag": {
-                "const": "playbill-procedure-settlement-refusal-v1",
-                "default": "playbill-procedure-settlement-refusal-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "code",
-              "message",
-              "node_id",
-              "repair"
-            ],
-            "title": "ProcedureSettlementRefusalV1",
             "type": "object"
           },
           "ProcedureSourceCaptureAssociationV1": {
@@ -30618,8 +30521,7 @@
                     "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                     "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                     "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
-                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1",
-                    "playbill-procedure-settlement-refusal-v1": "#/$defs/ProcedureSettlementRefusalV1"
+                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
                   },
                   "propertyName": "tag"
                 },
@@ -30635,9 +30537,6 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedureInternalFailureV1"
-                  },
-                  {
-                    "$ref": "#/$defs/ProcedureSettlementRefusalV1"
                   },
                   {
                     "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
@@ -31260,7 +31159,8 @@
               {
                 "enum": [
                   "open",
-                  "settled"
+                  "settled",
+                  "incomplete"
                 ],
                 "type": "string"
               },
@@ -31332,12 +31232,26 @@
             "additionalProperties": false,
             "properties": {
               "actor_id": {
-                "title": "Actor Id",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Actor Id"
               },
               "admitted_at": {
-                "title": "Admitted At",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Admitted At"
               },
               "candidate_digest": {
                 "anyOf": [
@@ -31351,6 +31265,19 @@
                 "default": null,
                 "title": "Candidate Digest"
               },
+              "incomplete_reasons": {
+                "default": [],
+                "items": {
+                  "enum": [
+                    "missing_admission",
+                    "missing_evaluation",
+                    "missing_candidate"
+                  ],
+                  "type": "string"
+                },
+                "title": "Incomplete Reasons",
+                "type": "array"
+              },
               "proposal_id": {
                 "title": "Proposal Id",
                 "type": "string"
@@ -31358,7 +31285,8 @@
               "status": {
                 "enum": [
                   "open",
-                  "settled"
+                  "settled",
+                  "incomplete"
                 ],
                 "title": "Status",
                 "type": "string"
@@ -31370,8 +31298,15 @@
                 "type": "string"
               },
               "target_ref": {
-                "title": "Target Ref",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Target Ref"
               },
               "terminal_reason": {
                 "anyOf": [
@@ -31392,12 +31327,24 @@
                 "title": "Terminal Reason"
               },
               "verdict": {
-                "enum": [
-                  "candidate",
-                  "refused"
+                "anyOf": [
+                  {
+                    "enum": [
+                      "candidate",
+                      "refused"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
                 ],
-                "title": "Verdict",
-                "type": "string"
+                "title": "Verdict"
+              },
+              "withdrawal_present": {
+                "default": false,
+                "title": "Withdrawal Present",
+                "type": "boolean"
               }
             },
             "required": [
@@ -31429,7 +31376,8 @@
               {
                 "enum": [
                   "open",
-                  "settled"
+                  "settled",
+                  "incomplete"
                 ],
                 "type": "string"
               },
@@ -31467,8 +31415,15 @@
           "json_name": "actor_id",
           "required": true,
           "schema": {
-            "title": "Actor Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Id"
           }
         },
         "admitted_at": {
@@ -31477,8 +31432,15 @@
           "json_name": "admitted_at",
           "required": true,
           "schema": {
-            "title": "Admitted At",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Admitted At"
           }
         },
         "candidate_digest": {
@@ -31501,6 +31463,27 @@
             "title": "Candidate Digest"
           }
         },
+        "incomplete_reasons": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "incomplete_reasons",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "enum": [
+                "missing_admission",
+                "missing_evaluation",
+                "missing_candidate"
+              ],
+              "type": "string"
+            },
+            "title": "Incomplete Reasons",
+            "type": "array"
+          }
+        },
         "proposal_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -31519,7 +31502,8 @@
           "schema": {
             "enum": [
               "open",
-              "settled"
+              "settled",
+              "incomplete"
             ],
             "title": "Status",
             "type": "string"
@@ -31545,8 +31529,15 @@
           "json_name": "target_ref",
           "required": true,
           "schema": {
-            "title": "Target Ref",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Ref"
           }
         },
         "terminal_reason": {
@@ -31581,12 +31572,32 @@
           "json_name": "verdict",
           "required": true,
           "schema": {
-            "enum": [
-              "candidate",
-              "refused"
+            "anyOf": [
+              {
+                "enum": [
+                  "candidate",
+                  "refused"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Verdict",
-            "type": "string"
+            "title": "Verdict"
+          }
+        },
+        "withdrawal_present": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "withdrawal_present",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Withdrawal Present",
+            "type": "boolean"
           }
         }
       },
@@ -31594,12 +31605,26 @@
         "additionalProperties": false,
         "properties": {
           "actor_id": {
-            "title": "Actor Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Id"
           },
           "admitted_at": {
-            "title": "Admitted At",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Admitted At"
           },
           "candidate_digest": {
             "anyOf": [
@@ -31613,6 +31638,19 @@
             "default": null,
             "title": "Candidate Digest"
           },
+          "incomplete_reasons": {
+            "default": [],
+            "items": {
+              "enum": [
+                "missing_admission",
+                "missing_evaluation",
+                "missing_candidate"
+              ],
+              "type": "string"
+            },
+            "title": "Incomplete Reasons",
+            "type": "array"
+          },
           "proposal_id": {
             "title": "Proposal Id",
             "type": "string"
@@ -31620,7 +31658,8 @@
           "status": {
             "enum": [
               "open",
-              "settled"
+              "settled",
+              "incomplete"
             ],
             "title": "Status",
             "type": "string"
@@ -31632,8 +31671,15 @@
             "type": "string"
           },
           "target_ref": {
-            "title": "Target Ref",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Ref"
           },
           "terminal_reason": {
             "anyOf": [
@@ -31654,12 +31700,24 @@
             "title": "Terminal Reason"
           },
           "verdict": {
-            "enum": [
-              "candidate",
-              "refused"
+            "anyOf": [
+              {
+                "enum": [
+                  "candidate",
+                  "refused"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Verdict",
-            "type": "string"
+            "title": "Verdict"
+          },
+          "withdrawal_present": {
+            "default": false,
+            "title": "Withdrawal Present",
+            "type": "boolean"
           }
         },
         "required": [
@@ -42868,8 +42926,7 @@
                     "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                     "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                     "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
-                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1",
-                    "playbill-procedure-settlement-refusal-v1": "#/$defs/ProcedureSettlementRefusalV1"
+                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
                   },
                   "propertyName": "tag"
                 },
@@ -42885,9 +42942,6 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedureInternalFailureV1"
-                  },
-                  {
-                    "$ref": "#/$defs/ProcedureSettlementRefusalV1"
                   },
                   {
                     "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
@@ -44033,83 +44087,6 @@
             "title": "ProcedureRunBudgetV1",
             "type": "object"
           },
-          "ProcedureSettlementRefusalV1": {
-            "additionalProperties": false,
-            "properties": {
-              "classification": {
-                "const": "settlement_refusal",
-                "default": "settlement_refusal",
-                "title": "Classification",
-                "type": "string"
-              },
-              "code": {
-                "enum": [
-                  "settlement_proposal_id_mismatch",
-                  "settlement_candidate_mismatch",
-                  "settlement_base_semantic_root_mismatch",
-                  "settlement_activation_coordinate_changed",
-                  "settlement_actor_principal_invalid",
-                  "settlement_candidate_scope_mismatch",
-                  "settlement_receipt_mismatch",
-                  "settlement_lost_cas"
-                ],
-                "title": "Code",
-                "type": "string"
-              },
-              "details": {
-                "title": "Details"
-              },
-              "journal_coordinate": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ProcedureJournalCoordinateV1"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "message": {
-                "title": "Message",
-                "type": "string"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "repair": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/RepairOperationV1"
-                  },
-                  {
-                    "$ref": "#/$defs/HandEditRepairV1"
-                  }
-                ],
-                "title": "Repair"
-              },
-              "retryable": {
-                "default": false,
-                "title": "Retryable",
-                "type": "boolean"
-              },
-              "tag": {
-                "const": "playbill-procedure-settlement-refusal-v1",
-                "default": "playbill-procedure-settlement-refusal-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "code",
-              "message",
-              "node_id",
-              "repair"
-            ],
-            "title": "ProcedureSettlementRefusalV1",
-            "type": "object"
-          },
           "RepairOperationV1": {
             "additionalProperties": false,
             "properties": {
@@ -44253,8 +44230,7 @@
                     "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                     "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                     "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
-                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1",
-                    "playbill-procedure-settlement-refusal-v1": "#/$defs/ProcedureSettlementRefusalV1"
+                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
                   },
                   "propertyName": "tag"
                 },
@@ -44270,9 +44246,6 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedureInternalFailureV1"
-                  },
-                  {
-                    "$ref": "#/$defs/ProcedureSettlementRefusalV1"
                   },
                   {
                     "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
@@ -44834,8 +44807,7 @@
                     "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                     "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                     "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
-                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1",
-                    "playbill-procedure-settlement-refusal-v1": "#/$defs/ProcedureSettlementRefusalV1"
+                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
                   },
                   "propertyName": "tag"
                 },
@@ -44851,9 +44823,6 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedureInternalFailureV1"
-                  },
-                  {
-                    "$ref": "#/$defs/ProcedureSettlementRefusalV1"
                   },
                   {
                     "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
@@ -46370,83 +46339,6 @@
             "title": "ProcedureSelectionDecisionV1",
             "type": "object"
           },
-          "ProcedureSettlementRefusalV1": {
-            "additionalProperties": false,
-            "properties": {
-              "classification": {
-                "const": "settlement_refusal",
-                "default": "settlement_refusal",
-                "title": "Classification",
-                "type": "string"
-              },
-              "code": {
-                "enum": [
-                  "settlement_proposal_id_mismatch",
-                  "settlement_candidate_mismatch",
-                  "settlement_base_semantic_root_mismatch",
-                  "settlement_activation_coordinate_changed",
-                  "settlement_actor_principal_invalid",
-                  "settlement_candidate_scope_mismatch",
-                  "settlement_receipt_mismatch",
-                  "settlement_lost_cas"
-                ],
-                "title": "Code",
-                "type": "string"
-              },
-              "details": {
-                "title": "Details"
-              },
-              "journal_coordinate": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ProcedureJournalCoordinateV1"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "message": {
-                "title": "Message",
-                "type": "string"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "repair": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/RepairOperationV1"
-                  },
-                  {
-                    "$ref": "#/$defs/HandEditRepairV1"
-                  }
-                ],
-                "title": "Repair"
-              },
-              "retryable": {
-                "default": false,
-                "title": "Retryable",
-                "type": "boolean"
-              },
-              "tag": {
-                "const": "playbill-procedure-settlement-refusal-v1",
-                "default": "playbill-procedure-settlement-refusal-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "code",
-              "message",
-              "node_id",
-              "repair"
-            ],
-            "title": "ProcedureSettlementRefusalV1",
-            "type": "object"
-          },
           "RepairOperationV1": {
             "additionalProperties": false,
             "properties": {
@@ -46693,8 +46585,7 @@
                     "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                     "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                     "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
-                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1",
-                    "playbill-procedure-settlement-refusal-v1": "#/$defs/ProcedureSettlementRefusalV1"
+                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
                   },
                   "propertyName": "tag"
                 },
@@ -46710,9 +46601,6 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedureInternalFailureV1"
-                  },
-                  {
-                    "$ref": "#/$defs/ProcedureSettlementRefusalV1"
                   },
                   {
                     "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
@@ -47314,8 +47202,7 @@
                     "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                     "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                     "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
-                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1",
-                    "playbill-procedure-settlement-refusal-v1": "#/$defs/ProcedureSettlementRefusalV1"
+                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
                   },
                   "propertyName": "tag"
                 },
@@ -47331,9 +47218,6 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedureInternalFailureV1"
-                  },
-                  {
-                    "$ref": "#/$defs/ProcedureSettlementRefusalV1"
                   },
                   {
                     "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
@@ -48842,83 +48726,6 @@
             "title": "ProcedureSelectionDecisionV1",
             "type": "object"
           },
-          "ProcedureSettlementRefusalV1": {
-            "additionalProperties": false,
-            "properties": {
-              "classification": {
-                "const": "settlement_refusal",
-                "default": "settlement_refusal",
-                "title": "Classification",
-                "type": "string"
-              },
-              "code": {
-                "enum": [
-                  "settlement_proposal_id_mismatch",
-                  "settlement_candidate_mismatch",
-                  "settlement_base_semantic_root_mismatch",
-                  "settlement_activation_coordinate_changed",
-                  "settlement_actor_principal_invalid",
-                  "settlement_candidate_scope_mismatch",
-                  "settlement_receipt_mismatch",
-                  "settlement_lost_cas"
-                ],
-                "title": "Code",
-                "type": "string"
-              },
-              "details": {
-                "title": "Details"
-              },
-              "journal_coordinate": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ProcedureJournalCoordinateV1"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "message": {
-                "title": "Message",
-                "type": "string"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "repair": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/RepairOperationV1"
-                  },
-                  {
-                    "$ref": "#/$defs/HandEditRepairV1"
-                  }
-                ],
-                "title": "Repair"
-              },
-              "retryable": {
-                "default": false,
-                "title": "Retryable",
-                "type": "boolean"
-              },
-              "tag": {
-                "const": "playbill-procedure-settlement-refusal-v1",
-                "default": "playbill-procedure-settlement-refusal-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "code",
-              "message",
-              "node_id",
-              "repair"
-            ],
-            "title": "ProcedureSettlementRefusalV1",
-            "type": "object"
-          },
           "ProviderBucketClassificationPlanV1": {
             "additionalProperties": false,
             "description": "Accepted, measured-bucket-free classifier plan for one occurrence.",
@@ -49215,8 +49022,7 @@
                     "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                     "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                     "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
-                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1",
-                    "playbill-procedure-settlement-refusal-v1": "#/$defs/ProcedureSettlementRefusalV1"
+                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
                   },
                   "propertyName": "tag"
                 },
@@ -49232,9 +49038,6 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedureInternalFailureV1"
-                  },
-                  {
-                    "$ref": "#/$defs/ProcedureSettlementRefusalV1"
                   },
                   {
                     "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
@@ -49898,8 +49701,7 @@
                     "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                     "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                     "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
-                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1",
-                    "playbill-procedure-settlement-refusal-v1": "#/$defs/ProcedureSettlementRefusalV1"
+                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
                   },
                   "propertyName": "tag"
                 },
@@ -49915,9 +49717,6 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedureInternalFailureV1"
-                  },
-                  {
-                    "$ref": "#/$defs/ProcedureSettlementRefusalV1"
                   },
                   {
                     "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
@@ -51426,83 +51225,6 @@
             "title": "ProcedureSelectionDecisionV1",
             "type": "object"
           },
-          "ProcedureSettlementRefusalV1": {
-            "additionalProperties": false,
-            "properties": {
-              "classification": {
-                "const": "settlement_refusal",
-                "default": "settlement_refusal",
-                "title": "Classification",
-                "type": "string"
-              },
-              "code": {
-                "enum": [
-                  "settlement_proposal_id_mismatch",
-                  "settlement_candidate_mismatch",
-                  "settlement_base_semantic_root_mismatch",
-                  "settlement_activation_coordinate_changed",
-                  "settlement_actor_principal_invalid",
-                  "settlement_candidate_scope_mismatch",
-                  "settlement_receipt_mismatch",
-                  "settlement_lost_cas"
-                ],
-                "title": "Code",
-                "type": "string"
-              },
-              "details": {
-                "title": "Details"
-              },
-              "journal_coordinate": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ProcedureJournalCoordinateV1"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "message": {
-                "title": "Message",
-                "type": "string"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "repair": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/RepairOperationV1"
-                  },
-                  {
-                    "$ref": "#/$defs/HandEditRepairV1"
-                  }
-                ],
-                "title": "Repair"
-              },
-              "retryable": {
-                "default": false,
-                "title": "Retryable",
-                "type": "boolean"
-              },
-              "tag": {
-                "const": "playbill-procedure-settlement-refusal-v1",
-                "default": "playbill-procedure-settlement-refusal-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "code",
-              "message",
-              "node_id",
-              "repair"
-            ],
-            "title": "ProcedureSettlementRefusalV1",
-            "type": "object"
-          },
           "ProcedureSourceCaptureAssociationV1": {
             "additionalProperties": false,
             "description": "Reserved B4 association between one Provider occurrence and one Capture.",
@@ -51862,8 +51584,7 @@
                     "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                     "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                     "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
-                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1",
-                    "playbill-procedure-settlement-refusal-v1": "#/$defs/ProcedureSettlementRefusalV1"
+                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
                   },
                   "propertyName": "tag"
                 },
@@ -51879,9 +51600,6 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedureInternalFailureV1"
-                  },
-                  {
-                    "$ref": "#/$defs/ProcedureSettlementRefusalV1"
                   },
                   {
                     "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
