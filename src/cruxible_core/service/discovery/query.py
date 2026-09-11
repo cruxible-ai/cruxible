@@ -208,11 +208,13 @@ class _AcceptedQueryFactsRead:
         *,
         coordinate: AcceptedProjectionCoordinate,
         external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
+        source_tree: Mapping[str, bytes] | None = None,
     ) -> None:
         self._instance = instance
         self._coordinate = coordinate
         self._readers = dict(external_readers or {})
         self._tree: Mapping[str, bytes] | None = None
+        self._source_tree = source_tree
         self._claim_paths: tuple[str, ...] = ()
         self._subject_paths: tuple[str, ...] = ()
         self._history: ClaimReadHistoryIndex | None = None
@@ -221,13 +223,23 @@ class _AcceptedQueryFactsRead:
         self._rows: dict[str, ClaimFactRowV1] = {}
         self._results: dict[bool, ClaimQueryFactsV1] = {}
 
+    def live_claims(self) -> tuple[ClaimArtifactAny, ...]:
+        """Return the source Claims already read by this request's live fact fold."""
+        self.build()
+        return tuple(
+            self._claims[path]
+            for path in sorted(self._claims)
+            if self._claims[path].lifecycle.state == "live"
+        )
+
     def build(self, *, include_retired: bool = False) -> ClaimQueryFactsV1:
         previous = self._results.get(include_retired)
         if previous is not None:
             return previous
         if self._tree is None:
             if isinstance(self._instance, PlaybillInstance):
-                self._tree = ClaimVerdictReadContext(self._instance, self._coordinate).tree
+                context = ClaimVerdictReadContext(self._instance, self._coordinate)
+                self._tree = self._source_tree if self._source_tree is not None else context.tree
                 with self._instance.bind_accepted_projection(self._coordinate) as projection:
                     self._claim_paths = tuple(
                         row.path for row in projection.typed.envelopes(kind="claim")
@@ -235,6 +247,15 @@ class _AcceptedQueryFactsRead:
                     self._subject_paths = tuple(
                         row.path for row in projection.typed.envelopes(kind="subject")
                     )
+                    type_paths = tuple(
+                        row[0]
+                        for row in projection.typed.connection.execute(
+                            "SELECT DISTINCT t.path FROM claims c "
+                            "JOIN claim_types t ON t.identity=c.claim_type_identity"
+                        )
+                    )
+                if self._source_tree is None:
+                    context.prefetch(self._claim_paths + self._subject_paths + type_paths)
             else:
                 # Cold candidate compilation has source bytes, without a served index.
                 self._tree = self._instance.tree_at(self._coordinate.git_oid)

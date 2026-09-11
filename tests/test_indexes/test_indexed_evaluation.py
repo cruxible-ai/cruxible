@@ -81,7 +81,11 @@ def _fixture(tmp_path, sources):
             connection.close()
 
         return SimpleNamespace(
-            typed=TypedStateReader(connection, coordinate, SimpleNamespace(read_blob=read_blob)),
+            typed=TypedStateReader(
+                connection,
+                coordinate,
+                SimpleNamespace(read_blobs=lambda oids: {oid: read_blob(oid) for oid in oids}),
+            ),
             accepted=coordinate,
             _connection=connection,
             index_path=path,

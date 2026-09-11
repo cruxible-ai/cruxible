@@ -189,6 +189,15 @@ class EvaluationRows:
             lambda: self.keys("pins", "target_identity", "edge_kind='required_pin'"),
         )
         if edge_tree is None:
+            # A cold proof build already enumerates the graph. Fetch its sources
+            # together; incremental overlays keep using selected point reads.
+            self.reader.prefetch_members(
+                tuple(
+                    path
+                    for path in self.keys("artifact_lookup", "path")
+                    if path not in self.changed
+                )
+            )
             edge_tree = build_dependency_edge_tree(
                 tuple(edge for values in outgoing.values() for edge in values)
             )

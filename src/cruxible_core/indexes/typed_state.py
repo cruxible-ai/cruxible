@@ -580,6 +580,10 @@ class TypedStateReader:
         self.repository = repository
         self.bodies = bodies
         self.history = history
+        from cruxible_core.indexes.history.history_index import RetainedRecordReader
+
+        self.records = RetainedRecordReader(repository.blob_at) if history is not None else None
+        self._member_bytes: dict[str, bytes] = {}
         self.work = {"members_read": 0, "source_bytes": 0, "owners_selected": 0}
 
     @property
@@ -589,19 +593,34 @@ class TypedStateReader:
         return artifact_codec_for_compiler(self.accepted.compiler)
 
     def member_bytes(self, path: str) -> bytes:
+        self.prefetch_members((path,))
+        return self._member_bytes[path]
+
+    def prefetch_members(self, paths: tuple[str, ...]) -> None:
+        """Authenticate selected bytes once per handle, with batched Git object reads."""
         from cruxible_client.contracts.canonical import file_digest
 
-        row = self.connection.execute(
-            "SELECT git_blob_oid,file_digest,byte_length FROM main.members WHERE path=?", (path,)
-        ).fetchone()
-        if row is None:
-            raise ProjectionIntegrityError(f"accepted member is absent: {path}")
-        content = self.repository.read_blob(row[0])
-        self.work["members_read"] += 1
-        self.work["source_bytes"] += len(content)
-        if len(content) != row[2] or file_digest(content).tagged != row[1]:
-            raise ProjectionIntegrityError(f"accepted member differs from its projection: {path}")
-        return cast(bytes, content)
+        pending = tuple(dict.fromkeys(path for path in paths if path not in self._member_bytes))
+        for start in range(0, len(pending), 500):
+            selected = pending[start : start + 500]
+            rows = self.connection.execute(
+                "SELECT path,git_blob_oid,file_digest,byte_length FROM main.members "
+                "WHERE path IN (" + ",".join("?" for _ in selected) + ")",
+                selected,
+            ).fetchall()
+            missing = set(selected) - {row[0] for row in rows}
+            if missing:
+                raise ProjectionIntegrityError(f"accepted member is absent: {min(missing)}")
+            contents = self.repository.read_blobs(tuple(row[1] for row in rows))
+            for path, oid, digest, length in rows:
+                content = contents[oid]
+                self.work["members_read"] += 1
+                self.work["source_bytes"] += len(content)
+                if len(content) != length or file_digest(content).tagged != digest:
+                    raise ProjectionIntegrityError(
+                        f"accepted member differs from its projection: {path}"
+                    )
+                self._member_bytes[path] = content
 
     def envelope(self, identity: str) -> ArtifactEnvelopeRow | None:
         if identity in SINGLETONS:
@@ -752,17 +771,15 @@ class TypedStateReader:
 
         records = {}
         coordinates = {}
+        self.prefetch_members(paths)
         if self.history is not None:
+            assert self.records is not None
             with self.history() as history:
                 for path in paths:
                     for location in history.member_history(path):
-                        if location.sequence in records:
-                            continue
                         generation = history.generation(location.sequence)
                         record_path = generation.source_record_path
-                        record = history.read_member_record(
-                            location, load_record=self.repository.blob_at
-                        )
+                        record = history.read_member_record(location, load_record=self.records)
                         records[location.sequence] = (record_path, record)
                         coordinates[location.sequence] = AcceptedCoordinate(
                             git_oid=generation.git_oid,
@@ -800,6 +817,15 @@ class TypedStateReader:
             accepted_coordinates_by_sequence=coordinates,
             selected_member_history=tuple(records[key] for key in sorted(records)),
         )
+
+    def facts_for(self, rows: tuple[ArtifactEnvelopeRow, ...]) -> dict[str, tuple[Any, ...]]:
+        """Compile a selected owner set together, without repeating shared history."""
+        grouped: dict[str, list[Any]] = {row.identity: [] for row in rows}
+        if rows:
+            for fact in self._compile_paths(tuple(row.path for row in rows)).semantic_facts:
+                if fact.subject_identity in grouped:
+                    grouped[fact.subject_identity].append(fact)
+        return {identity: tuple(facts) for identity, facts in grouped.items()}
 
     def facts(
         self, schema_id: str | None = None, *, identity: str | None = None

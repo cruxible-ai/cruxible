@@ -11,6 +11,7 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from cruxible_client.contracts.candidates import MemberLawEvaluationV2
 from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
     capture_contract_digest,
@@ -62,6 +63,7 @@ from cruxible_client.contracts.standing_mandates import (
 )
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_core.evidence.source_readers import ExternalSourceReaderProtocol
+from cruxible_core.indexes.history.history_index import RetainedRecordReader
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.settlement import ChangeSetRecord, ChangeSetRecordAnyVersion
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -194,6 +196,11 @@ class ClaimVerdictReadContext:
             self._source_bytes[path] = content
         return self._source_bytes[path]
 
+    def prefetch(self, paths: tuple[str, ...]) -> None:
+        wanted = tuple(dict.fromkeys(path for path in paths if path not in self._source_bytes))
+        if wanted:
+            self._source_bytes.update(self.instance.blobs_at(self.coordinate.git_oid, wanted))
+
     @property
     def tree(self) -> Mapping[str, bytes]:
         return self._tree
@@ -201,6 +208,7 @@ class ClaimVerdictReadContext:
     def claims(self) -> tuple[ClaimArtifactAny, ...]:
         with self.instance.bind_accepted_projection(self.coordinate) as projection:
             identities = tuple(row.identity for row in projection.typed.envelopes(kind="claim"))
+        self.prefetch(tuple(claim_path(identity.removeprefix("Claim:")) for identity in identities))
         for identity in identities:
             self.claim(identity)
         return tuple(self._claims.values())
@@ -407,19 +415,30 @@ class ClaimReadHistoryIndex:
 
 
 class _IndexedClaimLawEvidence(Mapping[str, ClaimLawEvidenceAny]):
-    def __init__(self, instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate):
+    def __init__(
+        self,
+        instance: PlaybillInstance,
+        coordinate: AcceptedProjectionCoordinate,
+        records: RetainedRecordReader | None = None,
+    ):
         self.instance = instance
         self.at = AcceptedCoordinate.from_internal(coordinate)
+        self._records = records if records is not None else RetainedRecordReader(instance.blob_at)
+        self._evidence_by_sequence: dict[int, dict[str, MemberLawEvaluationV2]] = {}
 
     def __getitem__(self, path: str) -> ClaimLawEvidenceAny:
         with self.instance.accepted_history_reader(at=self.at) as history:
             locations = history.claim_law_locations(path=path, latest=True)
             if not locations:
                 raise KeyError(path)
-            record = history.read_member_record(locations[0], self.instance.blob_at)
+            record = history.read_member_record(locations[0], self._records)
             if isinstance(record, ChangeSetRecord):
                 raise KeyError(path)
-            evidence = next((item for item in record.law_evidence if item.path == path), None)
+            if record.sequence not in self._evidence_by_sequence:
+                self._evidence_by_sequence[record.sequence] = {
+                    item.path: item for item in record.law_evidence
+                }
+            evidence = self._evidence_by_sequence[record.sequence].get(path)
             raw = None if evidence is None else evidence.result.get("claim_evidence")
             if raw is None:
                 raise ProposalIntegrityError("accepted Claim law locator has no retained evidence")
@@ -467,13 +486,14 @@ def _claim_read_history_index(
     instance: ClaimReadSourceProtocol,
     *,
     coordinate: AcceptedProjectionCoordinate,
+    records: RetainedRecordReader | None = None,
 ) -> ClaimReadHistoryIndex:
     """Live reads use retained locators; unprojected replay folds its supplied source."""
     if isinstance(instance, PlaybillInstance):
         return ClaimReadHistoryIndex(
             instance=instance,
             generation_oids=(),
-            law_evidence=_IndexedClaimLawEvidence(instance, coordinate),
+            law_evidence=_IndexedClaimLawEvidence(instance, coordinate, records),
             _claim_types=_IndexedClaimTypes(instance, coordinate),
         )
     return _build_claim_read_history_index(instance, coordinate=coordinate)

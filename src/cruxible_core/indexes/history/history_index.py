@@ -30,6 +30,7 @@ from cruxible_client.contracts.candidates import (
 from cruxible_client.contracts.errors import PlaybillFormatError, ProjectionIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow
+from cruxible_core.derived.derived_runtime import BoundedCache
 from cruxible_core.indexes.acquisition import open_working_snapshot
 from cruxible_core.ledger.recovery import RecoveredInstanceState
 from cruxible_core.proposals.settlement import (
@@ -158,12 +159,52 @@ class AcceptedMemberLocation:
     has_law_evidence: int
 
 
+class RetainedRecordReader:
+    """Request-owned validated records, shared across selections of their members."""
+
+    def __init__(self, load_record: Callable[[str, str], bytes | None]) -> None:
+        self._load = load_record
+        self._records: dict[AcceptedGenerationLocation, ChangeSetRecordAnyVersion] = {}
+
+    def read(
+        self,
+        generation: AcceptedGenerationLocation,
+        canonical_cache: BoundedCache[bool] | None = None,
+    ) -> ChangeSetRecordAnyVersion:
+        if generation in self._records:
+            return self._records[generation]
+        if generation.source_record_path is None:
+            raise ProjectionIntegrityError("genesis has no member evidence record")
+        raw = self._load(generation.git_oid, generation.source_record_path)
+        if raw is None:
+            raise ProjectionIntegrityError("accepted member source record is unavailable")
+        record = parse_change_set_record(
+            raw, path=generation.source_record_path, canonical_cache=canonical_cache
+        )
+        if (
+            record.sequence != generation.sequence
+            or record.changeset_digest != generation.source_record_digest
+            or record.candidate_digest != generation.candidate_digest
+            or record.compiler_digest != generation.compiler_digest
+        ):
+            raise ProjectionIntegrityError("accepted member source record binding differs")
+        self._records[generation] = record
+        return record
+
+
 class HistoryReader:
     """A transaction-scoped reader. Locations identify retained bytes, not liveness."""
 
-    def __init__(self, connection: sqlite3.Connection, sequence: int) -> None:
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        sequence: int,
+        canonical_cache: BoundedCache[bool] | None = None,
+    ) -> None:
+        self._canonical_cache = canonical_cache
         self._connection = connection
         self._sequence = sequence
+        self._record_readers: dict[Callable[[str, str], bytes | None], RetainedRecordReader] = {}
 
     @property
     def sequence(self) -> int:
@@ -287,29 +328,23 @@ class HistoryReader:
         return location
 
     def read_generation_record(
-        self, sequence: int, load_record: Callable[[str, str], bytes | None]
+        self, sequence: int, load_record: Callable[[str, str], bytes | None] | RetainedRecordReader
     ) -> ChangeSetRecordAnyVersion:
         """Verify one retained generation record against its accepted locator."""
-        generation = self.generation(sequence)
-        if generation.source_record_path is None:
-            raise ProjectionIntegrityError("genesis has no member evidence record")
-        raw = load_record(generation.git_oid, generation.source_record_path)
-        if raw is None:
-            raise ProjectionIntegrityError("accepted member source record is unavailable")
-        record = parse_change_set_record(raw, path=generation.source_record_path)
-        if (
-            record.sequence != generation.sequence
-            or record.changeset_digest != generation.source_record_digest
-            or record.candidate_digest != generation.candidate_digest
-            or record.compiler_digest != generation.compiler_digest
-        ):
-            raise ProjectionIntegrityError("accepted member source record binding differs")
-        return record
+        reader: RetainedRecordReader | None
+        if isinstance(load_record, RetainedRecordReader):
+            reader = load_record
+        else:
+            reader = self._record_readers.get(load_record)
+            if reader is None:
+                reader = RetainedRecordReader(load_record)
+                self._record_readers[load_record] = reader
+        return reader.read(self.generation(sequence), self._canonical_cache)
 
     def read_member_record(
         self,
         location: AcceptedMemberLocation,
-        load_record: Callable[[str, str], bytes | None],
+        load_record: Callable[[str, str], bytes | None] | RetainedRecordReader,
     ) -> ChangeSetRecordAnyVersion:
         """Verify one exact retained record; a locator never substitutes for it."""
         record = self.read_generation_record(location.sequence, load_record)
@@ -330,7 +365,7 @@ class HistoryReader:
         *,
         artifact_digest: str,
         path: str,
-        load_record: Callable[[str, str], bytes | None],
+        load_record: Callable[[str, str], bytes | None] | RetainedRecordReader,
     ) -> MemberLawEvaluationV2 | None:
         location = self.claim_law_evidence(identity, artifact_digest=artifact_digest, path=path)
         if location is None:
@@ -477,6 +512,9 @@ class AcceptedHistoryIndex:
 
     def __init__(self, path: Path) -> None:
         self.path = path
+        self._canonical_records: BoundedCache[bool] = BoundedCache(
+            max_entries=4096, max_bytes=256 * 1024
+        )
         self._lock = threading.RLock()
         self._connections: list[sqlite3.Connection] = []
         self._proposal_close_state: dict[str, Any] = {}
@@ -648,7 +686,9 @@ class AcceptedHistoryIndex:
         if clean is not None:
             clean_connection, clean_stamp = clean
             try:
-                reader = HistoryReader(clean_connection, recovered.head.sequence)
+                reader = HistoryReader(
+                    clean_connection, recovered.head.sequence, self._canonical_records
+                )
                 reader.resolve(
                     AcceptedCoordinate(
                         git_oid=recovered.head.oid,
@@ -658,7 +698,9 @@ class AcceptedHistoryIndex:
                     )
                 )
                 if at is not None:
-                    reader = HistoryReader(clean_connection, reader.resolve(at).sequence)
+                    reader = HistoryReader(
+                        clean_connection, reader.resolve(at).sequence, self._canonical_records
+                    )
                 yield reader
                 current_stamp = self._file_stamp()
                 if current_stamp is None or clean_stamp[:2] != current_stamp[:2]:
@@ -702,7 +744,7 @@ class AcceptedHistoryIndex:
                 connection = open_working_snapshot(
                     self.path, expected_stamp=published_stamp, file_stamp=self._file_stamp
                 )
-                reader = HistoryReader(connection, recovered.head.sequence)
+                reader = HistoryReader(connection, recovered.head.sequence, self._canonical_records)
                 # BEGIN alone does not establish a snapshot. Pin it before
                 # releasing the acquisition lock, including for an empty caller.
                 reader.resolve(
@@ -722,7 +764,9 @@ class AcceptedHistoryIndex:
                         "history index changed during snapshot acquisition"
                     )
                 if at is not None:
-                    reader = HistoryReader(connection, reader.resolve(at).sequence)
+                    reader = HistoryReader(
+                        connection, reader.resolve(at).sequence, self._canonical_records
+                    )
                 writer.rollback()
             yield reader
             current_stamp = self._file_stamp()

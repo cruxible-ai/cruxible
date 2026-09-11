@@ -38,6 +38,7 @@ from cruxible_core.service.claims.claims import (
     _resolve_coordinate,
     materialize_playbill_claim_view,
 )
+from cruxible_core.service.evidence.evidence import _claim_read_history_index
 
 
 def _cursor_selection(request: ClaimReadBatchRequestV1) -> str:
@@ -112,8 +113,9 @@ def service_read_claim_batch(
             identities = identities[: request.limit]
         views: list[PlaybillClaimViewV2] = []
         public_views = []
+        projected_views = {view.envelope.identity: view for view in projection.claims(identities)}
         for identity in identities:
-            projected = projection.claim(identity)
+            projected = projected_views.get(identity)
             if projected is None:
                 raise ClaimNotFoundError(f"Claim not found: {identity}")
             public_views.append(_public_claim(projected))
@@ -142,14 +144,21 @@ def service_read_claim_batch(
         admission_tree = (
             instance.blobs_at(coordinate.git_oid, tuple(sorted(wanted))) if public_views else {}
         )
+        claim_history = _claim_read_history_index(
+            instance, coordinate=coordinate, records=projection.typed.records
+        )
+        evaluation_time = request.evaluation_time or (
+            _accepted_generation_time(instance, coordinate) if public_views else None
+        )
         for public in public_views:
+            assert evaluation_time is not None
             view = materialize_playbill_claim_view(
                 instance,
                 public=public,
                 coordinate=coordinate,
-                evaluation_time=request.evaluation_time
-                or _accepted_generation_time(instance, coordinate),
+                evaluation_time=evaluation_time,
                 admission_tree=admission_tree,
+                law=claim_history.law_evidence.get(str(public.envelope["path"])),
             )
             views.append(PlaybillClaimViewV2.model_validate(view.model_dump(mode="json")))
     cursor = None

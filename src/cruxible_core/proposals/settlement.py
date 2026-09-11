@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Annotated, Final, Literal, Protocol
@@ -62,6 +63,7 @@ from cruxible_client.contracts.principals import (
     principal_registry_from_tree,
 )
 from cruxible_client.contracts.types import GenerationDescriptor
+from cruxible_core.derived.derived_runtime import BoundedCache
 from cruxible_core.indexes.projection import (
     AcceptedProjectionCoordinate,
     CandidateGenerationProjectionCoordinate,
@@ -483,7 +485,9 @@ _TAGGED_CHANGE_SET_RECORD_ADAPTER: TypeAdapter[ChangeSetRecordAnyVersion] = Type
 )
 
 
-def parse_change_set_record(content: bytes, *, path: str) -> ChangeSetRecordAnyVersion:
+def parse_change_set_record(
+    content: bytes, *, path: str, canonical_cache: BoundedCache[bool] | None = None
+) -> ChangeSetRecordAnyVersion:
     """Parse any accepted change-set version and verify exact canonical bytes.
 
     This is the one seam through which accepted change-set bytes enter replay,
@@ -503,8 +507,15 @@ def parse_change_set_record(content: bytes, *, path: str) -> ChangeSetRecordAnyV
             record = _CHANGE_SET_RECORD_ADAPTER.validate_json(content)
     except (ValueError, ValidationError) as exc:
         raise SettlementIntegrityError(f"generation change-set record is invalid: {path}") from exc
-    if render_change_set(record) != content:
-        raise SettlementIntegrityError(f"generation change-set record is not canonical: {path}")
+    # History readers still fetch source bytes and construct fresh models. Only
+    # the expensive canonical round trip is reusable for identical content;
+    # this marker neither authenticates a locator nor proves source availability.
+    key = hashlib.sha256(content).digest() if canonical_cache is not None else None
+    if canonical_cache is None or canonical_cache.get(key) is None:
+        if render_change_set(record) != content:
+            raise SettlementIntegrityError(f"generation change-set record is not canonical: {path}")
+        if canonical_cache is not None:
+            canonical_cache.put(key, True, weight=64)
     return record
 
 

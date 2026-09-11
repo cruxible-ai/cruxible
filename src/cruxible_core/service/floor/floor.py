@@ -72,10 +72,6 @@ from cruxible_core.service.authoring.documents import (
     PlaybillAcceptedCoordinate,
     service_list_playbill_documents,
 )
-from cruxible_core.service.claims.claims import (
-    _claim_from_view,
-    service_list_playbill_claims,
-)
 from cruxible_core.service.discovery.coverage import (
     COVERAGE_ACCESS_PROFILE_ID,
     accepted_evidence_sources,
@@ -85,7 +81,7 @@ from cruxible_core.service.discovery.discovery import (
     accepted_claim_types,
     build_accepted_discovery_vocabulary,
 )
-from cruxible_core.service.discovery.query import build_accepted_query_facts
+from cruxible_core.service.discovery.query import _AcceptedQueryFactsRead
 from cruxible_core.service.floor.floor_content import current_content, review_snapshot_oid
 from cruxible_core.storage.cas import BodyAccessContext
 
@@ -504,21 +500,20 @@ def service_export_playbill_floor(
         files = base_files.copy()
     else:
         tree = instance.tree_at(coordinate.git_oid)
-        facts = build_accepted_query_facts(
+        read = _AcceptedQueryFactsRead(
             instance,
             coordinate=coordinate,
             external_readers=external_readers,
+            source_tree=tree,
         )
+        facts = read.build()
         vocabulary = build_accepted_discovery_vocabulary(
             instance,
             coordinate=coordinate,
             facts=facts,
         )
         entries = _entry_index(vocabulary.entries)
-        claims = tuple(
-            _claim_from_view(view)
-            for view in service_list_playbill_claims(instance, at=accepted).claims
-        )
+        claims = read.live_claims()
         relations = descriptor_relations(claims)
 
         files = {}

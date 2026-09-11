@@ -35,7 +35,9 @@ def test_read_assembles_each_row_and_parses_each_claim_and_type_once(
 ) -> None:
     instance, _owner = seed_claims(tmp_path)
     coordinate, tree, _retired = _retired_tree(instance)
-    monkeypatch.setattr(instance, "tree_at", lambda oid: dict(tree))
+    monkeypatch.setattr(
+        instance, "blobs_at", lambda oid, paths: {p: tree[p] for p in paths if p in tree}
+    )
     expected = {
         include: query.build_accepted_query_facts(
             instance, coordinate=coordinate, include_retired=include
@@ -76,7 +78,9 @@ def test_live_only_read_does_not_require_retired_law_evidence(
         history,
         law_evidence={path: law for path, law in history.law_evidence.items() if path != retired},
     )
-    monkeypatch.setattr(instance, "tree_at", lambda oid: dict(tree))
+    monkeypatch.setattr(
+        instance, "blobs_at", lambda oid, paths: {p: tree[p] for p in paths if p in tree}
+    )
     monkeypatch.setattr(query, "_claim_read_history_index", lambda *args, **kwargs: history)
     reader = query._AcceptedQueryFactsRead(instance, coordinate=coordinate)
     assert len(reader.build().claims) == 1
@@ -94,7 +98,9 @@ def test_evidence_lookup_and_claim_parse_keep_original_refusal_order(
     history = query._claim_read_history_index(instance, coordinate=coordinate)
     history = replace(history, law_evidence={})
     tree[path] = b"not a Claim"
-    monkeypatch.setattr(instance, "tree_at", lambda oid: dict(tree))
+    monkeypatch.setattr(
+        instance, "blobs_at", lambda oid, paths: {p: tree[p] for p in paths if p in tree}
+    )
     monkeypatch.setattr(query, "_claim_read_history_index", lambda *args, **kwargs: history)
     calls = []
     original = query.parse_claim

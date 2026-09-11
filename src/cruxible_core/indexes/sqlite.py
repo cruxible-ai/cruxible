@@ -10,7 +10,7 @@ import stat
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from cruxible_client.contracts.canonical import (
     LogicalDigest,
@@ -341,10 +341,10 @@ class ProjectionHandle:
         )
 
     def attach_sources(self, repository: Any, *, bodies: Any, history: Any) -> ProjectionHandle:
-        self.typed.repository, self.typed.bodies, self.typed.history = (
-            repository,
-            bodies,
-            history,
+        from cruxible_core.indexes.typed_state import TypedStateReader
+
+        self.typed = TypedStateReader(
+            self._connection, self.accepted, repository, bodies=bodies, history=history
         )
         try:
             self.require_source_authentication(repository=repository)
@@ -431,10 +431,13 @@ class ProjectionHandle:
 
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
+        rows = self.typed.envelopes(kind="document")
+        facts = self.typed.facts_for(rows)
         return tuple(
-            view
-            for row in self.typed.envelopes(kind="document")
-            if (view := self.document(row.identity, access=access)) is not None
+            document_projection_view(
+                row, facts[row.identity], coordinate=self.accepted, access=access
+            )
+            for row in rows
         )
 
     def subject(self, identity: str) -> SubjectProjectionView | None:
@@ -454,23 +457,33 @@ class ProjectionHandle:
 
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
+        rows = self.typed.envelopes(kind="subject")
+        facts = self.typed.facts_for(rows)
         return tuple(
-            view
-            for row in self.typed.envelopes(kind="subject")
-            if (view := self.subject(row.identity)) is not None
+            subject_projection_view(row, facts[row.identity], coordinate=self.accepted)
+            for row in rows
         )
 
     def claim(self, identity: str) -> ClaimProjectionView | None:
         """Read one canonical first-class Claim at this accepted coordinate."""
 
+        return next(iter(self.claims((identity,))), None)
+
+    def claims(self, identities: tuple[str, ...]) -> tuple[ClaimProjectionView, ...]:
+        """Materialize only the selected Claims, sharing source and history reads."""
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
-        envelope = self.typed.envelope(identity)
-        if envelope is None or envelope.kind != "claim":
-            return None
-        return claim_projection_view(
-            envelope, self.typed.facts(identity=identity), coordinate=self.accepted
+        rows = tuple(
+            row
+            for identity in dict.fromkeys(identities)
+            if (row := self.typed.envelope(identity)) is not None and row.kind == "claim"
         )
+        facts = self.typed.facts_for(rows)
+        views = {
+            row.identity: claim_projection_view(row, facts[row.identity], coordinate=self.accepted)
+            for row in rows
+        }
+        return tuple(views[identity] for identity in identities if identity in views)
 
     def select_claim_identities(
         self,
@@ -532,11 +545,7 @@ class ProjectionHandle:
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
         identities = self._connection.execute(sql + " ORDER BY identity", values).fetchall()
-        return tuple(
-            view
-            for row in identities
-            if (view := self.claim(cast(str, row["identity"]))) is not None
-        )
+        return self.claims(tuple(row["identity"] for row in identities))
 
     def close(self) -> None:
         if not self._closed:

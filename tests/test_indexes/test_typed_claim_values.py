@@ -65,7 +65,7 @@ def _stored_claim(claim_world, tmp_path, claim):
         reader = TypedStateReader(
             connection,
             instance.accepted_coordinate(),
-            SimpleNamespace(read_blob={oid: content}.__getitem__),
+            SimpleNamespace(read_blobs=lambda oids: {key: {oid: content}[key] for key in oids}),
         )
         restored = reader.source(claim.identity.qualified)
         assert restored == claim
@@ -209,7 +209,7 @@ def test_filtered_claim_selection_distinguishes_selectors_before_materialization
         handle = SimpleNamespace(
             _connection=connection,
             _closed=False,
-            claim=materialize,
+            claims=lambda identities: tuple(materialize(identity) for identity in identities),
         )
         for mismatched in (
             SemanticAddress.whole_artifact(address.artifact_path),

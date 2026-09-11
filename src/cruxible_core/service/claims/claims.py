@@ -438,6 +438,11 @@ def service_get_playbill_claim(
             raise ClaimNotFoundError(f"Claim not found; expected {expected}; received {identity!r}")
     with instance.bind_accepted_projection(coordinate) as projection:
         claim = projection.claim(qualified)
+        from cruxible_core.service.evidence.evidence import _claim_read_history_index
+
+        claim_history = _claim_read_history_index(
+            instance, coordinate=coordinate, records=projection.typed.records
+        )
     if claim is None:
         raise ClaimNotFoundError(f"Claim not found; expected {expected}; received {identity!r}")
     public = _public_claim(claim)
@@ -448,6 +453,7 @@ def service_get_playbill_claim(
         public=public,
         coordinate=coordinate,
         evaluation_time=evaluation_time or _accepted_generation_time(instance, coordinate),
+        law=claim_history.law_evidence.get(path),
     )
 
 
@@ -457,10 +463,12 @@ def materialize_playbill_claim_view(
     public: PlaybillClaimView,
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
+    law: ClaimLawEvidenceAny | None,
     admission_tree: dict[str, bytes] | None = None,
 ) -> PlaybillClaimViewV2:
     """Shared single/batch admission semantics; binding and selection happen upstream."""
-    path = str(public.envelope["path"])
+    if law is None:
+        raise ProposalIntegrityError("accepted Claim has no reproducible Claim law evidence")
     parsed = _claim_from_view(public)
     return PlaybillClaimViewV2(
         coordinate=public.coordinate,
@@ -475,7 +483,7 @@ def materialize_playbill_claim_view(
                 if admission_tree is not None
                 else _claim_admission_tree(instance, claim=parsed, coordinate=coordinate)
             ),
-            law=_claim_law_evidence(instance, path=path, at=coordinate),
+            law=law,
         ),
         statement=claim_statement_card(parsed),
     )
