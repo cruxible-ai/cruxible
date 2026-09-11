@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -22,7 +21,6 @@ from cruxible_client.contracts.policies import (
     ClaimResolutionPolicyV1,
 )
 from cruxible_core.compiler.compiler import current_compiler_coordinate
-from cruxible_core.indexes.serving import bind_current_projection
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.proposals.settlement import (
     ChangeActorBinding,
@@ -159,24 +157,17 @@ def test_claim_type_v2_generation_projects_and_replays_after_restart(tmp_path: P
     reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     assert reopened.accepted_coordinate().git_oid == bundle.oid
     assert isinstance(reopened.accepted_history()[-1].record, ChangeSetRecordV3)
-    publication = Path(reopened.inspect().storage_directories["projections"])
-    with bind_current_projection(publication, expected=reopened.accepted_coordinate()) as handle:
-        connection = sqlite3.connect(handle.index_path)
-        try:
-            envelope = connection.execute(
-                "SELECT kind,artifact_digest FROM artifact_envelopes WHERE identity = ?",
-                (exact_claim_type.identity.qualified,),
-            ).fetchone()
-            schemas = {
-                row[0]
-                for row in connection.execute(
-                    "SELECT schema_id FROM semantic_facts WHERE subject_identity = ?",
-                    (exact_claim_type.identity.qualified,),
-                )
-            }
-        finally:
-            connection.close()
-    assert envelope == ("claim-type", claim_type_digest(exact_claim_type).tagged)
+    with reopened.bind_accepted_projection(reopened.accepted_coordinate()) as handle:
+        envelope = handle.typed.envelope(exact_claim_type.identity.qualified)
+        schemas = {
+            fact.schema_id
+            for fact in handle.typed.facts(identity=exact_claim_type.identity.qualified)
+        }
+    assert envelope is not None
+    assert (envelope.kind, envelope.artifact_digest) == (
+        "claim-type",
+        claim_type_digest(exact_claim_type).tagged,
+    )
     assert {
         "playbill.claim_type.attestation_coverage",
         "playbill.claim_type.governance",
