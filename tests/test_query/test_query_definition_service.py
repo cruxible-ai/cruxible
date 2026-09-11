@@ -12,6 +12,7 @@ from cruxible_client.contracts.query.definitions import (
     query_definition_digest,
     query_definition_path,
 )
+from cruxible_core.indexes.typed_state import TypedStateReader
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.discovery.query_definitions import (
     service_get_playbill_query_definition,
@@ -108,3 +109,35 @@ def test_query_definition_read_is_pinned_to_the_requested_accepted_coordinate(
     pinned = service_get_playbill_query_definition(instance, name=QUERY_NAME, at=accepted)
 
     assert pinned.coordinate == accepted
+
+
+def test_query_definition_reads_only_selected_accepted_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, _owner = _accept_query(tmp_path)
+    # Bind once before measuring the service read, which must not walk the tree.
+    with instance.bind_accepted_projection(instance.accepted_coordinate()):
+        pass
+    reads: list[str] = []
+    member_bytes = TypedStateReader.member_bytes
+
+    def counted(reader: TypedStateReader, path: str) -> bytes:
+        reads.append(path)
+        return member_bytes(reader, path)
+
+    def no_tree(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("QueryDefinition reads must use the accepted typed directory")
+
+    monkeypatch.setattr(TypedStateReader, "member_bytes", counted)
+    monkeypatch.setattr(instance, "tree_at", no_tree)
+    monkeypatch.setattr(instance, "immutable_tree_at", no_tree)
+    selected = service_get_playbill_query_definition(instance, name=QUERY_NAME)
+    assert reads == [query_definition_path(QUERY_NAME)]
+    reads.clear()
+    listing = service_list_playbill_query_definitions(instance)
+    assert listing.query_definitions == (selected,)
+    assert reads == [query_definition_path(QUERY_NAME)]
+    reads.clear()
+    with pytest.raises(ClaimNotFoundError):
+        service_get_playbill_query_definition(instance, name="project.absent_query")
+    assert reads == []
