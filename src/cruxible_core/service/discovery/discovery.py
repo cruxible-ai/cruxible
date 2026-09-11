@@ -237,7 +237,13 @@ def build_accepted_discovery_vocabulary(
         coordinate=coordinate,
         external_readers=external_readers,
     )
-    tree = instance.tree_at(coordinate.git_oid)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        assert projection.typed is not None
+        tree = {
+            row.path: projection.typed.member_bytes(row.path)
+            for kind in ("claim-type", "query-definition")
+            for row in projection.typed.envelopes(kind=kind)
+        }
     return build_discovery_vocabulary(
         view=subject_query_view(resolved_facts),
         facts=resolved_facts,
@@ -272,8 +278,15 @@ def service_discover_playbill_semantic(
         raise ProposalIntegrityError("discovery accepts only verified accepted coordinates")
     coordinate = _resolve_coordinate(instance, at)
     if profile == "interfaces" and query is None and entrypoint is None:
+        with instance.bind_accepted_projection(coordinate) as projection:
+            assert projection.typed is not None
+            tree = {
+                row.path: projection.typed.member_bytes(row.path)
+                for kind in ("provider", "provider-interface")
+                for row in projection.typed.envelopes(kind=kind)
+            }
         interfaces = _provider_interfaces(
-            instance.tree_at(coordinate.git_oid),
+            tree,
             installed_classifier_digests=installed_classifier_digests,
         )
         return PlaybillInterfaceInventoryV1(

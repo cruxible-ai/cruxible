@@ -55,8 +55,15 @@ def _instance_with_query(tmp_path: Path):
     return instance, owner
 
 
-def test_vocabulary_covers_accepted_subjects_claim_types_and_queries(tmp_path: Path) -> None:
+def test_vocabulary_covers_accepted_subjects_claim_types_and_queries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     instance, _owner = _instance_with_query(tmp_path)
+
+    def no_tree(*_args, **_kwargs):
+        pytest.fail("discovery must select sources through the typed index")
+
+    monkeypatch.setattr(instance, "tree_at", no_tree)
 
     vocabulary = build_accepted_discovery_vocabulary(
         instance,

@@ -55,6 +55,7 @@ from cruxible_core.service.discovery.query_definitions import accepted_query_def
 from cruxible_core.service.evidence.evidence import (
     ClaimReadHistoryIndex,
     ClaimReadSourceProtocol,
+    ClaimVerdictReadContext,
     _claim_read_history_index,
     _current_replay_available,
     _referent_digests,
@@ -99,14 +100,16 @@ def _resolve_coordinate(
     )
 
 
-def _accepted_subjects(tree: Mapping[str, bytes]) -> tuple[AcceptedSubject, ...]:
+def _accepted_subjects(
+    tree: Mapping[str, bytes], *, paths: tuple[str, ...] | None = None
+) -> tuple[AcceptedSubject, ...]:
     return tuple(
         AcceptedSubject(
             path=path,
             shell=shell,
             artifact_digest=subject_digest(shell).tagged,
         )
-        for path in sorted(tree, key=lambda item: item.encode("utf-8"))
+        for path in sorted(tree if paths is None else paths, key=lambda item: item.encode("utf-8"))
         if path.startswith(SUBJECT_PATH_PREFIX)
         for shell in (parse_subject(tree[path], path=path),)
     )
@@ -209,7 +212,9 @@ class _AcceptedQueryFactsRead:
         self._instance = instance
         self._coordinate = coordinate
         self._readers = dict(external_readers or {})
-        self._tree: dict[str, bytes] | None = None
+        self._tree: Mapping[str, bytes] | None = None
+        self._claim_paths: tuple[str, ...] = ()
+        self._subject_paths: tuple[str, ...] = ()
         self._history: ClaimReadHistoryIndex | None = None
         self._claims: dict[str, ClaimArtifactAny] = {}
         self._claim_types: dict[str, ClaimType] = {}
@@ -221,7 +226,22 @@ class _AcceptedQueryFactsRead:
         if previous is not None:
             return previous
         if self._tree is None:
-            self._tree = self._instance.tree_at(self._coordinate.git_oid)
+            if isinstance(self._instance, PlaybillInstance):
+                self._tree = ClaimVerdictReadContext(self._instance, self._coordinate).tree
+                with self._instance.bind_accepted_projection(self._coordinate) as projection:
+                    self._claim_paths = tuple(
+                        row.path for row in projection.typed.envelopes(kind="claim")
+                    )
+                    self._subject_paths = tuple(
+                        row.path for row in projection.typed.envelopes(kind="subject")
+                    )
+            else:
+                # Cold candidate compilation has source bytes, without a served index.
+                self._tree = self._instance.tree_at(self._coordinate.git_oid)
+                self._claim_paths = tuple(p for p in self._tree if p.startswith(CLAIM_PATH_PREFIX))
+                self._subject_paths = tuple(
+                    p for p in self._tree if p.startswith(SUBJECT_PATH_PREFIX)
+                )
         tree = self._tree
         if self._history is None:
             self._history = _claim_read_history_index(self._instance, coordinate=self._coordinate)
@@ -236,9 +256,7 @@ class _AcceptedQueryFactsRead:
             return evidence
 
         rows: list[ClaimFactRowV1] = []
-        for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-            if not path.startswith(CLAIM_PATH_PREFIX):
-                continue
+        for path in sorted(self._claim_paths, key=lambda item: item.encode("utf-8")):
             # The full-history path historically looked up evidence before
             # parsing the Claim; live-only reads parsed lifecycle first and
             # never demanded evidence for retired heads. Keep both orders.
@@ -267,7 +285,7 @@ class _AcceptedQueryFactsRead:
         assembled = next(iter(self._results.values()), None)
         if assembled is None:
             providers = accepted_claim_providers(self._instance, coordinate=self._coordinate)
-            subjects = _accepted_subjects(tree)
+            subjects = _accepted_subjects(tree, paths=self._subject_paths)
             ordered_providers = tuple(
                 providers[key] for key in sorted(providers, key=lambda item: item.encode("utf-8"))
             )
