@@ -9,7 +9,7 @@ import re
 import sqlite3
 import stat
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -127,6 +127,7 @@ def update_projection_database(
     changed_paths: frozenset[str],
     sources: Mapping[str, bytes],
     bodies: Any = None,
+    resolve_digest: Callable[[str], tuple[str, ...]] | None = None,
 ) -> dict[str, int]:
     """Copy one verified typed publication, then replace changed owners atomically."""
     from cruxible_core.compiler.compiler import SUPPORTED_COMPILERS, artifact_codec_for_compiler
@@ -144,6 +145,7 @@ def update_projection_database(
         changed_paths=changed_paths,
         codec=artifact_codec_for_compiler(compiler),
         bodies=bodies,
+        resolve_digest=resolve_digest,
     )
 
 
@@ -156,6 +158,7 @@ def initialize_projection_database(
     assembler_implementation: str,
     sources: Mapping[str, bytes] | None = None,
     bodies: Any = None,
+    resolve_digest: Callable[[str], tuple[str, ...]] | None = None,
 ) -> dict[str, int]:
     """Create and populate the complete PB-B one-piece SQLite projection."""
 
@@ -177,6 +180,7 @@ def initialize_projection_database(
             assembler_implementation=assembler_implementation,
             bodies=bodies,
             registry=registry,
+            resolve_digest=resolve_digest,
         )
 
     if not _ASSEMBLER_IMPLEMENTATION_RE.fullmatch(assembler_implementation):
