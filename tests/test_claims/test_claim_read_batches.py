@@ -35,6 +35,7 @@ def request(instance, **kwargs):
 
 def test_selected_pages_equal_single_views_and_bind_once(seeded, monkeypatch):
     from cruxible_core.indexes.sqlite import ProjectionHandle
+    from cruxible_core.indexes.typed_state import TypedStateReader
 
     def forbidden(*args, **kwargs):
         raise AssertionError("batch must not materialize the Claim population")
@@ -64,6 +65,10 @@ def test_selected_pages_equal_single_views_and_bind_once(seeded, monkeypatch):
         return original(coordinate)
 
     monkeypatch.setattr(seeded, "bind_accepted_projection", counted)
+    monkeypatch.setattr(seeded, "accepted_history", forbidden)
+    monkeypatch.setattr(seeded, "paths_at", forbidden)
+    monkeypatch.setattr(seeded, "tree_at", forbidden)
+    monkeypatch.setattr(TypedStateReader, "envelopes", forbidden)
     ids = tuple(view.envelope["identity"] for view in reversed(selected))
     all_views = service_read_claim_batch(seeded, request=request(seeded, claim_ids=ids))
     assert binds == 1

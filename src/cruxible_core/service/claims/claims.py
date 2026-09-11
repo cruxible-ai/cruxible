@@ -399,11 +399,7 @@ def _accepted_claim_ids(
         if history.sequence == 0:
             return ()
     with instance.bind_accepted_projection(coordinate) as projection:
-        rows = (
-            projection.typed.envelopes(kind="claim")
-            if projection.typed is not None
-            else tuple(row for row in projection.artifact_envelopes() if row.kind == "claim")
-        )
+        rows = projection.typed.envelopes(kind="claim")
         return tuple(row.identity.removeprefix("Claim:") for row in rows)
 
 
@@ -581,25 +577,17 @@ def _claim_admission_tree(
     """Read the ClaimType and CaptureContracts cited by this exact accepted Claim."""
     wanted = [claim_type_path(claim.statement.predicate)]
     with instance.bind_accepted_projection(coordinate) as projection:
-        if projection.typed is not None:
-            wanted.extend(
-                row[0]
-                for row in projection.typed.connection.execute(
-                    "SELECT DISTINCT t.path FROM citation_uses u "
-                    "JOIN captures c ON c.capture_digest=u.capture_digest "
-                    "JOIN capture_contracts t ON t.artifact_digest=c.contract_digest "
-                    "WHERE u.owner_kind='Claim' AND u.owner_key=? ORDER BY t.path",
-                    (claim.identity.qualified,),
-                )
+        wanted.extend(
+            row[0]
+            for row in projection.typed.connection.execute(
+                "SELECT DISTINCT t.path FROM citation_uses u "
+                "JOIN captures c ON c.capture_digest=u.capture_digest "
+                "JOIN capture_contracts t ON t.artifact_digest=c.contract_digest "
+                "WHERE u.owner_kind='Claim' AND u.owner_key=? ORDER BY t.path",
+                (claim.identity.qualified,),
             )
-            return {path: projection.typed.member_bytes(path) for path in wanted}
-    # Frozen storage-v1 has no normalized citation relation.
-    wanted.extend(
-        path
-        for path in instance.paths_at(coordinate.git_oid)
-        if path.startswith("capture-contracts/")
-    )
-    return instance.blobs_at(coordinate.git_oid, wanted)
+        )
+        return {path: projection.typed.member_bytes(path) for path in wanted}
 
 
 def _claim_admission_accounts(

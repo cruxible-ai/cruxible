@@ -16,15 +16,23 @@ from cruxible_client.contracts.claim_reads import (
     ClaimReadBatchResultV1,
 )
 from cruxible_client.contracts.claim_types import claim_type_path
-from cruxible_client.contracts.claims import claim_path, claim_statement_digest, parse_claim
+from cruxible_client.contracts.claims import (
+    ClaimFormatError,
+    claim_path,
+    claim_statement_digest,
+    parse_claim,
+)
 from cruxible_client.contracts.declared_blocks import ProjectionClaimBackingV1
-from cruxible_client.contracts.errors import ClaimNotFoundError, PlaybillFormatError
+from cruxible_client.contracts.errors import (
+    ClaimNotFoundError,
+    PlaybillFormatError,
+)
 from cruxible_core.authoring.id_prefixes import resolve_id_prefix
 from cruxible_core.compiler.compiler import artifact_codec_for_compiler
+from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.claims.claims import (
-    _accepted_claim_ids,
     _accepted_generation_time,
     _public_claim,
     _resolve_coordinate,
@@ -56,9 +64,10 @@ def service_read_claim_batch(
     # A latest-head request becomes one immutable selection before any reads or
     # cursor binding. Subsequent pages must supply this returned coordinate.
     request = request.model_copy(update={"at": resolved_at})
-    generation = next(
-        item for item in instance.accepted_history() if item.oid == coordinate.git_oid
-    )
+    with instance.accepted_history_reader(
+        at=AcceptedCoordinate.from_internal(coordinate)
+    ) as history:
+        generation_sequence = history.sequence
     after = ""
     if request.cursor:
         try:
@@ -67,21 +76,30 @@ def service_read_claim_batch(
                 raise ValueError("cursor selection differs")
         except (ValueError, TypeError, UnicodeError) as exc:
             raise PlaybillFormatError("Claim batch cursor does not match this selection") from exc
-    if generation.sequence == 0:
+    if generation_sequence == 0:
         if request.claim_ids:
             raise ClaimNotFoundError("the accepted generation contains no Claims")
         return ClaimReadBatchResultV1(coordinate=resolved_at, claims=())
     truncated = False
     with instance.bind_accepted_projection(coordinate) as projection:
         if request.claim_ids:
-            accepted = _accepted_claim_ids(instance, coordinate=coordinate)
-            identities = tuple(
-                "Claim:"
-                + resolve_id_prefix(
-                    identity.removeprefix("Claim:"), accepted, marker="CLM-", label="Claim"
-                )
-                for identity in request.claim_ids
-            )
+            accepted_ids: tuple[str, ...] | None = None
+
+            def resolve(identity: str) -> str:
+                nonlocal accepted_ids
+                bare = identity.removeprefix("Claim:")
+                try:
+                    claim_path(bare)
+                except ClaimFormatError:
+                    if accepted_ids is None:
+                        accepted_ids = tuple(
+                            row.identity.removeprefix("Claim:")
+                            for row in projection.typed.envelopes(kind="claim")
+                        )
+                    bare = resolve_id_prefix(bare, accepted_ids, marker="CLM-", label="Claim")
+                return "Claim:" + bare
+
+            identities = tuple(resolve(identity) for identity in request.claim_ids)
         else:
             identities = projection.select_claim_identities(
                 subject_paths=request.subject_paths,
@@ -101,11 +119,18 @@ def service_read_claim_batch(
             public_views.append(_public_claim(projected))
         # One shared exact accepted blob selection; single-view admission logic
         # still evaluates each Claim independently against this same material.
-        wanted = {
-            path
-            for path in instance.paths_at(coordinate.git_oid)
-            if path.startswith("capture-contracts/")
-        }
+        wanted: set[str] = set()
+        for identity in identities:
+            wanted.update(
+                row[0]
+                for row in projection.typed.connection.execute(
+                    "SELECT DISTINCT t.path FROM citation_uses u "
+                    "JOIN captures c ON c.capture_digest=u.capture_digest "
+                    "JOIN capture_contracts t ON t.artifact_digest=c.contract_digest "
+                    "WHERE u.owner_kind='Claim' AND u.owner_key=? ORDER BY t.path",
+                    (identity,),
+                )
+            )
         for public in public_views:
             statement = next(
                 fact["value"]

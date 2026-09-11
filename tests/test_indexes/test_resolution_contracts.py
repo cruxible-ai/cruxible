@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import json
-import sqlite3
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
@@ -61,7 +58,6 @@ from cruxible_core.exhaust import (
 )
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
-from cruxible_core.indexes.serving import bind_current_projection
 from cruxible_core.procedures.resolution import (
     AcceptedAuthorityBasisV1,
     ProcedureProofReferenceV1,
@@ -600,20 +596,13 @@ def test_derived_activation_remains_bound_to_its_accepting_generation(tmp_path) 
     )
     assert instance.accepted_coordinate().git_oid != accepting_coordinate.git_oid
 
-    publication = Path(instance.inspect().storage_directories["projections"])
-    with bind_current_projection(publication, expected=instance.accepted_coordinate()) as handle:
-        connection = sqlite3.connect(handle.index_path)
-        try:
-            rows = connection.execute(
-                "SELECT value_json FROM semantic_facts "
-                "WHERE schema_id = 'playbill.procedure.resolution_activation' "
-                "AND subject_identity = ? ORDER BY fact_key",
-                (procedure.identity.qualified,),
-            ).fetchall()
-        finally:
-            connection.close()
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as handle:
+        rows = handle.typed.facts(
+            "playbill.procedure.resolution_activation",
+            identity=procedure.identity.qualified,
+        )
     assert len(rows) == 3
-    activation_coordinate = json.loads(rows[0][0])["subject"]["accepted_coordinate"]
+    activation_coordinate = rows[0].value["subject"]["accepted_coordinate"]
     assert activation_coordinate["git_oid"] == accepting_coordinate.git_oid
     assert activation_coordinate["semantic_root"] == accepting_coordinate.semantic_root
     assert activation_coordinate["generation_root"] == accepting_coordinate.generation_root
