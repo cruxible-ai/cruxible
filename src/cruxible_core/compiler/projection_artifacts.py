@@ -65,11 +65,6 @@ from cruxible_client.contracts.semantic import (
 )
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_client.contracts.types import PrincipalRecord
-from cruxible_core.indexes.claims.projection_claim_cache import (
-    CachedClaim,
-    ClaimCompilationCache,
-    FrozenClaimFact,
-)
 from cruxible_core.query.explanation import (
     ProjectionCoordinateContext,
     accepted_artifact_explanation_facts,
@@ -773,7 +768,6 @@ def parse_projection_tree(
     bodies: BodyProjectionProtocol | None = None,
     coordinate: ProjectionCoordinateContext | None = None,
     accepted_coordinates_by_sequence: Mapping[int, AcceptedCoordinate] | None = None,
-    claim_compilation_cache: ClaimCompilationCache | None = None,
     verified_change_sets: tuple[tuple[str, ChangeSetRecordAnyVersion], ...] | None = None,
 ) -> ParsedProjectionTree:
     """Parse all registered blobs and produce one sorted, typed row stream."""
@@ -2181,52 +2175,28 @@ def parse_projection_tree(
                 )
                 continue
             if kind == "claim":
-                cached = (
-                    claim_compilation_cache.get(
-                        compiler_digest=coordinate.compiler_digest,
-                        codec=artifact_codec,
-                        path=path,
-                        content=content,
-                    )
-                    if claim_compilation_cache is not None and coordinate is not None
-                    else None
-                )
-                claim = None
-                if cached is None:
-                    try:
-                        claim = parse_claim(content, path=path, codec=artifact_codec)
-                    except ClaimFormatError as exc:
-                        raise ProjectionFormatError(
-                            f"registered Claim failed strict validation: {path}"
-                        ) from exc
-                    identity = claim.identity.qualified
-                else:
-                    identity = cached.identity
+                try:
+                    claim = parse_claim(content, path=path, codec=artifact_codec)
+                except ClaimFormatError as exc:
+                    raise ProjectionFormatError(
+                        f"registered Claim failed strict validation: {path}"
+                    ) from exc
+                identity = claim.identity.qualified
                 previous = identities.get(identity)
                 if previous is not None:
                     raise ProjectionFormatError(
                         f"duplicate semantic identity {identity!r}: {previous} and {path}"
                     )
                 identities[identity] = path
-                if cached is None:
-                    assert claim is not None
-                    input_digest = file_digest(content).tagged
-                    artifact_digest = claim_artifact_digest(claim).tagged
-                    statement_digest = claim_statement_digest(claim.statement).tagged
-                    format_tag: str = claim.artifact_format
-                    predecessor_digest = claim.lifecycle.predecessor_digest
-                    retired = claim.lifecycle.state == "retired"
-                    claim_pins = tuple(
-                        (pin.target.qualified, pin.artifact_digest) for pin in claim.pins
-                    )
-                else:
-                    input_digest = cached.input_digest
-                    artifact_digest = cached.artifact_digest
-                    statement_digest = cached.statement_digest
-                    format_tag = cached.format_tag
-                    predecessor_digest = cached.predecessor_digest
-                    retired = cached.retired
-                    claim_pins = cached.pins
+                input_digest = file_digest(content).tagged
+                artifact_digest = claim_artifact_digest(claim).tagged
+                statement_digest = claim_statement_digest(claim.statement).tagged
+                format_tag: str = claim.artifact_format
+                predecessor_digest = claim.lifecycle.predecessor_digest
+                retired = claim.lifecycle.state == "retired"
+                claim_pins = tuple(
+                    (pin.target.qualified, pin.artifact_digest) for pin in claim.pins
+                )
                 envelopes.append(
                     ArtifactEnvelopeRow(
                         identity=identity,
@@ -2253,37 +2223,13 @@ def parse_projection_tree(
                     )
                     for target, digest in claim_pins
                 )
-                if cached is None:
-                    assert claim is not None
-                    static_facts = _claim_static_facts(
-                        claim,
-                        path=path,
-                        input_digest=input_digest,
-                        artifact_digest=artifact_digest,
-                        statement_digest=statement_digest,
-                    )
-                    if claim_compilation_cache is not None and coordinate is not None:
-                        claim_compilation_cache.put(
-                            compiler_digest=coordinate.compiler_digest,
-                            codec=artifact_codec,
-                            path=path,
-                            content=content,
-                            entry=CachedClaim(
-                                identity=identity,
-                                format_tag=format_tag,
-                                input_digest=input_digest,
-                                artifact_digest=artifact_digest,
-                                statement_digest=statement_digest,
-                                predecessor_digest=predecessor_digest,
-                                retired=retired,
-                                pins=claim_pins,
-                                facts=tuple(
-                                    FrozenClaimFact.from_fact(fact) for fact in static_facts
-                                ),
-                            ),
-                        )
-                else:
-                    static_facts = cached.materialize_facts()
+                static_facts = _claim_static_facts(
+                    claim,
+                    path=path,
+                    input_digest=input_digest,
+                    artifact_digest=artifact_digest,
+                    statement_digest=statement_digest,
+                )
                 semantic_facts.extend(static_facts)
                 if coordinate is not None and registry.supports(
                     "playbill.claim.current_verdict",

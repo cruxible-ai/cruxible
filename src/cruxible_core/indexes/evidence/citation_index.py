@@ -33,11 +33,44 @@ from cruxible_core.evidence.citation_relations import (
     _use_facts,
     external_source_relation_subject,
 )
-from cruxible_core.indexes.claims.projection_claim_cache import FrozenClaimFact
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate, AssemblerRequest
 
 if TYPE_CHECKING:
     from cruxible_core.indexes.sqlite import ProjectionHandle
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenClaimFact:
+    """Private snapshot of a fact already validated by the running compiler."""
+
+    schema_id: str
+    schema_version: int
+    subject_identity: str
+    fact_key: str
+    value_json: bytes
+
+    @classmethod
+    def from_fact(cls, fact: ProjectionFact) -> FrozenClaimFact:
+        return cls(
+            schema_id=fact.schema_id,
+            schema_version=fact.schema_version,
+            subject_identity=fact.subject_identity,
+            fact_key=fact.fact_key,
+            value_json=canonical_bytes(fact.value),
+        )
+
+    def materialize(self) -> ProjectionFact:
+        # Only our private, already-validated in-process snapshots reach here.
+        # This deliberately skips repeated normalization, not validation of any
+        # persisted/wire input. JSON decoding detaches every nested mutable value.
+        return ProjectionFact.model_construct(
+            schema_id=self.schema_id,
+            schema_version=self.schema_version,
+            subject_identity=self.subject_identity,
+            fact_key=self.fact_key,
+            value=json.loads(self.value_json),
+        )
+
 
 FactKey = tuple[str, int, str, str]
 
