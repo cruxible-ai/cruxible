@@ -27,7 +27,9 @@ def _tree():
 
 
 def _publication(tmp_path):
-    repository = MemoryLedger(tmp_path / "repository", _tree())
+    repository = MemoryLedger(
+        tmp_path / "repository", {**_tree(), "cards/documents/review.md": b"review card"}
+    )
     coordinate = accepted_coordinate(repository).model_copy(update={"compiler": P2_B5_COMPILER})
     directory = tmp_path / "projection"
     directory.mkdir()

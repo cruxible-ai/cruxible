@@ -117,17 +117,26 @@ def parse_static_owners(sources: Mapping[str, bytes], *, accepted: Any) -> Parse
     )
     from cruxible_core.compiler.projection_artifacts import (
         ArtifactEnvelopeRow,
+        FixtureArtifact,
         PinRow,
         parse_projection_tree,
     )
 
     kinds = artifact_kinds_for_compiler(accepted.compiler)
     codec = artifact_codec_for_compiler(accepted.compiler)
-    documents = {
-        path: body for path, body in sources.items() if kinds.resolve_path(path) == "document"
+    source_kinds = {
+        path: None if is_candidate_card_path(path) else kinds.resolve_path(path) for path in sources
     }
+    documents = {path: body for path, body in sources.items() if source_kinds[path] == "document"}
+    fixtures = {path: body for path, body in sources.items() if source_kinds[path] == "fixture"}
     parsed = parse_projection_tree(
-        {path: body for path, body in sources.items() if path not in documents},
+        {
+            path: body
+            for path, body in sources.items()
+            if path not in documents
+            and path not in fixtures
+            and source_kinds[path] != "presentation"
+        },
         registry=projection_registry_for_compiler(accepted.compiler),
         artifact_kinds=kinds,
         artifact_codec=codec,
@@ -155,6 +164,29 @@ def parse_static_owners(sources: Mapping[str, bytes], *, accepted: Any) -> Parse
                     "one artifact pins the same dependency identity at conflicting digests"
                 )
             pins[key] = PinRow(document.identity, pin.target_identity, pin.target_digest)
+    # Extension declarations govern produced facts, not the static fixture owner.
+    # Read its accepted source contract without substituting the default registry.
+    for path, content in fixtures.items():
+        fixture = FixtureArtifact.model_validate_json(content)
+        envelopes.append(
+            ArtifactEnvelopeRow(
+                fixture.artifact_id,
+                fixture.kind,
+                fixture.tag,
+                path,
+                file_digest(content).tagged,
+                fixture.predecessor_digest,
+                fixture.revision,
+            )
+        )
+        for pin in fixture.pins:
+            key = (fixture.artifact_id, pin.target_identity)
+            previous = pins.get(key)
+            if previous is not None and previous.target_digest != pin.target_digest:
+                raise ProjectionIntegrityError(
+                    "one artifact pins the same dependency identity at conflicting digests"
+                )
+            pins[key] = PinRow(fixture.artifact_id, pin.target_identity, pin.target_digest)
     return replace(
         parsed,
         envelopes=tuple(sorted(envelopes, key=lambda row: row.identity)),

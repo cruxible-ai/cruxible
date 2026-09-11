@@ -239,6 +239,11 @@ def test_extension_owner_prefix_does_not_shadow_retained_facts(tmp_path, schema_
             assembler.request(output_staging_directory=publication / f".stage-{version}")
         )
         with bind_projection(publication / result.manifest_path, expected=coordinate) as projection:
+            if version == 2:
+                from cruxible_core.indexes.sqlite import reset_projection_verification_memo
+
+                reset_projection_verification_memo()
+                projection.require_source_authentication(repository=repository)
             facts = projection.semantic_facts(schema_id)
             assert len(facts) == 1
             assert projection.semantic_facts(schema_id, subject_identity="one") == facts
