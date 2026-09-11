@@ -363,43 +363,47 @@ def _verify_projection_schema(connection: sqlite3.Connection) -> None:
         raise ProjectionIntegrityError("projection SQLite schema differs from the PB-B registry")
 
 
-def canonical_logical_export(path: Path) -> dict[str, object]:
-    """Export logical tables independent of page layout and binding metadata."""
+def _canonical_connection_export(connection: sqlite3.Connection) -> dict[str, object]:
+    _verify_projection_schema(connection)
+    if connection.execute("PRAGMA user_version").fetchone()[0] == 2:
+        from cruxible_core.indexes.typed_sqlite import logical_export
 
-    try:
-        connection = sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True)
-        try:
-            _verify_projection_schema(connection)
-            if connection.execute("PRAGMA user_version").fetchone()[0] == 2:
-                from cruxible_core.indexes.typed_sqlite import logical_export
-
-                return logical_export(connection)
-            tables: list[dict[str, object]] = []
-            for spec in sorted(_TABLE_SPECS, key=lambda item: item.name.encode("utf-8")):
-                if not spec.logical:
-                    continue
-                order = ",".join(spec.primary_key)
-                rows = connection.execute(f"SELECT * FROM {spec.name} ORDER BY {order}").fetchall()
-                tables.append(
-                    {
-                        "name": spec.name,
-                        "columns": [
-                            {"name": name, "type": sql_type, "nullable": nullable}
-                            for name, sql_type, nullable in spec.columns
-                        ],
-                        "primary_key": list(spec.primary_key),
-                        "constraints": list(spec.constraints),
-                        "indexes": [
-                            {"name": name, "columns": columns.split(",")}
-                            for name, columns in spec.indexes
-                        ],
-                        "rows": [list(row) for row in rows],
-                    }
-                )
-            return {
-                "schema_version": PROJECTION_SCHEMA_VERSION,
-                "tables": tables,
+        return logical_export(connection)
+    tables: list[dict[str, object]] = []
+    for spec in sorted(_TABLE_SPECS, key=lambda item: item.name.encode("utf-8")):
+        if not spec.logical:
+            continue
+        order = ",".join(spec.primary_key)
+        rows = connection.execute(f"SELECT * FROM {spec.name} ORDER BY {order}").fetchall()
+        tables.append(
+            {
+                "name": spec.name,
+                "columns": [
+                    {"name": name, "type": sql_type, "nullable": nullable}
+                    for name, sql_type, nullable in spec.columns
+                ],
+                "primary_key": list(spec.primary_key),
+                "constraints": list(spec.constraints),
+                "indexes": [
+                    {"name": name, "columns": columns.split(",")} for name, columns in spec.indexes
+                ],
+                "rows": [list(row) for row in rows],
             }
+        )
+    return {
+        "schema_version": PROJECTION_SCHEMA_VERSION,
+        "tables": tables,
+    }
+
+
+def canonical_logical_export(source: Path | sqlite3.Connection) -> dict[str, object]:
+    """Export logical tables independent of page layout and binding metadata."""
+    try:
+        if isinstance(source, sqlite3.Connection):
+            return _canonical_connection_export(source)
+        connection = sqlite3.connect(f"{source.as_uri()}?mode=ro&immutable=1", uri=True)
+        try:
+            return _canonical_connection_export(connection)
         finally:
             connection.close()
     except (OSError, sqlite3.DatabaseError) as exc:
@@ -408,8 +412,8 @@ def canonical_logical_export(path: Path) -> dict[str, object]:
         ) from exc
 
 
-def projection_logical_digest(path: Path) -> LogicalDigest:
-    exported = canonical_logical_export(path)
+def projection_logical_digest(source: Path | sqlite3.Connection) -> LogicalDigest:
+    exported = canonical_logical_export(source)
     return typed_digest(
         LogicalDigest,
         "playbill-projection-logical-v2"
@@ -428,6 +432,34 @@ def physical_file_digest(path: Path) -> Sha256Value:
     except OSError as exc:
         raise ProjectionIntegrityError("projection piece cannot be read") from exc
     return Sha256Value(digest.hexdigest())
+
+
+def _descriptor_digest(descriptor: int) -> str:
+    digest = hashlib.sha256()
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    while chunk := os.read(descriptor, 1024 * 1024):
+        digest.update(chunk)
+    return Sha256Value(digest.hexdigest()).tagged
+
+
+def _descriptor_uri(descriptor: int) -> str | None:
+    """Use a descriptor alias so SQLite opens the verified inode, not its old name."""
+    expected = os.fstat(descriptor)
+    for directory in ("/dev/fd", "/proc/self/fd"):
+        alias = Path(directory) / str(descriptor)
+        try:
+            duplicate = os.open(alias, os.O_RDONLY)
+        except OSError:
+            continue
+        try:
+            # Darwin's devfs alias reports a synthetic st_dev through stat;
+            # fstat of the opened alias reports the underlying file identity.
+            metadata = os.fstat(duplicate)
+            if (metadata.st_dev, metadata.st_ino) == (expected.st_dev, expected.st_ino):
+                return f"{alias.as_uri()}?mode=ro&immutable=1"
+        finally:
+            os.close(duplicate)
+    return None
 
 
 def load_projection_manifest(path: Path) -> ProjectionManifest:
@@ -487,7 +519,9 @@ class ProjectionHandle:
         piece_paths: tuple[Path, ...],
         connection: sqlite3.Connection,
         accepted: AcceptedProjectionCoordinate,
+        source_descriptor: int | None = None,
     ) -> None:
+        self._source_descriptor = source_descriptor
         self.manifest_path = manifest_path
         self.manifest = manifest
         self.piece_paths = piece_paths
@@ -1017,8 +1051,13 @@ class ProjectionHandle:
 
     def close(self) -> None:
         if not self._closed:
-            self._connection.close()
-            self._closed = True
+            try:
+                self._connection.close()
+            finally:
+                if self._source_descriptor is not None:
+                    os.close(self._source_descriptor)
+                    self._source_descriptor = None
+                self._closed = True
 
     def __enter__(self) -> "ProjectionHandle":
         if self._closed:
@@ -1067,14 +1106,41 @@ def bind_projection(
             pieces.append(resolved)
             continue
         already_verified = False
-        if physical_file_digest(resolved).tagged != piece.physical_digest:
-            raise ProjectionIntegrityError(f"projection piece digest mismatch: {piece.name}")
         pieces.append(resolved)
 
     index_path = pieces[0]
     connection: sqlite3.Connection | None = None
+    descriptor: int | None = None
     try:
-        connection = sqlite3.connect(f"{index_path.as_uri()}?mode=ro&immutable=1", uri=True)
+        descriptor = os.open(index_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        opened_identity = _verified_piece_identity(
+            index_path,
+            os.fstat(descriptor),
+            expected=expected,
+            manifest=manifest,
+            physical_digest=manifest.pieces[0].physical_digest,
+        )
+        if opened_identity != identities[0]:
+            raise ProjectionIntegrityError("projection piece changed during acquisition")
+        if (
+            not already_verified
+            and _descriptor_digest(descriptor) != manifest.pieces[0].physical_digest
+        ):
+            raise ProjectionIntegrityError(
+                f"projection piece digest mismatch: {manifest.pieces[0].name}"
+            )
+        descriptor_uri = _descriptor_uri(descriptor)
+        connection = sqlite3.connect(
+            descriptor_uri or f"{index_path.as_uri()}?mode=ro&immutable=1",
+            uri=True,
+        )
+        if descriptor_uri is None:
+            # Without a descriptor namespace there is no pathname-only proof of
+            # which inode SQLite opened. This portable fallback charges a full
+            # opened-snapshot hash per bind, never certifying it from a warm memo.
+            actual = Sha256Value(hashlib.sha256(connection.serialize()).hexdigest()).tagged
+            if actual != manifest.pieces[0].physical_digest:
+                raise ProjectionIntegrityError("opened projection snapshot digest mismatch")
         connection.row_factory = sqlite3.Row
         _verify_projection_schema(connection)
         # A piece already verified in this process under this exact file
@@ -1148,9 +1214,18 @@ def bind_projection(
             raise ProjectionIntegrityError("projection row counts differ from the manifest")
         if (
             not already_verified
-            and projection_logical_digest(index_path).tagged != manifest.logical_digest
+            and projection_logical_digest(connection).tagged != manifest.logical_digest
         ):
             raise ProjectionIntegrityError("projection canonical logical digest mismatch")
+        final_identity = _verified_piece_identity(
+            index_path,
+            os.fstat(descriptor),
+            expected=expected,
+            manifest=manifest,
+            physical_digest=manifest.pieces[0].physical_digest,
+        )
+        if final_identity != opened_identity:
+            raise ProjectionIntegrityError("projection piece changed while binding")
         for identity in identities:
             _record_verified_piece(identity)
         handle = ProjectionHandle(
@@ -1159,18 +1234,23 @@ def bind_projection(
             piece_paths=tuple(pieces),
             connection=connection,
             accepted=expected,
+            source_descriptor=descriptor,
         )
         handle._verification_identity = identities[0]
         return handle
-    except sqlite3.DatabaseError as exc:
+    except (OSError, sqlite3.DatabaseError) as exc:
         if connection is not None:
             connection.close()
+        if descriptor is not None:
+            os.close(descriptor)
         raise ProjectionIntegrityError(
             "projection piece is not a valid PB-B SQLite database"
         ) from exc
     except BaseException:
         if connection is not None:
             connection.close()
+        if descriptor is not None:
+            os.close(descriptor)
         raise
 
 
