@@ -19,10 +19,6 @@ from cruxible_client.contracts.captures import (
     parse_capture_envelope,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext, BodyProjectionProtocol
-from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestationV2,
-    claim_attestation_v2_envelope_digest,
-)
 from cruxible_client.contracts.claims import claim_citation_references, parse_claim
 from cruxible_client.contracts.errors import ProjectionFormatError
 from cruxible_client.contracts.projection_extensions import ProjectionFact
@@ -277,32 +273,6 @@ def populate_citations(
     except BaseException:
         connection.execute("ROLLBACK TO populate_citations")
         connection.execute("RELEASE populate_citations")
-        raise
-
-
-def populate_attestation_citations(
-    connection: sqlite3.Connection,
-    attestation: ClaimAttestationV2,
-    *,
-    bodies: BodyProjectionProtocol,
-    owner_exists: OwnerExists,
-) -> None:
-    """Shared owner writer; acceptance/new-kind wiring is deliberately a separate step."""
-    key = claim_attestation_v2_envelope_digest(attestation)
-    if not owner_exists("attestation", key):
-        raise ProjectionFormatError("citation attestation owner is not published")
-    connection.execute("SAVEPOINT attestation_citations")
-    try:
-        for digest in attestation.statement.cited_capture_digests:
-            _insert_capture(connection, digest, bodies)
-            connection.execute(
-                "INSERT OR IGNORE INTO citation_uses VALUES ('attestation',?,?,?,NULL,NULL)",
-                (key, digest, digest),
-            )
-        connection.execute("RELEASE attestation_citations")
-    except BaseException:
-        connection.execute("ROLLBACK TO attestation_citations")
-        connection.execute("RELEASE attestation_citations")
         raise
 
 

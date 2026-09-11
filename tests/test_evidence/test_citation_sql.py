@@ -21,11 +21,6 @@ from cruxible_client.contracts.captures import (
     capture_contract_path,
     render_capture_contract,
 )
-from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestationStatementV2,
-    ClaimAttestationV2,
-    claim_attestation_v2_envelope_digest,
-)
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
     build_claim_citation,
@@ -53,7 +48,6 @@ from cruxible_core.indexes.evidence.citation_coverage import coverage_rows
 from cruxible_core.indexes.evidence.citation_sql import (
     SCHEMA_SQL,
     CitationReader,
-    populate_attestation_citations,
     populate_citations,
     remove_owner_citations,
 )
@@ -345,46 +339,6 @@ def test_failed_cas_population_rolls_back_relationships_and_does_not_commit_oute
             bodies=world.store,
             owner_exists=lambda *_: False,
         )
-
-
-def test_shared_attestation_uses_have_no_roles_or_claim_groups_and_retain_capture(world):
-    digest = world.capture(1)
-    claim = world.claim(1, [digest])
-    world.publish(claim)
-    envelope = ClaimAttestationV2(
-        statement=ClaimAttestationStatementV2(
-            instance_id="test",
-            referent_coordinate=AT,
-            claim_identity=claim.identity,
-            claim_artifact_digest=claim_artifact_digest(claim).tagged,
-            claim_statement_digest=claim_statement_digest(claim.statement).tagged,
-            subject_shell_digest=DIGEST,
-            attesting_principal_id="owner",
-            signing_key_digest=DIGEST,
-            attestation_basis="new_capture",
-            stance="support",
-            cited_capture_digests=(digest,),
-            attested_at=NOW,
-        ),
-        signature="1" * 128,
-    )
-    key = claim_attestation_v2_envelope_digest(envelope)
-    populate_attestation_citations(
-        world.connection,
-        envelope,
-        bodies=world.store,
-        owner_exists=lambda kind, owner: kind == "attestation" and owner == key,
-    )
-    rows = world.reader.owner_uses("attestation", key)
-    assert [(r["use_key"], r["origin"], r["role"]) for r in rows] == [(digest, None, None)]
-    world.remove(claim)
-    assert world.reader.owners_for_capture(digest) == rows
-    assert (
-        world.connection.execute("SELECT count(*) FROM citation_group_members").fetchone()[0] == 0
-    )
-    remove_owner_citations(world.connection, [("attestation", key)])
-    assert world.connection.execute("SELECT count(*) FROM captures").fetchone()[0] == 0
-    assert world.connection.execute("SELECT count(*) FROM source_references").fetchone()[0] == 0
 
 
 def test_coverage_exports_match_frozen_versions_and_recheck_availability(world):
