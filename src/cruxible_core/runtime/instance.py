@@ -281,7 +281,6 @@ class PlaybillInstance:
         self._tree_memo: OrderedDict[str, dict[str, bytes]] = OrderedDict()
         # Read services keyed by accepted coordinate park their derived
         # history indexes here so activation drops them with one clear().
-        self.claim_read_history_memo: OrderedDict[str, object] = OrderedDict()
         # Immutable-coordinate exports survive head movement; keys include their
         # review-context snapshot and access profile. Bounded by the floor service.
         self.floor_structure_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
@@ -1631,7 +1630,6 @@ class PlaybillInstance:
         bodies = ContentAddressedBodyStore(paths["cas"])
         self._tree_memo.clear()
         self.derived.clear()
-        self.claim_read_history_memo.clear()
         self._evaluation_state_cache.clear()
         self._recovered = recover_instance(
             self._ledger,
@@ -1799,7 +1797,6 @@ class PlaybillInstance:
                     projection=copy.deepcopy(result.projection),
                 )
                 self._tree_memo.clear()
-                self.claim_read_history_memo.clear()
                 self._history_lookup = None
                 self._recovered = advanced
 
