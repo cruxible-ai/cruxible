@@ -244,3 +244,26 @@ def test_extension_owner_prefix_does_not_shadow_retained_facts(tmp_path, schema_
             assert projection.semantic_facts(schema_id, subject_identity="one") == facts
             observed.append(facts)
     assert observed[1] == observed[0]
+
+
+def test_line_identity_lookup_and_role_sensitive_dependency_read(tmp_path):
+    from cruxible_client.contracts.procedures.line_specs import line_identity_digest
+    from tests.test_procedures.test_procedure_measurement_readings import _line_world
+
+    instance, procedure, line = _line_world(tmp_path)
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        reader = projection.typed
+        assert reader is not None
+        assert (
+            reader.connection.execute(
+                "SELECT identity FROM lines WHERE identity_digest=?",
+                (line_identity_digest(line.identity),),
+            ).fetchone()[0]
+            == line.identity.qualified
+        )
+        selected = reader.dependency_state(line.identity.qualified)
+        assert selected.pins == line.pins
+        assert selected.identity == line.identity
+        selected_procedure = reader.dependency_state(procedure.identity.qualified)
+        assert selected_procedure.pins == procedure.pins
+        assert reader.dependency_state("Procedure:missing") is None
