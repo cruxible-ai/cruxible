@@ -9,6 +9,7 @@ from cruxible_client.contracts.projection_extensions import ProjectionExtensionR
 from cruxible_core.claims.claim_retirement import service_retire_claim
 from cruxible_core.compiler.assembler import PYTHON_REFERENCE_ASSEMBLER
 from cruxible_core.compiler.projection_artifacts import parse_projection_tree
+from cruxible_core.indexes.projection import AssemblerRequest
 from cruxible_core.indexes.sqlite import (
     canonical_logical_export,
     initialize_projection_database,
@@ -33,7 +34,10 @@ def _parse(instance, *, blobs=None, registry=None):
         coordinate=request,
         accepted_coordinates_by_sequence=instance._accepted_coordinates_by_sequence(),
     )
-    return parsed, request, assembler.registry
+    frozen_request = AssemblerRequest(
+        **request.model_dump(exclude={"tag", "storage_schema_version"})
+    )
+    return parsed, frozen_request, assembler.registry
 
 
 def _assert_same_rows_and_digest(tmp_path, cold, warm):

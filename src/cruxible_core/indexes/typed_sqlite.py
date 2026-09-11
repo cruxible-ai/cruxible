@@ -8,10 +8,17 @@ import hashlib
 import sqlite3
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
+from typing import Any
 
 from cruxible_client.contracts.canonical import ArtifactCodec, file_digest, is_candidate_card_path
 from cruxible_client.contracts.errors import ProjectionIntegrityError
+from cruxible_client.contracts.projection_extensions import ProjectionExtensionRegistry
 from cruxible_core.compiler.projection_artifacts import ParsedProjectionTree
+from cruxible_core.indexes.evidence.citation_sql import (
+    SCHEMA_SQL,
+    populate_citations,
+    remove_owner_citations,
+)
 from cruxible_core.indexes.projection import AssemblerRequest
 from cruxible_core.indexes.sqlite_v1 import _TABLE_SPECS
 from cruxible_core.indexes.typed_state import (
@@ -34,7 +41,7 @@ _EXTENSION_TABLES = (
 
 def complete_schema_sql() -> str:
     specs = [spec for spec in _TABLE_SPECS if spec.name in (*_METADATA_TABLES, *_EXTENSION_TABLES)]
-    statements = [schema_sql()]
+    statements = [schema_sql(), SCHEMA_SQL]
     for spec in specs:
         statements.append(spec.create_sql + ";")
         statements.extend(
@@ -114,12 +121,15 @@ def replace_rows(
     codec: ArtifactCodec,
     changed_paths: Iterable[str] = (),
     resolve_digest: Callable[[str], Iterable[str]] | None = None,
+    bodies: Any = None,
 ) -> None:
     changed = tuple(sorted(set(changed_paths)))
     for path in changed:
         for identity, kind in connection.execute(
             "SELECT identity,kind FROM artifact_lookup WHERE path=?", (path,)
         ).fetchall():
+            if kind == "claim":
+                remove_owner_citations(connection, (("Claim", identity),))
             connection.execute("DELETE FROM pins WHERE source_identity=?", (identity,))
             if kind == "exhaust-promotion":
                 connection.execute(
@@ -133,6 +143,35 @@ def replace_rows(
     insert_owners(
         connection, parsed=parsed, blobs=sources, codec=codec, resolve_digest=resolve_digest
     )
+    if bodies is not None:
+        populate_citations(
+            connection,
+            sources,
+            bodies=bodies,
+            owner_exists=lambda kind, identity: (
+                kind == "Claim"
+                and connection.execute(
+                    "SELECT 1 FROM claims WHERE identity=?", (identity,)
+                ).fetchone()
+                is not None
+            ),
+            artifact_codec=codec,
+        )
+    for fact in parsed.semantic_facts:
+        if fact.schema_id not in ("playbill.procedure.track_record", "playbill.line.track_record"):
+            continue
+        value = fact.value
+        assert isinstance(value, dict)
+        digest = value["promotion_digest"]["$digest"]
+        owners = connection.execute(
+            "SELECT identity FROM exhaust_promotions WHERE artifact_digest=?", (digest,)
+        ).fetchall()
+        if len(owners) != 1:
+            raise ProjectionIntegrityError("promoted result has no exact unique typed owner")
+        connection.execute(
+            "INSERT INTO promotion_subjects VALUES (?,?,?,?)",
+            (owners[0][0], fact.subject_identity, fact.schema_id.split(".")[1], fact.fact_key),
+        )
     # Full registry validation is O(principals), explicitly distinct from indexed
     # active-actor checks. This publication is a derivative, never a trust root.
     if connection.execute("SELECT 1 FROM principals LIMIT 1").fetchone():
@@ -150,6 +189,8 @@ def initialize(
     codec: ArtifactCodec,
     assembler_implementation: str,
     resolve_digest: Callable[[str], Iterable[str]] | None = None,
+    bodies: Any = None,
+    registry: ProjectionExtensionRegistry | None = None,
 ) -> dict[str, int]:
     connection = sqlite3.connect(path)
     try:
@@ -163,6 +204,7 @@ def initialize(
             sources=sources,
             codec=codec,
             resolve_digest=resolve_digest,
+            bodies=bodies,
         )
         connection.execute(
             "INSERT INTO compiler_coordinates VALUES (1,?,?)",
@@ -174,6 +216,91 @@ def initialize(
         )
         connection.execute(
             "INSERT INTO generation_metadata VALUES (1,?,?,?,?,?)",
+            (
+                request.instance_id,
+                request.git_object_format,
+                request.git_oid,
+                request.semantic_root,
+                request.generation_root,
+            ),
+        )
+        from cruxible_client.contracts.canonical import canonical_bytes
+
+        fixture_ids = {row.identity for row in parsed.envelopes if row.kind == "fixture"}
+        for table, facts, declarations in (
+            (
+                "semantic_facts",
+                tuple(f for f in parsed.semantic_facts if f.subject_identity in fixture_ids),
+                "projection_fact_schemas",
+            ),
+            ("presentation_facts", parsed.presentation_facts, "presentation_fact_schemas"),
+        ):
+            connection.executemany(
+                f"INSERT INTO {table} VALUES (?,?,?,?,?)",
+                [
+                    (
+                        fact.schema_id,
+                        fact.schema_version,
+                        fact.subject_identity,
+                        fact.fact_key,
+                        canonical_bytes(fact.value).decode(),
+                    )
+                    for fact in facts
+                ],
+            )
+            if registry is not None:
+                keys = {(fact.schema_id, fact.schema_version) for fact in facts}
+                selected = registry.declarations(
+                    "semantic" if table == "semantic_facts" else "presentation"
+                )
+                connection.executemany(
+                    f"INSERT INTO {declarations} VALUES (?,?,?)",
+                    [
+                        (
+                            declaration.schema_id,
+                            declaration.schema_version,
+                            canonical_bytes(list(declaration.constraints)).decode(),
+                        )
+                        for declaration in selected
+                        if (declaration.schema_id, declaration.schema_version) in keys
+                    ],
+                )
+        connection.commit()
+        verify_schema(connection)
+        return row_counts(connection)
+    finally:
+        connection.close()
+
+
+def update(
+    path: Path,
+    *,
+    parent: sqlite3.Connection,
+    request: AssemblerRequest,
+    parsed: ParsedProjectionTree,
+    sources: Mapping[str, bytes],
+    changed_paths: Iterable[str],
+    codec: ArtifactCodec,
+    bodies: Any = None,
+    resolve_digest: Callable[[str], Iterable[str]] | None = None,
+) -> dict[str, int]:
+    connection = sqlite3.connect(path)
+    try:
+        parent.backup(connection)
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("BEGIN IMMEDIATE")
+        replace_rows(
+            connection,
+            request=request,
+            parsed=parsed,
+            sources=sources,
+            changed_paths=changed_paths,
+            codec=codec,
+            bodies=bodies,
+            resolve_digest=resolve_digest,
+        )
+        connection.execute(
+            "UPDATE generation_metadata SET instance_id=?,git_object_format=?,git_oid=?,semantic_root=?,generation_root=? WHERE singleton=1",
             (
                 request.instance_id,
                 request.git_object_format,

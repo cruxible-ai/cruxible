@@ -45,6 +45,7 @@ def _build(
     publication.mkdir()
     assembler = ProjectionAssembler(
         repository,
+        storage_schema_version=1,
         accepted=accepted_coordinate(repository, generation_byte=("2" if name == "a" else "3") * 2),
         publication_directory=publication,
     )
@@ -104,6 +105,7 @@ def test_unknown_mismatched_or_misclassified_semantic_fact_refuses(
     publication.mkdir()
     assembler = ProjectionAssembler(
         repository,
+        storage_schema_version=1,
         accepted=accepted_coordinate(repository),
         publication_directory=publication,
     )

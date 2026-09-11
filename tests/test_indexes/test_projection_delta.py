@@ -143,7 +143,7 @@ def test_delta_rejects_wrong_successor_before_consuming_artifacts(tmp_path, monk
 
 @pytest.mark.parametrize("parent_state", ["missing", "corrupt"])
 def test_parent_recovery_or_refusal_preserves_authority(tmp_path, monkeypatch, parent_state):
-    from cruxible_core.indexes.projection import AssemblerRequest, projection_manifest_name
+    from cruxible_core.indexes.projection import AssemblerRequestV2, projection_manifest_name
 
     instance, owner = initialize_local(tmp_path)
     _seed_claim_surface(instance, owner)
@@ -168,7 +168,7 @@ def test_parent_recovery_or_refusal_preserves_authority(tmp_path, monkeypatch, p
         if delta is None:
             return assemble(assembler, request, crash_hook=crash_hook)
         base = delta.base
-        parent_request = AssemblerRequest(
+        parent_request = AssemblerRequestV2(
             instance_id=base.instance_id,
             repository_path=base.repository_path,
             git_object_format=base.git_object_format,
@@ -228,7 +228,12 @@ def test_unrelated_document_carries_nonempty_citation_relations_without_rebuild(
     _accept(instance, owner, coordinator, intent.intent_id, actor)
     publication = Path(instance.inspect().storage_directories["projections"])
     with bind_current_projection(publication, expected=instance.accepted_coordinate()) as handle:
-        prior_uses = handle.semantic_facts("playbill.citation_relation.use")
+        prior_uses = tuple(
+            tuple(row)
+            for row in handle._connection.execute(
+                "SELECT * FROM citation_uses ORDER BY owner_kind,owner_key,use_key"
+            )
+        )
         assert prior_uses
     body = instance.store_document_body(b"unrelated document")
     document = DocumentShell(
@@ -246,7 +251,15 @@ def test_unrelated_document_carries_nonempty_citation_relations_without_rebuild(
         def forbidden(*args, **kwargs):
             raise AssertionError("unrelated members cannot require citation reconstruction")
 
-        patch.setattr(delta_module.CitationIndex, "advance", forbidden)
+        from cruxible_core.indexes import typed_sqlite
+
+        original_populate = typed_sqlite.populate_citations
+
+        def only_unrelated(connection, sources, **kwargs):
+            assert not any(path.startswith("claims/") for path in sources)
+            return original_populate(connection, sources, **kwargs)
+
+        patch.setattr(typed_sqlite, "populate_citations", only_unrelated)
         _accept_tree(
             instance,
             owner,
@@ -258,7 +271,15 @@ def test_unrelated_document_carries_nonempty_citation_relations_without_rebuild(
             proposal_name="unrelated-document",
         )
     with bind_current_projection(publication, expected=instance.accepted_coordinate()) as handle:
-        assert handle.semantic_facts("playbill.citation_relation.use") == prior_uses
+        assert (
+            tuple(
+                tuple(row)
+                for row in handle._connection.execute(
+                    "SELECT * FROM citation_uses ORDER BY owner_kind,owner_key,use_key"
+                )
+            )
+            == prior_uses
+        )
         expected = _rows(handle.index_path)
     directory = tmp_path / "cold-oracle"
     directory.mkdir()
@@ -287,7 +308,8 @@ def test_warm_citation_successor_reads_no_global_relation_slice(tmp_path, monkey
     ).intent
     _accept(instance, owner, coordinator, first.intent_id, actor)
     before = instance.accepted_coordinate()
-    assert instance._citation_index_cache.peek(before) is not None
+    with instance.bind_accepted_projection(before) as handle:
+        assert handle._connection.execute("SELECT count(*) FROM citation_uses").fetchone()[0] > 0
     original = ProjectionHandle.semantic_facts
     reads = []
 
@@ -304,5 +326,7 @@ def test_warm_citation_successor_reads_no_global_relation_slice(tmp_path, monkey
         patch.setattr(ProjectionHandle, "semantic_facts", bounded)
         _accept(instance, owner, coordinator, second.intent_id, actor)
     assert reads == []
-    assert instance._citation_index_cache.peek(instance.accepted_coordinate()) is not None
-    assert instance._citation_index_cache.peek(before) is not None
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as handle:
+        assert handle._connection.execute("SELECT count(*) FROM citation_uses").fetchone()[0] > 0
+    with instance.bind_accepted_projection(before) as handle:
+        assert handle._connection.execute("SELECT count(*) FROM citation_uses").fetchone()[0] > 0
