@@ -10,7 +10,13 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.candidates import CandidateMemberEvidence
+from cruxible_client.contracts.canonical import (
+    Sha256Value,
+    canonical_bytes,
+    file_digest,
+    typed_digest,
+)
 from cruxible_client.contracts.captures import (
     parse_capture_envelope,
 )
@@ -51,6 +57,7 @@ from cruxible_client.contracts.diagnostics import GovernedOperationReference
 from cruxible_client.contracts.discovery import ContextCapsuleV1, ExpandRequestV1
 from cruxible_client.contracts.errors import (
     ClaimNotFoundError,
+    ProjectionIntegrityError,
     ProposalIntegrityError,
 )
 from cruxible_client.contracts.policies import (
@@ -506,22 +513,6 @@ def materialize_playbill_claim_view(
     )
 
 
-def projected_playbill_claim_views(
-    instance: PlaybillInstance,
-    *,
-    coordinate: AcceptedProjectionCoordinate,
-) -> tuple[PlaybillClaimView, ...]:
-    """Materialize every projected Claim view at one accepted coordinate."""
-
-    generation = next(
-        item for item in instance.accepted_history() if item.oid == coordinate.git_oid
-    )
-    if generation.sequence == 0:
-        return ()
-    with instance.bind_accepted_projection(coordinate) as projection:
-        return tuple(_public_claim(item) for item in projection.list_claims())
-
-
 def service_list_playbill_claims(
     instance: PlaybillInstance,
     *,
@@ -531,24 +522,13 @@ def service_list_playbill_claims(
     include_retired: bool = False,
 ) -> PlaybillClaimList:
     coordinate = _resolve_coordinate(instance, at)
-    projected = projected_playbill_claim_views(instance, coordinate=coordinate)
-    claims: tuple[PlaybillClaimView, ...]
-    if include_retired and subject is None and predicate is None:
-        claims = projected
-    else:
-        # One reconstruction per row: the filter used to rebuild the whole
-        # ClaimArtifact once per bound predicate in the conjunction.
-        selected: list[PlaybillClaimView] = []
-        for item in projected:
-            parsed = _claim_from_view(item)
-            if not include_retired and parsed.lifecycle.state != "live":
-                continue
-            if subject is not None and parsed.statement.subject != subject:
-                continue
-            if predicate is not None and parsed.statement.predicate != predicate:
-                continue
-            selected.append(item)
-        claims = tuple(selected)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        claims = tuple(
+            _public_claim(item)
+            for item in projection.list_claims(
+                subject=subject, predicate=predicate, include_retired=include_retired
+            )
+        )
     return PlaybillClaimList(
         coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
         claims=claims,
@@ -890,29 +870,43 @@ def service_playbill_claim_history(
     )
     path = claim_path(parsed_identity.name)
     entries: list[PlaybillClaimHistoryEntry] = []
-    for generation in instance.accepted_history()[1:]:
-        record = generation.record
-        if record is None or not any(member.path == path for member in record.members):
-            continue
-        content = instance.tree_at(generation.oid).get(path)
-        if content is None:
-            continue
-        claim = parse_claim(content, path=path)
-        entries.append(
-            PlaybillClaimHistoryEntry(
-                sequence=generation.sequence,
-                coordinate=PlaybillAcceptedCoordinate.from_internal(
-                    instance.coordinate_for_oid(generation.oid)
-                ),
-                statement_digest=claim_statement_digest(claim.statement).tagged,
-                artifact_digest=claim_artifact_digest(claim).tagged,
-                predecessor_digest=claim.lifecycle.predecessor_digest,
-                lifecycle_state=claim.lifecycle.state,
-                change_set_path=f"changesets/cs-{record.sequence:020d}.json",
-                changeset_digest=record.changeset_digest,
-                candidate_digest=record.candidate_digest,
+    with instance.accepted_history_reader() as history:
+        for location in history.member_history(path):
+            generation = history.generation(location.sequence)
+            record = history.read_member_record(location, load_record=instance._ledger.blob_at)
+            member = record.members[location.member_ordinal]
+            content = instance.blob_at(generation.git_oid, path)
+            if member.disposition == "delete" and content is None:
+                continue
+            if content is None:
+                raise ProjectionIntegrityError("Claim history source is unavailable")
+            claim = parse_claim(content, path=path)
+            digest = claim_artifact_digest(claim).tagged
+            source_digest = (
+                file_digest(content).tagged
+                if isinstance(member, CandidateMemberEvidence)
+                else digest
             )
-        )
+            if source_digest != location.artifact_digest:
+                raise ProjectionIntegrityError("Claim history source binding differs")
+            entries.append(
+                PlaybillClaimHistoryEntry(
+                    sequence=generation.sequence,
+                    coordinate=PlaybillAcceptedCoordinate(
+                        git_oid=generation.git_oid,
+                        semantic_root=generation.semantic_root,
+                        generation_root=generation.generation_root,
+                        compiler_digest=generation.compiler_digest,
+                    ),
+                    statement_digest=claim_statement_digest(claim.statement).tagged,
+                    artifact_digest=digest,
+                    predecessor_digest=claim.lifecycle.predecessor_digest,
+                    lifecycle_state=claim.lifecycle.state,
+                    change_set_path=f"changesets/cs-{record.sequence:020d}.json",
+                    changeset_digest=record.changeset_digest,
+                    candidate_digest=record.candidate_digest,
+                )
+            )
     if not entries:
         raise ClaimNotFoundError(identity)
     return PlaybillClaimHistory(identity=parsed_identity.qualified, entries=tuple(entries))
@@ -961,7 +955,9 @@ def service_explain_playbill_claim(
         citations_by_capture.setdefault(citation.capture_digest, []).append(citation.citation_id)
     from cruxible_core.service.evidence.evidence import _capture_contracts
 
-    contracts = _capture_contracts(instance.tree_at(coordinate.git_oid))
+    contracts = _capture_contracts(
+        _claim_admission_tree(instance, claim=claim, coordinate=coordinate)
+    )
     for digest in claim.backing.capture_digests:
         envelope = parse_capture_envelope(
             instance.body_store().read(
@@ -1552,7 +1548,7 @@ class _InstanceSourceMaterialResolver:
         self._external_reader = external_reader
 
     def read_ledger(self, artifact_path: str) -> bytes | None:
-        return self._instance.tree_at(self._coordinate.git_oid).get(artifact_path)
+        return self._instance.blob_at(self._coordinate.git_oid, artifact_path)
 
     def read_cas(self, content_digest: str, *, access: BodyAccessContext) -> bytes | None:
         if not self._instance.body_store().verify(content_digest):
@@ -1606,7 +1602,6 @@ __all__ = [
     "PlaybillClaimQueryResultV2",
     "PlaybillClaimView",
     "PlaybillClaimViewV2",
-    "projected_playbill_claim_views",
     "resolve_playbill_claim_group",
     "service_expand_playbill_semantic",
     "service_explain_playbill_claim",

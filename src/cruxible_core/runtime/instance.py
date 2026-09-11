@@ -271,8 +271,6 @@ class PlaybillInstance:
         # review-context snapshot and access profile. Bounded by the floor service.
         self.floor_structure_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
         self.floor_export_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
-        self.floor_history_memo: OrderedDict[str, object] = OrderedDict()
-        self.floor_review_memo: OrderedDict[str, object] = OrderedDict()
 
     @staticmethod
     def _accepted_query_facts(

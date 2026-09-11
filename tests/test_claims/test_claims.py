@@ -448,7 +448,9 @@ def test_v2_claim_successor_preserves_the_base_accepted_authority_change_shape(
     }
 
 
-def test_service_claim_history_returns_each_accepted_lineage_entry(tmp_path: Path) -> None:
+def test_service_claim_history_returns_each_accepted_lineage_entry(
+    tmp_path: Path, monkeypatch
+) -> None:
     instance, owner = initialize_local(tmp_path)
     base = instance.accepted_coordinate()
     claim_id = "CLM-aabbccddaabbccddaabbccddaabbccdd"
@@ -504,6 +506,12 @@ def test_service_claim_history_returns_each_accepted_lineage_entry(tmp_path: Pat
         proposal_name="history-successor",
     )
 
+    def forbidden(*args, **kwargs):
+        pytest.fail("Claim history must select indexed occurrences, not scan accepted history")
+
+    monkeypatch.setattr(instance, "accepted_history", forbidden)
+    monkeypatch.setattr(instance, "tree_at", forbidden)
+    monkeypatch.setattr(instance, "paths_at", forbidden)
     history = service_playbill_claim_history(instance, identity=f"Claim:{claim_id}")
 
     assert history.identity == f"Claim:{claim_id}"

@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from cruxible_core.indexes.sqlite import ProjectionHandle
 from cruxible_core.service.claims import claims as playbill_claims
 from cruxible_core.service.claims.claims import (
     _claim_law_evidence_index,
@@ -109,3 +110,30 @@ def test_claim_reads_rebuild_history_after_refresh(
     instance.refresh()
     assert not hasattr(instance, "claim_read_history_memo")
     assert service_get_playbill_claim(instance, identity=identity) == before
+
+
+def test_filtered_claim_list_materializes_only_selected_rows(tmp_path: Path, monkeypatch) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    before = service_list_playbill_claims(instance).claims
+    selected = playbill_claims._claim_from_view(before[0])
+    materialized = []
+    original = ProjectionHandle.claim
+
+    def counted(self, identity):
+        materialized.append(identity)
+        return original(self, identity)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("filtered Claim list must not scan accepted history or source inventory")
+
+    monkeypatch.setattr(ProjectionHandle, "claim", counted)
+    monkeypatch.setattr(instance, "accepted_history", forbidden)
+    monkeypatch.setattr(instance, "tree_at", forbidden)
+    monkeypatch.setattr(instance, "paths_at", forbidden)
+    result = service_list_playbill_claims(
+        instance,
+        subject=selected.statement.subject,
+        predicate=selected.statement.predicate,
+    )
+    assert result.claims == (before[0],)
+    assert materialized == [selected.identity.qualified]
