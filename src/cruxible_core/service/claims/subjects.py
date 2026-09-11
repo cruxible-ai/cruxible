@@ -8,7 +8,13 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from cruxible_client.contracts.artifacts import parse_artifact_identity
-from cruxible_client.contracts.errors import ProposalIntegrityError, SubjectNotFoundError
+from cruxible_client.contracts.candidates import CandidateMemberEvidence
+from cruxible_client.contracts.canonical import file_digest
+from cruxible_client.contracts.errors import (
+    ProjectionIntegrityError,
+    ProposalIntegrityError,
+    SubjectNotFoundError,
+)
 from cruxible_client.contracts.subjects import (
     parse_subject,
     subject_digest,
@@ -195,11 +201,6 @@ def service_get_playbill_subject(
     at: PlaybillAcceptedCoordinate | None = None,
 ) -> PlaybillSubjectView:
     coordinate = _resolve_coordinate(instance, at)
-    generation = next(
-        item for item in instance.accepted_history() if item.oid == coordinate.git_oid
-    )
-    if generation.sequence == 0:
-        raise SubjectNotFoundError(identity)
     with instance.bind_accepted_projection(coordinate) as projection:
         subject = projection.subject(identity)
         if subject is None:
@@ -217,14 +218,8 @@ def service_list_playbill_subjects(
     at: PlaybillAcceptedCoordinate | None = None,
 ) -> PlaybillSubjectList:
     coordinate = _resolve_coordinate(instance, at)
-    generation = next(
-        item for item in instance.accepted_history() if item.oid == coordinate.git_oid
-    )
-    if generation.sequence == 0:
-        subjects: tuple[PlaybillSubjectView, ...] = ()
-    else:
-        with instance.bind_accepted_projection(coordinate) as projection:
-            subjects = tuple(_public_subject(item) for item in projection.list_subjects())
+    with instance.bind_accepted_projection(coordinate) as projection:
+        subjects = tuple(_public_subject(item) for item in projection.list_subjects())
     return PlaybillSubjectList(
         coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
         subjects=subjects,
@@ -249,28 +244,42 @@ def service_playbill_subject_history(
     except ValueError as exc:
         raise SubjectNotFoundError(identity) from exc
     entries: list[PlaybillSubjectHistoryEntry] = []
-    for generation in instance.accepted_history()[1:]:
-        record = generation.record
-        if record is None or not any(member.path == path for member in record.members):
-            continue
-        content = instance.tree_at(generation.oid).get(path)
-        if content is None:
-            continue
-        shell = parse_subject(content, path=path)
-        entries.append(
-            PlaybillSubjectHistoryEntry(
-                sequence=generation.sequence,
-                coordinate=PlaybillAcceptedCoordinate.from_internal(
-                    instance.coordinate_for_oid(generation.oid)
-                ),
-                artifact_digest=subject_digest(shell).tagged,
-                predecessor_digest=shell.lifecycle.predecessor_digest,
-                lifecycle_state=shell.lifecycle.state,
-                change_set_path=f"changesets/cs-{record.sequence:020d}.json",
-                changeset_digest=record.changeset_digest,
-                candidate_digest=record.candidate_digest,
+    with instance.accepted_history_reader() as history:
+        for location in history.member_history(path):
+            generation = history.generation(location.sequence)
+            record = history.read_member_record(location, instance.blob_at)
+            member = record.members[location.member_ordinal]
+            content = instance.blob_at(generation.git_oid, path)
+            if member.disposition == "delete" and content is None:
+                continue
+            if content is None:
+                raise ProjectionIntegrityError("Subject history source is unavailable")
+            shell = parse_subject(content, path=path)
+            digest = subject_digest(shell).tagged
+            source_digest = (
+                file_digest(content).tagged
+                if isinstance(member, CandidateMemberEvidence)
+                else digest
             )
-        )
+            if source_digest != location.artifact_digest:
+                raise ProjectionIntegrityError("Subject history source binding differs")
+            entries.append(
+                PlaybillSubjectHistoryEntry(
+                    sequence=generation.sequence,
+                    coordinate=PlaybillAcceptedCoordinate(
+                        git_oid=generation.git_oid,
+                        semantic_root=generation.semantic_root,
+                        generation_root=generation.generation_root,
+                        compiler_digest=generation.compiler_digest,
+                    ),
+                    artifact_digest=digest,
+                    predecessor_digest=shell.lifecycle.predecessor_digest,
+                    lifecycle_state=shell.lifecycle.state,
+                    change_set_path=f"changesets/cs-{record.sequence:020d}.json",
+                    changeset_digest=record.changeset_digest,
+                    candidate_digest=record.candidate_digest,
+                )
+            )
     if not entries:
         raise SubjectNotFoundError(identity)
     return PlaybillSubjectHistory(identity=identity, entries=tuple(entries))

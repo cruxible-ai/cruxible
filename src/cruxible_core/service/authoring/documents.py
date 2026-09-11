@@ -13,8 +13,8 @@ from cruxible_client.contracts.attestations import (
     VerifiedApproval,
     verify_approval,
 )
-from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
-from cruxible_client.contracts.canonical import ProposalDigest
+from cruxible_client.contracts.candidates import CandidateMemberEvidence, CandidateRecordAnyVersion
+from cruxible_client.contracts.canonical import ProposalDigest, file_digest
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.documents import (
     DocumentShell,
@@ -26,6 +26,7 @@ from cruxible_client.contracts.documents import (
 from cruxible_client.contracts.errors import (
     ApprovalIntegrityError,
     DocumentNotFoundError,
+    ProjectionIntegrityError,
     ProposalActivationRequestInvalid,
     ProposalIntegrityError,
     SettlementIntegrityError,
@@ -518,11 +519,6 @@ def service_get_playbill_document(
     at: PlaybillAcceptedCoordinate | None = None,
 ) -> PlaybillDocumentView:
     coordinate = _resolve_coordinate(instance, at)
-    generation = next(
-        item for item in instance.accepted_history() if item.oid == coordinate.git_oid
-    )
-    if generation.sequence == 0:
-        raise DocumentNotFoundError(identity)
     with instance.bind_accepted_projection(coordinate) as projection:
         document = projection.document(identity, access=access)
     if document is None:
@@ -537,16 +533,10 @@ def service_list_playbill_documents(
     at: PlaybillAcceptedCoordinate | None = None,
 ) -> PlaybillDocumentList:
     coordinate = _resolve_coordinate(instance, at)
-    generation = next(
-        item for item in instance.accepted_history() if item.oid == coordinate.git_oid
-    )
-    if generation.sequence == 0:
-        documents: tuple[PlaybillDocumentView, ...] = ()
-    else:
-        with instance.bind_accepted_projection(coordinate) as projection:
-            documents = tuple(
-                _public_document(item) for item in projection.list_documents(access=access)
-            )
+    with instance.bind_accepted_projection(coordinate) as projection:
+        documents = tuple(
+            _public_document(item) for item in projection.list_documents(access=access)
+        )
     return PlaybillDocumentList(
         coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
         documents=documents,
@@ -611,29 +601,43 @@ def service_playbill_document_history(
         raise DocumentNotFoundError(identity)
     path = document_path(document_id)
     entries: list[PlaybillDocumentHistoryEntry] = []
-    for generation in instance.accepted_history()[1:]:
-        record = generation.record
-        if record is None or not any(member.path == path for member in record.members):
-            continue
-        content = instance.tree_at(generation.oid).get(path)
-        if content is None:
-            continue
-        shell = parse_document(content, path=path)
-        entries.append(
-            PlaybillDocumentHistoryEntry(
-                sequence=generation.sequence,
-                coordinate=PlaybillAcceptedCoordinate.from_internal(
-                    instance.coordinate_for_oid(generation.oid)
-                ),
-                envelope_digest=document_digest(shell).tagged,
-                body_digest=shell.body_digest,
-                predecessor_digest=shell.predecessor_digest,
-                revision=shell.lifecycle.revision,
-                change_set_path=f"changesets/cs-{record.sequence:020d}.json",
-                changeset_digest=record.changeset_digest,
-                candidate_digest=record.candidate_digest,
+    with instance.accepted_history_reader() as history:
+        for location in history.member_history(path):
+            generation = history.generation(location.sequence)
+            record = history.read_member_record(location, instance.blob_at)
+            member = record.members[location.member_ordinal]
+            content = instance.blob_at(generation.git_oid, path)
+            if member.disposition == "delete" and content is None:
+                continue
+            if content is None:
+                raise ProjectionIntegrityError("Document history source is unavailable")
+            shell = parse_document(content, path=path)
+            digest = document_digest(shell).tagged
+            source_digest = (
+                file_digest(content).tagged
+                if isinstance(member, CandidateMemberEvidence)
+                else digest
             )
-        )
+            if source_digest != location.artifact_digest:
+                raise ProjectionIntegrityError("Document history source binding differs")
+            entries.append(
+                PlaybillDocumentHistoryEntry(
+                    sequence=generation.sequence,
+                    coordinate=PlaybillAcceptedCoordinate(
+                        git_oid=generation.git_oid,
+                        semantic_root=generation.semantic_root,
+                        generation_root=generation.generation_root,
+                        compiler_digest=generation.compiler_digest,
+                    ),
+                    envelope_digest=digest,
+                    body_digest=shell.body_digest,
+                    predecessor_digest=shell.predecessor_digest,
+                    revision=shell.lifecycle.revision,
+                    change_set_path=f"changesets/cs-{record.sequence:020d}.json",
+                    changeset_digest=record.changeset_digest,
+                    candidate_digest=record.candidate_digest,
+                )
+            )
     if not entries:
         raise DocumentNotFoundError(identity)
     return PlaybillDocumentHistory(identity=identity, entries=tuple(entries))
