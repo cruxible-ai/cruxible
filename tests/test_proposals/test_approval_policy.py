@@ -190,6 +190,9 @@ def test_write_gate_uses_artifact_codec_lineage_before_candidate_time(
             )
         instance, _owner = initialize_local(tmp_path)
 
+    # A frozen bootstrap stays replayable even when its write gate requires
+    # reseeding; opening its read coordinate must not assemble a newer format.
+    instance.refresh()
     base = instance.accepted_coordinate()
     tree = instance.tree_at(base.git_oid)
     assert instance.descriptor.compiler == compiler
