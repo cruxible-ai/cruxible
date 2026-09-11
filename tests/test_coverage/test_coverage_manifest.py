@@ -17,9 +17,7 @@ import pytest
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_core.coverage.contracts import CoverageWatcherHealthV1
 from cruxible_core.coverage.indexes import (
-    CaptureCitationInputV2,
     CoverageScanBudgetV1,
-    build_evidence_citation_index_v2,
     build_working_occurrence_overlay,
 )
 from cruxible_core.coverage.manifest import (
@@ -40,6 +38,10 @@ from cruxible_core.coverage.manifest import (
     write_coverage_manifest_v2,
 )
 from cruxible_core.coverage.resolver import resolve_coverage_v3
+from tests.core_support._citation_index_oracle import (
+    CaptureCitationInputV2,
+    build_evidence_citation_index_v2,
+)
 from tests.core_support._coverage_support import (
     CITED,
     EPILOGUE,
