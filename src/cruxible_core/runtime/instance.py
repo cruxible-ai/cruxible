@@ -32,6 +32,7 @@ from cruxible_client.contracts.errors import (
     PlaybillFormatError,
     PlaybillInstanceDecommissioned,
     PlaybillKeyError,
+    PrincipalIntegrityError,
     ProjectionIntegrityError,
     ProposalIntegrityError,
     SettlementIntegrityError,
@@ -39,6 +40,7 @@ from cruxible_client.contracts.errors import (
 from cruxible_client.contracts.ledger_mirror import validate_mirror_url
 from cruxible_client.contracts.principals import (
     PrincipalRegistrySnapshot,
+    parse_principal_record,
     principal_registry_from_tree,
 )
 from cruxible_client.contracts.temporal import format_datetime, utc_now
@@ -84,7 +86,11 @@ from cruxible_core.governance.keys import (
     public_key_hex_from_private_file,
     raw_public_key_hex_from_openssh,
 )
-from cruxible_core.indexes.history.history_index import AcceptedHistoryIndex, HistoryReader
+from cruxible_core.indexes.history.history_index import (
+    AcceptedGenerationLocation,
+    AcceptedHistoryIndex,
+    HistoryReader,
+)
 from cruxible_core.indexes.projection import (
     AcceptedCoordinate,
     AcceptedProjectionCoordinate,
@@ -223,9 +229,6 @@ def _validate_client_principals(
 # Four generations cover every read path that walks a bounded lineage while
 # keeping the resident set to a handful of trees per served instance.
 _TREE_MEMO_GENERATIONS = 4
-# One index over metadata already owned by replay, with a hard entry ceiling.
-# Larger histories retain the original scan semantics instead of truncating.
-_HISTORY_LOOKUP_MAX_GENERATIONS = 65_536
 
 
 class PlaybillInstance:
@@ -269,9 +272,6 @@ class PlaybillInstance:
             IndexDefinition("accepted-history", "accepted", "1", "verified-ledger-history-v1"),
             self._accepted_history_index,
         )
-        self._history_lookup: (
-            tuple[RecoveredInstanceState, dict[str, RecoveredGeneration | None] | None] | None
-        ) = None
         self._promotion_verifier = promotion_verifier
         self._claim_attestation_store: ClaimAttestationEvidenceStore | None = None
         self._workspace_advertiser: Callable[[], PlaybillWorkspaceAdvertisement] | None = None
@@ -281,7 +281,6 @@ class PlaybillInstance:
         self._tree_memo: OrderedDict[str, dict[str, bytes]] = OrderedDict()
         # Read services keyed by accepted coordinate park their derived
         # history indexes here so activation drops them with one clear().
-        self.claim_read_history_memo: OrderedDict[str, object] = OrderedDict()
         # Immutable-coordinate exports survive head movement; keys include their
         # review-context snapshot and access profile. Bounded by the floor service.
         self.floor_structure_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
@@ -1046,7 +1045,13 @@ class PlaybillInstance:
             )
         with self.bind_accepted_projection(coordinate) as projection:
             if projection.typed is not None:
-                return projection.typed.principal_registry()
+                registry = projection.typed.principal_registry()
+                generation = self._generation_for_oid(coordinate.git_oid)
+                if generation is None or registry != generation.principals:
+                    raise PrincipalIntegrityError(
+                        "indexed principals differ from the replay-verified accepted registry"
+                    )
+                return registry
             # Frozen v1 publications have no typed principal relation.
             return principal_registry_from_tree(
                 self.immutable_tree_at(coordinate.git_oid), semantic_root=coordinate.semantic_root
@@ -1061,7 +1066,13 @@ class PlaybillInstance:
             return
         with self.bind_accepted_projection(coordinate) as projection:
             if projection.typed is not None:
-                projection.typed.principal(principal_id, active=True)
+                principal = projection.typed.principal(principal_id, active=True)
+                path = f"principals/{principal_id}.json"
+                raw = self.blob_at(coordinate.git_oid, path)
+                if raw is None or principal != parse_principal_record(raw, path=path):
+                    raise PrincipalIntegrityError(
+                        "indexed principal differs from its exact accepted Git record"
+                    )
             else:
                 principal_registry_from_tree(
                     self.immutable_tree_at(coordinate.git_oid),
@@ -1347,6 +1358,13 @@ class PlaybillInstance:
         """Acquire one verified epoch and a cutoff-bound shared history reader."""
         with self._state_lock:
             recovered = self._recovered
+        with self._history_reader_for_epoch(recovered, at=at) as reader:
+            yield reader
+
+    @contextmanager
+    def _history_reader_for_epoch(
+        self, recovered: RecoveredInstanceState, *, at: AcceptedCoordinate | None = None
+    ) -> Iterator[HistoryReader]:
         paths = self._validated_paths(self.root, self.descriptor.storage)
         if self._accepted_history_index.path.parent != paths["projections"]:
             raise ProjectionIntegrityError("history index storage binding changed")
@@ -1410,26 +1428,29 @@ class PlaybillInstance:
             yield reader
 
     def _generation_for_oid(self, oid: str) -> RecoveredGeneration | None:
-        """Resolve unique membership only in this captured replay-verified epoch.
-
-        An index hit replaces a history scan, never recovery or a blob proof.
-        The atomic epoch/index pair prevents concurrent refresh from applying
-        another history's membership. Duplicate identities remain ambiguous.
-        """
+        """Locate membership through C, then bind it to the captured replay proof."""
         recovered = self._recovered
-        cached = self._history_lookup
-        if cached is None or cached[0] is not recovered:
-            index: dict[str, RecoveredGeneration | None] | None = None
-            if len(recovered.history) <= _HISTORY_LOOKUP_MAX_GENERATIONS:
-                index = {}
-                for generation in recovered.history:
-                    index[generation.oid] = None if generation.oid in index else generation
-            cached = (recovered, index)
-            self._history_lookup = cached
-        if cached[1] is not None:
-            return cached[1].get(oid)
-        matches = tuple(generation for generation in recovered.history if generation.oid == oid)
-        return matches[0] if len(matches) == 1 else None
+        with self._history_reader_for_epoch(recovered) as reader:
+            location = reader.generation_for_oid(oid)
+        return self._replayed_generation(recovered, location)
+
+    def _replayed_generation(
+        self, recovered: RecoveredInstanceState, location: AcceptedGenerationLocation | None
+    ) -> RecoveredGeneration | None:
+        if location is None:
+            return None
+        if not 0 <= location.sequence < len(recovered.history):
+            raise ProjectionIntegrityError("indexed generation lies outside captured replay")
+        generation = recovered.history[location.sequence]
+        if (
+            generation.sequence != location.sequence
+            or generation.oid != location.git_oid
+            or generation.semantic_root.tagged != location.semantic_root
+            or generation.generation_root.tagged != location.generation_root
+            or recovered.coordinate.compiler.rule_digest != location.compiler_digest
+        ):
+            raise ProjectionIntegrityError("indexed generation differs from captured replay")
+        return generation
 
     def accepted_evaluation_time(self, oid: str) -> datetime:
         """Resolve the immutable acceptance instant for one replayed generation."""
@@ -1469,16 +1490,15 @@ class PlaybillInstance:
     def generation_for_semantic_root(self, semantic_root: str) -> RecoveredGeneration:
         """Resolve one historical signing root without consulting mutable proposal state."""
 
-        matches = tuple(
-            generation
-            for generation in self._recovered.history
-            if generation.semantic_root.tagged == semantic_root
-        )
-        if len(matches) != 1:
+        recovered = self._recovered
+        with self._history_reader_for_epoch(recovered) as reader:
+            location = reader.generation_for_semantic_root(semantic_root)
+        generation = self._replayed_generation(recovered, location)
+        if generation is None:
             raise PlaybillFormatError(
                 "semantic root is not one accepted generation of this instance"
             )
-        return matches[0]
+        return generation
 
     def immutable_tree_at(self, oid: str) -> SnapshotTree:
         """Return an owned immutable root after verifying the full accepted binding."""
@@ -1631,7 +1651,6 @@ class PlaybillInstance:
         bodies = ContentAddressedBodyStore(paths["cas"])
         self._tree_memo.clear()
         self.derived.clear()
-        self.claim_read_history_memo.clear()
         self._evaluation_state_cache.clear()
         self._recovered = recover_instance(
             self._ledger,
@@ -1651,7 +1670,6 @@ class PlaybillInstance:
             query_facts_builder=self._accepted_query_facts,
             checkpoint_directory=self._checkpoint_directory(self.root),
         )
-        self._history_lookup = None
         return self.accepted_coordinate()
 
     def activation_publisher(
@@ -1799,8 +1817,6 @@ class PlaybillInstance:
                     projection=copy.deepcopy(result.projection),
                 )
                 self._tree_memo.clear()
-                self.claim_read_history_memo.clear()
-                self._history_lookup = None
                 self._recovered = advanced
 
             try:

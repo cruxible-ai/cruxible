@@ -41,9 +41,9 @@ def test_discovery_matches_full_view_inputs_without_building_them(tmp_path, monk
     calls = []
     providers = playbill_evidence.accepted_claim_providers
 
-    def counted(tree):
-        calls.append(len(tree))
-        return providers(tree)
+    def counted(instance, *, coordinate):
+        calls.append(coordinate)
+        return providers(instance, coordinate=coordinate)
 
     monkeypatch.setattr(playbill_evidence, "accepted_claim_providers", counted)
     playbill_search.reset_claim_resolution_memo()

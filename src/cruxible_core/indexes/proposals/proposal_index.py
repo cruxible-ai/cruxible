@@ -28,6 +28,7 @@ from cruxible_client.contracts.proposal_models import (
     ProposalEvaluationRecord,
     ProposalWithdrawalRecordV1,
 )
+from cruxible_core.indexes.history.history_index import commit_working_write
 from cruxible_core.proposals.proposal_notes import admission_bytes
 
 if TYPE_CHECKING:
@@ -106,7 +107,7 @@ class ProposalIndex:
         path: Path,
         lock: threading.RLock,
         file_stamp: Callable[[], tuple[int, ...] | None],
-        on_commit: Callable[[tuple[int, ...] | None], None],
+        on_commit: Callable[[tuple[int, ...] | None, tuple[int, ...]], None],
         connections: list[sqlite3.Connection],
         shutdown_proof: dict[str, Any],
     ) -> None:
@@ -148,8 +149,9 @@ class ProposalIndex:
                     for statement in _SCHEMA.split(";"):
                         if statement.strip():
                             self._connection.execute(statement)
-                    self._connection.commit()
-                    self._on_commit(before)
+                    after = commit_working_write(self._connection, self._file_stamp, before)
+                    self._on_commit(before, after)
+                    self._connection.rollback()
                 except BaseException:
                     self._connection.rollback()
                     raise
@@ -216,13 +218,18 @@ class ProposalIndex:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def database_committed(self, before: tuple[int, ...] | None) -> None:
-        """Retain A readiness across a trusted C-only transaction under the shared lock."""
-        if self._root is not None and before is not None and self._stamp == before:
+    def database_committed(self, before: tuple[int, ...] | None, after: tuple[int, ...]) -> None:
+        """Publish C's captured stamp while it retains reacquired SQLite ownership."""
+        if (
+            self._root is not None
+            and before is not None
+            and self._stamp == before
+            and after[:2] == before[:2]
+        ):
             marker = self._marker(self._root)
             if marker is not None and marker.get("database_stamp") == list(before):
-                self._stamp = self._file_stamp()
-                marker["database_stamp"] = self._stamp
+                self._stamp = after
+                marker["database_stamp"] = after
                 self._write_marker(self._root, marker)
                 self._remember(self._root, marker)
 
@@ -425,13 +432,11 @@ class ProposalIndex:
         marker: dict[str, Any],
         before: tuple[int, ...] | None,
     ) -> None:
-        connection.commit()
-        self._on_commit(before)
-        marker.update(
-            clean=True, inventory=self._inventory(evidence), database_stamp=self._file_stamp()
-        )
+        after = commit_working_write(connection, self._file_stamp, before)
+        self._on_commit(before, after)
+        marker.update(clean=True, inventory=self._inventory(evidence), database_stamp=after)
         self._write_marker(evidence.root, marker)
-        self._stamp = self._file_stamp()
+        self._stamp = after
         self._remember(evidence.root, marker)
 
     def _remember(self, root: Path, marker: dict[str, Any]) -> None:
@@ -452,7 +457,7 @@ class ProposalIndex:
                     marker = self._sync(evidence, writer, check_review_context=review_context)
                     # A clean checkpoint needs no durable marker rewrite on a read.
                     if marker.get("clean") is True:
-                        writer.commit()
+                        commit_working_write(writer, self._file_stamp, before)
                     else:
                         self._finish(evidence, writer, marker, before)
                 except BaseException:
@@ -466,15 +471,22 @@ class ProposalIndex:
                 progress = reader.execute(
                     "SELECT source_epoch,verified_sequence FROM proposal_progress"
                 ).fetchone()
-                if tuple(progress or ()) != (marker["epoch"], marker["sequence"]):
+                if (
+                    tuple(progress or ()) != (marker["epoch"], marker["sequence"])
+                    or self._file_stamp() != self._stamp
+                ):
                     raise ProposalIntegrityError(
                         "proposal index changed during snapshot acquisition"
                     )
+                writer.rollback()
             evidence._recovered_evaluations = {}
             yield reader
         except sqlite3.DatabaseError as exc:
             raise ProposalIntegrityError("proposal index requires reconstruction") from exc
         finally:
+            with self._lock:
+                if self._connection is not None and self._connection.in_transaction:
+                    self._connection.rollback()
             if reader is not None:
                 reader.close()
 
@@ -559,6 +571,7 @@ class ProposalIndex:
                 )
                 self._progress(writer, evidence, marker)
                 self._finish(evidence, writer, marker, before)
+                writer.rollback()
             except BaseException:
                 writer.rollback()
                 self._stamp = None

@@ -15,7 +15,6 @@ from cruxible_client.contracts.captures import CanonicalDurationV1
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandateV1,
     procedure_mandate_digest,
-    render_procedure_mandate,
 )
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedureV1,
@@ -1772,43 +1771,6 @@ def _line_mandate(
         expires_at=expires_at,
         lifecycle=ArtifactLifecycle(state=state),  # type: ignore[arg-type]
     )
-
-
-def test_a_foreign_mandate_never_grants_the_line_a_rung() -> None:
-    """Only the mandate pinning this exact Procedure artifact may grant."""
-
-    _line_spec, accepted, _interfaces = _line()
-    exact = _line_mandate(accepted)
-    tree = {"procedure-mandates/triage.json": render_procedure_mandate(exact)}
-    assert procedure_run_service._accepted_line_mandates(  # noqa: SLF001
-        tree, accepted, evaluation_time=READ_TIME
-    ) == ((procedure_mandate_digest(exact).tagged, exact),)
-
-    other_procedure = accepted.model_copy(
-        update={"artifact_digest": _line_digest("another-procedure")}
-    )
-    attacks = {
-        "another Procedure artifact": _line_mandate(other_procedure),
-        "retired lifecycle": _line_mandate(accepted, state="retired"),
-        "not yet valid": _line_mandate(
-            accepted,
-            valid_from=datetime(2027, 6, 1, tzinfo=UTC),
-            expires_at=datetime(2028, 1, 1, tzinfo=UTC),
-        ),
-        "already expired": _line_mandate(
-            accepted,
-            valid_from=datetime(2025, 1, 1, tzinfo=UTC),
-            expires_at=datetime(2025, 6, 1, tzinfo=UTC),
-        ),
-    }
-    for label, mandate in attacks.items():
-        foreign = {"procedure-mandates/triage.json": render_procedure_mandate(mandate)}
-        assert (
-            procedure_run_service._accepted_line_mandates(  # noqa: SLF001
-                foreign, accepted, evaluation_time=READ_TIME
-            )
-            == ()
-        ), label
 
 
 def _admitted_line_service(

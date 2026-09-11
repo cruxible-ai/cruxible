@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections import OrderedDict
-from collections.abc import Mapping, MutableSet
+from collections.abc import Iterator, Mapping, MutableSet
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
@@ -72,7 +71,6 @@ from cruxible_client.contracts.standing_mandates import (
     standing_mandate_path,
 )
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
-from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.evidence.source_readers import ExternalSourceReaderProtocol
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -209,7 +207,7 @@ class ClaimVerdictReadContext:
     instance: PlaybillInstance
     coordinate: AcceptedProjectionCoordinate
     _claims: dict[str, ClaimArtifactAny] = dataclass_field(default_factory=dict, init=False)
-    _providers: dict[str, ProviderV1] | None = dataclass_field(default=None, init=False)
+    _providers: Mapping[str, ProviderV1] | None = dataclass_field(default=None, init=False)
     _tree: Mapping[str, bytes] = dataclass_field(init=False)
 
     def __post_init__(self) -> None:
@@ -236,14 +234,61 @@ class ClaimVerdictReadContext:
             self._claims[identity] = parse_claim(content, path=path)
         return self._claims[identity]
 
-    def providers(self) -> dict[str, ProviderV1]:
+    def providers(self) -> Mapping[str, ProviderV1]:
         if self._providers is None:
-            object.__setattr__(self, "_providers", accepted_claim_providers(self._tree))
+            object.__setattr__(
+                self,
+                "_providers",
+                accepted_claim_providers(self.instance, coordinate=self.coordinate),
+            )
         assert self._providers is not None
         return self._providers
 
 
-def accepted_claim_providers(tree: Mapping[str, bytes]) -> dict[str, ProviderV1]:
+class _AcceptedClaimProviders(Mapping[str, ProviderV1]):
+    """One request's provider closure, selected from its immutable accepted coordinate."""
+
+    def __init__(
+        self, instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
+    ) -> None:
+        self._instance = instance
+        self._coordinate = coordinate
+        self._selected: dict[str, ProviderV1] = {}
+
+    def __getitem__(self, identity: str) -> ProviderV1:
+        if identity not in self._selected:
+            if not identity.startswith("Provider:"):
+                raise KeyError(identity)
+            with self._instance.bind_accepted_projection(self._coordinate) as projection:
+                assert projection.typed is not None
+                provider = projection.typed.source(identity)
+                if provider is None:
+                    raise KeyError(identity)
+                self._selected[identity] = provider
+        return self._selected[identity]
+
+    def __iter__(self) -> Iterator[str]:
+        with self._instance.bind_accepted_projection(self._coordinate) as projection:
+            assert projection.typed is not None
+            identities = tuple(row.identity for row in projection.typed.envelopes(kind="provider"))
+        return iter(identities)
+
+    def __len__(self) -> int:
+        with self._instance.bind_accepted_projection(self._coordinate) as projection:
+            assert projection.typed is not None
+            return int(
+                projection.typed.connection.execute("SELECT count(*) FROM providers").fetchone()[0]
+            )
+
+
+def accepted_claim_providers(
+    instance: ClaimReadSourceProtocol, *, coordinate: AcceptedProjectionCoordinate
+) -> Mapping[str, ProviderV1]:
+    if isinstance(instance, PlaybillInstance):
+        return _AcceptedClaimProviders(instance, coordinate)
+    # Cold accepted replay has no published projection yet. Its source tree is
+    # the explicit reconstruction oracle, never the live service read path.
+    tree = instance.tree_at(coordinate.git_oid)
     result: dict[str, ProviderV1] = {}
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
         if not path.startswith("providers/"):
@@ -401,7 +446,7 @@ def service_propose_claim_attestation(
         )
     subject_content_digest, object_content_digest = _referent_digests(tree, accepted.claim)
     principals = principal_registry_from_tree(tree, semantic_root=coordinate.semantic_root)
-    providers = accepted_claim_providers(tree)
+    providers = accepted_claim_providers(instance, coordinate=coordinate)
     verify_claim_attestation(
         attestation,
         verification_time=datetime.fromisoformat(timestamp.replace("Z", "+00:00")),
@@ -564,8 +609,8 @@ def _current_replay_available(
 class ClaimReadHistoryIndex:
     instance: ClaimReadSourceProtocol
     generation_oids: tuple[str, ...]
-    law_evidence: dict[str, ClaimLawEvidenceAny]
-    _claim_types: dict[tuple[str, str], ClaimType] | None = None
+    law_evidence: Mapping[str, ClaimLawEvidenceAny]
+    _claim_types: Mapping[tuple[str, str], ClaimType] | None = None
 
     def claim_types(self) -> Mapping[tuple[str, str], ClaimType]:
         """Materialize historical trees once, only when stale evidence needs them."""
@@ -584,7 +629,61 @@ class ClaimReadHistoryIndex:
         return self._claim_types
 
 
-_HISTORY_INDEX_MEMO_COORDINATES = 4
+class _IndexedClaimLawEvidence(Mapping[str, ClaimLawEvidenceAny]):
+    def __init__(self, instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate):
+        self.instance = instance
+        self.at = AcceptedCoordinate.from_internal(coordinate)
+
+    def __getitem__(self, path: str) -> ClaimLawEvidenceAny:
+        with self.instance.accepted_history_reader(at=self.at) as history:
+            locations = history.claim_law_locations(path=path, latest=True)
+            if not locations:
+                raise KeyError(path)
+            record = history.read_member_record(locations[0], self.instance.blob_at)
+            if isinstance(record, ChangeSetRecord):
+                raise KeyError(path)
+            evidence = next((item for item in record.law_evidence if item.path == path), None)
+            raw = None if evidence is None else evidence.result.get("claim_evidence")
+            if raw is None:
+                raise ProposalIntegrityError("accepted Claim law locator has no retained evidence")
+            return parse_claim_law_evidence(raw)
+
+    def __iter__(self) -> Iterator[str]:
+        with self.instance.accepted_history_reader(at=self.at) as history:
+            paths = {item.member_path for item in history.claim_law_locations()}
+        return iter(sorted(paths))
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
+class _IndexedClaimTypes(Mapping[tuple[str, str], ClaimType]):
+    def __init__(self, instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate):
+        self.instance = instance
+        self.at = AcceptedCoordinate.from_internal(coordinate)
+
+    def __getitem__(self, key: tuple[str, str]) -> ClaimType:
+        path, digest = key
+        with self.instance.accepted_history_reader(at=self.at) as history:
+            location = history.artifact(digest)
+            if location is None or location.path != path:
+                raise KeyError(key)
+            generation = history.generation(location.occurrence_sequence)
+        raw = self.instance.blob_at(generation.git_oid, location.path)
+        if raw is None:
+            raise ProposalIntegrityError("historical ClaimType source is unavailable")
+        claim_type = parse_claim_type(raw, path=path)
+        if claim_type_digest(claim_type).tagged != digest:
+            raise ProposalIntegrityError("historical ClaimType differs from requested digest")
+        return claim_type
+
+    def __iter__(self) -> Iterator[tuple[str, str]]:
+        with self.instance.accepted_history_reader(at=self.at) as history:
+            keys = {(row.path, row.artifact_digest) for row in history.claim_type_versions()}
+        return iter(sorted(keys))
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
 
 
 def _claim_read_history_index(
@@ -592,23 +691,14 @@ def _claim_read_history_index(
     *,
     coordinate: AcceptedProjectionCoordinate,
 ) -> ClaimReadHistoryIndex:
-    """Index ClaimTypes and latest Claim evidence once per accepted coordinate.
-
-    The index is a pure function of immutable accepted history, so it is
-    memoized on the read source when that source offers somewhere to park it -
-    every verdict evaluation used to rebuild the whole traversal, and one
-    ``next`` evaluates every Claim twice. A read source without the memo (a
-    replay shim, say) keeps building it per call.
-    """
-
-    memo = getattr(instance, "claim_read_history_memo", None)
-    if isinstance(memo, OrderedDict):
-        cached = memo_get(memo, coordinate.git_oid)
-        if isinstance(cached, ClaimReadHistoryIndex):
-            return cached
-        built = _build_claim_read_history_index(instance, coordinate=coordinate)
-        memo_put(memo, coordinate.git_oid, built, capacity=_HISTORY_INDEX_MEMO_COORDINATES)
-        return built
+    """Live reads use retained locators; unprojected replay folds its supplied source."""
+    if isinstance(instance, PlaybillInstance):
+        return ClaimReadHistoryIndex(
+            instance=instance,
+            generation_oids=(),
+            law_evidence=_IndexedClaimLawEvidence(instance, coordinate),
+            _claim_types=_IndexedClaimTypes(instance, coordinate),
+        )
     return _build_claim_read_history_index(instance, coordinate=coordinate)
 
 
@@ -833,7 +923,9 @@ def service_evaluate_playbill_claim_verdict(
         captures=captures,
         attestations=attestations,
         providers=(
-            accepted_claim_providers(tree) if read_context is None else read_context.providers()
+            accepted_claim_providers(instance, coordinate=coordinate)
+            if read_context is None
+            else read_context.providers()
         ),
         claim_effective_from=accepted.claim.statement.effective_from,
         claim_effective_until=accepted.claim.statement.effective_until,

@@ -371,30 +371,19 @@ def test_next_evaluates_each_claim_verdict_exactly_once(
     assert sum(evaluated.values()) == len(evaluated)
 
 
-def test_the_claim_read_history_index_is_built_once_per_coordinate(
+def test_claim_reads_use_history_locators_without_a_retained_history_map(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     instance, _owner = seed_claims(tmp_path)
-    instance.claim_read_history_memo.clear()
-    built = 0
-    original = playbill_evidence._build_claim_read_history_index
 
-    def counting(source: Any, *, coordinate: Any) -> Any:
-        nonlocal built
-        built += 1
-        return original(source, coordinate=coordinate)
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("served search must not build the old Claim history map")
 
-    monkeypatch.setattr(playbill_evidence, "_build_claim_read_history_index", counting)
+    monkeypatch.setattr(playbill_evidence, "_build_claim_read_history_index", forbidden)
     service_search_playbill(instance, request=_orient_request(instance))
-    assert built == 1
-
     service_search_playbill(instance, request=_orient_request(instance))
-    assert built == 1
-
-    # Replay after activation must not serve a superseded index.
-    instance.refresh()
-    assert instance.claim_read_history_memo == {}
+    assert not hasattr(instance, "claim_read_history_memo")
 
 
 def test_the_publication_intent_fold_runs_once_per_durable_stream(

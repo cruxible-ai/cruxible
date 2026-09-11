@@ -36,12 +36,14 @@ from cruxible_client.contracts.captures import (
     capture_contract_digest,
     parse_capture_contract,
 )
-from cruxible_client.contracts.errors import PlaybillError, PlaybillExecutionError
+from cruxible_client.contracts.errors import (
+    PlaybillError,
+    PlaybillExecutionError,
+    ProjectionIntegrityError,
+)
 from cruxible_client.contracts.procedure_mandates import (
     PROCEDURE_MANDATE_CLOCK_SKEW,
     ProcedureMandateV1,
-    parse_procedure_mandate,
-    procedure_mandate_digest,
 )
 from cruxible_client.contracts.procedure_runtime_policy import PROCEDURE_RUNTIME_POLICY_PATH
 from cruxible_client.contracts.procedures.artifacts import (
@@ -156,8 +158,6 @@ from cruxible_client.contracts.provider_interfaces import (
 from cruxible_client.contracts.providers import (
     AcceptedProviderV1,
     ProviderV2,
-    parse_provider,
-    provider_digest,
 )
 from cruxible_client.contracts.repairs import served_repair_for_refusal
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
@@ -181,6 +181,7 @@ from cruxible_core.exhaust.records import parse_journal_payload
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.typed_state import utc_microseconds
 from cruxible_core.procedures.acquisition import (
     ACQUISITION_OVERSIZED,
     ACQUISITION_REFUSED,
@@ -654,17 +655,20 @@ def _accepted_procedure(
     coordinate: AcceptedProjectionCoordinate,
 ) -> AcceptedProcedureV1:
     path = procedure_path(name)
-    content = instance.blob_at(coordinate.git_oid, path)
-    if content is None:
-        raise ProcedureNotFound(f"{ProcedureNotFound.code}: {name}")
-    procedure = parse_procedure(content, path=path)
-    if procedure.lifecycle.state == "retired":
-        raise ProcedureRetired(f"{ProcedureRetired.code}: {name}")
-    return AcceptedProcedureV1(
-        path=path,
-        procedure=procedure,
-        artifact_digest=procedure_artifact_digest(procedure).tagged,
-    )
+    with instance.bind_accepted_projection(coordinate) as projection:
+        assert projection.typed is not None
+        envelope = projection.typed.envelope(f"Procedure:{name}")
+        if envelope is None:
+            raise ProcedureNotFound(f"{ProcedureNotFound.code}: {name}")
+        procedure = projection.typed.source(envelope.identity)
+        assert procedure is not None
+        if procedure.lifecycle.state == "retired":
+            raise ProcedureRetired(f"{ProcedureRetired.code}: {name}")
+        return AcceptedProcedureV1(
+            path=path,
+            procedure=procedure,
+            artifact_digest=envelope.artifact_digest,
+        )
 
 
 def _accepted_line_by_identity_digest(
@@ -693,31 +697,37 @@ def _accepted_line_by_identity_digest(
 
 
 def _line_catalogs(
-    tree: Mapping[str, bytes],
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    pins: Sequence[ArtifactPin],
 ) -> tuple[
     dict[str, AcceptedProviderV1],
     dict[str, AcceptedProviderInterfaceRegistrationV1],
 ]:
     providers: dict[str, AcceptedProviderV1] = {}
     interfaces: dict[str, AcceptedProviderInterfaceRegistrationV1] = {}
-    for path, content in tree.items():
-        if path.startswith("providers/") and path.endswith((".json", ".yaml")):
-            provider = parse_provider(content, path=path)
-            if provider.lifecycle.state == "live":
-                digest = provider_digest(provider).tagged
-                providers[digest] = AcceptedProviderV1(
-                    path=path,
-                    provider=provider,
-                    artifact_digest=digest,
+    with instance.bind_accepted_projection(coordinate) as projection:
+        assert projection.typed is not None
+        for pin in dict.fromkeys(pins):
+            if pin.target.kind not in {"Provider", "ProviderInterface"}:
+                continue
+            table = "providers" if pin.target.kind == "Provider" else "provider_interfaces"
+            row = projection.typed.connection.execute(
+                f"SELECT path FROM {table} "
+                "WHERE identity=? AND artifact_digest=? AND lifecycle='live'",
+                (pin.target.qualified, pin.artifact_digest),
+            ).fetchone()
+            if row is None:
+                continue
+            source = projection.typed.source(pin.target.qualified)
+            assert source is not None
+            if pin.target.kind == "Provider":
+                providers[pin.artifact_digest] = AcceptedProviderV1(
+                    path=row[0], provider=source, artifact_digest=pin.artifact_digest
                 )
-        elif path.startswith("provider-interfaces/") and path.endswith((".json", ".yaml")):
-            registration = parse_provider_interface(content, path=path)
-            if registration.lifecycle.state == "live":
-                digest = provider_interface_digest(registration).tagged
-                interfaces[digest] = AcceptedProviderInterfaceRegistrationV1(
-                    path=path,
-                    registration=registration,
-                    artifact_digest=digest,
+            else:
+                interfaces[pin.artifact_digest] = AcceptedProviderInterfaceRegistrationV1(
+                    path=row[0], registration=source, artifact_digest=pin.artifact_digest
                 )
     return providers, interfaces
 
@@ -2695,7 +2705,7 @@ def _prepare_direct_source_run(
                 ),
             },
         )
-    providers, interfaces = _line_catalogs(tree)
+    providers, interfaces = _line_catalogs(instance, coordinate, accepted.procedure.pins)
     capture_contracts = _accepted_capture_contracts(tree)
     try:
         external_occurrences = _plan_external_occurrences(
@@ -3090,24 +3100,29 @@ def _line_refusal_state(
 
 
 def _accepted_line_mandates(
-    tree: Mapping[str, bytes],
+    instance: PlaybillInstance,
     accepted: AcceptedProcedureV1,
     *,
+    coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
 ) -> tuple[tuple[str, ProcedureMandateV1], ...]:
-    result: list[tuple[str, ProcedureMandateV1]] = []
-    for path, content in tree.items():
-        if not path.startswith("procedure-mandates/") or not path.endswith((".json", ".yaml")):
-            continue
-        mandate = parse_procedure_mandate(content, path=path)
-        if (
-            mandate.lifecycle.state == "live"
-            and mandate.procedure.target == accepted.procedure.identity
-            and mandate.procedure.artifact_digest == accepted.artifact_digest
-            and mandate.valid_from <= evaluation_time < mandate.expires_at
+    instant = utc_microseconds(evaluation_time)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        assert projection.typed is not None
+        result = []
+        for identity, digest in projection.typed.connection.execute(
+            "SELECT identity,artifact_digest FROM procedure_mandates "
+            "WHERE procedure_identity=? AND procedure_digest=? AND lifecycle='live' "
+            "AND valid_from_us<=? AND expires_at_us>? ORDER BY artifact_digest",
+            (accepted.procedure.identity.qualified, accepted.artifact_digest, instant, instant),
         ):
-            result.append((procedure_mandate_digest(mandate).tagged, mandate))
-    return tuple(sorted(result, key=lambda item: item[0].encode("ascii")))
+            mandate = projection.typed.source(identity)
+            if not isinstance(mandate, ProcedureMandateV1):
+                raise ProjectionIntegrityError(
+                    "accepted ProcedureMandate source is absent or invalid"
+                )
+            result.append((digest, mandate))
+        return tuple(result)
 
 
 def service_run_playbill_line(
@@ -3187,7 +3202,9 @@ def service_run_playbill_line(
             message=str(exc),
             details={"repair": "Restore or succeed the missing accepted closure member."},
         )
-    providers, interfaces = _line_catalogs(tree)
+    providers, interfaces = _line_catalogs(
+        instance, coordinate, (*accepted.procedure.pins, *accepted_line.line.pins)
+    )
     interface_digests = {
         provider_digest_value: implementation.interface_digest
         for provider_digest_value, provider in providers.items()
@@ -3218,8 +3235,9 @@ def service_run_playbill_line(
             },
         )
     mandates = _accepted_line_mandates(
-        tree,
+        instance,
         accepted,
+        coordinate=coordinate,
         evaluation_time=evaluation_time,
     )
     if not mandates:

@@ -85,7 +85,11 @@ CREATE INDEX members_by_identity
 CREATE INDEX members_by_path
  ON accepted_member_locations(member_path,sequence,member_ordinal);
 """
-_SCHEMA = _HISTORY_SCHEMA + _MEMBER_SCHEMA
+_GENERATION_ROOT_INDEX = """
+CREATE INDEX IF NOT EXISTS generations_by_semantic_root
+ ON accepted_generations(semantic_root,sequence);
+"""
+_SCHEMA = _HISTORY_SCHEMA + _MEMBER_SCHEMA + _GENERATION_ROOT_INDEX
 
 
 def _schema_rows(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
@@ -114,6 +118,7 @@ def _expected_schema(schema: str) -> list[tuple[object, ...]]:
 
 _EXPECTED_SCHEMA = _expected_schema(_SCHEMA)
 _PRE_MEMBER_SCHEMA = _expected_schema(_HISTORY_SCHEMA)
+_PRE_ROOT_INDEX_SCHEMA = _expected_schema(_HISTORY_SCHEMA + _MEMBER_SCHEMA)
 
 
 @dataclass(frozen=True)
@@ -183,6 +188,20 @@ class HistoryReader:
             raise PlaybillFormatError("coordinate is not one generation in requested history")
         return AcceptedGenerationLocation(*rows[0])
 
+    def generation_for_oid(self, oid: str) -> AcceptedGenerationLocation | None:
+        rows = self._connection.execute(
+            "SELECT * FROM accepted_generations WHERE git_oid=? AND sequence<=? LIMIT 2",
+            (oid, self.sequence),
+        ).fetchall()
+        return AcceptedGenerationLocation(*rows[0]) if len(rows) == 1 else None
+
+    def generation_for_semantic_root(self, root: str) -> AcceptedGenerationLocation | None:
+        rows = self._connection.execute(
+            "SELECT * FROM accepted_generations WHERE semantic_root=? AND sequence<=? LIMIT 2",
+            (root, self.sequence),
+        ).fetchall()
+        return AcceptedGenerationLocation(*rows[0]) if len(rows) == 1 else None
+
     def candidate_accepted(self, candidate_digest: str) -> bool:
         return (
             self._connection.execute(
@@ -201,6 +220,38 @@ class HistoryReader:
                 "SELECT * FROM accepted_member_locations WHERE member_path=? "
                 "AND sequence<=? ORDER BY sequence,member_ordinal",
                 (path, self.sequence),
+            )
+        )
+
+    def claim_law_locations(
+        self, *, path: str | None = None, latest: bool = False
+    ) -> tuple[AcceptedMemberLocation, ...]:
+        """Locate Claim law records; a single-path read uses the path index."""
+        where = "artifact_kind='claim' AND has_law_evidence=1 AND sequence<=?"
+        args: tuple[object, ...] = (self.sequence,)
+        if path is not None:
+            where += " AND member_path=?"
+            args += (path,)
+        return tuple(
+            AcceptedMemberLocation(*row)
+            for row in self._connection.execute(
+                "SELECT * FROM accepted_member_locations WHERE "
+                + where
+                + " ORDER BY sequence DESC,member_ordinal DESC"
+                + (" LIMIT 1" if latest else ""),
+                args,
+            )
+        )
+
+    def claim_type_versions(self) -> tuple[ArtifactVersionLocation, ...]:
+        """Explicit enumeration for callers requesting the historical type catalog."""
+        return tuple(
+            ArtifactVersionLocation(*row)
+            for row in self._connection.execute(
+                "SELECT * FROM artifact_versions WHERE identity >= 'ClaimType:' "
+                "AND identity < 'ClaimType;' AND occurrence_sequence<=? "
+                "ORDER BY identity,artifact_digest,occurrence_sequence",
+                (self.sequence,),
             )
         )
 
@@ -226,13 +277,11 @@ class HistoryReader:
             )
         return location
 
-    def read_member_record(
-        self,
-        location: AcceptedMemberLocation,
-        load_record: Callable[[str, str], bytes | None],
+    def read_generation_record(
+        self, sequence: int, load_record: Callable[[str, str], bytes | None]
     ) -> ChangeSetRecordAnyVersion:
-        """Verify one exact retained record; a locator never substitutes for it."""
-        generation = self.generation(location.sequence)
+        """Verify one retained generation record against its accepted locator."""
+        generation = self.generation(sequence)
         if generation.source_record_path is None:
             raise ProjectionIntegrityError("genesis has no member evidence record")
         raw = load_record(generation.git_oid, generation.source_record_path)
@@ -244,8 +293,18 @@ class HistoryReader:
             or record.changeset_digest != generation.source_record_digest
             or record.candidate_digest != generation.candidate_digest
             or record.compiler_digest != generation.compiler_digest
-            or not 0 <= location.member_ordinal < len(record.members)
         ):
+            raise ProjectionIntegrityError("accepted member source record binding differs")
+        return record
+
+    def read_member_record(
+        self,
+        location: AcceptedMemberLocation,
+        load_record: Callable[[str, str], bytes | None],
+    ) -> ChangeSetRecordAnyVersion:
+        """Verify one exact retained record; a locator never substitutes for it."""
+        record = self.read_generation_record(location.sequence, load_record)
+        if not 0 <= location.member_ordinal < len(record.members):
             raise ProjectionIntegrityError("accepted member source record binding differs")
         member = record.members[location.member_ordinal]
         if (
@@ -318,6 +377,32 @@ class HistoryReader:
 
 
 EnvelopeLoader = Callable[[int], Sequence[ArtifactEnvelopeRow]]
+
+
+def commit_working_write(
+    connection: sqlite3.Connection,
+    file_stamp: Callable[[], tuple[int, ...] | None],
+    before: tuple[int, ...] | None,
+) -> tuple[int, ...]:
+    """Commit and retain writer ownership for publishing a proven physical stamp.
+
+    SQLite releases its writer lock at COMMIT. Reacquiring it and checking this
+    same connection's data_version detects another writer winning that gap.
+    The caller must release the reacquired transaction after publishing its
+    checkpoint and pinning any reader snapshot, before yielding to user code.
+    """
+    version = connection.execute("PRAGMA data_version").fetchone()
+    connection.commit()
+    connection.execute("BEGIN IMMEDIATE")
+    after = file_stamp()
+    if (
+        connection.execute("PRAGMA data_version").fetchone() != version
+        or before is None
+        or after is None
+        or before[:2] != after[:2]
+    ):
+        raise sqlite3.DatabaseError("working database changed across commit ownership")
+    return after
 
 
 def working_file_stamp(path: Path) -> tuple[int, ...] | None:
@@ -433,16 +518,18 @@ class AcceptedHistoryIndex:
             self._ready = None
             self._stamp = None
 
-    def proposal_committed(self, before_stamp: tuple[int, ...] | None) -> None:
+    def proposal_committed(
+        self, before_stamp: tuple[int, ...] | None, after_stamp: tuple[int, ...]
+    ) -> None:
         """Preserve verified history across a known proposal-only transaction.
 
         The proposal component holds our lock and captures ``before_stamp``
         after acquiring its SQLite writer transaction, before changing rows.
-        Call only after commit. A previously unexplained file change must still
-        force reconciliation; this callback cannot certify that earlier change.
+        ``after_stamp`` comes from commit_working_write while the reacquired
+        SQLite writer transaction remains held. This callback never samples a
+        later stamp that could include an unrelated writer's changes.
         """
         with self._lock:
-            after_stamp = self._file_stamp()
             if (
                 self._ready is not None
                 and before_stamp is not None
@@ -483,6 +570,10 @@ class AcceptedHistoryIndex:
                 connection.executescript(_SCHEMA)
             elif schema == _PRE_MEMBER_SCHEMA:
                 connection.executescript(_MEMBER_SCHEMA)
+                connection.executescript(_GENERATION_ROOT_INDEX)
+                self.invalidate()
+            elif schema == _PRE_ROOT_INDEX_SCHEMA:
+                connection.executescript(_GENERATION_ROOT_INDEX)
                 self.invalidate()
             stamp = self._file_stamp()
             self._writer_identity = None if stamp is None else stamp[:2]
@@ -514,13 +605,12 @@ class AcceptedHistoryIndex:
                     stamp = self._file_stamp()
                     ready = self._ready if stamp is not None and stamp == self._stamp else None
                     self._sync(writer, recovered, load_envelopes, ready)
-                    writer.commit()
-                    if self._file_stamp() != before_commit and hasattr(self, "_proposals"):
-                        self._proposals.database_committed(before_commit)
+                    published_stamp = commit_working_write(writer, self._file_stamp, before_commit)
+                    if published_stamp != before_commit and hasattr(self, "_proposals"):
+                        self._proposals.database_committed(before_commit, published_stamp)
                 except BaseException:
                     writer.rollback()
                     raise
-                published_stamp = self._file_stamp()
                 self._stamp = published_stamp
                 self._ready = (
                     recovered.head.sequence,
@@ -553,6 +643,7 @@ class AcceptedHistoryIndex:
                     )
                 if at is not None:
                     reader = HistoryReader(connection, reader.resolve(at).sequence)
+                writer.rollback()
             yield reader
             current_stamp = self._file_stamp()
             if (
@@ -568,6 +659,9 @@ class AcceptedHistoryIndex:
                 "accepted history index could not be read or updated; repair or retry required"
             ) from exc
         finally:
+            with self._lock:
+                if self._writer is not None and self._writer.in_transaction:
+                    self._writer.rollback()
             if connection is not None:
                 connection.close()
 

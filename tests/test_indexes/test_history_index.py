@@ -8,7 +8,10 @@ import pytest
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow
-from cruxible_core.indexes.history.history_index import AcceptedHistoryIndex
+from cruxible_core.indexes.history.history_index import (
+    AcceptedHistoryIndex,
+    commit_working_write,
+)
 from tests.core_support._knowledge_loop_support import seed_claims
 
 
@@ -53,6 +56,9 @@ def test_sparse_occurrences_reinstatement_rename_cutoff_and_queries(tmp_path, se
         assert [r.occurrence_sequence for r in reader.occurrences("Claim:a")] == [0, 2, 3]
         assert reader.artifact("old").path == "claims/b.json"
         latest = reader.generation(state.head.sequence)
+        assert reader.generation_for_oid(latest.git_oid) == latest
+        assert reader.generation_for_semantic_root(latest.semantic_root) == latest
+        assert reader.generation_for_oid("absent") is None
         assert latest.actor_id == state.head.record.actor_binding.actor_id
         assert latest.source_record_digest == state.head.record.changeset_digest
         assert reader.candidate_accepted(latest.candidate_digest)
@@ -71,6 +77,11 @@ def test_sparse_occurrences_reinstatement_rename_cutoff_and_queries(tmp_path, se
     assert calls == list(range(len(state.history)))
     with sqlite3.connect(index.path) as db:
         for query, params, expected in (
+            (
+                "SELECT * FROM accepted_generations WHERE semantic_root=? AND sequence<=?",
+                (latest.semantic_root, latest.sequence),
+                "generations_by_semantic_root",
+            ),
             (
                 "SELECT 1 FROM accepted_generations WHERE candidate_digest=? AND sequence<=?",
                 (latest.candidate_digest, latest.sequence),
@@ -276,8 +287,9 @@ def test_proposal_commit_preserves_only_previously_verified_history(tmp_path, se
         before = index._file_stamp()
         db.execute("CREATE TABLE proposals (proposal_id TEXT PRIMARY KEY) STRICT")
         db.execute("INSERT INTO proposals VALUES ('p')")
-        db.commit()
-        index.proposal_committed(before)
+        after = commit_working_write(db, index._file_stamp, before)
+        index.proposal_committed(before, after)
+        db.rollback()
     with index.read(state, source) as reader:
         assert reader.artifact("1") is not None
     assert calls == [0, 1]
@@ -290,8 +302,9 @@ def test_proposal_commit_preserves_only_previously_verified_history(tmp_path, se
         db.execute("BEGIN IMMEDIATE")
         before = index._file_stamp()
         db.execute("INSERT INTO proposals VALUES ('q')")
-        db.commit()
-        index.proposal_committed(before)
+        after = commit_working_write(db, index._file_stamp, before)
+        index.proposal_committed(before, after)
+        db.rollback()
     with index.read(state, source) as reader:
         assert reader.artifact("1") is not None
     assert calls == [0, 1, 0, 1]

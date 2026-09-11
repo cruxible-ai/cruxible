@@ -377,15 +377,15 @@ def _resolve_prepared(
         generation_root=admission.accepted_coordinate.generation_root,
         compiler_digest=admission.accepted_coordinate.compiler_digest,
     )
-    tree = instance.tree_at(coordinate.git_oid)
     accepted = _accepted_procedure(
         instance,
         name=admission.procedure_identity.name,
         coordinate=coordinate,
     )
     mandates = _accepted_line_mandates(
-        tree,
+        instance,
         accepted,
+        coordinate=coordinate,
         evaluation_time=request.evaluation_time,
     )
     sink = ProposalTerminalEgressSink(instance=instance, accepted_mandates=dict(mandates))

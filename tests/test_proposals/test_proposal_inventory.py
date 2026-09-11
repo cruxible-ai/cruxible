@@ -793,3 +793,43 @@ def test_indexed_principal_gate_rejects_unknown_actor_at_bound_revision(tmp_path
     instance.require_accepted_principal(coordinate, "owner")
     with pytest.raises(PrincipalIntegrityError, match="absent"):
         instance.require_accepted_principal(coordinate, "not-registered")
+
+
+def test_point_principal_rejects_unsigned_sql_key_substitution(tmp_path, monkeypatch):
+    from cruxible_client.contracts.errors import PrincipalIntegrityError
+    from cruxible_core.indexes.typed_state import TypedStateReader
+
+    instance, _ = seed_claims(tmp_path)
+    coordinate = instance.accepted_coordinate()
+    original = TypedStateReader.principal
+
+    def replaced(reader, principal_id, *, active=False):
+        principal = original(reader, principal_id, active=active)
+        return principal.model_copy(update={"public_key": "a" * 64})
+
+    monkeypatch.setattr(TypedStateReader, "principal", replaced)
+    with pytest.raises(PrincipalIntegrityError):
+        instance.require_accepted_principal(coordinate, "owner")
+
+
+@pytest.mark.parametrize("mutation", ["key", "omission"])
+def test_full_principal_registry_rejects_unsigned_sql_mutation(tmp_path, monkeypatch, mutation):
+    from cruxible_client.contracts.errors import PrincipalIntegrityError
+    from cruxible_core.indexes.typed_state import TypedStateReader
+
+    instance, _ = seed_claims(tmp_path)
+    coordinate = instance.accepted_coordinate()
+    original = TypedStateReader.principal_registry
+
+    def replaced(reader):
+        registry = original(reader)
+        principals = tuple(
+            p.model_copy(update={"public_key": "a" * 64}) if p.principal_id == "owner" else p
+            for p in registry.principals
+            if not (p.principal_id == "owner" and mutation == "omission")
+        )
+        return type(registry)(semantic_root=registry.semantic_root, principals=principals)
+
+    monkeypatch.setattr(TypedStateReader, "principal_registry", replaced)
+    with pytest.raises(PrincipalIntegrityError):
+        instance.accepted_principal_registry(coordinate)

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.errors import ProjectionIntegrityError, ProposalIntegrityError
 from cruxible_core.indexes.proposals.proposal_note_projection import ProposalNoteIndex
 from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
 from cruxible_core.proposals.proposal_notes import admission_bytes
@@ -176,6 +176,79 @@ def test_missing_checkpoint_and_deleted_sql_row_reconstruct_before_miss(tmp_path
     (evidence.root / ".proposal-source.json").unlink()
     assert evidence.read_evaluation(first.admission.proposal_id) == first.evaluation
     _oracle(instance)
+
+
+@pytest.mark.parametrize("publisher", ("proposal", "history"))
+@pytest.mark.parametrize("attack", ("delete", "replace"))
+def test_commit_gap_never_certifies_foreign_rows_or_file(tmp_path, monkeypatch, publisher, attack):
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    evidence = instance.proposal_evidence()
+    index = evidence.index
+    with instance.accepted_history_reader():
+        pass
+    owner = instance._accepted_history_index
+    marker_before = index._marker(evidence.root)
+    field = "_connection" if publisher == "proposal" else "_writer"
+    component = index if publisher == "proposal" else owner
+    connection = getattr(component, field)
+
+    class CommitGap:
+        def __getattr__(self, name):
+            return getattr(connection, name)
+
+        def commit(self):
+            connection.commit()
+            if attack == "delete":
+                with sqlite3.connect(index.path) as foreign:
+                    foreign.execute("DELETE FROM proposals")
+            else:
+                connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                replacement = index.path.with_suffix(".replacement")
+                with sqlite3.connect(replacement) as copied:
+                    connection.backup(copied)
+                    copied.execute("PRAGMA journal_mode=DELETE")
+                    copied.execute("DELETE FROM proposals")
+                copied.close()
+                os.replace(replacement, index.path)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(component, field, CommitGap())
+        with pytest.raises((ProjectionIntegrityError, sqlite3.DatabaseError)):
+            if publisher == "proposal":
+                evidence.write_evaluation(first.evaluation)
+            else:
+                with instance.accepted_history_reader():
+                    pytest.fail("the foreign writer must refuse snapshot publication")
+    # No callback may certify the foreign row deletion as trusted local work.
+    marker = index._marker(evidence.root)
+    assert marker["clean"] is False or marker["database_stamp"] == marker_before["database_stamp"]
+    assert evidence.read_admission(first.admission.proposal_id) == first.admission
+
+
+def test_c_callback_uses_only_the_captured_commit_stamp(tmp_path, monkeypatch):
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    evidence = instance.proposal_evidence()
+    index = evidence.index
+    with instance.accepted_history_reader():
+        pass
+    before = index._file_stamp()
+    with sqlite3.connect(index.path) as connection:
+        connection.execute("UPDATE history_progress SET sequence=sequence")
+    after = index._file_stamp()
+    original_marker = index._marker
+
+    def marker_then_foreign_write(root):
+        marker = original_marker(root)
+        with sqlite3.connect(index.path) as foreign:
+            foreign.execute("DELETE FROM proposals")
+        return marker
+
+    with monkeypatch.context() as patch:
+        patch.setattr(index, "_marker", marker_then_foreign_write)
+        index.database_committed(before, after)
+    assert evidence.read_admission(first.admission.proposal_id) == first.admission
 
 
 def test_git_context_change_replaces_alias_and_keeps_submitted_group(tmp_path):
