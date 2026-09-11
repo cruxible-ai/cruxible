@@ -2,7 +2,7 @@
 
 import pytest
 
-from cruxible_core.derived import evaluation_state_cache as cache_module
+from cruxible_core.indexes.evaluated_state import derive_indexed_state
 from cruxible_core.proposals import proposals
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -29,7 +29,7 @@ def test_served_writes_reuse_dependency_state_and_match_cold_evaluation_and_reop
     actor = AuthenticatedActor(actor_id="owner")
     coordinator = _coordinator(instance)
     base = instance.accepted_coordinate()
-    instance._evaluation_state_cache.derive(instance.immutable_tree_at(base.git_oid))
+    derive_indexed_state(instance.immutable_tree_at(base.git_oid))
 
     def unexpected(*args, **kwargs):
         pytest.fail("warm served write rebuilt all accepted dependencies")
@@ -42,7 +42,6 @@ def test_served_writes_reuse_dependency_state_and_match_cold_evaluation_and_reop
             canonical_timestamp=TIMESTAMP,
         ).intent
         with monkeypatch.context() as guarded:
-            guarded.setattr(cache_module, "build_tree_state", unexpected)
             guarded.setattr(proposals, "build_tree_state", unexpected)
             submitted = coordinator.submit(intent.intent_id, actor=actor)
         assert submitted.status.state == "ready_to_activate"
@@ -71,7 +70,6 @@ def test_served_writes_reuse_dependency_state_and_match_cold_evaluation_and_reop
             authenticated_submitter="owner",
         )
         with monkeypatch.context() as guarded:
-            guarded.setattr(cache_module, "build_tree_state", unexpected)
             guarded.setattr(proposals, "build_tree_state", unexpected)
             receipt = service_activate_playbill_proposal(
                 instance, proposal_id=submitted.status.proposal_id, activated_by="owner"
@@ -82,6 +80,6 @@ def test_served_writes_reuse_dependency_state_and_match_cold_evaluation_and_reop
     reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     assert reopened.accepted_coordinate() == instance.accepted_coordinate()
     assert reopened.accepted_history() == instance.accepted_history()
-    assert reopened._evaluation_state_cache._state is None
+    assert not hasattr(reopened, "_evaluation_state_cache")
     instance.refresh()
-    assert instance._evaluation_state_cache._state is None
+    assert not hasattr(instance, "_evaluation_state_cache")

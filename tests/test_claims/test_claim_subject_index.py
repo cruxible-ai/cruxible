@@ -261,17 +261,16 @@ def test_malformed_changed_claim_preserves_predecessor_index():
     assert index == build_claim_subject_index(tree)
 
 
-def test_subject_index_remains_detached_in_shared_evaluation_cache():
-    from cruxible_core.derived.evaluation_state_cache import EvaluationStateCache
+def test_subject_index_remains_immutable_in_cold_evaluation_oracle():
+    from cruxible_core.proposals.proposals import build_tree_state
 
     tree = _tree(_make_claim(1))
-    cache = EvaluationStateCache()
-    state = cache.derive(tree)
+    state = build_tree_state(tree)
     with pytest.raises((TypeError, AttributeError)):
         state.claim_subjects.subject_by_claim.clear()
     with pytest.raises((TypeError, AttributeError)):
         state.claim_subjects.claims_by_subject.clear()
-    assert cache.derive(tree).claim_subjects == build_claim_subject_index(tree)
+    assert build_tree_state(tree).claim_subjects == build_claim_subject_index(tree)
 
 
 def test_warm_subject_update_does_not_iterate_retained_maps(monkeypatch):

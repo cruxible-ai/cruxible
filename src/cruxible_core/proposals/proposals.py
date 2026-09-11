@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable, Final, Literal, Protocol
+from typing import Any, Callable, Final, Literal, Protocol, cast
 
 from pydantic import (
     BaseModel,
@@ -1396,22 +1396,6 @@ class EvaluatedTreeState:
     claim_subjects: ClaimSubjectIndex
 
 
-def detach_tree_state(state: EvaluatedTreeState) -> EvaluatedTreeState:
-    """Detach small wrappers; retained row/node stores expose detached values."""
-    from dataclasses import replace
-
-    from cruxible_client.contracts.merkle import detach_merkle_tree
-
-    return replace(
-        state,
-        merkle=detach_merkle_tree(state.merkle),
-        claim_subjects=replace(state.claim_subjects),
-        dependencies=replace(
-            state.dependencies, edge_tree=detach_merkle_tree(state.dependencies.edge_tree)
-        ),
-    )
-
-
 TreeStateProvider = Callable[[Mapping[str, bytes]], EvaluatedTreeState]
 
 
@@ -1495,7 +1479,11 @@ def advance_member_delta(
     """Commit a complete internal prospective or verified physical delta."""
     # Complete private prospective edits, including generated dispositions.
     # Raw bytes are committed before any changed artifact is parsed.
-    members = PersistentMap(state.members)
+    from cruxible_core.indexes.evaluated_state import ChangedMembers, MerkleMembers
+
+    indexed = isinstance(state.members, MerkleMembers)
+    members = state.members if indexed else PersistentMap(state.members)
+    updates: dict[str, str | None] = {}
     changed = []
     for path, content in edits.items():
         if path.startswith("changesets/") or is_candidate_card_path(path):
@@ -1504,7 +1492,13 @@ def advance_member_delta(
         if members.get(path) == digest:
             continue
         changed.append(path)
-        members = members.delete(path) if digest is None else members.set(path, digest)
+        if indexed:
+            updates[path] = digest
+        else:
+            assert isinstance(members, PersistentMap)
+            members = members.delete(path) if digest is None else members.set(path, digest)
+    if indexed:
+        members = ChangedMembers(state.members, updates)
     # Preserve the frozen diff encoding using only the proven complete scope.
     diff_digest, scope = semantic_diff_from_members(
         {p: state.members[p] for p in changed if p in state.members},
@@ -1529,6 +1523,10 @@ def advance_tree_state(
     advanced: AdvancedMembers,
 ) -> EvaluatedTreeState:
     """Complete an advanced manifest with the dependency index over the same change."""
+
+    advance = getattr(state, "advance", None)
+    if advance is not None:
+        return cast(EvaluatedTreeState, advance(tree, advanced))
 
     return EvaluatedTreeState(
         members=advanced.members,
@@ -1582,12 +1580,12 @@ class _MemberVerdict:
 class _ResolvedArtifacts:
     """Candidate-state artifacts a member law may need to read outside its own path."""
 
-    subjects: dict[str, AcceptedSubject]
-    claim_types: dict[str, AcceptedClaimType]
-    capture_contracts: dict[str, AcceptedCaptureContract]
-    providers: dict[str, AcceptedProviderV1]
-    provider_interfaces: dict[str, AcceptedProviderInterfaceRegistrationV1]
-    procedures: dict[str, AcceptedProcedureV1]
+    subjects: Mapping[str, AcceptedSubject]
+    claim_types: Mapping[str, AcceptedClaimType]
+    capture_contracts: Mapping[str, AcceptedCaptureContract]
+    providers: Mapping[str, AcceptedProviderV1]
+    provider_interfaces: Mapping[str, AcceptedProviderInterfaceRegistrationV1]
+    procedures: Mapping[str, AcceptedProcedureV1]
 
 
 @dataclass(frozen=True)
@@ -2152,6 +2150,8 @@ def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
 
 
 def _claim_member(context: _MemberContext) -> _MemberVerdict:
+    from cruxible_core.indexes.evaluated_state import mapped_values
+
     claim = parse_claim(context.content, path=context.path)
     predecessor: AcceptedClaim | None = None
     if context.parent_content is not None:
@@ -2182,13 +2182,10 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         claim_types=context.resolved.claim_types,
         capture_contracts=context.resolved.capture_contracts,
         capture_store=context.bodies,
-        providers={
-            identity: accepted.provider for identity, accepted in context.resolved.providers.items()
-        },
-        producer_artifact_digests={
-            identity: accepted.artifact_digest
-            for identity, accepted in context.resolved.procedures.items()
-        },
+        providers=mapped_values(context.resolved.providers, lambda accepted: accepted.provider),
+        producer_artifact_digests=mapped_values(
+            context.resolved.procedures, lambda accepted: accepted.artifact_digest
+        ),
         producer_receipt_resolver=context.producer_receipt_resolver,
         law_digest=installed.coordinate.digest,
         instance_id=context.current.instance_id,
@@ -2791,62 +2788,65 @@ def _resolved_artifacts(
     candidate_tree: Mapping[str, bytes],
     states: Mapping[str, ArtifactDependencyStateV1],
 ) -> _ResolvedArtifacts:
-    """Resolve the candidate-state artifacts member laws read across paths.
+    """Resolve selected owner contracts lazily; cold replay keeps its full oracle."""
+    from cruxible_core.indexes.evaluated_state import SelectedRows
 
-    This still reads the whole candidate tree, because a Claim's ClaimType may
-    live anywhere in it and nothing in the change set says where. It is the one
-    remaining per-generation cost proportional to the instance rather than to the
-    change, and retiring it needs a carried resolution index of its own.
-    """
+    def rows(
+        kind: str, convert: Callable[[str, bytes, str], Any], *, path_key: bool = False
+    ) -> Any:
+        if isinstance(states, SelectedRows) and states.owner is not None:
+            return states.owner.artifact_rows(kind, convert, path_key=path_key)
+        return {
+            state.path if path_key else state.identity.qualified: convert(
+                state.path, candidate_tree[state.path], state.artifact_digest
+            )
+            for state in states.values()
+            if state.artifact_kind == kind
+        }
 
-    resolved = _ResolvedArtifacts({}, {}, {}, {}, {}, {})
-    for state in states.values():
-        content = candidate_tree[state.path]
-        if state.artifact_kind == "subject":
-            resolved.subjects[state.path] = AcceptedSubject(
-                path=state.path,
-                shell=parse_subject(content, path=state.path),
-                artifact_digest=state.artifact_digest,
-            )
-        elif state.artifact_kind == "claim-type":
-            artifact = parse_claim_type(content, path=state.path)
-            resolved.claim_types[artifact.identity.qualified] = AcceptedClaimType(
-                path=state.path,
-                claim_type=artifact,
-                artifact_digest=state.artifact_digest,
-            )
-        elif state.artifact_kind == "capture-contract":
-            contract = parse_capture_contract(content, path=state.path)
-            resolved.capture_contracts[contract.identity.qualified] = AcceptedCaptureContract(
-                path=state.path,
-                contract=contract,
-                artifact_digest=state.artifact_digest,
-            )
-        elif state.artifact_kind == "provider":
-            provider = parse_provider(content, path=state.path)
-            accepted = AcceptedProviderV1(
-                path=state.path,
-                provider=provider,
-                artifact_digest=state.artifact_digest,
-            )
-            resolved.providers[provider.identity.qualified] = accepted
-        elif state.artifact_kind == "provider-interface":
-            registration = parse_provider_interface(content, path=state.path)
-            resolved.provider_interfaces[registration.identity.qualified] = (
-                AcceptedProviderInterfaceRegistrationV1(
-                    path=state.path,
-                    registration=registration,
-                    artifact_digest=state.artifact_digest,
-                )
-            )
-        elif state.artifact_kind == "procedure":
-            procedure = parse_procedure(content, path=state.path)
-            resolved.procedures[procedure.identity.qualified] = AcceptedProcedureV1(
-                path=state.path,
-                procedure=procedure,
-                artifact_digest=state.artifact_digest,
-            )
-    return resolved
+    return _ResolvedArtifacts(
+        rows(
+            "subject",
+            lambda path, content, digest: AcceptedSubject(
+                path=path, shell=parse_subject(content, path=path), artifact_digest=digest
+            ),
+            path_key=True,
+        ),
+        rows(
+            "claim-type",
+            lambda path, content, digest: AcceptedClaimType(
+                path=path, claim_type=parse_claim_type(content, path=path), artifact_digest=digest
+            ),
+        ),
+        rows(
+            "capture-contract",
+            lambda path, content, digest: AcceptedCaptureContract(
+                path=path,
+                contract=parse_capture_contract(content, path=path),
+                artifact_digest=digest,
+            ),
+        ),
+        rows(
+            "provider",
+            lambda path, content, digest: AcceptedProviderV1(
+                path=path, provider=parse_provider(content, path=path), artifact_digest=digest
+            ),
+        ),
+        rows(
+            "provider-interface",
+            lambda path, content, digest: AcceptedProviderInterfaceRegistrationV1(
+                path=path,
+                registration=parse_provider_interface(content, path=path),
+                artifact_digest=digest,
+            ),
+        ),
+        rows(
+            "procedure",
+            lambda path, content, digest: AcceptedProcedureV1(
+                path=path, procedure=parse_procedure(content, path=path), artifact_digest=digest
+            ),
+        ),
+    )
 
 
 def _procedure_pin(state: ArtifactDependencyStateV1) -> ArtifactPin | None:
@@ -2905,7 +2905,10 @@ def _procedure_mandate_pair_diagnostics(
             or before.artifact_digest == after.artifact_digest
         ):
             continue
-        for mandate_path, prior_mandate in parent.states.items():
+        for mandate_path in parent.sources_by_pinned_identity.get(
+            before.identity.qualified, frozenset()
+        ):
+            prior_mandate = parent.states[mandate_path]
             if (
                 prior_mandate.artifact_kind != "procedure-mandate"
                 or prior_mandate.lifecycle.state != "live"
@@ -3172,7 +3175,7 @@ def _evaluate_scoped_members(
     used_expansions: set[str] = set()
     accepted: list[_AcceptedMember] = []
     accepted_referents: frozenset[AcceptedCoordinate] | None = None
-    candidate_identities: dict[str, tuple[ArtifactIdentity, str]] | None = None
+    candidate_identities: Mapping[str, tuple[ArtifactIdentity, str]] | None = None
     for path in scope:
         kind = _member_kind(path)
         proposed = candidate_tree.get(path)
@@ -3193,10 +3196,17 @@ def _evaluate_scoped_members(
             accepted_referents = accepted_referent_coordinates_from_tree(
                 current_tree, current=AcceptedCoordinate.from_internal(current)
             )
-            candidate_identities = {
-                item.identity.qualified: (item.identity, item.artifact_digest)
-                for item in candidate_states.values()
-            }
+            from cruxible_core.indexes.evaluated_state import SelectedRows
+
+            candidate_identities = SelectedRows(
+                lambda identity: (
+                    candidate_states[candidate_dependencies.paths_by_identity[identity]].identity,
+                    candidate_states[
+                        candidate_dependencies.paths_by_identity[identity]
+                    ].artifact_digest,
+                ),
+                lambda: candidate_dependencies.paths_by_identity,
+            )
         assert candidate_identities is not None
         verdict = kind.evaluate(
             _MemberContext(
@@ -3653,39 +3663,40 @@ def evaluate_proposal_tree(
         if parent_state is not None
         else (tree_state_provider or build_tree_state)(current_tree)
     )
-    advanced = advance_tree_members(parent, previous_tree=current_tree, tree=candidate_tree)
-    if not advanced.scope:
-        return CandidateEvaluation(
-            candidate_tree,
-            None,
-            (
-                _diagnostic(
-                    "playbill.proposal.non_singleton_scope",
-                    "The proposal changes no registered semantic member.",
+    with getattr(parent, "scope", nullcontext)():
+        advanced = advance_tree_members(parent, previous_tree=current_tree, tree=candidate_tree)
+        if not advanced.scope:
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                (
+                    _diagnostic(
+                        "playbill.proposal.non_singleton_scope",
+                        "The proposal changes no registered semantic member.",
+                    ),
                 ),
-            ),
-            rebased,
+                rebased,
+            )
+        return _evaluate_scoped_members(
+            current_tree=current_tree,
+            candidate_tree=candidate_tree,
+            current=current,
+            bodies=bodies,
+            timestamp=timestamp,
+            advanced=advanced,
+            parent=parent,
+            actor_id=actor_id,
+            rebased=rebased,
+            wire_version=wire_version,
+            claim_type_expansions=claim_type_expansions,
+            promotion_verifier=promotion_verifier,
+            producer_receipt_resolver=producer_receipt_resolver,
+            query_facts_provider=query_facts_provider,
+            replay_claim_admission_accounts=replay_claim_admission_accounts,
+            acceptance_laws=acceptance_laws,
+            historical_law_coordinates=historical_law_coordinates or {},
+            principal_registry_provider=principal_registry_provider,
         )
-    return _evaluate_scoped_members(
-        current_tree=current_tree,
-        candidate_tree=candidate_tree,
-        current=current,
-        bodies=bodies,
-        timestamp=timestamp,
-        advanced=advanced,
-        parent=parent,
-        actor_id=actor_id,
-        rebased=rebased,
-        wire_version=wire_version,
-        claim_type_expansions=claim_type_expansions,
-        promotion_verifier=promotion_verifier,
-        producer_receipt_resolver=producer_receipt_resolver,
-        query_facts_provider=query_facts_provider,
-        replay_claim_admission_accounts=replay_claim_admission_accounts,
-        acceptance_laws=acceptance_laws,
-        historical_law_coordinates=historical_law_coordinates or {},
-        principal_registry_provider=principal_registry_provider,
-    )
 
 
 #: The receive bounds that name an admission. Frozen: adding an advertised

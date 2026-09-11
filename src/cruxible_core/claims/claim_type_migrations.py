@@ -349,7 +349,7 @@ def _operation_digest(
 
 
 def _current_dependents(
-    tree: dict[str, bytes],
+    tree: Mapping[str, bytes],
     *,
     identity: str,
 ) -> dict[str, tuple[str, ClaimArtifactAny]]:
@@ -974,7 +974,7 @@ def _service_migrate_claim_type_v1(
 
     current = instance.accepted_coordinate()
     coordinate = AcceptedCoordinate.from_internal(current)
-    tree = instance.tree_at(current.git_oid)
+    tree = instance.immutable_tree_at(current.git_oid)
     type_path, predecessor, successor = resolve_claim_type_succession(tree, request.successor)
     delta = semantic_field_delta(
         predecessor.model_dump(mode="json"), successor.model_dump(mode="json")
@@ -1061,7 +1061,7 @@ def _service_migrate_claim_type_v2(
 ) -> ClaimTypeMigrationPreflightV1 | ClaimTypeMigrationResultV2:
     current = instance.accepted_coordinate()
     coordinate = AcceptedCoordinate.from_internal(current)
-    tree = instance.tree_at(current.git_oid)
+    tree = instance.immutable_tree_at(current.git_oid)
     type_path, predecessor, successor = resolve_claim_type_succession(tree, request.successor)
     delta = semantic_field_delta(
         predecessor.model_dump(mode="json"), successor.model_dump(mode="json")
@@ -1159,7 +1159,7 @@ def _service_migrate_claim_type_v3(
 ) -> ClaimTypeMigrationPreflightV1 | ClaimTypeMigrationResultV3:
     current = instance.accepted_coordinate()
     coordinate = AcceptedCoordinate.from_internal(current)
-    tree = instance.tree_at(current.git_oid)
+    tree = instance.immutable_tree_at(current.git_oid)
     type_path, predecessor, successor = resolve_claim_type_succession(tree, request.successor)
     delta = semantic_field_delta(
         predecessor.model_dump(mode="json"), successor.model_dump(mode="json")
