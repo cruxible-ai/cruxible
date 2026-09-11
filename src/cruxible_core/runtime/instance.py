@@ -75,7 +75,6 @@ from cruxible_core.derived.derived_state import (
     SnapshotTree,
     advance_accepted_tree,
 )
-from cruxible_core.derived.evaluation_state_cache import EvaluationStateCache
 from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.exhaust.producer_receipts import local_producer_receipt_resolver
 from cruxible_core.governance.keys import (
@@ -86,6 +85,7 @@ from cruxible_core.governance.keys import (
     public_key_hex_from_private_file,
     raw_public_key_hex_from_openssh,
 )
+from cruxible_core.indexes.evaluated_state import derive_indexed_state
 from cruxible_core.indexes.history.history_index import (
     AcceptedGenerationLocation,
     AcceptedHistoryIndex,
@@ -253,16 +253,8 @@ class PlaybillInstance:
         self._state_lock = threading.RLock()
         self.derived = DerivedState()
         self.prepared_evaluations = PreparedEvaluationAdapter(self.derived)
-        self._evaluation_state_cache = EvaluationStateCache(build_context=self.derived.build)
         for name, namespace, adapter, source in (
             ("accepted-artifacts", "accepted", self.derived, "verified-ledger-tree-v1"),
-            ("claim-contenders", "accepted/candidate", self.derived, "live-subject-predicate-v1"),
-            (
-                "evaluation",
-                "accepted/candidate",
-                self._evaluation_state_cache,
-                "exact-semantic-bytes-v1",
-            ),
         ):
             self.derived.register(IndexDefinition(name, namespace, "1", source), adapter)
         self._accepted_history_index = AcceptedHistoryIndex(
@@ -1107,7 +1099,7 @@ class PlaybillInstance:
             receive_limits=self._receive_limits,
             require_writable=self.require_writable,
             ledger_publisher=self.request_ledger_mirror,
-            tree_state_provider=self._evaluation_state_cache.derive,
+            tree_state_provider=derive_indexed_state,
         )
 
     def bind_receive_limits(self, limits: ProposalReceiveLimits) -> None:
@@ -1519,7 +1511,13 @@ class PlaybillInstance:
             blobs = self._ledger.blobs_at(oid, paths)
             return advance_accepted_tree(previous, {path: blobs.get(path) for path in paths})
 
-        return self.derived.accepted_tree(binding, lambda: self.tree_at(oid), advance)
+        tree = self.derived.accepted_tree(binding, lambda: self.tree_at(oid), advance)
+        tree._accepted_reader = (
+            None
+            if coordinate.git_oid == self._verified_genesis.oid
+            else lambda: self.bind_accepted_projection(coordinate)
+        )
+        return tree
 
     def tree_at(self, oid: str) -> dict[str, bytes]:
         """Read an exact Git tree only after proving the OID is accepted history.
@@ -1651,7 +1649,6 @@ class PlaybillInstance:
         bodies = ContentAddressedBodyStore(paths["cas"])
         self._tree_memo.clear()
         self.derived.clear()
-        self._evaluation_state_cache.clear()
         self._recovered = recover_instance(
             self._ledger,
             genesis=self._verified_genesis,
@@ -1728,7 +1725,7 @@ class PlaybillInstance:
                 bodies=self.body_store(),
             ),
             query_facts_provider=lambda coordinate: self._accepted_query_facts(self, coordinate),
-            tree_state_provider=self._evaluation_state_cache.derive,
+            tree_state_provider=derive_indexed_state,
             accepted_tree_provider=self.immutable_tree_at,
             principal_registry_provider=self.accepted_principal_registry,
         )

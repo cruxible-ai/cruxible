@@ -13,9 +13,9 @@ maintenance is tested against, and stays the only path a cold start can take.
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter, field_validator, model_validator
@@ -115,11 +115,6 @@ from cruxible_core.exhaust.promotions import (
     parse_exhaust_promotion,
 )
 
-# Bounded so the memo can never grow with history. One accepted tree at the
-# pre-PC-G file-count posture fits several times over, which is what keeps the
-# steady-state hit rate high, and every entry is dropped when the process exits.
-_PARSE_MEMO_ENTRIES = 16_384
-
 
 class _StrictClosureModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -168,16 +163,8 @@ class ArtifactDependencyStateV1(_StrictClosureModel):
 
 
 def parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyStateV1 | None:
-    """Parse a caller-owned row; the bounded memo retains only canonical bytes."""
-
-    encoded = _dependency_artifact_bytes(path, content)
-    return None if encoded is None else ArtifactDependencyStateV1.model_validate_json(encoded)
-
-
-@lru_cache(maxsize=_PARSE_MEMO_ENTRIES)
-def _dependency_artifact_bytes(path: str, content: bytes) -> bytes | None:
-    parsed = _parse_dependency_artifact(path, content)
-    return None if parsed is None else canonical_bytes(parsed.model_dump(mode="json"))
+    """Read exact selected bytes; retain no second global artifact payload cache."""
+    return _parse_dependency_artifact(path, content)
 
 
 def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyStateV1 | None:
@@ -750,6 +737,22 @@ def reverse_pin_closure(
     silently discover dependencies beyond an excluded member.
     """
 
+    from cruxible_core.derived.derived_state import CandidateTree, SnapshotTree
+    from cruxible_core.indexes.evaluated_state import EvaluationRows, FrozenProjectionStorage
+
+    snapshot = tree.snapshot() if isinstance(tree, CandidateTree) else tree
+    if isinstance(snapshot, SnapshotTree) and snapshot._accepted_reader is not None:
+        try:
+            base = EvaluationRows(snapshot._accepted_reader())
+        except FrozenProjectionStorage:
+            pass
+        else:
+            try:
+                selected = base if snapshot._parent is None else base.overlay(snapshot._edits)
+                return _walk_reverse_pin_closure(root, include, selected.reverse_neighbors)
+            finally:
+                base.close()
+
     index = build_dependency_index(tree)
     digest_identities = dict(claim_identity_by_digest or {})
     claims_by_path: dict[str, ClaimArtifactAny] = {}
@@ -769,22 +772,15 @@ def reverse_pin_closure(
                     digest_identities[digest] = identity
             if identity is not None:
                 input_sources.setdefault(identity.qualified, set()).add(path)
-    pending = [root.qualified]
-    seen_identities = {root.qualified}
-    inventory: dict[str, ReversePinClosureItem] = {}
-    while pending:
-        triggering = pending.pop(0)
+
+    def neighbors(triggering: str) -> tuple[tuple[ArtifactDependencyStateV1, tuple[str, ...]], ...]:
+        values = []
         dependent_paths = {
             *index.sources_by_pinned_identity.get(triggering, frozenset()),
             *input_sources.get(triggering, set()),
         }
-        for path in sorted(
-            dependent_paths,
-            key=lambda item: item.encode("utf-8"),
-        ):
+        for path in sorted(dependent_paths, key=lambda item: item.encode("utf-8")):
             state = index.states[path]
-            if state.identity.qualified in seen_identities or not include(state):
-                continue
             roles_set = {pin.role for pin in state.pins if pin.target.qualified == triggering}
             dependent_claim = claims_by_path.get(path)
             if dependent_claim is not None and any(
@@ -793,7 +789,26 @@ def reverse_pin_closure(
                 for digest in dependent_claim.backing.input_claim_digests
             ):
                 roles_set.add("backing-input")
-            roles = tuple(sorted(roles_set, key=lambda item: item.encode("utf-8")))
+            values.append((state, tuple(sorted(roles_set, key=lambda item: item.encode("utf-8")))))
+        return tuple(values)
+
+    return _walk_reverse_pin_closure(root, include, neighbors)
+
+
+def _walk_reverse_pin_closure(
+    root: ArtifactIdentity,
+    include: Callable[[ArtifactDependencyStateV1], bool],
+    neighbors: Callable[[str], tuple[tuple[ArtifactDependencyStateV1, tuple[str, ...]], ...]],
+) -> tuple[ReversePinClosureItem, ...]:
+    """One deterministic BFS; excluded nodes are traversal boundaries."""
+    pending = deque((root.qualified,))
+    seen_identities = {root.qualified}
+    inventory = {}
+    while pending:
+        triggering = pending.popleft()
+        for state, roles in neighbors(triggering):
+            if state.identity.qualified in seen_identities or not include(state):
+                continue
             if not roles:
                 raise ValueError("reverse-pin index lacks an exact dependency edge")
             inventory[state.identity.qualified] = ReversePinClosureItem(

@@ -179,14 +179,14 @@ def parse_static_owners(sources: Mapping[str, bytes], *, accepted: Any) -> Parse
                 fixture.revision,
             )
         )
-        for pin in fixture.pins:
-            key = (fixture.artifact_id, pin.target_identity)
+        for fixture_pin in fixture.pins:
+            key = (fixture.artifact_id, fixture_pin.target_identity)
             previous = pins.get(key)
-            if previous is not None and previous.target_digest != pin.target_digest:
+            if previous is not None and previous.target_digest != fixture_pin.target_digest:
                 raise ProjectionIntegrityError(
                     "one artifact pins the same dependency identity at conflicting digests"
                 )
-            pins[key] = PinRow(fixture.artifact_id, pin.target_identity, pin.target_digest)
+            pins[key] = PinRow(fixture.artifact_id, fixture_pin.target_identity, fixture_pin.target_digest)
     return replace(
         parsed,
         envelopes=tuple(sorted(envelopes, key=lambda row: row.identity)),

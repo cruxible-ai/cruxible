@@ -9,50 +9,16 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping
-from contextlib import AbstractContextManager, nullcontext
+from collections.abc import Callable, Iterator, Mapping, MutableMapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Any
 
 from cruxible_client._persistent import PersistentMap
-from cruxible_client.contracts.canonical import canonical_bytes, normalize_ledger_path
+from cruxible_client.contracts.canonical import normalize_ledger_path
 from cruxible_client.contracts.claims import ClaimArtifactAny, ClaimStatement, parse_claim
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_core.derived.derived_runtime import BoundedCache, Lease, Registry
-
-
-def _claim_key(statement: ClaimStatement) -> str:
-    return canonical_bytes(
-        [statement.subject.model_dump(mode="json"), statement.predicate]
-    ).decode()
-
-
-@dataclass(frozen=True)
-class _Contenders:
-    # All values are immutable scalars/bytes, never retained public models.
-    keys: PersistentMap[str]
-    groups: PersistentMap[PersistentMap[bytes]]
-
-    def advance(self, tree: Mapping[str, bytes], changed: Iterable[str]) -> _Contenders:
-        keys, groups = self.keys, self.groups
-        for path in sorted(set(changed), key=lambda s: s.encode("utf-8")):
-            if not path.startswith("claims/"):
-                continue
-            old = keys.get(path)
-            if old is not None:
-                group = groups[old].delete(path)
-                groups = groups.set(old, group) if group else groups.delete(old)
-                keys = keys.delete(path)
-            content = tree.get(path)
-            if content is None:
-                continue
-            claim = parse_claim(content, path=path)
-            if claim.lifecycle.state != "live":
-                continue
-            key = _claim_key(claim.statement)
-            keys = keys.set(path, key)
-            groups = groups.set(key, groups.get(key, PersistentMap()).set(path, content))
-        return _Contenders(keys, groups)
 
 
 class SnapshotTree(Mapping[str, bytes]):
@@ -85,17 +51,14 @@ class SnapshotTree(Mapping[str, bytes]):
             else semantic_members
         )
         self._accepted = False
-        self._build_context: Callable[[object], AbstractContextManager[None]] = lambda key: (
-            nullcontext()
-        )
         self._parent = parent
         self._edits = edits if edits is not None else PersistentMap()
         self._lock = threading.RLock()
-        self._contenders: _Contenders | None = None
-        self._evaluation: Any = None
-        self._evaluation_seed: Any = None
-        self._index_seed: _Contenders | None = None
-        self._pending: frozenset[str] = frozenset()
+        self._accepted_reader: Callable[[], Any] | None = (
+            None if parent is None else parent._accepted_reader
+        )
+        self._proofs: Any = None
+        self._proof_seed: Any = None
 
     def __getitem__(self, key: str) -> bytes:
         return self._rows[key]
@@ -115,27 +78,35 @@ class SnapshotTree(Mapping[str, bytes]):
     def fork(self) -> CandidateTree:
         return CandidateTree(self)
 
-    def _claim_index(self) -> _Contenders:
-        with self._lock:
-            if self._contenders is None:
-                if self._index_seed is not None:
-                    self._contenders = self._index_seed.advance(self, self._pending)
-                elif self._parent is None or not self._parent._accepted:
-                    self._contenders = _Contenders(PersistentMap(), PersistentMap()).advance(
-                        self, self
-                    )
-                else:
-                    self._contenders = self._parent._claim_index().advance(self, self._edits)
-            return self._contenders
-
     def claim_items(self, statement: ClaimStatement) -> tuple[tuple[str, bytes], ...]:
-        if self._contenders is None:
-            with self._build_context(("contenders", id(self))):
-                index = self._claim_index()
-        else:
-            index = self._claim_index()
-        group = index.groups.get(_claim_key(statement), PersistentMap())
-        return tuple(group.items())
+        if self._accepted_reader is not None:
+            from cruxible_core.indexes.evaluated_state import (
+                EvaluationRows,
+                FrozenProjectionStorage,
+            )
+
+            try:
+                base = EvaluationRows(self._accepted_reader())
+            except FrozenProjectionStorage:
+                pass
+            else:
+                try:
+                    selected = base if self._parent is None else base.overlay(self._edits)
+                    return selected.claim_items(statement)
+                finally:
+                    base.close()
+        # Cold source-only ingress remains the exact full builder oracle.
+        rows = []
+        for path in self:
+            if path.startswith("claims/"):
+                claim = parse_claim(self[path], path=path)
+                if (
+                    claim.lifecycle.state == "live"
+                    and claim.statement.subject == statement.subject
+                    and claim.statement.predicate == statement.predicate
+                ):
+                    rows.append((path, self[path]))
+        return tuple(sorted(rows))
 
     def claims_for(self, statement: ClaimStatement) -> tuple[ClaimArtifactAny, ...]:
         return tuple(
@@ -164,8 +135,6 @@ class CandidateTree(MutableMapping[str, bytes]):
         self._semantic_members = parent._semantic_members
         self._edits = parent._edits if parent._parent is not None else PersistentMap()
         self._cached: SnapshotTree | None = parent
-        self._index_seed = parent._index_seed
-        self._pending = set(parent._pending)
 
     def __getitem__(self, key: str) -> bytes:
         return self._rows[key]
@@ -179,7 +148,6 @@ class CandidateTree(MutableMapping[str, bytes]):
     def __setitem__(self, key: str, value: bytes) -> None:
         if normalize_ledger_path(key) != key or not isinstance(value, bytes):
             raise ValueError("candidate edits require canonical paths and immutable bytes")
-        self._advance_seed(key)
         previous = self._rows.get(key)
         weight_delta = (
             len(value) - len(previous)
@@ -201,7 +169,6 @@ class CandidateTree(MutableMapping[str, bytes]):
     def __delitem__(self, key: str) -> None:
         if key not in self._rows:
             raise KeyError(key)
-        self._advance_seed(key)
         weight = len(key.encode("utf-8")) + len(self._rows[key])
         self._input_bytes -= weight
         if semantic_path(key):
@@ -210,12 +177,6 @@ class CandidateTree(MutableMapping[str, bytes]):
         self._rows = self._rows.delete(key)
         self._edits = self._edits.set(key, None) if key in self._parent else self._edits.delete(key)
         self._cached = None
-
-    def _advance_seed(self, key: str) -> None:
-        if self._cached is not None and self._cached._contenders is not None:
-            self._index_seed = self._cached._contenders
-            self._pending.clear()
-        self._pending.add(key)
 
     def snapshot(self) -> SnapshotTree:
         if self._cached is None:
@@ -227,9 +188,6 @@ class CandidateTree(MutableMapping[str, bytes]):
                 semantic_bytes=self._semantic_bytes,
                 semantic_members=self._semantic_members,
             )
-            self._cached._build_context = self._parent._build_context
-            self._cached._index_seed = self._index_seed
-            self._cached._pending = frozenset(self._pending)
         return self._cached
 
     def fork(self) -> CandidateTree:
@@ -317,7 +275,6 @@ class DerivedState:
             )
             weight = tree._input_bytes
             tree._accepted = True
-            tree._build_context = self.build
             with self._lock:
                 self._builds += 1
                 if epoch == self._epoch and self._max_roots and weight <= self._max_input_bytes:
@@ -384,10 +341,8 @@ def advance_accepted_tree(parent: SnapshotTree, edits: Mapping[str, bytes | None
         rows, input_bytes=weight, semantic_bytes=semantic_bytes, semantic_members=semantic_members
     )
     with parent._lock:
-        result._index_seed = parent._contenders
-        result._pending = frozenset(edits)
-        if parent._evaluation is not None:
-            result._evaluation_seed = (parent._evaluation, PersistentMap(edits))
+        if parent._proofs is not None and parent._accepted_reader is not None:
+            result._proof_seed = (parent._proofs, parent._accepted_reader, dict(edits))
     return result
 
 

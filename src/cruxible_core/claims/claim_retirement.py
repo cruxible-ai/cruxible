@@ -285,6 +285,9 @@ def claim_retirement_inventory(
     tree the retirement is being written onto.
     """
 
+    from cruxible_core.derived.derived_state import snapshot_against
+
+    tree = snapshot_against(tree, instance.immutable_tree_at(coordinate.git_oid))
     with instance.accepted_history_reader(at=coordinate) as history:
 
         def resolve(digest: str) -> ArtifactIdentity | None:
