@@ -207,7 +207,7 @@ class ClaimVerdictReadContext:
     instance: PlaybillInstance
     coordinate: AcceptedProjectionCoordinate
     _claims: dict[str, ClaimArtifactAny] = dataclass_field(default_factory=dict, init=False)
-    _providers: dict[str, ProviderV1] | None = dataclass_field(default=None, init=False)
+    _providers: Mapping[str, ProviderV1] | None = dataclass_field(default=None, init=False)
     _tree: Mapping[str, bytes] = dataclass_field(init=False)
 
     def __post_init__(self) -> None:
@@ -234,14 +234,61 @@ class ClaimVerdictReadContext:
             self._claims[identity] = parse_claim(content, path=path)
         return self._claims[identity]
 
-    def providers(self) -> dict[str, ProviderV1]:
+    def providers(self) -> Mapping[str, ProviderV1]:
         if self._providers is None:
-            object.__setattr__(self, "_providers", accepted_claim_providers(self._tree))
+            object.__setattr__(
+                self,
+                "_providers",
+                accepted_claim_providers(self.instance, coordinate=self.coordinate),
+            )
         assert self._providers is not None
         return self._providers
 
 
-def accepted_claim_providers(tree: Mapping[str, bytes]) -> dict[str, ProviderV1]:
+class _AcceptedClaimProviders(Mapping[str, ProviderV1]):
+    """One request's provider closure, selected from its immutable accepted coordinate."""
+
+    def __init__(
+        self, instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
+    ) -> None:
+        self._instance = instance
+        self._coordinate = coordinate
+        self._selected: dict[str, ProviderV1] = {}
+
+    def __getitem__(self, identity: str) -> ProviderV1:
+        if identity not in self._selected:
+            if not identity.startswith("Provider:"):
+                raise KeyError(identity)
+            with self._instance.bind_accepted_projection(self._coordinate) as projection:
+                assert projection.typed is not None
+                provider = projection.typed.source(identity)
+                if provider is None:
+                    raise KeyError(identity)
+                self._selected[identity] = provider
+        return self._selected[identity]
+
+    def __iter__(self) -> Iterator[str]:
+        with self._instance.bind_accepted_projection(self._coordinate) as projection:
+            assert projection.typed is not None
+            identities = tuple(row.identity for row in projection.typed.envelopes(kind="provider"))
+        return iter(identities)
+
+    def __len__(self) -> int:
+        with self._instance.bind_accepted_projection(self._coordinate) as projection:
+            assert projection.typed is not None
+            return int(
+                projection.typed.connection.execute("SELECT count(*) FROM providers").fetchone()[0]
+            )
+
+
+def accepted_claim_providers(
+    instance: ClaimReadSourceProtocol, *, coordinate: AcceptedProjectionCoordinate
+) -> Mapping[str, ProviderV1]:
+    if isinstance(instance, PlaybillInstance):
+        return _AcceptedClaimProviders(instance, coordinate)
+    # Cold accepted replay has no published projection yet. Its source tree is
+    # the explicit reconstruction oracle, never the live service read path.
+    tree = instance.tree_at(coordinate.git_oid)
     result: dict[str, ProviderV1] = {}
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
         if not path.startswith("providers/"):
@@ -399,7 +446,7 @@ def service_propose_claim_attestation(
         )
     subject_content_digest, object_content_digest = _referent_digests(tree, accepted.claim)
     principals = principal_registry_from_tree(tree, semantic_root=coordinate.semantic_root)
-    providers = accepted_claim_providers(tree)
+    providers = accepted_claim_providers(instance, coordinate=coordinate)
     verify_claim_attestation(
         attestation,
         verification_time=datetime.fromisoformat(timestamp.replace("Z", "+00:00")),
@@ -876,7 +923,9 @@ def service_evaluate_playbill_claim_verdict(
         captures=captures,
         attestations=attestations,
         providers=(
-            accepted_claim_providers(tree) if read_context is None else read_context.providers()
+            accepted_claim_providers(instance, coordinate=coordinate)
+            if read_context is None
+            else read_context.providers()
         ),
         claim_effective_from=accepted.claim.statement.effective_from,
         claim_effective_until=accepted.claim.statement.effective_until,

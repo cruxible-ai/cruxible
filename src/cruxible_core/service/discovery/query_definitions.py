@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from cruxible_client.contracts.errors import ClaimNotFoundError
+from cruxible_client.contracts.errors import ClaimNotFoundError, ProjectionIntegrityError
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinitionV1,
     QueryDefinitionV1,
@@ -87,9 +87,12 @@ def accepted_query_definition(
         envelope = projection.typed.envelope(identity)
         if envelope is None:
             raise ClaimNotFoundError(path)
+        query = projection.typed.source(identity)
+        if not isinstance(query, QueryDefinitionV1):
+            raise ProjectionIntegrityError("accepted QueryDefinition source is absent or invalid")
         return AcceptedQueryDefinitionV1(
             path=envelope.path,
-            query=projection.typed.source(identity),
+            query=query,
             artifact_digest=envelope.artifact_digest,
         )
 
@@ -117,20 +120,20 @@ def service_list_playbill_query_definitions(
     coordinate = _resolve_coordinate(instance, at)
     with instance.bind_accepted_projection(coordinate) as projection:
         assert projection.typed is not None
-        views = tuple(
-            _view(
-                projection.typed.source(envelope.identity),
-                path=envelope.path,
-                coordinate=coordinate,
-            )
-            for envelope in sorted(
-                projection.typed.envelopes(kind="query-definition"),
-                key=lambda item: item.path.encode("utf-8"),
-            )
-        )
+        views = []
+        for envelope in sorted(
+            projection.typed.envelopes(kind="query-definition"),
+            key=lambda item: item.path.encode("utf-8"),
+        ):
+            query = projection.typed.source(envelope.identity)
+            if not isinstance(query, QueryDefinitionV1):
+                raise ProjectionIntegrityError(
+                    "accepted QueryDefinition source is absent or invalid"
+                )
+            views.append(_view(query, path=envelope.path, coordinate=coordinate))
     return PlaybillQueryDefinitionList(
         coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
-        query_definitions=views,
+        query_definitions=tuple(views),
     )
 
 
