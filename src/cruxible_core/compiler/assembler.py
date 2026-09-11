@@ -446,6 +446,17 @@ class ProjectionAssembler:
                 presentation_facts=parsed.presentation_facts,
             )
         parsed = _timed(timings, "sort", lambda: _sorted_projection_tree(parsed))
+        resolver = self.resolve_claim_digest
+        if isinstance(request, AssemblerRequestV2) and resolver is None:
+            from cruxible_core.indexes.typed_sqlite import cold_claim_digest_resolver
+
+            resolver = cold_claim_digest_resolver(
+                blob_map,
+                repository=self._repository,
+                head_oid=request.git_oid,
+                codec=self.artifact_codec,
+                coordinates=self.accepted_coordinates_by_sequence,
+            )
 
         return _timed(
             timings,
@@ -458,7 +469,7 @@ class ProjectionAssembler:
                 assembler_implementation=PYTHON_REFERENCE_ASSEMBLER,
                 sources=blob_map,
                 bodies=self.bodies,
-                resolve_digest=self.resolve_claim_digest,
+                resolve_digest=resolver,
             ),
         )
 
