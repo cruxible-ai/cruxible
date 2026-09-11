@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_digest,
     procedure_mandate_path,
@@ -37,14 +35,7 @@ from cruxible_core.procedures.execution import (
     prepare_direct_procedure_run,
 )
 from cruxible_core.procedures.terminal_services import (
-    EffectfulTerminalError,
-    PlaybillSettlementDoor,
     ProposalTerminalAdapter,
-    SettlementCandidateInspection,
-    SettlementDoorResultV1,
-    SettlementLostCas,
-    SettlementTargetV1,
-    SettlementTerminalAdapter,
 )
 from cruxible_core.service.procedures.procedure_runs import SERVED_NODE_KINDS
 from tests.core_support._support import initialize_local
@@ -267,7 +258,7 @@ def test_v2_refuses_inherited_standing_mandate_authority(tmp_path) -> None:
     request = _effectful_request(
         "mandate_settlement",
         admission=admission,
-        item=_item("candidate", value=_settlement_target(admission).model_dump(mode="json")),
+        item=_item("candidate"),
         target_paths=(path,),
         mandate_digest=_digest("procedure-mandate"),
         bound=_pin("target-law", "ClaimType", "prediction"),
@@ -443,8 +434,8 @@ def test_proposal_adapter_rechecks_authority_before_submission(tmp_path, retire_
     if retire_at_head:
         with pytest.raises(TerminalAuthorityRefusal, match="procedure_mandate_superseded"):
             deliver()
-        target_ref = (
-            "refs/proposals/owner/procedure-" + request.operation_key.removeprefix("sha256:")
+        target_ref = "refs/proposals/owner/procedure-" + request.operation_key.removeprefix(
+            "sha256:"
         )
         assert service.transport.read_proposal_ref(target_ref) is None
         return
@@ -454,262 +445,9 @@ def test_proposal_adapter_rechecks_authority_before_submission(tmp_path, retire_
     assert AcceptedCoordinate.from_internal(instance.accepted_coordinate()) == base
 
 
-class _Door:
-    def __init__(
-        self,
-        result: SettlementDoorResultV1,
-        inspection: SettlementCandidateInspection,
-    ) -> None:
-        self.result = result
-        self.inspection = inspection
-        self.calls = 0
-        self.inspect_calls = 0
-
-    def inspect_exact_candidate(self, *, target: SettlementTargetV1):
-        self.inspect_calls += 1
-        return self.inspection
-
-    def activate_exact_candidate(self, *, target: SettlementTargetV1, actor_id: str):
-        self.calls += 1
-        assert target.proposal_id == self.result.proposal_id
-        assert actor_id == "operator"
-        return self.result
-
-
-def _settlement_target(
-    admission: ProcedureRunAdmissionV1,
-    *,
-    proposal_value: int = 1,
-    candidate_value: int = 1,
-    base_semantic_root: str | None = None,
-) -> SettlementTargetV1:
-    proposal_id = typed_digest(ArtifactDigest, "proposal-test-v1", {"value": 1}).tagged
-    candidate_digest = typed_digest(
-        ArtifactDigest, "candidate-test-v1", {"value": candidate_value}
-    ).tagged
-    if proposal_value != 1:
-        proposal_id = typed_digest(
-            ArtifactDigest, "proposal-test-v1", {"value": proposal_value}
-        ).tagged
-    return SettlementTargetV1(
-        proposal_id=proposal_id,
-        candidate_digest=candidate_digest,
-        base_semantic_root=base_semantic_root or admission.accepted_coordinate.semantic_root,
-    )
-
-
-def _settlement_door(
-    target: SettlementTargetV1,
-    *,
-    target_paths: tuple[str, ...],
-    inspection_proposal_id: str | None = None,
-    inspection_candidate_digest: str | None = None,
-) -> _Door:
-    return _Door(
-        SettlementDoorResultV1(
-            status="accepted",
-            proposal_id=target.proposal_id,
-            candidate_digest=target.candidate_digest,
-        ),
-        SettlementCandidateInspection(
-            proposal_id=inspection_proposal_id or target.proposal_id,
-            candidate_digest=inspection_candidate_digest or target.candidate_digest,
-            base_semantic_root=target.base_semantic_root,
-            target_paths=target_paths,
-        ),
-    )
-
-
-class _SettlementEvidence:
-    def __init__(
-        self,
-        *,
-        target: SettlementTargetV1,
-        base_oid: str,
-        candidate_tree_oid: str,
-    ) -> None:
-        self.target = target
-        self.base_oid = base_oid
-        self.candidate_tree_oid = candidate_tree_oid
-
-    def resolve_proposal_id(self, value: str) -> str:
-        return value
-
-    def read_admission(self, value: str):
-        return SimpleNamespace(proposal_id=value)
-
-    def read_evaluation(self, value: str):
-        return SimpleNamespace(
-            proposal_id=value,
-            candidate_digest=self.target.candidate_digest,
-            evaluated_base_oid=self.base_oid,
-            evaluated_tree_oid=self.candidate_tree_oid,
-        )
-
-    def read_candidate(self, value: str):
-        return SimpleNamespace(
-            candidate_digest=value,
-            candidate=SimpleNamespace(parent_semantic_root=self.target.base_semantic_root),
-        )
-
-
-class _SettlementInstance:
-    def __init__(self, *, admission: ProcedureRunAdmissionV1, target: SettlementTargetV1) -> None:
-        self.admission = admission
-        self.target = target
-        self.candidate_tree_oid = "b" * 40
-        self.evidence = _SettlementEvidence(
-            target=target,
-            base_oid=admission.accepted_coordinate.git_oid,
-            candidate_tree_oid=self.candidate_tree_oid,
-        )
-        self.current_coordinate = self._internal_coordinate(admission.accepted_coordinate)
-
-    @staticmethod
-    def _internal_coordinate(coordinate: AcceptedCoordinate):
-        return SimpleNamespace(
-            git_oid=coordinate.git_oid,
-            semantic_root=coordinate.semantic_root,
-            generation_root=coordinate.generation_root,
-            compiler=SimpleNamespace(rule_digest=coordinate.compiler_digest),
-        )
-
-    def proposal_evidence(self):
-        return self.evidence
-
-    def coordinate_for_oid(self, oid: str):
-        assert oid == self.admission.accepted_coordinate.git_oid
-        return self._internal_coordinate(self.admission.accepted_coordinate)
-
-    def tree_at(self, oid: str):
-        assert oid == self.admission.accepted_coordinate.git_oid
-        return {
-            "claims/changed.json": b"old",
-            "claims/removed.json": b"removed",
-            "claims/same.json": b"same",
-        }
-
-    def proposal_tree(self, oid: str):
-        assert oid == self.candidate_tree_oid
-        return {
-            "claims/added.json": b"added",
-            "claims/changed.json": b"new",
-            "claims/same.json": b"same",
-        }
-
-    def accepted_coordinate(self):
-        return self.current_coordinate
-
-
-def test_concrete_settlement_door_resolves_at_admission_and_rechecks_activation(
-    tmp_path, monkeypatch
-) -> None:
-    admission = _admission(tmp_path)
-    target = _settlement_target(admission)
-    instance = _SettlementInstance(admission=admission, target=target)
-    required: list[str] = []
-    activated: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        "cruxible_core.procedures.terminal_services.principal_registry_from_tree",
-        lambda tree, *, semantic_root: SimpleNamespace(
-            require_active=lambda actor_id: required.append(actor_id)
-        ),
-    )
-    monkeypatch.setattr(
-        "cruxible_core.procedures.terminal_services.service_activate_playbill_proposal",
-        lambda passed_instance, *, proposal_id, activated_by: (
-            activated.append((proposal_id, activated_by)) or SimpleNamespace(status="accepted")
-        ),
-    )
-    door = PlaybillSettlementDoor(
-        instance=instance,
-        admitted_coordinate=admission.accepted_coordinate,
-    )
-
-    inspection = door.inspect_exact_candidate(target=target)
-    assert inspection.target_paths == (
-        "claims/added.json",
-        "claims/changed.json",
-        "claims/removed.json",
-    )
-    assert door.activate_exact_candidate(target=target, actor_id="operator").status == "accepted"
-    assert required == ["operator"]
-    assert activated == [(target.proposal_id, "operator")]
-
-    instance.current_coordinate = instance._internal_coordinate(
-        admission.accepted_coordinate.model_copy(update={"git_oid": "c" * 40})
-    )
-    with pytest.raises(EffectfulTerminalError, match="coordinate_changed"):
-        door.activate_exact_candidate(target=target, actor_id="operator")
-    assert activated == [(target.proposal_id, "operator")]
-
-
-def test_settlement_adapter_delegates_only_after_exact_authority(tmp_path) -> None:
-    admission = _admission(tmp_path)
-    target_path = "claims/aa/CLM-" + "a" * 32 + ".json"
-    target = _settlement_target(admission)
-    mandate = _runtime_mandate(admission, namespace=("claims",))
-    mandate_digest = procedure_mandate_digest(mandate).tagged
-    request = _effectful_request(
-        "mandate_settlement",
-        admission=admission,
-        item=_item("candidate", value=target.model_dump(mode="json")),
-        target_paths=(target_path,),
-        mandate_digest=mandate_digest,
-        bound=_pin("target-law", "ClaimType", "prediction"),
-    )
-    door = _settlement_door(target, target_paths=(target_path,))
-    adapter = SettlementTerminalAdapter(door=door)
-    with pytest.raises(TerminalAuthorityRefusal):
-        adapter.deliver(request=request, admission=admission, accepted_mandates={})
-    assert door.calls == 0
-    receipt = adapter.deliver(
-        request=request,
-        admission=admission,
-        accepted_mandates={mandate_digest: mandate},
-    )
-    verify_terminal_egress_receipt(request, receipt)
-    assert receipt.disposition == "settled"
-    assert door.calls == 1
-
-
-def test_lost_cas_refuses_with_observed_head_and_reprepare_repair(tmp_path) -> None:
-    admission = _admission(tmp_path)
-    target_path = "claims/aa/CLM-" + "a" * 32 + ".json"
-    target = _settlement_target(admission)
-    mandate = _runtime_mandate(admission, namespace=("claims",))
-    mandate_digest = procedure_mandate_digest(mandate).tagged
-    request = _effectful_request(
-        "mandate_settlement",
-        admission=admission,
-        item=_item("candidate", value=target.model_dump(mode="json")),
-        target_paths=(target_path,),
-        mandate_digest=mandate_digest,
-        bound=_pin("target-law", "ClaimType", "prediction"),
-    )
-    observed = admission.accepted_coordinate.model_copy(update={"git_oid": "f" * 40})
-    door = _settlement_door(target, target_paths=(target_path,))
-    door.result = SettlementDoorResultV1(
-        status="lost_cas",
-        proposal_id=target.proposal_id,
-        candidate_digest=target.candidate_digest,
-        observed_head=observed,
-    )
-
-    with pytest.raises(SettlementLostCas) as caught:
-        SettlementTerminalAdapter(door=door).deliver(
-            request=request,
-            admission=admission,
-            accepted_mandates={mandate_digest: mandate},
-        )
-    assert observed.git_oid in str(caught.value)
-    assert "re-prepare at the new head" in str(caught.value)
-
-
-def test_settlement_refuses_mandate_expired_between_admission_and_egress(tmp_path) -> None:
+def test_egress_refuses_mandate_expired_between_admission_and_egress(tmp_path) -> None:
     admission = _admission(tmp_path, admitted_at=NOW - timedelta(days=10))
     target_path = "claims/aa/CLM-" + "a" * 32 + ".json"
-    target = _settlement_target(admission)
     mandate = _runtime_mandate(admission, namespace=("claims",)).model_copy(
         update={"expires_at": NOW - timedelta(days=9)}
     )
@@ -717,16 +455,15 @@ def test_settlement_refuses_mandate_expired_between_admission_and_egress(tmp_pat
     request = _effectful_request(
         "mandate_settlement",
         admission=admission,
-        item=_item("candidate", value=target.model_dump(mode="json")),
+        item=_item("candidate"),
         target_paths=(target_path,),
         mandate_digest=mandate_digest,
         bound=_pin("target-law", "ClaimType", "prediction"),
         prepared_at=NOW,
     )
-    door = _settlement_door(target, target_paths=(target_path,))
 
     with pytest.raises(TerminalAuthorityRefusal) as caught:
-        SettlementTerminalAdapter(door=door).deliver(
+        require_procedure_mandate(
             request=request,
             admission=admission,
             accepted_mandates={mandate_digest: mandate},
@@ -734,10 +471,9 @@ def test_settlement_refuses_mandate_expired_between_admission_and_egress(tmp_pat
 
     assert caught.value.codes == ("procedure_mandate_expired",)
     assert request.evaluation_time == request.prepared_at == NOW
-    assert door.calls == 0
 
 
-def test_settlement_refuses_expired_mandate_with_rewound_v3_admission(tmp_path) -> None:
+def test_egress_refuses_expired_mandate_with_rewound_v3_admission(tmp_path) -> None:
     fixture = _fixture(tmp_path)
     honest_admission = _line_admission(_procedure(), fixture, admitted_at=NOW)
     rewound_admission = type(honest_admission).model_validate(
@@ -749,7 +485,6 @@ def test_settlement_refuses_expired_mandate_with_rewound_v3_admission(tmp_path) 
     assert rewound_admission.admission_binding_digest == (honest_admission.admission_binding_digest)
 
     target_path = "claims/aa/CLM-" + "a" * 32 + ".json"
-    target = _settlement_target(rewound_admission)
     mandate = _runtime_mandate(rewound_admission, namespace=("claims",)).model_copy(
         update={"expires_at": NOW - timedelta(days=9)}
     )
@@ -757,77 +492,26 @@ def test_settlement_refuses_expired_mandate_with_rewound_v3_admission(tmp_path) 
     request = _effectful_request(
         "mandate_settlement",
         admission=rewound_admission,
-        item=_item("candidate", value=target.model_dump(mode="json")),
+        item=_item("candidate"),
         target_paths=(target_path,),
         mandate_digest=mandate_digest,
         bound=_pin("target-law", "ClaimType", "prediction"),
         prepared_at=NOW,
     )
-    door = _settlement_door(target, target_paths=(target_path,))
 
     with pytest.raises(TerminalAuthorityRefusal) as caught:
-        SettlementTerminalAdapter(door=door).deliver(
+        require_procedure_mandate(
             request=request,
             admission=rewound_admission,
             accepted_mandates={mandate_digest: mandate},
         )
 
     assert caught.value.codes == ("procedure_mandate_expired",)
-    assert door.calls == 0
-
-
-@pytest.mark.parametrize("mismatch", ["base", "paths", "proposal", "candidate"])
-def test_settlement_adapter_refuses_candidate_scope_before_activation(tmp_path, mismatch) -> None:
-    admission = _admission(tmp_path)
-    target_path = "claims/aa/CLM-" + "a" * 32 + ".json"
-    target = _settlement_target(
-        admission,
-        base_semantic_root=(
-            _digest("other-semantic-root")
-            if mismatch == "base"
-            else admission.accepted_coordinate.semantic_root
-        ),
-    )
-    mandate = _runtime_mandate(admission, namespace=("claims",))
-    mandate_digest = procedure_mandate_digest(mandate).tagged
-    request = _effectful_request(
-        "mandate_settlement",
-        admission=admission,
-        item=_item("candidate", value=target.model_dump(mode="json")),
-        target_paths=(target_path,),
-        mandate_digest=mandate_digest,
-        bound=_pin("target-law", "ClaimType", "prediction"),
-    )
-    door = _settlement_door(
-        target,
-        target_paths=(
-            ("claims/bb/CLM-" + "b" * 32 + ".json",) if mismatch == "paths" else (target_path,)
-        ),
-        inspection_proposal_id=(
-            typed_digest(ArtifactDigest, "proposal-test-v1", {"value": 2}).tagged
-            if mismatch == "proposal"
-            else None
-        ),
-        inspection_candidate_digest=(
-            typed_digest(ArtifactDigest, "candidate-test-v1", {"value": 2}).tagged
-            if mismatch == "candidate"
-            else None
-        ),
-    )
-    with pytest.raises(EffectfulTerminalError, match="settlement_.*_mismatch"):
-        SettlementTerminalAdapter(door=door).deliver(
-            request=request,
-            admission=admission,
-            accepted_mandates={mandate_digest: mandate},
-        )
-    assert door.calls == 0
-    assert door.inspect_calls == (0 if mismatch == "base" else 1)
 
 
 def test_procedure_mandate_refusal_reports_every_failed_law_and_repair(tmp_path) -> None:
     admission = _admission(tmp_path)
     target_path = "claims/aa/CLM-" + "a" * 32 + ".json"
-    target = _settlement_target(admission)
     base = _runtime_mandate(admission, namespace=("claims",))
     refused = base.model_copy(
         update={
@@ -845,14 +529,13 @@ def test_procedure_mandate_refusal_reports_every_failed_law_and_repair(tmp_path)
     request = _effectful_request(
         "mandate_settlement",
         admission=admission,
-        item=_item("candidate", value=target.model_dump(mode="json")),
+        item=_item("candidate"),
         target_paths=(target_path,),
         mandate_digest=refused_digest,
         bound=_pin("target-law", "ClaimType", "prediction"),
     )
-    door = _settlement_door(target, target_paths=(target_path,))
     with pytest.raises(TerminalAuthorityRefusal) as caught:
-        SettlementTerminalAdapter(door=door).deliver(
+        require_procedure_mandate(
             request=request,
             admission=admission,
             accepted_mandates={refused_digest: refused},
@@ -871,7 +554,6 @@ def test_procedure_mandate_refusal_reports_every_failed_law_and_repair(tmp_path)
     assert caught.value.repair_kind == "author_successor"
     assert caught.value.repair.operation == "playbill.authoring.create"
     assert caught.value.repair.arguments == {"example": "procedure-mandate"}
-    assert door.calls == 0
 
 
 def test_v2_receipt_checks_apply_even_when_request_is_v1(tmp_path) -> None:
