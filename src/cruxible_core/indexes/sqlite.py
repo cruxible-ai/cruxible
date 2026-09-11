@@ -31,6 +31,7 @@ from cruxible_core.documents.projection_documents import (
     DocumentProjectionView,
     document_projection_view,
 )
+from cruxible_core.indexes.acquisition import DatabasePathChangedError, guard_database_path
 from cruxible_core.indexes.claims.projection_claims import (
     ClaimProjectionView,
     claim_projection_view,
@@ -1112,16 +1113,43 @@ def bind_projection(
     connection: sqlite3.Connection | None = None
     descriptor: int | None = None
     try:
-        descriptor = os.open(index_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        opened_identity = _verified_piece_identity(
-            index_path,
-            os.fstat(descriptor),
-            expected=expected,
-            manifest=manifest,
-            physical_digest=manifest.pieces[0].physical_digest,
-        )
-        if opened_identity != identities[0]:
-            raise ProjectionIntegrityError("projection piece changed during acquisition")
+        for attempt in range(3):
+            try:
+                # Some SQLite VFS implementations resolve descriptor aliases
+                # back to pathnames. Guard that short acquisition too, including
+                # an ancestor swapped away and restored before connect returns.
+                with guard_database_path(index_path):
+                    descriptor = os.open(index_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                    opened_identity = _verified_piece_identity(
+                        index_path,
+                        os.fstat(descriptor),
+                        expected=expected,
+                        manifest=manifest,
+                        physical_digest=manifest.pieces[0].physical_digest,
+                    )
+                    if opened_identity != identities[0]:
+                        raise ProjectionIntegrityError(
+                            "projection piece changed during acquisition"
+                        )
+                    descriptor_uri = _descriptor_uri(descriptor)
+                    connection = sqlite3.connect(
+                        descriptor_uri or f"{index_path.as_uri()}?mode=ro&immutable=1",
+                        uri=True,
+                    )
+                    # Make SQLite acquire its actual file before ending the
+                    # namespace proof. Full cold scans use this connection later.
+                    connection.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
+                break
+            except DatabasePathChangedError:
+                if connection is not None:
+                    connection.close()
+                    connection = None
+                if descriptor is not None:
+                    os.close(descriptor)
+                    descriptor = None
+                if attempt == 2:
+                    raise
+        assert descriptor is not None and connection is not None
         if (
             not already_verified
             and _descriptor_digest(descriptor) != manifest.pieces[0].physical_digest
@@ -1129,11 +1157,6 @@ def bind_projection(
             raise ProjectionIntegrityError(
                 f"projection piece digest mismatch: {manifest.pieces[0].name}"
             )
-        descriptor_uri = _descriptor_uri(descriptor)
-        connection = sqlite3.connect(
-            descriptor_uri or f"{index_path.as_uri()}?mode=ro&immutable=1",
-            uri=True,
-        )
         if descriptor_uri is None:
             # Without a descriptor namespace there is no pathname-only proof of
             # which inode SQLite opened. This portable fallback charges a full
