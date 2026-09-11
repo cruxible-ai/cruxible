@@ -32,6 +32,7 @@ from cruxible_client.contracts.errors import (
     PlaybillFormatError,
     PlaybillInstanceDecommissioned,
     PlaybillKeyError,
+    PrincipalIntegrityError,
     ProjectionIntegrityError,
     ProposalIntegrityError,
     SettlementIntegrityError,
@@ -39,6 +40,7 @@ from cruxible_client.contracts.errors import (
 from cruxible_client.contracts.ledger_mirror import validate_mirror_url
 from cruxible_client.contracts.principals import (
     PrincipalRegistrySnapshot,
+    parse_principal_record,
     principal_registry_from_tree,
 )
 from cruxible_client.contracts.temporal import format_datetime, utc_now
@@ -1045,7 +1047,13 @@ class PlaybillInstance:
             )
         with self.bind_accepted_projection(coordinate) as projection:
             if projection.typed is not None:
-                return projection.typed.principal_registry()
+                registry = projection.typed.principal_registry()
+                generation = self._generation_for_oid(coordinate.git_oid)
+                if generation is None or registry != generation.principals:
+                    raise PrincipalIntegrityError(
+                        "indexed principals differ from the replay-verified accepted registry"
+                    )
+                return registry
             # Frozen v1 publications have no typed principal relation.
             return principal_registry_from_tree(
                 self.immutable_tree_at(coordinate.git_oid), semantic_root=coordinate.semantic_root
@@ -1060,7 +1068,13 @@ class PlaybillInstance:
             return
         with self.bind_accepted_projection(coordinate) as projection:
             if projection.typed is not None:
-                projection.typed.principal(principal_id, active=True)
+                principal = projection.typed.principal(principal_id, active=True)
+                path = f"principals/{principal_id}.json"
+                raw = self.blob_at(coordinate.git_oid, path)
+                if raw is None or principal != parse_principal_record(raw, path=path):
+                    raise PrincipalIntegrityError(
+                        "indexed principal differs from its exact accepted Git record"
+                    )
             else:
                 principal_registry_from_tree(
                     self.immutable_tree_at(coordinate.git_oid),

@@ -39,6 +39,72 @@ _EXTENSION_TABLES = (
 )
 
 
+def cold_claim_digest_resolver(
+    sources: Mapping[str, bytes],
+    *,
+    repository: Any,
+    head_oid: str,
+    codec: ArtifactCodec,
+    coordinates: Mapping[int, Any],
+) -> Callable[[str], tuple[str, ...]]:
+    """Resolve full-rebuild inputs from exact retained occurrences, even if deleted.
+
+    The served/delta path supplies C's cutoff-bound lookup. This source-only
+    oracle deliberately pays historical traversal and holds no lineage index.
+    Legacy file commitments are checked as files before parsing their original
+    Claim format; they are never reinterpreted as artifact commitments.
+    """
+    from cruxible_client.contracts.claims import claim_artifact_digest, parse_claim
+    from cruxible_core.proposals.settlement import parse_change_set_record
+
+    records = tuple(
+        sorted(
+            (
+                parse_change_set_record(content, path=path)
+                for path, content in sources.items()
+                if path.startswith("changesets/")
+            ),
+            key=lambda record: record.sequence,
+        )
+    )
+    latest = records[-1].sequence if records else 0
+
+    def resolve(digest: str) -> tuple[str, ...]:
+        identities: set[str] = set()
+        for record in records:
+            for member in record.members:
+                if member.artifact_kind != "claim":
+                    continue
+                exact = getattr(member, "candidate_artifact_digest", None)
+                legacy = getattr(member, "artifact_digest", None)
+                if exact != digest and (exact is not None or legacy is None):
+                    continue
+                coordinate = coordinates.get(record.sequence)
+                oid = None if coordinate is None else coordinate.git_oid
+                if oid is None:
+                    oid = head_oid
+                    for _ in range(latest - record.sequence):
+                        oid = repository.parent_of(oid)
+                content = repository.blob_at(oid, member.path)
+                if content is None:
+                    raise ProjectionIntegrityError("historical Claim occurrence source is absent")
+                if exact is None and file_digest(content).tagged != legacy:
+                    raise ProjectionIntegrityError(
+                        "legacy Claim occurrence input differs from retained commitment"
+                    )
+                claim = parse_claim(content, path=member.path, codec=codec)
+                actual = claim_artifact_digest(claim).tagged
+                if exact is not None and actual != exact:
+                    raise ProjectionIntegrityError(
+                        "historical Claim occurrence differs from retained artifact commitment"
+                    )
+                if actual == digest:
+                    identities.add(claim.identity.qualified)
+        return tuple(sorted(identities))
+
+    return resolve
+
+
 def complete_schema_sql() -> str:
     specs = [spec for spec in _TABLE_SPECS if spec.name in (*_METADATA_TABLES, *_EXTENSION_TABLES)]
     statements = [schema_sql(), SCHEMA_SQL]

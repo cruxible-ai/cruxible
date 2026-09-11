@@ -13,7 +13,7 @@ import sqlite3
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from cruxible_client.contracts.acquisition_policies import parse_acquisition_policy
 from cruxible_client.contracts.approval_policy import (
@@ -41,7 +41,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     procedure_runtime_policy_digest,
 )
 from cruxible_client.contracts.procedures.artifacts import parse_procedure
-from cruxible_client.contracts.procedures.line_specs import parse_line_spec
+from cruxible_client.contracts.procedures.line_specs import line_identity_digest, parse_line_spec
 from cruxible_client.contracts.provider_interfaces import parse_provider_interface
 from cruxible_client.contracts.providers import parse_provider
 from cruxible_client.contracts.query.definitions import parse_query_definition
@@ -56,6 +56,9 @@ from cruxible_core.compiler.projection_artifacts import (
 from cruxible_core.exhaust.promotions import parse_exhaust_promotion
 
 SQLValue = str | int | None
+
+if TYPE_CHECKING:
+    from cruxible_core.claims.closure import ArtifactDependencyStateV1
 
 
 def utc_microseconds(value: datetime | None) -> int | None:
@@ -130,6 +133,7 @@ OWNER_CODECS = (
         "lines",
         parse_line_spec,
         (
+            ("identity_digest", "TEXT NOT NULL"),
             ("occurrence_epoch", "INTEGER NOT NULL CHECK(occurrence_epoch>=1)"),
             ("procedure_identity", "TEXT NOT NULL"),
             ("procedure_digest", "TEXT NOT NULL"),
@@ -352,6 +356,7 @@ def schema_sql() -> str:
             "CREATE INDEX claims_by_subject_predicate ON claims(subject_path,predicate,subject_selector_scheme,subject_selector_value,identity)",
             "CREATE INDEX claims_by_object_subject ON claims(object_path,identity) WHERE object_kind='subject'",
             "CREATE INDEX provider_interfaces_by_interface ON provider_interfaces(interface_digest,identity)",
+            "CREATE INDEX lines_by_identity_digest ON lines(identity_digest,identity)",
             "CREATE INDEX procedure_mandates_by_procedure ON procedure_mandates(procedure_identity,procedure_digest,valid_from_us,identity) WHERE lifecycle='live'",
             """CREATE TABLE promotion_subjects (
             promotion_identity TEXT NOT NULL REFERENCES exhaust_promotions(identity), subject_identity TEXT NOT NULL,
@@ -429,6 +434,8 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
             procedure_identity=source.procedure.target.qualified,
             procedure_digest=source.procedure.artifact_digest,
         )
+    if owner.kind == "line":
+        result["identity_digest"] = line_identity_digest(source.identity)
     if owner.kind == "standing-mandate":
         result["provider_identity"] = source.provider.qualified
     for name in ("valid_from", "valid_until", "expires_at"):
@@ -697,6 +704,28 @@ class TypedStateReader:
                 f"principal is not active at {self.accepted.semantic_root}: {principal_id}"
             )
         return result
+
+    def dependency_state(self, identity: str) -> ArtifactDependencyStateV1 | None:
+        """Read one exact selected owner contract, preserving role-bearing pins."""
+        from cruxible_client.contracts.documents import DocumentArtifactAdapter
+        from cruxible_core.claims.closure import ArtifactDependencyStateV1
+
+        row = self.envelope(identity)
+        if row is None or row.kind not in OWNER_BY_KIND or row.kind == "fixture":
+            return None
+        source = OWNER_BY_KIND[row.kind].parse(
+            self.member_bytes(row.path), path=row.path, codec=self.codec
+        )
+        adapted = DocumentArtifactAdapter(source) if row.kind == "document" else source
+        return ArtifactDependencyStateV1(
+            path=row.path,
+            artifact_kind=row.kind,
+            artifact_tag=row.format_tag,
+            identity=adapted.identity,
+            artifact_digest=row.artifact_digest,
+            pins=adapted.pins,
+            lifecycle=adapted.lifecycle,
+        )
 
     def principal_registry(self) -> PrincipalRegistrySnapshot:
         return principal_registry(self.connection, self.accepted.semantic_root)

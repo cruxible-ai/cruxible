@@ -31,6 +31,7 @@ from cruxible_client.contracts.claims import (
     ClaimArtifactV2,
     ClaimArtifactV3,
     ClaimCitationV1,
+    ClaimFormatError,
     ClaimLawEvidenceAny,
     ClaimLawEvidenceV1,
     ClaimStatementCardV1,
@@ -396,7 +397,7 @@ def _resolved_claim_id(
     bare = identity.removeprefix("Claim:")
     try:
         claim_path(bare)
-    except ValueError:
+    except ClaimFormatError:
         pass
     else:
         return bare
@@ -419,10 +420,12 @@ def _accepted_claim_ids(
         if history.sequence == 0:
             return ()
     with instance.bind_accepted_projection(coordinate) as projection:
-        return tuple(
-            row.identity.removeprefix("Claim:")
-            for row in projection.artifact_envelopes(kind="claim")
+        rows = (
+            projection.typed.envelopes(kind="claim")
+            if projection.typed is not None
+            else tuple(row for row in projection.artifact_envelopes() if row.kind == "claim")
         )
+        return tuple(row.identity.removeprefix("Claim:") for row in rows)
 
 
 def _observed_at(timestamp: str) -> datetime:
@@ -448,7 +451,7 @@ def service_get_playbill_claim(
     bare = _resolved_claim_id(instance, identity, coordinate=coordinate)
     try:
         path = claim_path(bare)
-    except ValueError as exc:
+    except ClaimFormatError as exc:
         raise ClaimNotFoundError(
             f"Claim not found; expected {expected}; received {identity!r}"
         ) from exc

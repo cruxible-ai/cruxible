@@ -30,6 +30,34 @@ def _rows(path):
         return {name: sorted(db.execute(f"SELECT * FROM {name}").fetchall()) for name in names}
 
 
+def test_standalone_cold_preserves_historical_consumed_input_resolution(tmp_path):
+    from cruxible_core.indexes.sqlite import bind_projection
+    from tests.test_claims.test_claim_retirement import _accepted_dependency_world
+
+    instance, *_ = _accepted_dependency_world(tmp_path)
+    directory = tmp_path / "standalone-cold"
+    directory.mkdir()
+    assembler = ProjectionAssembler(
+        instance._ledger,
+        accepted=instance.accepted_coordinate(),
+        publication_directory=directory,
+        bodies=instance.body_store(),
+        accepted_coordinates_by_sequence=instance._accepted_coordinates_by_sequence(),
+    )
+    rebuilt = assembler.assemble(
+        assembler.request(output_staging_directory=directory / ".stage-cold")
+    )
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as published:
+        with bind_projection(
+            directory / rebuilt.manifest_path, expected=instance.accepted_coordinate()
+        ) as cold:
+            sql = "SELECT * FROM pins ORDER BY source_identity,edge_kind,ordinal"
+            assert [tuple(row) for row in cold._connection.execute(sql)] == [
+                tuple(row) for row in published._connection.execute(sql)
+            ]
+            assert cold.manifest.logical_digest == published.manifest.logical_digest
+
+
 def test_successor_matches_every_cold_row_across_create_revise_and_retire(tmp_path, monkeypatch):
     instance, owner = initialize_local(tmp_path)
     _seed_claim_surface(instance, owner)
