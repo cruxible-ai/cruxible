@@ -240,7 +240,6 @@ from cruxible_core.storage.material_reservations import ProcedureMaterialReserva
 
 PROCEDURE_RUN_ID_DOMAIN = "playbill-procedure-run-id-v1"
 PROCEDURE_RUN_STREAM_ID = "procedures"
-PROCEDURE_RUN_PARTITION_ID = "direct-runs"
 PROCEDURE_RUN_FENCING_TOKEN = "playbill-procedure-direct-run-v1"
 DIRECT_RECEIPT_REDUCER_DOMAIN = "playbill-direct-procedure-receipt-reducer-v1"
 #: The node kinds the served run lanes admit. ``source`` is served only on the

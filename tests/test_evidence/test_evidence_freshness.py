@@ -21,7 +21,7 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultV2
 from cruxible_client.contracts.claims import ClaimLawEvidenceV2
-from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
+from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDispositionV1,
     ClaimTypeMigrationRequestV1,
@@ -35,9 +35,7 @@ from cruxible_core.service.authoring.documents import (
 )
 from cruxible_core.service.claims.claims import (
     PlaybillClaimExplanationV3,
-    PlaybillClaimQueryResultV2,
     service_explain_playbill_claim,
-    service_query_playbill_claims,
 )
 from cruxible_core.service.discovery.next import PlaybillNextRequestV1, service_playbill_next
 from cruxible_core.service.evidence.evidence import (
@@ -175,15 +173,6 @@ def test_v3_freshness_succeeds_service_wires_and_next_queue(tmp_path: Path) -> N
         claim_identity=f"Claim:{claim_id}",
         evaluation_time=at_expiry,
     )
-
-    queried = service_query_playbill_claims(
-        instance,
-        subject=SemanticAddress.whole_artifact("subjects/project.work_item/wi-42.json"),
-        predicate=_claim_type().predicate,
-        evaluation_time=at_expiry,
-    )
-    assert isinstance(queried, PlaybillClaimQueryResultV2)
-    assert queried.verdicts[0].verdict == "stale_evidence"
 
     explanation = service_explain_playbill_claim(
         instance,

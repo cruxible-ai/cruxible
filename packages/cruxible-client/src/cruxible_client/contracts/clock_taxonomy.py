@@ -224,8 +224,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillClaimExplanationV3", "admission_evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillClaimExplanationV3", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillClaimHistoryEntry", "sequence"): "SETTLEMENT ORDER",
-    ("PlaybillClaimQueryResult", "evaluation_time"): "EVALUATION INSTANT",
-    ("PlaybillClaimQueryResultV2", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillClaimRetirePreflight", "effective_until"): "VALIDITY WINDOW",
     ("PlaybillClaimVerdictQueryV1", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillClaimVerdictQueryV2", "evaluation_time"): "EVALUATION INSTANT",

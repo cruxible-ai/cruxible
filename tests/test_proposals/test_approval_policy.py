@@ -31,7 +31,6 @@ from cruxible_core.compiler.compiler import (
     current_compiler_coordinate,
 )
 from cruxible_core.governance.keys import generate_client_principal_key
-from cruxible_core.procedures.execution import resolve_procedure_runtime_policy
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
@@ -143,10 +142,6 @@ def test_runtime_policy_changes_by_singleton_proposal_and_lists_in_force(
     assert _activate(instance, proposal, tmp_path=tmp_path).status == "accepted"
     instance.refresh()
 
-    resolved = resolve_procedure_runtime_policy(
-        instance.tree_at(instance.accepted_coordinate().git_oid)
-    )
-    assert resolved == successor
     row = next(
         item
         for item in list_playbill_policies_in_force(instance).policies

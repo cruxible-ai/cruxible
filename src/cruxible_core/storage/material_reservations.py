@@ -541,38 +541,6 @@ class ProcedureMaterialReservationStore:
                 released.append(reservation.reservation_id)
         return tuple(released)
 
-    def reachable_body_digests(
-        self,
-        records: Sequence[StoredProcedureJournalRecordV1],
-        *,
-        bodies: ContentAddressedBodyStore,
-    ) -> frozenset[str]:
-        """Return active leases plus authenticated journal and manifest references."""
-
-        access = BodyAccessContext(principal_id="procedure-material-gc", can_read_body=True)
-        with self.locked():
-            active = {item.body_digest for item in self.active_locked()}
-            journal: set[str] = set()
-            material: set[str] = set()
-            for stored in records:
-                record = stored.record
-                journal.add(record.payload_digest)
-                if record.event_kind != "admission_bound":
-                    continue
-                try:
-                    payload = parse_journal_payload(
-                        bodies.read(record.payload_digest, access=access)
-                    )
-                    members = _validated_admission_material_members(payload)
-                except Exception as exc:
-                    raise ProcedureMaterialRecoveryRequired(
-                        "run_recovery_required: admission reachability cannot be authenticated"
-                    ) from exc
-                material.update(
-                    member.body_digest for member in members if member.body_digest is not None
-                )
-            return frozenset(active | journal | material)
-
 
 def _validated_admission_material_members(payload: object) -> tuple[Any, ...]:
     """Parse a V3 admission manifest without creating a module import cycle."""

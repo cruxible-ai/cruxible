@@ -174,34 +174,6 @@ class PlaybillClaimList(_StrictClaimServiceModel):
     claims: tuple[PlaybillClaimView, ...]
 
 
-class PlaybillClaimQueryResult(_StrictClaimServiceModel):
-    tag: Literal["playbill-claim-query-v1"] = "playbill-claim-query-v1"
-    coordinate: PlaybillAcceptedCoordinate
-    evaluation_time: datetime
-    subject: SemanticAddress
-    predicate: str
-    cardinality: Literal["one", "many"]
-    status: Literal["resolved", "unresolved", "refused"]
-    selected_claim_identities: tuple[str, ...]
-    contender_claim_identities: tuple[str, ...]
-    claims: tuple[PlaybillClaimView, ...]
-    verdicts: tuple[ClaimVerdictResultV1, ...]
-
-
-class PlaybillClaimQueryResultV2(_StrictClaimServiceModel):
-    tag: Literal["playbill-claim-query-v2"] = "playbill-claim-query-v2"
-    coordinate: PlaybillAcceptedCoordinate
-    evaluation_time: datetime
-    subject: SemanticAddress
-    predicate: str
-    cardinality: Literal["one", "many"]
-    status: Literal["resolved", "unresolved", "refused"]
-    selected_claim_identities: tuple[str, ...]
-    contender_claim_identities: tuple[str, ...]
-    claims: tuple[PlaybillClaimView, ...]
-    verdicts: tuple[ClaimVerdictResultAny, ...]
-
-
 @dataclass(frozen=True)
 class PlaybillClaimGroupResolution:
     """One resolved (Subject, predicate) slot, carried without its wire envelope."""
@@ -804,58 +776,6 @@ def resolve_playbill_claim_group(
         ),
         claims=claims,
         verdicts=tuple(verdicts),
-    )
-
-
-def service_query_playbill_claims(
-    instance: PlaybillInstance,
-    *,
-    subject: SemanticAddress,
-    predicate: str,
-    at: PlaybillAcceptedCoordinate | None = None,
-    evaluation_time: datetime | None = None,
-) -> PlaybillClaimQueryResult | PlaybillClaimQueryResultV2:
-    coordinate = _resolve_coordinate(instance, at)
-    evaluated_at = evaluation_time or datetime.now(UTC)
-    listed = service_list_playbill_claims(
-        instance,
-        at=PlaybillAcceptedCoordinate.from_internal(coordinate),
-        subject=subject,
-        predicate=predicate,
-    )
-    group = resolve_playbill_claim_group(
-        instance,
-        subject=subject,
-        predicate=predicate,
-        coordinate=coordinate,
-        evaluated_at=evaluated_at,
-        claims=tuple(_claim_from_view(view) for view in listed.claims),
-    )
-    if any(isinstance(item, ClaimVerdictResultV2) for item in group.verdicts):
-        return PlaybillClaimQueryResultV2(
-            coordinate=listed.coordinate,
-            evaluation_time=evaluated_at,
-            subject=subject,
-            predicate=predicate,
-            cardinality=group.cardinality,
-            status=group.status,
-            selected_claim_identities=group.selected_claim_identities,
-            contender_claim_identities=group.contender_claim_identities,
-            claims=listed.claims,
-            verdicts=group.verdicts,
-        )
-    v1_verdicts = tuple(item for item in group.verdicts if isinstance(item, ClaimVerdictResultV1))
-    return PlaybillClaimQueryResult(
-        coordinate=listed.coordinate,
-        evaluation_time=evaluated_at,
-        subject=subject,
-        predicate=predicate,
-        cardinality=group.cardinality,
-        status=group.status,
-        selected_claim_identities=group.selected_claim_identities,
-        contender_claim_identities=group.contender_claim_identities,
-        claims=listed.claims,
-        verdicts=v1_verdicts,
     )
 
 
@@ -1598,8 +1518,6 @@ __all__ = [
     "PlaybillClaimHistory",
     "PlaybillClaimHistoryEntry",
     "PlaybillClaimList",
-    "PlaybillClaimQueryResult",
-    "PlaybillClaimQueryResultV2",
     "PlaybillClaimView",
     "PlaybillClaimViewV2",
     "resolve_playbill_claim_group",
@@ -1609,5 +1527,4 @@ __all__ = [
     "service_list_playbill_claims",
     "service_open_playbill_source",
     "service_playbill_claim_history",
-    "service_query_playbill_claims",
 ]

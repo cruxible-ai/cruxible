@@ -11,7 +11,6 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
     capture_contract_digest,
@@ -20,11 +19,7 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.cas_contracts import BodyProjectionProtocol
 from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestation,
-    ClaimAttestationStatement,
     VerifiedClaimAttestationV1,
-    store_claim_attestation,
-    verify_claim_attestation,
 )
 from cruxible_client.contracts.claim_types import (
     ClaimType,
@@ -45,9 +40,6 @@ from cruxible_client.contracts.claim_verdicts import (
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifactAny,
-    ClaimArtifactV3,
-    ClaimBacking,
-    ClaimBackingV2,
     ClaimLawEvidenceAny,
     SubjectClaimObject,
     claim_artifact_digest,
@@ -55,11 +47,9 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
     parse_claim,
     parse_claim_law_evidence,
-    render_claim,
 )
 from cruxible_client.contracts.errors import ClaimNotFoundError, ProposalIntegrityError
-from cruxible_client.contracts.principals import principal_registry_from_tree
-from cruxible_client.contracts.providers import ProviderV1, parse_provider, provider_digest
+from cruxible_client.contracts.providers import ProviderV1, parse_provider
 from cruxible_client.contracts.source_references import (
     CasSourceReferenceV1,
     LedgerSourceReferenceV1,
@@ -73,14 +63,11 @@ from cruxible_client.contracts.standing_mandates import (
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_core.evidence.source_readers import ExternalSourceReaderProtocol
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
-from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.proposals.settlement import ChangeSetRecord, ChangeSetRecordAnyVersion
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
     PlaybillAcceptedCoordinate,
-    PlaybillProposalInspection,
 )
-from cruxible_core.service.proposals.proposal_names import canonical_playbill_proposal_name
 from cruxible_core.storage.cas import BodyAccessContext
 
 
@@ -106,27 +93,6 @@ class ClaimReadSourceProtocol(Protocol):
     def tree_at(self, oid: str) -> dict[str, bytes]: ...
 
     def body_store(self) -> BodyProjectionProtocol: ...
-
-
-class PreparedClaimAttestationV1(_StrictEvidenceServiceModel):
-    tag: Literal["playbill-prepared-claim-attestation-v1"] = (
-        "playbill-prepared-claim-attestation-v1"
-    )
-    claim_identity: str
-    claim_artifact_digest: str
-    statement: ClaimAttestationStatement
-
-
-class ClaimAttestationProposalV1(_StrictEvidenceServiceModel):
-    tag: Literal["playbill-claim-attestation-proposal-v1"] = (
-        "playbill-claim-attestation-proposal-v1"
-    )
-    proposal: PlaybillProposalInspection
-    claim_identity: str
-    predecessor_artifact_digest: str
-    candidate_artifact_digest: str
-    attestation_digest: str
-    competing_claim_identities: tuple[str, ...]
 
 
 class PlaybillClaimVerdictQueryV1(_StrictEvidenceServiceModel):
@@ -378,216 +344,6 @@ def _referent_digests(
         else None
     )
     return subject_digest_value, object_digest
-
-
-def service_prepare_claim_attestation(
-    instance: PlaybillInstance,
-    *,
-    claim_identity: str,
-    stance: Literal["support", "contradict", "unsure"],
-    signer: ArtifactIdentity,
-    signing_key_id: str,
-    capture_digests: tuple[str, ...],
-    observed_at: datetime,
-    valid_until: datetime | None = None,
-    at: PlaybillAcceptedCoordinate | None = None,
-) -> PreparedClaimAttestationV1:
-    """Prepare the exact public preimage; the private key remains client-held."""
-
-    coordinate = _resolve_coordinate(instance, at)
-    tree = instance.tree_at(coordinate.git_oid)
-    accepted = _accepted_claim(tree, claim_identity)
-    if isinstance(accepted.claim, ClaimArtifactV3):
-        raise ProposalIntegrityError(
-            "an attributed retired Claim is terminal and cannot accept new attestation backing"
-        )
-    subject_content_digest, object_content_digest = _referent_digests(tree, accepted.claim)
-    statement = ClaimAttestationStatement(
-        instance_id=coordinate.instance_id,
-        referent_coordinate=AcceptedCoordinate.from_internal(coordinate),
-        subject=accepted.claim.statement.subject,
-        subject_content_digest=subject_content_digest,
-        object_subject=(
-            accepted.claim.statement.object.address
-            if isinstance(accepted.claim.statement.object, SubjectClaimObject)
-            else None
-        ),
-        object_content_digest=object_content_digest,
-        claim_statement_digest=accepted.statement_digest,
-        stance=stance,
-        provider_or_principal=signer,
-        signing_key_id=signing_key_id,
-        capture_digests=capture_digests,
-        observed_at=observed_at,
-        valid_until=valid_until,
-    )
-    return PreparedClaimAttestationV1(
-        claim_identity=accepted.claim.identity.qualified,
-        claim_artifact_digest=accepted.artifact_digest,
-        statement=statement,
-    )
-
-
-def _provider_pin(
-    provider: ProviderV1,
-) -> ArtifactPin:
-    return ArtifactPin(
-        role="provider",
-        target=provider.identity,
-        artifact_digest=provider_digest(provider).tagged,
-    )
-
-
-def service_propose_claim_attestation(
-    instance: PlaybillInstance,
-    *,
-    claim_identity: str,
-    attestation: ClaimAttestation,
-    actor_id: str,
-    proposal_name: str,
-    timestamp: str,
-    competing_claims: tuple[ClaimArtifactAny, ...] = (),
-    base: PlaybillAcceptedCoordinate | None = None,
-) -> ClaimAttestationProposalV1:
-    """Verify/store one inert signature and propose exact tested-statement backing."""
-
-    coordinate = _resolve_coordinate(instance, base)
-    if coordinate != instance.accepted_coordinate():
-        raise ProposalIntegrityError("ClaimAttestation proposals require the current accepted base")
-    tree = instance.tree_at(coordinate.git_oid)
-    accepted = _accepted_claim(tree, claim_identity)
-    if isinstance(accepted.claim, ClaimArtifactV3):
-        raise ProposalIntegrityError(
-            "an attributed retired Claim is terminal and cannot accept new attestation backing"
-        )
-    subject_content_digest, object_content_digest = _referent_digests(tree, accepted.claim)
-    principals = principal_registry_from_tree(tree, semantic_root=coordinate.semantic_root)
-    providers = accepted_claim_providers(instance, coordinate=coordinate)
-    verify_claim_attestation(
-        attestation,
-        verification_time=datetime.fromisoformat(timestamp.replace("Z", "+00:00")),
-        expected_instance_id=coordinate.instance_id,
-        expected_coordinate=AcceptedCoordinate.from_internal(coordinate),
-        claim=accepted,
-        referent_subject_content_digest=subject_content_digest,
-        referent_object_content_digest=object_content_digest,
-        principals=principals,
-        providers=providers,
-        store=instance.body_store(),
-        current_subject_content_digest=subject_content_digest,
-        current_object_content_digest=object_content_digest,
-    )
-    attestation_digest = store_claim_attestation(attestation, store=instance.body_store())
-    contracts = _capture_contracts(tree)
-    pins = {(pin.role, pin.target.qualified): pin for pin in accepted.claim.pins}
-    for capture_digest_value in attestation.capture_digests:
-        envelope = parse_capture_envelope(
-            instance.body_store().read(
-                capture_digest_value,
-                access=BodyAccessContext(
-                    principal_id="playbill-evidence-service",
-                    can_read_body=True,
-                ),
-            )
-        )
-        contract = contracts.get(envelope.capture_contract_digest)
-        if contract is None:
-            raise ProposalIntegrityError("attestation CaptureContract is not accepted")
-        pins[("capture-contract", contract.contract.identity.qualified)] = ArtifactPin(
-            role="capture-contract",
-            target=contract.contract.identity,
-            artifact_digest=contract.artifact_digest,
-        )
-        for provider_identity in {
-            envelope.producer.qualified,
-            envelope.run_coordinate.executable_identity.qualified,
-        }:
-            provider = providers.get(provider_identity)
-            if provider is not None:
-                pins[("provider", provider.identity.qualified)] = _provider_pin(provider)
-    new_capture_digests = set(attestation.capture_digests) - set(
-        accepted.claim.backing.capture_digests
-    )
-    if isinstance(accepted.claim.backing, ClaimBackingV2) and new_capture_digests:
-        raise ProposalIntegrityError(
-            "a v2 Claim must attach new attestation Captures through explicit citations"
-        )
-    backing_type = (
-        ClaimBackingV2 if isinstance(accepted.claim.backing, ClaimBackingV2) else ClaimBacking
-    )
-    backing_payload = {
-        "referent_context": accepted.claim.backing.referent_context.model_copy(
-            update={"observed_at": attestation.observed_at}
-        ),
-        "capture_digests": tuple(
-            sorted(
-                {
-                    *accepted.claim.backing.capture_digests,
-                    *attestation.capture_digests,
-                }
-            )
-        ),
-        "attestation_digests": tuple(
-            sorted(
-                {
-                    *accepted.claim.backing.attestation_digests,
-                    attestation_digest,
-                }
-            )
-        ),
-        "input_claim_digests": accepted.claim.backing.input_claim_digests,
-        "reducer_digest": accepted.claim.backing.reducer_digest,
-        "source_mappings": accepted.claim.backing.source_mappings,
-    }
-    if isinstance(accepted.claim.backing, ClaimBackingV2):
-        backing_payload["citations"] = accepted.claim.backing.citations
-    successor = accepted.claim.model_copy(
-        update={
-            "backing": backing_type.model_validate(backing_payload),
-            "pins": tuple(
-                sorted(
-                    pins.values(),
-                    key=lambda item: (item.role, item.target.qualified),
-                )
-            ),
-            "lifecycle": ArtifactLifecycle(predecessor_digest=accepted.artifact_digest),
-        }
-    )
-    candidate_tree = dict(tree)
-    candidate_tree[accepted.path] = render_claim(successor)
-    competing_identities: list[str] = []
-    for competing in competing_claims:
-        competing_path = claim_path(competing.identity.name)
-        if competing_path == accepted.path:
-            raise ProposalIntegrityError("competing Claim cannot replace the tested lineage")
-        if competing.statement.subject != successor.statement.subject:
-            raise ProposalIntegrityError("competing Claim must address the tested subject")
-        candidate_tree[competing_path] = render_claim(competing)
-        competing_identities.append(competing.identity.qualified)
-    ref_name = canonical_playbill_proposal_name(proposal_name, family="claim attestation")
-    proposed = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id=actor_id),
-        request=ProposalAdmissionRequest(
-            target_ref=f"refs/proposals/{actor_id}/{ref_name}",
-            proposed_base_oid=coordinate.git_oid,
-        ),
-        candidate_tree=candidate_tree,
-        timestamp=timestamp,
-    )
-    return ClaimAttestationProposalV1(
-        proposal=PlaybillProposalInspection(
-            proposal=proposed,
-            workspace_advertisement=proposed.workspace_advertisement,
-            accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
-                instance.accepted_coordinate()
-            ),
-        ),
-        claim_identity=successor.identity.qualified,
-        predecessor_artifact_digest=accepted.artifact_digest,
-        candidate_artifact_digest=claim_artifact_digest(successor).tagged,
-        attestation_digest=attestation_digest,
-        competing_claim_identities=tuple(sorted(competing_identities)),
-    )
 
 
 def _current_replay_available(
@@ -992,15 +748,11 @@ def service_get_playbill_standing_mandate(
 
 
 __all__ = [
-    "ClaimAttestationProposalV1",
     "PlaybillClaimVerdictQueryV1",
     "PlaybillClaimVerdictQueryV2",
     "PlaybillClaimVerdictQueryAny",
-    "PreparedClaimAttestationV1",
     "accepted_claim_providers",
     "current_verified_claim_attestations",
     "service_evaluate_playbill_claim_verdict",
     "service_get_playbill_standing_mandate",
-    "service_prepare_claim_attestation",
-    "service_propose_claim_attestation",
 ]

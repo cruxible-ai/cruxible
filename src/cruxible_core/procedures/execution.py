@@ -46,9 +46,7 @@ from cruxible_client.contracts.errors import (
     PlaybillJournalIntegrityError,
 )
 from cruxible_client.contracts.procedure_runtime_policy import (
-    PROCEDURE_RUNTIME_POLICY_PATH,
     ProcedureRuntimePolicyV1,
-    parse_procedure_runtime_policy,
 )
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedureV1,
@@ -1448,17 +1446,6 @@ def procedure_direct_partition(semantic_replay_key_digest: str) -> str:
 
 class ProcedureRuntimePolicyAbsent(PlaybillExecutionError):
     code = "procedure_runtime_policy_absent"
-
-
-def resolve_procedure_runtime_policy(
-    tree: Mapping[str, bytes],
-) -> ProcedureRuntimePolicyV1:
-    content = tree.get(PROCEDURE_RUNTIME_POLICY_PATH)
-    if content is None:
-        raise ProcedureRuntimePolicyAbsent(
-            "procedure_runtime_policy_absent: seed ProcedureRuntimePolicy before Line admission"
-        )
-    return parse_procedure_runtime_policy(content, path=PROCEDURE_RUNTIME_POLICY_PATH)
 
 
 def bind_line_admission_runtime_policy(

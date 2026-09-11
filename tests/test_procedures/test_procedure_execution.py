@@ -90,7 +90,6 @@ from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
     LocalJournalBackend,
-    ProcedureExhaustWriter,
     parse_journal_payload,
 )
 from cruxible_core.exhaust.line_track_records import LineTrackRecordReducer
@@ -142,7 +141,6 @@ from cruxible_core.procedures.run_index import ProcedureRunIndex
 from cruxible_core.service.procedures.procedure_runs import service_prepare_playbill_line_admission
 from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
 from cruxible_core.storage.material_reservations import (
-    ProcedureMaterialRecoveryRequired,
     ProcedureMaterialReservationStore,
     RunMaterialReservationV1,
     reserve_admission_material_body,
@@ -1873,117 +1871,6 @@ def test_admission_bound_manifest_matches_the_exact_three_plane_admission(tmp_pa
         )
 
 
-def test_manifest_references_remain_gc_reachable_after_lease_promotion(tmp_path) -> None:
-    fixture = _fixture(tmp_path)
-    accepted = _state_procedure()
-    capture_input = LandedCaptureRunInputV1(
-        input_name="capture",
-        capture_digest=_digest("reachable-capture"),
-        capture_contract_digest=_digest("reachable-contract"),
-        landing_cursor="partition:0001",
-    )
-    admission = _line_admission(
-        accepted,
-        fixture,
-        landed_capture_inputs=(capture_input,),
-    )
-    pending = reserve_admission_material_body(
-        bodies=fixture.bodies,
-        instance_id=admission.instance_id,
-        run_id=admission.run_id,
-        admission_binding_digest=admission.admission_binding_digest,
-        input_name="capture",
-        plane="landed_capture",
-        content=b'{"retained":"capture"}',
-    )
-    member = ProcedureAdmissionMaterialMemberV1(
-        input_name="capture",
-        plane="landed_capture",
-        semantic_digest=capture_input.capture_digest,
-        body_digest=pending.body_digest,
-        retention_authority_digest=capture_input.capture_contract_digest,
-        body_retention="optional",
-    )
-    manifest = ProcedureAdmissionMaterialManifestV1(members=(member,))
-    payload = ProcedureAdmissionBoundPayloadV3(
-        admission=admission,
-        admission_material_manifest=manifest,
-        admission_material_manifest_digest=procedure_admission_material_digest(manifest),
-    )
-    fixture.journal.activate_writer(
-        admission.journal_stream,
-        admission.journal_partition_id,
-        fencing_token="writer",
-        expected_head=fixture.journal.read_head(
-            admission.journal_stream,
-            admission.journal_partition_id,
-        ),
-    )
-    ProcedureExhaustWriter(
-        journal=fixture.journal,
-        bodies=fixture.bodies,
-        fencing_token="writer",
-    ).append(
-        stream=admission.journal_stream,
-        partition_id=admission.journal_partition_id,
-        event_kind="admission_bound",
-        accepted_coordinate=admission.accepted_coordinate,
-        definition_digest=admission.definition_digest,
-        actor_context=admission.actor_context,
-        recorded_at=NOW,
-        payload=payload.model_dump(mode="json"),
-        procedure_artifact_digest=admission.procedure_artifact_digest,
-        run_id=admission.run_id,
-        admission_binding_digest=admission.admission_binding_digest,
-        line_spec_digest=admission.line_spec_digest,
-        occurrence_id=admission.occurrence_id,
-        attempt=admission.attempt,
-    )
-    reservations = ProcedureMaterialReservationStore(fixture.bodies.reservation_root)
-    reservations.release(pending.reservation_id)
-    records = fixture.journal.all_records(
-        admission.journal_stream,
-        admission.journal_partition_id,
-    )
-
-    reachable = reservations.reachable_body_digests(records, bodies=fixture.bodies)
-
-    assert pending.body_digest in reachable
-    assert records[0].record.payload_digest in reachable
-
-    corrupt_payload = payload.model_dump(mode="json")
-    corrupt_payload["admission_material_manifest_digest"] = _digest("corrupt-manifest")
-    ProcedureExhaustWriter(
-        journal=fixture.journal,
-        bodies=fixture.bodies,
-        fencing_token="writer",
-    ).append(
-        stream=admission.journal_stream,
-        partition_id=admission.journal_partition_id,
-        event_kind="admission_bound",
-        accepted_coordinate=admission.accepted_coordinate,
-        definition_digest=admission.definition_digest,
-        actor_context=admission.actor_context,
-        recorded_at=NOW,
-        payload=corrupt_payload,
-        procedure_artifact_digest=admission.procedure_artifact_digest,
-        run_id=admission.run_id,
-        admission_binding_digest=admission.admission_binding_digest,
-        line_spec_digest=admission.line_spec_digest,
-        occurrence_id=admission.occurrence_id,
-        attempt=admission.attempt,
-    )
-    corrupt_record = fixture.journal.all_records(
-        admission.journal_stream,
-        admission.journal_partition_id,
-    )[-1]
-    with pytest.raises(
-        ProcedureMaterialRecoveryRequired,
-        match="reachability cannot be authenticated",
-    ):
-        reservations.reachable_body_digests((corrupt_record,), bodies=fixture.bodies)
-
-
 def test_line_v3_admission_bound_persists_manifest_not_material_values(
     tmp_path,
     monkeypatch,
@@ -2160,11 +2047,6 @@ def test_line_v4_admission_and_v5_receipt_carry_the_exact_provider_plan(
     )
     assert bound_payload["tag"] == "playbill-procedure-admission-bound-payload-v4"
     assert ProcedureRunAdmissionV4.model_validate(bound_payload["admission"]) == admission
-    reachable = ProcedureMaterialReservationStore(
-        fixture.bodies.reservation_root
-    ).reachable_body_digests(records, bodies=fixture.bodies)
-    assert bound_record.record.payload_digest in reachable
-
     monkeypatch.setattr(procedure_run_service, "_records_for_run", lambda *_args: records)
 
     class _Instance:
