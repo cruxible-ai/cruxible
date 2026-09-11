@@ -661,3 +661,64 @@ def test_source_metadata_retains_exact_large_commitment_length_without_body(worl
     assert before[0].byte_length == length
     world.store._path(digest).unlink()
     assert world.reader.uses_for_source("source-0") == before
+
+
+def test_frozen_v1_publication_keeps_populated_citation_facts_and_logical_digest(tmp_path):
+    from dataclasses import replace
+
+    from cruxible_core.compiler.assembler import PYTHON_REFERENCE_ASSEMBLER, ProjectionAssembler
+    from cruxible_core.compiler.projection_artifacts import parse_projection_tree
+    from cruxible_core.evidence.citation_relations import RELATION_USE_SCHEMA
+    from cruxible_core.indexes.sqlite import (
+        bind_projection,
+        canonical_logical_export,
+        initialize_projection_database,
+        projection_logical_digest,
+    )
+    from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
+
+    accepted = tmp_path / "accepted"
+    accepted.mkdir()
+    instance, _claim_id, _owner = _accepted_claim_world(accepted)
+    coordinate = instance.accepted_coordinate()
+    sources = instance.tree_at(coordinate.git_oid)
+    publication = tmp_path / "published"
+    publication.mkdir()
+    assembler = ProjectionAssembler(
+        instance._ledger,
+        accepted=coordinate,
+        publication_directory=publication,
+        storage_schema_version=1,
+        bodies=instance.body_store(),
+        accepted_coordinates_by_sequence=instance._accepted_coordinates_by_sequence(),
+    )
+    request = assembler.request(output_staging_directory=publication / ".stage-frozen")
+    parsed = parse_projection_tree(
+        sources,
+        registry=assembler.registry,
+        artifact_kinds=assembler.artifact_kinds,
+        artifact_codec=assembler.artifact_codec,
+        bodies=instance.body_store(),
+        coordinate=request,
+        accepted_coordinates_by_sequence=instance._accepted_coordinates_by_sequence(),
+    )
+    relations = build_citation_relation_facts(sources, bodies=instance.body_store())
+    assert any(f.schema_id == RELATION_USE_SCHEMA for f in relations)
+    expected = tmp_path / "frozen-oracle.sqlite"
+    initialize_projection_database(
+        expected,
+        request=request,
+        parsed=replace(parsed, semantic_facts=(*parsed.semantic_facts, *relations)),
+        registry=assembler.registry,
+        assembler_implementation=PYTHON_REFERENCE_ASSEMBLER,
+    )
+    result = assembler.assemble(request)
+    with bind_projection(Path(result.manifest_path), expected=coordinate) as handle:
+        assert handle.semantic_facts(RELATION_USE_SCHEMA) == tuple(
+            sorted(
+                (fact for fact in relations if fact.schema_id == RELATION_USE_SCHEMA),
+                key=lambda fact: (fact.subject_identity, fact.fact_key),
+            )
+        )
+        assert canonical_logical_export(handle.index_path) == canonical_logical_export(expected)
+        assert projection_logical_digest(handle.index_path) == projection_logical_digest(expected)
