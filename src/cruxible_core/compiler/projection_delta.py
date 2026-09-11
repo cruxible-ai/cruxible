@@ -9,7 +9,6 @@ shapes deliberately use the existing full assembler.
 from __future__ import annotations
 
 import time
-from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, TypeVar
@@ -18,14 +17,10 @@ from cruxible_client.contracts.canonical import is_candidate_card_path
 from cruxible_client.contracts.errors import ProjectionIntegrityError
 from cruxible_core.compiler.projection_artifacts import parse_projection_tree
 from cruxible_core.compiler.projection_tree import _read_registered_entries
-from cruxible_core.indexes.evidence.citation_index import (
-    CitationDelta,
-    CitationIndex,
-    rebuild_citation_index,
-)
 from cruxible_core.indexes.projection import (
     AcceptedProjectionCoordinate,
     AssemblerRequest,
+    AssemblerRequestV2,
     CandidateGenerationProjectionCoordinate,
     projection_manifest_name,
 )
@@ -91,6 +86,8 @@ def populate_successor(
     timings: dict[str, int],
 ) -> dict[str, int] | None:
     """Update an independently staged database, or select the cold path before writing."""
+    if not isinstance(request, AssemblerRequestV2):
+        return None
     bundle, base = delta.bundle, delta.base
     if not isinstance(assembler.accepted, CandidateGenerationProjectionCoordinate):
         raise ProjectionIntegrityError("an accepted rebuild cannot consume a candidate delta")
@@ -107,7 +104,7 @@ def populate_successor(
     if any(member.artifact_kind not in _LOCAL_KINDS for member in bundle.record.members):
         return None
 
-    parent_request = AssemblerRequest(
+    parent_request = AssemblerRequestV2(
         instance_id=base.instance_id,
         repository_path=base.repository_path,
         git_object_format=base.git_object_format,
@@ -123,11 +120,6 @@ def populate_successor(
     # Genesis or an explicitly missing derivative can always rebuild from authority.
     if not parent_manifest.is_file():
         return None
-
-    citation_inputs_changed = any(
-        member.path.startswith(("claims/", "capture-contracts/"))
-        for member in bundle.record.members
-    )
 
     def changed_inputs() -> tuple[frozenset[str], dict[str, bytes]]:
         repository = assembler._repository
@@ -152,7 +144,12 @@ def populate_successor(
             artifact_kinds=assembler.artifact_kinds,
             include_paths=selected,
         )
-        return members, {blob.path: blob.content for blob in blobs}
+        result = {blob.path: blob.content for blob in blobs}
+        record_bytes = repository.read_blob(current_entries[bundle.record_path].oid)
+        if record_bytes is None:
+            raise ProjectionIntegrityError("verified successor changeset is absent")
+        result[bundle.record_path] = record_bytes
+        return members, result
 
     members, inputs = _timed(timings, "git_traversal", changed_inputs)
     with bind_projection(parent_manifest, expected=base) as parent:
@@ -160,9 +157,7 @@ def populate_successor(
         # subjects, including a changed artifact. They need full reconstruction
         # even when their own source files are unchanged.
         if (
-            parent._connection.execute(
-                "SELECT 1 FROM artifact_envelopes WHERE kind='fixture' LIMIT 1"
-            ).fetchone()
+            parent._connection.execute("SELECT 1 FROM fixtures LIMIT 1").fetchone()
             or parent._connection.execute("SELECT 1 FROM presentation_facts LIMIT 1").fetchone()
         ):
             return None
@@ -190,47 +185,7 @@ def populate_successor(
                 member, "candidate_artifact_digest", None
             ):
                 raise ProjectionIntegrityError("compiled delta member differs from its changeset")
-        relations = None
-        successor_relations = None
-        relation_cache = assembler.citation_index_cache
-        cache_epoch = relation_cache.cache.generation if relation_cache is not None else 0
-        bodies = assembler.bodies
-        # Relations depend on Claim citations and CaptureContracts, not the
-        # generation coordinate. Other member kinds carry those rows unchanged.
-        if (
-            citation_inputs_changed
-            and bodies is not None
-            and assembler.registry.supports(
-                "playbill.citation_relation.use", 1, classification="semantic"
-            )
-        ):
-
-            def citation_delta() -> tuple[CitationIndex, CitationDelta] | None:
-                prior = (
-                    relation_cache.parent(parent)
-                    if relation_cache is not None
-                    else rebuild_citation_index(parent)
-                )
-                if prior is None:
-                    return None
-                with (
-                    relation_cache.owner.build(("citation-delta", request.git_oid))
-                    if relation_cache is not None
-                    else nullcontext()
-                ):
-                    return prior.advance(inputs, changed_paths=members, bodies=bodies)
-
-            planned = _timed(timings, "parse_normalize", citation_delta)
-            if planned is None:
-                return None
-            successor_relations, relations = planned
-            assembler.registry.validate(
-                tuple(f.materialize() for f in relations.inserts), classification="semantic"
-            )
-        elif relation_cache is not None:
-            # Carry a warm root over unrelated edits without bootstrapping a cold one.
-            successor_relations = relation_cache.peek(base)
-        result = _timed(
+        return _timed(
             timings,
             "sqlite_load",
             lambda: update_projection_database(
@@ -239,9 +194,7 @@ def populate_successor(
                 request=request,
                 parsed=parsed,
                 changed_paths=members,
-                relation_delta=relations,
+                sources=inputs,
+                bodies=assembler.bodies,
             ),
         )
-        if relation_cache is not None and successor_relations is not None:
-            relation_cache.remember(request, successor_relations, epoch=cache_epoch)
-        return result

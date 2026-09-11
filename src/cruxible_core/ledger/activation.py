@@ -11,7 +11,6 @@ from typing import Final, Protocol
 from cruxible_client.contracts.errors import SettlementIntegrityError
 from cruxible_client.contracts.types import GenesisCoordinate
 from cruxible_core.compiler.assembler import ProjectionAssembler, ProjectionCrashHook
-from cruxible_core.indexes.evidence.citation_index import CitationIndexCache
 from cruxible_core.indexes.projection import (
     AcceptedCoordinate,
     AcceptedProjectionCoordinate,
@@ -83,7 +82,6 @@ class ActivationPublisher:
         checkpoint_directory: Path | None = None,
         checkpoint_interval: int = DEFAULT_CHECKPOINT_INTERVAL,
         genesis: GenesisCoordinate | None = None,
-        citation_index_cache: CitationIndexCache | None = None,
         verified_change_sets: tuple[tuple[str, ChangeSetRecordAnyVersion], ...] | None = None,
     ) -> None:
         if checkpoint_interval < 1:
@@ -96,7 +94,6 @@ class ActivationPublisher:
         self.checkpoint_directory = checkpoint_directory
         self.checkpoint_interval = checkpoint_interval
         self.genesis = genesis
-        self.citation_index_cache = citation_index_cache
         self.verified_change_sets = verified_change_sets
 
     def prebuild(
@@ -129,7 +126,6 @@ class ActivationPublisher:
             publication_directory=self.publication_directory,
             bodies=self.bodies,
             accepted_coordinates_by_sequence=accepted_coordinates,
-            citation_index_cache=self.citation_index_cache,
         )
         stage = self.publication_directory / f".stage-{secrets.token_hex(12)}"
         from cruxible_core.compiler.projection_delta import GenerationDelta

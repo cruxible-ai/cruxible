@@ -38,7 +38,6 @@ from cruxible_core.indexes.claims.projection_subjects import (
     SubjectProjectionView,
     subject_projection_view,
 )
-from cruxible_core.indexes.evidence.citation_index import CitationDelta
 from cruxible_core.indexes.projection import (
     PROJECTION_SCHEMA_VERSION,
     AcceptedProjectionCoordinate,
@@ -126,187 +125,26 @@ def update_projection_database(
     request: AssemblerRequest,
     parsed: ParsedProjectionTree,
     changed_paths: frozenset[str],
-    relation_delta: CitationDelta | None,
+    sources: Mapping[str, bytes],
+    bodies: Any = None,
 ) -> dict[str, int]:
-    """Copy a verified immutable parent and replace only changeset-owned rows.
+    """Copy one verified typed publication, then replace changed owners atomically."""
+    from cruxible_core.compiler.compiler import SUPPORTED_COMPILERS, artifact_codec_for_compiler
+    from cruxible_core.indexes.typed_sqlite import update
 
-    Coordinate-bearing explanation facts retain their frozen wire shape. Their
-    binding is rewritten explicitly; arbitrary embedded evidence is never searched
-    and replaced. The source database and all historical readers remain untouched.
-    """
-    connection = sqlite3.connect(path)
-    try:
-        parent._connection.backup(connection)
-        connection.execute("PRAGMA journal_mode=DELETE")
-        connection.execute("PRAGMA synchronous=FULL")
-        connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("BEGIN IMMEDIATE")
-        old_identities = [
-            row[0]
-            for artifact_path in sorted(changed_paths)
-            for row in connection.execute(
-                "SELECT identity FROM artifact_envelopes WHERE path=?", (artifact_path,)
-            )
-        ]
-        for identity in old_identities:
-            for table, column in (
-                ("semantic_facts", "subject_identity"),
-                ("presentation_facts", "subject_identity"),
-                ("pins", "source_identity"),
-                ("live_identities", "identity"),
-                ("artifact_envelopes", "identity"),
-            ):
-                if table == "semantic_facts":
-                    # Track records belong to an ExhaustPromotion, even though
-                    # their query subject is the affected Procedure or Line.
-                    connection.execute(
-                        "DELETE FROM semantic_facts WHERE subject_identity=? AND "
-                        "schema_id NOT IN ('playbill.procedure.track_record', "
-                        "'playbill.line.track_record')",
-                        (identity,),
-                    )
-                else:
-                    connection.execute(f"DELETE FROM {table} WHERE {column}=?", (identity,))
-
-        def binding(
-            coordinate: AcceptedProjectionCoordinate | AssemblerRequest,
-        ) -> dict[str, object]:
-            compiler = (
-                coordinate.compiler.rule_digest
-                if isinstance(coordinate, AcceptedProjectionCoordinate)
-                else coordinate.compiler_digest
-            )
-            return {
-                "compiler_digest": {"$digest": compiler},
-                "generation_root": {"$digest": coordinate.generation_root},
-                "git_object_format": coordinate.git_object_format,
-                "git_oid": coordinate.git_oid,
-                "instance_id": coordinate.instance_id,
-                "semantic_root": {"$digest": coordinate.semantic_root},
-            }
-
-        old_binding, new_binding = binding(parent.accepted), binding(request)
-
-        def rebind(raw: str) -> str:
-            value = json.loads(raw)
-            proofs = [item["proof_ref"] for item in value.get("basis", [])]
-            if "proof_ref" in value:
-                proofs.append(value["proof_ref"])
-            if "coverage_binding" in value:
-                proofs.append(value["coverage_binding"]["proof_ref"])
-            for proof in proofs:
-                if proof["accepted_coordinate"] != old_binding:
-                    raise ProjectionIntegrityError("carried explanation has another coordinate")
-                proof["accepted_coordinate"] = new_binding
-            # Input is previously normalized compiler output; only typed coordinate
-            # fields changed. Preserve canonical text without re-normalizing evidence.
-            return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-        connection.create_function("playbill_rebind", 1, rebind)
-        for family in (
-            "document",
-            "subject",
-            "claim_type",
-            "procedure",
-            "line",
-            "query_definition",
-            "claim",
-        ):
-            for suffix in ("governance", "provenance", "attestation_coverage", "history"):
-                connection.execute(
-                    "UPDATE semantic_facts SET value_json=playbill_rebind(value_json) "
-                    "WHERE schema_id=? AND schema_version=1",
-                    (f"playbill.{family}.{suffix}",),
-                )
-        connection.executemany(
-            "INSERT INTO artifact_envelopes VALUES (?,?,?,?,?,?,?)",
-            [
-                (
-                    r.identity,
-                    r.kind,
-                    r.format_tag,
-                    r.path,
-                    r.artifact_digest,
-                    r.predecessor_digest,
-                    r.revision,
-                )
-                for r in parsed.envelopes
-            ],
-        )
-        retired = frozenset(parsed.retired_identities)
-        connection.executemany(
-            "INSERT INTO live_identities VALUES (?,?,?)",
-            [
-                (r.identity, r.artifact_digest, r.path)
-                for r in parsed.envelopes
-                if r.identity not in retired
-            ],
-        )
-        connection.executemany(
-            "INSERT INTO pins VALUES (?,?,?)",
-            [(r.source_identity, r.target_identity, r.target_digest) for r in parsed.pins],
-        )
-        for table, facts in (
-            ("semantic_facts", parsed.semantic_facts),
-            ("presentation_facts", parsed.presentation_facts),
-        ):
-            connection.executemany(
-                f"INSERT INTO {table} VALUES (?,?,?,?,?)",
-                [
-                    (
-                        f.schema_id,
-                        f.schema_version,
-                        f.subject_identity,
-                        f.fact_key,
-                        _canonical_json_text(f.value),
-                    )
-                    for f in facts
-                ],
-            )
-        if relation_delta is not None:
-            connection.executemany(
-                "DELETE FROM semantic_facts WHERE schema_id=? AND schema_version=? "
-                "AND subject_identity=? AND fact_key=?",
-                relation_delta.deletes,
-            )
-            connection.executemany(
-                "INSERT INTO semantic_facts VALUES (?,?,?,?,?)",
-                [
-                    (
-                        f.schema_id,
-                        f.schema_version,
-                        f.subject_identity,
-                        f.fact_key,
-                        f.value_json.decode("utf-8"),
-                    )
-                    for f in relation_delta.inserts
-                ],
-            )
-        connection.execute(
-            "UPDATE generation_metadata SET instance_id=?,git_object_format=?,git_oid=?,"
-            "semantic_root=?,generation_root=? WHERE singleton=1",
-            (
-                request.instance_id,
-                request.git_object_format,
-                request.git_oid,
-                request.semantic_root,
-                request.generation_root,
-            ),
-        )
-        connection.commit()
-        _verify_projection_schema(connection)
-        if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
-            raise ProjectionIntegrityError("successor projection failed SQLite integrity_check")
-        return dict(
-            sorted(
-                (spec.name, connection.execute(f"SELECT COUNT(*) FROM {spec.name}").fetchone()[0])
-                for spec in _TABLE_SPECS
-            )
-        )
-    except sqlite3.DatabaseError as exc:
-        raise ProjectionIntegrityError("failed to update the SQLite projection") from exc
-    finally:
-        connection.close()
+    compiler = next(
+        item for item in SUPPORTED_COMPILERS if item.rule_digest == request.compiler_digest
+    )
+    return update(
+        path,
+        parent=parent._connection,
+        request=request,
+        parsed=parsed,
+        sources=sources,
+        changed_paths=changed_paths,
+        codec=artifact_codec_for_compiler(compiler),
+        bodies=bodies,
+    )
 
 
 def initialize_projection_database(
@@ -317,6 +155,7 @@ def initialize_projection_database(
     registry: ProjectionExtensionRegistry,
     assembler_implementation: str,
     sources: Mapping[str, bytes] | None = None,
+    bodies: Any = None,
 ) -> dict[str, int]:
     """Create and populate the complete PB-B one-piece SQLite projection."""
 
@@ -336,6 +175,8 @@ def initialize_projection_database(
             sources=sources,
             codec=artifact_codec_for_compiler(compiler),
             assembler_implementation=assembler_implementation,
+            bodies=bodies,
+            registry=registry,
         )
 
     if not _ASSEMBLER_IMPLEMENTATION_RE.fullmatch(assembler_implementation):
@@ -643,6 +484,16 @@ class ProjectionHandle:
         return self
 
     @property
+    def citations(self) -> Any:
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
+        from cruxible_core.indexes.evidence.citation_sql import CitationReader
+
+        if self.typed is None:
+            raise ProjectionIntegrityError("citation relations require a rebuilt typed publication")
+        return CitationReader(self._connection, self.typed.member_bytes)
+
+    @property
     def index_path(self) -> Path:
         if len(self.piece_paths) != 1:
             raise ProjectionIntegrityError("PB-B can query exactly one physical piece")
@@ -652,10 +503,10 @@ class ProjectionHandle:
         self, *, paths: tuple[str, ...] | None = None
     ) -> tuple[ArtifactEnvelopeRow, ...]:
         """Read typed artifact metadata, optionally for an exact changed-path set."""
-        if self.typed is not None:
-            return self.typed.envelopes(paths=paths)
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
+        if self.typed is not None:
+            return self.typed.envelopes(paths=paths)
         columns = "identity,kind,format_tag,path,artifact_digest,predecessor_digest,revision"
         if paths is None:
             rows = self._connection.execute(
@@ -679,10 +530,18 @@ class ProjectionHandle:
     ) -> tuple[ProjectionFact, ...]:
         """Read one compiler-declared semantic relation slice in key order."""
 
-        if self.typed is not None:
-            return self.typed.facts(schema_id, identity=subject_identity)
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
+        if self.typed is not None:
+            from cruxible_core.indexes.typed_state import OWNER_BY_KIND
+
+            family = (
+                schema_id.split(".")[1].replace("_", "-")
+                if schema_id.startswith("playbill.")
+                else None
+            )
+            if family in OWNER_BY_KIND and family != "fixture":
+                return self.typed.facts(schema_id, identity=subject_identity)
         if subject_identity is None:
             rows = self._connection.execute(
                 "SELECT schema_id,schema_version,subject_identity,fact_key,value_json "
@@ -711,6 +570,31 @@ class ProjectionHandle:
     def fixture(self, identity: str) -> dict[str, object] | None:
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
+        if self.typed is not None:
+            row = self._connection.execute(
+                "SELECT identity,'fixture' AS kind,format_tag,path,artifact_digest,"
+                "predecessor_digest,revision FROM fixtures WHERE identity=?",
+                (identity,),
+            ).fetchone()
+            if row is None:
+                return None
+            facts = self._connection.execute(
+                "SELECT schema_id,schema_version,fact_key,value_json FROM semantic_facts "
+                "WHERE subject_identity=? ORDER BY schema_id,schema_version,fact_key",
+                (identity,),
+            ).fetchall()
+            return {
+                "envelope": dict(row),
+                "facts": [
+                    {
+                        "schema_id": fact[0],
+                        "schema_version": fact[1],
+                        "fact_key": fact[2],
+                        "value": json.loads(fact[3]),
+                    }
+                    for fact in facts
+                ],
+            }
         envelope = self._connection.execute(
             "SELECT * FROM artifact_envelopes WHERE identity = ? AND kind = 'fixture'",
             (identity,),
@@ -743,6 +627,8 @@ class ProjectionHandle:
     ) -> DocumentProjectionView | None:
         """Read one canonical Document; proposal refs are outside this bound handle."""
 
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
         if self.typed is not None:
             envelope = self.typed.envelope(identity)
             if envelope is None or envelope.kind != "document":
@@ -753,8 +639,6 @@ class ProjectionHandle:
                 coordinate=self.accepted,
                 access=access,
             )
-        if self._closed:
-            raise ProjectionIntegrityError("projection handle is closed")
         envelope = self._connection.execute(
             "SELECT * FROM artifact_envelopes WHERE identity = ? AND kind = 'document'",
             (identity,),
@@ -799,14 +683,14 @@ class ProjectionHandle:
     ) -> tuple[DocumentProjectionView, ...]:
         """List canonical Documents in stable identity order."""
 
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
         if self.typed is not None:
             return tuple(
                 view
                 for row in self.typed.envelopes(kind="document")
                 if (view := self.document(row.identity, access=access)) is not None
             )
-        if self._closed:
-            raise ProjectionIntegrityError("projection handle is closed")
         identities = self._connection.execute(
             "SELECT identity FROM artifact_envelopes WHERE kind = 'document' ORDER BY identity"
         ).fetchall()
@@ -819,6 +703,8 @@ class ProjectionHandle:
     def subject(self, identity: str) -> SubjectProjectionView | None:
         """Read one canonical identity-only Subject at this accepted coordinate."""
 
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
         if self.typed is not None:
             envelope = self.typed.envelope(identity)
             if envelope is None or envelope.kind != "subject":
@@ -826,8 +712,6 @@ class ProjectionHandle:
             return subject_projection_view(
                 envelope, self.typed.facts(identity=identity), coordinate=self.accepted
             )
-        if self._closed:
-            raise ProjectionIntegrityError("projection handle is closed")
         envelope = self._connection.execute(
             "SELECT * FROM artifact_envelopes WHERE identity = ? AND kind = 'subject'",
             (identity,),
@@ -867,14 +751,14 @@ class ProjectionHandle:
     def list_subjects(self) -> tuple[SubjectProjectionView, ...]:
         """List canonical Subjects in stable kind-qualified identity order."""
 
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
         if self.typed is not None:
             return tuple(
                 view
                 for row in self.typed.envelopes(kind="subject")
                 if (view := self.subject(row.identity)) is not None
             )
-        if self._closed:
-            raise ProjectionIntegrityError("projection handle is closed")
         identities = self._connection.execute(
             "SELECT identity FROM artifact_envelopes WHERE kind = 'subject' ORDER BY identity"
         ).fetchall()
@@ -887,6 +771,8 @@ class ProjectionHandle:
     def claim(self, identity: str) -> ClaimProjectionView | None:
         """Read one canonical first-class Claim at this accepted coordinate."""
 
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
         if self.typed is not None:
             envelope = self.typed.envelope(identity)
             if envelope is None or envelope.kind != "claim":
@@ -894,8 +780,6 @@ class ProjectionHandle:
             return claim_projection_view(
                 envelope, self.typed.facts(identity=identity), coordinate=self.accepted
             )
-        if self._closed:
-            raise ProjectionIntegrityError("projection handle is closed")
         envelope = self._connection.execute(
             "SELECT * FROM artifact_envelopes WHERE identity = ? AND kind = 'claim'",
             (identity,),
@@ -942,6 +826,8 @@ class ProjectionHandle:
         limit: int,
     ) -> tuple[str, ...]:
         """Select a bounded page without materializing unrelated Claim views."""
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
         if self.typed is not None:
             clauses = [
                 "identity>?",
@@ -963,8 +849,6 @@ class ProjectionHandle:
                     values,
                 )
             )
-        if self._closed:
-            raise ProjectionIntegrityError("projection handle is closed")
         subject_slots = ",".join("?" for _ in subject_paths)
         sql = (
             "SELECT e.identity FROM artifact_envelopes e "
@@ -989,14 +873,14 @@ class ProjectionHandle:
     def list_claims(self) -> tuple[ClaimProjectionView, ...]:
         """List canonical Claims in stable lineage-identity order."""
 
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
         if self.typed is not None:
             return tuple(
                 view
                 for row in self.typed.envelopes(kind="claim")
                 if (view := self.claim(row.identity)) is not None
             )
-        if self._closed:
-            raise ProjectionIntegrityError("projection handle is closed")
         identities = self._connection.execute(
             "SELECT identity FROM artifact_envelopes WHERE kind = 'claim' ORDER BY identity"
         ).fetchall()

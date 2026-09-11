@@ -736,6 +736,22 @@ class TypedStateReader:
     def facts(
         self, schema_id: str | None = None, *, identity: str | None = None
     ) -> tuple[Any, ...]:
+        if schema_id in ("playbill.procedure.track_record", "playbill.line.track_record"):
+            sql = "SELECT DISTINCT p.path FROM promotion_subjects s JOIN exhaust_promotions p ON p.identity=s.promotion_identity WHERE s.record_kind=?"
+            values = [schema_id.split(".")[1]]
+            if identity is not None:
+                sql += " AND s.subject_identity=?"
+                values.append(identity)
+            paths = tuple(
+                row[0] for row in self.connection.execute(sql + " ORDER BY p.path", values)
+            )
+            parsed = self._compile_paths(paths)
+            return tuple(
+                fact
+                for fact in parsed.semantic_facts
+                if fact.schema_id == schema_id
+                and (identity is None or fact.subject_identity == identity)
+            )
         rows: tuple[ArtifactEnvelopeRow, ...]
         if identity is not None:
             envelope = self.envelope(identity)

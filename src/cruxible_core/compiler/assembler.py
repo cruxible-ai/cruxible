@@ -7,7 +7,7 @@ import sys
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, Protocol, TypeVar
+from typing import TYPE_CHECKING, Final, Literal, Protocol, TypeVar
 
 from cruxible_client.contracts.errors import (
     ProjectionCoordinateError,
@@ -23,17 +23,19 @@ from cruxible_core.compiler.compiler import (
 )
 from cruxible_core.compiler.projection_artifacts import ParsedProjectionTree, parse_projection_tree
 from cruxible_core.compiler.projection_tree import read_registered_tree
-from cruxible_core.evidence.citation_relations import build_citation_relation_facts
-from cruxible_core.indexes.evidence.citation_index import CitationIndexCache
 from cruxible_core.indexes.projection import (
     AcceptedCoordinate,
     AcceptedProjectionCoordinate,
     AssemblerRequest,
+    AssemblerRequestV2,
     AssemblerResult,
+    AssemblerResultV2,
     BuildInstrumentation,
     CandidateGenerationProjectionCoordinate,
     ProjectionManifest,
+    ProjectionManifestV2,
     ProjectionPiece,
+    ProjectionPieceV2,
     projection_manifest_name,
     projection_piece_name,
     render_projection_manifest,
@@ -163,16 +165,16 @@ class ProjectionAssembler:
         registry: ProjectionExtensionRegistry | None = None,
         bodies: BodyProjectionProtocol | None = None,
         accepted_coordinates_by_sequence: Mapping[int, AcceptedCoordinate] | None = None,
-        citation_index_cache: CitationIndexCache | None = None,
+        storage_schema_version: Literal[1, 2] = 2,
     ) -> None:
         if publication_directory.is_symlink() or not publication_directory.is_dir():
             raise ProjectionPublicationError(
                 "projection publication directory must be an existing regular directory"
             )
+        self.storage_schema_version = storage_schema_version
         self._repository = repository
         self.accepted = accepted
         self.publication_directory = publication_directory.resolve(strict=True)
-        self.citation_index_cache = citation_index_cache
         self.registry = registry or projection_registry_for_compiler(accepted.compiler)
         self.artifact_kinds = artifact_kinds_for_compiler(accepted.compiler)
         self.artifact_codec = artifact_codec_for_compiler(accepted.compiler)
@@ -182,7 +184,8 @@ class ProjectionAssembler:
     def request(self, *, output_staging_directory: Path) -> AssemblerRequest:
         """Create the exact serializable request for this verified coordinate."""
 
-        return AssemblerRequest(
+        request_type = AssemblerRequestV2 if self.storage_schema_version == 2 else AssemblerRequest
+        return request_type(
             instance_id=self.accepted.instance_id,
             repository_path=self.accepted.repository_path,
             git_object_format=self.accepted.git_object_format,
@@ -307,7 +310,12 @@ class ProjectionAssembler:
             _checkpoint(PROJECTION_PIECE_DIRECTORY_FSYNC, "after", crash_hook)
 
         _timed(timings, "fsync", publish_piece)
-        manifest = ProjectionManifest(
+        typed_storage = isinstance(request, AssemblerRequestV2)
+        manifest_type: type[ProjectionManifest] = (
+            ProjectionManifestV2 if typed_storage else ProjectionManifest
+        )
+        piece_type: type[ProjectionPiece] = ProjectionPieceV2 if typed_storage else ProjectionPiece
+        manifest = manifest_type(
             instance_id=request.instance_id,
             git_object_format=request.git_object_format,
             git_oid=request.git_oid,
@@ -316,7 +324,7 @@ class ProjectionAssembler:
             compiler_digest=request.compiler_digest,
             schema_version=request.schema_version,
             pieces=(
-                ProjectionPiece(
+                piece_type(
                     ordinal=0,
                     name=piece_name,
                     byte_length=byte_length,
@@ -357,7 +365,8 @@ class ProjectionAssembler:
         staging.rmdir()
         _fsync_directory(self.publication_directory)
 
-        return AssemblerResult(
+        result_type: type[AssemblerResult] = AssemblerResultV2 if typed_storage else AssemblerResult
+        return result_type(
             manifest_path=str(final_manifest),
             manifest=manifest,
             git_oid=request.git_oid,
@@ -414,24 +423,6 @@ class ProjectionAssembler:
                 accepted_coordinates_by_sequence=self.accepted_coordinates_by_sequence,
             ),
         )
-        if self.bodies is not None and self.registry.supports(
-            "playbill.citation_relation.use",
-            1,
-            classification="semantic",
-        ):
-            parsed = parsed.__class__(
-                envelopes=parsed.envelopes,
-                pins=parsed.pins,
-                retired_identities=parsed.retired_identities,
-                semantic_facts=(
-                    *parsed.semantic_facts,
-                    *build_citation_relation_facts(
-                        blob_map,
-                        bodies=self.bodies,
-                    ),
-                ),
-                presentation_facts=parsed.presentation_facts,
-            )
         parsed = _timed(timings, "sort", lambda: _sorted_projection_tree(parsed))
 
         return _timed(
@@ -443,6 +434,8 @@ class ProjectionAssembler:
                 parsed=parsed,
                 registry=self.registry,
                 assembler_implementation=PYTHON_REFERENCE_ASSEMBLER,
+                sources=blob_map,
+                bodies=self.bodies,
             ),
         )
 

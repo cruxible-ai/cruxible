@@ -28,6 +28,7 @@ def test_typed_claim_source_parity_and_no_builtin_payload_copy(tmp_path):
         parsed=parsed,
         registry=registry,
         assembler_implementation=PYTHON_REFERENCE_ASSEMBLER,
+        bodies=instance.body_store(),
     )
     connection = sqlite3.connect(path)
     connection.row_factory = sqlite3.Row
@@ -98,3 +99,60 @@ def test_typed_reverse_and_full_address_indexes_are_present():
     assert len(searches) == 15
     assert all("(identity=?)" in detail for detail in searches)
     connection.close()
+
+
+def test_v2_preserves_extensions_and_old_publication_beside_same_coordinate(tmp_path):
+    import pytest
+
+    from cruxible_client.contracts.errors import ProjectionIntegrityError
+    from cruxible_core.compiler.assembler import ProjectionAssembler
+    from cruxible_core.indexes.sqlite import bind_projection, load_projection_manifest
+    from tests.core_support._projection_support import (
+        MemoryLedger,
+        accepted_coordinate,
+        fixture_bytes,
+        presentation_bytes,
+    )
+
+    repository = MemoryLedger(
+        tmp_path / "repo",
+        {
+            "artifacts/fixtures/one.yaml": fixture_bytes("one", {"retained": True}),
+            "presentation/fixtures/one.json": presentation_bytes("one", "Visible label"),
+        },
+    )
+    coordinate = accepted_coordinate(repository)
+    publication = tmp_path / "published"
+    publication.mkdir()
+    results = []
+    for version in (1, 2):
+        assembler = ProjectionAssembler(
+            repository,
+            accepted=coordinate,
+            publication_directory=publication,
+            storage_schema_version=version,
+        )
+        result = assembler.assemble(
+            assembler.request(output_staging_directory=publication / f".stage-version-{version}")
+        )
+        results.append(result)
+        assert (
+            load_projection_manifest(publication / result.manifest_path).tag == result.manifest.tag
+        )
+        with bind_projection(publication / result.manifest_path, expected=coordinate) as handle:
+            fixture = handle.fixture("one")
+            assert fixture["facts"][0]["value"] == {"retained": True}
+            assert handle.semantic_facts("playbill.fixture.fact")[0].value == {"retained": True}
+            assert (
+                handle._connection.execute("SELECT count(*) FROM presentation_facts").fetchone()[0]
+                == 1
+            )
+        for read in (
+            lambda: handle.fixture("one"),
+            handle.artifact_envelopes,
+            lambda: handle.claim("Claim:missing"),
+        ):
+            with pytest.raises(ProjectionIntegrityError, match="closed"):
+                read()
+    assert results[0].manifest_path != results[1].manifest_path
+    assert results[0].logical_digest != results[1].logical_digest
