@@ -153,6 +153,7 @@ def populate_successor(
 
     members, inputs = _timed(timings, "git_traversal", changed_inputs)
     with bind_projection(parent_manifest, expected=base) as parent:
+        parent.require_source_authentication(repository=assembler._repository)
         # Fixture extensions and presentation rows can be owned by arbitrary
         # subjects, including a changed artifact. They need full reconstruction
         # even when their own source files are unchanged.

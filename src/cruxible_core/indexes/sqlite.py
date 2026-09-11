@@ -60,7 +60,7 @@ from cruxible_core.storage.cas import BodyAccessContext
 # and the same manifest digests. Any write to the piece moves st_mtime_ns and
 # st_ctime_ns, so a tampered file misses the memo and is verified again.
 _VERIFIED_PIECE_CAPACITY = 8
-_VERIFIED_PIECES: "OrderedDict[tuple[object, ...], bool]" = OrderedDict()
+_VERIFIED_PIECES: "OrderedDict[tuple[object, ...], str]" = OrderedDict()
 
 
 def _verified_piece_identity(
@@ -91,11 +91,34 @@ def _verified_piece_identity(
 
 
 def _piece_already_verified(identity: tuple[object, ...]) -> bool:
-    return memo_get(_VERIFIED_PIECES, identity) is True
+    return memo_get(_VERIFIED_PIECES, identity) is not None
 
 
-def _record_verified_piece(identity: tuple[object, ...]) -> None:
-    memo_put(_VERIFIED_PIECES, identity, True, capacity=_VERIFIED_PIECE_CAPACITY)
+def _record_verified_piece(
+    identity: tuple[object, ...], *, source_authenticated: bool = False
+) -> None:
+    previous = memo_get(_VERIFIED_PIECES, identity)
+    value = (
+        "source-authenticated"
+        if source_authenticated or previous == "source-authenticated"
+        else "verified"
+    )
+    memo_put(_VERIFIED_PIECES, identity, value, capacity=_VERIFIED_PIECE_CAPACITY)
+
+
+def record_source_built_piece(path: Path, *, accepted: Any, manifest: ProjectionManifest) -> None:
+    """Mark only the assembler's completed exact source-derived output ready."""
+    before = path.stat()
+    digest = physical_file_digest(path).tagged
+    after = path.stat()
+    if before != after or digest != manifest.pieces[0].physical_digest:
+        raise ProjectionIntegrityError(
+            "source-built projection changed before readiness publication"
+        )
+    identity = _verified_piece_identity(
+        path, after, expected=accepted, manifest=manifest, physical_digest=digest
+    )
+    _record_verified_piece(identity, source_authenticated=True)
 
 
 def reset_projection_verification_memo() -> None:
@@ -470,6 +493,7 @@ class ProjectionHandle:
         self._connection = connection
         self.accepted = accepted
         self._closed = False
+        self._verification_identity: tuple[object, ...] | None = None
         self.typed = None
         if isinstance(manifest, ProjectionManifestV2):
             from cruxible_core.indexes.typed_state import TypedStateReader
@@ -485,7 +509,39 @@ class ProjectionHandle:
                 bodies,
                 history,
             )
+            try:
+                self.require_source_authentication(repository=repository)
+            except BaseException:
+                self.close()
+                raise
         return self
+
+    def require_source_authentication(self, *, repository: Any = None) -> None:
+        """Authenticate static typed rows before they can select acceptance inputs.
+
+        Immutable hashes authenticate a file's self-consistency, not its claimed
+        source. An unrecognized persisted piece pays a full Git/typed-row parity
+        check once. Live citation envelopes remain outside this static boundary.
+        """
+        if self._closed or self.typed is None or self._verification_identity is None:
+            raise ProjectionIntegrityError(
+                "source authentication requires a bound typed projection"
+            )
+        current_identity = _verified_piece_identity(
+            self.index_path,
+            self.index_path.stat(),
+            expected=self.accepted,
+            manifest=self.manifest,
+            physical_digest=self.manifest.pieces[0].physical_digest,
+        )
+        if current_identity != self._verification_identity:
+            raise ProjectionIntegrityError("bound typed projection file identity changed")
+        if memo_get(_VERIFIED_PIECES, self._verification_identity) == "source-authenticated":
+            return
+        from cruxible_core.indexes.typed_sqlite import authenticate_source_rows
+
+        authenticate_source_rows(self, repository=repository or self.typed.repository)
+        _record_verified_piece(self._verification_identity, source_authenticated=True)
 
     @property
     def citations(self) -> Any:
@@ -999,7 +1055,10 @@ def bind_projection(
         assembler_row = connection.execute(
             "SELECT implementation,contract_version FROM assembler_metadata WHERE singleton = 1"
         ).fetchone()
-        if isinstance(manifest, ProjectionManifestV2):
+        if already_verified:
+            # Counts were checked under this exact immutable file identity.
+            counts = manifest.row_counts
+        elif isinstance(manifest, ProjectionManifestV2):
             from cruxible_core.indexes.typed_sqlite import row_counts
 
             counts = row_counts(connection)
@@ -1049,13 +1108,15 @@ def bind_projection(
             raise ProjectionIntegrityError("projection canonical logical digest mismatch")
         for identity in identities:
             _record_verified_piece(identity)
-        return ProjectionHandle(
+        handle = ProjectionHandle(
             manifest_path=manifest_path.resolve(strict=True),
             manifest=manifest,
             piece_paths=tuple(pieces),
             connection=connection,
             accepted=expected,
         )
+        handle._verification_identity = identities[0]
+        return handle
     except sqlite3.DatabaseError as exc:
         if connection is not None:
             connection.close()
