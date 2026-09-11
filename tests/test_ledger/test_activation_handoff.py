@@ -126,7 +126,7 @@ def test_two_served_writes_handoff_without_recovery_and_detach_mutable_state(
             assert receipt.accepted_coordinate.git_oid == instance.accepted_coordinate().git_oid
             assert instance._recovered.head.sequence == sequence
             assert not instance._tree_memo
-            assert instance._history_lookup is None
+            assert not hasattr(instance, "_history_lookup")
             with instance.bind_accepted_projection(instance.accepted_coordinate()):
                 pass
             expected_record = render_change_set(instance.accepted_history()[-1].record)
