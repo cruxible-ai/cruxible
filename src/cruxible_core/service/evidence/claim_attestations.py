@@ -37,7 +37,6 @@ from cruxible_client.contracts.claims import (
     parse_claim,
 )
 from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
-from cruxible_client.contracts.principals import principal_registry_from_tree
 from cruxible_client.contracts.procedures.artifacts import (
     parse_procedure,
     procedure_artifact_digest,
@@ -123,13 +122,13 @@ def _object_shell_digest(tree: dict[str, bytes], claim: ClaimArtifactAny) -> str
 
 
 def _principal_at(
-    tree: dict[str, bytes],
+    instance: PlaybillInstance,
     *,
-    coordinate: AcceptedCoordinate,
+    coordinate: AcceptedProjectionCoordinate,
     statement: ClaimAttestationStatementV2,
     phase: str,
 ) -> PrincipalRecord:
-    registry = principal_registry_from_tree(tree, semantic_root=coordinate.semantic_root)
+    registry = instance.accepted_principal_registry(coordinate)
     try:
         principal = registry.require_active(statement.attesting_principal_id)
     except PlaybillError as exc:
@@ -237,10 +236,7 @@ def _new_capture_accounts(
             "capture_admission_refused",
             "Claim evidence admission inputs do not reproduce at the signed referent",
         ) from exc
-    principals = principal_registry_from_tree(
-        referent_tree,
-        semantic_root=referent.semantic_root,
-    )
+    principals = instance.accepted_principal_registry(referent)
     bodies = instance.body_store()
     producer_receipt_resolver = local_producer_receipt_resolver(
         exhaust_root=instance.root / instance.descriptor.storage.exhaust,
@@ -430,8 +426,8 @@ def service_append_claim_attestation(
         _refuse("statement_binding_mismatch", "signed Claim shell digest differs")
     at = recorded_at or utc_now()
     referent_principal = _principal_at(
-        referent_tree,
-        coordinate=statement.referent_coordinate,
+        instance,
+        coordinate=referent,
         statement=statement,
         phase="referent",
     )
@@ -453,8 +449,8 @@ def service_append_claim_attestation(
     append_coordinate = instance.accepted_coordinate()
     append_tree = instance.tree_at(append_coordinate.git_oid)
     _principal_at(
-        append_tree,
-        coordinate=AcceptedCoordinate.from_internal(append_coordinate),
+        instance,
+        coordinate=append_coordinate,
         statement=statement,
         phase="append",
     )

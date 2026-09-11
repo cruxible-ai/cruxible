@@ -258,7 +258,8 @@ def test_service_gate_independently_refuses_nonordinary_principal(
             return owner.principal.model_copy(update={"kind": "recovery"})
 
     monkeypatch.setattr(
-        "cruxible_core.service.evidence.claim_attestations.principal_registry_from_tree",
+        instance,
+        "accepted_principal_registry",
         lambda *_args, **_kwargs: Registry(),
     )
     monkeypatch.setattr(
@@ -367,8 +368,8 @@ def test_principal_inactive_codes_are_distinct_by_coordinate(
             raise PlaybillFormatError("inactive")
 
     monkeypatch.setattr(
-        service_module,
-        "principal_registry_from_tree",
+        instance,
+        "accepted_principal_registry",
         lambda *_args, **_kwargs: InactiveRegistry(),
     )
     _assert_refusal(instance, request, "principal_inactive_at_referent")
