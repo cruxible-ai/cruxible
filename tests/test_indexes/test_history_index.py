@@ -165,9 +165,14 @@ def test_mixed_coordinates_duplicate_oid_and_ambiguous_digest(tmp_path, seeded):
             reader.resolve(coordinate(second, seeded).model_copy(update={"semantic_root": "wrong"}))
         with pytest.raises(PlaybillFormatError, match="multiple identities"):
             reader.artifact("old")
+        assert reader.identities_for_digest("old") == ("Claim:0", "Claim:1")
+        assert reader.identities_for_digest("missing") == ()
         assert reader.artifact("old", identity="Claim:0").occurrence_sequence == 0
+    with index.read(state, lambda n: [], at=coordinate(state.history[0], seeded)) as reader:
+        assert reader.identities_for_digest("old") == ("Claim:0",)
     with index.read(prefix(seeded, 1), lambda n: [envelope(identity="Claim:0")]) as reader:
         assert reader.artifact("old").identity == "Claim:0"
+        assert reader.identities_for_digest("old") == ("Claim:0",)
 
 
 def test_instance_projection_parity_and_warm_no_history_source_work(seeded, monkeypatch):
