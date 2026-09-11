@@ -30,6 +30,7 @@ from cruxible_client.contracts.candidates import (
 from cruxible_client.contracts.errors import PlaybillFormatError, ProjectionIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow
+from cruxible_core.indexes.acquisition import open_working_snapshot
 from cruxible_core.ledger.recovery import RecoveredInstanceState
 from cruxible_core.proposals.settlement import (
     ChangeSetRecord,
@@ -627,9 +628,9 @@ class AcceptedHistoryIndex:
                     recovered.coordinate.compiler.rule_digest,
                     recovered.coordinate.compiler.schema_version,
                 )
-                connection = sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True)
-                connection.execute("PRAGMA query_only=ON")
-                connection.execute("BEGIN DEFERRED")
+                connection = open_working_snapshot(
+                    self.path, expected_stamp=published_stamp, file_stamp=self._file_stamp
+                )
                 reader = HistoryReader(connection, recovered.head.sequence)
                 # BEGIN alone does not establish a snapshot. Pin it before
                 # releasing the acquisition lock, including for an empty caller.
