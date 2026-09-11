@@ -15,7 +15,6 @@ from cruxible_client.contracts.approval_policy import (
     approval_policy_digest,
     parse_approval_policy,
 )
-from cruxible_client.contracts.canonical import is_candidate_card_path
 from cruxible_client.contracts.captures import capture_contract_digest, parse_capture_contract
 from cruxible_client.contracts.claim_types import claim_type_digest, parse_claim_type
 from cruxible_client.contracts.documents import document_digest, parse_document
@@ -35,9 +34,7 @@ from cruxible_client.contracts.query.definitions import (
 )
 from cruxible_core.compiler.compiler import (
     artifact_codec_for_compiler,
-    artifact_kinds_for_compiler,
 )
-from cruxible_core.compiler.projection_artifacts import registered_path_kind
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 
@@ -110,18 +107,27 @@ def list_playbill_policies_in_force(
     """List every live accepted policy carrier at exactly one coordinate."""
 
     coordinate = _coordinate(instance, at)
-    tree = instance.tree_at(coordinate.git_oid)
-    artifact_kinds = artifact_kinds_for_compiler(coordinate.compiler)
     artifact_codec = artifact_codec_for_compiler(coordinate.compiler)
+    kinds = (
+        "approval-policy",
+        "procedure-runtime-policy",
+        "source-acquisition-policy",
+        "claim-type",
+        "capture-contract",
+        "query-definition",
+        "document",
+        "procedure",
+        "line",
+    )
+    with instance.bind_accepted_projection(coordinate) as projection:
+        assert projection.typed is not None
+        selected = [
+            (row.path, kind, projection.typed.member_bytes(row.path))
+            for kind in kinds
+            for row in projection.typed.envelopes(kind=kind)
+        ]
     rows: list[contracts.PlaybillPolicyInForce] = []
-    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if is_candidate_card_path(path):
-            # Cards are derivative Markdown sidecars with no registered artifact
-            # format, so a whole-tree scan must skip them exactly as the
-            # projection tree and artifact projections already do.
-            continue
-        kind = registered_path_kind(path, artifact_kinds=artifact_kinds)
-        content = tree[path]
+    for path, kind, content in selected:
         if kind == "approval-policy":
             approval_policy = parse_approval_policy(content, path=path, codec=artifact_codec)
             rows.append(

@@ -62,8 +62,9 @@ from tests.test_procedures.test_procedure_run_surface import (
 )
 
 
-def _published_sources(tmp_path, tree, monkeypatch):
-    instance, _owner = initialize_local(tmp_path)
+def _published_sources(tmp_path, tree, monkeypatch, *, instance=None):
+    if instance is None:
+        instance, _owner = initialize_local(tmp_path)
     repository = MemoryLedger(tmp_path / "catalog-repository", tree)
     # Source bindings use actual Git blob object IDs. The older MemoryLedger
     # helper also keeps its synthetic entry IDs for its frozen projection tests.
@@ -330,3 +331,65 @@ def test_source_catalogs_select_exact_contract_and_policy_pins(tmp_path, monkeyp
         instance, coordinate=coordinate, procedure=pinned, input_names=("orders",)
     ) == (policy_pin.artifact_digest, policy)
     assert reads == [acquisition_policy_path(policy.identity.name)]
+
+
+@pytest.mark.parametrize("unrelated", (2, 31))
+def test_claim_type_policy_and_query_readers_skip_unrelated_owners(
+    tmp_path, monkeypatch, unrelated
+):
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+    from cruxible_client.contracts.query.definitions import (
+        query_definition_digest,
+        query_definition_path,
+        render_query_definition,
+    )
+    from cruxible_core.proposals.proposals import _accepted_query
+    from cruxible_core.service.claims.claim_types import (
+        service_get_playbill_claim_type,
+        service_list_playbill_claim_types,
+    )
+    from cruxible_core.service.claims.policies import list_playbill_policies_in_force
+    from cruxible_core.service.evidence.source_catalog import service_playbill_source_context
+    from tests.test_query.test_query_definitions import active_work_query, claim_type
+
+    contract = capture_contract()
+    definition = claim_type("project.work_item.status")
+    query = active_work_query()
+    type_path = claim_type_path(definition.predicate)
+    query_path = query_definition_path(query.identity.name)
+    tree = {
+        type_path: render_claim_type(definition),
+        query_path: render_query_definition(query),
+        capture_contract_path(contract.identity.name): render_capture_contract(contract),
+        **{
+            provider_path(f"unused-{i}"): render_provider(provider(contract, name=f"unused-{i}"))
+            for i in range(unrelated)
+        },
+    }
+    instance, coordinate, reads = _published_sources(tmp_path, tree, monkeypatch)
+    monkeypatch.setattr(instance, "accepted_coordinate", lambda: coordinate)
+    listed = service_list_playbill_claim_types(instance)
+    assert [row.identity for row in listed.claim_types] == [definition.identity.qualified]
+    assert reads == [type_path]
+    reads.clear()
+    assert (
+        service_get_playbill_claim_type(instance, predicate=definition.predicate)
+        == listed.claim_types[0]
+    )
+    assert reads == [type_path]
+    reads.clear()
+    policies = list_playbill_policies_in_force(instance)
+    assert any(row.policy_kind == "claim_admission_policy" for row in policies.policies)
+    assert set(reads) == {type_path, query_path, capture_contract_path(contract.identity.name)}
+    reads.clear()
+    assert service_playbill_source_context(instance).documents == ()
+    assert reads == []
+    source = SimpleNamespace(_accepted_reader=lambda: instance.bind_accepted_projection(coordinate))
+    found = _accepted_query(source, query_definition_digest(query).tagged)
+    assert found is not None and found.query == query
+    assert reads == [query_path]
+    reads.clear()
+    assert _accepted_query(source, "sha256:" + "0" * 64) is None
+    assert reads == []

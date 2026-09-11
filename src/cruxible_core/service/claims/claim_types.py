@@ -1,8 +1,4 @@
-"""Typed service operations for governed ClaimType interfaces.
-
-ClaimTypes are not carried by the accepted projection index, so reads walk the
-accepted tree at the resolved coordinate exactly as semantic expansion does.
-"""
+"""Typed service operations for governed ClaimType interfaces."""
 
 from __future__ import annotations
 
@@ -14,7 +10,6 @@ from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_digest,
     claim_type_path,
-    parse_claim_type,
     render_claim_type,
 )
 from cruxible_client.contracts.errors import ClaimNotFoundError
@@ -103,7 +98,7 @@ def service_propose_playbill_claim_type(
     """Submit one ClaimType candidate through the generic proposal path."""
 
     proposed_base = _resolve_coordinate(instance, base)
-    candidate_tree = instance.tree_at(proposed_base.git_oid)
+    candidate_tree = instance.immutable_tree_at(proposed_base.git_oid).fork()
     candidate_tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
     ref_name = canonical_playbill_proposal_name(proposal_name, family="claim type")
     result = instance.proposal_service().submit(
@@ -136,9 +131,9 @@ def service_propose_playbill_claim_type_input(
     """Lower and lint one tagless ClaimType input against one captured coordinate."""
 
     coordinate = instance.accepted_coordinate()
-    tree = instance.tree_at(coordinate.git_oid)
+    tree = instance.immutable_tree_at(coordinate.git_oid)
     claim_type = lower_claim_type_input(input, tree=tree)
-    candidate_tree = dict(tree)
+    candidate_tree = tree.fork()
     candidate_tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
     ref_name = canonical_playbill_proposal_name(proposal_name, family="claim type input")
     result = instance.proposal_service().submit(
@@ -173,10 +168,12 @@ def service_get_playbill_claim_type(
 
     coordinate = _resolve_coordinate(instance, at)
     path = claim_type_path(predicate)
-    content = instance.tree_at(coordinate.git_oid).get(path)
-    if content is None:
+    with instance.bind_accepted_projection(coordinate) as projection:
+        assert projection.typed is not None
+        claim_type = projection.typed.source(f"ClaimType:{predicate}")
+    if claim_type is None:
         raise ClaimNotFoundError(path)
-    return _view(parse_claim_type(content, path=path), path=path, coordinate=coordinate)
+    return _view(claim_type, path=path, coordinate=coordinate)
 
 
 def service_list_playbill_claim_types(
@@ -187,15 +184,16 @@ def service_list_playbill_claim_types(
     """Return every accepted ClaimType in byte-sorted ledger-path order."""
 
     coordinate = _resolve_coordinate(instance, at)
-    tree = instance.tree_at(coordinate.git_oid)
-    views = tuple(
-        _view(parse_claim_type(tree[path], path=path), path=path, coordinate=coordinate)
-        for path in sorted(tree, key=lambda item: item.encode("utf-8"))
-        if path.startswith(CLAIM_TYPE_PATH_PREFIX)
-    )
+    with instance.bind_accepted_projection(coordinate) as projection:
+        assert projection.typed is not None
+        views = []
+        for row in sorted(projection.typed.envelopes(kind="claim-type"), key=lambda row: row.path):
+            claim_type = projection.typed.source(row.identity)
+            assert claim_type is not None
+            views.append(_view(claim_type, path=row.path, coordinate=coordinate))
     return PlaybillClaimTypeList(
         coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
-        claim_types=views,
+        claim_types=tuple(views),
     )
 
 

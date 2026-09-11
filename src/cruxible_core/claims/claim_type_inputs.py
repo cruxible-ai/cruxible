@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -152,7 +153,7 @@ def claim_type_input_template() -> ClaimTypeInputV1:
 def lower_claim_type_input(
     value: ClaimTypeInputV1,
     *,
-    tree: dict[str, bytes],
+    tree: Mapping[str, bytes],
 ) -> ClaimType:
     path = claim_type_path(value.predicate)
     predecessor = None

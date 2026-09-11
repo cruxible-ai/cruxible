@@ -51,6 +51,7 @@ from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_integration.test_acquisition_policies import _policy, _rule
 from tests.test_procedures.test_line_specs import _line
 from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
+from tests.test_service.test_typed_source_catalogs import _published_sources
 
 
 def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -116,7 +117,7 @@ def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> 
 
 
 def test_policy_inventory_skips_the_cards_an_accepted_change_leaves(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    """The whole-tree policy scan must survive derivative card sidecars."""
+    """Policy inventory excludes derivative card sidecars."""
 
     instance, owner = initialize_local(tmp_path)
     claim_type = _claim_type(0)
@@ -214,7 +215,7 @@ def complete_policy_inventory(
         document_kind="reference",
         title="Policy carrier",
         media_type="text/plain",
-        body_digest="sha256:" + "d" * 64,
+        body_digest=instance.body_store().store(b"Policy carrier\n").digest,
         authority=DocumentAuthority(required_tier="governed_write"),
         governance_scope=("project:policy",),
         lifecycle=DocumentLifecycle(revision=1, activation_policy="snapshot"),
@@ -246,8 +247,13 @@ def complete_policy_inventory(
     for line in (live_line, retired_line):
         tree[line_spec_path(line.identity.name)] = render_line_spec(line)
 
-    instance.tree_at = lambda _oid: dict(tree)  # type: ignore[method-assign]
-    rows = tuple(list_playbill_policies_in_force(instance).policies)
+    (root / "indexed").mkdir()
+    with pytest.MonkeyPatch.context() as patch:
+        indexed, coordinate, _reads = _published_sources(
+            root / "indexed", tree, patch, instance=instance
+        )
+        patch.setattr(indexed, "accepted_coordinate", lambda: coordinate)
+        rows = tuple(list_playbill_policies_in_force(indexed).policies)
     expected = {
         "approval_policy": ("ApprovalPolicy:instance", None),
         "procedure_runtime_policy": ("ProcedureRuntimePolicy:instance", None),

@@ -929,25 +929,38 @@ _CORROBORATION_BINDING_TYPES = {
 }
 
 
-def _accepted_queries_by_digest(
+def _accepted_query(
     tree: Mapping[str, bytes],
-) -> dict[str, AcceptedQueryDefinitionV1]:
-    accepted: dict[str, AcceptedQueryDefinitionV1] = {}
-    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not path.startswith("query-definitions/") or not path.endswith(".json"):
-            continue
-        query = parse_query_definition(tree[path], path=path)
-        if query.lifecycle.state != "live":
-            continue
-        digest = query_definition_digest(query).tagged
-        if digest in accepted:
-            raise ProposalIntegrityError("accepted QueryDefinition digest is not unique")
-        accepted[digest] = AcceptedQueryDefinitionV1(
-            path=path,
-            query=query,
-            artifact_digest=digest,
-        )
-    return accepted
+    digest: str,
+) -> AcceptedQueryDefinitionV1 | None:
+    reader = getattr(tree, "_accepted_reader", None)
+    if reader is not None:
+        with reader() as projection:
+            assert projection.typed is not None
+            paths = projection._connection.execute(
+                "SELECT path FROM query_definitions WHERE artifact_digest=? AND lifecycle='live'",
+                (digest,),
+            ).fetchall()
+            if len(paths) > 1:
+                raise ProposalIntegrityError("accepted QueryDefinition digest is not unique")
+            sources = [(path, projection.typed.member_bytes(path)) for (path,) in paths]
+    else:
+        # Full source reconstruction is the cold compiler path.
+        sources = [
+            (path, tree[path])
+            for path in tree
+            if path.startswith("query-definitions/") and path.endswith(".json")
+        ]
+    matched = []
+    for path, content in sources:
+        query = parse_query_definition(content, path=path)
+        if query.lifecycle.state == "live" and query_definition_digest(query).tagged == digest:
+            matched.append(
+                AcceptedQueryDefinitionV1(path=path, query=query, artifact_digest=digest)
+            )
+    if len(matched) > 1:
+        raise ProposalIntegrityError("accepted QueryDefinition digest is not unique")
+    return matched[0] if matched else None
 
 
 def _corroboration_parameters(
@@ -978,7 +991,7 @@ def _run_corroboration_requirements(
     policy: ClaimAdmissionPolicyV1,
     accepted_type: AcceptedClaimType,
     subject: AcceptedSubject,
-    definitions: Mapping[str, AcceptedQueryDefinitionV1],
+    definition_for_digest: Callable[[str], AcceptedQueryDefinitionV1 | None],
     facts: ClaimQueryFactsV1,
     current: AcceptedProjectionCoordinate,
     timestamp: str,
@@ -992,7 +1005,7 @@ def _run_corroboration_requirements(
     results: list[ClaimCorroborationResultV1] = []
     issues: list[tuple[str, str]] = []
     for requirement in policy.corroboration_requirements:
-        definition = definitions.get(requirement.query_definition_digest)
+        definition = definition_for_digest(requirement.query_definition_digest)
         if definition is None:
             issues.append(
                 (
@@ -1111,7 +1124,6 @@ def _claim_admission_evaluations(
     query_digests_by_path: dict[str, tuple[str, ...]] = {}
     accounts: list[ClaimAdmissionEvaluationAccountV1] = []
     diagnostics: list[CompilerDiagnostic] = []
-    definitions = _accepted_queries_by_digest(current_tree)
     facts: ClaimQueryFactsV1 | None = None
     for subject_path, changed_claims in sorted(
         changed_by_subject.items(),
@@ -1221,7 +1233,7 @@ def _claim_admission_evaluations(
                     policy=policy,
                     accepted_type=accepted_type,
                     subject=subject,
-                    definitions=definitions,
+                    definition_for_digest=lambda digest: _accepted_query(current_tree, digest),
                     facts=facts,
                     current=current,
                     timestamp=timestamp,

@@ -24,6 +24,7 @@ from cruxible_client.contracts.source_catalog import (
     compile_source_catalog,
     content_digest_bytes,
 )
+from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
     PlaybillAcceptedCoordinate,
@@ -52,22 +53,25 @@ class PlaybillSourceContext(_StrictSourceServiceModel):
     documents: tuple[DocumentShell, ...]
 
 
-def _accepted_documents(instance: PlaybillInstance) -> dict[str, DocumentShell]:
-    result: dict[str, DocumentShell] = {}
-    for path, content in instance.tree_at(instance.accepted_coordinate().git_oid).items():
-        if not path.startswith("documents/"):
-            continue
-        shell = parse_document(content, path=path)
-        result[shell.document_id] = shell
-    return result
+def _accepted_documents(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+) -> dict[str, DocumentShell]:
+    with instance.bind_accepted_projection(coordinate) as projection:
+        assert projection.typed is not None
+        documents = {}
+        for row in projection.typed.envelopes(kind="document"):
+            shell = projection.typed.source(row.identity)
+            assert shell is not None
+            documents[shell.document_id] = shell
+        return documents
 
 
 def service_playbill_source_context(instance: PlaybillInstance) -> PlaybillSourceContext:
-    documents = _accepted_documents(instance)
+    coordinate = instance.accepted_coordinate()
+    documents = _accepted_documents(instance, coordinate)
     return PlaybillSourceContext(
-        accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
-            instance.accepted_coordinate()
-        ),
+        accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
         documents=tuple(
             documents[key] for key in sorted(documents, key=lambda item: item.encode())
         ),
@@ -83,12 +87,13 @@ def service_compile_playbill_sources(
 ) -> SourceCompilationBundle:
     """Compile local declared files without changing CAS, exhaust, or accepted state."""
 
+    coordinate = instance.accepted_coordinate()
     return compile_source_catalog(
         catalog,
         repository_root=repository_root,
         root_aliases=root_aliases or {},
-        accepted_base=PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-        accepted_documents=_accepted_documents(instance),
+        accepted_base=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        accepted_documents=_accepted_documents(instance, coordinate),
     )
 
 
@@ -131,8 +136,9 @@ def service_check_playbill_source_bundle(
 ) -> PlaybillSourceCheckResult:
     """Compare one exact frozen compile with current accepted and pending coordinates."""
 
-    current_coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    accepted = _accepted_documents(instance)
+    coordinate = instance.accepted_coordinate()
+    current_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    accepted = _accepted_documents(instance, coordinate)
     pending = _pending_body_digests(instance)
     alignments: list[SourceAlignment] = []
     base_is_current = bundle.manifest.accepted_base == current_coordinate
