@@ -16,7 +16,7 @@ from cruxible_client.contracts.captures import (
     capture_contract_is_self_asserted,
     parse_capture_contract,
 )
-from cruxible_client.contracts.cas_contracts import BodyProjectionProtocol
+from cruxible_client.contracts.cas_contracts import BodyAccessContext, BodyProjectionProtocol
 from cruxible_client.contracts.claim_verdicts import ObservationTrustGrade, observation_trust_grade
 from cruxible_client.contracts.claims import (
     ClaimCitationReference,
@@ -74,6 +74,7 @@ def coverage_rows(
         "AND u.owner_kind='Claim') "
         "ORDER BY p.evidence_commitment_digest,s.kind,p.logical_source_id"
     )
+    access = BodyAccessContext(principal_id="playbill-coverage", can_read_body=True)
     envelopes: dict[str, CaptureEnvelopeAny] = {}
     trust_by_contract: dict[str, ObservationTrustGrade] = {}
     citations: list[EvidenceCitationV1] = []
@@ -91,7 +92,7 @@ def coverage_rows(
         first: CaptureEnvelopeAny | None = None
         for capture in captures:
             digest = str(capture["capture_digest"])
-            envelope = reader._envelope(digest, bodies, envelopes)
+            envelope = reader._envelope(digest, bodies, envelopes, access=access)
             if first is None:
                 first = envelope
             trust: ObservationTrustGrade = "proposer_observed"

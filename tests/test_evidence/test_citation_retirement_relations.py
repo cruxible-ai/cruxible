@@ -112,7 +112,7 @@ def test_shared_capture_emits_one_claim_cites_retired_row_and_retirement_clears_
     instance, owner, live_claim_id = claim_cites_retired_world(tmp_path)
 
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
-        conflicts = projection.semantic_facts(RELATION_RETIRED_CONFLICT_SCHEMA)
+        conflicts = projection.citations.conflicts()
     assert len(conflicts) == 1
     assert conflicts[0].value["relation_kind"] == "capture"  # type: ignore[index]
     assert conflicts[0].value["live_claim_identity"] == f"Claim:{live_claim_id}"  # type: ignore[index]
@@ -267,15 +267,16 @@ def test_relation_delta_reopens_only_the_changed_claim_captures(
     tmp_path: Path,
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
-    from cruxible_core.indexes.evidence.citation_index import CitationIndex
-
-    citation_contract_schema = "playbill.citation_relation.capture_contract"
     instance, owner, _actor, first, second, *_rest = shared_capture_world(tmp_path)
     before = instance.accepted_coordinate()
-    with instance.bind_accepted_projection(before) as projection:
-        previous_contracts = projection.semantic_facts(citation_contract_schema)
-        previous_uses = projection.semantic_facts(RELATION_USE_SCHEMA)
-        previous_conflicts = projection.semantic_facts(RELATION_RETIRED_CONFLICT_SCHEMA)
+    previous = build_citation_relation_facts(
+        instance.tree_at(before.git_oid),
+        bodies=instance.body_store(),
+    )
+    previous_uses = tuple(f for f in previous if f.schema_id == RELATION_USE_SCHEMA)
+    previous_conflicts = tuple(
+        f for f in previous if f.schema_id == RELATION_RETIRED_CONFLICT_SCHEMA
+    )
 
     _retire_claim(instance, owner, first)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
@@ -346,15 +347,11 @@ def test_relation_delta_reopens_only_the_changed_claim_captures(
     assert sorted(incremental, key=key) == sorted(full, key=key)
     assert parse_calls == 1
 
-    prior_index = CitationIndex.rebuild((*previous_contracts, *previous_uses, *previous_conflicts))
-    parse_calls = 0
-    scoped, _delta = prior_index.advance(
-        {claim_path(first): tree[claim_path(first)]},
-        changed_paths=frozenset((claim_path(first),)),
-        bodies=instance.body_store(),
-    )
-    assert sorted(scoped.facts(), key=key) == sorted(full, key=key)
-    assert parse_calls == 1
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        assert sorted(projection.citations.conflicts(), key=key) == sorted(
+            full_conflicts,
+            key=key,
+        )
 
 
 def test_incremental_capture_precedence_drops_carried_weaker_conflict(
@@ -362,9 +359,14 @@ def test_incremental_capture_precedence_drops_carried_weaker_conflict(
 ) -> None:
     instance, owner, _actor, first, second, *_rest = shared_capture_world(tmp_path)
     before = instance.accepted_coordinate()
-    with instance.bind_accepted_projection(before) as projection:
-        previous_uses = projection.semantic_facts(RELATION_USE_SCHEMA)
-        previous_conflicts = projection.semantic_facts(RELATION_RETIRED_CONFLICT_SCHEMA)
+    previous = build_citation_relation_facts(
+        instance.tree_at(before.git_oid),
+        bodies=instance.body_store(),
+    )
+    previous_uses = tuple(f for f in previous if f.schema_id == RELATION_USE_SCHEMA)
+    previous_conflicts = tuple(
+        f for f in previous if f.schema_id == RELATION_RETIRED_CONFLICT_SCHEMA
+    )
 
     live_use = next(
         fact.value

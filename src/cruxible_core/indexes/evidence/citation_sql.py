@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -31,7 +32,7 @@ from cruxible_client.contracts.source_references import (
     LedgerSourceReferenceV1,
 )
 from cruxible_core.evidence.citation_relations import (
-    _conflict_facts,
+    _conflict_group_facts,
     _digest_identity,
     _same_version_span_key,
     external_source_relation_subject,
@@ -47,17 +48,22 @@ CREATE TABLE source_references (
  source_ref_key TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('external','ledger','cas')),
  source_identity TEXT, producer_binding_digest TEXT, coordinate_type TEXT,
  source_version_key TEXT, selector_type TEXT, start_byte INTEGER, end_byte INTEGER,
+ start_byte_decimal TEXT, end_byte_decimal TEXT,
  ledger_git_oid TEXT, ledger_semantic_root TEXT, ledger_generation_root TEXT,
  ledger_compiler_digest TEXT, ledger_path TEXT, cas_content_digest TEXT, replayability TEXT,
  CHECK ((start_byte IS NULL AND end_byte IS NULL) OR
         (start_byte IS NOT NULL AND end_byte IS NOT NULL
-         AND 0 <= start_byte AND start_byte < end_byte))
+         AND 0 <= start_byte AND start_byte < end_byte)),
+ CHECK ((start_byte_decimal IS NULL AND end_byte_decimal IS NULL) OR
+        (start_byte IS NULL AND end_byte IS NULL
+         AND start_byte_decimal IS NOT NULL AND end_byte_decimal IS NOT NULL))
 ) STRICT;
 CREATE INDEX source_spans_by_version ON source_references
  (source_version_key,start_byte,end_byte,source_ref_key) WHERE source_version_key IS NOT NULL;
 CREATE TABLE captures (
  capture_digest TEXT PRIMARY KEY, contract_digest TEXT NOT NULL,
- evidence_commitment_digest TEXT NOT NULL, logical_source_id TEXT,
+ evidence_commitment_digest TEXT NOT NULL, commitment_byte_length_decimal TEXT,
+ logical_source_id TEXT,
  source_ref_key TEXT NOT NULL REFERENCES source_references(source_ref_key),
  producer_identity TEXT NOT NULL, observed_at_us INTEGER NOT NULL,
  access_class TEXT NOT NULL CHECK(access_class IN ('public','instance','restricted'))
@@ -96,16 +102,18 @@ def _insert_capture(
     key = _digest_identity("source-reference", source.model_dump(mode="json"))
     span = _same_version_span_key({"source": source.model_dump(mode="json")})
     version, start, end = span if span is not None else (None, None, None)
+    start_decimal = end_decimal = None
     if end is not None and end > _MAX_SQL_INTEGER:
         # Canonical source extensions allow arbitrary exact integers. Retain the
-        # version and selector, include this row in candidate queries, and compare
-        # the original envelope's integers. Never cast or saturate signed bytes.
+        # exact decimal offsets and version. INTEGER columns only accelerate
+        # candidate selection; accepted conflict findings do not depend on CAS.
+        start_decimal, end_decimal = str(start), str(end)
         start = end = None
     external = source if isinstance(source, ExternalSourceReferenceV1) else None
     ledger = source if isinstance(source, LedgerSourceReferenceV1) else None
     cas = source if isinstance(source, CasSourceReferenceV1) else None
     connection.execute(
-        "INSERT OR IGNORE INTO source_references VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT OR IGNORE INTO source_references VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             key,
             source.kind,
@@ -116,6 +124,8 @@ def _insert_capture(
             external.selector_type if external else None,
             start,
             end,
+            start_decimal,
+            end_decimal,
             ledger.coordinate.git_oid if ledger else None,
             ledger.coordinate.semantic_root if ledger else None,
             ledger.coordinate.generation_root if ledger else None,
@@ -128,11 +138,14 @@ def _insert_capture(
     elapsed = envelope.observed_at.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
     observed_us = (elapsed.days * 86400 + elapsed.seconds) * 1000000 + elapsed.microseconds
     connection.execute(
-        "INSERT OR IGNORE INTO captures VALUES (?,?,?,?,?,?,?,?)",
+        "INSERT OR IGNORE INTO captures VALUES (?,?,?,?,?,?,?,?,?)",
         (
             digest,
             envelope.capture_contract_digest,
             envelope.commitment.digest,
+            None
+            if envelope.commitment.byte_length is None
+            else str(envelope.commitment.byte_length),
             external.source_identity
             if external
             else (ledger.address.artifact_path if ledger else None),
@@ -293,6 +306,35 @@ def populate_attestation_citations(
         raise
 
 
+@dataclass(frozen=True)
+class CitationSourceUse:
+    """Accepted fields needed by source-observation findings, without a fake envelope."""
+
+    capture_digest: str
+    citation_id: str
+    claim_artifact_digest: str
+    claim_identity: str
+    lifecycle: str
+    commitment_digest: str
+    byte_length: int
+    source_identity: str
+    coordinate_type: str
+    selector_type: str
+
+
+def _decimal_integer(value: object) -> int:
+    if not isinstance(value, str) or not value.isascii() or not value.isdecimal():
+        raise ProjectionFormatError("citation metadata requires an exact nonnegative integer")
+    if len(value) > 1 and value.startswith("0"):
+        raise ProjectionFormatError("citation integer metadata is not canonical")
+    return int(value)
+
+
+def _span_integer(row: Mapping[str, object], column: str) -> int:
+    value = row[column]
+    return value if type(value) is int else _decimal_integer(row[f"{column}_decimal"])
+
+
 class CitationReader:
     """Read one bound SQLite publication; never establish acceptance or cache bodies."""
 
@@ -330,11 +372,15 @@ class CitationReader:
 
     @staticmethod
     def _envelope(
-        digest: str, bodies: BodyProjectionProtocol, envelopes: dict[str, CaptureEnvelopeAny]
+        digest: str,
+        bodies: BodyProjectionProtocol,
+        envelopes: dict[str, CaptureEnvelopeAny],
+        *,
+        access: BodyAccessContext = _ACCESS,
     ) -> CaptureEnvelopeAny:
         envelope = envelopes.get(digest)
         if envelope is None:
-            envelope = parse_capture_envelope(bodies.read(digest, access=_ACCESS))
+            envelope = parse_capture_envelope(bodies.read(digest, access=access))
             if capture_digest(envelope).tagged != digest:
                 raise ProjectionFormatError("citation Capture differs from its exact envelope")
             envelopes[digest] = envelope
@@ -371,21 +417,46 @@ class CitationReader:
             sorted(uses, key=lambda use: (str(use["claim_path"]), str(use["citation_id"])))
         )
 
-    def uses_for_source(
+    def source_claim_uses(
         self,
         source_id: str,
         *,
-        bodies: BodyProjectionProtocol,
+        lifecycle: Literal["live", "retired"] | None = None,
     ) -> tuple[dict[str, object], ...]:
-        rows = self._rows(
-            "SELECT u.*, c.path,c.artifact_digest,c.lifecycle FROM captures p "
+        """Return selected owner metadata without rereading immutable source bodies."""
+        return self._rows(
+            "SELECT u.*,c.path,c.artifact_digest,c.lifecycle,p.evidence_commitment_digest,"
+            "p.commitment_byte_length_decimal,s.source_identity,s.coordinate_type,s.selector_type "
+            "FROM captures p "
             "JOIN source_references s USING(source_ref_key) "
             "JOIN citation_uses u USING(capture_digest) JOIN claims c ON c.identity=u.owner_key "
             "WHERE p.logical_source_id=? AND s.kind='external' AND u.owner_kind='Claim' "
-            "ORDER BY c.path,u.use_key",
-            (source_id,),
+            + ("AND c.lifecycle=? " if lifecycle is not None else "")
+            + "ORDER BY c.path,u.use_key",
+            (source_id,) if lifecycle is None else (source_id, lifecycle),
         )
-        return self._relation_uses(rows, bodies=bodies)
+
+    def uses_for_source(self, source_id: str) -> tuple[CitationSourceUse, ...]:
+        """Accepted observation metadata, independent of current envelope availability."""
+        result = []
+        for row in self.source_claim_uses(source_id):
+            if row["lifecycle"] not in ("live", "retired"):
+                raise ProjectionFormatError("citation source use has an invalid lifecycle")
+            result.append(
+                CitationSourceUse(
+                    capture_digest=str(row["capture_digest"]),
+                    citation_id=str(row["use_key"]),
+                    claim_artifact_digest=str(row["artifact_digest"]),
+                    claim_identity=str(row["owner_key"]),
+                    lifecycle=str(row["lifecycle"]),
+                    commitment_digest=str(row["evidence_commitment_digest"]),
+                    byte_length=_decimal_integer(row["commitment_byte_length_decimal"]),
+                    source_identity=str(row["source_identity"]),
+                    coordinate_type=str(row["coordinate_type"]),
+                    selector_type=str(row["selector_type"]),
+                )
+            )
+        return tuple(result)
 
     def overlapping_uses(
         self,
@@ -404,13 +475,14 @@ class CitationReader:
             raise ValueError("citation interval requires increasing nonnegative exact integers")
         # Null bounds with a version key denote a recognized but unindexable
         # arbitrary-precision span, not a missing span. They are always candidates.
+        bounded = end_byte <= _MAX_SQL_INTEGER
         rows = self._rows(
             "SELECT u.*,c.path,c.artifact_digest,c.lifecycle FROM source_references s "
             "JOIN captures p USING(source_ref_key) JOIN citation_uses u USING(capture_digest) "
             "JOIN claims c ON c.identity=u.owner_key WHERE s.source_version_key=? "
-            "AND (s.start_byte IS NULL OR s.start_byte < ?) AND u.owner_kind='Claim' "
-            "ORDER BY c.path,u.use_key",
-            (source_version_key, min(end_byte, _MAX_SQL_INTEGER)),
+            + ("AND (s.start_byte IS NULL OR s.start_byte < ?) " if bounded else "")
+            + "AND u.owner_kind='Claim' ORDER BY c.path,u.use_key",
+            (source_version_key, end_byte) if bounded else (source_version_key,),
         )
         uses = self._relation_uses(rows, bodies=bodies)
         return tuple(
@@ -426,7 +498,6 @@ class CitationReader:
     def conflicts(
         self,
         *,
-        bodies: BodyProjectionProtocol,
         claim_identities: Iterable[str] | None = None,
     ) -> tuple[ProjectionFact, ...]:
         """Compute conflicts and witnesses together over complete relevant groups.
@@ -457,18 +528,43 @@ class CitationReader:
                         (identity,),
                     )
                 )
-        envelopes: dict[str, CaptureEnvelopeAny] = {}
         facts: list[ProjectionFact] = []
         for kind, key in sorted(groups):
             rows = self._rows(
-                "SELECT u.*,c.path,c.artifact_digest,c.lifecycle FROM citation_group_members g "
+                "SELECT u.*,c.path,c.artifact_digest,c.lifecycle,s.start_byte,s.end_byte,"
+                "s.start_byte_decimal,s.end_byte_decimal FROM citation_group_members g "
                 "JOIN citation_uses u ON u.owner_kind='Claim' AND u.owner_key=g.claim_identity "
                 "AND u.use_key=g.citation_id JOIN claims c ON c.identity=g.claim_identity "
+                "JOIN captures p USING(capture_digest) "
+                "JOIN source_references s USING(source_ref_key) "
                 "WHERE g.group_kind=? AND g.group_key=? ORDER BY c.path,u.use_key",
                 (kind, key),
             )
-            uses = list(self._relation_uses(rows, bodies=bodies, envelopes=envelopes))
-            facts.extend(_conflict_facts(uses, {f"{kind}:{key}"}))
+            uses = [
+                {
+                    "capture_digest": {"$digest": row["capture_digest"]},
+                    "citation_id": row["use_key"],
+                    "claim_identity": row["owner_key"],
+                    "claim_lifecycle": row["lifecycle"],
+                    "claim_artifact_digest": {"$digest": row["artifact_digest"]},
+                }
+                for row in rows
+            ]
+            spans = (
+                [
+                    (_span_integer(row, "start_byte"), _span_integer(row, "end_byte"), use)
+                    for row, use in zip(rows, uses, strict=True)
+                ]
+                if kind == "same_version_span"
+                else []
+            )
+            facts.extend(
+                _conflict_group_facts(
+                    {key: uses} if kind == "capture" else {},
+                    {key: uses} if kind == "exact_external" else {},
+                    {key: spans} if kind == "same_version_span" else {},
+                )
+            )
         valued = [(fact, fact.value) for fact in facts if isinstance(fact.value, dict)]
         if targets is not None:
             valued = [

@@ -87,13 +87,13 @@ class World:
     def reader(self):
         return CitationReader(self.connection, self.sources.__getitem__)
 
-    def capture(self, n, *, source=0, start=0, end=10):
+    def capture(self, n, *, source=0, start=0, end=10, binding=DIGEST, byte_length=10):
         contract = capture_contract()
         envelope = CaptureEnvelopeV1(
             capture_contract_digest=capture_contract_digest(contract).tagged,
             source=ExternalSourceReferenceV1(
                 source_identity=f"source-{source}",
-                producer_binding_digest=DIGEST,
+                producer_binding_digest=binding,
                 coordinate_type=FOREIGN_SOURCE_COORDINATE_TYPE,
                 coordinate={"version": 1},
                 selector_type=FOREIGN_SOURCE_SELECTOR_TYPE,
@@ -103,7 +103,7 @@ class World:
             commitment=EvidenceCommitmentV1(
                 digest_kind="exact_bytes",
                 digest=DIGEST,
-                byte_length=10,
+                byte_length=byte_length,
                 materialization="external",
             ),
             run_coordinate=CaptureRunCoordinateV1(
@@ -115,7 +115,7 @@ class World:
             ),
             run_receipt_digest=DIGEST,
             producer=ArtifactIdentity(kind="Provider", name="test.provider"),
-            producer_binding_digest=DIGEST,
+            producer_binding_digest=binding,
             observed_at=NOW,
         )
         digest = self.store.store(canonical_bytes(envelope.model_dump(mode="json"))).digest
@@ -215,8 +215,7 @@ def world(tmp_path: Path):
         "CREATE TABLE claims(identity TEXT PRIMARY KEY,path TEXT,"
         "artifact_digest TEXT,lifecycle TEXT) STRICT;"
         "CREATE TABLE capture_contracts(identity TEXT PRIMARY KEY,path TEXT,"
-        "artifact_digest TEXT) STRICT;"
-        + SCHEMA_SQL
+        "artifact_digest TEXT) STRICT;" + SCHEMA_SQL
     )
     root = tmp_path / "cas"
     root.mkdir()
@@ -242,11 +241,11 @@ def test_precedence_removal_restores_untouched_weaker_groups(world):
     retired = world.claim(2, [a], retired=True)
     other = world.claim(3, [c], retired=True)
     world.publish(live, retired, other)
-    before = world.reader.conflicts(bodies=world.store)
+    before = world.reader.conflicts()
     assert before == world.cold_conflicts()
     assert {f.value["relation_kind"] for f in before} == {"capture"}
     world.remove(retired)
-    after = world.reader.conflicts(bodies=world.store, claim_identities=[live.identity.qualified])
+    after = world.reader.conflicts(claim_identities=[live.identity.qualified])
     assert after == world.cold_conflicts()
     assert {f.value["relation_kind"] for f in after} == {"exact_external", "same_version_span"}
     assert world.reader.owners_for_capture(a)  # live still retains the shared Capture
@@ -268,7 +267,7 @@ def test_randomized_old_new_memberships_and_owner_replacement_match_cold(world):
                 n, rng.sample(captures, rng.randrange(1, 4)), retired=bool(rng.randrange(2))
             )
             world.publish(claims[n])
-        assert world.reader.conflicts(bodies=world.store) == world.cold_conflicts()
+        assert world.reader.conflicts() == world.cold_conflicts()
 
 
 def test_roles_witness_bounds_and_half_open_spans(world):
@@ -281,7 +280,7 @@ def test_roles_witness_bounds_and_half_open_spans(world):
         *(world.claim(n, [first], retired=True) for n in range(10, 22)),
     )
     assert len(world.reader.owner_uses("Claim", live.identity.qualified)) == 2
-    facts = world.reader.conflicts(bodies=world.store)
+    facts = world.reader.conflicts()
     assert facts == world.cold_conflicts()
     assert len(facts) == 1
     assert facts[0].value["retired_claim_count"] == 12
@@ -289,9 +288,18 @@ def test_roles_witness_bounds_and_half_open_spans(world):
 
 
 def test_indexed_spans_filter_ends_and_retain_arbitrary_precision_candidates(world):
-    spans = [(0, 2), (1, 12), (10, 15), (1 << 70, (1 << 70) + 10)]
+    spans = [
+        (0, 2),
+        (1, 12),
+        (10, 15),
+        (1 << 70, (1 << 70) + 10),
+        ((1 << 70) + 5, (1 << 70) + 15),
+    ]
     digests = [world.capture(n, start=start, end=end) for n, (start, end) in enumerate(spans)]
-    world.publish(*(world.claim(n + 1, [digest]) for n, digest in enumerate(digests)))
+    world.publish(
+        *(world.claim(n + 1, [digest], retired=n == 3) for n, digest in enumerate(digests))
+    )
+    assert world.reader.conflicts() == world.cold_conflicts()
     version = _same_version_span_key(
         {"source": world.envelopes[digests[0]].source.model_dump(mode="json")}
     )[0]
@@ -308,6 +316,9 @@ def test_indexed_spans_filter_ends_and_retain_arbitrary_precision_candidates(wor
     for invalid in (True, 1.5, "1"):
         with pytest.raises(ValueError, match="exact integers"):
             world.reader.overlapping_uses(version, invalid, 10, bodies=world.store)
+    expected = world.cold_conflicts()
+    world.store._path(digests[3]).unlink()
+    assert world.reader.conflicts() == expected
 
 
 def test_failed_cas_population_rolls_back_relationships_and_does_not_commit_outer_transaction(
@@ -427,15 +438,27 @@ def test_selected_group_work_is_independent_of_unrelated_citation_growth(
         retired,
         *(world.claim(n + 10, [world.capture(n + 10, source=n + 10)]) for n in range(unrelated)),
     )
+    publication_reads = []
+    original_insert = citation_sql._insert_capture
+
+    def counted_insert(connection, capture, bodies):
+        publication_reads.append(capture)
+        return original_insert(connection, capture, bodies)
+
+    monkeypatch.setattr(citation_sql, "_insert_capture", counted_insert)
+    world.publish(live)
+    assert publication_reads == [digest]
     visited = []
-    original = citation_sql._conflict_facts
+    original = citation_sql._conflict_group_facts
 
-    def count(uses, groups):
-        visited.append(len(uses))
-        return original(uses, groups)
+    def count(captures, external, spans):
+        visited.append(
+            sum(len(group) for groups in (captures, external, spans) for group in groups.values())
+        )
+        return original(captures, external, spans)
 
-    monkeypatch.setattr(citation_sql, "_conflict_facts", count)
-    assert world.reader.conflicts(bodies=world.store, claim_identities=[live.identity.qualified])
+    monkeypatch.setattr(citation_sql, "_conflict_group_facts", count)
+    assert world.reader.conflicts(claim_identities=[live.identity.qualified])
     assert visited == [2, 2, 2]
 
 
@@ -449,15 +472,15 @@ def test_owner_rename_and_historical_binding_keep_original_relationships(world):
     world.connection.backup(historical)
     historical_sources = dict(world.sources)
     reader = CitationReader(historical, historical_sources.__getitem__)
-    before = reader.conflicts(bodies=world.store)
+    before = reader.conflicts()
     renamed = world.claim(3, [digest])
     world.publish(renamed)
     world.remove(old)
     assert not world.reader.owner_uses("Claim", old.identity.qualified)
     assert world.reader.owner_uses("Claim", renamed.identity.qualified)
-    assert reader.conflicts(bodies=world.store) == before
-    assert world.reader.conflicts(bodies=world.store) == world.cold_conflicts()
-    assert world.reader.conflicts(bodies=world.store) != before
+    assert reader.conflicts() == before
+    assert world.reader.conflicts() == world.cold_conflicts()
+    assert world.reader.conflicts() != before
     assert len(world.reader.owners_for_capture(digest)) == 2
     assert world.connection.execute(
         "SELECT capture_digest,evidence_commitment_digest FROM captures"
@@ -487,3 +510,154 @@ def test_span_candidates_stay_within_source_version_and_filter_actual_overlap(wo
     uses = world.reader.overlapping_uses(version, 4, 10, bodies=world.store)
     assert set(seen) == set(selected[:3])
     assert {u["capture_digest"]["$digest"] for u in uses} == set(selected[1:3])
+
+
+def test_exact_external_group_retains_original_producer_binding_exclusion(world):
+    first = world.capture(1, binding=DIGEST)
+    second = world.capture(2, binding="sha256:" + "2" * 64)
+    world.publish(world.claim(1, [first]), world.claim(2, [second], retired=True))
+    assert world.connection.execute("SELECT count(*) FROM source_references").fetchone()[0] == 2
+    facts = world.reader.conflicts()
+    assert facts == world.cold_conflicts()
+    assert {fact.value["relation_kind"] for fact in facts} == {
+        "exact_external",
+        "same_version_span",
+    }
+
+
+def _next_relation_findings(world, reader):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from cruxible_core.compiler.compiler import P2_B5_COMPILER
+    from cruxible_core.coverage.contracts import (
+        CoverageAccessProfileV1,
+        CoverageCommitmentScanProofV1,
+        CoverageLineOverlayV1,
+        LogicalSourceIdentityV1,
+        occurrence_identity_digest,
+    )
+    from cruxible_core.coverage.indexes import WorkingOccurrenceV1
+    from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
+    from cruxible_core.service.discovery.next import (
+        PlaybillNextSourceObservationV4,
+        PlaybillNextWorkspaceObservationV1,
+        _citation_relation_items,
+    )
+
+    source = LogicalSourceIdentityV1(plane="external", identity="source-0")
+    occurrence = WorkingOccurrenceV1(
+        source=source,
+        observed_commitment_digest=DIGEST,
+        byte_length=10,
+        ordinal=0,
+        identity_digest=occurrence_identity_digest(
+            source=source,
+            observed_commitment_digest=DIGEST,
+            ordinal=0,
+        ),
+        line_overlay=CoverageLineOverlayV1(start_byte=0, end_byte=10, start_line=1, end_line=1),
+    )
+    observation = PlaybillNextSourceObservationV4(
+        source_id="source-0",
+        observed_source_digest=DIGEST,
+        byte_length=20,
+        marker_summaries=(),
+        occurrences=(occurrence,),
+        commitment_scan_proofs=(
+            CoverageCommitmentScanProofV1(
+                source=source,
+                commitment_digest=DIGEST,
+                byte_length=10,
+            ),
+        ),
+        citation_window_observations=(),
+        scan_notes=(),
+        marker_notes=(),
+    )
+    coordinate = AcceptedProjectionCoordinate(
+        instance_id="citation-test",
+        repository_path="/fixture/ledger.git",
+        git_object_format="sha1",
+        git_oid=AT.git_oid,
+        semantic_root=AT.semantic_root,
+        generation_root=AT.generation_root,
+        compiler=P2_B5_COMPILER,
+    )
+    instance = SimpleNamespace(
+        paths_at=lambda _oid: tuple(world.sources),
+        bind_accepted_projection=lambda _coordinate: nullcontext(SimpleNamespace(citations=reader)),
+    )
+    return _citation_relation_items(
+        instance,
+        coordinate=coordinate,
+        access_profile=CoverageAccessProfileV1(
+            profile_id="test",
+            permitted_access_classes=("instance",),
+        ),
+        observation=PlaybillNextWorkspaceObservationV1(source_observations=(observation,)),
+    )
+
+
+@pytest.mark.parametrize("unavailable", ["missing", "corrupt"])
+@pytest.mark.parametrize("shared", [True, False])
+def test_next_findings_survive_unavailable_cas_like_retained_facts(world, unavailable, shared):
+    from types import SimpleNamespace
+
+    from cruxible_core.evidence.citation_relations import RELATION_SOURCE_USE_SCHEMA
+    from cruxible_core.indexes.evidence.citation_sql import CitationSourceUse
+
+    first = world.capture(1, start=0, end=5)
+    second = first if shared else world.capture(2, start=10, end=15)
+    world.publish(world.claim(1, [first]), world.claim(2, [second], retired=True))
+    # These are the exact accepted rows the prior semantic-fact reader retained.
+    retained = build_citation_relation_facts(world.sources, bodies=world.store)
+    conflicts = tuple(
+        sorted(
+            (f for f in retained if f.schema_id == RELATION_RETIRED_CONFLICT_SCHEMA),
+            key=lambda f: f.fact_key,
+        )
+    )
+    uses = [f.value for f in retained if f.schema_id == RELATION_SOURCE_USE_SCHEMA]
+    old_reader = SimpleNamespace(
+        conflicts=lambda: conflicts,
+        uses_for_source=lambda source: tuple(
+            CitationSourceUse(
+                capture_digest=u["capture_digest"]["$digest"],
+                citation_id=u["citation_id"],
+                claim_artifact_digest=u["claim_artifact_digest"]["$digest"],
+                claim_identity=u["claim_identity"],
+                lifecycle=u["claim_lifecycle"],
+                commitment_digest=u["commitment"]["digest"],
+                byte_length=u["commitment"]["byte_length"],
+                source_identity=u["source"]["source_identity"],
+                coordinate_type=u["source"]["coordinate_type"],
+                selector_type=u["source"]["selector_type"],
+            )
+            for u in uses
+            if u["source"]["source_identity"] == source
+        ),
+    )
+    expected = _next_relation_findings(world, old_reader)
+    assert len(expected) == 1
+    assert expected[0].detail["relation_kind"] == ("capture" if shared else "current_span_overlap")
+    assert _next_relation_findings(world, world.reader) == expected
+    if unavailable == "missing":
+        world.store._path(first).unlink()
+    else:
+        world.store._path(first).write_bytes(b"corrupt Capture bytes")
+    assert _next_relation_findings(world, old_reader) == expected
+    assert _next_relation_findings(world, world.reader) == expected
+    assert world.reader.conflicts() == conflicts
+    with pytest.raises(PlaybillCasError):
+        coverage_rows(world.reader, bodies=world.store, at=AT)
+
+
+def test_source_metadata_retains_exact_large_commitment_length_without_body(world):
+    length = 1 << 70
+    digest = world.capture(1, byte_length=length)
+    world.publish(world.claim(1, [digest]))
+    before = world.reader.uses_for_source("source-0")
+    assert before[0].byte_length == length
+    world.store._path(digest).unlink()
+    assert world.reader.uses_for_source("source-0") == before

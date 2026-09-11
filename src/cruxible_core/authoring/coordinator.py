@@ -70,10 +70,6 @@ from cruxible_core.authoring.preflight import (
 )
 from cruxible_core.authoring.store import AuthoringIntentStore
 from cruxible_core.compiler.projection_artifacts import projected_revision
-from cruxible_core.evidence.citation_relations import (
-    RELATION_CONTRACT_SCHEMA,
-    capture_contract_relation_subject,
-)
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.candidate_cards import is_candidate_card_path
 from cruxible_core.proposals.prepared_evaluation import PreparedEvaluationScope
@@ -586,16 +582,7 @@ class AuthoringIntentCoordinator:
                 )
             )
             with self.instance.bind_accepted_projection(coordinate) as projection:
-                facts = projection.semantic_facts(
-                    RELATION_CONTRACT_SCHEMA,
-                    subject_identity=capture_contract_relation_subject(
-                        envelope.capture_contract_digest
-                    ),
-                )
-            if len(facts) != 1 or not isinstance(facts[0].value, dict):
-                return ()
-            raw_path = facts[0].value.get("path")
-            path = raw_path.get("$path") if isinstance(raw_path, dict) else None
+                path = projection.citations.capture_contract_path(envelope.capture_contract_digest)
             if not isinstance(path, str):
                 return ()
         except (PlaybillError, ValueError):
