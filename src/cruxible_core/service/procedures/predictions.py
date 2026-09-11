@@ -17,6 +17,7 @@ from cruxible_client.contracts.canonical import CanonicalValue, canonical_bytes
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     LiteralClaimObject,
+    claim_artifact_digest,
     claim_path,
     claim_statement_address,
     claim_statement_digest,
@@ -199,7 +200,7 @@ def _accepted_procedure(
     coordinate: AcceptedCoordinate,
 ) -> AcceptedProcedureV1:
     path = procedure_path(name)
-    raw = instance.tree_at(coordinate.git_oid).get(path)
+    raw = instance.blob_at(coordinate.git_oid, path)
     if raw is None:
         raise _refuse(
             "prediction_unsettleable_rule",
@@ -304,18 +305,31 @@ def _accepted_claim_revision(
     claim_id: str,
 ) -> tuple[ClaimArtifactAny, AcceptedCoordinate, int]:
     path = claim_path(claim_id.removeprefix("Claim:"))
-    current_raw = instance.tree_at(instance.accepted_coordinate().git_oid).get(path)
+    coordinate = instance.accepted_coordinate()
+    current_raw = instance.blob_at(coordinate.git_oid, path)
     if current_raw is None:
         raise ValueError("Claim is not accepted")
     claim = parse_claim(current_raw, path=path)
-    for generation in instance.accepted_history():
-        if instance.tree_at(generation.oid).get(path) != current_raw:
-            continue
-        return (
-            claim,
-            AcceptedCoordinate.from_internal(instance.coordinate_for_oid(generation.oid)),
-            generation.sequence,
-        )
+    digest = claim_artifact_digest(claim).tagged
+    with instance.accepted_history_reader(
+        at=AcceptedCoordinate.from_internal(coordinate)
+    ) as history:
+        for occurrence in history.occurrences(claim.identity.qualified):
+            if occurrence.path != path or occurrence.artifact_digest != digest:
+                continue
+            generation = history.generation(occurrence.occurrence_sequence)
+            if instance.blob_at(generation.git_oid, path) != current_raw:
+                continue
+            return (
+                claim,
+                AcceptedCoordinate(
+                    git_oid=generation.git_oid,
+                    semantic_root=generation.semantic_root,
+                    generation_root=generation.generation_root,
+                    compiler_digest=generation.compiler_digest,
+                ),
+                generation.sequence,
+            )
     raise PlaybillFormatError("accepted Claim revision has no accepting generation")
 
 
@@ -326,7 +340,7 @@ def _activation_for_declaration(
     prediction_claim: ClaimArtifactAny,
     prediction_coordinate: AcceptedCoordinate,
 ) -> ResolutionContractActivationV2:
-    raw = instance.tree_at(declaration.base_coordinate.git_oid).get(declaration.procedure_path)
+    raw = instance.blob_at(declaration.base_coordinate.git_oid, declaration.procedure_path)
     if raw is None:
         raise PlaybillFormatError("prediction Procedure disappeared from retained history")
     procedure = parse_procedure(raw, path=declaration.procedure_path)

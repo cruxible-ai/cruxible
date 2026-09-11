@@ -179,9 +179,12 @@ def test_proposal_selector_resolves_full_prefix_and_current_target_ref(
         admission.model_copy(update={"proposal_id": "sha256:" + "a" * 8 + "2" * 56}),
     )
 
+    class AmbiguousIndex:
+        def rows(self, *_args):
+            return tuple({"proposal_id": item.proposal_id} for item in forced)
+
     class AmbiguousEvidence:
-        def list_admissions(self):  # type: ignore[no-untyped-def]
-            return forced
+        index = AmbiguousIndex()
 
     with monkeypatch.context() as scoped:
         scoped.setattr(instance, "proposal_evidence", lambda: AmbiguousEvidence())
@@ -730,3 +733,63 @@ def test_an_instance_scoped_credential_may_not_withdraw_a_foreign_proposal(
     )
     assert entry.status == "open"
     assert instance.proposal_evidence().read_withdrawal(proposal_id) is None
+
+
+def test_live_submission_and_settlement_read_indexed_principals(tmp_path, monkeypatch):
+    from cruxible_core.indexes.typed_state import TypedStateReader
+    from cruxible_core.proposals import proposals, settlement
+
+    instance, owner = seed_claims(tmp_path)
+    calls = []
+    original_principal = TypedStateReader.principal
+    original_registry = TypedStateReader.principal_registry
+
+    def principal(reader, identity, *, active=False):
+        calls.append(("point", reader.accepted.git_oid, identity))
+        return original_principal(reader, identity, active=active)
+
+    def registry(reader):
+        calls.append(("registry", reader.accepted.git_oid, None))
+        return original_registry(reader)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("live principal lookup scanned the accepted tree")
+
+    monkeypatch.setattr(TypedStateReader, "principal", principal)
+    monkeypatch.setattr(TypedStateReader, "principal_registry", registry)
+    monkeypatch.setattr(proposals, "principal_registry_from_tree", forbidden)
+    monkeypatch.setattr(settlement, "principal_registry_from_tree", forbidden)
+    base = instance.accepted_coordinate()
+    result = service_propose_playbill_claim(
+        instance,
+        authoring=authoring("indexed-principals", "ready", with_claim_type=False),
+        actor_id="owner",
+        proposal_name="indexed-principals",
+        timestamp=TIMESTAMP,
+    )
+    assert ("point", base.git_oid, "owner") in calls
+    assert ("registry", base.git_oid, None) in calls
+    proposed = result.proposal.proposal
+    candidate = proposed.candidate
+    assert candidate is not None
+    assert proposed.evaluation.evaluated_tree_oid is not None
+    instance.prepare_generation(
+        base=base,
+        candidate_tree=instance.proposal_tree(proposed.evaluation.evaluated_tree_oid),
+        candidate=candidate,
+        approvals=(_sign(owner, candidate.candidate_digest, base.semantic_root),),
+        actor_binding=settlement.ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
+        sequence=len(instance.accepted_history()),
+    )
+    assert all(oid == base.git_oid for _, oid, _ in calls)
+
+
+def test_indexed_principal_gate_rejects_unknown_actor_at_bound_revision(tmp_path):
+    from cruxible_client.contracts.errors import PrincipalIntegrityError
+
+    instance, _ = seed_claims(tmp_path)
+    coordinate = instance.accepted_coordinate()
+    instance.require_accepted_principal(coordinate, "owner")
+    with pytest.raises(PrincipalIntegrityError, match="absent"):
+        instance.require_accepted_principal(coordinate, "not-registered")

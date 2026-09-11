@@ -152,7 +152,6 @@ _QUERY_RECEIPT_PARTITION = "default"
 _WRITER_TOKEN = "playbill-procedure-measurement-v1"
 _ACCESS = BodyAccessContext(principal_id="playbill-measurement", can_read_body=True)
 _QUERY_BUDGET_KEYS = frozenset(QueryBudgetsV1.model_fields) - {"tag"}
-_ACTIVATION_MEMO_CAPACITY = 32
 _READING_INDEX_MEMO_CAPACITY = 16
 MEASUREMENT_QUERY_EVIDENCE_TAG = "playbill-measurement-query-evidence-v1"
 MEASUREMENT_ATTESTATION_EVIDENCE_TAG = "playbill-measurement-attestation-evidence-v1"
@@ -285,9 +284,6 @@ class MeasurementActivationBasisV1:
     activations: tuple[ResolutionContractActivationV1, ...]
 
 
-_activation_memo: OrderedDict[tuple[str, str, str], MeasurementActivationBasisV1] = OrderedDict()
-
-
 def _accepted_procedure(
     instance: PlaybillInstance,
     *,
@@ -295,7 +291,7 @@ def _accepted_procedure(
     coordinate: AcceptedProjectionCoordinate,
 ) -> AcceptedProcedureV1:
     path = procedure_path(name)
-    content = instance.tree_at(coordinate.git_oid).get(path)
+    content = instance.blob_at(coordinate.git_oid, path)
     if content is None:
         raise ProcedureNotFound(f"{ProcedureNotFound.code}: {name}")
     procedure = parse_procedure(content, path=path)
@@ -320,31 +316,35 @@ def _accepting_generation(
     (artifact digest, observation OID).
     """
 
-    observation_seen = False
-    found: tuple[AcceptedCoordinate, datetime] | None = None
-    for generation in instance.accepted_history():
-        record = generation.record
-        if record is not None:
-            members = getattr(record, "members", ())
-            if any(
-                getattr(member, "path", None) == accepted.path
-                and getattr(member, "candidate_artifact_digest", None) == accepted.artifact_digest
-                for member in members
+    with instance.accepted_history_reader(
+        at=AcceptedCoordinate.from_internal(observation)
+    ) as history:
+        for location in reversed(history.member_history(accepted.path)):
+            if location.artifact_digest != accepted.artifact_digest:
+                continue
+            record = history.read_member_record(location, load_record=instance.blob_at)
+            # Legacy member input digests are not accepted candidate versions.
+            if (
+                getattr(record.members[location.member_ordinal], "candidate_artifact_digest", None)
+                != accepted.artifact_digest
             ):
-                found = (
-                    AcceptedCoordinate.from_internal(instance.coordinate_for_oid(generation.oid)),
-                    instance.accepted_evaluation_time(generation.oid),
-                )
-        if generation.oid == observation.git_oid:
-            observation_seen = True
-            break
-    if not observation_seen:
-        raise PlaybillFormatError("observation coordinate is outside accepted history")
-    if found is None:
-        raise PlaybillFormatError(
-            "accepted Procedure revision has no accepting generation before the observation"
-        )
-    return found
+                continue
+            generation = history.generation(location.sequence)
+            activated_at = parse_datetime(record.candidate.timestamp)
+            if activated_at is None:
+                raise PlaybillFormatError("accepted candidate timestamp is missing")
+            return (
+                AcceptedCoordinate(
+                    git_oid=generation.git_oid,
+                    semantic_root=generation.semantic_root,
+                    generation_root=generation.generation_root,
+                    compiler_digest=generation.compiler_digest,
+                ),
+                activated_at,
+            )
+    raise PlaybillFormatError(
+        "accepted Procedure revision has no accepting generation before the observation"
+    )
 
 
 def measurement_activation_basis(
@@ -353,19 +353,13 @@ def measurement_activation_basis(
     accepted: AcceptedProcedureV1,
     observation: AcceptedProjectionCoordinate,
 ) -> MeasurementActivationBasisV1:
-    """Derive every activation once per (instance, revision, observation OID)."""
-
-    key = (str(instance.root), accepted.artifact_digest, observation.git_oid)
-    cached = _activation_memo.get(key)
-    if cached is not None:
-        _activation_memo.move_to_end(key)
-        return cached
+    """Derive activations from the indexed, exact historical acceptance record."""
     coordinate, activated_at = _accepting_generation(
         instance,
         accepted=accepted,
         observation=observation,
     )
-    basis = MeasurementActivationBasisV1(
+    return MeasurementActivationBasisV1(
         coordinate=coordinate,
         activated_at=activated_at,
         activations=derive_resolution_activations(
@@ -374,10 +368,6 @@ def measurement_activation_basis(
             activated_at=activated_at,
         ),
     )
-    _activation_memo[key] = basis
-    while len(_activation_memo) > _ACTIVATION_MEMO_CAPACITY:
-        _activation_memo.popitem(last=False)
-    return basis
 
 
 def _window(

@@ -37,23 +37,23 @@ class ProposalNoteEvidence(Protocol):
 @dataclass
 class ProposalNoteIndex:
     evidence: ProposalNoteEvidence
-    admissions: dict[str, ProposalAdmissionRecord]
-    evaluations: dict[str, ProposalEvaluationRecord]
-    candidates: dict[str, CandidateReviewSummary]
-    review_oids: dict[str, str]
-    proposal_ids_by_oid: dict[str, set[str]]
+    admissions: Mapping[str, ProposalAdmissionRecord]
+    evaluations: Mapping[str, ProposalEvaluationRecord]
+    candidates: Mapping[str, CandidateReviewSummary]
+    review_oids: Mapping[str, str]
+    proposal_ids_by_oid: Mapping[str, set[str]]
 
-    proposal_ids_by_candidate: dict[str, set[str]] = field(default_factory=dict)
+    proposal_ids_by_candidate: Mapping[str, set[str]] = field(default_factory=dict)
     _oids_by_candidate: dict[str, set[str]] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        by_candidate = dict(self.proposal_ids_by_candidate)
         for proposal_id in self.admissions:
             digest = self.evaluations[proposal_id].candidate_digest
             if digest is not None:
-                self.proposal_ids_by_candidate.setdefault(digest, set()).add(proposal_id)
-        # The cold builder tolerates duplicate admission IDs under foreign
-        # filenames. Earlier aliases remain in its groups even when a later
-        # record replaces the admission, so invert the groups themselves.
+                by_candidate.setdefault(digest, set()).add(proposal_id)
+        self.proposal_ids_by_candidate = by_candidate
+        # Candidate lookup is derived from the exact commit groups.
         for oid, proposal_ids in self.proposal_ids_by_oid.items():
             for proposal_id in proposal_ids:
                 digest = self.evaluations[proposal_id].candidate_digest
@@ -65,6 +65,13 @@ class ProposalNoteIndex:
         cls, evidence: ProposalNoteEvidence, transport: ProposalTransportProtocol
     ) -> ProposalNoteIndex:
         all_admissions = evidence.list_admissions()
+        unique_admissions: dict[str, ProposalAdmissionRecord] = {}
+        for admission in all_admissions:
+            previous = unique_admissions.get(admission.proposal_id)
+            if previous is not None and previous != admission:
+                raise ProposalIntegrityError("proposal evidence contains conflicting admissions")
+            unique_admissions[admission.proposal_id] = admission
+        all_admissions = tuple(unique_admissions.values())
         admissions: dict[str, ProposalAdmissionRecord] = {}
         evaluations: dict[str, ProposalEvaluationRecord] = {}
         for record in evidence.list_evaluations():
@@ -77,7 +84,7 @@ class ProposalNoteIndex:
         for admission in all_admissions:
             proposal_id = admission.proposal_id
             evaluation = evaluations.get(proposal_id)
-            # Admission precedes evaluation/candidate persistence. An interrupted
+            # Old or damaged inventories can contain incomplete admissions. An interrupted
             # unrelated write is not a complete note record and must not block
             # every subsequent authoring operation. Settlement reads its own
             # target strictly through the evidence store.

@@ -15,6 +15,7 @@ from cruxible_client.contracts.errors import (
     ProposalSelectorAmbiguousError,
 )
 from cruxible_core.authoring.id_prefixes import AmbiguousIdPrefix, resolve_id_prefix
+from cruxible_core.indexes.proposals.proposal_index import timestamp
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
@@ -116,61 +117,80 @@ def service_list_playbill_proposals(
     """Reduce immutable proposal evidence against the current accepted coordinate."""
 
     coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    evidence = instance.proposal_evidence()
-    entries: list[PlaybillProposalListEntryV1] = []
-    withdrawn = evidence.withdrawn_proposal_ids()
-    records = tuple(
-        (admission, evidence.read_evaluation(admission.proposal_id))
-        for admission in evidence.list_admissions()
-    )
-    with instance.accepted_history_reader(at=coordinate) as history:
-        accepted_candidates = {
-            evaluation.candidate_digest
-            for _, evaluation in records
-            if evaluation.candidate_digest is not None
-            and history.candidate_accepted(evaluation.candidate_digest)
-        }
-    for admission, evaluation in records:
-        candidate_digest = evaluation.candidate_digest
-        if evaluation.verdict == "refused":
-            entry_status: ProposalInventoryStatus = "settled"
-            terminal_reason: ProposalTerminalReason | None = "refused"
-        elif candidate_digest in accepted_candidates:
-            entry_status = "settled"
-            terminal_reason = "accepted"
-        else:
-            assert candidate_digest is not None
-            candidate = evidence.read_candidate(candidate_digest)
-            if admission.proposal_id in withdrawn:
-                # A withdrawal outranks staleness: an actor who said this
-                # proposal will never be settled has answered the question
-                # `readmit` would otherwise keep open.
-                entry_status = "settled"
-                terminal_reason = "withdrawn"
-            elif candidate.candidate.parent_semantic_root == coordinate.semantic_root:
-                entry_status = "open"
-                terminal_reason = None
-            else:
-                entry_status = "settled"
-                terminal_reason = "stale"
-        entry = PlaybillProposalListEntryV1(
-            proposal_id=admission.proposal_id,
-            actor_id=admission.actor_id,
-            target_ref=admission.target_ref,
-            admitted_at=admission.admitted_at,
-            verdict=evaluation.verdict,
-            candidate_digest=candidate_digest,
-            status=entry_status,
-            terminal_reason=terminal_reason,
-        )
-        if status is None or status == entry.status:
-            entries.append(entry)
-    entries.sort(key=lambda item: (item.admitted_at.encode("utf-8"), item.proposal_id.encode()))
     return PlaybillProposalListV1(
         coordinate=coordinate,
         status_filter=status,
-        entries=tuple(entries),
+        entries=tuple(
+            entry
+            for entry in _proposal_entries(instance, coordinate)
+            if status is None or status == entry.status
+        ),
     )
+
+
+def _proposal_entries(
+    instance: PlaybillInstance,
+    coordinate: PlaybillAcceptedCoordinate,
+    proposal_id: str | None = None,
+) -> tuple[PlaybillProposalListEntryV1, ...]:
+    evidence = instance.proposal_evidence()
+    assert evidence.index is not None
+    if proposal_id is not None:
+        # A selected status is an evidence read, not an inventory-only answer.
+        evidence.read_admission(proposal_id)
+        evaluation = evidence.read_evaluation(proposal_id)
+        if evaluation.candidate_digest is not None:
+            evidence.read_candidate(evaluation.candidate_digest)
+        evidence.read_withdrawal(proposal_id)
+    with evidence.index.read(evidence) as connection:
+        if connection.execute("SELECT 1 FROM proposals LIMIT 1").fetchone() is None:
+            return ()
+    with instance.accepted_history_reader(at=coordinate) as history:
+        with evidence.index.read(evidence) as connection:
+            generation = connection.execute(
+                "SELECT git_oid,semantic_root,generation_root,compiler_digest "
+                "FROM accepted_generations WHERE sequence=?",
+                (history.sequence,),
+            ).fetchone()
+            if tuple(generation or ()) != (
+                coordinate.git_oid,
+                coordinate.semantic_root,
+                coordinate.generation_root,
+                coordinate.compiler_digest,
+            ):
+                raise ProposalIntegrityError("proposal inventory history binding differs")
+            rows = connection.execute(
+                "SELECT p.*, CASE WHEN evaluation_status='refused' THEN 'refused' "
+                "WHEN EXISTS (SELECT 1 FROM accepted_generations g "
+                "WHERE g.candidate_digest=p.candidate_digest AND g.sequence<=?) THEN 'accepted' "
+                "WHEN withdrawal_path IS NOT NULL THEN 'withdrawn' "
+                "WHEN candidate_parent_semantic_root=? THEN NULL ELSE 'stale' END AS reason "
+                "FROM proposals p "
+                + ("WHERE proposal_id=? " if proposal_id is not None else "")
+                + "ORDER BY admitted_at_us,proposal_id",
+                (history.sequence, coordinate.semantic_root)
+                + ((proposal_id,) if proposal_id is not None else ()),
+            ).fetchall()
+    entries = []
+    for row in rows:
+        if row["evaluation_status"] == "missing" or (
+            row["evaluation_status"] == "candidate"
+            and row["candidate_parent_semantic_root"] is None
+        ):
+            raise ProposalIntegrityError("proposal evidence is incomplete")
+        entries.append(
+            PlaybillProposalListEntryV1(
+                proposal_id=row["proposal_id"],
+                actor_id=row["actor_id"],
+                target_ref=row["target_ref"],
+                admitted_at=timestamp(row["admitted_at_us"]),
+                verdict=row["evaluation_status"],
+                candidate_digest=row["candidate_digest"],
+                status="open" if row["reason"] is None else "settled",
+                terminal_reason=row["reason"],
+            )
+        )
+    return tuple(entries)
 
 
 def service_resolve_playbill_proposal_selector(
@@ -180,58 +200,39 @@ def service_resolve_playbill_proposal_selector(
 ) -> PlaybillProposalSelectorResultV1:
     """Resolve a user selector once to immutable proposal admission evidence."""
 
-    admissions = tuple(instance.proposal_evidence().list_admissions())
-    proposal_ids = tuple(item.proposal_id for item in admissions)
+    evidence = instance.proposal_evidence()
+    assert evidence.index is not None
+    rows = evidence.index.rows(
+        evidence, "proposal_id>=? AND proposal_id<?", (selector, selector + "\uffff")
+    )
+    proposal_ids = tuple(row["proposal_id"] for row in rows)
     try:
-        resolved = resolve_id_prefix(
-            selector,
-            proposal_ids,
-            marker="sha256:",
-            label="proposal",
-        )
+        resolved = resolve_id_prefix(selector, proposal_ids, marker="sha256:", label="proposal")
     except AmbiguousIdPrefix as exc:
-        matches = tuple(
-            sorted(
-                {proposal_id for proposal_id in proposal_ids if proposal_id.startswith(selector)},
-                key=lambda item: item.encode("utf-8"),
-            )
-        )
-        raise ProposalSelectorAmbiguousError(selector, matches) from exc
+        raise ProposalSelectorAmbiguousError(selector, proposal_ids) from exc
     if resolved in proposal_ids:
+        evidence.read_admission(resolved)
         return PlaybillProposalSelectorResultV1(selector=selector, proposal_id=resolved)
-
-    matching_ref_admissions = tuple(item for item in admissions if item.target_ref == selector)
-    if matching_ref_admissions:
-        target_oid = instance.proposal_ref_target(selector)
-        current_candidates = tuple(
-            sorted(
-                {
-                    item.proposal_id
-                    for item in matching_ref_admissions
-                    if item.candidate_commit_oid == target_oid
-                },
-                key=lambda item: item.encode("utf-8"),
-            )
+    target_oid = instance.proposal_ref_target(selector) if selector.startswith("refs/") else None
+    if target_oid is not None:
+        current = evidence.index.rows(
+            evidence, "candidate_commit_oid=? AND target_ref=?", (target_oid, selector)
         )
-        if len(current_candidates) == 1:
-            return PlaybillProposalSelectorResultV1(
-                selector=selector,
-                proposal_id=current_candidates[0],
-            )
-        historical_candidates = tuple(
-            sorted(
-                {item.proposal_id for item in matching_ref_admissions},
-                key=lambda item: item.encode("utf-8"),
-            )
-        )
-        raise ProposalSelectorAmbiguousError(selector, historical_candidates)
+        if len(current) == 1:
+            resolved = current[0]["proposal_id"]
+            evidence.read_admission(resolved)
+            return PlaybillProposalSelectorResultV1(selector=selector, proposal_id=resolved)
+    # Only the historical ambiguity diagnostic needs every admission for a ref.
+    rows = evidence.index.rows(evidence, "target_ref=?", (selector,))
+    if rows:
+        raise ProposalSelectorAmbiguousError(selector, tuple(row["proposal_id"] for row in rows))
     raise ProposalNotFoundError(selector)
 
 
 def _proposal_result(instance: PlaybillInstance, proposal_id: str) -> ProposalResult:
     evidence = instance.proposal_evidence()
     admission = evidence.read_admission(proposal_id)
-    evaluation = evidence.read_evaluation(proposal_id)
+    evaluation = evidence.read_evaluation(admission.proposal_id)
     candidate = (
         None
         if evaluation.candidate_digest is None
@@ -258,7 +259,11 @@ def service_readmit_playbill_proposal(
     source_status = next(
         (
             entry
-            for entry in service_list_playbill_proposals(instance, status="settled").entries
+            for entry in _proposal_entries(
+                instance,
+                PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+                proposal_id,
+            )
             if entry.proposal_id == proposal_id
         ),
         None,
@@ -376,7 +381,11 @@ def service_withdraw_playbill_proposal(
     entry = next(
         (
             item
-            for item in service_list_playbill_proposals(instance).entries
+            for item in _proposal_entries(
+                instance,
+                PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+                admission.proposal_id,
+            )
             if item.proposal_id == admission.proposal_id
         ),
         None,

@@ -57,6 +57,7 @@ from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
 from cruxible_core.service.procedures.predictions import (
     PredictionRefused,
+    _accepted_claim_revision,
     _journal,
     load_prediction_activations,
     service_predict_playbill,
@@ -94,6 +95,36 @@ def _world(tmp_path: Path):  # type: ignore[no-untyped-def]
     seed_path = next(path for path in sorted(tree) if path.startswith("claims/"))
     seed = parse_claim(tree[seed_path], path=seed_path)
     return instance, owner, seed.backing.capture_digests[0]
+
+
+def test_prediction_claim_history_uses_indexed_occurrences(tmp_path: Path, monkeypatch) -> None:
+    instance, _owner, _capture = _world(tmp_path)
+    current = instance.accepted_coordinate()
+    path, raw = next(
+        (path, raw)
+        for path, raw in instance.tree_at(current.git_oid).items()
+        if path.startswith("claims/")
+    )
+    claim = parse_claim(raw, path=path)
+    expected = next(
+        generation
+        for generation in instance.accepted_history()
+        if instance.blob_at(generation.oid, path) == raw
+    )
+    with instance.accepted_history_reader():
+        pass
+
+    def unexpected_scan(*args, **kwargs):
+        pytest.fail("prediction Claim lookup must not scan accepted history or whole trees")
+
+    monkeypatch.setattr(instance, "accepted_history", unexpected_scan)
+    monkeypatch.setattr(instance, "tree_at", unexpected_scan)
+    result, coordinate, sequence = _accepted_claim_revision(
+        instance, claim_id=claim.identity.qualified
+    )
+    assert result == claim
+    assert coordinate.git_oid == expected.oid
+    assert sequence == expected.sequence
 
 
 def _payload(capture_digest: str, *, qualifier: str, value: object) -> ClaimAuthoringPayloadV3:

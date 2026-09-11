@@ -37,6 +37,10 @@ from cruxible_client.contracts.errors import (
     SettlementIntegrityError,
 )
 from cruxible_client.contracts.ledger_mirror import validate_mirror_url
+from cruxible_client.contracts.principals import (
+    PrincipalRegistrySnapshot,
+    principal_registry_from_tree,
+)
 from cruxible_client.contracts.temporal import format_datetime, utc_now
 from cruxible_client.contracts.types import (
     GenesisCoordinate,
@@ -87,8 +91,8 @@ from cruxible_core.indexes.projection import (
     AssemblerResult,
     projection_manifest_name,
 )
-from cruxible_core.indexes.proposals.proposal_note_cache import ProposalNoteCache
 from cruxible_core.indexes.proposals.proposal_note_projection import ProposalNoteIndex
+from cruxible_core.indexes.proposals.proposal_note_reader import IndexedProposalNotes
 from cruxible_core.indexes.serving import bind_current_projection
 from cruxible_core.indexes.sqlite import ProjectionHandle, bind_projection
 from cruxible_core.ledger.activation import ActivationPublisher, ActivationResult
@@ -246,7 +250,6 @@ class PlaybillInstance:
         self._state_lock = threading.RLock()
         self.derived = DerivedState()
         self.prepared_evaluations = PreparedEvaluationAdapter(self.derived)
-        self._proposal_note_cache = ProposalNoteCache()
         self._evaluation_state_cache = EvaluationStateCache(build_context=self.derived.build)
         for name, namespace, adapter, source in (
             ("accepted-artifacts", "accepted", self.derived, "verified-ledger-tree-v1"),
@@ -257,7 +260,6 @@ class PlaybillInstance:
                 self._evaluation_state_cache,
                 "exact-semantic-bytes-v1",
             ),
-            ("proposal-notes", "operational", self._proposal_note_cache, "fresh-note-bytes-v1"),
         ):
             self.derived.register(IndexDefinition(name, namespace, "1", source), adapter)
         self._accepted_history_index = AcceptedHistoryIndex(
@@ -1024,6 +1026,48 @@ class PlaybillInstance:
         self.require_writable()
         return self.body_store().store(content)
 
+    def accepted_principal_registry(
+        self, coordinate: AcceptedProjectionCoordinate
+    ) -> PrincipalRegistrySnapshot:
+        """Read the public-key registry at an exact verified accepted snapshot."""
+        if coordinate.git_oid == self._verified_genesis.oid:
+            # Bootstrap has no served SQLite publication yet. Its signed registry
+            # is already authenticated independently of all derived storage.
+            verified = self.resolve_accepted_coordinate(
+                git_oid=coordinate.git_oid,
+                semantic_root=coordinate.semantic_root,
+                generation_root=coordinate.generation_root,
+                compiler_digest=coordinate.compiler.rule_digest,
+            )
+            if verified != coordinate:
+                raise PlaybillFormatError("principal registry coordinate differs from genesis")
+            return PrincipalRegistrySnapshot(
+                semantic_root=coordinate.semantic_root, principals=self._verified_genesis.principals
+            )
+        with self.bind_accepted_projection(coordinate) as projection:
+            if projection.typed is not None:
+                return projection.typed.principal_registry()
+            # Frozen v1 publications have no typed principal relation.
+            return principal_registry_from_tree(
+                self.immutable_tree_at(coordinate.git_oid), semantic_root=coordinate.semantic_root
+            )
+
+    def require_accepted_principal(
+        self, coordinate: AcceptedProjectionCoordinate, principal_id: str
+    ) -> None:
+        """Check an admission actor with a single indexed principal lookup."""
+        if coordinate.git_oid == self._verified_genesis.oid:
+            self.accepted_principal_registry(coordinate).require_active(principal_id)
+            return
+        with self.bind_accepted_projection(coordinate) as projection:
+            if projection.typed is not None:
+                projection.typed.principal(principal_id, active=True)
+            else:
+                principal_registry_from_tree(
+                    self.immutable_tree_at(coordinate.git_oid),
+                    semantic_root=coordinate.semantic_root,
+                ).require_active(principal_id)
+
     def proposal_service(self) -> ProposalService:
         """Bind PB-C proposal evaluation to authenticated main and inert storage."""
 
@@ -1033,11 +1077,13 @@ class PlaybillInstance:
             self._ledger,
             accepted=self.accepted_coordinate(),
             bodies=bodies,
-            evidence=ProposalEvidenceStore(paths["exhaust"]),
+            evidence=self.proposal_evidence(),
             review_projection_lock=self.review_projection_lock,
             note_index_provider=self.proposal_note_index,
             accepted_tree_provider=self.immutable_tree_at,
             prepared_evaluations=self.prepared_evaluations,
+            principal_registry_provider=self.accepted_principal_registry,
+            active_principal_provider=self.require_accepted_principal,
             current_coordinate=self.accepted_coordinate,
             promotion_verifier=self._promotion_verifier,
             producer_receipt_resolver=local_producer_receipt_resolver(
@@ -1224,13 +1270,15 @@ class PlaybillInstance:
         self, *, evidence: ProposalEvidenceStore | None = None
     ) -> ProposalNoteIndex:
         """Return fresh evidence-derived review relationships under the review lock."""
-        return self._proposal_note_cache.load(evidence or self.proposal_evidence(), self._ledger)
+        return IndexedProposalNotes(evidence or self.proposal_evidence())
 
     def proposal_evidence(self) -> ProposalEvidenceStore:
         """Return the immutable non-authoritative proposal/approval evidence store."""
 
         paths = self._validated_paths(self.root, self.descriptor.storage)
-        return ProposalEvidenceStore(paths["exhaust"])
+        return ProposalEvidenceStore(
+            paths["exhaust"], index=self._accepted_history_index.proposals, transport=self._ledger
+        )
 
     def proposal_ref_target(self, target_ref: str) -> str | None:
         """Read one proposal transport ref without exposing ledger mutation."""
@@ -1664,6 +1712,7 @@ class PlaybillInstance:
             query_facts_provider=lambda coordinate: self._accepted_query_facts(self, coordinate),
             tree_state_provider=self._evaluation_state_cache.derive,
             accepted_tree_provider=self.immutable_tree_at,
+            principal_registry_provider=self.accepted_principal_registry,
         )
 
     def settle_and_activate(
