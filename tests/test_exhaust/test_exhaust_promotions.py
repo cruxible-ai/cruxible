@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import sqlite3
-from pathlib import Path
-
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedures.artifacts import (
@@ -29,8 +25,8 @@ from cruxible_core.exhaust import (
     render_exhaust_promotion,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
-from cruxible_core.indexes.serving import bind_current_projection
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.floor.floor import _procedure_track_records
 from cruxible_core.service.procedures.procedures import (
     ExhaustReducerRegistry,
     LocalExhaustPromotionVerifier,
@@ -346,20 +342,14 @@ def test_promotion_passes_proposal_replay_and_projects_canonical_output(
         proposal_name="run-a-promotion",
     )
 
-    publication = Path(instance.inspect().storage_directories["projections"])
-    with bind_current_projection(publication, expected=instance.accepted_coordinate()) as handle:
-        connection = sqlite3.connect(handle.index_path)
-        try:
-            row = connection.execute(
-                "SELECT value_json FROM semantic_facts "
-                "WHERE schema_id = 'playbill.procedure.track_record' "
-                "AND subject_identity = ?",
-                (accepted_procedure.procedure.identity.qualified,),
-            ).fetchone()
-        finally:
-            connection.close()
-    assert row is not None
-    projected = json.loads(row[0])
+    promotion_coordinate = instance.accepted_coordinate()
+    with instance.bind_accepted_projection(promotion_coordinate) as handle:
+        facts = handle.typed.facts(
+            "playbill.procedure.track_record",
+            identity=accepted_procedure.procedure.identity.qualified,
+        )
+    assert len(facts) == 1
+    projected = facts[0].value
     assert projected["output"] == output
     assert projected["output_digest"] == {"$digest": output_digest}
 
@@ -407,11 +397,36 @@ def test_promotion_passes_proposal_replay_and_projects_canonical_output(
         proposal_name="unrelated-document",
     )
     assert updates == [frozenset({"documents/unrelated.json"})]
-    with bind_current_projection(publication, expected=instance.accepted_coordinate()) as handle:
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as handle:
         facts = handle.semantic_facts("playbill.procedure.track_record")
         assert len(facts) == 1
         assert facts[0].value == projected
         expected_rows = _rows(handle.index_path)
+    selected_paths = []
+    original_blob_at = instance._ledger.blob_at
+
+    def selected_blob(oid, path):
+        selected_paths.append(path)
+        return original_blob_at(oid, path)
+
+    def no_inventory(*args, **kwargs):
+        raise AssertionError("floor track records scanned unrelated accepted state")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(instance, "tree_at", no_inventory)
+        patch.setattr(instance, "immutable_tree_at", no_inventory)
+        patch.setattr(instance, "accepted_history", no_inventory)
+        patch.setattr(instance._ledger, "blob_at", selected_blob)
+        records = _procedure_track_records(instance, coordinate=instance.accepted_coordinate())
+        historical = _procedure_track_records(instance, coordinate=promotion_coordinate)
+    assert records == historical
+    assert records[accepted_procedure.procedure.identity.qualified][0].value == projected
+    assert selected_paths
+    assert all(
+        path == exhaust_promotion_path(promotion.identity.name) or path.startswith("changesets/")
+        for path in selected_paths
+    )
+    assert "documents/unrelated.json" not in selected_paths
     cold_directory = tmp_path / "cold-rebuild"
     cold_directory.mkdir()
     assembler = ProjectionAssembler(

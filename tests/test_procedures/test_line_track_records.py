@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import json
-import sqlite3
 from datetime import datetime, timezone
-from pathlib import Path
 
 import pytest
 
@@ -63,7 +60,6 @@ from cruxible_core.exhaust.line_track_records import (
     line_track_record_facts,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
-from cruxible_core.indexes.serving import bind_current_projection
 from cruxible_core.procedures.egress import EFFECTIVE_RUNG_TERMS
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.floor.floor import service_export_playbill_floor
@@ -443,14 +439,9 @@ def test_an_accepted_promotion_projects_its_line_track_record_through_the_floor(
 
     floor = service_export_playbill_floor(instance)
     assert "procedures/orders-triage.card.json" in floor
-    publication = Path(instance.inspect().storage_directories["projections"])
-    with bind_current_projection(publication, expected=instance.accepted_coordinate()) as handle:
-        with sqlite3.connect(handle.index_path) as connection:
-            row = connection.execute(
-                "SELECT value_json FROM semantic_facts "
-                "WHERE schema_id = 'playbill.line.track_record'",
-            ).fetchone()
-    assert row is not None
-    record = LineTrackRecordV1.model_validate(json.loads(row[0])["track_record"])
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as handle:
+        facts = handle.typed.facts("playbill.line.track_record")
+    assert len(facts) == 1
+    record = LineTrackRecordV1.model_validate(facts[0].value["track_record"])
     assert record.line_id == "orders-triage"
     assert record.tally.delivered == 1
