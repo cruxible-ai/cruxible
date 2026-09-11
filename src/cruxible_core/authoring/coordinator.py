@@ -720,213 +720,205 @@ class AuthoringIntentCoordinator:
         *,
         actor: AuthenticatedActor,
     ) -> AuthoringSubmitResultV1:
-        with self.instance.prepared_evaluations.scope() as prepared:
-            return self._submit(intent_id, actor=actor, prepared=prepared)
-
-    def _submit(
-        self,
-        intent_id: str,
-        *,
-        actor: AuthenticatedActor,
-        prepared: PreparedEvaluationScope,
-    ) -> AuthoringSubmitResultV1:
         self.instance.require_writable()
-        current = self._refresh_protocol(
-            self.store.get(intent_id, actor_id=actor.actor_id),
-            actor=actor,
-        )
-        reduced = current.candidate_status
-        if reduced.state == "accepted":
-            idempotent_existing = (
-                reduced.proposal_id is None
-                and isinstance(current.payload, ClaimAuthoringPayloadV1)
-                and isinstance(current.payload.source, ExistingCaptureCitationSourceV1)
+        with self.instance.prepared_evaluations.scope() as prepared:
+            current = self._refresh_protocol(
+                self.store.get(intent_id, actor_id=actor.actor_id),
+                actor=actor,
             )
-            revision: int | None = None
-            if idempotent_existing:
-                coordinate = self.instance.accepted_coordinate()
-                with self.instance.bind_accepted_projection(coordinate) as projection:
-                    projected = projection.claim(f"Claim:{current.semantic_identity}")
-                revision = None if projected is None else projected.envelope.revision
-            return AuthoringSubmitResultV1(
-                intent=current.model_copy(update={"candidate_status": reduced}),
-                status=reduced,
-                workspace_advertisement=self.instance.advertise_workspace(),
-                identity_stable=idempotent_existing,
-                claim_revision=revision,
-            )
-        if current.candidate_status.proposal_id is not None:
-            candidate = self.instance.proposal_evidence().read_candidate(
-                current.candidate_status.candidate_digest or ""
-            )
-            if (
-                candidate.candidate.parent_semantic_root
-                == self.instance.accepted_coordinate().semantic_root
-            ):
+            reduced = current.candidate_status
+            if reduced.state == "accepted":
+                idempotent_existing = (
+                    reduced.proposal_id is None
+                    and isinstance(current.payload, ClaimAuthoringPayloadV1)
+                    and isinstance(current.payload.source, ExistingCaptureCitationSourceV1)
+                )
+                revision: int | None = None
+                if idempotent_existing:
+                    coordinate = self.instance.accepted_coordinate()
+                    with self.instance.bind_accepted_projection(coordinate) as projection:
+                        projected = projection.claim(f"Claim:{current.semantic_identity}")
+                    revision = None if projected is None else projected.envelope.revision
                 return AuthoringSubmitResultV1(
                     intent=current.model_copy(update={"candidate_status": reduced}),
                     status=reduced,
                     workspace_advertisement=self.instance.advertise_workspace(),
+                    identity_stable=idempotent_existing,
+                    claim_revision=revision,
                 )
-
-        computed, preflighted = self._compute_and_bind_preflight(
-            intent_id, actor=actor, prepared=prepared
-        )
-        if computed.result.verdict == "refused":
-            status = computed.status
             if current.candidate_status.proposal_id is not None:
-                status = status.model_copy(update={"state": "conflicted_after_rebase"})
-            return AuthoringSubmitResultV1(
-                intent=preflighted.model_copy(update={"candidate_status": status}),
-                status=status,
-                workspace_advertisement=self.instance.advertise_workspace(),
+                candidate = self.instance.proposal_evidence().read_candidate(
+                    current.candidate_status.candidate_digest or ""
+                )
+                if (
+                    candidate.candidate.parent_semantic_root
+                    == self.instance.accepted_coordinate().semantic_root
+                ):
+                    return AuthoringSubmitResultV1(
+                        intent=current.model_copy(update={"candidate_status": reduced}),
+                        status=reduced,
+                        workspace_advertisement=self.instance.advertise_workspace(),
+                    )
+
+            computed, preflighted = self._compute_and_bind_preflight(
+                intent_id, actor=actor, prepared=prepared
             )
-        if computed.lowered is not None and computed.lowered.idempotent:
-            accepted = AcceptedCoordinate.from_internal(self.instance.accepted_coordinate())
-            status = CandidateStatusV1(
-                state="accepted",
-                current_accepted_coordinate=accepted,
-                accepted_generation=accepted,
+            if computed.result.verdict == "refused":
+                status = computed.status
+                if current.candidate_status.proposal_id is not None:
+                    status = status.model_copy(update={"state": "conflicted_after_rebase"})
+                return AuthoringSubmitResultV1(
+                    intent=preflighted.model_copy(update={"candidate_status": status}),
+                    status=status,
+                    workspace_advertisement=self.instance.advertise_workspace(),
+                )
+            if computed.lowered is not None and computed.lowered.idempotent:
+                accepted = AcceptedCoordinate.from_internal(self.instance.accepted_coordinate())
+                status = CandidateStatusV1(
+                    state="accepted",
+                    current_accepted_coordinate=accepted,
+                    accepted_generation=accepted,
+                )
+                operation_key = typed_digest(
+                    Sha256Value,
+                    "playbill-authoring-submit-existing-association-v1",
+                    {
+                        "certificate_digest": computed.result.certificate.certificate_digest,
+                        "intent_id": intent_id,
+                    },
+                ).tagged
+
+                def accept_existing(intent: AuthoringIntentV1) -> AuthoringIntentV1:
+                    return intent.model_copy(update={"candidate_status": status})
+
+                accepted_intent = self.store.transition(
+                    intent_id,
+                    actor_id=actor.actor_id,
+                    operation_key=operation_key,
+                    transform=accept_existing,
+                )
+                with self.instance.bind_accepted_projection(
+                    self.instance.accepted_coordinate()
+                ) as projection:
+                    projected = projection.claim(f"Claim:{preflighted.semantic_identity}")
+                claim_revision = None if projected is None else projected.envelope.revision
+                return AuthoringSubmitResultV1(
+                    intent=accepted_intent,
+                    status=accepted_intent.candidate_status,
+                    workspace_advertisement=self.instance.advertise_workspace(),
+                    identity_stable=True,
+                    claim_revision=claim_revision,
+                )
+            if computed.evaluation is None or computed.evaluation.candidate is None:
+                raise RuntimeError("passing preflight omitted its evaluated candidate")
+
+            certificate = computed.result.certificate
+            handoff = prepared.handoff(authoring_operation(self.instance, preflighted))
+            result = self.instance.proposal_service().submit(
+                actor=actor,
+                request=ProposalAdmissionRequest(
+                    target_ref=certificate.proposal_ref,
+                    proposed_base_oid=certificate.accepted_coordinate.git_oid,
+                    # The one door that carries prose today. Every other submit call
+                    # site authors on the author's behalf -- a migration, a seed, a
+                    # retirement -- and has no sentence of theirs to pass on, so it
+                    # keeps the derived subject.
+                    rationale=(
+                        preflighted.payload.rationale
+                        if isinstance(preflighted.payload, ChangeSetAuthoringPayloadV1)
+                        else None
+                    ),
+                ),
+                candidate_tree=handoff.submission_tree
+                if handoff is not None and handoff.submission_tree is not None
+                else {
+                    path: content
+                    for path, content in computed.evaluated_tree.items()
+                    if not is_candidate_card_path(path)
+                },
+                timestamp=current.canonical_timestamp,
+                prepared=handoff,
             )
+            if result.candidate is None:
+                latest = AcceptedCoordinate.from_internal(self.instance.accepted_coordinate())
+                if latest == certificate.accepted_coordinate:
+                    raise RuntimeError("submit broke its unchanged-coordinate preflight binding")
+                status = CandidateStatusV1(
+                    state="conflicted_after_rebase",
+                    current_accepted_coordinate=latest,
+                    path_to_acceptance=(
+                        AcceptanceConditionV1(
+                            condition="repreflight_after_concurrent_acceptance",
+                            owner="daemon",
+                            action="Retry submit; the coordinator will rebase and preflight.",
+                            satisfied=False,
+                        ),
+                    ),
+                )
+                return AuthoringSubmitResultV1(
+                    intent=preflighted.model_copy(update={"candidate_status": status}),
+                    status=status,
+                    workspace_advertisement=result.workspace_advertisement,
+                )
+            if result.candidate.candidate_digest != computed.evaluation.candidate.candidate_digest:
+                raise RuntimeError("submit candidate differs from its binding preflight")
+
             operation_key = typed_digest(
                 Sha256Value,
-                "playbill-authoring-submit-existing-association-v1",
+                "playbill-authoring-submit-v1",
                 {
-                    "certificate_digest": computed.result.certificate.certificate_digest,
-                    "intent_id": intent_id,
+                    "certificate_digest": certificate.certificate_digest,
+                    "proposal_id": result.admission.proposal_id,
                 },
             ).tagged
+            submitted_status = self._candidate_status(
+                proposal_id=result.admission.proposal_id,
+                candidate_digest=result.candidate.candidate_digest,
+            )
+            # Nothing mints a publication expectation any more: a Claim projected as
+            # its own page text was the mint-era overlap the two-block-kinds law
+            # refuses, and the authoring door refuses `insertion_target` outright.
+            # An intent that already carries expectations keeps them, so an instance
+            # that published before this ruling still folds, reads and depublishes
+            # its registrations.
+            insertion_expectations = preflighted.insertion_expectations
+            singular = (
+                insertion_expectations[0]
+                if insertion_expectations
+                and isinstance(preflighted.payload, ClaimAuthoringPayloadV1)
+                else None
+            )
 
-            def accept_existing(intent: AuthoringIntentV1) -> AuthoringIntentV1:
-                return intent.model_copy(update={"candidate_status": status})
+            def bind_submit(intent: AuthoringIntentV1) -> AuthoringIntentV1:
+                if (
+                    intent.last_preflight is None
+                    or intent.last_preflight.certificate.certificate_digest
+                    != certificate.certificate_digest
+                ):
+                    raise ValueError("AuthoringIntent preflight changed during submit")
+                return intent.model_copy(
+                    update={
+                        "candidate_status": submitted_status,
+                        "insertion_expectation": singular,
+                        "insertion_expectations": insertion_expectations,
+                    }
+                )
 
-            accepted_intent = self.store.transition(
+            submitted = self.store.transition(
                 intent_id,
                 actor_id=actor.actor_id,
                 operation_key=operation_key,
-                transform=accept_existing,
+                transform=bind_submit,
             )
-            with self.instance.bind_accepted_projection(
-                self.instance.accepted_coordinate()
-            ) as projection:
-                projected = projection.claim(f"Claim:{preflighted.semantic_identity}")
-            claim_revision = None if projected is None else projected.envelope.revision
+            identity_stable, claim_revision = self._revision_marker(computed, preflighted)
             return AuthoringSubmitResultV1(
-                intent=accepted_intent,
-                status=accepted_intent.candidate_status,
-                workspace_advertisement=self.instance.advertise_workspace(),
-                identity_stable=True,
-                claim_revision=claim_revision,
-            )
-        if computed.evaluation is None or computed.evaluation.candidate is None:
-            raise RuntimeError("passing preflight omitted its evaluated candidate")
-
-        certificate = computed.result.certificate
-        handoff = prepared.handoff(authoring_operation(self.instance, preflighted))
-        result = self.instance.proposal_service().submit(
-            actor=actor,
-            request=ProposalAdmissionRequest(
-                target_ref=certificate.proposal_ref,
-                proposed_base_oid=certificate.accepted_coordinate.git_oid,
-                # The one door that carries prose today. Every other submit call
-                # site authors on the author's behalf -- a migration, a seed, a
-                # retirement -- and has no sentence of theirs to pass on, so it
-                # keeps the derived subject.
-                rationale=(
-                    preflighted.payload.rationale
-                    if isinstance(preflighted.payload, ChangeSetAuthoringPayloadV1)
-                    else None
-                ),
-            ),
-            candidate_tree=handoff.submission_tree
-            if handoff is not None and handoff.submission_tree is not None
-            else {
-                path: content
-                for path, content in computed.evaluated_tree.items()
-                if not is_candidate_card_path(path)
-            },
-            timestamp=current.canonical_timestamp,
-            prepared=handoff,
-        )
-        if result.candidate is None:
-            latest = AcceptedCoordinate.from_internal(self.instance.accepted_coordinate())
-            if latest == certificate.accepted_coordinate:
-                raise RuntimeError("submit broke its unchanged-coordinate preflight binding")
-            status = CandidateStatusV1(
-                state="conflicted_after_rebase",
-                current_accepted_coordinate=latest,
-                path_to_acceptance=(
-                    AcceptanceConditionV1(
-                        condition="repreflight_after_concurrent_acceptance",
-                        owner="daemon",
-                        action="Retry submit; the coordinator will rebase and preflight.",
-                        satisfied=False,
-                    ),
-                ),
-            )
-            return AuthoringSubmitResultV1(
-                intent=preflighted.model_copy(update={"candidate_status": status}),
-                status=status,
+                intent=submitted,
+                status=submitted.candidate_status,
                 workspace_advertisement=result.workspace_advertisement,
+                identity_stable=identity_stable,
+                claim_revision=claim_revision,
+                members=self._submit_members(computed, preflighted),
             )
-        if result.candidate.candidate_digest != computed.evaluation.candidate.candidate_digest:
-            raise RuntimeError("submit candidate differs from its binding preflight")
-
-        operation_key = typed_digest(
-            Sha256Value,
-            "playbill-authoring-submit-v1",
-            {
-                "certificate_digest": certificate.certificate_digest,
-                "proposal_id": result.admission.proposal_id,
-            },
-        ).tagged
-        submitted_status = self._candidate_status(
-            proposal_id=result.admission.proposal_id,
-            candidate_digest=result.candidate.candidate_digest,
-        )
-        # Nothing mints a publication expectation any more: a Claim projected as
-        # its own page text was the mint-era overlap the two-block-kinds law
-        # refuses, and the authoring door refuses `insertion_target` outright.
-        # An intent that already carries expectations keeps them, so an instance
-        # that published before this ruling still folds, reads and depublishes
-        # its registrations.
-        insertion_expectations = preflighted.insertion_expectations
-        singular = (
-            insertion_expectations[0]
-            if insertion_expectations and isinstance(preflighted.payload, ClaimAuthoringPayloadV1)
-            else None
-        )
-
-        def bind_submit(intent: AuthoringIntentV1) -> AuthoringIntentV1:
-            if (
-                intent.last_preflight is None
-                or intent.last_preflight.certificate.certificate_digest
-                != certificate.certificate_digest
-            ):
-                raise ValueError("AuthoringIntent preflight changed during submit")
-            return intent.model_copy(
-                update={
-                    "candidate_status": submitted_status,
-                    "insertion_expectation": singular,
-                    "insertion_expectations": insertion_expectations,
-                }
-            )
-
-        submitted = self.store.transition(
-            intent_id,
-            actor_id=actor.actor_id,
-            operation_key=operation_key,
-            transform=bind_submit,
-        )
-        identity_stable, claim_revision = self._revision_marker(computed, preflighted)
-        return AuthoringSubmitResultV1(
-            intent=submitted,
-            status=submitted.candidate_status,
-            workspace_advertisement=result.workspace_advertisement,
-            identity_stable=identity_stable,
-            claim_revision=claim_revision,
-            members=self._submit_members(computed, preflighted),
-        )
 
     def status(self, intent_id: str, *, actor: AuthenticatedActor) -> CandidateStatusV1:
         intent = self._refresh_protocol(
