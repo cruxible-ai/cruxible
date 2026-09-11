@@ -199,8 +199,8 @@ def _accepted_claim_artifact(claim: ClaimArtifactAny) -> AcceptedClaim:
 class ClaimVerdictReadContext:
     """One request's immutable accepted inputs; never retains current evidence.
 
-    Shares the instance-owned immutable root, parsed Claim inputs and provider
-    catalog across a batch. CAS availability, attestations and time-dependent
+    Shares selected accepted bytes, parsed Claim inputs and provider lookups
+    across a batch. CAS availability, attestations and time-dependent
     verdicts are still evaluated by the ordinary service for each Claim.
     """
 
@@ -208,20 +208,36 @@ class ClaimVerdictReadContext:
     coordinate: AcceptedProjectionCoordinate
     _claims: dict[str, ClaimArtifactAny] = dataclass_field(default_factory=dict, init=False)
     _providers: Mapping[str, ProviderV1] | None = dataclass_field(default=None, init=False)
+    _source_bytes: dict[str, bytes] = dataclass_field(default_factory=dict, init=False)
     _tree: Mapping[str, bytes] = dataclass_field(init=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "_tree", self.instance.immutable_tree_at(self.coordinate.git_oid))
+        from cruxible_core.indexes.evaluated_state import SelectedRows
+
+        object.__setattr__(
+            self,
+            "_tree",
+            SelectedRows(self._source, lambda: self.instance.paths_at(self.coordinate.git_oid)),
+        )
+
+    def _source(self, path: str) -> bytes:
+        if path not in self._source_bytes:
+            content = self.instance.blob_at(self.coordinate.git_oid, path)
+            if content is None:
+                raise KeyError(path)
+            self._source_bytes[path] = content
+        return self._source_bytes[path]
 
     @property
     def tree(self) -> Mapping[str, bytes]:
         return self._tree
 
     def claims(self) -> tuple[ClaimArtifactAny, ...]:
-        for path in self._tree:
-            if path.startswith("claims/") and path.endswith(".json"):
-                identity = "Claim:" + path.rsplit("/", 1)[-1].removesuffix(".json")
-                self.claim(identity)
+        with self.instance.bind_accepted_projection(self.coordinate) as projection:
+            assert projection.typed is not None
+            identities = tuple(row.identity for row in projection.typed.envelopes(kind="claim"))
+        for identity in identities:
+            self.claim(identity)
         return tuple(self._claims.values())
 
     def claim(self, identity: str) -> ClaimArtifactAny:
@@ -593,12 +609,21 @@ def _current_replay_available(
         return store.verify(envelope.source.content_digest)
     if isinstance(envelope.source, LedgerSourceReferenceV1):
         try:
-            material = instance.tree_at(envelope.source.coordinate.git_oid)[
-                envelope.source.address.artifact_path
-            ]
+            material = (
+                instance.blob_at(
+                    envelope.source.coordinate.git_oid, envelope.source.address.artifact_path
+                )
+                if isinstance(instance, PlaybillInstance)
+                else instance.tree_at(envelope.source.coordinate.git_oid).get(
+                    envelope.source.address.artifact_path
+                )
+            )
         except (KeyError, ValueError):
             return False
-        return "sha256:" + hashlib.sha256(material).hexdigest() == envelope.commitment.digest
+        return (
+            material is not None
+            and "sha256:" + hashlib.sha256(material).hexdigest() == envelope.commitment.digest
+        )
     if envelope.commitment.materialization == "cas" and store.verify(envelope.commitment.digest):
         return True
     reader = readers.get(envelope.source.source_identity)
@@ -862,12 +887,9 @@ def service_evaluate_playbill_claim_verdict(
         read_context.instance is not instance or read_context.coordinate != coordinate
     ):
         raise ProposalIntegrityError("Claim read context differs from requested accepted state")
-    tree = instance.tree_at(coordinate.git_oid) if read_context is None else read_context.tree
-    accepted = (
-        _accepted_claim(tree, claim_identity)
-        if read_context is None
-        else _accepted_claim_artifact(read_context.claim(claim_identity))
-    )
+    read_context = read_context or ClaimVerdictReadContext(instance, coordinate)
+    tree = read_context.tree
+    accepted = _accepted_claim_artifact(read_context.claim(claim_identity))
     history = _claim_read_history_index(instance, coordinate=coordinate)
     evidence = history.law_evidence.get(accepted.path)
     if evidence is None:
@@ -922,11 +944,7 @@ def service_evaluate_playbill_claim_verdict(
         evaluation_time=evaluation_time,
         captures=captures,
         attestations=attestations,
-        providers=(
-            accepted_claim_providers(instance, coordinate=coordinate)
-            if read_context is None
-            else read_context.providers()
-        ),
+        providers=read_context.providers(),
         claim_effective_from=accepted.claim.statement.effective_from,
         claim_effective_until=accepted.claim.statement.effective_until,
         referent_current=referent_current,
@@ -960,8 +978,7 @@ def service_get_playbill_standing_mandate(
     coordinate = _resolve_coordinate(instance, at)
     name = identity.removeprefix("StandingMandate:")
     path = standing_mandate_path(name)
-    tree = instance.tree_at(coordinate.git_oid)
-    content = tree.get(path)
+    content = instance.blob_at(coordinate.git_oid, path)
     if content is None:
         raise ProposalIntegrityError(f"StandingMandate is absent: {identity}")
     mandate = parse_standing_mandate(content, path=path)

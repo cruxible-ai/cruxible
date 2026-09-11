@@ -9,14 +9,29 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client.contracts.acquisition_policies import (
+    acquisition_policy_digest,
+    acquisition_policy_path,
+    render_acquisition_policy,
+)
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
-from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
+from cruxible_client.contracts.captures import (
+    capture_contract_digest,
+    capture_contract_path,
+    render_capture_contract,
+)
+from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_digest,
     procedure_mandate_path,
     render_procedure_mandate,
 )
 from cruxible_client.contracts.procedures.artifacts import render_procedure
+from cruxible_client.contracts.procedures.line_specs import (
+    line_identity_digest,
+    line_spec_path,
+    render_line_spec,
+)
 from cruxible_client.contracts.provider_interfaces import render_provider_interface
 from cruxible_client.contracts.providers import provider_digest, provider_path, render_provider
 from cruxible_core.compiler.assembler import ProjectionAssembler
@@ -24,13 +39,22 @@ from cruxible_core.indexes.sqlite import bind_projection
 from cruxible_core.indexes.typed_state import TypedStateReader
 from cruxible_core.service.evidence.evidence import accepted_claim_providers
 from cruxible_core.service.procedures.procedure_runs import (
+    LineRunNotAccepted,
+    SourceAcquisitionPolicyRequired,
+    _accepted_acquisition_policies,
+    _accepted_capture_contracts,
+    _accepted_line_by_identity_digest,
     _accepted_line_mandates,
+    _assert_line_closure_complete,
+    _direct_acquisition_policy,
     _line_catalogs,
 )
 from tests.core_support._p2b1_support import accepted_interface, accepted_provider
 from tests.core_support._pc_c_support import capture_contract, provider
 from tests.core_support._projection_support import MemoryLedger, accepted_coordinate
 from tests.core_support._support import initialize_local
+from tests.test_integration.test_acquisition_policies import _policy, _rule
+from tests.test_procedures.test_line_specs import _line
 from tests.test_procedures.test_procedure_run_surface import (
     READ_TIME,
     _line_mandate,
@@ -193,3 +217,116 @@ def test_mandates_select_exact_procedure_lifecycle_and_half_open_time(
     )
     assert actual == ((procedure_mandate_digest(exact).tagged, exact),)
     assert reads == [procedure_mandate_path(exact.identity.name)]
+
+
+@pytest.mark.parametrize("unrelated", (2, 17))
+def test_line_identity_and_closure_select_only_bound_sources(tmp_path, monkeypatch, unrelated):
+    procedure = _slotless_procedure("selected-procedure")
+    template, _, _ = _line()
+    pin = ArtifactPin(
+        role="procedure",
+        target=procedure.procedure.identity,
+        artifact_digest=procedure.artifact_digest,
+    )
+    selected = template.model_copy(update={"procedure": pin, "pins": (pin,), "slot_bindings": ()})
+    others = [
+        selected.model_copy(update={"identity": ArtifactIdentity(kind="Line", name=f"other-{i}")})
+        for i in range(unrelated)
+    ]
+    tree = {
+        procedure.path: render_procedure(procedure.procedure),
+        **{
+            line_spec_path(item.identity.name): render_line_spec(item)
+            for item in [selected, *others]
+        },
+    }
+    instance, coordinate, reads = _published_sources(tmp_path, tree, monkeypatch)
+    accepted = _accepted_line_by_identity_digest(
+        instance, coordinate=coordinate, identity_digest=line_identity_digest(selected.identity)
+    )
+    assert accepted.line == selected
+    assert reads == [line_spec_path(selected.identity.name)]
+    reads.clear()
+    _assert_line_closure_complete(instance, accepted, coordinate)
+    assert reads == [procedure.path]
+    reads.clear()
+    with pytest.raises(LineRunNotAccepted):
+        _accepted_line_by_identity_digest(
+            instance, coordinate=coordinate, identity_digest="sha256:" + "ab" * 32
+        )
+    assert reads == []
+    wrong_pin = pin.model_copy(update={"artifact_digest": "sha256:" + "ab" * 32})
+    wrong = accepted.model_copy(update={"line": selected.model_copy(update={"pins": (wrong_pin,)})})
+    with pytest.raises(PlaybillExecutionError, match="does not reproduce"):
+        _assert_line_closure_complete(instance, wrong, coordinate)
+
+
+@pytest.mark.parametrize("unrelated", (2, 17))
+def test_source_catalogs_select_exact_contract_and_policy_pins(tmp_path, monkeypatch, unrelated):
+    contract = capture_contract()
+    policy = _policy(_rule("orders"))
+    contracts = [contract, *(capture_contract(name=f"other-{i}") for i in range(unrelated))]
+    policies = [
+        policy,
+        *(
+            policy.model_copy(
+                update={
+                    "identity": ArtifactIdentity(kind="SourceAcquisitionPolicy", name=f"other-{i}")
+                }
+            )
+            for i in range(unrelated)
+        ),
+    ]
+    tree = {
+        **{
+            capture_contract_path(item.identity.name): render_capture_contract(item)
+            for item in contracts
+        },
+        **{
+            acquisition_policy_path(item.identity.name): render_acquisition_policy(item)
+            for item in policies
+        },
+    }
+    instance, coordinate, reads = _published_sources(tmp_path, tree, monkeypatch)
+    capture_pin = ArtifactPin(
+        role="capture-contract",
+        target=contract.identity,
+        artifact_digest=capture_contract_digest(contract).tagged,
+    )
+    policy_pin = ArtifactPin(
+        role="acquisition-policy",
+        target=policy.identity,
+        artifact_digest=acquisition_policy_digest(policy).tagged,
+    )
+    assert _accepted_capture_contracts(instance, coordinate, (capture_pin,)) == {
+        capture_pin.artifact_digest: contract
+    }
+    assert _accepted_acquisition_policies(instance, coordinate, pin=policy_pin) == (
+        (policy_pin.artifact_digest, policy),
+    )
+    assert reads == [
+        capture_contract_path(contract.identity.name),
+        acquisition_policy_path(policy.identity.name),
+    ]
+    reads.clear()
+    assert (
+        _accepted_acquisition_policies(
+            instance,
+            coordinate,
+            pin=policy_pin.model_copy(update={"artifact_digest": "sha256:" + "ab" * 32}),
+        )
+        == ()
+    )
+    assert reads == []
+    procedure = _slotless_procedure("policy-procedure").procedure
+    with pytest.raises(SourceAcquisitionPolicyRequired, match="accepted SourceAcquisitionPolicy"):
+        _direct_acquisition_policy(
+            instance, coordinate=coordinate, procedure=procedure, input_names=("orders",)
+        )
+    assert len(reads) == unrelated + 1
+    reads.clear()
+    pinned = procedure.model_copy(update={"pins": (*procedure.pins, policy_pin)})
+    assert _direct_acquisition_policy(
+        instance, coordinate=coordinate, procedure=pinned, input_names=("orders",)
+    ) == (policy_pin.artifact_digest, policy)
+    assert reads == [acquisition_policy_path(policy.identity.name)]

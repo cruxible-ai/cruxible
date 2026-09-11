@@ -19,8 +19,6 @@ from cruxible_client.contracts.acquisition_policies import (
     IndependentCoherenceV1,
     InputAcquisitionRuleV1,
     SourceAcquisitionPolicyV1,
-    acquisition_policy_digest,
-    parse_acquisition_policy,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import (
@@ -33,8 +31,6 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.captures import (
     CanonicalDurationV1,
     CaptureContractV1,
-    capture_contract_digest,
-    parse_capture_contract,
 )
 from cruxible_client.contracts.errors import (
     PlaybillError,
@@ -45,11 +41,14 @@ from cruxible_client.contracts.procedure_mandates import (
     PROCEDURE_MANDATE_CLOCK_SKEW,
     ProcedureMandateV1,
 )
-from cruxible_client.contracts.procedure_runtime_policy import PROCEDURE_RUNTIME_POLICY_PATH
+from cruxible_client.contracts.procedure_runtime_policy import (
+    PROCEDURE_RUNTIME_POLICY_IDENTITY,
+    PROCEDURE_RUNTIME_POLICY_PATH,
+    ProcedureRuntimePolicyV1,
+)
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedureV1,
     ProcedureArtifactAny,
-    parse_procedure,
     procedure_artifact_digest,
     procedure_path,
     render_procedure,
@@ -69,8 +68,6 @@ from cruxible_client.contracts.procedures.line_specs import (
     WindowCloseTriggerPolicyV1,
     evaluate_line_spec_law,
     line_identity_digest,
-    line_spec_digest,
-    parse_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
     ExhaustTapNodeV3,
@@ -151,9 +148,6 @@ from cruxible_client.contracts.provider_execution import (
 )
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistrationV1,
-    parse_provider_interface,
-    provider_interface_digest,
-    provider_interface_path,
 )
 from cruxible_client.contracts.providers import (
     AcceptedProviderV1,
@@ -169,7 +163,7 @@ from cruxible_client.contracts.workspace_file import (
     SourceReadReceiptV1,
     source_read_receipt_digest,
 )
-from cruxible_core.claims.closure import DEFERRED_PIN_TARGET_KINDS, build_dependency_index
+from cruxible_core.claims.closure import DEFERRED_PIN_TARGET_KINDS
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -222,7 +216,6 @@ from cruxible_core.procedures.execution import (
     procedure_replay_input_vector,
     procedure_semantic_replay_key_digest,
     procedure_semantic_run_id,
-    resolve_procedure_runtime_policy,
     run_value_digest,
     verify_line_admission_spec,
 )
@@ -671,29 +664,40 @@ def _accepted_procedure(
         )
 
 
+def _accepted_runtime_policy(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
+) -> ProcedureRuntimePolicyV1:
+    with instance.bind_accepted_projection(coordinate) as projection:
+        assert projection.typed is not None
+        policy = projection.typed.source(PROCEDURE_RUNTIME_POLICY_IDENTITY)
+        if policy is None:
+            raise ProcedureRuntimePolicyAbsent(
+                "procedure_runtime_policy_absent: seed ProcedureRuntimePolicy before Line admission"
+            )
+        if not isinstance(policy, ProcedureRuntimePolicyV1):
+            raise ProjectionIntegrityError("accepted ProcedureRuntimePolicy source is invalid")
+        return policy
+
+
 def _accepted_line_by_identity_digest(
-    tree: Mapping[str, bytes],
+    instance: PlaybillInstance,
     *,
+    coordinate: AcceptedProjectionCoordinate,
     identity_digest: str,
 ) -> AcceptedLineSpecV1:
-    matches: list[AcceptedLineSpecV1] = []
-    for path, content in tree.items():
-        if not path.startswith("lines/") or not path.endswith((".json", ".yaml")):
-            continue
-        line = parse_line_spec(content, path=path)
-        if line.lifecycle.state == "retired":
-            continue
-        if line_identity_digest(line.identity) == identity_digest:
-            matches.append(
-                AcceptedLineSpecV1(
-                    path=path,
-                    line=line,
-                    artifact_digest=line_spec_digest(line).tagged,
-                )
-            )
-    if len(matches) != 1:
-        raise LineRunNotAccepted(f"{LineRunNotAccepted.code}: {identity_digest}")
-    return matches[0]
+    with instance.bind_accepted_projection(coordinate) as projection:
+        assert projection.typed is not None
+        matches = projection.typed.connection.execute(
+            "SELECT identity,path,artifact_digest FROM lines "
+            "WHERE identity_digest=? AND lifecycle='live'",
+            (identity_digest,),
+        ).fetchall()
+        if len(matches) != 1:
+            raise LineRunNotAccepted(f"{LineRunNotAccepted.code}: {identity_digest}")
+        identity, path, digest = matches[0]
+        line = projection.typed.source(identity)
+        assert line is not None
+        return AcceptedLineSpecV1(path=path, line=line, artifact_digest=digest)
 
 
 def _line_catalogs(
@@ -733,26 +737,26 @@ def _line_catalogs(
 
 
 def _assert_line_closure_complete(
-    tree: Mapping[str, bytes],
+    instance: PlaybillInstance,
     accepted_line: AcceptedLineSpecV1,
+    coordinate: AcceptedProjectionCoordinate,
 ) -> None:
-    index = build_dependency_index(tree)
-    for pin in accepted_line.line.pins:
-        target_path = index.paths_by_identity.get(pin.target.qualified)
-        if target_path is None:
-            # These component families are exact registry pins until they gain
-            # ledger envelopes. Their owning law, not name lookup, verifies
-            # them, and the closure evaluator owns the one list of them.
-            if pin.target.kind in DEFERRED_PIN_TARGET_KINDS:
-                continue
-            raise PlaybillExecutionError(
-                f"accepted Line closure lost {pin.target.qualified} ({pin.role})"
-            )
-        target = index.states[target_path]
-        if target.artifact_digest != pin.artifact_digest or target.lifecycle.state != "live":
-            raise PlaybillExecutionError(
-                f"accepted Line closure does not reproduce {pin.target.qualified} ({pin.role})"
-            )
+    with instance.bind_accepted_projection(coordinate) as projection:
+        assert projection.typed is not None
+        for pin in accepted_line.line.pins:
+            target = projection.typed.dependency_state(pin.target.qualified)
+            if target is None:
+                # These component families remain exact registry pins until
+                # their owning law introduces ledger envelopes.
+                if pin.target.kind in DEFERRED_PIN_TARGET_KINDS:
+                    continue
+                raise PlaybillExecutionError(
+                    f"accepted Line closure lost {pin.target.qualified} ({pin.role})"
+                )
+            if target.artifact_digest != pin.artifact_digest or target.lifecycle.state != "live":
+                raise PlaybillExecutionError(
+                    f"accepted Line closure does not reproduce {pin.target.qualified} ({pin.role})"
+                )
 
 
 def _line_slot_pins(accepted_line: AcceptedLineSpecV1) -> dict[str, ArtifactPin]:
@@ -1125,9 +1129,11 @@ def _source_input_names(accepted: AcceptedProcedureV1) -> tuple[str, ...]:
 
 
 def _accepted_capture_contracts(
-    tree: Mapping[str, bytes],
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    pins: Sequence[ArtifactPin],
 ) -> dict[str, CaptureContractV1]:
-    """Index every live accepted CaptureContract by its own artifact digest.
+    """Resolve pinned live accepted CaptureContracts by their own artifact digests.
 
     Ruling: capture contracts come from the ACCEPTED tree, keyed by the pin
     digest the graph names, never from caller input. A caller-supplied contract
@@ -1135,30 +1141,51 @@ def _accepted_capture_contracts(
     """
 
     contracts: dict[str, CaptureContractV1] = {}
-    for path, content in tree.items():
-        if not path.startswith("capture-contracts/") or not path.endswith((".json", ".yaml")):
-            continue
-        contract = parse_capture_contract(content, path=path)
-        if contract.lifecycle.state != "live":
-            continue
-        contracts[capture_contract_digest(contract).tagged] = contract
+    with instance.bind_accepted_projection(coordinate) as projection:
+        assert projection.typed is not None
+        for pin in dict.fromkeys(pins):
+            if pin.target.kind != "CaptureContract":
+                continue
+            if (
+                projection.typed.connection.execute(
+                    "SELECT 1 FROM capture_contracts "
+                    "WHERE identity=? AND artifact_digest=? AND lifecycle='live'",
+                    (pin.target.qualified, pin.artifact_digest),
+                ).fetchone()
+                is not None
+            ):
+                contract = projection.typed.source(pin.target.qualified)
+                if not isinstance(contract, CaptureContractV1):
+                    raise ProjectionIntegrityError("accepted CaptureContract source is invalid")
+                contracts[pin.artifact_digest] = contract
     return contracts
 
 
 def _accepted_acquisition_policies(
-    tree: Mapping[str, bytes],
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    *,
+    pin: ArtifactPin | None = None,
 ) -> tuple[tuple[str, SourceAcquisitionPolicyV1], ...]:
     policies: list[tuple[str, SourceAcquisitionPolicyV1]] = []
-    for path, content in tree.items():
-        if not path.startswith("source-acquisition-policies/") or not path.endswith(
-            (".json", ".yaml")
+    with instance.bind_accepted_projection(coordinate) as projection:
+        assert projection.typed is not None
+        sql = (
+            "SELECT identity,artifact_digest FROM source_acquisition_policies "
+            "WHERE lifecycle='live'"
+        )
+        parameters: tuple[str, ...] = ()
+        if pin is not None:
+            sql += " AND identity=? AND artifact_digest=?"
+            parameters = (pin.target.qualified, pin.artifact_digest)
+        for identity, digest in projection.typed.connection.execute(
+            sql + " ORDER BY artifact_digest", parameters
         ):
-            continue
-        policy = parse_acquisition_policy(content, path=path)
-        if policy.lifecycle.state != "live":
-            continue
-        policies.append((acquisition_policy_digest(policy).tagged, policy))
-    return tuple(sorted(policies, key=lambda item: item[0].encode("ascii")))
+            policy = projection.typed.source(identity)
+            if not isinstance(policy, SourceAcquisitionPolicyV1):
+                raise ProjectionIntegrityError("accepted SourceAcquisitionPolicy source is invalid")
+            policies.append((digest, policy))
+    return tuple(policies)
 
 
 def _procedure_acquisition_policy_pin(procedure: ProcedureArtifactAny) -> ArtifactPin | None:
@@ -1176,8 +1203,9 @@ def _procedure_acquisition_policy_pin(procedure: ProcedureArtifactAny) -> Artifa
 
 
 def _direct_acquisition_policy(
-    tree: Mapping[str, bytes],
+    instance: PlaybillInstance,
     *,
+    coordinate: AcceptedProjectionCoordinate,
     procedure: ProcedureArtifactAny,
     input_names: tuple[str, ...],
 ) -> tuple[str, SourceAcquisitionPolicyV1]:
@@ -1200,8 +1228,8 @@ def _direct_acquisition_policy(
     acceptance -- which is why it is the fallback and not the law.
     """
 
-    accepted_policies = _accepted_acquisition_policies(tree)
     pin = _procedure_acquisition_policy_pin(procedure)
+    accepted_policies = _accepted_acquisition_policies(instance, coordinate, pin=pin)
     if pin is not None:
         pinned = next(
             (policy for digest, policy in accepted_policies if digest == pin.artifact_digest),
@@ -1545,8 +1573,6 @@ def service_bind_playbill_procedure(
             f"{ProcedureBindingGraphV4LineClosureRequired.code}: graph-v4 Provider slots "
             "are resolved only by accepted Line closure"
         )
-    tree = instance.tree_at(coordinate.git_oid)
-    index = build_dependency_index(tree)
     declarations = {item.slot_name: item for item in accepted.procedure.definition.pin_slots}
     requested = {item.slot_name for item in request.bindings}
     required = set(_required_slots(accepted.procedure))
@@ -1560,8 +1586,9 @@ def service_bind_playbill_procedure(
     for item in request.bindings:
         declaration = declarations[item.slot_name]
         identity = ArtifactIdentity(kind=item.target.kind, name=item.target.name)
-        path = index.paths_by_identity.get(identity.qualified)
-        state = None if path is None else index.states[path]
+        with instance.bind_accepted_projection(coordinate) as projection:
+            assert projection.typed is not None
+            state = projection.typed.dependency_state(identity.qualified)
         if state is None or state.lifecycle.state != "live":
             raise ProcedureBindingTargetNotFound(
                 f"{ProcedureBindingTargetNotFound.code}: {identity.qualified}"
@@ -1577,11 +1604,15 @@ def service_bind_playbill_procedure(
             None,
         )
         if interface_pin is not None:
-            interface_path = provider_interface_path(interface_pin.target.name)
-            interface_content = tree.get(interface_path)
-            if interface_content is not None:
-                registration = parse_provider_interface(interface_content, path=interface_path)
-                if provider_interface_digest(registration).tagged == interface_pin.artifact_digest:
+            with instance.bind_accepted_projection(coordinate) as projection:
+                assert projection.typed is not None
+                interface = projection.typed.envelope(interface_pin.target.qualified)
+                if (
+                    interface is not None
+                    and interface.artifact_digest == interface_pin.artifact_digest
+                ):
+                    registration = projection.typed.source(interface.identity)
+                    assert registration is not None
                     interface_digests[state.artifact_digest] = registration.interface_digest
         lowered.append(
             LineSlotBindingV1(
@@ -1602,7 +1633,7 @@ def service_bind_playbill_procedure(
         raise ProcedureBindingStaleCoordinate(
             f"{ProcedureBindingStaleCoordinate.code}: accepted coordinate advanced"
         )
-    candidate_tree = dict(tree)
+    candidate_tree = instance.tree_at(coordinate.git_oid)
     candidate_tree[accepted.path] = render_procedure(successor)
     operation = typed_digest(
         Sha256Value,
@@ -1654,14 +1685,12 @@ class _CurrentProcedureAuthority:
     ) -> str | None:
         del coordinate
         current = self.instance.accepted_coordinate()
-        path = procedure_path(identity.name)
-        content = self.instance.blob_at(current.git_oid, path)
-        if content is None:
-            return None
-        procedure = parse_procedure(content, path=path)
-        if procedure.lifecycle.state != "live":
-            return None
-        return procedure_artifact_digest(procedure).tagged
+        with self.instance.bind_accepted_projection(current) as projection:
+            assert projection.typed is not None
+            state = projection.typed.dependency_state(identity.qualified)
+            return (
+                None if state is None or state.lifecycle.state != "live" else state.artifact_digest
+            )
 
 
 @dataclass
@@ -2659,7 +2688,6 @@ def _prepare_direct_source_run(
 
     definition = accepted.procedure.definition
     assert isinstance(definition, ProcedureDefinitionV4)
-    tree = instance.tree_at(coordinate.git_oid)
     refuse = partial(
         _direct_refusal_state,
         accepted,
@@ -2668,7 +2696,7 @@ def _prepare_direct_source_run(
         evaluation_time=evaluation_time,
     )
     try:
-        runtime_policy = resolve_procedure_runtime_policy(tree)
+        runtime_policy = _accepted_runtime_policy(instance, coordinate)
     except ProcedureRuntimePolicyAbsent as exc:
         return refuse(
             code="procedure_runtime_policy_absent",
@@ -2677,7 +2705,8 @@ def _prepare_direct_source_run(
         )
     try:
         policy_digest, policy = _direct_acquisition_policy(
-            tree,
+            instance,
+            coordinate=coordinate,
             procedure=accepted.procedure,
             input_names=_source_input_names(accepted),
         )
@@ -2706,7 +2735,7 @@ def _prepare_direct_source_run(
             },
         )
     providers, interfaces = _line_catalogs(instance, coordinate, accepted.procedure.pins)
-    capture_contracts = _accepted_capture_contracts(tree)
+    capture_contracts = _accepted_capture_contracts(instance, coordinate, accepted.procedure.pins)
     try:
         external_occurrences = _plan_external_occurrences(
             accepted,
@@ -3166,9 +3195,9 @@ def service_run_playbill_line(
         )
     coordinate = instance.accepted_coordinate()
     head_at_admission = coordinate
-    tree = instance.tree_at(coordinate.git_oid)
     accepted_line = _accepted_line_by_identity_digest(
-        tree,
+        instance,
+        coordinate=coordinate,
         identity_digest=path_identity_digest,
     )
     accepted = _accepted_procedure(
@@ -3190,7 +3219,7 @@ def service_run_playbill_line(
             },
         )
     try:
-        _assert_line_closure_complete(tree, accepted_line)
+        _assert_line_closure_complete(instance, accepted_line, coordinate)
     except PlaybillExecutionError as exc:
         return _line_refusal_state(
             accepted,
@@ -3329,7 +3358,7 @@ def service_run_playbill_line(
             message="Served Line execution requires an accepted acquisition-policy pin.",
             details={"repair": "Accept a Line successor with an acquisition policy."},
         )
-    runtime_policy = resolve_procedure_runtime_policy(tree)
+    runtime_policy = _accepted_runtime_policy(instance, coordinate)
     slot_pins = _line_slot_pins(accepted_line)
     budget = _line_budget(accepted_line, accepted)
     try:
@@ -3365,8 +3394,14 @@ def service_run_playbill_line(
                 repair=served_repair_for_refusal("provider_unavailable"),
             ),
         )
-    capture_contracts = _accepted_capture_contracts(tree)
-    accepted_policies = dict(_accepted_acquisition_policies(tree))
+    capture_contracts = _accepted_capture_contracts(
+        instance, coordinate, (*accepted.procedure.pins, *accepted_line.line.pins)
+    )
+    accepted_policies = dict(
+        _accepted_acquisition_policies(
+            instance, coordinate, pin=accepted_line.line.acquisition_policy
+        )
+    )
     line_policy = accepted_policies.get(accepted_line.line.acquisition_policy.artifact_digest)
     if line_policy is None:
         return _line_refusal_state(
@@ -4011,9 +4046,14 @@ def service_prepare_playbill_line_admission(
             },
             repair=served_repair_for_refusal("exhaust_binding_carrier_required"),
         )
-    tree = instance.tree_at(admission.bound_coordinate.git_oid)
+    coordinate = instance.resolve_accepted_coordinate(
+        git_oid=admission.bound_coordinate.git_oid,
+        semantic_root=admission.bound_coordinate.semantic_root,
+        generation_root=admission.bound_coordinate.generation_root,
+        compiler_digest=admission.bound_coordinate.compiler_digest,
+    )
     try:
-        policy = resolve_procedure_runtime_policy(tree)
+        policy = _accepted_runtime_policy(instance, coordinate)
     except ProcedureRuntimePolicyAbsent as exc:
         return ProcedureAdmissionRefusalV1(
             code="procedure_runtime_policy_absent",

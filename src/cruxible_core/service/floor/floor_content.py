@@ -18,9 +18,10 @@ from cruxible_client.contracts.proposal_models import (
     ProposalAdmissionRecord,
     ProposalEvaluationRecord,
 )
-from cruxible_core.derived.memo import memo_get, memo_put
-from cruxible_core.ledger.recovery import RecoveredGeneration
+from cruxible_core.indexes.history.history_index import AcceptedGenerationLocation
+from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.proposal_notes import admission_bytes, evaluation_bytes
+from cruxible_core.proposals.settlement import ChangeSetRecordAnyVersion
 from cruxible_core.runtime.instance import PlaybillInstance
 
 MAX_REVIEW_SNAPSHOT_BYTES = 64 * 1024 * 1024
@@ -30,34 +31,6 @@ def _render(value: object) -> bytes:
     return pretty_json(json.loads(canonical_bytes(value))).encode("utf-8") + b"\n"
 
 
-def latest_changes(instance: PlaybillInstance, oid: str) -> dict[str, RecoveredGeneration]:
-    """Fold only the unindexed suffix of immutable accepted generation records."""
-    cached = memo_get(instance.floor_history_memo, oid)
-    if isinstance(cached, dict):
-        return cached
-    pending = []
-    found = False
-    prior: dict[str, RecoveredGeneration] = {}
-    for generation in reversed(instance.accepted_history()):
-        if generation.oid == oid:
-            found = True
-        if not found:
-            continue
-        cached = memo_get(instance.floor_history_memo, generation.oid)
-        if isinstance(cached, dict):
-            prior = cached.copy()
-            break
-        pending.append(generation)
-    if not found:
-        raise ProposalIntegrityError("floor coordinate is outside accepted history")
-    for generation in reversed(pending):
-        if generation.record is not None:
-            for member in generation.record.members:
-                prior[member.path] = generation
-    memo_put(instance.floor_history_memo, oid, prior, capacity=2)
-    return prior
-
-
 def review_snapshot_oid(instance: PlaybillInstance) -> str | None:
     return instance._ledger.mirror_refs().get("refs/notes/playbill-eval")
 
@@ -65,16 +38,13 @@ def review_snapshot_oid(instance: PlaybillInstance) -> str | None:
 def review_context(
     instance: PlaybillInstance, notes_oid: str | None
 ) -> tuple[dict[str, tuple[dict[str, object], ...]], str]:
-    """Read canonical note pairs once per immutable notes commit.
+    """Read canonical note pairs from the exact immutable notes commit.
 
     Association to an accepted candidate is not approval of the author's prose.
     Missing notes are explicit unavailable context, never invented rationale.
     """
     if notes_oid is None:
         return {}, "unavailable"
-    cached = memo_get(instance.floor_review_memo, notes_oid)
-    if isinstance(cached, tuple):
-        return cached
     entries = instance._ledger.list_tree_with_sizes(notes_oid)
     if sum(entry.size or 0 for entry in entries) > MAX_REVIEW_SNAPSHOT_BYTES:
         return {}, "review_snapshot_budget_exceeded"
@@ -112,44 +82,46 @@ def review_context(
                 k: v for k, v in item.items() if k != "note_path"
             }:
                 raise ProposalIntegrityError("floor note aliases disagree about a proposal")
-    result = (
+    return (
         {
             candidate: tuple(items[key] for key in sorted(items))
             for candidate, items in by_candidate.items()
         },
         "available",
     )
-    memo_put(instance.floor_review_memo, notes_oid, result, capacity=2)
-    return result
 
 
 def current_content(
     instance: PlaybillInstance,
     *,
-    oid: str,
+    coordinate: AcceptedProjectionCoordinate,
     claims: tuple[ClaimArtifactAny, ...],
     notes_oid: str | None,
 ) -> dict[str, bytes]:
-    changes = latest_changes(instance, oid)
     context, context_status = review_context(instance, notes_oid)
     grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
-    relevant_changes: dict[int, RecoveredGeneration] = {}
-    for claim in claims:
-        if claim.lifecycle.state != "live":
-            continue
-        path = claim_path(claim.identity.name)
-        generation = changes.get(path)
-        sequence = None if generation is None else generation.sequence
-        if generation is not None:
-            relevant_changes[generation.sequence] = generation
-        grouped[claim.statement.subject.artifact_path].append(
-            {
-                "claim": claim.identity.qualified,
-                "artifact_digest": claim_artifact_digest(claim).tagged,
-                "statement": claim.statement.model_dump(mode="json"),
-                "latest_change_sequence": sequence,
-            }
-        )
+    relevant_changes: dict[int, tuple[AcceptedGenerationLocation, ChangeSetRecordAnyVersion]] = {}
+    with instance.accepted_history_reader(
+        at=AcceptedCoordinate.from_internal(coordinate)
+    ) as history:
+        for claim in claims:
+            if claim.lifecycle.state != "live":
+                continue
+            location = history.latest_member(claim_path(claim.identity.name))
+            sequence = None if location is None else location.sequence
+            if location is not None and location.sequence not in relevant_changes:
+                relevant_changes[location.sequence] = (
+                    history.generation(location.sequence),
+                    history.read_member_record(location, instance.blob_at),
+                )
+            grouped[claim.statement.subject.artifact_path].append(
+                {
+                    "claim": claim.identity.qualified,
+                    "artifact_digest": claim_artifact_digest(claim).tagged,
+                    "statement": claim.statement.model_dump(mode="json"),
+                    "latest_change_sequence": sequence,
+                }
+            )
     files: dict[str, bytes] = {}
     for subject, rows in sorted(grouped.items()):
         relative = subject.removeprefix("subjects/")
@@ -163,9 +135,7 @@ def current_content(
                 "claims": sorted_claims,
             }
         )
-    for sequence, generation in sorted(relevant_changes.items()):
-        record = generation.record
-        assert record is not None
+    for sequence, (generation, record) in sorted(relevant_changes.items()):
         review_entries = tuple(
             row
             for row in context.get(record.candidate_digest, ())
@@ -175,7 +145,7 @@ def current_content(
             {
                 "kind": "accepted-change-with-associated-review-context",
                 "sequence": sequence,
-                "accepted_git_oid": generation.oid,
+                "accepted_git_oid": generation.git_oid,
                 "candidate_digest": record.candidate_digest,
                 "actor": record.actor_binding.actor_id,
                 "timestamp": record.candidate.timestamp,
@@ -194,7 +164,7 @@ def current_content(
         )
     files["provenance/snapshot.json"] = _render(
         {
-            "accepted_git_oid": oid,
+            "accepted_git_oid": coordinate.git_oid,
             "evaluation_notes_oid": notes_oid,
             "status": context_status,
             "rebuild_inputs": "accepted ledger plus this immutable Git notes snapshot",

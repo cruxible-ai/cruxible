@@ -67,7 +67,8 @@ from cruxible_core.compiler.compiler import (
     SUPPORTED_COMPILERS,
     current_compiler_coordinate,
 )
-from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow, parse_projection_tree
+from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow
+from cruxible_core.compiler.projection_tree import TreeReadLimits, read_registered_tree
 from cruxible_core.curation.review_operational import ReviewOperationalStore
 from cruxible_core.derived.derived_state import (
     DerivedState,
@@ -75,7 +76,6 @@ from cruxible_core.derived.derived_state import (
     SnapshotTree,
     advance_accepted_tree,
 )
-from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.exhaust.producer_receipts import local_producer_receipt_resolver
 from cruxible_core.governance.keys import (
     ALLOWED_SIGNERS_FILE,
@@ -101,6 +101,7 @@ from cruxible_core.indexes.proposals.proposal_note_projection import ProposalNot
 from cruxible_core.indexes.proposals.proposal_note_reader import IndexedProposalNotes
 from cruxible_core.indexes.serving import bind_current_projection
 from cruxible_core.indexes.sqlite import ProjectionHandle, bind_projection
+from cruxible_core.indexes.typed_sqlite import parse_static_owners
 from cruxible_core.ledger.activation import ActivationPublisher, ActivationResult
 from cruxible_core.ledger.bootstrap import (
     VerifiedGenesis,
@@ -225,12 +226,6 @@ def _validate_client_principals(
     return ordered, posture
 
 
-# An accepted tree is immutable, so the only cost of a stale entry is memory.
-# Four generations cover every read path that walks a bounded lineage while
-# keeping the resident set to a handful of trees per served instance.
-_TREE_MEMO_GENERATIONS = 4
-
-
 class PlaybillInstance:
     """A verified opt-in Playbill substrate rooted outside agent workspaces."""
 
@@ -270,15 +265,12 @@ class PlaybillInstance:
         self._receive_limits = ProposalReceiveLimits()
         self._mirror_condition = threading.Condition()
         self._mirror_thread: threading.Thread | None = None
-        self._tree_memo: OrderedDict[str, dict[str, bytes]] = OrderedDict()
         # Read services keyed by accepted coordinate park their derived
         # history indexes here so activation drops them with one clear().
         # Immutable-coordinate exports survive head movement; keys include their
         # review-context snapshot and access profile. Bounded by the floor service.
         self.floor_structure_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
         self.floor_export_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
-        self.floor_history_memo: OrderedDict[str, object] = OrderedDict()
-        self.floor_review_memo: OrderedDict[str, object] = OrderedDict()
 
     @staticmethod
     def _accepted_query_facts(
@@ -595,9 +587,11 @@ class PlaybillInstance:
         storage_directories = {
             name: str(path) for name, path in paths.items() if name != "credentials"
         }
-        accepted_tree = self.tree_at(self._recovered.head.oid)
+        policy_bytes = self.blob_at(self._recovered.head.oid, APPROVAL_POLICY_PATH)
+        if policy_bytes is None:
+            raise PlaybillFormatError("accepted approval policy is absent")
         approval_policy = parse_approval_policy(
-            accepted_tree[APPROVAL_POLICY_PATH],
+            policy_bytes,
             path=APPROVAL_POLICY_PATH,
         )
         return PlaybillInspection(
@@ -1388,33 +1382,28 @@ class PlaybillInstance:
                     recovered.history[sequence - 1].oid, generation.oid
                 )
             )
-            if not manifest.exists():
-                # Historical publications (including genesis) may be absent.
-                # Reuse the frozen compiler's row derivation over verified Git
-                # bytes, without pretending this historical commit is main.
-                parsed = parse_projection_tree(
-                    self._ledger.read_tree(generation.oid),
-                    registry=assembler.registry,
+            if manifest.exists():
+                with bind_projection(manifest, expected=coordinate) as projection:
+                    if projection.typed is not None:
+                        projection.require_source_authentication(repository=self._ledger)
+                        return projection.artifact_envelopes(paths=changed)
+            # Missing historical publications and frozen v1 pieces derive
+            # membership from retained contracts. Document bodies and promoted
+            # output availability are independent of accepted membership.
+            sources = {
+                blob.path: blob.content
+                for blob in read_registered_tree(
+                    self._ledger,
+                    generation.oid,
+                    limits=TreeReadLimits(),
                     artifact_kinds=assembler.artifact_kinds,
-                    artifact_codec=assembler.artifact_codec,
-                    bodies=assembler.bodies,
-                    coordinate=request,
-                    accepted_coordinates_by_sequence={
-                        item.sequence: AcceptedCoordinate(
-                            git_oid=item.oid,
-                            semantic_root=item.semantic_root.tagged,
-                            generation_root=item.generation_root.tagged,
-                            compiler_digest=coordinate.compiler.rule_digest,
-                        )
-                        for item in recovered.history[: sequence + 1]
-                    },
                 )
-                selected = None if changed is None else frozenset(changed)
-                return tuple(
-                    row for row in parsed.envelopes if selected is None or row.path in selected
-                )
-            with bind_projection(manifest, expected=coordinate) as projection:
-                return projection.artifact_envelopes(paths=changed)
+            }
+            parsed = parse_static_owners(sources, accepted=coordinate)
+            selected = None if changed is None else frozenset(changed)
+            return tuple(
+                row for row in parsed.envelopes if selected is None or row.path in selected
+            )
 
         with self._accepted_history_index.read(recovered, envelopes, at=at) as reader:
             yield reader
@@ -1520,21 +1509,9 @@ class PlaybillInstance:
         return tree
 
     def tree_at(self, oid: str) -> dict[str, bytes]:
-        """Read an exact Git tree only after proving the OID is accepted history.
-
-        An accepted generation's tree is immutable by construction, so the read
-        is memoized per OID behind the same acceptance proof: the proof runs on
-        every call and only the Git subprocess pair is elided. Callers keep the
-        mutable-dict contract they had before, so each hit returns a fresh
-        shallow copy (a pointer copy per path, not a byte copy).
-        """
-
+        """Explicitly materialize an owned tree after proving accepted membership."""
         self.coordinate_for_oid(oid)
-        cached = memo_get(self._tree_memo, oid)
-        if cached is None:
-            cached = self._ledger.read_tree(oid)
-            memo_put(self._tree_memo, oid, cached, capacity=_TREE_MEMO_GENERATIONS)
-        return dict(cached)
+        return self._ledger.read_tree(oid)
 
     def paths_at(self, oid: str) -> tuple[str, ...]:
         """List accepted paths without reading a single blob payload.
@@ -1545,9 +1522,6 @@ class PlaybillInstance:
         """
 
         self.coordinate_for_oid(oid)
-        cached = memo_get(self._tree_memo, oid)
-        if cached is not None:
-            return tuple(cached)
         return self._ledger.paths_at(oid)
 
     def blob_at(self, oid: str, path: str) -> bytes | None:
@@ -1559,9 +1533,6 @@ class PlaybillInstance:
         """Read an exact set of accepted paths under the same acceptance proof."""
 
         self.coordinate_for_oid(oid)
-        cached = memo_get(self._tree_memo, oid)
-        if cached is not None:
-            return {path: cached[path] for path in dict.fromkeys(paths) if path in cached}
         return self._ledger.blobs_at(oid, paths)
 
     def proposal_tree(self, oid: str, *, base_oid: str | None = None) -> dict[str, bytes]:
@@ -1647,7 +1618,6 @@ class PlaybillInstance:
         """Recover with both the instance and ledger activation locks held."""
         paths = self._validated_paths(self.root, self.descriptor.storage)
         bodies = ContentAddressedBodyStore(paths["cas"])
-        self._tree_memo.clear()
         self.derived.clear()
         self._recovered = recover_instance(
             self._ledger,
@@ -1813,7 +1783,6 @@ class PlaybillInstance:
                     coordinate=copy.deepcopy(result.accepted),
                     projection=copy.deepcopy(result.projection),
                 )
-                self._tree_memo.clear()
                 self._recovered = advanced
 
             try:

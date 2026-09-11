@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import tempfile
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,10 +30,6 @@ from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandateV1,
     procedure_mandate_path,
     render_procedure_mandate,
-)
-from cruxible_client.contracts.procedure_runtime_policy import (
-    PROCEDURE_RUNTIME_POLICY_PATH,
-    render_procedure_runtime_policy,
 )
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedureV1,
@@ -440,13 +437,17 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
         interface=interface,
     )
     prepared = _rebind_prepared_line(prepared, accepted_line)
-    policy_tree = {
-        PROCEDURE_RUNTIME_POLICY_PATH: render_procedure_runtime_policy(
-            seeded_procedure_runtime_policy()
-        )
-    }
     bound = procedure_run_service.service_prepare_playbill_line_admission(
-        SimpleNamespace(tree_at=lambda _oid: policy_tree),  # type: ignore[arg-type]
+        SimpleNamespace(  # type: ignore[arg-type]
+            resolve_accepted_coordinate=lambda **_kwargs: prepared.admission.bound_coordinate,
+            bind_accepted_projection=lambda _coordinate: nullcontext(
+                SimpleNamespace(
+                    typed=SimpleNamespace(
+                        source=lambda _identity: seeded_procedure_runtime_policy()
+                    )
+                )
+            ),
+        ),
         admission=prepared.admission,
         accepted_line=accepted_line,
     )

@@ -97,6 +97,7 @@ from cruxible_core.exhaust.line_track_records import LineTrackRecordReducer
 from cruxible_core.exhaust.promotions import VerifiedExhaustRecordV1
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.indexes.typed_state import TypedStateReader
 from cruxible_core.procedures.execution import (
     PROCEDURE_RESULT_MAX_BYTES,
     ExhaustRunMaterialV1,
@@ -1205,8 +1206,18 @@ def test_served_line_admission_binds_the_accepted_runtime_policy_or_refuses(
     accepted_line = _accepted_line_for_admission(admission, accepted)
     admission = admission.model_copy(update={"line_spec_digest": accepted_line.artifact_digest})
     instance, _owner = initialize_local(tmp_path)
-    accepted_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    monkeypatch.setattr(instance, "tree_at", lambda _git_oid: accepted_tree)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    admission = admission.model_copy(
+        update={
+            "bound_coordinate": coordinate,
+            "accepted_coordinate": coordinate,
+            "head_at_admission": coordinate,
+            "accepted_state_inputs": tuple(
+                item.model_copy(update={"read_coordinate": coordinate})
+                for item in admission.accepted_state_inputs
+            ),
+        }
+    )
 
     bound = service_prepare_playbill_line_admission(
         instance,
@@ -1220,21 +1231,16 @@ def test_served_line_admission_binds_the_accepted_runtime_policy_or_refuses(
     assert bound.semantic_replay_key_digest == procedure_semantic_replay_key_digest(bound)
     assert bound.admission_binding_digest == procedure_admission_digest(bound)
 
-    legacy_tree = {
-        path: content
-        for path, content in accepted_tree.items()
-        if path != "governance/procedure-runtime-policy.json"
-    }
-    monkeypatch.setattr(instance, "tree_at", lambda _git_oid: legacy_tree)
-    refused = service_prepare_playbill_line_admission(
-        instance,
-        admission=admission,
-        accepted_line=accepted_line,
-    )
+    with monkeypatch.context() as patch:
+        patch.setattr(TypedStateReader, "source", lambda *_args: None)
+        refused = service_prepare_playbill_line_admission(
+            instance,
+            admission=admission,
+            accepted_line=accepted_line,
+        )
     assert isinstance(refused, ProcedureAdmissionRefusalV1)
     assert refused.code == "procedure_runtime_policy_absent"
 
-    monkeypatch.setattr(instance, "tree_at", lambda _git_oid: accepted_tree)
     mismatched = service_prepare_playbill_line_admission(
         instance,
         admission=admission,

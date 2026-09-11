@@ -23,6 +23,7 @@ from cruxible_core.service.floor.floor import (
     PlaybillFloorManifestV1,
     PlaybillFloorManifestV2,
     PlaybillProcedureFloorCardV1,
+    _procedure_cards,
     render_floor_json_v1,
     render_floor_json_v2,
 )
@@ -280,6 +281,7 @@ def test_floor_carries_its_coverage_boundary_and_enumerates_it(tmp_path: Path) -
 
 def test_procedure_floor_card_keeps_runnability_governance_and_track_record_separate(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
     instance = _instance_with_procedure(tmp_path)
 
@@ -312,5 +314,18 @@ def test_procedure_floor_card_keeps_runnability_governance_and_track_record_sepa
         instance.accepted_coordinate()
     )
     assert PROCEDURE_CARD_PATH in {item.path for item in _manifest(floor).files}
+
+    def no_inventory(*args, **kwargs):
+        raise AssertionError("Procedure cards reconstructed unrelated accepted state")
+
+    monkeypatch.setattr(instance, "tree_at", no_inventory)
+    monkeypatch.setattr(instance, "immutable_tree_at", no_inventory)
+    monkeypatch.setattr(instance, "accepted_history", no_inventory)
+    selected = _procedure_cards(
+        instance,
+        coordinate=instance.accepted_coordinate(),
+        at=card.accepted_coordinate,
+    )
+    assert selected == {PROCEDURE_CARD_PATH: floor[PROCEDURE_CARD_PATH]}
     (render_floor_json_v1,)
     (render_floor_json_v2,)

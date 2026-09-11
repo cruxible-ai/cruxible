@@ -22,7 +22,6 @@ from cruxible_client.contracts.subjects import (
     subject_path,
 )
 from cruxible_core.governance.actor_context import TransportCapability
-from cruxible_core.indexes.sqlite import canonical_logical_export
 from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
@@ -199,12 +198,7 @@ def test_subject_successor_uses_exact_predecessor_and_projection_revision(tmp_pa
     history = service_playbill_subject_history(instance, identity=SUBJECT_IDENTITY)
     assert [entry.lifecycle_state for entry in history.entries] == ["live", "retired"]
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
-        logical = canonical_logical_export(projection.index_path)
-    live = next(table for table in logical["tables"] if table["name"] == "live_identities")
-    assert {(row[0], row[2]) for row in live["rows"]} == {
-        ("ApprovalPolicy:instance", "governance/approval-policy.json"),
-        (
-            "ProcedureRuntimePolicy:instance",
-            "governance/procedure-runtime-policy.json",
-        ),
-    }
+        live = projection.typed.connection.execute(
+            "SELECT identity FROM subjects WHERE lifecycle='live'"
+        ).fetchall()
+    assert live == []

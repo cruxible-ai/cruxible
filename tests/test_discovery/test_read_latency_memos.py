@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import subprocess
-import threading
-from collections import Counter, OrderedDict
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -86,27 +85,23 @@ def _count_read_trees(monkeypatch: pytest.MonkeyPatch) -> Counter[str]:
     return counted
 
 
-def test_orient_reads_each_accepted_generation_tree_at_most_once(
+def test_orient_uses_indexed_inventory_without_accepted_tree_reads(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     instance, _owner = seed_claims(tmp_path)
-    generations = len(instance.accepted_history())
-    instance._tree_memo.clear()
 
     counted = _count_read_trees(monkeypatch)
     service_search_playbill(instance, request=_orient_request(instance))
 
-    assert counted
-    assert max(counted.values()) == 1
-    assert len(counted) <= generations
+    assert counted == Counter()
 
     counted.clear()
     service_search_playbill(instance, request=_orient_request(instance))
     assert counted == Counter()
 
 
-def test_a_memoized_tree_is_handed_out_as_an_independent_copy(tmp_path: Path) -> None:
+def test_explicit_tree_reads_are_owned_copies(tmp_path: Path) -> None:
     instance, _owner = seed_claims(tmp_path)
     oid = instance.accepted_coordinate().git_oid
 
@@ -119,80 +114,10 @@ def test_a_memoized_tree_is_handed_out_as_an_independent_copy(tmp_path: Path) ->
     assert set(second) == paths
 
 
-class _PreemptingMemo(OrderedDict[str, dict[str, bytes]]):
-    """A tree memo that hands control to an activation mid-read, exactly once.
-
-    Read routes are serialized on the event loop, but ``activate_proposal`` is a
-    sync handler and therefore runs in the anyio worker threadpool, where its
-    ``refresh()`` clears this dict. This stands in for that interleaving
-    deterministically: the reader is released the moment the clear has landed,
-    so the second half of the read runs against an emptied memo.
-    """
-
-    def __init__(self, *, reading: threading.Event, cleared: threading.Event) -> None:
-        super().__init__()
-        self._reading = reading
-        self._cleared = cleared
-        self._armed = True
-
-    def _preempt(self) -> None:
-        if not self._armed:
-            return
-        self._armed = False
-        self._reading.set()
-        assert self._cleared.wait(30)
-
-    def get(self, key: str, default: object = None) -> object:  # type: ignore[override]
-        value = super().get(key, default)  # type: ignore[arg-type]
-        if value is not None:
-            self._preempt()
-        return value
-
-    def __getitem__(self, key: str) -> dict[str, bytes]:
-        value = super().__getitem__(key)
-        self._preempt()
-        return value
-
-    def clear(self) -> None:
-        super().clear()
-        self._cleared.set()
-
-
-def test_a_cached_read_survives_an_activation_clearing_the_memo_under_it(
-    tmp_path: Path,
-) -> None:
-    instance, _owner = seed_claims(tmp_path)
-    oid = instance.accepted_coordinate().git_oid
-    expected = instance.tree_at(oid)
-
-    reading = threading.Event()
-    cleared = threading.Event()
-    memo = _PreemptingMemo(reading=reading, cleared=cleared)
-    memo[oid] = dict(expected)
-    instance._tree_memo = memo
-
-    def activate_concurrently() -> None:
-        assert reading.wait(30)
-        instance.refresh()
-
-    worker = threading.Thread(target=activate_concurrently)
-    worker.start()
-    try:
-        # The read finds the entry, the activation empties the memo under it,
-        # and the read must still answer with the accepted tree rather than
-        # raising out of the promotion it can no longer perform.
-        assert instance.tree_at(oid) == expected
-    finally:
-        cleared.set()
-        worker.join(30)
-    assert not worker.is_alive()
-
-
 def test_blob_and_path_reads_agree_with_the_whole_tree(tmp_path: Path) -> None:
     instance, _owner = seed_claims(tmp_path)
     oid = instance.accepted_coordinate().git_oid
     tree = instance.tree_at(oid)
-    instance._tree_memo.clear()
 
     assert set(instance.paths_at(oid)) == set(tree)
     sample = sorted(path for path in tree if path.startswith("claims/"))[:2]
@@ -230,16 +155,13 @@ def test_listing_accepted_paths_refuses_what_reading_them_refuses(
     with pytest.raises(PlaybillGitError, match="unsupported 120000"):
         instance._ledger.read_tree(poisoned)
 
-    # Cold: nothing memoized, the listing goes to Git and must refuse there.
-    instance._tree_memo.clear()
+    # Exact path reads reject unsupported tree entries.
     with pytest.raises(PlaybillGitError, match="unsupported 120000"):
         instance.paths_at(poisoned)
 
-    # Warm: the only way to fill the memo is a read, which refuses first, so no
-    # memo state can turn the refusal into an answer.
+    # Whole-tree materialization must enforce the same refusal.
     with pytest.raises(PlaybillGitError, match="unsupported 120000"):
         instance.tree_at(poisoned)
-    assert poisoned not in instance._tree_memo
     with pytest.raises(PlaybillGitError, match="unsupported 120000"):
         instance.paths_at(poisoned)
 
@@ -429,7 +351,6 @@ def test_one_claim_read_materializes_no_generation_and_still_receipts(
 
     monkeypatch.setattr(runtime_api, "check_permission", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(runtime_api, "get_playbill_manager", lambda: _Manager())
-    instance._tree_memo.clear()
 
     counted = _count_read_trees(monkeypatch)
     view = runtime_api.playbill_get_claim(

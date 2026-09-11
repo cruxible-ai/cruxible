@@ -25,7 +25,6 @@ import json
 import re
 from collections import defaultdict
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -40,12 +39,9 @@ from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_t
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
 )
-from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.errors import ProjectionIntegrityError, ProposalIntegrityError
 from cruxible_client.contracts.primitives import pretty_json
-from cruxible_client.contracts.procedures.artifacts import (
-    parse_procedure,
-    procedure_artifact_digest,
-)
+from cruxible_client.contracts.procedures.artifacts import ProcedureArtifactV1, ProcedureArtifactV2
 from cruxible_client.contracts.procedures.models import (
     ProcedureBudgetV3,
     ProcedureHardCapsV3,
@@ -56,18 +52,11 @@ from cruxible_client.contracts.projection_extensions import (
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
-from cruxible_core.compiler.compiler import (
-    artifact_codec_for_compiler,
-    artifact_kinds_for_compiler,
-    projection_registry_for_compiler,
-)
-from cruxible_core.compiler.projection_artifacts import parse_projection_tree
 from cruxible_core.coverage.contracts import CoverageManifestProfileV2
 from cruxible_core.coverage.indexes import evidence_citation_index_digest
 from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.evidence.source_readers import ExternalSourceReaderProtocol
 from cruxible_core.indexes.projection import (
-    AcceptedCoordinate,
     AcceptedProjectionCoordinate,
 )
 from cruxible_core.query.cards import (
@@ -111,16 +100,6 @@ DEFAULT_FLOOR_PRINCIPAL = "playbill-floor"
 SUBJECT_PATH_PREFIX = "subjects/"
 
 RelationIndex = Mapping[bytes, tuple[SemanticRelationV1, ...]]
-
-
-@dataclass(frozen=True)
-class _FloorProjectionCoordinate:
-    instance_id: str
-    git_object_format: str
-    git_oid: str
-    semantic_root: str
-    generation_root: str
-    compiler_digest: str
 
 
 class _StrictFloorModel(BaseModel):
@@ -393,50 +372,18 @@ def _documents(
     }
 
 
-def _accepted_coordinates_by_sequence(
-    instance: PlaybillInstance,
-) -> dict[int, AcceptedCoordinate]:
-    compiler_digest = instance.descriptor.compiler.rule_digest
-    return {
-        generation.sequence: AcceptedCoordinate(
-            git_oid=generation.oid,
-            semantic_root=generation.semantic_root.tagged,
-            generation_root=generation.generation_root.tagged,
-            compiler_digest=compiler_digest,
-        )
-        for generation in instance.accepted_history()
-    }
-
-
 def _procedure_track_records(
     instance: PlaybillInstance,
     *,
-    tree: dict[str, bytes],
     coordinate: AcceptedProjectionCoordinate,
 ) -> dict[str, tuple[ProjectionFact, ...]]:
     """Read only accepted, promoted track-record facts at this coordinate."""
 
-    projection = parse_projection_tree(
-        tree,
-        registry=projection_registry_for_compiler(instance.descriptor.compiler),
-        artifact_kinds=artifact_kinds_for_compiler(instance.descriptor.compiler),
-        artifact_codec=artifact_codec_for_compiler(instance.descriptor.compiler),
-        bodies=instance.body_store(),
-        coordinate=_FloorProjectionCoordinate(
-            instance_id=coordinate.instance_id,
-            git_object_format=coordinate.git_object_format,
-            git_oid=coordinate.git_oid,
-            semantic_root=coordinate.semantic_root,
-            generation_root=coordinate.generation_root,
-            compiler_digest=coordinate.compiler.rule_digest,
-        ),
-        accepted_coordinates_by_sequence=_accepted_coordinates_by_sequence(instance),
-    )
     records: dict[str, list[ProjectionFact]] = {}
-    for fact in projection.semantic_facts:
-        if fact.schema_id != "playbill.procedure.track_record":
-            continue
-        records.setdefault(fact.subject_identity, []).append(fact)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        assert projection.typed is not None
+        for fact in projection.typed.facts("playbill.procedure.track_record"):
+            records.setdefault(fact.subject_identity, []).append(fact)
     return {
         identity: tuple(sorted(facts, key=lambda item: item.fact_key.encode("utf-8")))
         for identity, facts in records.items()
@@ -446,26 +393,26 @@ def _procedure_track_records(
 def _procedure_cards(
     instance: PlaybillInstance,
     *,
-    tree: dict[str, bytes],
     coordinate: AcceptedProjectionCoordinate,
     at: PlaybillAcceptedCoordinate,
 ) -> dict[str, bytes]:
-    paths = tuple(
-        path
-        for path in sorted(tree, key=lambda item: item.encode("utf-8"))
-        if path.startswith("procedures/") and path.endswith(".json")
-    )
-    if not paths:
+    with instance.bind_accepted_projection(coordinate) as projection:
+        assert projection.typed is not None
+        rows = sorted(projection.typed.envelopes(kind="procedure"), key=lambda row: row.path)
+        procedures = tuple((row, projection.typed.source(row.identity)) for row in rows)
+    if not procedures:
         return {}
-    track_records = _procedure_track_records(instance, tree=tree, coordinate=coordinate)
+    track_records = _procedure_track_records(instance, coordinate=coordinate)
     files: dict[str, bytes] = {}
-    for path in paths:
-        procedure = parse_procedure(tree[path], path=path)
+    for row, procedure in procedures:
+        if not isinstance(procedure, ProcedureArtifactV1 | ProcedureArtifactV2):
+            raise ProjectionIntegrityError("Procedure floor source is unavailable")
+        path = row.path
         definition = procedure.definition
         card = PlaybillProcedureFloorCardV1(
             identity=procedure.identity,
             path=path,
-            artifact_digest=procedure_artifact_digest(procedure).tagged,
+            artifact_digest=row.artifact_digest,
             accepted_coordinate=at,
             input_contract=PlaybillProcedureInputContractV1(
                 input=definition.contract_in,
@@ -587,7 +534,7 @@ def service_export_playbill_floor(
                 tree, entries=entries, at=accepted, claims=claims, relations=relations
             )
         )
-        files.update(_procedure_cards(instance, tree=tree, coordinate=coordinate, at=accepted))
+        files.update(_procedure_cards(instance, coordinate=coordinate, at=accepted))
         files.update(_documents(instance, at=accepted, access=body_access))
         files[COVERAGE_MANIFEST_PATH] = _render(
             _coverage_manifest(instance, at=accepted).model_dump(mode="json")
@@ -606,7 +553,7 @@ def service_export_playbill_floor(
 
     if format_version == 3:
         files.update(
-            current_content(instance, oid=coordinate.git_oid, claims=claims, notes_oid=notes_oid)
+            current_content(instance, coordinate=coordinate, claims=claims, notes_oid=notes_oid)
         )
     ordered = {path: files[path] for path in sorted(files, key=lambda item: item.encode("utf-8"))}
     inventory = tuple(

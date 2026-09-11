@@ -20,7 +20,8 @@ from cruxible_client.contracts.claims import (
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
 from cruxible_core.compiler.assembler import PYTHON_REFERENCE_ASSEMBLER
 from cruxible_core.compiler.projection_artifacts import parse_projection_tree
-from cruxible_core.indexes.sqlite import initialize_projection_database
+from cruxible_core.indexes.projection import AssemblerRequest
+from cruxible_core.indexes.sqlite import ProjectionHandle, initialize_projection_database
 from cruxible_core.indexes.typed_state import TypedStateReader
 from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 
@@ -165,3 +166,64 @@ def test_subject_and_object_nonwhole_selectors_roundtrip(claim_world, tmp_path):
         "procedure-arm-v1",
         "inspect:on_true:finish",
     )
+
+
+@pytest.mark.parametrize("storage_version", [1, 2])
+def test_filtered_claim_selection_distinguishes_selectors_before_materialization(
+    claim_world, tmp_path, storage_version
+):
+    instance, path, original = claim_world
+    address = SemanticAddress.procedure_node("procedures/selected.json", "inspect")
+    claim = original.model_copy(
+        update={"statement": original.statement.model_copy(update={"subject": address})}
+    )
+    content = render_claim(claim)
+    assembler = instance.projection_assembler()
+    request = assembler.request(output_staging_directory=tmp_path / ".stage-filter")
+    if storage_version == 1:
+        request = AssemblerRequest(**request.model_dump(exclude={"tag", "storage_schema_version"}))
+    parsed = parse_projection_tree(
+        {path: content},
+        registry=assembler.registry,
+        artifact_kinds=assembler.artifact_kinds,
+        artifact_codec=assembler.artifact_codec,
+        bodies=instance.body_store(),
+    )
+    database = tmp_path / "filter.sqlite"
+    initialize_projection_database(
+        database,
+        request=request,
+        parsed=parsed,
+        sources={path: content},
+        registry=assembler.registry,
+        assembler_implementation=PYTHON_REFERENCE_ASSEMBLER,
+        bodies=instance.body_store(),
+    )
+    with closing(sqlite3.connect(database)) as connection:
+        connection.row_factory = sqlite3.Row
+        materialized = []
+
+        def materialize(identity):
+            materialized.append(identity)
+            return identity
+
+        handle = SimpleNamespace(
+            _connection=connection,
+            _closed=False,
+            typed=object() if storage_version == 2 else None,
+            claim=materialize,
+        )
+        for mismatched in (
+            SemanticAddress.whole_artifact(address.artifact_path),
+            SemanticAddress.procedure_node(address.artifact_path, "finish"),
+        ):
+            assert ProjectionHandle.list_claims(handle, subject=mismatched) == ()
+        assert ProjectionHandle.list_claims(handle, predicate="different.predicate") == ()
+        assert materialized == []
+        assert ProjectionHandle.list_claims(
+            handle,
+            subject=address,
+            predicate=claim.statement.predicate,
+            include_retired=False,
+        ) == (claim.identity.qualified,)
+        assert materialized == [claim.identity.qualified]
