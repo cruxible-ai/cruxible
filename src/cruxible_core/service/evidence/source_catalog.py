@@ -97,34 +97,32 @@ def service_compile_playbill_sources(
     )
 
 
-def _pending_body_digests(instance: PlaybillInstance) -> dict[str, set[str]]:
+def _pending_body_digests(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
+) -> dict[str, set[str]]:
     result: dict[str, set[str]] = {}
     evidence = instance.proposal_evidence()
-    # Admission commits publication; an evaluation may survive an interrupted
-    # submission before that point and does not yet describe pending work.
-    admitted_ids = {record.proposal_id for record in evidence.list_admissions()}
-    settled_candidates = {
-        generation.record.candidate_digest
-        for generation in instance.accepted_history()
-        if generation.record is not None
-    }
-    for evaluation in evidence.list_evaluations():
-        if (
-            evaluation.proposal_id not in admitted_ids
-            or evaluation.verdict != "candidate"
-            or evaluation.evaluated_tree_oid is None
-            or evaluation.candidate_digest is None
-            or evaluation.candidate_digest in settled_candidates
-        ):
-            continue
-        candidate = evidence.read_candidate(evaluation.candidate_digest)
-        for member in candidate.members:
-            if member.artifact_kind != "document":
-                continue
-            content = instance.proposal_tree(evaluation.evaluated_tree_oid).get(member.path)
-            if content is None:
-                continue
-            shell = parse_document(content, path=member.path)
+    assert evidence.index is not None
+    with instance.accepted_history_reader(
+        at=PlaybillAcceptedCoordinate.from_internal(coordinate)
+    ) as history:
+        # A missing candidate is an interrupted operation, not pending document work.
+        with evidence.index.read(evidence) as connection:
+            rows = connection.execute(
+                "SELECT candidate_digest,evaluated_tree_oid FROM proposals p "
+                "WHERE admission_path IS NOT NULL AND evaluation_status='candidate' "
+                "AND candidate_parent_semantic_root IS NOT NULL "
+                "AND NOT EXISTS (SELECT 1 FROM accepted_generations g "
+                "WHERE g.candidate_digest=p.candidate_digest AND g.sequence<=?)",
+                (history.sequence,),
+            ).fetchall()
+    for digest, tree_oid in rows:
+        candidate = evidence.read_candidate(digest)
+        paths = tuple(
+            member.path for member in candidate.members if member.artifact_kind == "document"
+        )
+        for path, content in instance._ledger.blobs_at(tree_oid, paths).items():
+            shell = parse_document(content, path=path)
             result.setdefault(shell.document_id, set()).add(shell.body_digest)
     return result
 
@@ -139,7 +137,7 @@ def service_check_playbill_source_bundle(
     coordinate = instance.accepted_coordinate()
     current_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
     accepted = _accepted_documents(instance, coordinate)
-    pending = _pending_body_digests(instance)
+    pending = _pending_body_digests(instance, coordinate)
     alignments: list[SourceAlignment] = []
     base_is_current = bundle.manifest.accepted_base == current_coordinate
     for document in bundle.documents:
