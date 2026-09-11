@@ -605,8 +605,12 @@ def _next_relation_findings(world, reader):
         generation_root=AT.generation_root,
         compiler=P2_B5_COMPILER,
     )
+    def refuse_tree_read(*_args):
+        pytest.fail("citation relation service enumerated the accepted tree")
+
     instance = SimpleNamespace(
-        paths_at=lambda _oid: tuple(world.sources),
+        paths_at=refuse_tree_read,
+        tree_at=refuse_tree_read,
         bind_accepted_projection=lambda _coordinate: nullcontext(SimpleNamespace(citations=reader)),
     )
     return _citation_relation_items(
@@ -618,6 +622,17 @@ def _next_relation_findings(world, reader):
         ),
         observation=PlaybillNextWorkspaceObservationV1(source_observations=(observation,)),
     )
+
+
+def test_next_relation_findings_use_sql_without_accepted_tree_reads(world):
+    digest = world.capture(1)
+    live = world.claim(1, [digest])
+    retired = world.claim(2, [digest], retired=True)
+    world.publish(live, retired)
+    findings = _next_relation_findings(world, world.reader)
+    assert len(findings) == 1
+    assert findings[0].detail["relation_kind"] == "capture"
+    assert findings[0].subject_identity == live.identity.qualified
 
 
 @pytest.mark.parametrize("unavailable", ["missing", "corrupt"])
