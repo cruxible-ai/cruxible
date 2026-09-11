@@ -9,9 +9,9 @@ import re
 import sqlite3
 import stat
 from collections import OrderedDict
-from dataclasses import dataclass
+from collections.abc import Mapping
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from cruxible_client.contracts.canonical import (
     LogicalDigest,
@@ -38,16 +38,18 @@ from cruxible_core.indexes.claims.projection_subjects import (
     SubjectProjectionView,
     subject_projection_view,
 )
-from cruxible_core.indexes.evidence.citation_index import CitationDelta
 from cruxible_core.indexes.projection import (
     PROJECTION_SCHEMA_VERSION,
     AcceptedProjectionCoordinate,
     AssemblerRequest,
+    AssemblerRequestV2,
     ProjectionManifest,
+    ProjectionManifestV2,
     ProjectionOrphan,
     projection_manifest_name,
     render_projection_manifest,
 )
+from cruxible_core.indexes.sqlite_v1 import _TABLE_SPECS
 from cruxible_core.storage.cas import BodyAccessContext
 
 # A bound piece is verified whole — a physical SHA-256 over the file, a
@@ -112,203 +114,6 @@ _MANIFEST_RE = re.compile(r"^projection-[0-9a-f]{64}\.json$")
 _ASSEMBLER_IMPLEMENTATION_RE = re.compile(r"^[a-z][a-z0-9.-]{0,63}$")
 
 
-@dataclass(frozen=True)
-class _TableSpec:
-    name: str
-    create_sql: str
-    columns: tuple[tuple[str, str, bool], ...]
-    primary_key: tuple[str, ...]
-    constraints: tuple[str, ...]
-    indexes: tuple[tuple[str, str], ...]
-    logical: bool
-
-
-_TABLE_SPECS = (
-    _TableSpec(
-        name="artifact_envelopes",
-        create_sql=(
-            "CREATE TABLE artifact_envelopes ("
-            "identity TEXT PRIMARY KEY, kind TEXT NOT NULL, format_tag TEXT NOT NULL, "
-            "path TEXT NOT NULL UNIQUE, artifact_digest TEXT NOT NULL, "
-            "predecessor_digest TEXT, revision INTEGER NOT NULL CHECK(revision >= 1)) STRICT"
-        ),
-        columns=(
-            ("identity", "TEXT", False),
-            ("kind", "TEXT", False),
-            ("format_tag", "TEXT", False),
-            ("path", "TEXT", False),
-            ("artifact_digest", "TEXT", False),
-            ("predecessor_digest", "TEXT", True),
-            ("revision", "INTEGER", False),
-        ),
-        primary_key=("identity",),
-        constraints=("check(revision>=1)", "unique(path)"),
-        indexes=(("idx_artifact_envelopes_kind", "kind,identity"),),
-        logical=True,
-    ),
-    _TableSpec(
-        name="live_identities",
-        create_sql=(
-            "CREATE TABLE live_identities (identity TEXT PRIMARY KEY, "
-            "artifact_digest TEXT NOT NULL, path TEXT NOT NULL) STRICT"
-        ),
-        columns=(
-            ("identity", "TEXT", False),
-            ("artifact_digest", "TEXT", False),
-            ("path", "TEXT", False),
-        ),
-        primary_key=("identity",),
-        constraints=(),
-        indexes=(),
-        logical=True,
-    ),
-    _TableSpec(
-        name="pins",
-        create_sql=(
-            "CREATE TABLE pins (source_identity TEXT NOT NULL, target_identity TEXT NOT NULL, "
-            "target_digest TEXT NOT NULL, PRIMARY KEY(source_identity,target_identity)) STRICT"
-        ),
-        columns=(
-            ("source_identity", "TEXT", False),
-            ("target_identity", "TEXT", False),
-            ("target_digest", "TEXT", False),
-        ),
-        primary_key=("source_identity", "target_identity"),
-        constraints=("unique(source_identity,target_identity)",),
-        indexes=(("idx_pins_target", "target_identity,source_identity"),),
-        logical=True,
-    ),
-    _TableSpec(
-        name="projection_fact_schemas",
-        create_sql=(
-            "CREATE TABLE projection_fact_schemas (schema_id TEXT NOT NULL, "
-            "schema_version INTEGER NOT NULL CHECK(schema_version >= 1), "
-            "constraints_json TEXT NOT NULL, PRIMARY KEY(schema_id,schema_version)) STRICT"
-        ),
-        columns=(
-            ("schema_id", "TEXT", False),
-            ("schema_version", "INTEGER", False),
-            ("constraints_json", "TEXT", False),
-        ),
-        primary_key=("schema_id", "schema_version"),
-        constraints=("check(schema_version>=1)",),
-        indexes=(),
-        logical=True,
-    ),
-    _TableSpec(
-        name="semantic_facts",
-        create_sql=(
-            "CREATE TABLE semantic_facts (schema_id TEXT NOT NULL, "
-            "schema_version INTEGER NOT NULL, "
-            "subject_identity TEXT NOT NULL, fact_key TEXT NOT NULL, value_json TEXT NOT NULL, "
-            "PRIMARY KEY(schema_id,schema_version,subject_identity,fact_key)) STRICT"
-        ),
-        columns=(
-            ("schema_id", "TEXT", False),
-            ("schema_version", "INTEGER", False),
-            ("subject_identity", "TEXT", False),
-            ("fact_key", "TEXT", False),
-            ("value_json", "TEXT", False),
-        ),
-        primary_key=("schema_id", "schema_version", "subject_identity", "fact_key"),
-        constraints=("unique(schema_id,schema_version,subject_identity,fact_key)",),
-        indexes=(("idx_semantic_facts_subject", "subject_identity,schema_id,fact_key"),),
-        logical=True,
-    ),
-    _TableSpec(
-        name="compiler_coordinates",
-        create_sql=(
-            "CREATE TABLE compiler_coordinates (singleton INTEGER PRIMARY KEY "
-            "CHECK(singleton = 1), "
-            "schema_version INTEGER NOT NULL, compiler_digest TEXT NOT NULL) STRICT"
-        ),
-        columns=(
-            ("singleton", "INTEGER", False),
-            ("schema_version", "INTEGER", False),
-            ("compiler_digest", "TEXT", False),
-        ),
-        primary_key=("singleton",),
-        constraints=("check(singleton=1)",),
-        indexes=(),
-        logical=True,
-    ),
-    _TableSpec(
-        name="assembler_metadata",
-        create_sql=(
-            "CREATE TABLE assembler_metadata (singleton INTEGER PRIMARY KEY "
-            "CHECK(singleton = 1), implementation TEXT NOT NULL, "
-            "contract_version INTEGER NOT NULL) STRICT"
-        ),
-        columns=(
-            ("singleton", "INTEGER", False),
-            ("implementation", "TEXT", False),
-            ("contract_version", "INTEGER", False),
-        ),
-        primary_key=("singleton",),
-        constraints=("check(singleton=1)",),
-        indexes=(),
-        logical=False,
-    ),
-    _TableSpec(
-        name="generation_metadata",
-        create_sql=(
-            "CREATE TABLE generation_metadata (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), "
-            "instance_id TEXT NOT NULL, git_object_format TEXT NOT NULL, git_oid TEXT NOT NULL, "
-            "semantic_root TEXT NOT NULL, generation_root TEXT NOT NULL) STRICT"
-        ),
-        columns=(
-            ("singleton", "INTEGER", False),
-            ("instance_id", "TEXT", False),
-            ("git_object_format", "TEXT", False),
-            ("git_oid", "TEXT", False),
-            ("semantic_root", "TEXT", False),
-            ("generation_root", "TEXT", False),
-        ),
-        primary_key=("singleton",),
-        constraints=("check(singleton=1)",),
-        indexes=(),
-        logical=False,
-    ),
-    _TableSpec(
-        name="presentation_fact_schemas",
-        create_sql=(
-            "CREATE TABLE presentation_fact_schemas (schema_id TEXT NOT NULL, "
-            "schema_version INTEGER NOT NULL, constraints_json TEXT NOT NULL, "
-            "PRIMARY KEY(schema_id,schema_version)) STRICT"
-        ),
-        columns=(
-            ("schema_id", "TEXT", False),
-            ("schema_version", "INTEGER", False),
-            ("constraints_json", "TEXT", False),
-        ),
-        primary_key=("schema_id", "schema_version"),
-        constraints=(),
-        indexes=(),
-        logical=False,
-    ),
-    _TableSpec(
-        name="presentation_facts",
-        create_sql=(
-            "CREATE TABLE presentation_facts (schema_id TEXT NOT NULL, "
-            "schema_version INTEGER NOT NULL, "
-            "subject_identity TEXT NOT NULL, fact_key TEXT NOT NULL, value_json TEXT NOT NULL, "
-            "PRIMARY KEY(schema_id,schema_version,subject_identity,fact_key)) STRICT"
-        ),
-        columns=(
-            ("schema_id", "TEXT", False),
-            ("schema_version", "INTEGER", False),
-            ("subject_identity", "TEXT", False),
-            ("fact_key", "TEXT", False),
-            ("value_json", "TEXT", False),
-        ),
-        primary_key=("schema_id", "schema_version", "subject_identity", "fact_key"),
-        constraints=(),
-        indexes=(),
-        logical=False,
-    ),
-)
-
-
 def _canonical_json_text(value: object) -> str:
     return canonical_bytes(value).decode("utf-8")
 
@@ -320,187 +125,26 @@ def update_projection_database(
     request: AssemblerRequest,
     parsed: ParsedProjectionTree,
     changed_paths: frozenset[str],
-    relation_delta: CitationDelta | None,
+    sources: Mapping[str, bytes],
+    bodies: Any = None,
 ) -> dict[str, int]:
-    """Copy a verified immutable parent and replace only changeset-owned rows.
+    """Copy one verified typed publication, then replace changed owners atomically."""
+    from cruxible_core.compiler.compiler import SUPPORTED_COMPILERS, artifact_codec_for_compiler
+    from cruxible_core.indexes.typed_sqlite import update
 
-    Coordinate-bearing explanation facts retain their frozen wire shape. Their
-    binding is rewritten explicitly; arbitrary embedded evidence is never searched
-    and replaced. The source database and all historical readers remain untouched.
-    """
-    connection = sqlite3.connect(path)
-    try:
-        parent._connection.backup(connection)
-        connection.execute("PRAGMA journal_mode=DELETE")
-        connection.execute("PRAGMA synchronous=FULL")
-        connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("BEGIN IMMEDIATE")
-        old_identities = [
-            row[0]
-            for artifact_path in sorted(changed_paths)
-            for row in connection.execute(
-                "SELECT identity FROM artifact_envelopes WHERE path=?", (artifact_path,)
-            )
-        ]
-        for identity in old_identities:
-            for table, column in (
-                ("semantic_facts", "subject_identity"),
-                ("presentation_facts", "subject_identity"),
-                ("pins", "source_identity"),
-                ("live_identities", "identity"),
-                ("artifact_envelopes", "identity"),
-            ):
-                if table == "semantic_facts":
-                    # Track records belong to an ExhaustPromotion, even though
-                    # their query subject is the affected Procedure or Line.
-                    connection.execute(
-                        "DELETE FROM semantic_facts WHERE subject_identity=? AND "
-                        "schema_id NOT IN ('playbill.procedure.track_record', "
-                        "'playbill.line.track_record')",
-                        (identity,),
-                    )
-                else:
-                    connection.execute(f"DELETE FROM {table} WHERE {column}=?", (identity,))
-
-        def binding(
-            coordinate: AcceptedProjectionCoordinate | AssemblerRequest,
-        ) -> dict[str, object]:
-            compiler = (
-                coordinate.compiler.rule_digest
-                if isinstance(coordinate, AcceptedProjectionCoordinate)
-                else coordinate.compiler_digest
-            )
-            return {
-                "compiler_digest": {"$digest": compiler},
-                "generation_root": {"$digest": coordinate.generation_root},
-                "git_object_format": coordinate.git_object_format,
-                "git_oid": coordinate.git_oid,
-                "instance_id": coordinate.instance_id,
-                "semantic_root": {"$digest": coordinate.semantic_root},
-            }
-
-        old_binding, new_binding = binding(parent.accepted), binding(request)
-
-        def rebind(raw: str) -> str:
-            value = json.loads(raw)
-            proofs = [item["proof_ref"] for item in value.get("basis", [])]
-            if "proof_ref" in value:
-                proofs.append(value["proof_ref"])
-            if "coverage_binding" in value:
-                proofs.append(value["coverage_binding"]["proof_ref"])
-            for proof in proofs:
-                if proof["accepted_coordinate"] != old_binding:
-                    raise ProjectionIntegrityError("carried explanation has another coordinate")
-                proof["accepted_coordinate"] = new_binding
-            # Input is previously normalized compiler output; only typed coordinate
-            # fields changed. Preserve canonical text without re-normalizing evidence.
-            return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-        connection.create_function("playbill_rebind", 1, rebind)
-        for family in (
-            "document",
-            "subject",
-            "claim_type",
-            "procedure",
-            "line",
-            "query_definition",
-            "claim",
-        ):
-            for suffix in ("governance", "provenance", "attestation_coverage", "history"):
-                connection.execute(
-                    "UPDATE semantic_facts SET value_json=playbill_rebind(value_json) "
-                    "WHERE schema_id=? AND schema_version=1",
-                    (f"playbill.{family}.{suffix}",),
-                )
-        connection.executemany(
-            "INSERT INTO artifact_envelopes VALUES (?,?,?,?,?,?,?)",
-            [
-                (
-                    r.identity,
-                    r.kind,
-                    r.format_tag,
-                    r.path,
-                    r.artifact_digest,
-                    r.predecessor_digest,
-                    r.revision,
-                )
-                for r in parsed.envelopes
-            ],
-        )
-        retired = frozenset(parsed.retired_identities)
-        connection.executemany(
-            "INSERT INTO live_identities VALUES (?,?,?)",
-            [
-                (r.identity, r.artifact_digest, r.path)
-                for r in parsed.envelopes
-                if r.identity not in retired
-            ],
-        )
-        connection.executemany(
-            "INSERT INTO pins VALUES (?,?,?)",
-            [(r.source_identity, r.target_identity, r.target_digest) for r in parsed.pins],
-        )
-        for table, facts in (
-            ("semantic_facts", parsed.semantic_facts),
-            ("presentation_facts", parsed.presentation_facts),
-        ):
-            connection.executemany(
-                f"INSERT INTO {table} VALUES (?,?,?,?,?)",
-                [
-                    (
-                        f.schema_id,
-                        f.schema_version,
-                        f.subject_identity,
-                        f.fact_key,
-                        _canonical_json_text(f.value),
-                    )
-                    for f in facts
-                ],
-            )
-        if relation_delta is not None:
-            connection.executemany(
-                "DELETE FROM semantic_facts WHERE schema_id=? AND schema_version=? "
-                "AND subject_identity=? AND fact_key=?",
-                relation_delta.deletes,
-            )
-            connection.executemany(
-                "INSERT INTO semantic_facts VALUES (?,?,?,?,?)",
-                [
-                    (
-                        f.schema_id,
-                        f.schema_version,
-                        f.subject_identity,
-                        f.fact_key,
-                        f.value_json.decode("utf-8"),
-                    )
-                    for f in relation_delta.inserts
-                ],
-            )
-        connection.execute(
-            "UPDATE generation_metadata SET instance_id=?,git_object_format=?,git_oid=?,"
-            "semantic_root=?,generation_root=? WHERE singleton=1",
-            (
-                request.instance_id,
-                request.git_object_format,
-                request.git_oid,
-                request.semantic_root,
-                request.generation_root,
-            ),
-        )
-        connection.commit()
-        _verify_projection_schema(connection)
-        if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
-            raise ProjectionIntegrityError("successor projection failed SQLite integrity_check")
-        return dict(
-            sorted(
-                (spec.name, connection.execute(f"SELECT COUNT(*) FROM {spec.name}").fetchone()[0])
-                for spec in _TABLE_SPECS
-            )
-        )
-    except sqlite3.DatabaseError as exc:
-        raise ProjectionIntegrityError("failed to update the SQLite projection") from exc
-    finally:
-        connection.close()
+    compiler = next(
+        item for item in SUPPORTED_COMPILERS if item.rule_digest == request.compiler_digest
+    )
+    return update(
+        path,
+        parent=parent._connection,
+        request=request,
+        parsed=parsed,
+        sources=sources,
+        changed_paths=changed_paths,
+        codec=artifact_codec_for_compiler(compiler),
+        bodies=bodies,
+    )
 
 
 def initialize_projection_database(
@@ -510,8 +154,30 @@ def initialize_projection_database(
     parsed: ParsedProjectionTree,
     registry: ProjectionExtensionRegistry,
     assembler_implementation: str,
+    sources: Mapping[str, bytes] | None = None,
+    bodies: Any = None,
 ) -> dict[str, int]:
     """Create and populate the complete PB-B one-piece SQLite projection."""
+
+    if isinstance(request, AssemblerRequestV2):
+        from cruxible_core.compiler.compiler import SUPPORTED_COMPILERS, artifact_codec_for_compiler
+        from cruxible_core.indexes.typed_sqlite import initialize
+
+        compiler = next(
+            item for item in SUPPORTED_COMPILERS if item.rule_digest == request.compiler_digest
+        )
+        if sources is None:
+            sources = _source_repository(request.repository_path).read_tree(request.git_oid)
+        return initialize(
+            path,
+            request=request,
+            parsed=parsed,
+            sources=sources,
+            codec=artifact_codec_for_compiler(compiler),
+            assembler_implementation=assembler_implementation,
+            bodies=bodies,
+            registry=registry,
+        )
 
     if not _ASSEMBLER_IMPLEMENTATION_RE.fullmatch(assembler_implementation):
         raise ProjectionIntegrityError("assembler implementation identifier is not canonical")
@@ -644,6 +310,11 @@ def initialize_projection_database(
 
 def _verify_projection_schema(connection: sqlite3.Connection) -> None:
     version = cast(int, connection.execute("PRAGMA user_version").fetchone()[0])
+    if version == 2:
+        from cruxible_core.indexes.typed_sqlite import verify_schema
+
+        verify_schema(connection)
+        return
     if version != PROJECTION_SCHEMA_VERSION:
         raise ProjectionIntegrityError("projection SQLite schema version is unsupported")
     expected: dict[tuple[str, str], str] = {}
@@ -671,6 +342,10 @@ def canonical_logical_export(path: Path) -> dict[str, object]:
         connection = sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True)
         try:
             _verify_projection_schema(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == 2:
+                from cruxible_core.indexes.typed_sqlite import logical_export
+
+                return logical_export(connection)
             tables: list[dict[str, object]] = []
             for spec in sorted(_TABLE_SPECS, key=lambda item: item.name.encode("utf-8")):
                 if not spec.logical:
@@ -706,10 +381,13 @@ def canonical_logical_export(path: Path) -> dict[str, object]:
 
 
 def projection_logical_digest(path: Path) -> LogicalDigest:
+    exported = canonical_logical_export(path)
     return typed_digest(
         LogicalDigest,
-        "playbill-projection-logical-v1",
-        canonical_logical_export(path),
+        "playbill-projection-logical-v2"
+        if exported.get("storage_schema_version") == 2
+        else "playbill-projection-logical-v1",
+        exported,
     )
 
 
@@ -729,7 +407,11 @@ def load_projection_manifest(path: Path) -> ProjectionManifest:
         raise ProjectionIntegrityError("projection manifest must be a regular file")
     try:
         raw = path.read_bytes()
-        manifest = ProjectionManifest.model_validate_json(raw)
+        manifest = (
+            ProjectionManifestV2
+            if json.loads(raw).get("tag") == "playbill-projection-manifest-v2"
+            else ProjectionManifest
+        ).model_validate_json(raw)
     except Exception as exc:
         raise ProjectionIntegrityError("projection manifest is missing or malformed") from exc
     if render_projection_manifest(manifest) != raw:
@@ -754,6 +436,18 @@ def _manifest_matches_coordinate(
     )
 
 
+def _source_repository(path: str) -> Any:
+    from cruxible_core.ledger.git import GitLedger
+
+    # Exact blob reads do not consult signing custody; credentials are deliberately
+    # unusable on this standalone read adapter. Instance callers attach their reader.
+    return GitLedger(
+        Path(path),
+        signing_key_path=Path(path) / ".read-only",
+        allowed_signers_path=Path(path) / ".read-only",
+    )
+
+
 class ProjectionHandle:
     """An immutable read handle whose complete build was verified exactly once."""
 
@@ -772,6 +466,32 @@ class ProjectionHandle:
         self._connection = connection
         self.accepted = accepted
         self._closed = False
+        self.typed = None
+        if isinstance(manifest, ProjectionManifestV2):
+            from cruxible_core.indexes.typed_state import TypedStateReader
+
+            self.typed = TypedStateReader(
+                connection, accepted, _source_repository(accepted.repository_path)
+            )
+
+    def attach_sources(self, repository: Any, *, bodies: Any, history: Any) -> ProjectionHandle:
+        if self.typed is not None:
+            self.typed.repository, self.typed.bodies, self.typed.history = (
+                repository,
+                bodies,
+                history,
+            )
+        return self
+
+    @property
+    def citations(self) -> Any:
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
+        from cruxible_core.indexes.evidence.citation_sql import CitationReader
+
+        if self.typed is None:
+            raise ProjectionIntegrityError("citation relations require a rebuilt typed publication")
+        return CitationReader(self._connection, self.typed.member_bytes)
 
     @property
     def index_path(self) -> Path:
@@ -785,6 +505,8 @@ class ProjectionHandle:
         """Read typed artifact metadata, optionally for an exact changed-path set."""
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
+        if self.typed is not None:
+            return self.typed.envelopes(paths=paths)
         columns = "identity,kind,format_tag,path,artifact_digest,predecessor_digest,revision"
         if paths is None:
             rows = self._connection.execute(
@@ -810,6 +532,16 @@ class ProjectionHandle:
 
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
+        if self.typed is not None:
+            from cruxible_core.indexes.typed_state import OWNER_BY_KIND
+
+            family = (
+                schema_id.split(".")[1].replace("_", "-")
+                if schema_id.startswith("playbill.")
+                else None
+            )
+            if family in OWNER_BY_KIND and family != "fixture":
+                return self.typed.facts(schema_id, identity=subject_identity)
         if subject_identity is None:
             rows = self._connection.execute(
                 "SELECT schema_id,schema_version,subject_identity,fact_key,value_json "
@@ -838,6 +570,31 @@ class ProjectionHandle:
     def fixture(self, identity: str) -> dict[str, object] | None:
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
+        if self.typed is not None:
+            row = self._connection.execute(
+                "SELECT identity,'fixture' AS kind,format_tag,path,artifact_digest,"
+                "predecessor_digest,revision FROM fixtures WHERE identity=?",
+                (identity,),
+            ).fetchone()
+            if row is None:
+                return None
+            facts = self._connection.execute(
+                "SELECT schema_id,schema_version,fact_key,value_json FROM semantic_facts "
+                "WHERE subject_identity=? ORDER BY schema_id,schema_version,fact_key",
+                (identity,),
+            ).fetchall()
+            return {
+                "envelope": dict(row),
+                "facts": [
+                    {
+                        "schema_id": fact[0],
+                        "schema_version": fact[1],
+                        "fact_key": fact[2],
+                        "value": json.loads(fact[3]),
+                    }
+                    for fact in facts
+                ],
+            }
         envelope = self._connection.execute(
             "SELECT * FROM artifact_envelopes WHERE identity = ? AND kind = 'fixture'",
             (identity,),
@@ -872,6 +629,16 @@ class ProjectionHandle:
 
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
+        if self.typed is not None:
+            envelope = self.typed.envelope(identity)
+            if envelope is None or envelope.kind != "document":
+                return None
+            return document_projection_view(
+                envelope,
+                self.typed.facts(identity=identity),
+                coordinate=self.accepted,
+                access=access,
+            )
         envelope = self._connection.execute(
             "SELECT * FROM artifact_envelopes WHERE identity = ? AND kind = 'document'",
             (identity,),
@@ -918,6 +685,12 @@ class ProjectionHandle:
 
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
+        if self.typed is not None:
+            return tuple(
+                view
+                for row in self.typed.envelopes(kind="document")
+                if (view := self.document(row.identity, access=access)) is not None
+            )
         identities = self._connection.execute(
             "SELECT identity FROM artifact_envelopes WHERE kind = 'document' ORDER BY identity"
         ).fetchall()
@@ -932,6 +705,13 @@ class ProjectionHandle:
 
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
+        if self.typed is not None:
+            envelope = self.typed.envelope(identity)
+            if envelope is None or envelope.kind != "subject":
+                return None
+            return subject_projection_view(
+                envelope, self.typed.facts(identity=identity), coordinate=self.accepted
+            )
         envelope = self._connection.execute(
             "SELECT * FROM artifact_envelopes WHERE identity = ? AND kind = 'subject'",
             (identity,),
@@ -973,6 +753,12 @@ class ProjectionHandle:
 
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
+        if self.typed is not None:
+            return tuple(
+                view
+                for row in self.typed.envelopes(kind="subject")
+                if (view := self.subject(row.identity)) is not None
+            )
         identities = self._connection.execute(
             "SELECT identity FROM artifact_envelopes WHERE kind = 'subject' ORDER BY identity"
         ).fetchall()
@@ -987,6 +773,13 @@ class ProjectionHandle:
 
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
+        if self.typed is not None:
+            envelope = self.typed.envelope(identity)
+            if envelope is None or envelope.kind != "claim":
+                return None
+            return claim_projection_view(
+                envelope, self.typed.facts(identity=identity), coordinate=self.accepted
+            )
         envelope = self._connection.execute(
             "SELECT * FROM artifact_envelopes WHERE identity = ? AND kind = 'claim'",
             (identity,),
@@ -1035,6 +828,27 @@ class ProjectionHandle:
         """Select a bounded page without materializing unrelated Claim views."""
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
+        if self.typed is not None:
+            clauses = [
+                "identity>?",
+                "subject_path IN (" + ",".join("?" for _ in subject_paths) + ")",
+            ]
+            values: list[object] = [after, *subject_paths]
+            if predicates:
+                clauses.append("predicate IN (" + ",".join("?" for _ in predicates) + ")")
+                values.extend(predicates)
+            if not include_retired:
+                clauses.append("lifecycle='live'")
+            values.append(limit)
+            return tuple(
+                row[0]
+                for row in self._connection.execute(
+                    "SELECT identity FROM claims WHERE "
+                    + " AND ".join(clauses)
+                    + " ORDER BY identity LIMIT ?",
+                    values,
+                )
+            )
         subject_slots = ",".join("?" for _ in subject_paths)
         sql = (
             "SELECT e.identity FROM artifact_envelopes e "
@@ -1061,6 +875,12 @@ class ProjectionHandle:
 
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
+        if self.typed is not None:
+            return tuple(
+                view
+                for row in self.typed.envelopes(kind="claim")
+                if (view := self.claim(row.identity)) is not None
+            )
         identities = self._connection.execute(
             "SELECT identity FROM artifact_envelopes WHERE kind = 'claim' ORDER BY identity"
         ).fetchall()
@@ -1137,6 +957,10 @@ def bind_projection(
         # run rather than synthesizing a passing result for it: a forged "ok"
         # would read, here and to anything that later surfaced it, as a check
         # that ran.
+        if connection.execute("PRAGMA user_version").fetchone()[0] != (
+            2 if isinstance(manifest, ProjectionManifestV2) else 1
+        ):
+            raise ProjectionIntegrityError("manifest and SQLite storage versions differ")
         integrity_ok = already_verified
         if not already_verified:
             integrity = connection.execute("PRAGMA integrity_check").fetchone()
@@ -1151,13 +975,18 @@ def bind_projection(
         assembler_row = connection.execute(
             "SELECT implementation,contract_version FROM assembler_metadata WHERE singleton = 1"
         ).fetchone()
-        counts = {
-            spec.name: cast(
-                int,
-                connection.execute(f"SELECT COUNT(*) FROM {spec.name}").fetchone()[0],
-            )
-            for spec in _TABLE_SPECS
-        }
+        if isinstance(manifest, ProjectionManifestV2):
+            from cruxible_core.indexes.typed_sqlite import row_counts
+
+            counts = row_counts(connection)
+        else:
+            counts = {
+                spec.name: cast(
+                    int,
+                    connection.execute(f"SELECT COUNT(*) FROM {spec.name}").fetchone()[0],
+                )
+                for spec in _TABLE_SPECS
+            }
         expected_metadata = (
             manifest.instance_id,
             manifest.git_object_format,

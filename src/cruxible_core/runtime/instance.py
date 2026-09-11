@@ -80,8 +80,6 @@ from cruxible_core.governance.keys import (
     public_key_hex_from_private_file,
     raw_public_key_hex_from_openssh,
 )
-from cruxible_core.indexes.claims.projection_claim_cache import ClaimCompilationCache
-from cruxible_core.indexes.evidence.citation_index import CitationIndexCache
 from cruxible_core.indexes.history.history_index import AcceptedHistoryIndex, HistoryReader
 from cruxible_core.indexes.projection import (
     AcceptedCoordinate,
@@ -248,8 +246,6 @@ class PlaybillInstance:
         self._state_lock = threading.RLock()
         self.derived = DerivedState()
         self.prepared_evaluations = PreparedEvaluationAdapter(self.derived)
-        self._citation_index_cache = CitationIndexCache(self.derived)
-        self._claim_compilation_cache = ClaimCompilationCache()
         self._proposal_note_cache = ProposalNoteCache()
         self._evaluation_state_cache = EvaluationStateCache(build_context=self.derived.build)
         for name, namespace, adapter, source in (
@@ -260,12 +256,6 @@ class PlaybillInstance:
                 "accepted/candidate",
                 self._evaluation_state_cache,
                 "exact-semantic-bytes-v1",
-            ),
-            (
-                "claim-compilation",
-                "accepted",
-                self._claim_compilation_cache,
-                "exact-claim-inputs-v1",
             ),
             ("proposal-notes", "operational", self._proposal_note_cache, "fresh-note-bytes-v1"),
         ):
@@ -1531,6 +1521,20 @@ class PlaybillInstance:
             raise PlaybillFormatError("accepted coordinate compiler digest is unsupported")
         return coordinate
 
+    def _projection_sources(self, handle: ProjectionHandle) -> ProjectionHandle:
+        coordinate = handle.accepted
+        at = AcceptedCoordinate(
+            git_oid=coordinate.git_oid,
+            semantic_root=coordinate.semantic_root,
+            generation_root=coordinate.generation_root,
+            compiler_digest=coordinate.compiler.rule_digest,
+        )
+        return handle.attach_sources(
+            self._ledger,
+            bodies=self.body_store(),
+            history=lambda: self.accepted_history_reader(at=at),
+        )
+
     def bind_accepted_projection(
         self,
         coordinate: AcceptedProjectionCoordinate,
@@ -1545,7 +1549,9 @@ class PlaybillInstance:
         )
         paths = self._validated_paths(self.root, self.descriptor.storage)
         if verified == self.accepted_coordinate():
-            return bind_current_projection(paths["projections"], expected=verified)
+            return self._projection_sources(
+                bind_current_projection(paths["projections"], expected=verified)
+            )
         assembler = ProjectionAssembler(
             self._ledger,
             accepted=verified,
@@ -1557,7 +1563,7 @@ class PlaybillInstance:
             output_staging_directory=paths["projections"] / ".historical-bind"
         )
         manifest_path = paths["projections"] / projection_manifest_name(request)
-        return bind_projection(manifest_path, expected=verified)
+        return self._projection_sources(bind_projection(manifest_path, expected=verified))
 
     def refresh(self, *, witness: WitnessSink | None = None) -> AcceptedProjectionCoordinate:
         """Replay accepted state and repair publication, excluding concurrent writers."""
@@ -1573,7 +1579,6 @@ class PlaybillInstance:
         self._tree_memo.clear()
         self.derived.clear()
         self.claim_read_history_memo.clear()
-        self._claim_compilation_cache.clear()
         self._evaluation_state_cache.clear()
         self._recovered = recover_instance(
             self._ledger,
@@ -1613,8 +1618,6 @@ class PlaybillInstance:
             checkpoint_directory=self._checkpoint_directory(self.root),
             checkpoint_interval=DEFAULT_CHECKPOINT_INTERVAL,
             genesis=self.descriptor.genesis,
-            claim_compilation_cache=self._claim_compilation_cache,
-            citation_index_cache=self._citation_index_cache,
             verified_change_sets=tuple(
                 (f"changesets/cs-{generation.record.sequence:020d}.json", generation.record)
                 for generation in self._recovered.history

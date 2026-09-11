@@ -44,6 +44,7 @@ def _publisher(
     directory.mkdir(exist_ok=True)
     return ProjectionAssembler(
         repository,
+        storage_schema_version=1,
         accepted=accepted_coordinate(repository, generation_byte=generation_byte),
         publication_directory=directory,
     )
