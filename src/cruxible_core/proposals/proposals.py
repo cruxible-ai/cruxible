@@ -398,6 +398,8 @@ class ExhaustPromotionVerifierProtocol(Protocol):
 class ProposalEvidenceProtocol(ProposalNoteEvidence, Protocol):
     """Daemon persistence seam consumed by the pure proposal service."""
 
+    def publication(self) -> AbstractContextManager[None]: ...
+
     def write_admission(self, record: ProposalAdmissionRecord) -> object: ...
 
     def write_evaluation(self, record: ProposalEvaluationRecord) -> object: ...
@@ -4020,10 +4022,11 @@ class ProposalService:
             # content-addressed records nothing points at), which a resubmission
             # on the same ref completes; an admission without its evaluation is
             # not a crash state but corrupt evidence, and reads as such.
-            if outcome.candidate is not None:
-                self.evidence.write_candidate(outcome.candidate)
-            self.evidence.write_evaluation(evaluation)
-            self.evidence.write_admission(admission)
+            with self.evidence.publication():
+                if outcome.candidate is not None:
+                    self.evidence.write_candidate(outcome.candidate)
+                self.evidence.write_evaluation(evaluation)
+                self.evidence.write_admission(admission)
             # Original and advisory aliases use the same complete group, so a
             # second admission sharing a commit cannot overwrite the first.
             after = self._note_index()
