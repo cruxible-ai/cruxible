@@ -310,6 +310,113 @@ def test_proposal_trigger_cannot_mutate_history_through_shared_database(tmp_path
             pytest.fail("proposal triggers must not bypass the shared schema check")
 
 
+def test_member_locations_read_exact_evidence_without_history_scan(seeded, monkeypatch):
+    from cruxible_client.contracts.errors import ProjectionIntegrityError
+
+    instance = seeded
+    with instance.accepted_history_reader() as reader:
+        generations = instance.accepted_history()
+        generation = generations[2]
+        member = generation.record.members[0]
+        version = reader.artifact(member.candidate_artifact_digest)
+        location = reader.claim_law_evidence(
+            version.identity, artifact_digest=version.artifact_digest, path=version.path
+        )
+        assert location.sequence == 2
+        assert reader.member_history(version.path) == (location,)
+        requested = []
+
+        def load(oid, path):
+            requested.append((oid, path))
+            return instance.blob_at(oid, path)
+
+        result = reader.read_claim_law_evidence(
+            version.identity,
+            artifact_digest=version.artifact_digest,
+            path=version.path,
+            load_record=load,
+        )
+        assert result == generation.record.law_evidence[0]
+        assert requested == [(generation.oid, "changesets/cs-00000000000000000002.json")]
+        with pytest.raises(ProjectionIntegrityError, match="requested version"):
+            reader.claim_law_evidence(version.identity, artifact_digest="wrong", path=version.path)
+        with pytest.raises(ProjectionIntegrityError, match="unavailable"):
+            reader.read_member_record(location, lambda oid, path: None)
+        with pytest.raises(ProjectionIntegrityError, match="binding differs"):
+            reader.read_member_record(
+                location,
+                lambda oid, path: instance.blob_at(
+                    generations[3].oid, "changesets/cs-00000000000000000003.json"
+                ),
+            )
+    checked = instance._accepted_history_index.generations_checked
+
+    def no_scan(*args, **kwargs):
+        pytest.fail("selected evidence read must not traverse accepted history")
+
+    monkeypatch.setattr(instance, "accepted_history", no_scan)
+    with instance.accepted_history_reader() as reader:
+        assert (
+            reader.read_claim_law_evidence(
+                version.identity,
+                artifact_digest=version.artifact_digest,
+                path=version.path,
+                load_record=load,
+            )
+            == result
+        )
+    assert instance._accepted_history_index.generations_checked == checked
+
+
+def test_unchanged_member_evaluation_gets_its_own_location_and_cutoff(tmp_path, seeded):
+    from cruxible_core.proposals.settlement import change_set_digest, render_change_set
+
+    source = seeded._recovered
+    original = source.history[2]
+    member = original.record.members[0]
+    with seeded.accepted_history_reader() as reader:
+        version = reader.artifact(member.candidate_artifact_digest)
+    row = ArtifactEnvelopeRow(
+        version.identity, "claim", "test", version.path, version.artifact_digest, None, 1
+    )
+    record = original.record.model_copy(update={"sequence": 4})
+    record = record.model_copy(update={"changeset_digest": change_set_digest(record).tagged})
+    repeat = replace(original, sequence=4, oid="f" * len(original.oid), record=record)
+    state = replace(source, history=(*source.history, repeat), head=repeat)
+    index = AcceptedHistoryIndex(tmp_path / "working.sqlite3")
+    with index.read(state, lambda n: [row] if n == 2 else []) as reader:
+        assert [v.occurrence_sequence for v in reader.occurrences(version.identity)] == [2]
+        assert [m.sequence for m in reader.member_history(version.path)] == [2, 4]
+        latest = reader.claim_law_evidence(
+            version.identity, artifact_digest=version.artifact_digest, path=version.path
+        )
+        assert latest.sequence == 4
+        assert (
+            reader.read_member_record(latest, lambda oid, path: render_change_set(record)) == record
+        )
+    with index.read(
+        state, lambda n: [row] if n == 2 else [], at=coordinate(original, seeded)
+    ) as reader:
+        assert (
+            reader.claim_law_evidence(
+                version.identity, artifact_digest=version.artifact_digest, path=version.path
+            ).sequence
+            == 2
+        )
+
+
+def test_old_narrow_history_schema_upgrades_and_rebuilds_member_locations(tmp_path, seeded):
+    from cruxible_core.indexes.history.history_index import _HISTORY_SCHEMA
+
+    path = tmp_path / "working.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.executescript(_HISTORY_SCHEMA)
+    index = AcceptedHistoryIndex(path)
+    with index.read(seeded._recovered, lambda n: []) as reader:
+        path = seeded.accepted_history()[2].record.members[0].path
+        assert reader.member_history(path)[0].sequence == 2
+
+
 def test_binding_includes_compiler_and_read_handle_expires(tmp_path, seeded):
     index = AcceptedHistoryIndex(tmp_path / "history.sqlite3")
     state = prefix(seeded, 1)
