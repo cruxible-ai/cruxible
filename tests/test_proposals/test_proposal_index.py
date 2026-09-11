@@ -200,6 +200,10 @@ def test_commit_gap_never_certifies_foreign_rows_or_file(tmp_path, monkeypatch, 
     field = "_connection" if publisher == "proposal" else "_writer"
     component = index if publisher == "proposal" else owner
     connection = getattr(component, field)
+    if publisher == "history":
+        # Clean reads no longer commit. Exercise the actual repair publisher's
+        # commit gap by requiring it to revalidate its source-backed rows.
+        owner.invalidate()
 
     class CommitGap:
         def __getattr__(self, name):

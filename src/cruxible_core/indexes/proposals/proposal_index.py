@@ -453,10 +453,65 @@ class ProposalIndex:
         self._shutdown_proof.clear()
         self._shutdown_proof.update(root=str(root), marker=json.loads(canonical_json(marker)))
 
+    def _clean_snapshot(
+        self, evidence: ProposalEvidenceStore, *, review_context: bool
+    ) -> sqlite3.Connection | None:
+        """Validate a clean proof in an independent snapshot without writer ownership."""
+        self.source_checks += 1
+        marker = self._marker(evidence.root)
+        stamp = self._file_stamp()
+        if (
+            marker is None
+            or marker.get("clean") is not True
+            or stamp is None
+            or marker.get("database_stamp") != list(stamp)
+            or marker.get("inventory") != self._inventory(evidence)
+        ):
+            return None
+        if (
+            review_context
+            and evidence.transport is not None
+            and marker.get("review_context")
+            != file_digest(evidence.transport.review_commit_context())
+        ):
+            return None
+        connection = open_working_snapshot(
+            self.path, expected_stamp=stamp, file_stamp=self._file_stamp
+        )
+        try:
+            if _schema_rows(connection) != _EXPECTED_SCHEMA:
+                raise ProposalIntegrityError("proposal index schema differs; rebuild required")
+            progress = connection.execute(
+                "SELECT source_epoch,verified_sequence,source_root FROM proposal_progress"
+            ).fetchall()
+            if (
+                progress != [(marker.get("epoch"), marker.get("sequence"), str(evidence.root))]
+                or self._marker(evidence.root) != marker
+                or self._inventory(evidence) != marker["inventory"]
+                or self._file_stamp() != stamp
+            ):
+                connection.close()
+                return None
+            connection.row_factory = sqlite3.Row
+            return connection
+        except BaseException:
+            connection.close()
+            raise
+
     @contextmanager
     def read(
         self, evidence: ProposalEvidenceStore, *, review_context: bool = False
     ) -> Iterator[sqlite3.Connection]:
+        try:
+            reader = self._clean_snapshot(evidence, review_context=review_context)
+        except sqlite3.DatabaseError as exc:
+            raise ProposalIntegrityError("proposal index requires reconstruction") from exc
+        if reader is not None:
+            try:
+                yield reader
+            finally:
+                reader.close()
+            return
         reader = None
         try:
             with self._source_lock(evidence):

@@ -473,6 +473,8 @@ def _member_digest(member: object) -> str | None:
 class AcceptedHistoryIndex:
     """Shared derived owner; no source mutation and no frozen compiler schema change."""
 
+    _proposals: ProposalIndex
+
     def __init__(self, path: Path) -> None:
         self.path = path
         self._lock = threading.RLock()
@@ -500,6 +502,8 @@ class AcceptedHistoryIndex:
         """Proposal locators share this working database and acquisition owner."""
         from cruxible_core.indexes.proposals.proposal_index import ProposalIndex
 
+        if hasattr(self, "_proposals"):
+            return self._proposals
         with self._lock:
             if not hasattr(self, "_proposals"):
                 self._proposals = ProposalIndex(
@@ -588,6 +592,46 @@ class AcceptedHistoryIndex:
             self._writer_identity = None if stamp is None else stamp[:2]
         return self._writer
 
+    def _clean_snapshot(
+        self, recovered: RecoveredInstanceState
+    ) -> tuple[sqlite3.Connection, tuple[int, ...]] | None:
+        if len(recovered.history) != recovered.head.sequence + 1:
+            raise ProjectionIntegrityError("verified history sequence is not contiguous")
+        ready = (
+            recovered.head.sequence,
+            recovered.head.generation_root.tagged,
+            recovered.coordinate.instance_id,
+            recovered.coordinate.compiler.rule_digest,
+            recovered.coordinate.compiler.schema_version,
+        )
+        stamp = self._stamp
+        if stamp is None or self._ready != ready or self._file_stamp() != stamp:
+            return None
+        connection = open_working_snapshot(
+            self.path, expected_stamp=stamp, file_stamp=self._file_stamp
+        )
+        try:
+            if _schema_rows(connection) != _EXPECTED_SCHEMA:
+                raise ProjectionIntegrityError("history index schema differs; rebuild required")
+            progress = connection.execute(
+                "SELECT instance_id,genesis_root,sequence FROM history_progress WHERE singleton=1"
+            ).fetchone()
+            if (
+                progress
+                != (
+                    recovered.coordinate.instance_id,
+                    recovered.history[0].generation_root.tagged,
+                    recovered.head.sequence,
+                )
+                or self._file_stamp() != stamp
+            ):
+                connection.close()
+                return None
+            return connection, stamp
+        except BaseException:
+            connection.close()
+            raise
+
     @contextmanager
     def read(
         self,
@@ -596,6 +640,33 @@ class AcceptedHistoryIndex:
         *,
         at: AcceptedCoordinate | None = None,
     ) -> Iterator[HistoryReader]:
+        try:
+            clean = self._clean_snapshot(recovered)
+        except sqlite3.DatabaseError as exc:
+            self.invalidate()
+            raise ProjectionIntegrityError("accepted history index could not be read") from exc
+        if clean is not None:
+            clean_connection, clean_stamp = clean
+            try:
+                reader = HistoryReader(clean_connection, recovered.head.sequence)
+                reader.resolve(
+                    AcceptedCoordinate(
+                        git_oid=recovered.head.oid,
+                        semantic_root=recovered.head.semantic_root.tagged,
+                        generation_root=recovered.head.generation_root.tagged,
+                        compiler_digest=recovered.coordinate.compiler.rule_digest,
+                    )
+                )
+                if at is not None:
+                    reader = HistoryReader(clean_connection, reader.resolve(at).sequence)
+                yield reader
+                current_stamp = self._file_stamp()
+                if current_stamp is None or clean_stamp[:2] != current_stamp[:2]:
+                    self.invalidate()
+                    raise ProjectionIntegrityError("history index file was replaced during read")
+            finally:
+                clean_connection.close()
+            return
         connection: sqlite3.Connection | None = None
         try:
             # Serialize only synchronization and snapshot acquisition. Neither

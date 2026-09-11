@@ -59,7 +59,7 @@ def open_working_snapshot(
     expected_stamp: tuple[int, ...],
     file_stamp: Callable[[], tuple[int, ...] | None],
 ) -> sqlite3.Connection:
-    """Pin a WAL snapshot while its caller retains the verified writer lock."""
+    """Pin a WAL snapshot only while its verified physical proof remains unchanged."""
 
     for attempt in range(3):
         connection = None
@@ -73,7 +73,7 @@ def open_working_snapshot(
                 connection.execute("PRAGMA query_only=ON")
                 connection.execute("BEGIN DEFERRED")
                 # BEGIN does not acquire the WAL snapshot. Read while the path
-                # proof and the caller's writer ownership still protect it.
+                # proof and the exact physical stamp still protect acquisition.
                 connection.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
                 if file_stamp() != expected_stamp:
                     raise ProjectionIntegrityError(
