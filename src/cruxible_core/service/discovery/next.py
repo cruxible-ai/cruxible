@@ -1554,8 +1554,6 @@ def _citation_relation_items(
 
     if not access_profile.permits("instance"):
         return ()
-    if not any(path.startswith("claims/") for path in instance.paths_at(coordinate.git_oid)):
-        return ()
     public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
     retirement_sequences = _claim_retirement_sequences(instance) if door_events else {}
     accepted_sequence_by_semantic_root = (
@@ -1763,7 +1761,7 @@ def _citation_relation_items(
         document_id = observed.document_id
         if (
             document_id is None
-            or instance.tree_at(coordinate.git_oid).get(document_path(document_id)) is None
+            or instance.blob_at(coordinate.git_oid, document_path(document_id)) is None
         ):
             continue
         live_intervals = sorted(

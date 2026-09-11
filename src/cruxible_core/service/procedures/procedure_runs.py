@@ -648,7 +648,6 @@ def _accepted_procedure(
 ) -> AcceptedProcedureV1:
     path = procedure_path(name)
     with instance.bind_accepted_projection(coordinate) as projection:
-        assert projection.typed is not None
         envelope = projection.typed.envelope(f"Procedure:{name}")
         if envelope is None:
             raise ProcedureNotFound(f"{ProcedureNotFound.code}: {name}")
@@ -667,7 +666,6 @@ def _accepted_runtime_policy(
     instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
 ) -> ProcedureRuntimePolicyV1:
     with instance.bind_accepted_projection(coordinate) as projection:
-        assert projection.typed is not None
         policy = projection.typed.source(PROCEDURE_RUNTIME_POLICY_IDENTITY)
         if policy is None:
             raise ProcedureRuntimePolicyAbsent(
@@ -685,7 +683,6 @@ def _accepted_line_by_identity_digest(
     identity_digest: str,
 ) -> AcceptedLineSpecV1:
     with instance.bind_accepted_projection(coordinate) as projection:
-        assert projection.typed is not None
         matches = projection.typed.connection.execute(
             "SELECT identity,path,artifact_digest FROM lines "
             "WHERE identity_digest=? AND lifecycle='live'",
@@ -710,7 +707,6 @@ def _line_catalogs(
     providers: dict[str, AcceptedProviderV1] = {}
     interfaces: dict[str, AcceptedProviderInterfaceRegistrationV1] = {}
     with instance.bind_accepted_projection(coordinate) as projection:
-        assert projection.typed is not None
         for pin in dict.fromkeys(pins):
             if pin.target.kind not in {"Provider", "ProviderInterface"}:
                 continue
@@ -741,7 +737,6 @@ def _assert_line_closure_complete(
     coordinate: AcceptedProjectionCoordinate,
 ) -> None:
     with instance.bind_accepted_projection(coordinate) as projection:
-        assert projection.typed is not None
         for pin in accepted_line.line.pins:
             target = projection.typed.dependency_state(pin.target.qualified)
             if target is None:
@@ -1141,7 +1136,6 @@ def _accepted_capture_contracts(
 
     contracts: dict[str, CaptureContractV1] = {}
     with instance.bind_accepted_projection(coordinate) as projection:
-        assert projection.typed is not None
         for pin in dict.fromkeys(pins):
             if pin.target.kind != "CaptureContract":
                 continue
@@ -1168,7 +1162,6 @@ def _accepted_acquisition_policies(
 ) -> tuple[tuple[str, SourceAcquisitionPolicyV1], ...]:
     policies: list[tuple[str, SourceAcquisitionPolicyV1]] = []
     with instance.bind_accepted_projection(coordinate) as projection:
-        assert projection.typed is not None
         sql = (
             "SELECT identity,artifact_digest FROM source_acquisition_policies "
             "WHERE lifecycle='live'"
@@ -1586,7 +1579,6 @@ def service_bind_playbill_procedure(
         declaration = declarations[item.slot_name]
         identity = ArtifactIdentity(kind=item.target.kind, name=item.target.name)
         with instance.bind_accepted_projection(coordinate) as projection:
-            assert projection.typed is not None
             state = projection.typed.dependency_state(identity.qualified)
         if state is None or state.lifecycle.state != "live":
             raise ProcedureBindingTargetNotFound(
@@ -1604,7 +1596,6 @@ def service_bind_playbill_procedure(
         )
         if interface_pin is not None:
             with instance.bind_accepted_projection(coordinate) as projection:
-                assert projection.typed is not None
                 interface = projection.typed.envelope(interface_pin.target.qualified)
                 if (
                     interface is not None
@@ -1685,7 +1676,6 @@ class _CurrentProcedureAuthority:
         del coordinate
         current = self.instance.accepted_coordinate()
         with self.instance.bind_accepted_projection(current) as projection:
-            assert projection.typed is not None
             state = projection.typed.dependency_state(identity.qualified)
             return (
                 None if state is None or state.lifecycle.state != "live" else state.artifact_digest
@@ -3136,7 +3126,6 @@ def _accepted_line_mandates(
 ) -> tuple[tuple[str, ProcedureMandateV1], ...]:
     instant = utc_microseconds(evaluation_time)
     with instance.bind_accepted_projection(coordinate) as projection:
-        assert projection.typed is not None
         result = []
         for identity, digest in projection.typed.connection.execute(
             "SELECT identity,artifact_digest FROM procedure_mandates "

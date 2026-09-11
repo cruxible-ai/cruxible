@@ -90,15 +90,20 @@ def test_compile_is_read_only_and_propose_uses_frozen_bytes(tmp_path: Path) -> N
     )
     assert stored == original
     assert base64.b64decode(bundle.documents[0].body_base64) == original
-    assert (
-        service_check_playbill_source_bundle(
-            instance,
-            bundle=bundle,
+
+    def no_inventory(*_args, **_kwargs):
+        pytest.fail("pending source checks must use indexed candidate and history lookups")
+
+    with pytest.MonkeyPatch.context() as patch:
+        for name in ("tree_at", "proposal_tree", "accepted_history"):
+            patch.setattr(instance, name, no_inventory)
+        evidence_type = type(instance.proposal_evidence())
+        patch.setattr(evidence_type, "list_admissions", no_inventory)
+        patch.setattr(evidence_type, "list_evaluations", no_inventory)
+        assert (
+            service_check_playbill_source_bundle(instance, bundle=bundle).alignments[0].state
+            == "pending"
         )
-        .alignments[0]
-        .state
-        == "pending"
-    )
 
     approval = _sign(
         reviewer,

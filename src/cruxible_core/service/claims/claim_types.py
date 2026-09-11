@@ -169,7 +169,6 @@ def service_get_playbill_claim_type(
     coordinate = _resolve_coordinate(instance, at)
     path = claim_type_path(predicate)
     with instance.bind_accepted_projection(coordinate) as projection:
-        assert projection.typed is not None
         claim_type = projection.typed.source(f"ClaimType:{predicate}")
     if claim_type is None:
         raise ClaimNotFoundError(path)
@@ -185,7 +184,6 @@ def service_list_playbill_claim_types(
 
     coordinate = _resolve_coordinate(instance, at)
     with instance.bind_accepted_projection(coordinate) as projection:
-        assert projection.typed is not None
         views = []
         for row in sorted(projection.typed.envelopes(kind="claim-type"), key=lambda row: row.path):
             claim_type = projection.typed.source(row.identity)

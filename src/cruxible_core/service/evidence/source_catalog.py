@@ -58,7 +58,6 @@ def _accepted_documents(
     coordinate: AcceptedProjectionCoordinate,
 ) -> dict[str, DocumentShell]:
     with instance.bind_accepted_projection(coordinate) as projection:
-        assert projection.typed is not None
         documents = {}
         for row in projection.typed.envelopes(kind="document"):
             shell = projection.typed.source(row.identity)
@@ -108,8 +107,20 @@ def _pending_body_digests(
     ) as history:
         # A missing candidate is an interrupted operation, not pending document work.
         with evidence.index.read(evidence) as connection:
+            generation = connection.execute(
+                "SELECT git_oid,semantic_root,generation_root,compiler_digest "
+                "FROM accepted_generations WHERE sequence=?",
+                (history.sequence,),
+            ).fetchone()
+            if tuple(generation or ()) != (
+                coordinate.git_oid,
+                coordinate.semantic_root,
+                coordinate.generation_root,
+                coordinate.compiler.rule_digest,
+            ):
+                raise ProposalIntegrityError("pending source history binding differs")
             rows = connection.execute(
-                "SELECT candidate_digest,evaluated_tree_oid FROM proposals p "
+                "SELECT DISTINCT candidate_digest,evaluated_tree_oid FROM proposals p "
                 "WHERE admission_path IS NOT NULL AND evaluation_status='candidate' "
                 "AND candidate_parent_semantic_root IS NOT NULL "
                 "AND NOT EXISTS (SELECT 1 FROM accepted_generations g "

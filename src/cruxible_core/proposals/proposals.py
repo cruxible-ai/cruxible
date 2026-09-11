@@ -936,7 +936,6 @@ def _accepted_query(
     reader = getattr(tree, "_accepted_reader", None)
     if reader is not None:
         with reader() as projection:
-            assert projection.typed is not None
             paths = projection._connection.execute(
                 "SELECT path FROM query_definitions WHERE artifact_digest=? AND lifecycle='live'",
                 (digest,),

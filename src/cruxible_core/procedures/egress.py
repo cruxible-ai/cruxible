@@ -1061,7 +1061,6 @@ def require_procedure_mandate_at_head(
     digest = request.procedure_mandate_digest
     mandates = {}
     if digest is not None:
-        assert projection.typed is not None
         row = projection.typed.connection.execute(
             "SELECT identity FROM procedure_mandates WHERE artifact_digest=?", (digest,)
         ).fetchone()

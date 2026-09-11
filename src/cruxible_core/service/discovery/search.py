@@ -281,7 +281,6 @@ def _procedure_rows(
     if "procedure" not in request.kinds:
         return ()
     with instance.bind_accepted_projection(coordinate) as projection:
-        assert projection.typed is not None
         inventory = projection.typed.procedure_inventory()
     return tuple(
         PlaybillSearchRowV1(

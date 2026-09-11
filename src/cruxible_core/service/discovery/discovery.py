@@ -238,7 +238,6 @@ def build_accepted_discovery_vocabulary(
         external_readers=external_readers,
     )
     with instance.bind_accepted_projection(coordinate) as projection:
-        assert projection.typed is not None
         tree = {
             row.path: projection.typed.member_bytes(row.path)
             for kind in ("claim-type", "query-definition")
@@ -279,7 +278,6 @@ def service_discover_playbill_semantic(
     coordinate = _resolve_coordinate(instance, at)
     if profile == "interfaces" and query is None and entrypoint is None:
         with instance.bind_accepted_projection(coordinate) as projection:
-            assert projection.typed is not None
             tree = {
                 row.path: projection.typed.member_bytes(row.path)
                 for kind in ("provider", "provider-interface")

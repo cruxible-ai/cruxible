@@ -381,7 +381,6 @@ def _procedure_track_records(
 
     records: dict[str, list[ProjectionFact]] = {}
     with instance.bind_accepted_projection(coordinate) as projection:
-        assert projection.typed is not None
         for fact in projection.typed.facts("playbill.procedure.track_record"):
             records.setdefault(fact.subject_identity, []).append(fact)
     return {
@@ -397,7 +396,6 @@ def _procedure_cards(
     at: PlaybillAcceptedCoordinate,
 ) -> dict[str, bytes]:
     with instance.bind_accepted_projection(coordinate) as projection:
-        assert projection.typed is not None
         rows = sorted(projection.typed.envelopes(kind="procedure"), key=lambda row: row.path)
         procedures = tuple((row, projection.typed.source(row.identity)) for row in rows)
     if not procedures:

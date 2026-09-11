@@ -83,7 +83,6 @@ def accepted_query_definition(
     path = query_definition_path(name)
     identity = f"QueryDefinition:{name}"
     with instance.bind_accepted_projection(coordinate) as projection:
-        assert projection.typed is not None
         envelope = projection.typed.envelope(identity)
         if envelope is None:
             raise ClaimNotFoundError(path)
@@ -119,7 +118,6 @@ def service_list_playbill_query_definitions(
 
     coordinate = _resolve_coordinate(instance, at)
     with instance.bind_accepted_projection(coordinate) as projection:
-        assert projection.typed is not None
         views = []
         for envelope in sorted(
             projection.typed.envelopes(kind="query-definition"),

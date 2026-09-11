@@ -200,7 +200,6 @@ class ClaimVerdictReadContext:
 
     def claims(self) -> tuple[ClaimArtifactAny, ...]:
         with self.instance.bind_accepted_projection(self.coordinate) as projection:
-            assert projection.typed is not None
             identities = tuple(row.identity for row in projection.typed.envelopes(kind="claim"))
         for identity in identities:
             self.claim(identity)
@@ -242,7 +241,6 @@ class _AcceptedClaimProviders(Mapping[str, ProviderV1]):
             if not identity.startswith("Provider:"):
                 raise KeyError(identity)
             with self._instance.bind_accepted_projection(self._coordinate) as projection:
-                assert projection.typed is not None
                 provider = projection.typed.source(identity)
                 if provider is None:
                     raise KeyError(identity)
@@ -251,13 +249,11 @@ class _AcceptedClaimProviders(Mapping[str, ProviderV1]):
 
     def __iter__(self) -> Iterator[str]:
         with self._instance.bind_accepted_projection(self._coordinate) as projection:
-            assert projection.typed is not None
             identities = tuple(row.identity for row in projection.typed.envelopes(kind="provider"))
         return iter(identities)
 
     def __len__(self) -> int:
         with self._instance.bind_accepted_projection(self._coordinate) as projection:
-            assert projection.typed is not None
             return int(
                 projection.typed.connection.execute("SELECT count(*) FROM providers").fetchone()[0]
             )

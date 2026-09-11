@@ -120,7 +120,6 @@ def list_playbill_policies_in_force(
         "line",
     )
     with instance.bind_accepted_projection(coordinate) as projection:
-        assert projection.typed is not None
         selected = [
             (row.path, kind, projection.typed.member_bytes(row.path))
             for kind in kinds
