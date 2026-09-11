@@ -90,9 +90,9 @@ from cruxible_core.coverage.indexes import (
     WorkingOccurrenceV1,
 )
 from cruxible_core.evidence.citation_relations import (
-    external_source_relation_subject,
     retired_activation_live_candidates,
 )
+from cruxible_core.indexes.evidence.citation_sql import CitationSourceUse
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.query.backends import claim_row_visibility
 from cruxible_core.query.engine import evaluate_claim_query
@@ -1206,24 +1206,6 @@ class _CitationCommitment:
     lineage_note: CitationLineageNote | None = None
 
 
-@dataclass(frozen=True)
-class _CitationRelationUse:
-    capture_digest: str
-    citation_id: str
-    claim_artifact_digest: str
-    claim_identity: str
-    lifecycle: Literal["live", "retired"]
-    commitment_digest: str
-    byte_length: int
-    source: ExternalSourceReferenceV1
-    original_start: int | None
-    original_end: int | None
-
-    @property
-    def external_key(self) -> str:
-        return external_source_relation_subject(self.source)
-
-
 def _digest_value(value: object) -> str | None:
     if isinstance(value, str):
         try:
@@ -1239,56 +1221,6 @@ def _digest_value(value: object) -> str | None:
             return None
         return raw
     return None
-
-
-def _relation_use(value: Mapping[str, object]) -> _CitationRelationUse:
-    source = ExternalSourceReferenceV1.model_validate(value.get("source"))
-    commitment = value.get("commitment")
-    lifecycle = value.get("claim_lifecycle")
-    if not isinstance(commitment, Mapping) or lifecycle not in {"live", "retired"}:
-        raise ValueError("citation relation use has an invalid lifecycle or commitment")
-    capture_digest = _digest_value(value.get("capture_digest"))
-    claim_artifact_digest = _digest_value(value.get("claim_artifact_digest"))
-    commitment_digest = _digest_value(commitment.get("digest"))
-    byte_length = commitment.get("byte_length")
-    citation_id = value.get("citation_id")
-    claim_identity = value.get("claim_identity")
-    if (
-        capture_digest is None
-        or claim_artifact_digest is None
-        or commitment_digest is None
-        or not isinstance(byte_length, int)
-        or isinstance(byte_length, bool)
-        or not isinstance(citation_id, str)
-        or not isinstance(claim_identity, str)
-    ):
-        raise ValueError("citation relation use is incomplete")
-    selector = source.selector
-    raw_window = (
-        selector.get("working_selection", selector) if isinstance(selector, Mapping) else None
-    )
-    start = raw_window.get("start_byte") if isinstance(raw_window, Mapping) else None
-    end = raw_window.get("end_byte") if isinstance(raw_window, Mapping) else None
-    if (
-        not isinstance(start, int)
-        or isinstance(start, bool)
-        or not isinstance(end, int)
-        or isinstance(end, bool)
-        or not 0 <= start <= end
-    ):
-        start = end = None
-    return _CitationRelationUse(
-        capture_digest=capture_digest,
-        citation_id=citation_id,
-        claim_artifact_digest=claim_artifact_digest,
-        claim_identity=claim_identity,
-        lifecycle=cast(Literal["live", "retired"], lifecycle),
-        commitment_digest=commitment_digest,
-        byte_length=byte_length,
-        source=source,
-        original_start=start,
-        original_end=end,
-    )
 
 
 def post_retirement_examined_support_suppresses_claim_cites_retired(
@@ -1587,10 +1519,10 @@ def _claim_cites_retired_item(
 
 
 def _unique_relation_occurrence(
-    use: _CitationRelationUse,
+    use: CitationSourceUse,
     observed: PlaybillNextSourceObservationV4,
 ) -> WorkingOccurrenceV1 | None:
-    expected_source = LogicalSourceIdentityV1(plane="external", identity=use.source.source_identity)
+    expected_source = LogicalSourceIdentityV1(plane="external", identity=use.source_identity)
     if observed.scan_notes or observed.marker_notes:
         return None
     if not any(
@@ -1637,7 +1569,7 @@ def _citation_relation_items(
         else {}
     )
     exact_by_claim: dict[str, list[Mapping[str, object]]] = defaultdict(list)
-    uses_by_source: dict[str, list[_CitationRelationUse]] = defaultdict(list)
+    uses_by_source: dict[str, list[CitationSourceUse]] = defaultdict(list)
     observed_sources = {
         item.source_id: item
         for item in (() if observation is None else observation.source_observations or ())
@@ -1645,7 +1577,7 @@ def _citation_relation_items(
     }
     try:
         with instance.bind_accepted_projection(coordinate) as projection:
-            for fact in projection.citations.conflicts(bodies=instance.body_store()):
+            for fact in projection.citations.conflicts():
                 if not isinstance(fact.value, Mapping):
                     raise ValueError("retired conflict has an invalid value")
                 identity = fact.value.get("live_claim_identity")
@@ -1653,11 +1585,7 @@ def _citation_relation_items(
                     raise ValueError("retired conflict has no live Claim")
                 exact_by_claim[identity].append(fact.value)
             for source_id in sorted(observed_sources, key=lambda item: item.encode("utf-8")):
-                for use in projection.citations.uses_for_source(
-                    source_id,
-                    bodies=instance.body_store(),
-                ):
-                    uses_by_source[source_id].append(_relation_use(use))
+                uses_by_source[source_id].extend(projection.citations.uses_for_source(source_id))
     except (PlaybillError, ValueError, ValidationError) as exc:
         raise PlaybillNextAcceptedStateInvalid(
             f"{PlaybillNextAcceptedStateInvalid.code}: citation relation projection is invalid"
@@ -1733,11 +1661,11 @@ def _citation_relation_items(
 
     for source_id in sorted(uses_by_source, key=lambda item: item.encode("utf-8")):
         observed = observed_sources[source_id]
-        current: list[tuple[int, int, str, _CitationRelationUse, WorkingOccurrenceV1]] = []
+        current: list[tuple[int, int, str, CitationSourceUse, WorkingOccurrenceV1]] = []
         for use in uses_by_source[source_id]:
             if (
-                use.source.coordinate_type != FOREIGN_SOURCE_COORDINATE_TYPE
-                or use.source.selector_type != FOREIGN_SOURCE_SELECTOR_TYPE
+                use.coordinate_type != FOREIGN_SOURCE_COORDINATE_TYPE
+                or use.selector_type != FOREIGN_SOURCE_SELECTOR_TYPE
             ):
                 continue
             occurrence = _unique_relation_occurrence(use, observed)
@@ -1758,15 +1686,15 @@ def _citation_relation_items(
 
         # An event sweep marks each live Claim at most once. Work is O(m_s log m_s + w_s),
         # never the live-by-retired Cartesian product.
-        events: list[tuple[int, int, str, int, _CitationRelationUse]] = []
+        events: list[tuple[int, int, str, int, CitationSourceUse]] = []
         for start, end, lifecycle, use, _occurrence in current:
             events.append((start, 1, lifecycle, end, use))
             events.append((end, 0, lifecycle, end, use))
-        active_retired: dict[str, _CitationRelationUse] = {}
+        active_retired: dict[str, CitationSourceUse] = {}
         active_live: Counter[str] = Counter()
         emitted_span: set[str] = set()
 
-        def emit_span(live_use: _CitationRelationUse) -> None:
+        def emit_span(live_use: CitationSourceUse) -> None:
             if live_use.claim_identity in exact_subjects or live_use.claim_identity in emitted_span:
                 return
             retired = tuple(active_retired.values())
@@ -1800,7 +1728,7 @@ def _citation_relation_items(
                 items.append(row)
             emitted_span.add(live_use.claim_identity)
 
-        live_use_by_claim: dict[str, _CitationRelationUse] = {}
+        live_use_by_claim: dict[str, CitationSourceUse] = {}
         for _position, order, lifecycle, _end, use in sorted(
             events,
             key=lambda event: (
@@ -1857,7 +1785,7 @@ def _citation_relation_items(
                 entry[0] < live_end and entry[1] > live_start for live_start, live_end in live_union
             )
         ]
-        components: list[list[tuple[int, int, str, _CitationRelationUse, WorkingOccurrenceV1]]] = []
+        components: list[list[tuple[int, int, str, CitationSourceUse, WorkingOccurrenceV1]]] = []
         for entry in sorted(
             uncovered,
             key=lambda item: (item[0], item[1], item[3].citation_id.encode("ascii")),

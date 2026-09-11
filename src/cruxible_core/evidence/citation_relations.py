@@ -258,7 +258,6 @@ def _conflict_facts(
     uses: list[dict[str, object]], touched_relation_keys: set[str] | None = None
 ) -> list[ProjectionFact]:
     """Retain raw conflicts; capture precedence is applied at the Claim boundary."""
-    facts: list[ProjectionFact] = []
     capture_groups: dict[str, list[dict[str, object]]] = defaultdict(list)
     external_groups: dict[str, list[dict[str, object]]] = defaultdict(list)
     for use in uses:
@@ -270,6 +269,27 @@ def _conflict_facts(
             parsed = ExternalSourceReferenceV1.model_validate(source)
             external_groups[external_source_relation_subject(parsed)].append(use)
 
+    version_groups: dict[str, list[tuple[int, int, dict[str, object]]]] = defaultdict(list)
+    for use in uses:
+        span = _same_version_span_key(use)
+        if span is not None:
+            version_groups[span[0]].append((span[1], span[2], use))
+    return _conflict_group_facts(
+        capture_groups,
+        external_groups,
+        version_groups,
+        touched_relation_keys,
+    )
+
+
+def _conflict_group_facts(
+    capture_groups: Mapping[str, list[dict[str, object]]],
+    external_groups: Mapping[str, list[dict[str, object]]],
+    version_groups: Mapping[str, list[tuple[int, int, dict[str, object]]]],
+    touched_relation_keys: set[str] | None = None,
+) -> list[ProjectionFact]:
+    """Frozen conflicts/witnesses over normalized complete groups, without body I/O."""
+    facts: list[ProjectionFact] = []
     emitted: set[tuple[str, str]] = set()
     for relation_kind, groups in (
         ("capture", capture_groups),
@@ -315,11 +335,6 @@ def _conflict_facts(
                     )
                 )
 
-    version_groups: dict[str, list[tuple[int, int, dict[str, object]]]] = defaultdict(list)
-    for use in uses:
-        span = _same_version_span_key(use)
-        if span is not None:
-            version_groups[span[0]].append((span[1], span[2], use))
     for version_key, version_uses in version_groups.items():
         stored_relation_key = _relation_group_key("same_version_span", version_key)
         if touched_relation_keys is not None and stored_relation_key not in touched_relation_keys:
