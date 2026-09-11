@@ -178,7 +178,6 @@ def populate_successor(
                 bodies=assembler.bodies,
                 coordinate=request,
                 accepted_coordinates_by_sequence=assembler.accepted_coordinates_by_sequence,
-                claim_compilation_cache=assembler.claim_compilation_cache,
                 verified_change_sets=records,
             ),
         )

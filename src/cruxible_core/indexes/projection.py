@@ -29,6 +29,7 @@ from cruxible_client.contracts.types import GitObjectFormat
 from cruxible_core.compiler.projection_tree import TreeReadLimits
 
 PROJECTION_SCHEMA_VERSION = 1
+TYPED_STORAGE_SCHEMA_VERSION = 2
 
 _PIECE_RE = re.compile(r"^piece-[0-9a-f]{64}-[0-9]{4}\.sqlite$")
 
@@ -87,6 +88,13 @@ class AssemblerRequest(_StrictProjectionModel):
         return self
 
 
+class AssemblerRequestV2(AssemblerRequest):
+    """A new storage producer contract; the semantic compiler coordinate is unchanged."""
+
+    tag: Literal["playbill-assembler-request-v2"] = "playbill-assembler-request-v2"  # type: ignore[assignment]
+    storage_schema_version: Literal[2] = 2
+
+
 class ProjectionPiece(_StrictProjectionModel):
     ordinal: int = Field(ge=0)
     name: str
@@ -105,6 +113,10 @@ class ProjectionPiece(_StrictProjectionModel):
     @classmethod
     def _physical_digest(cls, value: str) -> str:
         return _tagged_sha256(value, label="physical_digest")
+
+
+class ProjectionPieceV2(ProjectionPiece):
+    format: Literal["sqlite-v2"] = "sqlite-v2"  # type: ignore[assignment]
 
 
 class ProjectionManifest(_StrictProjectionModel):
@@ -174,6 +186,14 @@ class ProjectionManifest(_StrictProjectionModel):
         return self
 
 
+class ProjectionManifestV2(ProjectionManifest):
+    """Typed SQL publication, independently versioned from semantic compilation."""
+
+    tag: Literal["playbill-projection-manifest-v2"] = "playbill-projection-manifest-v2"  # type: ignore[assignment]
+    storage_schema_version: Literal[2] = 2
+    pieces: tuple[ProjectionPieceV2, ...]
+
+
 class BuildInstrumentation(_StrictProjectionModel):
     phase_nanoseconds: dict[str, int]
     high_water_memory_bytes: int | None = Field(default=None, ge=0)
@@ -222,6 +242,11 @@ class AssemblerResult(_StrictProjectionModel):
         return self
 
 
+class AssemblerResultV2(AssemblerResult):
+    tag: Literal["playbill-assembler-result-v2"] = "playbill-assembler-result-v2"  # type: ignore[assignment]
+    manifest: ProjectionManifestV2
+
+
 OrphanKind = Literal[
     "staging-build",
     "unreferenced-piece",
@@ -237,8 +262,11 @@ class ProjectionOrphan(_StrictProjectionModel):
 
 
 def projection_coordinate_key(request: AssemblerRequest | ProjectionManifest) -> str:
+    storage_version = getattr(request, "storage_schema_version", 1)
     return canonical_digest(
-        "playbill-projection-coordinate-v1",
+        "playbill-projection-coordinate-v2"
+        if storage_version == 2
+        else "playbill-projection-coordinate-v1",
         {
             "instance_id": request.instance_id,
             "git_object_format": request.git_object_format,
@@ -247,6 +275,7 @@ def projection_coordinate_key(request: AssemblerRequest | ProjectionManifest) ->
             "generation_root": request.generation_root,
             "compiler_digest": request.compiler_digest,
             "schema_version": request.schema_version,
+            **({"storage_schema_version": 2} if storage_version == 2 else {}),
         },
     )
 
