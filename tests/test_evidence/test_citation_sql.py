@@ -41,7 +41,6 @@ from cruxible_core.coverage.indexes import (
 from cruxible_core.evidence.citation_relations import (
     RELATION_RETIRED_CONFLICT_SCHEMA,
     _same_version_span_key,
-    build_citation_relation_facts,
 )
 from cruxible_core.indexes.evidence import citation_sql
 from cruxible_core.indexes.evidence.citation_coverage import coverage_rows
@@ -59,6 +58,7 @@ from tests.core_support._citation_index_oracle import (
     build_evidence_citation_index,
     build_evidence_citation_index_v2,
 )
+from tests.core_support._citation_relations_oracle import build_citation_relation_facts
 from tests.core_support._pc_c_support import capture_contract
 from tests.test_claims.test_claims import _claim
 
@@ -625,8 +625,8 @@ def _next_relation_findings(world, reader):
 def test_next_findings_survive_unavailable_cas_like_retained_facts(world, unavailable, shared):
     from types import SimpleNamespace
 
-    from cruxible_core.evidence.citation_relations import RELATION_SOURCE_USE_SCHEMA
     from cruxible_core.indexes.evidence.citation_sql import CitationSourceUse
+    from tests.core_support._citation_relations_oracle import RELATION_SOURCE_USE_SCHEMA
 
     first = world.capture(1, start=0, end=5)
     second = first if shared else world.capture(2, start=10, end=15)
