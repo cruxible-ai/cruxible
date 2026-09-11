@@ -87,13 +87,13 @@ class World:
     def reader(self):
         return CitationReader(self.connection, self.sources.__getitem__)
 
-    def capture(self, n, *, source=0, start=0, end=10):
+    def capture(self, n, *, source=0, start=0, end=10, binding=DIGEST):
         contract = capture_contract()
         envelope = CaptureEnvelopeV1(
             capture_contract_digest=capture_contract_digest(contract).tagged,
             source=ExternalSourceReferenceV1(
                 source_identity=f"source-{source}",
-                producer_binding_digest=DIGEST,
+                producer_binding_digest=binding,
                 coordinate_type=FOREIGN_SOURCE_COORDINATE_TYPE,
                 coordinate={"version": 1},
                 selector_type=FOREIGN_SOURCE_SELECTOR_TYPE,
@@ -115,7 +115,7 @@ class World:
             ),
             run_receipt_digest=DIGEST,
             producer=ArtifactIdentity(kind="Provider", name="test.provider"),
-            producer_binding_digest=DIGEST,
+            producer_binding_digest=binding,
             observed_at=NOW,
         )
         digest = self.store.store(canonical_bytes(envelope.model_dump(mode="json"))).digest
@@ -215,8 +215,7 @@ def world(tmp_path: Path):
         "CREATE TABLE claims(identity TEXT PRIMARY KEY,path TEXT,"
         "artifact_digest TEXT,lifecycle TEXT) STRICT;"
         "CREATE TABLE capture_contracts(identity TEXT PRIMARY KEY,path TEXT,"
-        "artifact_digest TEXT) STRICT;"
-        + SCHEMA_SQL
+        "artifact_digest TEXT) STRICT;" + SCHEMA_SQL
     )
     root = tmp_path / "cas"
     root.mkdir()
@@ -289,9 +288,18 @@ def test_roles_witness_bounds_and_half_open_spans(world):
 
 
 def test_indexed_spans_filter_ends_and_retain_arbitrary_precision_candidates(world):
-    spans = [(0, 2), (1, 12), (10, 15), (1 << 70, (1 << 70) + 10)]
+    spans = [
+        (0, 2),
+        (1, 12),
+        (10, 15),
+        (1 << 70, (1 << 70) + 10),
+        ((1 << 70) + 5, (1 << 70) + 15),
+    ]
     digests = [world.capture(n, start=start, end=end) for n, (start, end) in enumerate(spans)]
-    world.publish(*(world.claim(n + 1, [digest]) for n, digest in enumerate(digests)))
+    world.publish(
+        *(world.claim(n + 1, [digest], retired=n == 3) for n, digest in enumerate(digests))
+    )
+    assert world.reader.conflicts(bodies=world.store) == world.cold_conflicts()
     version = _same_version_span_key(
         {"source": world.envelopes[digests[0]].source.model_dump(mode="json")}
     )[0]
@@ -427,6 +435,16 @@ def test_selected_group_work_is_independent_of_unrelated_citation_growth(
         retired,
         *(world.claim(n + 10, [world.capture(n + 10, source=n + 10)]) for n in range(unrelated)),
     )
+    publication_reads = []
+    original_insert = citation_sql._insert_capture
+
+    def counted_insert(connection, capture, bodies):
+        publication_reads.append(capture)
+        return original_insert(connection, capture, bodies)
+
+    monkeypatch.setattr(citation_sql, "_insert_capture", counted_insert)
+    world.publish(live)
+    assert publication_reads == [digest]
     visited = []
     original = citation_sql._conflict_facts
 
@@ -487,3 +505,16 @@ def test_span_candidates_stay_within_source_version_and_filter_actual_overlap(wo
     uses = world.reader.overlapping_uses(version, 4, 10, bodies=world.store)
     assert set(seen) == set(selected[:3])
     assert {u["capture_digest"]["$digest"] for u in uses} == set(selected[1:3])
+
+
+def test_exact_external_group_retains_original_producer_binding_exclusion(world):
+    first = world.capture(1, binding=DIGEST)
+    second = world.capture(2, binding="sha256:" + "2" * 64)
+    world.publish(world.claim(1, [first]), world.claim(2, [second], retired=True))
+    assert world.connection.execute("SELECT count(*) FROM source_references").fetchone()[0] == 2
+    facts = world.reader.conflicts(bodies=world.store)
+    assert facts == world.cold_conflicts()
+    assert {fact.value["relation_kind"] for fact in facts} == {
+        "exact_external",
+        "same_version_span",
+    }

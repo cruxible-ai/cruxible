@@ -90,10 +90,7 @@ from cruxible_core.coverage.indexes import (
     WorkingOccurrenceV1,
 )
 from cruxible_core.evidence.citation_relations import (
-    RELATION_RETIRED_CONFLICT_SCHEMA,
-    RELATION_SOURCE_USE_SCHEMA,
     external_source_relation_subject,
-    logical_source_relation_subject,
     retired_activation_live_candidates,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -1648,10 +1645,7 @@ def _citation_relation_items(
     }
     try:
         with instance.bind_accepted_projection(coordinate) as projection:
-            for fact in projection.semantic_facts(
-                RELATION_RETIRED_CONFLICT_SCHEMA,
-                subject_identity="claim-cites-retired",
-            ):
+            for fact in projection.citations.conflicts(bodies=instance.body_store()):
                 if not isinstance(fact.value, Mapping):
                     raise ValueError("retired conflict has an invalid value")
                 identity = fact.value.get("live_claim_identity")
@@ -1659,13 +1653,11 @@ def _citation_relation_items(
                     raise ValueError("retired conflict has no live Claim")
                 exact_by_claim[identity].append(fact.value)
             for source_id in sorted(observed_sources, key=lambda item: item.encode("utf-8")):
-                for fact in projection.semantic_facts(
-                    RELATION_SOURCE_USE_SCHEMA,
-                    subject_identity=logical_source_relation_subject(source_id),
+                for use in projection.citations.uses_for_source(
+                    source_id,
+                    bodies=instance.body_store(),
                 ):
-                    if not isinstance(fact.value, Mapping):
-                        raise ValueError("citation relation use has an invalid value")
-                    uses_by_source[source_id].append(_relation_use(fact.value))
+                    uses_by_source[source_id].append(_relation_use(use))
     except (PlaybillError, ValueError, ValidationError) as exc:
         raise PlaybillNextAcceptedStateInvalid(
             f"{PlaybillNextAcceptedStateInvalid.code}: citation relation projection is invalid"

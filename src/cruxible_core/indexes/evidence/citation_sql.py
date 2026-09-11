@@ -371,21 +371,30 @@ class CitationReader:
             sorted(uses, key=lambda use: (str(use["claim_path"]), str(use["citation_id"])))
         )
 
+    def source_claim_uses(
+        self,
+        source_id: str,
+        *,
+        lifecycle: Literal["live", "retired"] | None = None,
+    ) -> tuple[dict[str, object], ...]:
+        """Return selected owner metadata without rereading immutable source bodies."""
+        return self._rows(
+            "SELECT u.*, c.path,c.artifact_digest,c.lifecycle FROM captures p "
+            "JOIN source_references s USING(source_ref_key) "
+            "JOIN citation_uses u USING(capture_digest) JOIN claims c ON c.identity=u.owner_key "
+            "WHERE p.logical_source_id=? AND s.kind='external' AND u.owner_kind='Claim' "
+            + ("AND c.lifecycle=? " if lifecycle is not None else "")
+            + "ORDER BY c.path,u.use_key",
+            (source_id,) if lifecycle is None else (source_id, lifecycle),
+        )
+
     def uses_for_source(
         self,
         source_id: str,
         *,
         bodies: BodyProjectionProtocol,
     ) -> tuple[dict[str, object], ...]:
-        rows = self._rows(
-            "SELECT u.*, c.path,c.artifact_digest,c.lifecycle FROM captures p "
-            "JOIN source_references s USING(source_ref_key) "
-            "JOIN citation_uses u USING(capture_digest) JOIN claims c ON c.identity=u.owner_key "
-            "WHERE p.logical_source_id=? AND s.kind='external' AND u.owner_kind='Claim' "
-            "ORDER BY c.path,u.use_key",
-            (source_id,),
-        )
-        return self._relation_uses(rows, bodies=bodies)
+        return self._relation_uses(self.source_claim_uses(source_id), bodies=bodies)
 
     def overlapping_uses(
         self,
@@ -404,13 +413,14 @@ class CitationReader:
             raise ValueError("citation interval requires increasing nonnegative exact integers")
         # Null bounds with a version key denote a recognized but unindexable
         # arbitrary-precision span, not a missing span. They are always candidates.
+        bounded = end_byte <= _MAX_SQL_INTEGER
         rows = self._rows(
             "SELECT u.*,c.path,c.artifact_digest,c.lifecycle FROM source_references s "
             "JOIN captures p USING(source_ref_key) JOIN citation_uses u USING(capture_digest) "
             "JOIN claims c ON c.identity=u.owner_key WHERE s.source_version_key=? "
-            "AND (s.start_byte IS NULL OR s.start_byte < ?) AND u.owner_kind='Claim' "
-            "ORDER BY c.path,u.use_key",
-            (source_version_key, min(end_byte, _MAX_SQL_INTEGER)),
+            + ("AND (s.start_byte IS NULL OR s.start_byte < ?) " if bounded else "")
+            + "AND u.owner_kind='Claim' ORDER BY c.path,u.use_key",
+            (source_version_key, end_byte) if bounded else (source_version_key,),
         )
         uses = self._relation_uses(rows, bodies=bodies)
         return tuple(

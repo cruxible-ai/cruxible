@@ -190,10 +190,6 @@ from cruxible_core.compiler.projection_artifacts import (
     parse_projection_tree,
 )
 from cruxible_core.derived.derived_state import CandidateTree, SnapshotTree, fork_tree
-from cruxible_core.evidence.citation_relations import (
-    RELATION_CONTRACT_SCHEMA,
-    capture_contract_relation_subject,
-)
 from cruxible_core.exhaust.producer_receipts import local_producer_receipt_resolver
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -255,11 +251,8 @@ def _capture_contract_at_base(
     contract_digest: str,
 ) -> AcceptedCaptureContract:
     with instance.bind_accepted_projection(base) as projection:
-        facts = projection.semantic_facts(
-            RELATION_CONTRACT_SCHEMA,
-            subject_identity=capture_contract_relation_subject(contract_digest),
-        )
-    if len(facts) != 1 or not isinstance(facts[0].value, dict):
+        path = projection.citations.capture_contract_path(contract_digest)
+    if path is None:
         _refuse(
             "playbill.authoring.capture_contract_unresolved",
             "source.capture_digest",
@@ -269,9 +262,6 @@ def _capture_contract_at_base(
                 "Choose a Capture whose exact contract is accepted at the intent base."
             ),
         )
-    value = facts[0].value
-    path_value = value.get("path")
-    path = path_value.get("$path") if isinstance(path_value, dict) else None
     if not isinstance(path, str) or not isinstance(base_tree.get(path), bytes):
         _refuse(
             "playbill.authoring.capture_contract_unresolved",
