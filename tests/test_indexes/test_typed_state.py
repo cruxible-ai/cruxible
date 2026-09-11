@@ -103,6 +103,21 @@ def test_typed_reverse_and_full_address_indexes_are_present():
     connection.close()
 
 
+def test_claim_lifecycle_selection_uses_covering_index():
+    with sqlite3.connect(":memory:") as connection:
+        connection.executescript(schema_sql())
+        plan = tuple(
+            row[3]
+            for row in connection.execute(
+                "EXPLAIN QUERY PLAN SELECT identity FROM claims "
+                "WHERE lifecycle='retired' ORDER BY identity"
+            )
+        )
+    assert plan == (
+        "SEARCH claims USING COVERING INDEX claims_by_lifecycle (lifecycle=?)",
+    )
+
+
 def test_v2_preserves_extensions_and_old_publication_beside_same_coordinate(tmp_path):
     import pytest
 
