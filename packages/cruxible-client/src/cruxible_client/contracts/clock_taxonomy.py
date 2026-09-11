@@ -74,6 +74,10 @@ def is_time_bearing_field(name: str, annotation: str) -> bool:
 # `observed_at` the instant the daemon evaluated the source, while an attestation
 # is `observed_at` the time its attestor asserts.
 CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
+    ("AcceptedGenerationLocation", "sequence"): "SETTLEMENT ORDER",
+    ("AcceptedGenerationLocation", "parent_sequence"): "SETTLEMENT ORDER",
+    ("ArtifactVersionLocation", "occurrence_sequence"): "SETTLEMENT ORDER",
+    ("AcceptedMemberLocation", "sequence"): "SETTLEMENT ORDER",
     # Canonical candidate timestamps are the author's assertion of when the
     # candidate was made; nothing checks them against a daemon clock.
     ("AuthoringIntentV1", "canonical_timestamp"): "ASSERTION TIME",
