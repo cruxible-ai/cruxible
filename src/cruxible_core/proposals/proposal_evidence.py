@@ -75,9 +75,21 @@ def _exclusive_canonical_write(path: Path, payload: bytes) -> None:
             view = view[written:]
         os.fsync(descriptor)
     except FileExistsError:
-        if path.is_symlink() or not path.is_file() or path.read_bytes() != payload:
-            raise ProposalIntegrityError("immutable proposal evidence path is occupied")
-        return
+        try:
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise ProposalIntegrityError("immutable proposal evidence path is occupied")
+            with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                if stream.read() != payload:
+                    raise ProposalIntegrityError("immutable proposal evidence path is occupied")
+            # An interrupted writer may have written every byte without reaching
+            # its fsync. Retry proves and flushes the same opened inode before
+            # derived publication, then flushes the directory below as usual.
+            os.fsync(descriptor)
+        except OSError as exc:
+            raise ProposalIntegrityError(
+                "existing proposal evidence could not be persisted"
+            ) from exc
     except OSError as exc:
         raise ProposalIntegrityError("proposal evidence could not be persisted") from exc
     finally:
