@@ -19,6 +19,7 @@ Four laws are under test here:
 from __future__ import annotations
 
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -42,7 +43,6 @@ from cruxible_client.contracts.claims import (
     claim_path,
     claim_statement_digest,
 )
-from cruxible_client.contracts.discovery import DiscoveryRequestV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import (
     AcceptedSubject,
@@ -52,7 +52,6 @@ from cruxible_core.claims.claim_slots import (
     classify_claim_slot,
     classify_claim_slot_member,
 )
-from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.query.backends import (
     ClaimFactRowV1,
     ClaimQueryFactsV1,
@@ -60,13 +59,16 @@ from cruxible_core.query.backends import (
 )
 from cruxible_core.query.cards import (
     ClaimTypeCardV1,
+    ClaimTypeUsageRowV1,
     InterfaceProjectionBudgetV1,
     SubjectProfilePredicateV1,
     SubjectProfileV1,
     _policy_summaries,
-    build_interface_projections,
+    build_claim_type_card,
+    build_subject_profile,
+    claim_predicate_verdicts,
     claim_type_card_digest,
-    discover_interfaces,
+    descriptor_relations,
     subject_profile_digest,
 )
 from cruxible_core.query.semantic_discovery import (
@@ -228,12 +230,66 @@ def _projections(
         claim_types=_claim_types(),  # type: ignore[arg-type]
         definitions=(accepted_query(active_work_query()),),
     )
-    return vocabulary, build_interface_projections(
-        vocabulary=vocabulary,
-        facts=facts,
-        claim_types=_claim_types(),  # type: ignore[arg-type]
-        evaluation_time=evaluation_time,
-        budget=budget,
+    contracts = {item.predicate: item for item in _claim_types()}
+    subjects = {item.path: item for item in facts.subjects}
+    rows = [row for row in facts.claims if row.accepted.claim.lifecycle.state == "live"]
+    relations = descriptor_relations(row.accepted.claim for row in facts.claims)
+    cards, profiles = [], []
+    for entry in vocabulary.entries:
+        selected_relations = relations.get(
+            canonical_bytes(entry.address.model_dump(mode="json")), ()
+        )
+        if entry.kind == "ClaimType":
+            contract = contracts.get(entry.label)
+            if contract is not None:
+                cards.append(
+                    build_claim_type_card(
+                        contract,
+                        at=vocabulary.at,
+                        entry=entry,
+                        budget=budget,
+                        relations=selected_relations,
+                        usage_rows=tuple(
+                            ClaimTypeUsageRowV1(
+                                subject_path=row.subject_path,
+                                subject_identity=subjects[
+                                    row.subject_path
+                                ].shell.identity.qualified,
+                            )
+                            for row in rows
+                            if row.accepted.claim.statement.predicate == contract.predicate
+                        ),
+                    )
+                )
+        elif entry.kind == "Subject" and entry.address.artifact_path in subjects:
+            subject = subjects[entry.address.artifact_path]
+            selected = tuple(row for row in rows if row.subject_path == subject.path)
+            profiles.append(
+                build_subject_profile(
+                    at=vocabulary.at,
+                    entry=entry,
+                    subject_kind=subject.shell.subject_kind,
+                    subject_id=subject.shell.subject_id,
+                    artifact_digest=subject.artifact_digest,
+                    claims=tuple(row.accepted.claim for row in selected),
+                    cardinalities={name: item.cardinality for name, item in contracts.items()},
+                    relations=selected_relations,
+                    evaluation_time=evaluation_time,
+                    budget=budget,
+                    predicate_verdicts=None
+                    if evaluation_time is None
+                    else claim_predicate_verdicts(
+                        selected,
+                        evaluation_time=evaluation_time,
+                        providers={item.identity.qualified: item for item in facts.providers},
+                    ),
+                )
+            )
+    return vocabulary, SimpleNamespace(
+        cards=tuple(cards),
+        profiles=tuple(profiles),
+        card=lambda address: next((item for item in cards if item.address == address), None),
+        profile=lambda address: next((item for item in profiles if item.address == address), None),
     )
 
 
@@ -253,16 +309,6 @@ def _standard_facts() -> ClaimQueryFactsV1:
             *_descriptors(),
         )
     )
-
-
-def _request(**overrides: object) -> DiscoveryRequestV1:
-    fields: dict[str, object] = {
-        "at": AcceptedCoordinate.from_internal(coordinate()),
-        "evaluation_time": EVALUATION_TIME,
-        "profile": "all",
-    }
-    fields.update(overrides)
-    return DiscoveryRequestV1(**fields)  # type: ignore[arg-type]
 
 
 def _card(projections, address: SemanticAddress = STATUS_CARD_ADDRESS) -> ClaimTypeCardV1:
@@ -385,8 +431,10 @@ def test_cards_and_profiles_rebuild_byte_identically_from_the_same_facts() -> No
     first = _projections(_standard_facts())[1]
     second = _projections(_standard_facts())[1]
 
-    assert canonical_bytes(first.model_dump(mode="json")) == canonical_bytes(
-        second.model_dump(mode="json")
+    assert canonical_bytes(
+        [item.model_dump(mode="json") for item in (*first.cards, *first.profiles)]
+    ) == canonical_bytes(
+        [item.model_dump(mode="json") for item in (*second.cards, *second.profiles)]
     )
     assert claim_type_card_digest(_card(first)) == claim_type_card_digest(_card(second))
     assert subject_profile_digest(_profile(first)) == subject_profile_digest(_profile(second))
@@ -522,35 +570,6 @@ def test_a_tag_or_lexical_basis_never_resolves_equivalence() -> None:
     assert grades["lexical"] is False
 
 
-def test_only_an_unambiguous_equivalence_grade_basis_resolves_a_query() -> None:
-    facts = _standard_facts()
-    vocabulary, projections = _projections(facts)
-
-    by_alias = discover_interfaces(
-        _request(query="work item state"),
-        vocabulary=vocabulary,
-        projections=projections,
-    )
-    assert by_alias.resolved_address == STATUS_CARD_ADDRESS
-    assert tuple(item.address for item in by_alias.cards)[0] == STATUS_CARD_ADDRESS
-
-    by_tag = discover_interfaces(
-        _request(query="triage"),
-        vocabulary=vocabulary,
-        projections=projections,
-    )
-    # The tag validly names both the ClaimType and the Subject; a tag is
-    # recall-only, so the page ranks them and resolves nothing.
-    assert {item.address.artifact_path for item in by_tag.cards} == {
-        STATUS_CARD_ADDRESS.artifact_path
-    }
-    assert {item.address.artifact_path for item in by_tag.profiles} == {WI1}
-    assert by_tag.resolved_address is None
-    assert all(
-        item.basis in {"tag", "lexical"} for hit in by_tag.page.hits for item in hit.match_basis
-    )
-
-
 # -- budgets ---------------------------------------------------------------
 
 
@@ -588,43 +607,6 @@ def test_an_over_long_object_is_committed_by_digest_instead_of_previewed() -> No
 
 
 # -- the interface discovery page and its capsule -------------------------
-
-
-def test_an_interface_page_projects_every_hit_exactly_once() -> None:
-    facts = _standard_facts()
-    vocabulary, projections = _projections(facts)
-    page = discover_interfaces(
-        _request(query=STATUS_PREDICATE),
-        vocabulary=vocabulary,
-        projections=projections,
-    )
-
-    projected = len(page.cards) + len(page.profiles) + len(page.handle_addresses)
-    assert projected == len(page.page.hits)
-    assert page.cards[0].address == STATUS_CARD_ADDRESS
-    # A QueryDefinition has no v1 card, so it stays an explicit handle rather
-    # than vanishing from a page that claims to account for its whole result set.
-    assert all(
-        item.artifact_path.startswith("query-definitions/") for item in page.handle_addresses
-    )
-    assert page.coverage.available_facets == ("claim_type_card", "handle")
-
-
-def test_the_same_request_and_coordinate_yield_a_byte_identical_interface_page() -> None:
-    facts = _standard_facts()
-    vocabulary, projections = _projections(facts)
-    request = _request(query=STATUS_PREDICATE)
-
-    first = discover_interfaces(request, vocabulary=vocabulary, projections=projections)
-    second = discover_interfaces(
-        request,
-        vocabulary=_projections(_standard_facts())[0],
-        projections=_projections(_standard_facts())[1],
-    )
-    assert canonical_bytes(first.model_dump(mode="json")) == canonical_bytes(
-        second.model_dump(mode="json")
-    )
-    assert first.receipt_digest == second.receipt_digest
 
 
 # -- token economics -------------------------------------------------------

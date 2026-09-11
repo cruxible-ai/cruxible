@@ -45,8 +45,6 @@ from cruxible_client.contracts.claims import ClaimArtifactAny, SubjectClaimObjec
 from cruxible_client.contracts.diagnostics import GovernedOperationReference
 from cruxible_client.contracts.discovery import (
     DiscoveryMatchBasis,
-    DiscoveryPageV1,
-    DiscoveryRequestV1,
     reject_locator_or_secret,
 )
 from cruxible_client.contracts.providers import ProviderV1
@@ -55,21 +53,17 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import CoverageDescriptorV1
 from cruxible_core.claims.claim_slots import classify_claim_slot
 from cruxible_core.indexes.projection import AcceptedCoordinate
-from cruxible_core.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
+from cruxible_core.query.backends import ClaimFactRowV1
 from cruxible_core.query.semantic_discovery import (
     MATCH_BASIS_PRIORITY,
     MATCH_BASIS_RESOLVES_EQUIVALENCE,
     DiscoveryEntryV1,
     DiscoveryError,
-    DiscoveryVocabularyV1,
-    discover,
-    resolved_equivalence_address,
 )
 
 CLAIM_TYPE_CARD_DIGEST_DOMAIN = "playbill-claim-type-card-v1"
 SUBJECT_PROFILE_DIGEST_DOMAIN = "playbill-subject-profile-v1"
 INTERFACE_POLICY_DIGEST_DOMAIN = "playbill-interface-policy-summary-v1"
-INTERFACE_PAGE_RECEIPT_DIGEST_DOMAIN = "playbill-interface-discovery-page-v1"
 
 CLAIM_TYPE_CARD_FACETS: tuple[str, ...] = ("interface", "match_bases", "policies", "usage")
 SUBJECT_PROFILE_FACETS: tuple[str, ...] = ("match_bases", "predicates", "vocabulary")
@@ -548,13 +542,6 @@ def descriptor_relations(
     return {owner: tuple(edges[key] for key in sorted(edges)) for owner, edges in found.items()}
 
 
-def _relations_for(
-    relations: Mapping[bytes, tuple[SemanticRelationV1, ...]],
-    address: SemanticAddress,
-) -> tuple[SemanticRelationV1, ...]:
-    return relations.get(canonical_bytes(address.model_dump(mode="json")), ())
-
-
 def _expansion_links(address: SemanticAddress) -> tuple[GovernedOperationReference, ...]:
     return (GovernedOperationReference(operation="expand", subject=address),)
 
@@ -907,273 +894,25 @@ def build_subject_profile(
 # -- the projection index and the interface discovery page ----------------
 
 
-def _require_address_order(value: Sequence[ClaimTypeCardV1 | SubjectProfileV1]) -> None:
-    keys = tuple(canonical_bytes(item.address.model_dump(mode="json")) for item in value)
-    if keys != tuple(sorted(set(keys))):
-        raise ValueError("interface projections must be sorted and unique by address")
-
-
-class InterfaceProjectionIndexV1(_StrictCardModel):
-    """Every card and profile at exactly one accepted coordinate."""
-
-    tag: Literal["playbill-interface-projection-index-v1"] = (
-        "playbill-interface-projection-index-v1"
-    )
-    at: AcceptedCoordinate
-    cards: tuple[ClaimTypeCardV1, ...] = ()
-    profiles: tuple[SubjectProfileV1, ...] = ()
-
-    @field_validator("cards")
-    @classmethod
-    def _cards(cls, value: tuple[ClaimTypeCardV1, ...]) -> tuple[ClaimTypeCardV1, ...]:
-        _require_address_order(value)
-        return value
-
-    @field_validator("profiles")
-    @classmethod
-    def _profiles(cls, value: tuple[SubjectProfileV1, ...]) -> tuple[SubjectProfileV1, ...]:
-        _require_address_order(value)
-        return value
-
-    def card(self, address: SemanticAddress) -> ClaimTypeCardV1 | None:
-        """Return the card at one exact semantic address, if this index holds it."""
-
-        key = canonical_bytes(address.model_dump(mode="json"))
-        return next(
-            (
-                item
-                for item in self.cards
-                if canonical_bytes(item.address.model_dump(mode="json")) == key
-            ),
-            None,
-        )
-
-    def profile(self, address: SemanticAddress) -> SubjectProfileV1 | None:
-        """Return the profile at one exact semantic address, if this index holds it."""
-
-        key = canonical_bytes(address.model_dump(mode="json"))
-        return next(
-            (
-                item
-                for item in self.profiles
-                if canonical_bytes(item.address.model_dump(mode="json")) == key
-            ),
-            None,
-        )
-
-
-class InterfaceDiscoveryPageV1(_StrictCardModel):
-    """One discovery page whose hits carry their compact interface projection."""
-
-    tag: Literal["playbill-interface-discovery-page-v1"] = "playbill-interface-discovery-page-v1"
-    page: DiscoveryPageV1
-    cards: tuple[ClaimTypeCardV1, ...] = ()
-    profiles: tuple[SubjectProfileV1, ...] = ()
-    handle_addresses: tuple[SemanticAddress, ...] = ()
-    resolved_address: SemanticAddress | None = None
-    coverage: CoverageDescriptorV1
-    receipt_digest: str
-
-    @field_validator("receipt_digest")
-    @classmethod
-    def _receipt(cls, value: str) -> str:
-        Sha256Value.from_tagged(value)
-        return value
-
-    @model_validator(mode="after")
-    def _covers_every_hit(self) -> "InterfaceDiscoveryPageV1":
-        projected = [canonical_bytes(item.address.model_dump(mode="json")) for item in self.cards]
-        projected.extend(
-            canonical_bytes(item.address.model_dump(mode="json")) for item in self.profiles
-        )
-        projected.extend(
-            canonical_bytes(item.model_dump(mode="json")) for item in self.handle_addresses
-        )
-        hits = [canonical_bytes(hit.address.model_dump(mode="json")) for hit in self.page.hits]
-        if sorted(projected) != sorted(hits):
-            raise ValueError("an interface page projects each hit exactly once")
-        return self
-
-
-def build_interface_projections(
-    *,
-    vocabulary: DiscoveryVocabularyV1,
-    facts: ClaimQueryFactsV1,
-    claim_types: Iterable[ClaimType] = (),
-    evaluation_time: datetime | None = None,
-    budget: InterfaceProjectionBudgetV1 = InterfaceProjectionBudgetV1(),
-) -> InterfaceProjectionIndexV1:
-    """Project every card and profile the accepted coordinate supports.
-
-    The vocabulary supplies the accepted descriptor terms so a card, a profile,
-    and a discovery hit can never disagree about what an interface is called.
-    """
-
-    if vocabulary.at != AcceptedCoordinate.from_internal(facts.coordinate):
-        raise DiscoveryError("interface projections require one accepted coordinate")
-    live = tuple(row for row in facts.claims if row.accepted.claim.lifecycle.state == "live")
-    contracts = {item.predicate: item for item in claim_types if item.lifecycle.state == "live"}
-    cardinalities = {name: item.cardinality for name, item in contracts.items()}
-    providers = {item.identity.qualified: item for item in facts.providers}
-    subject_identities = {item.path: item.shell.identity.qualified for item in facts.subjects}
-    digests = {item.path: item.artifact_digest for item in facts.subjects}
-    kinds = {item.path: (item.shell.subject_kind, item.shell.subject_id) for item in facts.subjects}
-    relations = descriptor_relations(row.accepted.claim for row in facts.claims)
-
-    usage: dict[str, list[ClaimTypeUsageRowV1]] = {}
-    by_subject: dict[str, list[ClaimFactRowV1]] = {}
-    for row in live:
-        usage.setdefault(row.accepted.claim.statement.predicate, []).append(
-            ClaimTypeUsageRowV1(
-                subject_path=row.subject_path,
-                subject_identity=subject_identities.get(row.subject_path, row.subject_path),
-            )
-        )
-        by_subject.setdefault(row.subject_path, []).append(row)
-
-    cards: list[ClaimTypeCardV1] = []
-    profiles: list[SubjectProfileV1] = []
-    for entry in vocabulary.entries:
-        if entry.kind == "ClaimType":
-            contract = contracts.get(entry.label)
-            if contract is None:
-                continue
-            cards.append(
-                build_claim_type_card(
-                    contract,
-                    at=vocabulary.at,
-                    entry=entry,
-                    usage_rows=tuple(usage.get(contract.predicate, ())),
-                    relations=_relations_for(relations, entry.address),
-                    budget=budget,
-                )
-            )
-        elif entry.kind == "Subject":
-            path = entry.address.artifact_path
-            if path not in kinds:
-                continue
-            subject_kind, subject_id = kinds[path]
-            rows = tuple(by_subject.get(path, ()))
-            profiles.append(
-                build_subject_profile(
-                    at=vocabulary.at,
-                    entry=entry,
-                    subject_kind=subject_kind,
-                    subject_id=subject_id,
-                    artifact_digest=digests[path],
-                    claims=tuple(item.accepted.claim for item in rows),
-                    cardinalities=cardinalities,
-                    relations=_relations_for(relations, entry.address),
-                    predicate_verdicts=(
-                        None
-                        if evaluation_time is None
-                        else claim_predicate_verdicts(
-                            rows,
-                            evaluation_time=evaluation_time,
-                            providers=providers,
-                        )
-                    ),
-                    evaluation_time=evaluation_time,
-                    budget=budget,
-                )
-            )
-    return InterfaceProjectionIndexV1(
-        at=vocabulary.at,
-        cards=tuple(cards),
-        profiles=tuple(profiles),
-    )
-
-
-def discover_interfaces(
-    request: DiscoveryRequestV1,
-    *,
-    vocabulary: DiscoveryVocabularyV1,
-    projections: InterfaceProjectionIndexV1,
-) -> InterfaceDiscoveryPageV1:
-    """Answer one discovery request with compact interfaces instead of bare handles.
-
-    Every hit the projection index covers comes back as a card or a profile;
-    a hit whose kind has no v1 projection stays an explicit handle rather than
-    being dropped, so the page still accounts for the whole result set.
-    """
-
-    if projections.at != vocabulary.at:
-        raise DiscoveryError("interface discovery requires one accepted coordinate")
-    page = discover(request, vocabulary=vocabulary)
-    cards: list[ClaimTypeCardV1] = []
-    profiles: list[SubjectProfileV1] = []
-    handles: list[SemanticAddress] = []
-    for hit in page.hits:
-        card = projections.card(hit.address)
-        profile = projections.profile(hit.address)
-        if card is not None:
-            cards.append(card)
-        elif profile is not None:
-            profiles.append(profile)
-        else:
-            handles.append(hit.address)
-    coverage = CoverageDescriptorV1(
-        requested_facets=("claim_type_card", "handle", "subject_profile"),
-        available_facets=byte_sorted(
-            tuple(
-                name
-                for name, present in (
-                    ("claim_type_card", bool(cards)),
-                    ("handle", bool(handles)),
-                    ("subject_profile", bool(profiles)),
-                )
-                if present
-            )
-        ),
-        truncated_facets=page.coverage.truncated_facets,
-        reason_codes=page.coverage.reason_codes,
-    )
-    receipt_digest = typed_digest(
-        Sha256Value,
-        INTERFACE_PAGE_RECEIPT_DIGEST_DOMAIN,
-        {
-            "cards": [claim_type_card_digest(item) for item in cards],
-            "coverage": coverage.model_dump(mode="json"),
-            "handles": [item.model_dump(mode="json") for item in handles],
-            "page_receipt_digest": page.receipt_digest,
-            "profiles": [subject_profile_digest(item) for item in profiles],
-        },
-    ).tagged
-    return InterfaceDiscoveryPageV1(
-        page=page,
-        cards=tuple(cards),
-        profiles=tuple(profiles),
-        handle_addresses=tuple(handles),
-        resolved_address=resolved_equivalence_address(page),
-        coverage=coverage,
-        receipt_digest=receipt_digest,
-    )
-
-
 __all__ = [
     "CLAIM_TYPE_CARD_DIGEST_DOMAIN",
     "CLAIM_TYPE_CARD_FACETS",
-    "INTERFACE_PAGE_RECEIPT_DIGEST_DOMAIN",
     "INTERFACE_POLICY_DIGEST_DOMAIN",
     "SUBJECT_PROFILE_DIGEST_DOMAIN",
     "SUBJECT_PROFILE_FACETS",
     "ClaimTypeCardV1",
     "ClaimTypeUsageRowV1",
     "ClaimTypeUsageV1",
-    "InterfaceDiscoveryPageV1",
     "InterfaceMatchBasisV1",
     "InterfacePolicySummaryV1",
     "InterfaceProjectionBudgetV1",
-    "InterfaceProjectionIndexV1",
     "SemanticRelationV1",
     "SubjectProfilePredicateV1",
     "SubjectProfileV1",
     "build_claim_type_card",
-    "build_interface_projections",
     "build_subject_profile",
     "claim_predicate_verdicts",
     "claim_type_card_digest",
     "descriptor_relations",
-    "discover_interfaces",
     "subject_profile_digest",
 ]
