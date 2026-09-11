@@ -1,8 +1,4 @@
-"""Typed service operations for governed QueryDefinition declarations.
-
-QueryDefinitions are not carried by the accepted projection index, so reads walk
-the accepted tree at the resolved coordinate exactly as semantic expansion does.
-"""
+"""Typed service operations for governed QueryDefinition declarations."""
 
 from __future__ import annotations
 
@@ -14,7 +10,6 @@ from cruxible_client.contracts.errors import ClaimNotFoundError
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinitionV1,
     QueryDefinitionV1,
-    parse_query_definition,
     query_definition_digest,
     query_definition_path,
 )
@@ -86,15 +81,17 @@ def accepted_query_definition(
     """Return one accepted QueryDefinition bound to its exact accepted digest."""
 
     path = query_definition_path(name)
-    content = instance.tree_at(coordinate.git_oid).get(path)
-    if content is None:
-        raise ClaimNotFoundError(path)
-    query = parse_query_definition(content, path=path)
-    return AcceptedQueryDefinitionV1(
-        path=path,
-        query=query,
-        artifact_digest=query_definition_digest(query).tagged,
-    )
+    identity = f"QueryDefinition:{name}"
+    with instance.bind_accepted_projection(coordinate) as projection:
+        assert projection.typed is not None
+        envelope = projection.typed.envelope(identity)
+        if envelope is None:
+            raise ClaimNotFoundError(path)
+        return AcceptedQueryDefinitionV1(
+            path=envelope.path,
+            query=projection.typed.source(identity),
+            artifact_digest=envelope.artifact_digest,
+        )
 
 
 def service_get_playbill_query_definition(
@@ -118,12 +115,19 @@ def service_list_playbill_query_definitions(
     """Return every accepted QueryDefinition in byte-sorted ledger-path order."""
 
     coordinate = _resolve_coordinate(instance, at)
-    tree = instance.tree_at(coordinate.git_oid)
-    views = tuple(
-        _view(parse_query_definition(tree[path], path=path), path=path, coordinate=coordinate)
-        for path in sorted(tree, key=lambda item: item.encode("utf-8"))
-        if path.startswith(QUERY_DEFINITION_PATH_PREFIX)
-    )
+    with instance.bind_accepted_projection(coordinate) as projection:
+        assert projection.typed is not None
+        views = tuple(
+            _view(
+                projection.typed.source(envelope.identity),
+                path=envelope.path,
+                coordinate=coordinate,
+            )
+            for envelope in sorted(
+                projection.typed.envelopes(kind="query-definition"),
+                key=lambda item: item.path.encode("utf-8"),
+            )
+        )
     return PlaybillQueryDefinitionList(
         coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
         query_definitions=views,
