@@ -80,7 +80,6 @@ from cruxible_core.governance.keys import (
     public_key_hex_from_private_file,
     raw_public_key_hex_from_openssh,
 )
-from cruxible_core.indexes.claims.projection_claim_cache import ClaimCompilationCache
 from cruxible_core.indexes.evidence.citation_index import CitationIndexCache
 from cruxible_core.indexes.history.history_index import AcceptedHistoryIndex, HistoryReader
 from cruxible_core.indexes.projection import (
@@ -249,7 +248,6 @@ class PlaybillInstance:
         self.derived = DerivedState()
         self.prepared_evaluations = PreparedEvaluationAdapter(self.derived)
         self._citation_index_cache = CitationIndexCache(self.derived)
-        self._claim_compilation_cache = ClaimCompilationCache()
         self._evaluation_state_cache = EvaluationStateCache(build_context=self.derived.build)
         for name, namespace, adapter, source in (
             ("accepted-artifacts", "accepted", self.derived, "verified-ledger-tree-v1"),
@@ -259,12 +257,6 @@ class PlaybillInstance:
                 "accepted/candidate",
                 self._evaluation_state_cache,
                 "exact-semantic-bytes-v1",
-            ),
-            (
-                "claim-compilation",
-                "accepted",
-                self._claim_compilation_cache,
-                "exact-claim-inputs-v1",
             ),
         ):
             self.derived.register(IndexDefinition(name, namespace, "1", source), adapter)
@@ -1573,7 +1565,6 @@ class PlaybillInstance:
         self._tree_memo.clear()
         self.derived.clear()
         self.claim_read_history_memo.clear()
-        self._claim_compilation_cache.clear()
         self._evaluation_state_cache.clear()
         self._recovered = recover_instance(
             self._ledger,
@@ -1613,7 +1604,6 @@ class PlaybillInstance:
             checkpoint_directory=self._checkpoint_directory(self.root),
             checkpoint_interval=DEFAULT_CHECKPOINT_INTERVAL,
             genesis=self.descriptor.genesis,
-            claim_compilation_cache=self._claim_compilation_cache,
             citation_index_cache=self._citation_index_cache,
             verified_change_sets=tuple(
                 (f"changesets/cs-{generation.record.sequence:020d}.json", generation.record)

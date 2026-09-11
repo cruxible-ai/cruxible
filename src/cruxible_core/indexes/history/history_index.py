@@ -22,12 +22,22 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from cruxible_core.indexes.proposals.proposal_index import ProposalIndex
 
+from cruxible_client.contracts.candidates import (
+    CandidateMemberEvidence,
+    CandidateMemberLawEvidenceV2,
+    MemberLawEvaluationV2,
+)
 from cruxible_client.contracts.errors import PlaybillFormatError, ProjectionIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow
 from cruxible_core.ledger.recovery import RecoveredInstanceState
+from cruxible_core.proposals.settlement import (
+    ChangeSetRecord,
+    ChangeSetRecordAnyVersion,
+    parse_change_set_record,
+)
 
-_SCHEMA = """
+_HISTORY_SCHEMA = """
 CREATE TABLE IF NOT EXISTS accepted_generations (
  sequence INTEGER PRIMARY KEY,
  git_oid TEXT NOT NULL, semantic_root TEXT NOT NULL, generation_root TEXT NOT NULL,
@@ -61,6 +71,22 @@ CREATE TABLE IF NOT EXISTS history_progress (
 ) STRICT;
 """
 
+_MEMBER_SCHEMA = """
+CREATE TABLE accepted_member_locations (
+ sequence INTEGER NOT NULL REFERENCES accepted_generations(sequence),
+ member_ordinal INTEGER NOT NULL CHECK(member_ordinal>=0),
+ member_path TEXT NOT NULL, artifact_kind TEXT NOT NULL,
+ artifact_identity TEXT, artifact_digest TEXT,
+ has_law_evidence INTEGER NOT NULL CHECK(has_law_evidence IN (0,1)),
+ PRIMARY KEY(sequence,member_ordinal)
+) STRICT;
+CREATE INDEX members_by_identity
+ ON accepted_member_locations(artifact_identity,sequence DESC,member_ordinal);
+CREATE INDEX members_by_path
+ ON accepted_member_locations(member_path,sequence,member_ordinal);
+"""
+_SCHEMA = _HISTORY_SCHEMA + _MEMBER_SCHEMA
+
 
 def _schema_rows(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
     rows = connection.execute(
@@ -77,16 +103,17 @@ def _schema_rows(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
     ]
 
 
-def _expected_schema() -> list[tuple[object, ...]]:
+def _expected_schema(schema: str) -> list[tuple[object, ...]]:
     reference = sqlite3.connect(":memory:")
     try:
-        reference.executescript(_SCHEMA)
+        reference.executescript(schema)
         return _schema_rows(reference)
     finally:
         reference.close()
 
 
-_EXPECTED_SCHEMA = _expected_schema()
+_EXPECTED_SCHEMA = _expected_schema(_SCHEMA)
+_PRE_MEMBER_SCHEMA = _expected_schema(_HISTORY_SCHEMA)
 
 
 @dataclass(frozen=True)
@@ -112,6 +139,17 @@ class ArtifactVersionLocation:
     path: str
     predecessor_digest: str | None
     artifact_revision: int
+
+
+@dataclass(frozen=True)
+class AcceptedMemberLocation:
+    sequence: int
+    member_ordinal: int
+    member_path: str
+    artifact_kind: str
+    artifact_identity: str | None
+    artifact_digest: str | None
+    has_law_evidence: int
 
 
 class HistoryReader:
@@ -154,6 +192,95 @@ class HistoryReader:
             ).fetchone()
             is not None
         )
+
+    def member_history(self, path: str) -> tuple[AcceptedMemberLocation, ...]:
+        """All member occurrences, including evaluations with unchanged bytes."""
+        return tuple(
+            AcceptedMemberLocation(*row)
+            for row in self._connection.execute(
+                "SELECT * FROM accepted_member_locations WHERE member_path=? "
+                "AND sequence<=? ORDER BY sequence,member_ordinal",
+                (path, self.sequence),
+            )
+        )
+
+    def claim_law_evidence(
+        self, identity: str, *, artifact_digest: str, path: str
+    ) -> AcceptedMemberLocation | None:
+        row = self._connection.execute(
+            "SELECT * FROM accepted_member_locations WHERE artifact_identity=? "
+            "AND sequence<=? ORDER BY sequence DESC,member_ordinal DESC LIMIT 1",
+            (identity, self.sequence),
+        ).fetchone()
+        if row is None:
+            return None
+        location = AcceptedMemberLocation(*row)
+        if (
+            location.artifact_kind != "claim"
+            or location.member_path != path
+            or location.artifact_digest != artifact_digest
+            or not location.has_law_evidence
+        ):
+            raise ProjectionIntegrityError(
+                "latest Claim law evidence differs from requested version"
+            )
+        return location
+
+    def read_member_record(
+        self,
+        location: AcceptedMemberLocation,
+        load_record: Callable[[str, str], bytes | None],
+    ) -> ChangeSetRecordAnyVersion:
+        """Verify one exact retained record; a locator never substitutes for it."""
+        generation = self.generation(location.sequence)
+        if generation.source_record_path is None:
+            raise ProjectionIntegrityError("genesis has no member evidence record")
+        raw = load_record(generation.git_oid, generation.source_record_path)
+        if raw is None:
+            raise ProjectionIntegrityError("accepted member source record is unavailable")
+        record = parse_change_set_record(raw, path=generation.source_record_path)
+        if (
+            record.sequence != generation.sequence
+            or record.changeset_digest != generation.source_record_digest
+            or record.candidate_digest != generation.candidate_digest
+            or record.compiler_digest != generation.compiler_digest
+            or not 0 <= location.member_ordinal < len(record.members)
+        ):
+            raise ProjectionIntegrityError("accepted member source record binding differs")
+        member = record.members[location.member_ordinal]
+        if (
+            member.path != location.member_path
+            or member.artifact_kind != location.artifact_kind
+            or _member_digest(member) != location.artifact_digest
+        ):
+            raise ProjectionIntegrityError("accepted member locator differs from retained member")
+        return record
+
+    def read_claim_law_evidence(
+        self,
+        identity: str,
+        *,
+        artifact_digest: str,
+        path: str,
+        load_record: Callable[[str, str], bytes | None],
+    ) -> MemberLawEvaluationV2 | None:
+        location = self.claim_law_evidence(identity, artifact_digest=artifact_digest, path=path)
+        if location is None:
+            return None
+        record = self.read_member_record(location, load_record)
+        matches = [e for e in _law_evidence(record) if e.path == path]
+        if len(matches) != 1:
+            raise ProjectionIntegrityError("accepted Claim law evidence is missing or ambiguous")
+        return matches[0]
+
+    def identities_for_digest(self, artifact_digest: str) -> tuple[str, ...]:
+        """Locate all identities for an exact version within this reader's prefix."""
+        rows = self._connection.execute(
+            "SELECT DISTINCT identity FROM artifact_versions "
+            "WHERE artifact_digest=? AND occurrence_sequence<=? ORDER BY identity",
+            (artifact_digest, self.sequence),
+        ).fetchall()
+        return tuple(row[0] for row in rows)
 
     def artifact(
         self, artifact_digest: str, *, identity: str | None = None
@@ -230,6 +357,23 @@ def _close_working_database(
 
     with lock:
         close_working_database(path, connections, proof)
+
+
+def _record_members(
+    record: ChangeSetRecordAnyVersion,
+) -> Sequence[CandidateMemberEvidence | CandidateMemberLawEvidenceV2]:
+    return record.members
+
+
+def _law_evidence(record: ChangeSetRecordAnyVersion) -> tuple[MemberLawEvaluationV2, ...]:
+    return () if isinstance(record, ChangeSetRecord) else record.law_evidence
+
+
+def _member_digest(member: object) -> str | None:
+    # Early retained formats carry an input digest, not a candidate artifact
+    # digest. Preserve that distinction rather than reinterpreting old bytes.
+    value = getattr(member, "candidate_artifact_digest", getattr(member, "artifact_digest", None))
+    return value if isinstance(value, str) else None
 
 
 class AcceptedHistoryIndex:
@@ -334,8 +478,12 @@ class AcceptedHistoryIndex:
             connection.execute("PRAGMA foreign_keys=ON")
             if connection.execute("PRAGMA journal_mode=WAL").fetchone() != ("wal",):
                 raise ProjectionIntegrityError("history index requires WAL mode")
-            if not _schema_rows(connection):
+            schema = _schema_rows(connection)
+            if not schema:
                 connection.executescript(_SCHEMA)
+            elif schema == _PRE_MEMBER_SCHEMA:
+                connection.executescript(_MEMBER_SCHEMA)
+                self.invalidate()
             stamp = self._file_stamp()
             self._writer_identity = None if stamp is None else stamp[:2]
         return self._writer
@@ -448,6 +596,9 @@ class AcceptedHistoryIndex:
             (recovered.head.sequence,),
         )
         connection.execute(
+            "DELETE FROM accepted_member_locations WHERE sequence>?", (recovered.head.sequence,)
+        )
+        connection.execute(
             "DELETE FROM artifact_versions WHERE occurrence_sequence>?", (recovered.head.sequence,)
         )
         connection.execute(
@@ -515,6 +666,40 @@ class AcceptedHistoryIndex:
                 )
                 self.generations_written += 1
                 self.artifact_rows_written += len(versions)
+            members = []
+            if record is not None:
+                law_paths = {e.path for e in _law_evidence(record)}
+                for ordinal, member in enumerate(_record_members(record)):
+                    digest = _member_digest(member)
+                    identity_digest = digest or getattr(member, "predecessor_artifact_digest", None)
+                    identities = connection.execute(
+                        "SELECT DISTINCT identity FROM artifact_versions WHERE path=? "
+                        "AND artifact_digest=? AND occurrence_sequence<=? LIMIT 2",
+                        (member.path, identity_digest, position),
+                    ).fetchall()
+                    identity = identities[0][0] if len(identities) == 1 else None
+                    members.append(
+                        (
+                            position,
+                            ordinal,
+                            member.path,
+                            member.artifact_kind,
+                            identity,
+                            digest,
+                            int(member.path in law_paths),
+                        )
+                    )
+            actual_members = connection.execute(
+                "SELECT * FROM accepted_member_locations WHERE sequence=? ORDER BY member_ordinal",
+                (position,),
+            ).fetchall()
+            if actual_members != members:
+                connection.execute(
+                    "DELETE FROM accepted_member_locations WHERE sequence=?", (position,)
+                )
+                connection.executemany(
+                    "INSERT INTO accepted_member_locations VALUES (?,?,?,?,?,?,?)", members
+                )
         progress = (
             recovered.coordinate.instance_id,
             history[0].generation_root.tagged,

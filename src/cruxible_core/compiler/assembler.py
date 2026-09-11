@@ -24,7 +24,6 @@ from cruxible_core.compiler.compiler import (
 from cruxible_core.compiler.projection_artifacts import ParsedProjectionTree, parse_projection_tree
 from cruxible_core.compiler.projection_tree import read_registered_tree
 from cruxible_core.evidence.citation_relations import build_citation_relation_facts
-from cruxible_core.indexes.claims.projection_claim_cache import ClaimCompilationCache
 from cruxible_core.indexes.evidence.citation_index import CitationIndexCache
 from cruxible_core.indexes.projection import (
     AcceptedCoordinate,
@@ -164,7 +163,6 @@ class ProjectionAssembler:
         registry: ProjectionExtensionRegistry | None = None,
         bodies: BodyProjectionProtocol | None = None,
         accepted_coordinates_by_sequence: Mapping[int, AcceptedCoordinate] | None = None,
-        claim_compilation_cache: ClaimCompilationCache | None = None,
         citation_index_cache: CitationIndexCache | None = None,
     ) -> None:
         if publication_directory.is_symlink() or not publication_directory.is_dir():
@@ -174,7 +172,6 @@ class ProjectionAssembler:
         self._repository = repository
         self.accepted = accepted
         self.publication_directory = publication_directory.resolve(strict=True)
-        self.claim_compilation_cache = claim_compilation_cache
         self.citation_index_cache = citation_index_cache
         self.registry = registry or projection_registry_for_compiler(accepted.compiler)
         self.artifact_kinds = artifact_kinds_for_compiler(accepted.compiler)
@@ -415,7 +412,6 @@ class ProjectionAssembler:
                 bodies=self.bodies,
                 coordinate=request,
                 accepted_coordinates_by_sequence=self.accepted_coordinates_by_sequence,
-                claim_compilation_cache=self.claim_compilation_cache,
             ),
         )
         if self.bodies is not None and self.registry.supports(

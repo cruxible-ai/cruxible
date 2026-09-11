@@ -9,9 +9,9 @@ import re
 import sqlite3
 import stat
 from collections import OrderedDict
-from dataclasses import dataclass
+from collections.abc import Mapping
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from cruxible_client.contracts.canonical import (
     LogicalDigest,
@@ -43,11 +43,14 @@ from cruxible_core.indexes.projection import (
     PROJECTION_SCHEMA_VERSION,
     AcceptedProjectionCoordinate,
     AssemblerRequest,
+    AssemblerRequestV2,
     ProjectionManifest,
+    ProjectionManifestV2,
     ProjectionOrphan,
     projection_manifest_name,
     render_projection_manifest,
 )
+from cruxible_core.indexes.sqlite_v1 import _TABLE_SPECS
 from cruxible_core.storage.cas import BodyAccessContext
 
 # A bound piece is verified whole — a physical SHA-256 over the file, a
@@ -110,203 +113,6 @@ def reset_projection_verification_memo() -> None:
 _PIECE_RE = re.compile(r"^piece-[0-9a-f]{64}-[0-9]{4}\.sqlite$")
 _MANIFEST_RE = re.compile(r"^projection-[0-9a-f]{64}\.json$")
 _ASSEMBLER_IMPLEMENTATION_RE = re.compile(r"^[a-z][a-z0-9.-]{0,63}$")
-
-
-@dataclass(frozen=True)
-class _TableSpec:
-    name: str
-    create_sql: str
-    columns: tuple[tuple[str, str, bool], ...]
-    primary_key: tuple[str, ...]
-    constraints: tuple[str, ...]
-    indexes: tuple[tuple[str, str], ...]
-    logical: bool
-
-
-_TABLE_SPECS = (
-    _TableSpec(
-        name="artifact_envelopes",
-        create_sql=(
-            "CREATE TABLE artifact_envelopes ("
-            "identity TEXT PRIMARY KEY, kind TEXT NOT NULL, format_tag TEXT NOT NULL, "
-            "path TEXT NOT NULL UNIQUE, artifact_digest TEXT NOT NULL, "
-            "predecessor_digest TEXT, revision INTEGER NOT NULL CHECK(revision >= 1)) STRICT"
-        ),
-        columns=(
-            ("identity", "TEXT", False),
-            ("kind", "TEXT", False),
-            ("format_tag", "TEXT", False),
-            ("path", "TEXT", False),
-            ("artifact_digest", "TEXT", False),
-            ("predecessor_digest", "TEXT", True),
-            ("revision", "INTEGER", False),
-        ),
-        primary_key=("identity",),
-        constraints=("check(revision>=1)", "unique(path)"),
-        indexes=(("idx_artifact_envelopes_kind", "kind,identity"),),
-        logical=True,
-    ),
-    _TableSpec(
-        name="live_identities",
-        create_sql=(
-            "CREATE TABLE live_identities (identity TEXT PRIMARY KEY, "
-            "artifact_digest TEXT NOT NULL, path TEXT NOT NULL) STRICT"
-        ),
-        columns=(
-            ("identity", "TEXT", False),
-            ("artifact_digest", "TEXT", False),
-            ("path", "TEXT", False),
-        ),
-        primary_key=("identity",),
-        constraints=(),
-        indexes=(),
-        logical=True,
-    ),
-    _TableSpec(
-        name="pins",
-        create_sql=(
-            "CREATE TABLE pins (source_identity TEXT NOT NULL, target_identity TEXT NOT NULL, "
-            "target_digest TEXT NOT NULL, PRIMARY KEY(source_identity,target_identity)) STRICT"
-        ),
-        columns=(
-            ("source_identity", "TEXT", False),
-            ("target_identity", "TEXT", False),
-            ("target_digest", "TEXT", False),
-        ),
-        primary_key=("source_identity", "target_identity"),
-        constraints=("unique(source_identity,target_identity)",),
-        indexes=(("idx_pins_target", "target_identity,source_identity"),),
-        logical=True,
-    ),
-    _TableSpec(
-        name="projection_fact_schemas",
-        create_sql=(
-            "CREATE TABLE projection_fact_schemas (schema_id TEXT NOT NULL, "
-            "schema_version INTEGER NOT NULL CHECK(schema_version >= 1), "
-            "constraints_json TEXT NOT NULL, PRIMARY KEY(schema_id,schema_version)) STRICT"
-        ),
-        columns=(
-            ("schema_id", "TEXT", False),
-            ("schema_version", "INTEGER", False),
-            ("constraints_json", "TEXT", False),
-        ),
-        primary_key=("schema_id", "schema_version"),
-        constraints=("check(schema_version>=1)",),
-        indexes=(),
-        logical=True,
-    ),
-    _TableSpec(
-        name="semantic_facts",
-        create_sql=(
-            "CREATE TABLE semantic_facts (schema_id TEXT NOT NULL, "
-            "schema_version INTEGER NOT NULL, "
-            "subject_identity TEXT NOT NULL, fact_key TEXT NOT NULL, value_json TEXT NOT NULL, "
-            "PRIMARY KEY(schema_id,schema_version,subject_identity,fact_key)) STRICT"
-        ),
-        columns=(
-            ("schema_id", "TEXT", False),
-            ("schema_version", "INTEGER", False),
-            ("subject_identity", "TEXT", False),
-            ("fact_key", "TEXT", False),
-            ("value_json", "TEXT", False),
-        ),
-        primary_key=("schema_id", "schema_version", "subject_identity", "fact_key"),
-        constraints=("unique(schema_id,schema_version,subject_identity,fact_key)",),
-        indexes=(("idx_semantic_facts_subject", "subject_identity,schema_id,fact_key"),),
-        logical=True,
-    ),
-    _TableSpec(
-        name="compiler_coordinates",
-        create_sql=(
-            "CREATE TABLE compiler_coordinates (singleton INTEGER PRIMARY KEY "
-            "CHECK(singleton = 1), "
-            "schema_version INTEGER NOT NULL, compiler_digest TEXT NOT NULL) STRICT"
-        ),
-        columns=(
-            ("singleton", "INTEGER", False),
-            ("schema_version", "INTEGER", False),
-            ("compiler_digest", "TEXT", False),
-        ),
-        primary_key=("singleton",),
-        constraints=("check(singleton=1)",),
-        indexes=(),
-        logical=True,
-    ),
-    _TableSpec(
-        name="assembler_metadata",
-        create_sql=(
-            "CREATE TABLE assembler_metadata (singleton INTEGER PRIMARY KEY "
-            "CHECK(singleton = 1), implementation TEXT NOT NULL, "
-            "contract_version INTEGER NOT NULL) STRICT"
-        ),
-        columns=(
-            ("singleton", "INTEGER", False),
-            ("implementation", "TEXT", False),
-            ("contract_version", "INTEGER", False),
-        ),
-        primary_key=("singleton",),
-        constraints=("check(singleton=1)",),
-        indexes=(),
-        logical=False,
-    ),
-    _TableSpec(
-        name="generation_metadata",
-        create_sql=(
-            "CREATE TABLE generation_metadata (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), "
-            "instance_id TEXT NOT NULL, git_object_format TEXT NOT NULL, git_oid TEXT NOT NULL, "
-            "semantic_root TEXT NOT NULL, generation_root TEXT NOT NULL) STRICT"
-        ),
-        columns=(
-            ("singleton", "INTEGER", False),
-            ("instance_id", "TEXT", False),
-            ("git_object_format", "TEXT", False),
-            ("git_oid", "TEXT", False),
-            ("semantic_root", "TEXT", False),
-            ("generation_root", "TEXT", False),
-        ),
-        primary_key=("singleton",),
-        constraints=("check(singleton=1)",),
-        indexes=(),
-        logical=False,
-    ),
-    _TableSpec(
-        name="presentation_fact_schemas",
-        create_sql=(
-            "CREATE TABLE presentation_fact_schemas (schema_id TEXT NOT NULL, "
-            "schema_version INTEGER NOT NULL, constraints_json TEXT NOT NULL, "
-            "PRIMARY KEY(schema_id,schema_version)) STRICT"
-        ),
-        columns=(
-            ("schema_id", "TEXT", False),
-            ("schema_version", "INTEGER", False),
-            ("constraints_json", "TEXT", False),
-        ),
-        primary_key=("schema_id", "schema_version"),
-        constraints=(),
-        indexes=(),
-        logical=False,
-    ),
-    _TableSpec(
-        name="presentation_facts",
-        create_sql=(
-            "CREATE TABLE presentation_facts (schema_id TEXT NOT NULL, "
-            "schema_version INTEGER NOT NULL, "
-            "subject_identity TEXT NOT NULL, fact_key TEXT NOT NULL, value_json TEXT NOT NULL, "
-            "PRIMARY KEY(schema_id,schema_version,subject_identity,fact_key)) STRICT"
-        ),
-        columns=(
-            ("schema_id", "TEXT", False),
-            ("schema_version", "INTEGER", False),
-            ("subject_identity", "TEXT", False),
-            ("fact_key", "TEXT", False),
-            ("value_json", "TEXT", False),
-        ),
-        primary_key=("schema_id", "schema_version", "subject_identity", "fact_key"),
-        constraints=(),
-        indexes=(),
-        logical=False,
-    ),
-)
 
 
 def _canonical_json_text(value: object) -> str:
@@ -510,8 +316,27 @@ def initialize_projection_database(
     parsed: ParsedProjectionTree,
     registry: ProjectionExtensionRegistry,
     assembler_implementation: str,
+    sources: Mapping[str, bytes] | None = None,
 ) -> dict[str, int]:
     """Create and populate the complete PB-B one-piece SQLite projection."""
+
+    if isinstance(request, AssemblerRequestV2):
+        from cruxible_core.compiler.compiler import SUPPORTED_COMPILERS, artifact_codec_for_compiler
+        from cruxible_core.indexes.typed_sqlite import initialize
+
+        compiler = next(
+            item for item in SUPPORTED_COMPILERS if item.rule_digest == request.compiler_digest
+        )
+        if sources is None:
+            sources = _source_repository(request.repository_path).read_tree(request.git_oid)
+        return initialize(
+            path,
+            request=request,
+            parsed=parsed,
+            sources=sources,
+            codec=artifact_codec_for_compiler(compiler),
+            assembler_implementation=assembler_implementation,
+        )
 
     if not _ASSEMBLER_IMPLEMENTATION_RE.fullmatch(assembler_implementation):
         raise ProjectionIntegrityError("assembler implementation identifier is not canonical")
@@ -644,6 +469,11 @@ def initialize_projection_database(
 
 def _verify_projection_schema(connection: sqlite3.Connection) -> None:
     version = cast(int, connection.execute("PRAGMA user_version").fetchone()[0])
+    if version == 2:
+        from cruxible_core.indexes.typed_sqlite import verify_schema
+
+        verify_schema(connection)
+        return
     if version != PROJECTION_SCHEMA_VERSION:
         raise ProjectionIntegrityError("projection SQLite schema version is unsupported")
     expected: dict[tuple[str, str], str] = {}
@@ -671,6 +501,10 @@ def canonical_logical_export(path: Path) -> dict[str, object]:
         connection = sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True)
         try:
             _verify_projection_schema(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == 2:
+                from cruxible_core.indexes.typed_sqlite import logical_export
+
+                return logical_export(connection)
             tables: list[dict[str, object]] = []
             for spec in sorted(_TABLE_SPECS, key=lambda item: item.name.encode("utf-8")):
                 if not spec.logical:
@@ -706,10 +540,13 @@ def canonical_logical_export(path: Path) -> dict[str, object]:
 
 
 def projection_logical_digest(path: Path) -> LogicalDigest:
+    exported = canonical_logical_export(path)
     return typed_digest(
         LogicalDigest,
-        "playbill-projection-logical-v1",
-        canonical_logical_export(path),
+        "playbill-projection-logical-v2"
+        if exported.get("storage_schema_version") == 2
+        else "playbill-projection-logical-v1",
+        exported,
     )
 
 
@@ -729,7 +566,11 @@ def load_projection_manifest(path: Path) -> ProjectionManifest:
         raise ProjectionIntegrityError("projection manifest must be a regular file")
     try:
         raw = path.read_bytes()
-        manifest = ProjectionManifest.model_validate_json(raw)
+        manifest = (
+            ProjectionManifestV2
+            if json.loads(raw).get("tag") == "playbill-projection-manifest-v2"
+            else ProjectionManifest
+        ).model_validate_json(raw)
     except Exception as exc:
         raise ProjectionIntegrityError("projection manifest is missing or malformed") from exc
     if render_projection_manifest(manifest) != raw:
@@ -754,6 +595,18 @@ def _manifest_matches_coordinate(
     )
 
 
+def _source_repository(path: str) -> Any:
+    from cruxible_core.ledger.git import GitLedger
+
+    # Exact blob reads do not consult signing custody; credentials are deliberately
+    # unusable on this standalone read adapter. Instance callers attach their reader.
+    return GitLedger(
+        Path(path),
+        signing_key_path=Path(path) / ".read-only",
+        allowed_signers_path=Path(path) / ".read-only",
+    )
+
+
 class ProjectionHandle:
     """An immutable read handle whose complete build was verified exactly once."""
 
@@ -772,6 +625,22 @@ class ProjectionHandle:
         self._connection = connection
         self.accepted = accepted
         self._closed = False
+        self.typed = None
+        if isinstance(manifest, ProjectionManifestV2):
+            from cruxible_core.indexes.typed_state import TypedStateReader
+
+            self.typed = TypedStateReader(
+                connection, accepted, _source_repository(accepted.repository_path)
+            )
+
+    def attach_sources(self, repository: Any, *, bodies: Any, history: Any) -> ProjectionHandle:
+        if self.typed is not None:
+            self.typed.repository, self.typed.bodies, self.typed.history = (
+                repository,
+                bodies,
+                history,
+            )
+        return self
 
     @property
     def index_path(self) -> Path:
@@ -783,6 +652,8 @@ class ProjectionHandle:
         self, *, paths: tuple[str, ...] | None = None
     ) -> tuple[ArtifactEnvelopeRow, ...]:
         """Read typed artifact metadata, optionally for an exact changed-path set."""
+        if self.typed is not None:
+            return self.typed.envelopes(paths=paths)
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
         columns = "identity,kind,format_tag,path,artifact_digest,predecessor_digest,revision"
@@ -808,6 +679,8 @@ class ProjectionHandle:
     ) -> tuple[ProjectionFact, ...]:
         """Read one compiler-declared semantic relation slice in key order."""
 
+        if self.typed is not None:
+            return self.typed.facts(schema_id, identity=subject_identity)
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
         if subject_identity is None:
@@ -870,6 +743,16 @@ class ProjectionHandle:
     ) -> DocumentProjectionView | None:
         """Read one canonical Document; proposal refs are outside this bound handle."""
 
+        if self.typed is not None:
+            envelope = self.typed.envelope(identity)
+            if envelope is None or envelope.kind != "document":
+                return None
+            return document_projection_view(
+                envelope,
+                self.typed.facts(identity=identity),
+                coordinate=self.accepted,
+                access=access,
+            )
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
         envelope = self._connection.execute(
@@ -916,6 +799,12 @@ class ProjectionHandle:
     ) -> tuple[DocumentProjectionView, ...]:
         """List canonical Documents in stable identity order."""
 
+        if self.typed is not None:
+            return tuple(
+                view
+                for row in self.typed.envelopes(kind="document")
+                if (view := self.document(row.identity, access=access)) is not None
+            )
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
         identities = self._connection.execute(
@@ -930,6 +819,13 @@ class ProjectionHandle:
     def subject(self, identity: str) -> SubjectProjectionView | None:
         """Read one canonical identity-only Subject at this accepted coordinate."""
 
+        if self.typed is not None:
+            envelope = self.typed.envelope(identity)
+            if envelope is None or envelope.kind != "subject":
+                return None
+            return subject_projection_view(
+                envelope, self.typed.facts(identity=identity), coordinate=self.accepted
+            )
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
         envelope = self._connection.execute(
@@ -971,6 +867,12 @@ class ProjectionHandle:
     def list_subjects(self) -> tuple[SubjectProjectionView, ...]:
         """List canonical Subjects in stable kind-qualified identity order."""
 
+        if self.typed is not None:
+            return tuple(
+                view
+                for row in self.typed.envelopes(kind="subject")
+                if (view := self.subject(row.identity)) is not None
+            )
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
         identities = self._connection.execute(
@@ -985,6 +887,13 @@ class ProjectionHandle:
     def claim(self, identity: str) -> ClaimProjectionView | None:
         """Read one canonical first-class Claim at this accepted coordinate."""
 
+        if self.typed is not None:
+            envelope = self.typed.envelope(identity)
+            if envelope is None or envelope.kind != "claim":
+                return None
+            return claim_projection_view(
+                envelope, self.typed.facts(identity=identity), coordinate=self.accepted
+            )
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
         envelope = self._connection.execute(
@@ -1033,6 +942,27 @@ class ProjectionHandle:
         limit: int,
     ) -> tuple[str, ...]:
         """Select a bounded page without materializing unrelated Claim views."""
+        if self.typed is not None:
+            clauses = [
+                "identity>?",
+                "subject_path IN (" + ",".join("?" for _ in subject_paths) + ")",
+            ]
+            values: list[object] = [after, *subject_paths]
+            if predicates:
+                clauses.append("predicate IN (" + ",".join("?" for _ in predicates) + ")")
+                values.extend(predicates)
+            if not include_retired:
+                clauses.append("lifecycle='live'")
+            values.append(limit)
+            return tuple(
+                row[0]
+                for row in self._connection.execute(
+                    "SELECT identity FROM claims WHERE "
+                    + " AND ".join(clauses)
+                    + " ORDER BY identity LIMIT ?",
+                    values,
+                )
+            )
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
         subject_slots = ",".join("?" for _ in subject_paths)
@@ -1059,6 +989,12 @@ class ProjectionHandle:
     def list_claims(self) -> tuple[ClaimProjectionView, ...]:
         """List canonical Claims in stable lineage-identity order."""
 
+        if self.typed is not None:
+            return tuple(
+                view
+                for row in self.typed.envelopes(kind="claim")
+                if (view := self.claim(row.identity)) is not None
+            )
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
         identities = self._connection.execute(
@@ -1137,6 +1073,10 @@ def bind_projection(
         # run rather than synthesizing a passing result for it: a forged "ok"
         # would read, here and to anything that later surfaced it, as a check
         # that ran.
+        if connection.execute("PRAGMA user_version").fetchone()[0] != (
+            2 if isinstance(manifest, ProjectionManifestV2) else 1
+        ):
+            raise ProjectionIntegrityError("manifest and SQLite storage versions differ")
         integrity_ok = already_verified
         if not already_verified:
             integrity = connection.execute("PRAGMA integrity_check").fetchone()
@@ -1151,13 +1091,18 @@ def bind_projection(
         assembler_row = connection.execute(
             "SELECT implementation,contract_version FROM assembler_metadata WHERE singleton = 1"
         ).fetchone()
-        counts = {
-            spec.name: cast(
-                int,
-                connection.execute(f"SELECT COUNT(*) FROM {spec.name}").fetchone()[0],
-            )
-            for spec in _TABLE_SPECS
-        }
+        if isinstance(manifest, ProjectionManifestV2):
+            from cruxible_core.indexes.typed_sqlite import row_counts
+
+            counts = row_counts(connection)
+        else:
+            counts = {
+                spec.name: cast(
+                    int,
+                    connection.execute(f"SELECT COUNT(*) FROM {spec.name}").fetchone()[0],
+                )
+                for spec in _TABLE_SPECS
+            }
         expected_metadata = (
             manifest.instance_id,
             manifest.git_object_format,
