@@ -509,13 +509,20 @@ class CitationReader:
         targets = None if claim_identities is None else set(claim_identities)
         groups: set[tuple[str, str]] = set()
         if targets is None:
+            # Start at retired owners, then deduplicate before the live-member
+            # probe. Probing before DISTINCT repeats a group scan for every
+            # retired use and can make one large group quadratic.
             group_rows = self.connection.execute(
-                "SELECT DISTINCT r.group_kind,r.group_key FROM claims c "
-                "JOIN citation_group_members r ON r.claim_identity=c.identity "
-                "WHERE c.lifecycle='retired' AND EXISTS (SELECT 1 FROM citation_group_members l "
+                "WITH retired_groups AS MATERIALIZED ("
+                "SELECT DISTINCT r.group_kind,r.group_key "
+                "FROM claims c INDEXED BY claims_by_lifecycle "
+                "CROSS JOIN citation_group_members r ON r.claim_identity=c.identity "
+                "WHERE c.lifecycle='retired') "
+                "SELECT g.group_kind,g.group_key FROM retired_groups g "
+                "WHERE EXISTS (SELECT 1 FROM citation_group_members l "
                 "JOIN claims live ON live.identity=l.claim_identity "
-                "WHERE l.group_kind=r.group_kind "
-                "AND l.group_key=r.group_key AND live.lifecycle='live')"
+                "WHERE l.group_kind=g.group_kind "
+                "AND l.group_key=g.group_key AND live.lifecycle='live')"
             )
             groups.update((row[0], row[1]) for row in group_rows)
         else:

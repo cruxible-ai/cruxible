@@ -216,6 +216,7 @@ def world(tmp_path: Path):
     connection.executescript(
         "CREATE TABLE claims(identity TEXT PRIMARY KEY,path TEXT,"
         "artifact_digest TEXT,lifecycle TEXT) STRICT;"
+        "CREATE INDEX claims_by_lifecycle ON claims(lifecycle,identity);"
         "CREATE TABLE capture_contracts(identity TEXT PRIMARY KEY,path TEXT,"
         "artifact_digest TEXT) STRICT;" + SCHEMA_SQL
     )
@@ -462,6 +463,70 @@ def test_selected_group_work_is_independent_of_unrelated_citation_growth(
     monkeypatch.setattr(citation_sql, "_conflict_group_facts", count)
     assert world.reader.conflicts(claim_identities=[live.identity.qualified])
     assert visited == [2, 2, 2]
+
+
+def _global_conflicts_with_sql_steps(world):
+    steps = 0
+
+    def count():
+        nonlocal steps
+        steps += 1
+        return 0
+
+    world.connection.set_progress_handler(count, 1)
+    try:
+        # This is next's unfiltered production entry point, including the SQL
+        # that discovers relevant groups before the shared kernel sees them.
+        facts = world.reader.conflicts()
+    finally:
+        world.connection.set_progress_handler(None, 0)
+    return facts, steps
+
+
+def test_global_conflict_sql_ignores_unrelated_live_citations(world, record_property):
+    digest = world.capture(1)
+    world.publish(world.claim(1, [digest], retired=True), world.claim(10_000, [digest]))
+    expected = world.cold_conflicts()
+    counts = []
+    previous = 0
+    for unrelated in (0, 100, 500):
+        world.publish(
+            *(
+                world.claim(n + 20_000, [world.capture(n + 20, source=n + 20)])
+                for n in range(previous, unrelated)
+            )
+        )
+        facts, steps = _global_conflicts_with_sql_steps(world)
+        assert facts == expected
+        counts.append(steps)
+        previous = unrelated
+    record_property("global_conflict_sql_steps", counts)
+    assert max(counts) <= counts[0] * 1.1 + 100, counts
+
+
+def test_global_conflict_sql_probes_each_shared_group_once(world, record_property):
+    digest = world.capture(1)
+    # Sort the live identity after all retired identities, so EXISTS has to
+    # reach the end of the group. Multiple roles also share the same group.
+    world.publish(world.claim(10_000, [digest], roles=("evidence", "copy")))
+    counts = []
+    previous = 0
+    for retired in (10, 100, 500):
+        world.publish(
+            *(
+                world.claim(n, [digest], retired=True, roles=("evidence", "copy"))
+                for n in range(previous, retired)
+            )
+        )
+        facts, steps = _global_conflicts_with_sql_steps(world)
+        assert facts == world.cold_conflicts()
+        counts.append(steps)
+        previous = retired
+    record_property("shared_group_sql_steps", counts)
+    # Complete group reads are still linear in membership. A per-retired-use
+    # correlated probe grows quadratically and exceeds these bounds.
+    assert counts[1] < counts[0] * 12, counts
+    assert counts[2] < counts[1] * 7, counts
 
 
 def test_owner_rename_and_historical_binding_keep_original_relationships(world):
