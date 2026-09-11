@@ -15,10 +15,10 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.discovery import DiscoveryMatchBasisV1
 from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
-from cruxible_client.contracts.procedures.artifacts import parse_procedure
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.claims.claim_slots import ClaimSlotClassification, classify_claim_slot
 from cruxible_core.derived.memo import memo_get, memo_put
+from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.query.search import (
     SEARCH_KINDS,
     PlaybillSearchCountV1,
@@ -273,30 +273,27 @@ def _claim_rows(
 
 
 def _procedure_rows(
-    tree: Mapping[str, bytes],
+    instance: PlaybillInstance,
     *,
+    coordinate: AcceptedProjectionCoordinate,
     request: PlaybillSearchRequestV1,
 ) -> tuple[PlaybillSearchRowV1, ...]:
     if "procedure" not in request.kinds:
         return ()
-    rows: list[PlaybillSearchRowV1] = []
-    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not path.startswith("procedures/") or not path.endswith(".json"):
-            continue
-        procedure = parse_procedure(tree[path], path=path)
-        rows.append(
-            PlaybillSearchRowV1(
-                kind="procedure",
-                identity=procedure.identity.name,
-                address=SemanticAddress.whole_artifact(path),
-                status="accepted" if procedure.lifecycle.state == "live" else "retired",
-                title=procedure.identity.name,
-                summary=(
-                    "directly_runnable" if procedure.directly_runnable else "binding_required"
-                ),
-            )
+    with instance.bind_accepted_projection(coordinate) as projection:
+        assert projection.typed is not None
+        inventory = projection.typed.procedure_inventory()
+    return tuple(
+        PlaybillSearchRowV1(
+            kind="procedure",
+            identity=procedure.identity.removeprefix("Procedure:"),
+            address=SemanticAddress.whole_artifact(procedure.path),
+            status="accepted" if procedure.lifecycle == "live" else "retired",
+            title=procedure.identity.removeprefix("Procedure:"),
+            summary=("directly_runnable" if procedure.directly_runnable else "binding_required"),
         )
-    return tuple(rows)
+        for procedure in inventory
+    )
 
 
 def _match_basis(row: PlaybillSearchRowV1, query: str) -> tuple[DiscoveryMatchBasisV1, ...]:
@@ -516,8 +513,10 @@ def service_search_playbill(
         raise
     except Exception as exc:  # pragma: no cover - backend normalization boundary
         raise ProposalIntegrityError("search requires a verified accepted coordinate") from exc
-    tree = instance.immutable_tree_at(coordinate.git_oid)
-    rows = (*_claim_rows(instance, request=request), *_procedure_rows(tree, request=request))
+    rows = (
+        *_claim_rows(instance, request=request),
+        *_procedure_rows(instance, coordinate=coordinate, request=request),
+    )
     if demand_provider is not None and "demand" in request.kinds:
         demand_rows = demand_provider.rows(instance, request)
         if any(row.kind != "demand" for row in demand_rows):

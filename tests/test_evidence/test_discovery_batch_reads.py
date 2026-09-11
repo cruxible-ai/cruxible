@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from cruxible_core.indexes.sqlite import ProjectionHandle
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.claims import claims as playbill_claims
 from cruxible_core.service.discovery import search as playbill_search
@@ -36,11 +37,14 @@ def test_discovery_matches_full_view_inputs_without_building_them(tmp_path, monk
     def unused(*args, **kwargs):
         pytest.fail("discovery must not materialize full Claim fact views")
 
-    monkeypatch.setattr(playbill_claims, "projected_playbill_claim_views", unused)
+    monkeypatch.setattr(ProjectionHandle, "list_claims", unused)
+    monkeypatch.setattr(instance, "tree_at", unused)
+    monkeypatch.setattr(instance, "immutable_tree_at", unused)
+    allowed_sources = set(context._source_bytes)
     read_blob = instance.blob_at
 
     def selected_history(oid, path):
-        assert path.startswith("changesets/")
+        assert path.startswith("changesets/") or path in allowed_sources
         return read_blob(oid, path)
 
     monkeypatch.setattr(instance, "blob_at", selected_history)

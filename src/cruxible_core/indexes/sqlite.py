@@ -24,6 +24,7 @@ from cruxible_client.contracts.projection_extensions import (
     ProjectionExtensionRegistry,
     ProjectionFact,
 )
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow, ParsedProjectionTree
 from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.documents.projection_documents import (
@@ -950,20 +951,64 @@ class ProjectionHandle:
         params.append(limit)
         return tuple(str(row[0]) for row in self._connection.execute(sql, params).fetchall())
 
-    def list_claims(self) -> tuple[ClaimProjectionView, ...]:
-        """List canonical Claims in stable lineage-identity order."""
+    def list_claims(
+        self,
+        *,
+        subject: SemanticAddress | None = None,
+        predicate: str | None = None,
+        include_retired: bool = True,
+    ) -> tuple[ClaimProjectionView, ...]:
+        """Select exact Claim keys before materializing their canonical views."""
 
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
+        values: list[object] = []
+        clauses: list[str] = []
         if self.typed is not None:
-            return tuple(
-                view
-                for row in self.typed.envelopes(kind="claim")
-                if (view := self.claim(row.identity)) is not None
-            )
-        identities = self._connection.execute(
-            "SELECT identity FROM artifact_envelopes WHERE kind = 'claim' ORDER BY identity"
-        ).fetchall()
+            sql = "SELECT identity FROM claims"
+            if subject is not None:
+                clauses.extend(
+                    ("subject_path=?", "subject_selector_scheme=?", "subject_selector_value=?")
+                )
+                values.extend(
+                    (subject.artifact_path, subject.selector.scheme, subject.selector.value)
+                )
+            if predicate is not None:
+                clauses.append("predicate=?")
+                values.append(predicate)
+            if not include_retired:
+                clauses.append("lifecycle='live'")
+        else:
+            sql = "SELECT e.identity AS identity FROM artifact_envelopes e"
+            clauses.append("e.kind='claim'")
+            if subject is not None or predicate is not None:
+                sql += (
+                    " JOIN semantic_facts s ON s.subject_identity=e.identity"
+                    " AND s.schema_id='playbill.claim.statement'"
+                )
+            if subject is not None:
+                clauses.extend(
+                    (
+                        "json_extract(s.value_json,'$.subject.artifact_path')=?",
+                        "json_extract(s.value_json,'$.subject.selector.scheme')=?",
+                        "json_extract(s.value_json,'$.subject.selector.value')=?",
+                    )
+                )
+                values.extend(
+                    (subject.artifact_path, subject.selector.scheme, subject.selector.value)
+                )
+            if predicate is not None:
+                clauses.append("json_extract(s.value_json,'$.predicate')=?")
+                values.append(predicate)
+            if not include_retired:
+                sql += (
+                    " JOIN semantic_facts l ON l.subject_identity=e.identity"
+                    " AND l.schema_id='playbill.claim.lifecycle'"
+                )
+                clauses.append("json_extract(l.value_json,'$.lifecycle.state')='live'")
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        identities = self._connection.execute(sql + " ORDER BY identity", values).fetchall()
         return tuple(
             view
             for row in identities

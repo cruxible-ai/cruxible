@@ -85,19 +85,16 @@ def _count_read_trees(monkeypatch: pytest.MonkeyPatch) -> Counter[str]:
     return counted
 
 
-def test_orient_reads_each_accepted_generation_tree_at_most_once(
+def test_orient_uses_indexed_inventory_without_accepted_tree_reads(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     instance, _owner = seed_claims(tmp_path)
-    generations = len(instance.accepted_history())
 
     counted = _count_read_trees(monkeypatch)
     service_search_playbill(instance, request=_orient_request(instance))
 
-    assert counted
-    assert max(counted.values()) == 1
-    assert len(counted) <= generations
+    assert counted == Counter()
 
     counted.clear()
     service_search_playbill(instance, request=_orient_request(instance))

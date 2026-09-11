@@ -100,6 +100,31 @@ def test_search_and_list_are_deterministic_cursor_bound_pages(tmp_path: Path) ->
     ]
 
 
+def test_procedure_search_reads_sql_summary_without_graph_or_tree(tmp_path, monkeypatch):
+    from cruxible_core.indexes.typed_state import TypedStateReader
+    from tests.test_procedures.test_procedure_measurement_readings import _line_world
+
+    instance, procedure, _line = _line_world(tmp_path)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Procedure search must use indexed summary fields")
+
+    monkeypatch.setattr(instance, "tree_at", forbidden)
+    monkeypatch.setattr(instance, "immutable_tree_at", forbidden)
+    monkeypatch.setattr(instance._ledger, "read_tree", forbidden)
+    monkeypatch.setattr(TypedStateReader, "source", forbidden)
+    result = service_search_playbill(
+        instance, request=_request(instance, mode="list", kinds=("procedure",))
+    )
+    assert [(row.identity, row.status, row.summary) for row in result.rows] == [
+        (
+            procedure.identity.name,
+            "accepted",
+            "directly_runnable" if procedure.directly_runnable else "binding_required",
+        )
+    ]
+
+
 def test_orient_has_no_arbitrary_rows_and_names_demand_as_not_installed(
     tmp_path: Path,
 ) -> None:
