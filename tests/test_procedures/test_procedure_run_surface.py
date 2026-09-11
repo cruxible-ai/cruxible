@@ -381,9 +381,9 @@ def _accept_line_tree(
         timestamp="2026-08-24T15:00:00.000000Z",
     )
     accept_proposal(instance, owner, inspection)
-    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     return procedure_run_service._accepted_line_by_identity_digest(  # noqa: SLF001
-        tree,
+        instance,
+        coordinate=instance.accepted_coordinate(),
         identity_digest=line_identity_digest(line.identity),
     )
 
@@ -481,6 +481,40 @@ def test_a_cadence_line_admits_two_occurrences_one_period_apart_over_a_real_tree
     assert next_due == READ_TIME + timedelta(hours=1)
     assert awaited is None
     assert second != first
+
+
+def test_warm_line_admission_uses_selected_sources_without_tree_inventory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    procedure = _slotless_procedure("selected-line-procedure")
+    line = _scheduled_line(
+        "selected-line",
+        trigger=CadenceTriggerPolicyV1(
+            cadence_policy_digest=_line_digest("hourly"), interval_seconds=3600
+        ),
+        accepted=procedure,
+    )
+    _accept_line_tree(instance, owner, line=line, accepted=procedure, proposal_name="selected-line")
+    with instance.accepted_history_reader():
+        pass
+
+    def no_tree(*_args, **_kwargs):
+        pytest.fail("warm Line admission must select its accepted owners")
+
+    monkeypatch.setattr(instance, "tree_at", no_tree)
+    monkeypatch.setattr(instance, "immutable_tree_at", no_tree)
+    digest = line_identity_digest(line.identity)
+    result = procedure_run_service.service_run_playbill_line(
+        instance,
+        path_identity_digest=digest,
+        request=LineRunRequestV1(line_identity_digest=digest, evaluation_time=READ_TIME),
+        actor_context=_actor(instance),
+        caller_rung=3,
+        daemon_clock=_DAEMON_CLOCK,
+    )
+    assert result.status == "admission_refused"
+    assert result.terminal.code == "line_mandate_required"
 
 
 def test_a_caller_cannot_walk_the_cadence_by_advancing_the_claimed_instant(
