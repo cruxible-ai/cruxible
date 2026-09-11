@@ -428,3 +428,49 @@ def test_close_does_not_certify_mutation_after_exclusive_lock_release(tmp_path, 
     assert fresh.read_admission(first.admission.proposal_id) == first.admission
     assert restarted.proposals.reconstructions == 1
     restarted.close()
+
+
+def test_interrupted_existing_records_are_fsynced_before_checkpoint_commit(tmp_path, monkeypatch):
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    evidence = instance.proposal_evidence()
+    index = evidence.index
+    paths = [next(evidence.evaluations.glob("*.json")), next(evidence.proposals.glob("*.json"))]
+    for path in paths:
+        # Model a writer stopped after full write but before its fsync.
+        path.write_bytes(path.read_bytes())
+    index._write_marker(evidence.root, dict(index._marker(evidence.root), clean=False))
+    expected = [(path.stat().st_ino, path.parent.stat().st_ino) for path in paths]
+    flushed = []
+    fsync = os.fsync
+    finish = index._finish
+
+    def recorded_fsync(descriptor):
+        flushed.append(os.fstat(descriptor).st_ino)
+        fsync(descriptor)
+
+    def checked_finish(*args):
+        for file_inode, directory_inode in expected:
+            assert file_inode in flushed
+            assert directory_inode in flushed
+            assert flushed.index(file_inode) < flushed.index(directory_inode)
+        return finish(*args)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "fsync", recorded_fsync)
+        patch.setattr(index, "_finish", checked_finish)
+        with evidence.publication():
+            evidence.write_evaluation(first.evaluation)
+            evidence.write_admission(first.admission)
+    assert index._marker(evidence.root)["clean"] is True
+
+
+def test_existing_evidence_retry_refuses_symlink_even_with_identical_bytes(tmp_path):
+    from cruxible_core.proposals.proposal_evidence import _exclusive_canonical_write
+
+    target = tmp_path / "target.json"
+    target.write_bytes(b"{}\n")
+    path = tmp_path / "source.json"
+    path.symlink_to(target)
+    with pytest.raises(ProposalIntegrityError):
+        _exclusive_canonical_write(path, b"{}\n")
