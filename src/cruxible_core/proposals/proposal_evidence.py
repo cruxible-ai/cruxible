@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+import stat
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
+
+if TYPE_CHECKING:
+    from cruxible_core.indexes.proposals.proposal_index import ProposalIndex
+    from cruxible_core.ledger.git import GitLedger
 
 from pydantic import BaseModel, ValidationError
 
@@ -83,10 +89,16 @@ def _exclusive_canonical_write(path: Path, payload: bytes) -> None:
 class ProposalEvidenceStore:
     """Immutable out-of-band proposal/candidate evidence; never accepted authority."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(
+        self, root: Path, *, index: ProposalIndex | None = None, transport: GitLedger | None = None
+    ) -> None:
         if root.is_symlink() or not root.is_dir():
             raise ProposalIntegrityError("proposal evidence root must be an existing directory")
         self.root = root.resolve(strict=True)
+        self.index = index
+        self.transport = transport
+        self._pending_records: dict[str, dict[str, Path]] | None = None
+        self._recovered_evaluations: dict[str, Path] = {}
         self.proposals = self._directory("proposals")
         self.evaluations = self._directory("evaluations")
         self.candidates = self._directory("candidates")
@@ -99,12 +111,43 @@ class ProposalEvidenceStore:
         path.mkdir(mode=0o700, exist_ok=True)
         if path.is_symlink() or not path.is_dir():
             raise ProposalIntegrityError("proposal evidence directory is not trustworthy")
-        os.chmod(path, 0o700)
+        if stat.S_IMODE(path.stat().st_mode) != 0o700:
+            os.chmod(path, 0o700)
         return path.resolve(strict=True)
+
+    @contextmanager
+    def publication(self) -> Iterator[None]:
+        """Publish existing source writes as one admission-last locator update."""
+        if self.index is None or self._pending_records is not None:
+            yield
+        else:
+            with self.index.publication(self):
+                yield
+
+    def _write_record(self, kind: str, identity: str, path: Path, payload: bytes) -> None:
+        with self.publication():
+            if self.index is not None and kind == "evaluation":
+                # A second digest-named evaluation is a duplicate, even if the
+                # caller has not yet reached its admission write.
+                connection = self.index._connection
+                assert connection is not None
+                old = connection.execute(
+                    "SELECT evaluation_path FROM proposals WHERE proposal_id=?", (identity,)
+                ).fetchone()
+                located = (
+                    self.root / old[0]
+                    if old and old[0]
+                    else self._recovered_evaluations.get(identity)
+                )
+                if located is not None and located != path:
+                    raise ProposalIntegrityError("proposal evidence contains multiple evaluations")
+            _exclusive_canonical_write(path, payload)
+            if self._pending_records is not None:
+                self._pending_records.setdefault(kind, {})[identity] = path
 
     def write_admission(self, record: ProposalAdmissionRecord) -> Path:
         path = self.proposals / f"{record.proposal_id.removeprefix('sha256:')}.json"
-        _exclusive_canonical_write(path, admission_bytes(record))
+        self._write_record("admission", record.proposal_id, path, admission_bytes(record))
         return path
 
     def write_evaluation(self, record: ProposalEvaluationRecord) -> Path:
@@ -113,12 +156,14 @@ class ProposalEvidenceStore:
             {key: value for key, value in record.model_dump(mode="json").items() if key != "tag"},
         )
         path = self.evaluations / f"{digest}.json"
-        _exclusive_canonical_write(path, evaluation_bytes(record))
+        self._write_record("evaluation", record.proposal_id, path, evaluation_bytes(record))
         return path
 
     def write_candidate(self, record: CandidateRecordAnyVersion) -> Path:
         path = self.candidates / f"{record.candidate_digest.removeprefix('sha256:')}.json"
-        _exclusive_canonical_write(path, render_candidate_record(record))
+        self._write_record(
+            "candidate", record.candidate_digest, path, render_candidate_record(record)
+        )
         return path
 
     def write_withdrawal(self, record: ProposalWithdrawalRecordV1) -> Path:
@@ -131,13 +176,23 @@ class ProposalEvidenceStore:
         """
 
         path = self.withdrawals / f"{record.proposal_id.removeprefix('sha256:')}.json"
-        _exclusive_canonical_write(path, canonical_bytes(record.model_dump(mode="json")) + b"\n")
+        self._write_record(
+            "withdrawal",
+            record.proposal_id,
+            path,
+            canonical_bytes(record.model_dump(mode="json")) + b"\n",
+        )
         return path
 
     def read_withdrawal(self, proposal_id: str) -> ProposalWithdrawalRecordV1 | None:
         """Return this proposal's withdrawal, or None when it has not been withdrawn."""
 
         ProposalDigest.from_tagged(proposal_id)
+        if self.index is not None:
+            row = self.index.locate(self, proposal_id)
+            if row["withdrawal_path"] is None:
+                return None
+            return self._read_located(row, "withdrawal", ProposalWithdrawalRecordV1)
         path = self.withdrawals / f"{proposal_id.removeprefix('sha256:')}.json"
         if not path.exists():
             return None
@@ -168,6 +223,10 @@ class ProposalEvidenceStore:
     def withdrawn_proposal_ids(self) -> frozenset[str]:
         """Return every withdrawn proposal id, read from its own evidence."""
 
+        if self.index is not None:
+            return frozenset(
+                row["proposal_id"] for row in self.index.rows(self, "withdrawal_path IS NOT NULL")
+            )
         return frozenset(
             self._read_model(
                 path,
@@ -201,9 +260,21 @@ class ProposalEvidenceStore:
     def resolve_proposal_id(self, proposal_id: str) -> str:
         """Accept a unique sha256: prefix where a full proposal id is expected."""
 
+        if self.index is not None:
+            if len(proposal_id) == 71:
+                ProposalDigest.from_tagged(proposal_id)
+                return proposal_id
+            ids = tuple(
+                row["proposal_id"]
+                for row in self.index.rows(
+                    self, "proposal_id>=? AND proposal_id<?", (proposal_id, proposal_id + "\uffff")
+                )
+            )
+        else:
+            ids = tuple(f"sha256:{path.stem}" for path in self.proposals.glob("*.json"))
         return resolve_id_prefix(
             proposal_id,
-            tuple(f"sha256:{path.stem}" for path in self.proposals.glob("*.json")),
+            ids,
             marker="sha256:",
             label="proposal",
         )
@@ -213,6 +284,13 @@ class ProposalEvidenceStore:
 
         proposal_id = self.resolve_proposal_id(proposal_id)
         ProposalDigest.from_tagged(proposal_id)
+        if self.index is not None:
+            return self._read_located(
+                self.index.locate(self, proposal_id),
+                "admission",
+                ProposalAdmissionRecord,
+                render=admission_bytes,
+            )
         path = self.proposals / f"{proposal_id.removeprefix('sha256:')}.json"
         return self._read_model(
             path,
@@ -224,6 +302,13 @@ class ProposalEvidenceStore:
     def list_admissions(self) -> tuple[ProposalAdmissionRecord, ...]:
         """List canonical admissions in stable evidence-filename order."""
 
+        if self.index is not None:
+            return tuple(
+                self._read_located(
+                    row, "admission", ProposalAdmissionRecord, render=admission_bytes
+                )
+                for row in self.index.rows(self)
+            )
         return tuple(
             self._read_model(
                 path,
@@ -238,6 +323,14 @@ class ProposalEvidenceStore:
         """Resolve the sole canonical evaluation recorded for one admission."""
 
         ProposalDigest.from_tagged(proposal_id)
+        if self.index is not None:
+            row = self.index.locate(self, proposal_id)
+            if row["evaluation_path"] is None:
+                raise ProposalIntegrityError(
+                    "proposal evidence must contain exactly one evaluation for the admission"
+                )
+            return self._read_located(row, "evaluation", ProposalEvaluationRecord)
+        # Explicit cold/recovery operation for an unbound source store.
         matches: list[ProposalEvaluationRecord] = []
         for path in sorted(self.evaluations.glob("*.json"), key=lambda item: item.name):
             record = self._read_model(path, ProposalEvaluationRecord, label="proposal evaluation")
@@ -252,6 +345,11 @@ class ProposalEvidenceStore:
     def list_evaluations(self) -> tuple[ProposalEvaluationRecord, ...]:
         """List canonical evaluations in stable evidence-filename order."""
 
+        if self.index is not None:
+            return tuple(
+                self._read_located(row, "evaluation", ProposalEvaluationRecord)
+                for row in self.index.rows(self, "evaluation_path IS NOT NULL")
+            )
         return tuple(
             self._read_model(path, ProposalEvaluationRecord, label="proposal evaluation")
             for path in sorted(self.evaluations.glob("*.json"), key=lambda item: item.name)
@@ -349,6 +447,48 @@ class ProposalEvidenceStore:
             approval_digest(submission.attestation)
         return submissions
 
+    def _read_located(
+        self,
+        row: dict[str, Any],
+        kind: str,
+        model: type[_EvidenceModelT],
+        *,
+        render: Callable[[Any], bytes] | None = None,
+    ) -> _EvidenceModelT:
+        from cruxible_core.indexes.proposals.proposal_index import file_digest
+
+        relative = Path(row[kind + "_path"])
+        if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 2:
+            raise ProposalIntegrityError("proposal locator path escapes source directory")
+        raw = self.read_record_bytes(self.root / relative)
+        if file_digest(raw) != row[kind + "_digest"]:
+            raise ProposalIntegrityError("proposal located evidence digest differs")
+        record = self.parse_model_bytes(raw, model, label="proposal " + kind, render=render)
+        if getattr(record, "proposal_id", None) != row["proposal_id"]:
+            raise ProposalIntegrityError("proposal located evidence names another admission")
+        return record
+
+    @staticmethod
+    def read_record_bytes(path: Path) -> bytes:
+        directory_fd = file_fd = None
+        try:
+            directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            file_fd = os.open(
+                path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd
+            )
+            if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+                raise ProposalIntegrityError("proposal evidence is not a regular file")
+            with os.fdopen(file_fd, "rb") as stream:
+                file_fd = None
+                return stream.read()
+        except OSError as exc:
+            raise ProposalIntegrityError("proposal evidence is missing or unavailable") from exc
+        finally:
+            if file_fd is not None:
+                os.close(file_fd)
+            if directory_fd is not None:
+                os.close(directory_fd)
+
     @staticmethod
     def _read_model(
         path: Path,
@@ -365,12 +505,7 @@ class ProposalEvidenceStore:
         holds the moment a field with a default is added to its limits.
         """
 
-        if path.is_symlink() or not path.is_file():
-            raise ProposalIntegrityError(f"{label} evidence is missing or not a regular file")
-        try:
-            raw = path.read_bytes()
-        except OSError as exc:
-            raise ProposalIntegrityError(f"{label} evidence is malformed") from exc
+        raw = ProposalEvidenceStore.read_record_bytes(path)
         return ProposalEvidenceStore.parse_model_bytes(raw, model, label=label, render=render)
 
     @staticmethod

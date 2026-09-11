@@ -452,17 +452,7 @@ def _accepted_retirements_for_items(
 
     history = instance.accepted_history()
     evidence = instance.proposal_evidence()
-    admitted_ids = {record.proposal_id for record in evidence.list_admissions()}
-    evaluations_by_candidate: dict[str, list[str]] = {}
-    for evaluation in evidence.list_evaluations():
-        if (
-            evaluation.proposal_id in admitted_ids
-            and evaluation.verdict == "candidate"
-            and evaluation.candidate_digest is not None
-        ):
-            evaluations_by_candidate.setdefault(evaluation.candidate_digest, []).append(
-                evaluation.proposal_id
-            )
+    assert evidence.index is not None
     unresolved = {item.item_id: item for item in items}
     resolved: dict[
         str,
@@ -482,7 +472,12 @@ def _accepted_retirements_for_items(
             continue
         proposal_ids = tuple(
             sorted(
-                set(evaluations_by_candidate.get(accepted.record.candidate_digest, ())),
+                {
+                    row["proposal_id"]
+                    for row in evidence.index.rows(
+                        evidence, "candidate_digest=?", (accepted.record.candidate_digest,)
+                    )
+                },
                 key=lambda value: value.encode("ascii"),
             )
         )

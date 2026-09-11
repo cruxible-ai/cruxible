@@ -89,8 +89,8 @@ from cruxible_core.indexes.projection import (
     AssemblerResult,
     projection_manifest_name,
 )
-from cruxible_core.indexes.proposals.proposal_note_cache import ProposalNoteCache
 from cruxible_core.indexes.proposals.proposal_note_projection import ProposalNoteIndex
+from cruxible_core.indexes.proposals.proposal_note_reader import IndexedProposalNotes
 from cruxible_core.indexes.serving import bind_current_projection
 from cruxible_core.indexes.sqlite import ProjectionHandle, bind_projection
 from cruxible_core.ledger.activation import ActivationPublisher, ActivationResult
@@ -250,7 +250,6 @@ class PlaybillInstance:
         self.prepared_evaluations = PreparedEvaluationAdapter(self.derived)
         self._citation_index_cache = CitationIndexCache(self.derived)
         self._claim_compilation_cache = ClaimCompilationCache()
-        self._proposal_note_cache = ProposalNoteCache()
         self._evaluation_state_cache = EvaluationStateCache(build_context=self.derived.build)
         for name, namespace, adapter, source in (
             ("accepted-artifacts", "accepted", self.derived, "verified-ledger-tree-v1"),
@@ -267,7 +266,6 @@ class PlaybillInstance:
                 self._claim_compilation_cache,
                 "exact-claim-inputs-v1",
             ),
-            ("proposal-notes", "operational", self._proposal_note_cache, "fresh-note-bytes-v1"),
         ):
             self.derived.register(IndexDefinition(name, namespace, "1", source), adapter)
         self._accepted_history_index = AcceptedHistoryIndex(
@@ -1038,7 +1036,7 @@ class PlaybillInstance:
             self._ledger,
             accepted=self.accepted_coordinate(),
             bodies=bodies,
-            evidence=ProposalEvidenceStore(paths["exhaust"]),
+            evidence=self.proposal_evidence(),
             review_projection_lock=self.review_projection_lock,
             note_index_provider=self.proposal_note_index,
             accepted_tree_provider=self.immutable_tree_at,
@@ -1229,13 +1227,15 @@ class PlaybillInstance:
         self, *, evidence: ProposalEvidenceStore | None = None
     ) -> ProposalNoteIndex:
         """Return fresh evidence-derived review relationships under the review lock."""
-        return self._proposal_note_cache.load(evidence or self.proposal_evidence(), self._ledger)
+        return IndexedProposalNotes(evidence or self.proposal_evidence())
 
     def proposal_evidence(self) -> ProposalEvidenceStore:
         """Return the immutable non-authoritative proposal/approval evidence store."""
 
         paths = self._validated_paths(self.root, self.descriptor.storage)
-        return ProposalEvidenceStore(paths["exhaust"])
+        return ProposalEvidenceStore(
+            paths["exhaust"], index=self._accepted_history_index.proposals, transport=self._ledger
+        )
 
     def proposal_ref_target(self, target_ref: str) -> str | None:
         """Read one proposal transport ref without exposing ledger mutation."""

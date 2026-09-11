@@ -17,6 +17,10 @@ from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from cruxible_core.indexes.proposals.proposal_index import ProposalIndex
 
 from cruxible_client.contracts.errors import PlaybillFormatError, ProjectionIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -189,12 +193,61 @@ class HistoryReader:
 EnvelopeLoader = Callable[[int], Sequence[ArtifactEnvelopeRow]]
 
 
+def working_file_stamp(path: Path) -> tuple[int, ...] | None:
+    if path.is_symlink():
+        raise ProjectionIntegrityError("history index must not be a symlink")
+    try:
+        value = path.stat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(value.st_mode):
+        raise ProjectionIntegrityError("history index must be a regular file")
+    result = (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+    wal = path.with_name(path.name + "-wal")
+    if wal.is_symlink():
+        raise ProjectionIntegrityError("history WAL must not be a symlink")
+    try:
+        value = wal.stat()
+    except FileNotFoundError:
+        return result
+    if value.st_size == 0:
+        # Creating/removing an empty WAL does not change the database bytes.
+        return result
+    return (
+        *result,
+        value.st_dev,
+        value.st_ino,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
+def _close_working_database(
+    path: Path, lock: threading.RLock, connections: list[sqlite3.Connection], proof: dict[str, Any]
+) -> None:
+    from cruxible_core.indexes.proposals.proposal_index import close_working_database
+
+    with lock:
+        close_working_database(path, connections, proof)
+
+
 class AcceptedHistoryIndex:
     """Shared derived owner; no source mutation and no frozen compiler schema change."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
         self._lock = threading.RLock()
+        self._connections: list[sqlite3.Connection] = []
+        self._proposal_close_state: dict[str, Any] = {}
+        self._finalizer = weakref.finalize(
+            self,
+            _close_working_database,
+            path,
+            self._lock,
+            self._connections,
+            self._proposal_close_state,
+        )
         self._ready: tuple[int, str, str, str, int] | None = None
         self._stamp: tuple[int, ...] | None = None
         self._writer: sqlite3.Connection | None = None
@@ -203,6 +256,27 @@ class AcceptedHistoryIndex:
         self.generations_checked = 0
         self.generations_written = 0
         self.artifact_rows_written = 0
+
+    @property
+    def proposals(self) -> ProposalIndex:
+        """Proposal locators share this working database and acquisition owner."""
+        from cruxible_core.indexes.proposals.proposal_index import ProposalIndex
+
+        with self._lock:
+            if not hasattr(self, "_proposals"):
+                self._proposals = ProposalIndex(
+                    path=self.path,
+                    lock=self._lock,
+                    file_stamp=self._file_stamp,
+                    on_commit=self.proposal_committed,
+                    connections=self._connections,
+                    shutdown_proof=self._proposal_close_state,
+                )
+            return self._proposals
+
+    def close(self) -> None:
+        """Close the shared working file and preserve a verified graceful-restart checkpoint."""
+        self._finalizer()
 
     def invalidate(self) -> None:
         """Force full source reconciliation on the next read.
@@ -237,30 +311,7 @@ class AcceptedHistoryIndex:
                 self.invalidate()
 
     def _file_stamp(self) -> tuple[int, ...] | None:
-        if self.path.is_symlink():
-            raise ProjectionIntegrityError("history index must not be a symlink")
-        try:
-            value = self.path.stat()
-        except FileNotFoundError:
-            return None
-        if not stat.S_ISREG(value.st_mode):
-            raise ProjectionIntegrityError("history index must be a regular file")
-        result = (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
-        wal = self.path.with_name(self.path.name + "-wal")
-        if wal.is_symlink():
-            raise ProjectionIntegrityError("history WAL must not be a symlink")
-        try:
-            value = wal.stat()
-        except FileNotFoundError:
-            return result
-        return (
-            *result,
-            value.st_dev,
-            value.st_ino,
-            value.st_size,
-            value.st_mtime_ns,
-            value.st_ctime_ns,
-        )
+        return working_file_stamp(self.path)
 
     def _write_connection(self) -> sqlite3.Connection:
         """Keep one idle connection so closing readers does not checkpoint the WAL.
@@ -278,7 +329,8 @@ class AcceptedHistoryIndex:
         if self._writer is None:
             connection = sqlite3.connect(self.path, check_same_thread=False)
             self._writer = connection
-            self._close_writer = weakref.finalize(self, connection.close)
+            self._close_writer = connection.close
+            self._connections.append(connection)
             connection.execute("PRAGMA foreign_keys=ON")
             if connection.execute("PRAGMA journal_mode=WAL").fetchone() != ("wal",):
                 raise ProjectionIntegrityError("history index requires WAL mode")
@@ -310,10 +362,13 @@ class AcceptedHistoryIndex:
                             "history index schema differs; rebuild required"
                         )
                     source_version = writer.execute("PRAGMA data_version").fetchone()
+                    before_commit = self._file_stamp()
                     stamp = self._file_stamp()
                     ready = self._ready if stamp is not None and stamp == self._stamp else None
                     self._sync(writer, recovered, load_envelopes, ready)
                     writer.commit()
+                    if self._file_stamp() != before_commit and hasattr(self, "_proposals"):
+                        self._proposals.database_committed(before_commit)
                 except BaseException:
                     writer.rollback()
                     raise

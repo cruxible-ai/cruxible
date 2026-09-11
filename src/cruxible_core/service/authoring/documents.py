@@ -249,7 +249,7 @@ def service_inspect_playbill_proposal(
 ) -> PlaybillProposalInspection:
     evidence = instance.proposal_evidence()
     admission = evidence.read_admission(proposal_id)
-    evaluation = evidence.read_evaluation(proposal_id)
+    evaluation = evidence.read_evaluation(admission.proposal_id)
     candidate = (
         evidence.read_candidate(evaluation.candidate_digest)
         if evaluation.candidate_digest is not None

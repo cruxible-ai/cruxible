@@ -179,9 +179,12 @@ def test_proposal_selector_resolves_full_prefix_and_current_target_ref(
         admission.model_copy(update={"proposal_id": "sha256:" + "a" * 8 + "2" * 56}),
     )
 
+    class AmbiguousIndex:
+        def rows(self, *_args):
+            return tuple({"proposal_id": item.proposal_id} for item in forced)
+
     class AmbiguousEvidence:
-        def list_admissions(self):  # type: ignore[no-untyped-def]
-            return forced
+        index = AmbiguousIndex()
 
     with monkeypatch.context() as scoped:
         scoped.setattr(instance, "proposal_evidence", lambda: AmbiguousEvidence())
