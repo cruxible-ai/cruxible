@@ -562,6 +562,14 @@ def singleton_path(identity: str, codec: ArtifactCodec) -> str | None:
     return None if singleton is None else artifact_path_for_codec(singleton[1], codec)
 
 
+@dataclass(frozen=True)
+class ProcedureInventoryRow:
+    identity: str
+    path: str
+    lifecycle: str
+    directly_runnable: bool
+
+
 class TypedStateReader:
     """Indexed metadata and exact selected source reads under one accepted handle."""
 
@@ -705,6 +713,15 @@ class TypedStateReader:
             )
         return result
 
+    def procedure_inventory(self) -> tuple[ProcedureInventoryRow, ...]:
+        """Return the accepted Procedure catalog without decoding graph bytes."""
+        return tuple(
+            ProcedureInventoryRow(row[0], row[1], row[2], bool(row[3]))
+            for row in self.connection.execute(
+                "SELECT identity,path,lifecycle,directly_runnable FROM procedures ORDER BY path"
+            )
+        )
+
     def dependency_state(self, identity: str) -> ArtifactDependencyStateV1 | None:
         """Read one exact selected owner contract, preserving role-bearing pins."""
         from cruxible_client.contracts.documents import DocumentArtifactAdapter
@@ -719,7 +736,7 @@ class TypedStateReader:
         adapted = DocumentArtifactAdapter(source) if row.kind == "document" else source
         return ArtifactDependencyStateV1(
             path=row.path,
-            artifact_kind=row.kind,
+            artifact_kind=cast(Any, row.kind),
             artifact_tag=row.format_tag,
             identity=adapted.identity,
             artifact_digest=row.artifact_digest,

@@ -239,6 +239,11 @@ def test_extension_owner_prefix_does_not_shadow_retained_facts(tmp_path, schema_
             assembler.request(output_staging_directory=publication / f".stage-{version}")
         )
         with bind_projection(publication / result.manifest_path, expected=coordinate) as projection:
+            if version == 2:
+                from cruxible_core.indexes.sqlite import reset_projection_verification_memo
+
+                reset_projection_verification_memo()
+                projection.require_source_authentication(repository=repository)
             facts = projection.semantic_facts(schema_id)
             assert len(facts) == 1
             assert projection.semantic_facts(schema_id, subject_identity="one") == facts
@@ -267,3 +272,14 @@ def test_line_identity_lookup_and_role_sensitive_dependency_read(tmp_path):
         selected_procedure = reader.dependency_state(procedure.identity.qualified)
         assert selected_procedure.pins == procedure.pins
         assert reader.dependency_state("Procedure:missing") is None
+        assert [
+            (row.identity, row.path, row.lifecycle, row.directly_runnable)
+            for row in reader.procedure_inventory()
+        ] == [
+            (
+                procedure.identity.qualified,
+                selected_procedure.path,
+                procedure.lifecycle.state,
+                procedure.directly_runnable,
+            )
+        ]
