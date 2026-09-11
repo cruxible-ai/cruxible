@@ -656,7 +656,12 @@ class PlaybillInstance:
             publication_directory=paths["projections"],
             bodies=ContentAddressedBodyStore(paths["cas"]),
             accepted_coordinates_by_sequence=self._accepted_coordinates_by_sequence(),
+            resolve_claim_digest=self._claim_identities_for_digest,
         )
+
+    def _claim_identities_for_digest(self, digest: str) -> tuple[str, ...]:
+        with self.accepted_history_reader() as history:
+            return history.identities_for_digest(digest)
 
     def body_store(self) -> ContentAddressedBodyStore:
         """Return PB-C's inert, access-controlled content-addressed body store."""
@@ -1623,6 +1628,7 @@ class PlaybillInstance:
                 for generation in self._recovered.history
                 if generation.record is not None
             ),
+            resolve_claim_digest=self._claim_identities_for_digest,
         )
 
     def prepare_generation(

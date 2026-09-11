@@ -19,6 +19,7 @@ from cruxible_client.contracts.acquisition_policies import parse_acquisition_pol
 from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_IDENTITY,
     APPROVAL_POLICY_PATH,
+    approval_policy_digest,
     parse_approval_policy,
 )
 from cruxible_client.contracts.artifacts import parse_artifact_identity
@@ -37,6 +38,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_IDENTITY,
     PROCEDURE_RUNTIME_POLICY_PATH,
     parse_procedure_runtime_policy,
+    procedure_runtime_policy_digest,
 )
 from cruxible_client.contracts.procedures.artifacts import parse_procedure
 from cruxible_client.contracts.procedures.line_specs import parse_line_spec
@@ -285,6 +287,7 @@ CHECK((object_kind='subject' AND object_path IS NOT NULL AND object_selector_sch
    OR (object_kind='literal' AND object_path IS NULL AND object_selector_scheme IS NULL
        AND object_selector_value IS NULL AND object_content_digest IS NULL
        AND object_span_start_text IS NULL AND object_span_end_text IS NULL
+       AND literal_type IS NOT NULL
        AND literal_type IN ('null','boolean','integer','string','array','object'))),
 CHECK((literal_type='string' AND literal_text IS NOT NULL AND literal_boolean IS NULL AND literal_integer_text IS NULL)
    OR (literal_type='boolean' AND literal_text IS NULL AND literal_boolean IS NOT NULL AND literal_integer_text IS NULL)
@@ -418,7 +421,8 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
     result = {name: getattr(source, name) for name, _ in owner.fields if hasattr(source, name)}
     if owner.kind == "procedure":
         result.update(
-            definition_format=source.definition.tag, directly_runnable=int(source.directly_runnable)
+            definition_format=str(source.definition.graph_format),
+            directly_runnable=int(source.directly_runnable),
         )
     if owner.kind in ("line", "procedure-mandate"):
         result.update(
@@ -445,6 +449,8 @@ def insert_owners(
     sources: dict[str, Any] = {}
     for row in parsed.envelopes:
         if row.identity in SINGLETONS:
+            if row.kind != SINGLETONS[row.identity][0]:
+                raise ProjectionIntegrityError("artifact uses a reserved singleton identity")
             continue
         owner = OWNER_BY_KIND[row.kind]
         if connection.execute(
@@ -598,8 +604,29 @@ class TypedStateReader:
                 is None
             ):
                 return None
-            parsed = self._compile_paths((path,))
-            return next((row for row in parsed.envelopes if row.identity == identity), None)
+            if self.history is None:
+                parsed = self._compile_paths((path,))
+                return next((row for row in parsed.envelopes if row.identity == identity), None)
+            from cruxible_client.contracts.canonical import file_digest
+
+            content = self.member_bytes(path)
+            kind, _, parser = SINGLETONS[identity]
+            source: Any = parser(content, path=path, codec=self.codec)
+            digest = (
+                approval_policy_digest(source).tagged
+                if identity == APPROVAL_POLICY_IDENTITY
+                else procedure_runtime_policy_digest(source).tagged
+            )
+            with self.history() as history:
+                locations = history.member_history(path)
+            # Frozen projected_revision counts every relevant member, including
+            # unchanged-byte reevaluations. C preserves legacy file digests as
+            # file digests, so neither branch reinterprets an old commitment.
+            digests = {digest, file_digest(content).tagged}
+            revision = len(locations) + int(
+                not any(location.artifact_digest in digests for location in locations)
+            )
+            return ArtifactEnvelopeRow(identity, kind, source.tag, path, digest, None, revision)
         owner = owner_for_identity(identity)
         if owner is None:
             sql = f"SELECT {COMMON_COLUMNS} FROM artifact_lookup WHERE identity=?"
@@ -690,6 +717,8 @@ class TypedStateReader:
             with self.history() as history:
                 for path in paths:
                     for location in history.member_history(path):
+                        if location.sequence in records:
+                            continue
                         generation = history.generation(location.sequence)
                         record_path = generation.source_record_path
                         record = history.read_member_record(

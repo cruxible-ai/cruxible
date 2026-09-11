@@ -156,3 +156,35 @@ def test_v2_preserves_extensions_and_old_publication_beside_same_coordinate(tmp_
                 read()
     assert results[0].manifest_path != results[1].manifest_path
     assert results[0].logical_digest != results[1].logical_digest
+
+
+def test_registered_procedure_and_singletons_read_exact_selected_sources(tmp_path, monkeypatch):
+    from cruxible_client.contracts.approval_policy import APPROVAL_POLICY_IDENTITY
+    from tests.test_procedures.test_procedure_measurement_readings import _world
+
+    instance, _, procedure = _world(tmp_path)
+    parsed, _, _ = _parse(instance)
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        reader = projection.typed
+        assert reader is not None
+        row = reader.connection.execute(
+            "SELECT definition_format,directly_runnable FROM procedures WHERE identity=?",
+            (procedure.identity.qualified,),
+        ).fetchone()
+        assert tuple(row) == (
+            str(procedure.definition.graph_format),
+            int(procedure.directly_runnable),
+        )
+        assert reader.source(procedure.identity.qualified) == procedure
+        from cruxible_core.indexes.history.history_index import HistoryReader
+
+        monkeypatch.setattr(
+            HistoryReader,
+            "read_member_record",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("singleton envelope read old record body")
+            ),
+        )
+        assert reader.envelope(APPROVAL_POLICY_IDENTITY) == next(
+            row for row in parsed.envelopes if row.identity == APPROVAL_POLICY_IDENTITY
+        )

@@ -23,6 +23,7 @@ from cruxible_core.compiler.compiler import (
 )
 from cruxible_core.compiler.projection_artifacts import ParsedProjectionTree, parse_projection_tree
 from cruxible_core.compiler.projection_tree import read_registered_tree
+from cruxible_core.evidence.citation_relations import build_citation_relation_facts
 from cruxible_core.indexes.projection import (
     AcceptedCoordinate,
     AcceptedProjectionCoordinate,
@@ -165,6 +166,7 @@ class ProjectionAssembler:
         registry: ProjectionExtensionRegistry | None = None,
         bodies: BodyProjectionProtocol | None = None,
         accepted_coordinates_by_sequence: Mapping[int, AcceptedCoordinate] | None = None,
+        resolve_claim_digest: Callable[[str], tuple[str, ...]] | None = None,
         storage_schema_version: Literal[1, 2] = 2,
     ) -> None:
         if publication_directory.is_symlink() or not publication_directory.is_dir():
@@ -180,6 +182,7 @@ class ProjectionAssembler:
         self.artifact_codec = artifact_codec_for_compiler(accepted.compiler)
         self.bodies = bodies
         self.accepted_coordinates_by_sequence = dict(accepted_coordinates_by_sequence or {})
+        self.resolve_claim_digest = resolve_claim_digest
 
     def request(self, *, output_staging_directory: Path) -> AssemblerRequest:
         """Create the exact serializable request for this verified coordinate."""
@@ -423,6 +426,25 @@ class ProjectionAssembler:
                 accepted_coordinates_by_sequence=self.accepted_coordinates_by_sequence,
             ),
         )
+        if (
+            not isinstance(request, AssemblerRequestV2)
+            and self.bodies is not None
+            and self.registry.supports(
+                "playbill.citation_relation.use", 1, classification="semantic"
+            )
+        ):
+            # Frozen storage v1 commits these exact relation payloads. New
+            # publications use D's normalized tables without duplicate facts.
+            parsed = ParsedProjectionTree(
+                envelopes=parsed.envelopes,
+                pins=parsed.pins,
+                retired_identities=parsed.retired_identities,
+                semantic_facts=(
+                    *parsed.semantic_facts,
+                    *build_citation_relation_facts(blob_map, bodies=self.bodies),
+                ),
+                presentation_facts=parsed.presentation_facts,
+            )
         parsed = _timed(timings, "sort", lambda: _sorted_projection_tree(parsed))
 
         return _timed(
@@ -436,6 +458,7 @@ class ProjectionAssembler:
                 assembler_implementation=PYTHON_REFERENCE_ASSEMBLER,
                 sources=blob_map,
                 bodies=self.bodies,
+                resolve_digest=self.resolve_claim_digest,
             ),
         )
 
