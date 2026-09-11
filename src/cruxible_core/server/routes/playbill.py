@@ -271,7 +271,7 @@ async def whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
 )
 async def list_proposals(
     instance_id: str,
-    status: Literal["open", "settled"] | None = None,
+    status: Literal["open", "settled", "incomplete"] | None = None,
 ) -> contracts.PlaybillProposalList:
     return playbill_api.playbill_list_proposals(
         resolve_server_instance_id(instance_id),

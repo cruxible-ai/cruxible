@@ -19,7 +19,7 @@ from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
 
 T = TypeVar("T")
 _COMPLETE = (
-    "evaluation_status!='missing' AND "
+    "admission_path IS NOT NULL AND evaluation_status!='missing' AND "
     "(candidate_digest IS NULL OR candidate_parent_semantic_root IS NOT NULL)"
 )
 

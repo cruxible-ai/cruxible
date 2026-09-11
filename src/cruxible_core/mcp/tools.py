@@ -188,7 +188,7 @@ def register_tools(
     @_tool
     def cruxible_playbill_proposal_list(
         instance_id: str,
-        status: Literal["open", "settled"] | None = None,
+        status: Literal["open", "settled", "incomplete"] | None = None,
     ) -> contracts.PlaybillProposalList:
         """List open or settled proposal evidence at the current coordinate."""
         return handlers.handle_playbill_list_proposals(instance_id, status)

@@ -42,16 +42,21 @@ CREATE TABLE IF NOT EXISTS proposal_progress (
  source_root TEXT NOT NULL
 ) STRICT;
 CREATE TABLE IF NOT EXISTS proposals (
- proposal_id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, target_ref TEXT NOT NULL,
- admission_path TEXT NOT NULL, admission_digest TEXT NOT NULL,
+ proposal_id TEXT PRIMARY KEY, actor_id TEXT, target_ref TEXT,
+ admission_path TEXT, admission_digest TEXT,
  evaluation_path TEXT, evaluation_digest TEXT, withdrawal_path TEXT, withdrawal_digest TEXT,
  evaluation_status TEXT NOT NULL CHECK(evaluation_status IN ('missing','refused','candidate')),
- proposed_base_oid TEXT NOT NULL, candidate_commit_oid TEXT NOT NULL,
+ proposed_base_oid TEXT, candidate_commit_oid TEXT,
  review_commit_oid TEXT, review_context_digest TEXT,
- candidate_tree_oid TEXT NOT NULL, evaluated_base_oid TEXT, evaluated_tree_oid TEXT,
+ candidate_tree_oid TEXT, evaluated_base_oid TEXT, evaluated_tree_oid TEXT,
  candidate_digest TEXT, candidate_parent_semantic_root TEXT,
- rebased INTEGER CHECK(rebased IN (0,1)), admitted_at_us INTEGER NOT NULL, evaluated_at_us INTEGER,
+ rebased INTEGER CHECK(rebased IN (0,1)), admitted_at_us INTEGER, evaluated_at_us INTEGER,
  source_epoch TEXT NOT NULL, verified_sequence INTEGER NOT NULL CHECK(verified_sequence>=0),
+ CHECK(admission_path IS NOT NULL OR evaluation_path IS NOT NULL OR withdrawal_path IS NOT NULL),
+ CHECK((admission_path IS NULL)=(admission_digest IS NULL)),
+ CHECK(admission_path IS NULL OR (actor_id IS NOT NULL AND target_ref IS NOT NULL
+       AND proposed_base_oid IS NOT NULL AND candidate_commit_oid IS NOT NULL
+       AND candidate_tree_oid IS NOT NULL AND admitted_at_us IS NOT NULL)),
  CHECK((evaluation_path IS NULL)=(evaluation_digest IS NULL)),
  CHECK((withdrawal_path IS NULL)=(withdrawal_digest IS NULL)),
  CHECK((review_commit_oid IS NULL)=(review_context_digest IS NULL)),
@@ -240,7 +245,6 @@ class ProposalIndex:
         connection: sqlite3.Connection,
         *,
         check_review_context: bool = False,
-        source_write: bool = False,
     ) -> dict[str, Any]:
         self.source_checks += 1
         if _schema_rows(connection) != _EXPECTED_SCHEMA:
@@ -256,7 +260,6 @@ class ProposalIndex:
         if (
             marker is not None
             and marker.get("clean") is True
-            and (not source_write or marker.get("orphan_evaluations", 0) == 0)
             and marker.get("inventory") == self._inventory(evidence)
             and marker.get("database_stamp") == (list(stamp) if stamp else None)
             and marker.get("review_context") == context
@@ -285,14 +288,16 @@ class ProposalIndex:
     def _row(
         self,
         evidence: ProposalEvidenceStore,
-        admission_path: Path,
+        admission_path: Path | None,
         evaluation_path: Path | None,
         withdrawal_path: Path | None,
         epoch: str,
         sequence: int,
     ) -> dict[str, Any]:
-        admission, admission_digest = self._record(
-            evidence, admission_path, ProposalAdmissionRecord, admission_bytes
+        admission, admission_digest = (
+            (None, None)
+            if admission_path is None
+            else self._record(evidence, admission_path, ProposalAdmissionRecord, admission_bytes)
         )
         evaluation, evaluation_digest = (
             (None, None)
@@ -304,11 +309,10 @@ class ProposalIndex:
             if withdrawal_path is None
             else self._record(evidence, withdrawal_path, ProposalWithdrawalRecordV1)
         )
-        if any(
-            record is not None and record.proposal_id != admission.proposal_id
-            for record in (evaluation, withdrawal)
-        ):
+        ids = {record.proposal_id for record in (admission, evaluation, withdrawal) if record}
+        if len(ids) != 1:
             raise ProposalIntegrityError("proposal located evidence names another admission")
+        proposal_id = ids.pop()
         candidate_digest = evaluation.candidate_digest if evaluation else None
         summary = (
             evidence.read_candidate_review_summary_if_present(candidate_digest)
@@ -317,7 +321,7 @@ class ProposalIndex:
         )
         review_oid = None
         review_context = None
-        if summary is not None and evidence.transport is not None:
+        if admission is not None and summary is not None and evidence.transport is not None:
             assert evaluation is not None
             review_context = file_digest(evidence.transport.review_commit_context())
             review_oid = evidence.transport.proposal_review_commit_oid(
@@ -328,10 +332,12 @@ class ProposalIndex:
                 message=summary.message(rationale=admission.rationale),
             )
         return dict(
-            proposal_id=admission.proposal_id,
-            actor_id=admission.actor_id,
-            target_ref=admission.target_ref,
-            admission_path=str(admission_path.relative_to(evidence.root)),
+            proposal_id=proposal_id,
+            actor_id=admission.actor_id if admission else None,
+            target_ref=admission.target_ref if admission else None,
+            admission_path=str(admission_path.relative_to(evidence.root))
+            if admission_path
+            else None,
             admission_digest=admission_digest,
             evaluation_path=str(evaluation_path.relative_to(evidence.root))
             if evaluation_path
@@ -342,17 +348,17 @@ class ProposalIndex:
             else None,
             withdrawal_digest=withdrawal_digest,
             evaluation_status=evaluation.verdict if evaluation else "missing",
-            proposed_base_oid=admission.proposed_base_oid,
-            candidate_commit_oid=admission.candidate_commit_oid,
+            proposed_base_oid=admission.proposed_base_oid if admission else None,
+            candidate_commit_oid=admission.candidate_commit_oid if admission else None,
             review_commit_oid=review_oid,
             review_context_digest=review_context,
-            candidate_tree_oid=admission.candidate_tree_oid,
+            candidate_tree_oid=admission.candidate_tree_oid if admission else None,
             evaluated_base_oid=evaluation.evaluated_base_oid if evaluation else None,
             evaluated_tree_oid=evaluation.evaluated_tree_oid if evaluation else None,
             candidate_digest=candidate_digest,
             candidate_parent_semantic_root=summary.parent_semantic_root if summary else None,
             rebased=int(evaluation.rebased) if evaluation else None,
-            admitted_at_us=_micros(admission.admitted_at),
+            admitted_at_us=_micros(admission.admitted_at) if admission else None,
             evaluated_at_us=_micros(evaluation.evaluated_at) if evaluation else None,
             source_epoch=epoch,
             verified_sequence=sequence,
@@ -396,20 +402,23 @@ class ProposalIndex:
                 by_id[record.proposal_id], digests[record.proposal_id] = path, digest
             records.append(by_id)
         admissions, evaluations, withdrawals = records
-        evidence._recovered_evaluations = evaluations
         marker: dict[str, Any] = dict(
             epoch=new_id("", length=32, separator=""),
             sequence=0,
             clean=False,
             review_context=context,
-            orphan_evaluations=bool(set(evaluations) - set(admissions)),
         )
         connection.execute("DELETE FROM proposals")
-        for pid, path in admissions.items():
+        for pid in sorted(set(admissions) | set(evaluations) | set(withdrawals)):
             self._put(
                 connection,
                 self._row(
-                    evidence, path, evaluations.get(pid), withdrawals.get(pid), marker["epoch"], 0
+                    evidence,
+                    admissions.get(pid),
+                    evaluations.get(pid),
+                    withdrawals.get(pid),
+                    marker["epoch"],
+                    0,
                 ),
             )
         if self._inventory(evidence) != inventory:
@@ -481,7 +490,6 @@ class ProposalIndex:
                         "proposal index changed during snapshot acquisition"
                     )
                 writer.rollback()
-            evidence._recovered_evaluations = {}
             yield reader
         except sqlite3.DatabaseError as exc:
             raise ProposalIntegrityError("proposal index requires reconstruction") from exc
@@ -500,7 +508,7 @@ class ProposalIndex:
             writer.execute("BEGIN IMMEDIATE")
             before = self._file_stamp()
             try:
-                marker = self._sync(evidence, writer, source_write=True)
+                marker = self._sync(evidence, writer)
                 marker = dict(marker, clean=False, sequence=marker["sequence"] + 1)
                 self._write_marker(evidence.root, marker)
                 evidence._pending_records = {}
@@ -509,15 +517,7 @@ class ProposalIndex:
                 admissions = pending.get("admission", {})
                 evaluations = pending.get("evaluation", {})
                 withdrawals = pending.get("withdrawal", {})
-                affected = set(admissions) | set(withdrawals)
-                affected.update(
-                    pid
-                    for pid in evaluations
-                    if writer.execute(
-                        "SELECT 1 FROM proposals WHERE proposal_id=?", (pid,)
-                    ).fetchone()
-                    is not None
-                )
+                affected = set(admissions) | set(evaluations) | set(withdrawals)
                 for digest in pending.get("candidate", {}):
                     affected.update(
                         row[0]
@@ -532,22 +532,14 @@ class ProposalIndex:
                         (pid,),
                     ).fetchone()
                     admission_path = admissions.get(pid) or (
-                        evidence.root / old[0] if old else None
+                        evidence.root / old[0] if old and old[0] else None
                     )
-                    evaluation_path = (
-                        evaluations.get(pid)
-                        or evidence._recovered_evaluations.get(pid)
-                        or (evidence.root / old[1] if old and old[1] else None)
+                    evaluation_path = evaluations.get(pid) or (
+                        evidence.root / old[1] if old and old[1] else None
                     )
                     withdrawal_path = withdrawals.get(pid) or (
                         evidence.root / old[2] if old and old[2] else None
                     )
-                    if admission_path is None:
-                        raise ProposalIntegrityError("withdrawal has no admission")
-                    if evaluation_path is None:
-                        # Low-level/legacy split writes have no completed batch locator.
-                        marker = self._rebuild(evidence, writer, marker.get("review_context"))
-                        break
                     row = self._row(
                         evidence,
                         admission_path,
@@ -558,6 +550,7 @@ class ProposalIndex:
                     )
                     if (
                         old
+                        and old[0]
                         and admissions.get(pid)
                         and evidence.read_record_bytes(evidence.root / old[0])
                         != evidence.read_record_bytes(admissions[pid])
@@ -566,11 +559,6 @@ class ProposalIndex:
                             "proposal evidence contains conflicting admissions"
                         )
                     self._put(writer, row)
-                marker["orphan_evaluations"] = any(
-                    writer.execute("SELECT 1 FROM proposals WHERE proposal_id=?", (pid,)).fetchone()
-                    is None
-                    for pid in set(evidence._recovered_evaluations) | set(evaluations)
-                )
                 self._progress(writer, evidence, marker)
                 self._finish(evidence, writer, marker, before)
                 writer.rollback()
@@ -580,7 +568,6 @@ class ProposalIndex:
                 raise
             finally:
                 evidence._pending_records = None
-                evidence._recovered_evaluations = {}
 
     def rows(
         self, evidence: ProposalEvidenceStore, where: str = "1", parameters: tuple[Any, ...] = ()

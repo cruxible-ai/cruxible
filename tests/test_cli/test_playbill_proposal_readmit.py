@@ -147,6 +147,16 @@ def test_proposal_list_rows_match_the_labelled_columns(
                         status="settled",
                         terminal_reason="refused",
                     ),
+                    contracts.PlaybillProposalListEntry(
+                        proposal_id="sha256:" + "9" * 64,
+                        actor_id=None,
+                        target_ref=None,
+                        admitted_at=None,
+                        verdict=None,
+                        status="incomplete",
+                        incomplete_reasons=("missing_admission", "missing_evaluation"),
+                        withdrawal_present=True,
+                    ),
                 ],
             )
 
@@ -170,6 +180,9 @@ def test_proposal_list_rows_match_the_labelled_columns(
     assert lines[0] == "STATUS  TERMINAL_REASON  PROPOSAL_ID  TARGET_REF  COORDINATE_TIME"
     assert lines[1].startswith(f"open  -  {SOURCE_ID}  ")
     assert lines[2].startswith(f"settled  refused  {NEW_ID}  ")
+    assert lines[3] == (
+        "incomplete  missing_admission,missing_evaluation  sha256:" + "9" * 64 + "  -  -"
+    )
 
 
 def _withdraw_result(*, already: bool = False) -> contracts.PlaybillProposalWithdrawResult:

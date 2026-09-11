@@ -127,8 +127,10 @@ def test_missing_evaluation_is_not_a_refused_list_entry(tmp_path):
     first = _submit(instance, "one")
     evidence = instance.proposal_evidence()
     next(evidence.evaluations.glob("*.json")).unlink()
-    with pytest.raises(ProposalIntegrityError, match="incomplete"):
-        service_list_playbill_proposals(instance)
+    entry = service_list_playbill_proposals(instance).entries[0]
+    assert entry.status == "incomplete"
+    assert entry.verdict is None
+    assert entry.incomplete_reasons == ("missing_evaluation",)
     with pytest.raises(ProposalIntegrityError, match="exactly one"):
         evidence.read_evaluation(first.admission.proposal_id)
 
@@ -306,12 +308,14 @@ def test_split_source_completion_refreshes_missing_evaluation_and_candidate(tmp_
     evidence = instance.proposal_evidence()
     next(evidence.evaluations.glob("*.json")).unlink()
     next(evidence.candidates.glob("*.json")).unlink()
-    with pytest.raises(ProposalIntegrityError, match="incomplete"):
-        service_list_playbill_proposals(instance)
+    assert service_list_playbill_proposals(instance).entries[0].incomplete_reasons == (
+        "missing_evaluation",
+    )
     evidence.write_evaluation(proposal.evaluation)
     assert evidence.read_evaluation(proposal.admission.proposal_id) == proposal.evaluation
-    with pytest.raises(ProposalIntegrityError, match="incomplete"):
-        service_list_playbill_proposals(instance)
+    assert service_list_playbill_proposals(instance).entries[0].incomplete_reasons == (
+        "missing_candidate",
+    )
     evidence.write_candidate(proposal.candidate)
     assert service_list_playbill_proposals(instance).entries[0].status == "open"
     _oracle(instance)
@@ -391,8 +395,10 @@ def test_verified_orphan_inventory_cannot_hide_later_duplicate_evaluation(tmp_pa
     proposal = _submit(instance, "one")
     evidence = instance.proposal_evidence()
     next(evidence.proposals.glob("*.json")).unlink()
-    # A read may reconstruct an inventory with an unpublished evaluation tail.
-    assert service_list_playbill_proposals(instance).entries == ()
+    # An evaluation survives loss of its admission as an explicit partial row.
+    assert service_list_playbill_proposals(instance).entries[0].incomplete_reasons == (
+        "missing_admission",
+    )
     competing = proposal.evaluation.model_copy(
         update={"evaluated_at": "2026-08-11T12:31:00.000000Z"}
     )
@@ -405,7 +411,7 @@ def test_verified_orphan_inventory_cannot_hide_later_duplicate_evaluation(tmp_pa
         service_list_playbill_proposals(instance).entries[0].proposal_id
         == proposal.admission.proposal_id
     )
-    assert evidence.index._marker(evidence.root)["orphan_evaluations"] is False
+    assert evidence.index.locate(evidence, proposal.admission.proposal_id)["admission_path"]
 
     def forbidden(*args, **kwargs):
         raise AssertionError("resolved orphan must permit bounded future writes")

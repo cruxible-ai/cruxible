@@ -29,7 +29,8 @@ from cruxible_core.service.authoring.documents import (
     PlaybillProposalInspection,
 )
 
-ProposalInventoryStatus = Literal["open", "settled"]
+ProposalInventoryStatus = Literal["open", "settled", "incomplete"]
+ProposalIncompleteReason = Literal["missing_admission", "missing_evaluation", "missing_candidate"]
 ProposalTerminalReason = Literal["accepted", "refused", "stale", "withdrawn"]
 WhoAmIActorIdSource = Literal["runtime_credential_label", "local_operator"]
 PrincipalRegistrationStatus = Literal["active", "revoked", "absent"]
@@ -43,16 +44,29 @@ class _StrictOperationalReadModel(BaseModel):
 class PlaybillProposalListEntryV1(_StrictOperationalReadModel):
     tag: Literal["playbill-proposal-list-entry-v1"] = "playbill-proposal-list-entry-v1"
     proposal_id: str
-    actor_id: str
-    target_ref: str
-    admitted_at: str
-    verdict: Literal["candidate", "refused"]
+    actor_id: str | None
+    target_ref: str | None
+    admitted_at: str | None
+    verdict: Literal["candidate", "refused"] | None
     candidate_digest: str | None = None
     status: ProposalInventoryStatus
     terminal_reason: ProposalTerminalReason | None = None
+    incomplete_reasons: tuple[ProposalIncompleteReason, ...] = ()
+    withdrawal_present: bool = False
 
     @model_validator(mode="after")
     def _status_shape(self) -> "PlaybillProposalListEntryV1":
+        if self.status == "incomplete":
+            if not self.incomplete_reasons or self.terminal_reason is not None:
+                raise ValueError(
+                    "incomplete proposal must name missing evidence without a terminal reason"
+                )
+            return self
+        if self.incomplete_reasons or any(
+            value is None
+            for value in (self.actor_id, self.target_ref, self.admitted_at, self.verdict)
+        ):
+            raise ValueError("complete proposal requires admission and evaluation evidence")
         if (self.status == "open") != (self.terminal_reason is None):
             raise ValueError("open proposal status and terminal reason disagree")
         if self.verdict == "refused" and self.terminal_reason != "refused":
@@ -173,21 +187,30 @@ def _proposal_entries(
             ).fetchall()
     entries = []
     for row in rows:
-        if row["evaluation_status"] == "missing" or (
+        missing: list[ProposalIncompleteReason] = []
+        if row["admission_path"] is None:
+            missing.append("missing_admission")
+        if row["evaluation_status"] == "missing":
+            missing.append("missing_evaluation")
+        elif (
             row["evaluation_status"] == "candidate"
             and row["candidate_parent_semantic_root"] is None
         ):
-            raise ProposalIntegrityError("proposal evidence is incomplete")
+            missing.append("missing_candidate")
         entries.append(
             PlaybillProposalListEntryV1(
                 proposal_id=row["proposal_id"],
                 actor_id=row["actor_id"],
                 target_ref=row["target_ref"],
-                admitted_at=timestamp(row["admitted_at_us"]),
-                verdict=row["evaluation_status"],
+                admitted_at=timestamp(row["admitted_at_us"])
+                if row["admitted_at_us"] is not None
+                else None,
+                verdict=None if row["evaluation_status"] == "missing" else row["evaluation_status"],
                 candidate_digest=row["candidate_digest"],
-                status="open" if row["reason"] is None else "settled",
-                terminal_reason=row["reason"],
+                status="incomplete" if missing else "open" if row["reason"] is None else "settled",
+                terminal_reason=None if missing else row["reason"],
+                incomplete_reasons=tuple(missing),
+                withdrawal_present=row["withdrawal_path"] is not None,
             )
         )
     return tuple(entries)

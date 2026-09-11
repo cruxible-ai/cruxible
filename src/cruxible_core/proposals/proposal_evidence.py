@@ -110,7 +110,6 @@ class ProposalEvidenceStore:
         self.index = index
         self.transport = transport
         self._pending_records: dict[str, dict[str, Path]] | None = None
-        self._recovered_evaluations: dict[str, Path] = {}
         self.proposals = self._directory("proposals")
         self.evaluations = self._directory("evaluations")
         self.candidates = self._directory("candidates")
@@ -146,11 +145,7 @@ class ProposalEvidenceStore:
                 old = connection.execute(
                     "SELECT evaluation_path FROM proposals WHERE proposal_id=?", (identity,)
                 ).fetchone()
-                located = (
-                    self.root / old[0]
-                    if old and old[0]
-                    else self._recovered_evaluations.get(identity)
-                )
+                located = self.root / old[0] if old and old[0] else None
                 if located is not None and located != path:
                     raise ProposalIntegrityError("proposal evidence contains multiple evaluations")
             _exclusive_canonical_write(path, payload)
@@ -319,7 +314,7 @@ class ProposalEvidenceStore:
                 self._read_located(
                     row, "admission", ProposalAdmissionRecord, render=admission_bytes
                 )
-                for row in self.index.rows(self)
+                for row in self.index.rows(self, "admission_path IS NOT NULL")
             )
         return tuple(
             self._read_model(
@@ -469,6 +464,8 @@ class ProposalEvidenceStore:
     ) -> _EvidenceModelT:
         from cruxible_core.indexes.proposals.proposal_index import file_digest
 
+        if row[kind + "_path"] is None:
+            raise ProposalIntegrityError(f"proposal {kind} evidence is missing")
         relative = Path(row[kind + "_path"])
         if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 2:
             raise ProposalIntegrityError("proposal locator path escapes source directory")

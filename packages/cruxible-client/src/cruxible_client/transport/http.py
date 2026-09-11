@@ -513,7 +513,7 @@ class CruxibleClient:
         self,
         instance_id: str,
         *,
-        status: Literal["open", "settled"] | None = None,
+        status: Literal["open", "settled", "incomplete"] | None = None,
     ) -> contracts.PlaybillProposalList:
         params = {} if status is None else {"status": status}
         response = self._client.get(

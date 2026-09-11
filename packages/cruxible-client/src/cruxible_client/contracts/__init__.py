@@ -489,13 +489,17 @@ class PlaybillProposalListEntry(BaseModel):
 
     tag: Literal["playbill-proposal-list-entry-v1"] = "playbill-proposal-list-entry-v1"
     proposal_id: str
-    actor_id: str
-    target_ref: str
-    admitted_at: str
-    verdict: Literal["candidate", "refused"]
+    actor_id: str | None
+    target_ref: str | None
+    admitted_at: str | None
+    verdict: Literal["candidate", "refused"] | None
     candidate_digest: str | None = None
-    status: Literal["open", "settled"]
+    status: Literal["open", "settled", "incomplete"]
     terminal_reason: Literal["accepted", "refused", "stale", "withdrawn"] | None = None
+    incomplete_reasons: tuple[
+        Literal["missing_admission", "missing_evaluation", "missing_candidate"], ...
+    ] = ()
+    withdrawal_present: bool = False
 
 
 class PlaybillProposalList(BaseModel):
@@ -503,7 +507,7 @@ class PlaybillProposalList(BaseModel):
 
     tag: Literal["playbill-proposal-list-v1"] = "playbill-proposal-list-v1"
     coordinate: PlaybillAcceptedCoordinate
-    status_filter: Literal["open", "settled"] | None = None
+    status_filter: Literal["open", "settled", "incomplete"] | None = None
     entries: list[PlaybillProposalListEntry]
 
 

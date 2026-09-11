@@ -1348,7 +1348,7 @@ def proposal_group() -> None:
 
 
 @proposal_group.command("list")
-@click.option("--status", type=click.Choice(["open", "settled"]), default=None)
+@click.option("--status", type=click.Choice(["open", "settled", "incomplete"]), default=None)
 @json_option
 @handle_errors
 def list_proposals(status: str | None, output_json: bool) -> None:
@@ -1364,10 +1364,10 @@ def list_proposals(status: str | None, output_json: bool) -> None:
         return
     click.echo("STATUS  TERMINAL_REASON  PROPOSAL_ID  TARGET_REF  COORDINATE_TIME")
     for entry in result.entries:
-        terminal = entry.terminal_reason or "-"
+        terminal = ",".join(entry.incomplete_reasons) or entry.terminal_reason or "-"
         click.echo(
             f"{entry.status}  {terminal}  {entry.proposal_id}  "
-            f"{entry.target_ref}  {entry.admitted_at}"
+            f"{entry.target_ref or '-'}  {entry.admitted_at or '-'}"
         )
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
 
