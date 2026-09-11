@@ -28,20 +28,10 @@ import hashlib
 from collections.abc import Mapping, Sequence
 
 from cruxible_client.contracts.captures import (
-    CaptureContractV1,
     CaptureEnvelopeAny,
-    capture_contract_digest,
-    capture_contract_is_self_asserted,
-    parse_capture_contract,
     parse_capture_envelope,
 )
-from cruxible_client.contracts.claim_verdicts import (
-    EvidenceProvenanceGrade,
-    observation_trust_grade,
-)
 from cruxible_client.contracts.claims import (
-    AcceptedClaim,
-    claim_artifact_digest,
     claim_path,
     claim_statement_digest,
     parse_claim,
@@ -58,7 +48,6 @@ from cruxible_client.contracts.source_references import (
     LedgerSourceReferenceV1,
     SourceAccessClass,
 )
-from cruxible_core.compiler.compiler import artifact_codec_for_compiler
 from cruxible_core.coverage.adapter import (
     WorkingSourceObservationV1,
     build_overlay,
@@ -75,15 +64,11 @@ from cruxible_core.coverage.contracts import (
     PlaybillCitationWindowObservationV1,
 )
 from cruxible_core.coverage.indexes import (
-    CaptureCitationInputV1,
-    CaptureCitationInputV2,
     CoverageScanBudgetV1,
     EvidenceCitationIndexV1,
     EvidenceCitationIndexV2,
     WorkingOccurrenceOverlayV1,
     WorkingOccurrenceOverlayV2,
-    build_evidence_citation_index,
-    build_evidence_citation_index_v2,
 )
 from cruxible_core.coverage.manifest import (
     COVERAGE_DIRECTORY,
@@ -100,16 +85,9 @@ from cruxible_core.coverage.resolver import (
     BoundPublicationObservation,
     resolve_coverage_v3,
 )
-from cruxible_core.evidence.citation_relations import (
-    RELATION_SOURCE_USE_SCHEMA,
-    logical_source_relation_subject,
-)
+from cruxible_core.indexes.evidence.citation_coverage import coverage_rows
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
-from cruxible_core.service.claims.claims import (
-    _claim_from_view,
-    service_list_playbill_claims,
-)
 from cruxible_core.service.proposals.publications import bound_publication_registrations
 from cruxible_core.storage.cas import BodyAccessContext
 
@@ -156,49 +134,22 @@ def build_accepted_evidence_index(
     *,
     at: PlaybillAcceptedCoordinate,
 ) -> EvidenceCitationIndexV1:
-    """Rebuild the reverse evidence index from accepted state at one coordinate.
-
-    Reachability, not enumeration: the index carries the Captures accepted
-    Claims actually pin, because a Capture no accepted Claim reaches is not
-    accepted evidence anyone can cite. Retired Claims contribute their Captures
-    but not their dependent counts -- the builder already drops non-live Claims
-    from the citation side -- so retiring a Claim never silently deletes the
-    evidence history a drift card points back at.
-    """
-
-    listing = service_list_playbill_claims(instance, at=at, include_retired=True)
-    access = BodyAccessContext(principal_id=COVERAGE_PRINCIPAL, can_read_body=True)
-    store = instance.body_store()
-
-    claims: list[AcceptedClaim] = []
-    captures: dict[str, CaptureCitationInputV1] = {}
-    for view in listing.claims:
-        artifact = _claim_from_view(view)
-        path = view.envelope.get("path")
-        if not isinstance(path, str):
-            raise ProposalIntegrityError("Claim projection envelope has no path")
-        claims.append(
-            AcceptedClaim(
-                path=path,
-                claim=artifact,
-                statement_digest=claim_statement_digest(artifact.statement).tagged,
-                artifact_digest=claim_artifact_digest(artifact).tagged,
-            )
-        )
-        for digest in artifact.backing.capture_digests:
-            if digest in captures:
-                continue
-            captures[digest] = CaptureCitationInputV1(
-                capture_digest=digest,
-                envelope=parse_capture_envelope(store.read(digest, access=access)),
-                access_class=COVERAGE_EVIDENCE_ACCESS_CLASS,
-            )
-
-    return build_evidence_citation_index(
-        at=at,
-        captures=tuple(captures[digest] for digest in sorted(captures)),
-        claims=tuple(claims),
+    """Export the frozen V1 digest input directly from accepted SQL relationships."""
+    at = _resolve_coordinate(instance, at)
+    internal = instance.resolve_accepted_coordinate(
+        git_oid=at.git_oid,
+        semantic_root=at.semantic_root,
+        generation_root=at.generation_root,
+        compiler_digest=at.compiler_digest,
     )
+    with instance.bind_accepted_projection(internal) as projection:
+        index, _envelopes = coverage_rows(
+            projection.citations,
+            bodies=instance.body_store(),
+            at=at,
+            version=1,
+        )
+        return index
 
 
 def build_accepted_evidence_index_v2(
@@ -206,8 +157,7 @@ def build_accepted_evidence_index_v2(
     *,
     at: PlaybillAcceptedCoordinate,
 ) -> EvidenceCitationIndexV2:
-    """Rebuild the association-native index and its verifier-owned trust axis."""
-
+    """Export association-native coverage rows and verifier-owned trust."""
     index, _envelopes = _accepted_evidence_inputs_v2(instance, at=at)
     return index
 
@@ -217,64 +167,21 @@ def _accepted_evidence_inputs_v2(
     *,
     at: PlaybillAcceptedCoordinate,
 ) -> tuple[EvidenceCitationIndexV2, dict[str, CaptureEnvelopeAny]]:
-    """Read authoritative artifacts and retained envelopes once for this request.
+    """Retain only this request's exact envelopes and full digest export.
 
-    Coverage needs Claim artifacts, not their inspection projections. Keep these
-    values request-local so each request still verifies current CAS availability
-    and resolves its full accepted coordinate before using the accepted tree.
+    The retained digest commits all citation rows. SQL supplies those rows
+    directly without loading all Claims or constructing another reverse index.
+    Trust and CAS availability are checked again for each request.
     """
-
     at = _resolve_coordinate(instance, at)
-    artifact_codec = artifact_codec_for_compiler(instance.coordinate_for_oid(at.git_oid).compiler)
-    access = BodyAccessContext(principal_id=COVERAGE_PRINCIPAL, can_read_body=True)
-    store = instance.body_store()
-    tree = instance.tree_at(at.git_oid)
-    contracts: dict[str, CaptureContractV1] = {}
-    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not path.startswith("capture-contracts/"):
-            continue
-        contract = parse_capture_contract(tree[path], path=path)
-        contracts[capture_contract_digest(contract).tagged] = contract
-
-    claims: list[AcceptedClaim] = []
-    captures: dict[str, CaptureCitationInputV2] = {}
-    for claim_path_value in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not claim_path_value.startswith("claims/"):
-            continue
-        artifact = parse_claim(tree[claim_path_value], path=claim_path_value, codec=artifact_codec)
-        claims.append(
-            AcceptedClaim(
-                path=claim_path_value,
-                claim=artifact,
-                statement_digest=claim_statement_digest(artifact.statement).tagged,
-                artifact_digest=claim_artifact_digest(artifact).tagged,
-            )
-        )
-        for digest in artifact.backing.capture_digests:
-            if digest in captures:
-                continue
-            envelope = parse_capture_envelope(store.read(digest, access=access))
-            accepted_contract = contracts.get(envelope.capture_contract_digest)
-            if accepted_contract is None:
-                raise ProposalIntegrityError("accepted CaptureContract is unavailable")
-            provenance: EvidenceProvenanceGrade = (
-                "self-asserted"
-                if capture_contract_is_self_asserted(accepted_contract)
-                else "daemon-fetched"
-            )
-            captures[digest] = CaptureCitationInputV2(
-                capture_digest=digest,
-                envelope=envelope,
-                access_class=COVERAGE_EVIDENCE_ACCESS_CLASS,
-                observation_trust=observation_trust_grade(provenance),
-            )
-
-    index = build_evidence_citation_index_v2(
-        at=at,
-        captures=tuple(captures[digest] for digest in sorted(captures)),
-        claims=tuple(claims),
+    internal = instance.resolve_accepted_coordinate(
+        git_oid=at.git_oid,
+        semantic_root=at.semantic_root,
+        generation_root=at.generation_root,
+        compiler_digest=at.compiler_digest,
     )
-    return index, {digest: capture.envelope for digest, capture in captures.items()}
+    with instance.bind_accepted_projection(internal) as projection:
+        return coverage_rows(projection.citations, bodies=instance.body_store(), at=at)
 
 
 def accepted_evidence_sources(
@@ -336,8 +243,8 @@ def _materialized_wanted_selections(
                         "retained commitment bytes failed CAS verification"
                     ) from exc
             elif isinstance(envelope.source, LedgerSourceReferenceV1):
-                content = instance.tree_at(envelope.source.coordinate.git_oid).get(
-                    envelope.source.address.artifact_path
+                content = instance.blob_at(
+                    envelope.source.coordinate.git_oid, envelope.source.address.artifact_path
                 )
                 # A ledger address may select a region whose materializer is not
                 # retained independently. Only an exact whole-body reproduction
@@ -466,31 +373,10 @@ def _retired_citation_window_inputs(
             item.source.identity for item in observations if item.source.plane == "external"
         }
         for source_id in sorted(observed_sources, key=lambda item: item.encode("utf-8")):
-            for fact in projection.semantic_facts(
-                RELATION_SOURCE_USE_SCHEMA,
-                subject_identity=logical_source_relation_subject(source_id),
-            ):
-                value = fact.value
-                if not isinstance(value, Mapping):
-                    raise ProposalIntegrityError("retired citation relation is malformed")
-                if value.get("claim_lifecycle") != "retired":
-                    continue
-                source = value.get("source")
-                capture = value.get("capture_digest")
-                citation_id = value.get("citation_id")
-                if (
-                    not isinstance(source, Mapping)
-                    or not isinstance(capture, Mapping)
-                    or not isinstance(capture.get("$digest"), str)
-                    or not isinstance(citation_id, str)
-                ):
-                    raise ProposalIntegrityError("retired citation relation is malformed")
-                external = ExternalSourceReferenceV1.model_validate(source)
-                logical = LogicalSourceIdentityV1(
-                    plane="external",
-                    identity=external.source_identity,
-                )
-                item = (logical, citation_id, capture["$digest"])
+            logical = LogicalSourceIdentityV1(plane="external", identity=source_id)
+            for use in projection.citations.source_claim_uses(source_id, lifecycle="retired"):
+                citation_id, digest = str(use["use_key"]), str(use["capture_digest"])
+                item = (logical, citation_id, digest)
                 inputs[(logical.sort_key, citation_id.encode("ascii"))] = item
     return tuple(inputs[key] for key in sorted(inputs))
 
@@ -609,7 +495,6 @@ def _bound_publication_observations(
     registrations = bound_publication_registrations(instance)
     if registrations is None:
         return ()
-    tree = instance.tree_at(at.git_oid)
     by_source = {
         item.source.identity: item for item in observations if item.source.plane == "external"
     }
@@ -621,7 +506,7 @@ def _bound_publication_observations(
         if observed is None:
             continue
         path = claim_path(registration.claim_identity)
-        raw_claim = tree.get(path)
+        raw_claim = instance.blob_at(at.git_oid, path)
         if raw_claim is None:
             continue
         claim = parse_claim(raw_claim, path=path)

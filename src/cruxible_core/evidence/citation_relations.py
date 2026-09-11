@@ -1,8 +1,9 @@
-"""Disposable accepted-coordinate citation relation facts.
+"""Frozen citation relation interpretation and the cold reconstruction oracle.
 
-The rows live in the existing immutable semantic-fact table.  They are neither
-governed artifacts nor an operational store: an explicit projection rebuild can
-rederive every byte from the accepted Claim members and Capture CAS envelopes.
+Current publications store typed citation relationships. SQL readers use the
+same group derivation and conflict/witness computation below. The full fact
+builder remains for frozen compiler reproduction and differential recovery
+checks; it is not a fallback for current scoped reads.
 """
 
 from __future__ import annotations
@@ -404,9 +405,9 @@ def build_citation_relation_facts(
 
     Explicit rebuild/recovery omits prior rows and is the full reference path.
     The legacy partial-rebuild arguments are retained for internal callers; they
-    do not preserve suppressed conflicts. Production successor maintenance uses
-    the citation owner/group adapter, retaining raw conflicts and applying exact
-    row deltas. That adapter falls back here when an old parent is lossy.
+    do not preserve suppressed conflicts. Current publication and request paths
+    instead use typed SQLite relationships with complete group membership;
+    they do not invoke this legacy partial-rebuild adapter.
     """
 
     facts = _contract_facts(tree)

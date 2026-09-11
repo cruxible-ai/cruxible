@@ -29,6 +29,7 @@ from cruxible_core.coverage.indexes import (
     CaptureCitationInputV2,
     build_evidence_citation_index_v2,
 )
+from cruxible_core.indexes.evidence import citation_sql
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.claims.claims import _claim_from_view, service_list_playbill_claims
 from cruxible_core.service.discovery import coverage as coverage
@@ -116,7 +117,7 @@ def test_service_reuses_captures_and_matches_projection_route(
     at = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
     expected_index = _projected_index(instance, at=at)
     capture_count = len({d for row in expected_index.citations for d in row.capture_digests})
-    original_parse = coverage.parse_capture_envelope
+    original_parse = citation_sql.parse_capture_envelope
     parsed = 0
 
     def counted(content):  # type: ignore[no-untyped-def]
@@ -127,12 +128,19 @@ def test_service_reuses_captures_and_matches_projection_route(
     def forbidden(*args, **kwargs):  # type: ignore[no-untyped-def]
         raise AssertionError("coverage must not materialize inspection projections")
 
-    monkeypatch.setattr(coverage, "parse_capture_envelope", counted)
-    monkeypatch.setattr(coverage, "service_list_playbill_claims", forbidden)
+    monkeypatch.setattr(citation_sql, "parse_capture_envelope", counted)
+    monkeypatch.setattr(
+        "cruxible_core.service.claims.claims.service_list_playbill_claims", forbidden
+    )
+    monkeypatch.setattr(
+        "cruxible_core.coverage.indexes.build_evidence_citation_index_v2", forbidden
+    )
     arguments = dict(
         instance_id=instance.descriptor.instance_id, observations=(observation,), at=at
     )
-    actual = coverage.service_resolve_playbill_coverage(instance, **arguments)
+    with monkeypatch.context() as scoped:
+        scoped.setattr(instance, "tree_at", forbidden)
+        actual = coverage.service_resolve_playbill_coverage(instance, **arguments)
     assert parsed == capture_count
 
     def projected_inputs(instance, *, at):  # type: ignore[no-untyped-def]
@@ -206,12 +214,8 @@ def test_many_citation_windows_decode_each_source_once(
     assert calls == 1
 
 
-def test_historical_codec_matches_projection_before_existing_index_path_refusal(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Direct decoding preserves old bytes; AcceptedClaim's old path limit stays explicit."""
-    from types import SimpleNamespace
-
+def test_frozen_coverage_claim_model_retains_historical_codec_and_path_refusal() -> None:
+    """The cold V1/V2 oracle still interprets historical bytes under their codec."""
     from cruxible_client.contracts.canonical import canonical_bytes
     from cruxible_client.contracts.claims import ClaimFormatError, claim_path
     from cruxible_core.compiler.compiler import (
@@ -238,7 +242,6 @@ def test_historical_codec_matches_projection_before_existing_index_path_refusal(
         generation_root="sha256:" + "3" * 64,
         compiler=P2_B0_COMPILER,
     )
-    at = PlaybillAcceptedCoordinate.from_internal(coordinate)
     parsed = parse_projection_tree(
         tree,
         registry=projection_registry_for_compiler(coordinate.compiler),
@@ -260,29 +263,3 @@ def test_historical_codec_matches_projection_before_existing_index_path_refusal(
     # Do not rewrite historical addresses or claim new historical coverage support.
     with pytest.raises(ClaimFormatError, match="identity/path disagreement"):
         AcceptedClaim(**expected)
-
-    def resolve(**values):  # type: ignore[no-untyped-def]
-        assert values == {
-            "git_oid": at.git_oid,
-            "semantic_root": at.semantic_root,
-            "generation_root": at.generation_root,
-            "compiler_digest": at.compiler_digest,
-        }
-        return coordinate
-
-    instance = SimpleNamespace(
-        resolve_accepted_coordinate=resolve,
-        coordinate_for_oid=lambda oid: coordinate if oid == at.git_oid else None,
-        body_store=lambda: None,
-        tree_at=lambda oid: tree if oid == at.git_oid else {},
-    )
-    observed = []
-
-    def accepted_claim(**values):  # type: ignore[no-untyped-def]
-        observed.append(values)
-        return AcceptedClaim(**values)
-
-    monkeypatch.setattr(coverage, "AcceptedClaim", accepted_claim)
-    with pytest.raises(ClaimFormatError, match="identity/path disagreement"):
-        coverage.build_accepted_evidence_index_v2(instance, at=at)
-    assert observed == [expected]
