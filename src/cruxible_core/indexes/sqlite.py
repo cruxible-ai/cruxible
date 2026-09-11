@@ -536,7 +536,9 @@ class ProjectionHandle:
 
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
+        typed_facts: tuple[ProjectionFact, ...] = ()
         if self.typed is not None:
+            from cruxible_core.compiler.compiler import projection_registry_for_compiler
             from cruxible_core.indexes.typed_state import OWNER_BY_KIND
 
             family = (
@@ -544,8 +546,16 @@ class ProjectionHandle:
                 if schema_id.startswith("playbill.")
                 else None
             )
-            if family in OWNER_BY_KIND and family != "fixture":
-                return self.typed.facts(schema_id, identity=subject_identity)
+            builtin = projection_registry_for_compiler(self.accepted.compiler)
+            if (
+                family in OWNER_BY_KIND
+                and family != "fixture"
+                and any(
+                    declaration.schema_id == schema_id
+                    for declaration in builtin.declarations("semantic")
+                )
+            ):
+                typed_facts = self.typed.facts(schema_id, identity=subject_identity)
         if subject_identity is None:
             rows = self._connection.execute(
                 "SELECT schema_id,schema_version,subject_identity,fact_key,value_json "
@@ -560,7 +570,7 @@ class ProjectionHandle:
                 "ORDER BY schema_version,fact_key",
                 (schema_id, subject_identity),
             ).fetchall()
-        return tuple(
+        retained = tuple(
             ProjectionFact(
                 schema_id=row["schema_id"],
                 schema_version=row["schema_version"],
@@ -569,6 +579,16 @@ class ProjectionHandle:
                 value=json.loads(row["value_json"]),
             )
             for row in rows
+        )
+        return tuple(
+            sorted(
+                (*typed_facts, *retained),
+                key=lambda fact: (
+                    fact.schema_version,
+                    fact.subject_identity,
+                    fact.fact_key,
+                ),
+            )
         )
 
     def fixture(self, identity: str) -> dict[str, object] | None:
