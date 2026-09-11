@@ -9,18 +9,18 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.errors import ProjectionIntegrityError, ProposalIntegrityError
-from cruxible_core.indexes.proposals.proposal_note_projection import ProposalNoteIndex
 from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
 from cruxible_core.proposals.proposal_notes import admission_bytes
 from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
 from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
+from tests.core_support._proposal_note_oracle import build_proposal_note_oracle
 from tests.core_support._support import initialize_local
 from tests.test_proposals.test_grouped_proposal_notes import _submit
 
 
 def _oracle(instance):
     # An unbound source store deliberately selects the independent cold verifier.
-    expected = ProposalNoteIndex.build(
+    expected = build_proposal_note_oracle(
         ProposalEvidenceStore(instance.proposal_evidence().root), instance._ledger
     )
     actual = instance.proposal_note_index()

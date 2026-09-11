@@ -17,6 +17,7 @@ from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
+from tests.core_support._proposal_note_oracle import build_proposal_note_oracle
 from tests.core_support._support import initialize_local
 from tests.test_ledger.test_activation import _sign
 from tests.test_proposals.test_proposal_notes import TIMESTAMP
@@ -66,7 +67,7 @@ def test_distinct_admissions_sharing_commit_keep_both_records_and_can_activate(t
     assert instance.read_proposal_note("evaluation", oid) == _expected(first, second)
     _approve(instance, owner, first)
     instance._reconcile_proposal_review_refs()
-    index = ProposalNoteIndex.build(instance.proposal_evidence(), instance._ledger)
+    index = build_proposal_note_oracle(instance.proposal_evidence(), instance._ledger)
     for alias in index.proposal_ids_by_oid:
         assert (
             instance.read_proposal_note("evaluation", alias)
@@ -110,7 +111,7 @@ def test_original_and_advisory_aliases_share_one_group(tmp_path):
     evaluated = instance.proposal_tree(first.evaluation.evaluated_tree_oid)
     second = _submit(instance, "second", tree=evaluated)
     assert first.admission.candidate_commit_oid != second.admission.candidate_commit_oid
-    index = ProposalNoteIndex.build(instance.proposal_evidence(), instance._ledger)
+    index = build_proposal_note_oracle(instance.proposal_evidence(), instance._ledger)
     assert (
         index.review_oids[first.admission.proposal_id]
         == index.review_oids[second.admission.proposal_id]
@@ -149,7 +150,7 @@ def test_crash_after_evidence_before_note_reconciles_valid_subset_then_activates
             instance, proposal_id=first.admission.proposal_id, activated_by="owner"
         )
     instance._reconcile_proposal_review_refs()
-    index = ProposalNoteIndex.build(instance.proposal_evidence(), instance._ledger)
+    index = build_proposal_note_oracle(instance.proposal_evidence(), instance._ledger)
     assert instance.read_proposal_note("evaluation", oid) == index.note_bytes(oid)["evaluation"]
     assert len(instance.read_proposal_note("evaluation", oid).splitlines()) == 4
     _approve(instance, owner, first)
@@ -177,7 +178,7 @@ def test_unrelated_incomplete_admission_does_not_block_later_authoring(
     later = _submit(instance, "later", timestamp="2026-08-11T12:30:01.000000Z")
     assert later.candidate is not None
     instance._reconcile_proposal_review_refs()
-    index = ProposalNoteIndex.build(instance.proposal_evidence(), instance._ledger)
+    index = build_proposal_note_oracle(instance.proposal_evidence(), instance._ledger)
     assert set(index.admissions) == {later.admission.proposal_id}
     assert (
         service_activate_playbill_proposal(
@@ -250,9 +251,9 @@ def test_crash_after_second_shared_candidate_approval_repairs_nonempty_subset(
             instance, proposal_id=first.admission.proposal_id, activated_by="owner"
         )
     instance._reconcile_proposal_review_refs()
-    expected = ProposalNoteIndex.build(instance.proposal_evidence(), instance._ledger).note_bytes(
-        oid
-    )["approval"]
+    expected = build_proposal_note_oracle(
+        instance.proposal_evidence(), instance._ledger
+    ).note_bytes(oid)["approval"]
     assert instance.read_proposal_note("approval", oid) == expected
     assert len(json.loads(expected)) == 2
     assert (
@@ -271,7 +272,7 @@ def test_strict_activation_checks_advisory_alias_as_well_as_original(tmp_path, k
     instance._reconcile_proposal_review_refs()
     accepted = instance.accepted_coordinate()
     original = proposal.admission.candidate_commit_oid
-    index = ProposalNoteIndex.build(instance.proposal_evidence(), instance._ledger)
+    index = build_proposal_note_oracle(instance.proposal_evidence(), instance._ledger)
     advisory = index.review_oids[proposal.admission.proposal_id]
     assert original != advisory
     original_note = instance.read_proposal_note(kind, original)

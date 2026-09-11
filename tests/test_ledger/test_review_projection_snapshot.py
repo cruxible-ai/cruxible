@@ -8,6 +8,7 @@ import pytest
 
 from cruxible_client.contracts.errors import PlaybillGitError, ProposalIntegrityError
 from cruxible_core.ledger.git import NOTE_REFS, GitLedger
+from tests.core_support._proposal_note_oracle import build_proposal_note_oracle
 from tests.core_support._support import initialize_local
 from tests.test_proposals.test_proposal_notes import _submit
 
@@ -180,14 +181,12 @@ def test_snapshot_rehashes_corrupted_note_blob(ledger):
 
 
 def test_partial_note_snapshot_falls_back_to_fresh_read_and_refuses_tamper(tmp_path):
-    from cruxible_core.indexes.proposals.proposal_note_projection import ProposalNoteIndex
-
     instance, _ = initialize_local(tmp_path)
     proposal = _submit(instance)
     oid = proposal.admission.candidate_commit_oid
     instance.write_proposal_note("evaluation", oid, b"edited\n")
     with instance.review_projection_lock():
-        index = ProposalNoteIndex.build(instance.proposal_evidence(), instance._ledger)
+        index = build_proposal_note_oracle(instance.proposal_evidence(), instance._ledger)
         with pytest.raises(ProposalIntegrityError):
             index.publish(
                 instance._ledger,

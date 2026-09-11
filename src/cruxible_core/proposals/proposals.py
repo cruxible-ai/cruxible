@@ -291,7 +291,6 @@ from cruxible_core.indexes.claims.claim_subject_index import (
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.indexes.proposals.proposal_note_projection import (
-    ProposalNoteEvidence,
     ProposalNoteIndex,
 )
 from cruxible_core.proposals.candidate_cards import (
@@ -395,7 +394,7 @@ class ExhaustPromotionVerifierProtocol(Protocol):
     ) -> ExhaustPromotionLawResultV1: ...
 
 
-class ProposalEvidenceProtocol(ProposalNoteEvidence, Protocol):
+class ProposalEvidenceProtocol(Protocol):
     """Daemon persistence seam consumed by the pure proposal service."""
 
     def publication(self) -> AbstractContextManager[None]: ...
@@ -3785,6 +3784,7 @@ class ProposalService:
         bodies: BodyVerifierProtocol,
         evidence: ProposalEvidenceProtocol,
         review_projection_lock: Callable[[], AbstractContextManager[None]],
+        note_index_provider: Callable[..., ProposalNoteIndex],
         receive_limits: ProposalReceiveLimits = ProposalReceiveLimits(),
         current_coordinate: Callable[[], AcceptedProjectionCoordinate] | None = None,
         promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
@@ -3794,7 +3794,6 @@ class ProposalService:
         require_writable: Callable[[], None] | None = None,
         ledger_publisher: Callable[[], object] | None = None,
         tree_state_provider: TreeStateProvider | None = None,
-        note_index_provider: Callable[..., ProposalNoteIndex] | None = None,
         accepted_tree_provider: Callable[[str], Mapping[str, bytes]] | None = None,
         prepared_evaluations: PreparedEvaluationAdapter | None = None,
         principal_registry_provider: Callable[
@@ -3809,9 +3808,7 @@ class ProposalService:
         self.bodies = bodies
         self.evidence = evidence
         self._review_projection_lock = review_projection_lock
-        self._note_index = note_index_provider or (
-            lambda **_: ProposalNoteIndex.build(self.evidence, self.transport)
-        )
+        self._note_index = note_index_provider
         self.receive_limits = receive_limits
         self._current_coordinate = current_coordinate or (lambda: accepted)
         self.promotion_verifier = promotion_verifier
