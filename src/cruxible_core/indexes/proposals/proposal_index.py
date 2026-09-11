@@ -15,7 +15,6 @@ import json
 import os
 import sqlite3
 import threading
-import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -23,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.primitives import canonical_json, new_id
 from cruxible_client.contracts.proposal_models import (
     ProposalAdmissionRecord,
     ProposalEvaluationRecord,
@@ -207,11 +207,11 @@ class ProposalIndex:
         from cruxible_core.proposals.proposal_evidence import _fsync_directory
 
         target = root / ".proposal-source.json"
-        temporary = root / (".proposal-source-" + uuid.uuid4().hex)
+        temporary = root / new_id(".proposal-source", length=32)
         try:
             with temporary.open("xb") as stream:
                 os.chmod(temporary, 0o600)
-                stream.write(json.dumps(value, sort_keys=True, separators=(",", ":")).encode())
+                stream.write(canonical_json(value).encode())
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary, target)
@@ -398,7 +398,7 @@ class ProposalIndex:
         admissions, evaluations, withdrawals = records
         evidence._recovered_evaluations = evaluations
         marker: dict[str, Any] = dict(
-            epoch=uuid.uuid4().hex,
+            epoch=new_id("", length=32, separator=""),
             sequence=0,
             clean=False,
             review_context=context,
@@ -442,7 +442,7 @@ class ProposalIndex:
 
     def _remember(self, root: Path, marker: dict[str, Any]) -> None:
         self._shutdown_proof.clear()
-        self._shutdown_proof.update(root=str(root), marker=json.loads(json.dumps(marker)))
+        self._shutdown_proof.update(root=str(root), marker=json.loads(canonical_json(marker)))
 
     @contextmanager
     def read(
