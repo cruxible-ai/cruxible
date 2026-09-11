@@ -37,6 +37,10 @@ from cruxible_client.contracts.errors import (
     SettlementIntegrityError,
 )
 from cruxible_client.contracts.ledger_mirror import validate_mirror_url
+from cruxible_client.contracts.principals import (
+    PrincipalRegistrySnapshot,
+    principal_registry_from_tree,
+)
 from cruxible_client.contracts.temporal import format_datetime, utc_now
 from cruxible_client.contracts.types import (
     GenesisCoordinate,
@@ -1022,6 +1026,48 @@ class PlaybillInstance:
         self.require_writable()
         return self.body_store().store(content)
 
+    def accepted_principal_registry(
+        self, coordinate: AcceptedProjectionCoordinate
+    ) -> PrincipalRegistrySnapshot:
+        """Read the public-key registry at an exact verified accepted snapshot."""
+        if coordinate.git_oid == self._verified_genesis.oid:
+            # Bootstrap has no served SQLite publication yet. Its signed registry
+            # is already authenticated independently of all derived storage.
+            verified = self.resolve_accepted_coordinate(
+                git_oid=coordinate.git_oid,
+                semantic_root=coordinate.semantic_root,
+                generation_root=coordinate.generation_root,
+                compiler_digest=coordinate.compiler.rule_digest,
+            )
+            if verified != coordinate:
+                raise PlaybillFormatError("principal registry coordinate differs from genesis")
+            return PrincipalRegistrySnapshot(
+                semantic_root=coordinate.semantic_root, principals=self._verified_genesis.principals
+            )
+        with self.bind_accepted_projection(coordinate) as projection:
+            if projection.typed is not None:
+                return projection.typed.principal_registry()
+            # Frozen v1 publications have no typed principal relation.
+            return principal_registry_from_tree(
+                self.immutable_tree_at(coordinate.git_oid), semantic_root=coordinate.semantic_root
+            )
+
+    def require_accepted_principal(
+        self, coordinate: AcceptedProjectionCoordinate, principal_id: str
+    ) -> None:
+        """Check an admission actor with a single indexed principal lookup."""
+        if coordinate.git_oid == self._verified_genesis.oid:
+            self.accepted_principal_registry(coordinate).require_active(principal_id)
+            return
+        with self.bind_accepted_projection(coordinate) as projection:
+            if projection.typed is not None:
+                projection.typed.principal(principal_id, active=True)
+            else:
+                principal_registry_from_tree(
+                    self.immutable_tree_at(coordinate.git_oid),
+                    semantic_root=coordinate.semantic_root,
+                ).require_active(principal_id)
+
     def proposal_service(self) -> ProposalService:
         """Bind PB-C proposal evaluation to authenticated main and inert storage."""
 
@@ -1036,6 +1082,8 @@ class PlaybillInstance:
             note_index_provider=self.proposal_note_index,
             accepted_tree_provider=self.immutable_tree_at,
             prepared_evaluations=self.prepared_evaluations,
+            principal_registry_provider=self.accepted_principal_registry,
+            active_principal_provider=self.require_accepted_principal,
             current_coordinate=self.accepted_coordinate,
             promotion_verifier=self._promotion_verifier,
             producer_receipt_resolver=local_producer_receipt_resolver(
@@ -1664,6 +1712,7 @@ class PlaybillInstance:
             query_facts_provider=lambda coordinate: self._accepted_query_facts(self, coordinate),
             tree_state_provider=self._evaluation_state_cache.derive,
             accepted_tree_provider=self.immutable_tree_at,
+            principal_registry_provider=self.accepted_principal_registry,
         )
 
     def settle_and_activate(
