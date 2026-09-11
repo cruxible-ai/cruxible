@@ -490,7 +490,9 @@ class ProposalTerminalEgressSink:
         )
         if existing is not None:
             return existing
-        adapter = ProposalTerminalAdapter(service=service)
+        adapter = ProposalTerminalAdapter(
+            service=service, bind_projection=self.instance.bind_accepted_projection
+        )
         return adapter.deliver(
             request=request,
             admission=admission,

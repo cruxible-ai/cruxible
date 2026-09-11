@@ -349,7 +349,9 @@ def test_proposal_adapter_checks_authority_before_creating_a_ref(tmp_path) -> No
         target_paths=(path,),
         mandate_digest=mandate_digest,
     )
-    adapter = ProposalTerminalAdapter(service=instance.proposal_service())
+    adapter = ProposalTerminalAdapter(
+        service=instance.proposal_service(), bind_projection=instance.bind_accepted_projection
+    )
     assert request.operation_key is not None
     target_ref = (
         "refs/proposals/owner/procedure-" + request.operation_key.removeprefix("sha256:")[:64]
@@ -372,7 +374,8 @@ def test_proposal_adapter_checks_authority_before_creating_a_ref(tmp_path) -> No
     assert instance.proposal_service().transport.read_proposal_ref(target_ref) is None
 
 
-def test_proposal_adapter_reuses_proposal_service_without_advancing_main(tmp_path) -> None:
+@pytest.mark.parametrize("retire_at_head", [False, True])
+def test_proposal_adapter_rechecks_authority_before_submission(tmp_path, retire_at_head) -> None:
     instance, owner = initialize_local(tmp_path)
     # The mandate the adapter is handed must be one accepted state carries: the
     # door re-establishes it against the head tree before any ref moves.
@@ -410,12 +413,42 @@ def test_proposal_adapter_reuses_proposal_service_without_advancing_main(tmp_pat
         target_paths=(path,),
         mandate_digest=mandate_digest,
     )
-    receipt = ProposalTerminalAdapter(service=instance.proposal_service()).deliver(
-        request=request,
-        admission=admission,
-        candidate_tree=candidate_tree,
-        accepted_mandates={mandate_digest: mandate},
+    if retire_at_head:
+        retired = mandate.model_copy(
+            update={
+                "lifecycle": mandate.lifecycle.model_copy(
+                    update={"state": "retired", "predecessor_digest": mandate_digest}
+                )
+            }
+        )
+        _accept_more(
+            instance,
+            owner,
+            {procedure_mandate_path(mandate.identity.name): render_procedure_mandate(retired)},
+            name="retire-adapter-mandate",
+        )
+    service = instance.proposal_service()
+    adapter = ProposalTerminalAdapter(
+        service=service, bind_projection=instance.bind_accepted_projection
     )
+
+    def deliver():
+        return adapter.deliver(
+            request=request,
+            admission=admission,
+            candidate_tree=candidate_tree,
+            accepted_mandates={mandate_digest: mandate},
+        )
+
+    if retire_at_head:
+        with pytest.raises(TerminalAuthorityRefusal, match="procedure_mandate_superseded"):
+            deliver()
+        target_ref = (
+            "refs/proposals/owner/procedure-" + request.operation_key.removeprefix("sha256:")
+        )
+        assert service.transport.read_proposal_ref(target_ref) is None
+        return
+    receipt = deliver()
     verify_terminal_egress_receipt(request, receipt)
     assert receipt.disposition == "received"
     assert AcceptedCoordinate.from_internal(instance.accepted_coordinate()) == base

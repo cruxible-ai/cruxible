@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
@@ -38,6 +39,7 @@ from cruxible_core.proposals.proposals import (
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
 
 if TYPE_CHECKING:
+    from cruxible_core.indexes.sqlite import ProjectionHandle
     from cruxible_core.procedures.execution import ProcedureRunAdmissionV1
     from cruxible_core.runtime.instance import PlaybillInstance
 
@@ -300,8 +302,16 @@ HEAD_CONTENTION_ATTEMPTS = 3
 class ProposalTerminalAdapter:
     """Lower one complete tree, authorize it, then call ProposalService exactly once."""
 
-    def __init__(self, *, service: ProposalService) -> None:
+    def __init__(
+        self,
+        *,
+        service: ProposalService,
+        bind_projection: Callable[
+            [AcceptedProjectionCoordinate], AbstractContextManager[ProjectionHandle]
+        ],
+    ) -> None:
         self.service = service
+        self._bind_projection = bind_projection
 
     def deliver(
         self,
@@ -344,14 +354,17 @@ class ProposalTerminalAdapter:
         assert request.operation_key is not None  # request shape
 
         def _authorize_at_head(
-            _current: AcceptedProjectionCoordinate,
-            head_tree: Mapping[str, bytes],
+            current: AcceptedProjectionCoordinate,
+            _head_tree: Mapping[str, bytes],
         ) -> None:
             # The mandate admission bound is re-established against the exact
-            # head tree the door evaluates at, inside the door's own read, so a
+            # coordinate the door evaluates at, inside the door's own read, so a
             # mandate retired since admission cannot author a new proposal and
             # no second read can disagree with the first.
-            require_procedure_mandate_at_head(request, admission=admission, head_tree=head_tree)
+            with self._bind_projection(current) as projection:
+                require_procedure_mandate_at_head(
+                    request, admission=admission, projection=projection
+                )
 
         for attempt in range(HEAD_CONTENTION_ATTEMPTS):
             try:
