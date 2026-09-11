@@ -85,7 +85,11 @@ CREATE INDEX members_by_identity
 CREATE INDEX members_by_path
  ON accepted_member_locations(member_path,sequence,member_ordinal);
 """
-_SCHEMA = _HISTORY_SCHEMA + _MEMBER_SCHEMA
+_GENERATION_ROOT_INDEX = """
+CREATE INDEX IF NOT EXISTS generations_by_semantic_root
+ ON accepted_generations(semantic_root,sequence);
+"""
+_SCHEMA = _HISTORY_SCHEMA + _MEMBER_SCHEMA + _GENERATION_ROOT_INDEX
 
 
 def _schema_rows(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
@@ -114,6 +118,7 @@ def _expected_schema(schema: str) -> list[tuple[object, ...]]:
 
 _EXPECTED_SCHEMA = _expected_schema(_SCHEMA)
 _PRE_MEMBER_SCHEMA = _expected_schema(_HISTORY_SCHEMA)
+_PRE_ROOT_INDEX_SCHEMA = _expected_schema(_HISTORY_SCHEMA + _MEMBER_SCHEMA)
 
 
 @dataclass(frozen=True)
@@ -182,6 +187,20 @@ class HistoryReader:
         if len(rows) != 1:
             raise PlaybillFormatError("coordinate is not one generation in requested history")
         return AcceptedGenerationLocation(*rows[0])
+
+    def generation_for_oid(self, oid: str) -> AcceptedGenerationLocation | None:
+        rows = self._connection.execute(
+            "SELECT * FROM accepted_generations WHERE git_oid=? AND sequence<=? LIMIT 2",
+            (oid, self.sequence),
+        ).fetchall()
+        return AcceptedGenerationLocation(*rows[0]) if len(rows) == 1 else None
+
+    def generation_for_semantic_root(self, root: str) -> AcceptedGenerationLocation | None:
+        rows = self._connection.execute(
+            "SELECT * FROM accepted_generations WHERE semantic_root=? AND sequence<=? LIMIT 2",
+            (root, self.sequence),
+        ).fetchall()
+        return AcceptedGenerationLocation(*rows[0]) if len(rows) == 1 else None
 
     def candidate_accepted(self, candidate_digest: str) -> bool:
         return (
@@ -551,6 +570,10 @@ class AcceptedHistoryIndex:
                 connection.executescript(_SCHEMA)
             elif schema == _PRE_MEMBER_SCHEMA:
                 connection.executescript(_MEMBER_SCHEMA)
+                connection.executescript(_GENERATION_ROOT_INDEX)
+                self.invalidate()
+            elif schema == _PRE_ROOT_INDEX_SCHEMA:
+                connection.executescript(_GENERATION_ROOT_INDEX)
                 self.invalidate()
             stamp = self._file_stamp()
             self._writer_identity = None if stamp is None else stamp[:2]
