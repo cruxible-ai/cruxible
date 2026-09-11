@@ -67,7 +67,8 @@ from cruxible_core.compiler.compiler import (
     SUPPORTED_COMPILERS,
     current_compiler_coordinate,
 )
-from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow, parse_projection_tree
+from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow
+from cruxible_core.compiler.projection_tree import TreeReadLimits, read_registered_tree
 from cruxible_core.curation.review_operational import ReviewOperationalStore
 from cruxible_core.derived.derived_state import (
     DerivedState,
@@ -100,6 +101,7 @@ from cruxible_core.indexes.proposals.proposal_note_projection import ProposalNot
 from cruxible_core.indexes.proposals.proposal_note_reader import IndexedProposalNotes
 from cruxible_core.indexes.serving import bind_current_projection
 from cruxible_core.indexes.sqlite import ProjectionHandle, bind_projection
+from cruxible_core.indexes.typed_sqlite import parse_static_owners
 from cruxible_core.ledger.activation import ActivationPublisher, ActivationResult
 from cruxible_core.ledger.bootstrap import (
     VerifiedGenesis,
@@ -1390,33 +1392,28 @@ class PlaybillInstance:
                     recovered.history[sequence - 1].oid, generation.oid
                 )
             )
-            if not manifest.exists():
-                # Historical publications (including genesis) may be absent.
-                # Reuse the frozen compiler's row derivation over verified Git
-                # bytes, without pretending this historical commit is main.
-                parsed = parse_projection_tree(
-                    self._ledger.read_tree(generation.oid),
-                    registry=assembler.registry,
+            if manifest.exists():
+                with bind_projection(manifest, expected=coordinate) as projection:
+                    if projection.typed is not None:
+                        projection.require_source_authentication(repository=self._ledger)
+                        return projection.artifact_envelopes(paths=changed)
+            # Missing historical publications and frozen v1 pieces derive
+            # membership from retained contracts. Document bodies and promoted
+            # output availability are independent of accepted membership.
+            sources = {
+                blob.path: blob.content
+                for blob in read_registered_tree(
+                    self._ledger,
+                    generation.oid,
+                    limits=TreeReadLimits(),
                     artifact_kinds=assembler.artifact_kinds,
-                    artifact_codec=assembler.artifact_codec,
-                    bodies=assembler.bodies,
-                    coordinate=request,
-                    accepted_coordinates_by_sequence={
-                        item.sequence: AcceptedCoordinate(
-                            git_oid=item.oid,
-                            semantic_root=item.semantic_root.tagged,
-                            generation_root=item.generation_root.tagged,
-                            compiler_digest=coordinate.compiler.rule_digest,
-                        )
-                        for item in recovered.history[: sequence + 1]
-                    },
                 )
-                selected = None if changed is None else frozenset(changed)
-                return tuple(
-                    row for row in parsed.envelopes if selected is None or row.path in selected
-                )
-            with bind_projection(manifest, expected=coordinate) as projection:
-                return projection.artifact_envelopes(paths=changed)
+            }
+            parsed = parse_static_owners(sources, accepted=coordinate)
+            selected = None if changed is None else frozenset(changed)
+            return tuple(
+                row for row in parsed.envelopes if selected is None or row.path in selected
+            )
 
         with self._accepted_history_index.read(recovered, envelopes, at=at) as reader:
             yield reader
