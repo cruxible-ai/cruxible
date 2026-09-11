@@ -784,7 +784,7 @@ class TypedStateReader:
         rows: tuple[ArtifactEnvelopeRow, ...]
         if identity is not None:
             envelope = self.envelope(identity)
-            rows = () if envelope is None else (envelope,)
+            rows = () if envelope is None or envelope.kind == "fixture" else (envelope,)
         else:
             kind = None
             if schema_id is not None and schema_id.startswith("playbill."):

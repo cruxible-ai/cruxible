@@ -2,6 +2,8 @@
 
 import sqlite3
 
+import pytest
+
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_core.compiler.assembler import PYTHON_REFERENCE_ASSEMBLER
 from cruxible_core.indexes.projection import AssemblerRequestV2, projection_manifest_name
@@ -188,3 +190,57 @@ def test_registered_procedure_and_singletons_read_exact_selected_sources(tmp_pat
         assert reader.envelope(APPROVAL_POLICY_IDENTITY) == next(
             row for row in parsed.envelopes if row.identity == APPROVAL_POLICY_IDENTITY
         )
+
+
+@pytest.mark.parametrize("schema_id", ["playbill.claim.custom", "playbill.procedure.custom"])
+def test_extension_owner_prefix_does_not_shadow_retained_facts(tmp_path, schema_id):
+    from cruxible_client.contracts.projection_extensions import (
+        ProjectionExtensionRegistry,
+        ProjectionFactDeclaration,
+    )
+    from cruxible_core.compiler.assembler import ProjectionAssembler
+    from cruxible_core.indexes.sqlite import bind_projection
+    from tests.core_support._projection_support import (
+        MemoryLedger,
+        accepted_coordinate,
+        fixture_bytes,
+    )
+
+    repository = MemoryLedger(
+        tmp_path / "repo",
+        {
+            "artifacts/fixtures/one.yaml": fixture_bytes(
+                "one", {"retained": True}, schema_id=schema_id
+            ),
+        },
+    )
+    coordinate = accepted_coordinate(repository)
+    publication = tmp_path / "published"
+    publication.mkdir()
+    registry = ProjectionExtensionRegistry(
+        (
+            ProjectionFactDeclaration(
+                schema_id=schema_id,
+                schema_version=1,
+                classification="semantic",
+            ),
+        )
+    )
+    observed = []
+    for version in (1, 2):
+        assembler = ProjectionAssembler(
+            repository,
+            accepted=coordinate,
+            publication_directory=publication,
+            storage_schema_version=version,
+            registry=registry,
+        )
+        result = assembler.assemble(
+            assembler.request(output_staging_directory=publication / f".stage-{version}")
+        )
+        with bind_projection(publication / result.manifest_path, expected=coordinate) as projection:
+            facts = projection.semantic_facts(schema_id)
+            assert len(facts) == 1
+            assert projection.semantic_facts(schema_id, subject_identity="one") == facts
+            observed.append(facts)
+    assert observed[1] == observed[0]
