@@ -171,8 +171,9 @@ def test_warm_bind_cannot_open_a_swapped_directory_then_certify_restored_path(
             patch.setattr(
                 storage,
                 "_descriptor_uri",
-                lambda descriptor: f"{(publication / result.manifest.pieces[0].name).as_uri()}"
-                "?mode=ro&immutable=1",
+                lambda descriptor: (
+                    f"{(publication / result.manifest.pieces[0].name).as_uri()}?mode=ro&immutable=1"
+                ),
             )
         if swap_count == 3:
             with pytest.raises(ProjectionIntegrityError, match="namespace changed"):

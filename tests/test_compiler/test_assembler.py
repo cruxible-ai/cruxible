@@ -20,7 +20,7 @@ from cruxible_core.indexes.sqlite import bind_projection
 from tests.core_support._projection_support import (
     MemoryLedger,
     accepted_coordinate,
-    fixture_bytes,
+    subject_bytes,
 )
 from tests.core_support._support import initialize_local
 
@@ -58,7 +58,7 @@ def test_request_and_result_are_serializable_and_coordinate_mismatch_precedes_tr
 ) -> None:
     repository = MemoryLedger(
         tmp_path / "repository",
-        {"artifacts/fixtures/one.yaml": fixture_bytes("one", {"enabled": True})},
+        {"subjects/project.work_item/one.json": subject_bytes("one")},
     )
     assembler = _assembler(tmp_path, repository)
     request = assembler.request(
@@ -86,24 +86,24 @@ def test_request_and_result_are_serializable_and_coordinate_mismatch_precedes_tr
 
 
 def test_projection_ignores_verified_candidate_card_derivatives(tmp_path: Path) -> None:
-    artifact = fixture_bytes("one", {"enabled": True})
+    artifact = subject_bytes("one")
     repository = MemoryLedger(
         tmp_path / "repository",
         {
-            "artifacts/fixtures/one.yaml": artifact,
-            "cards/artifacts/fixtures/one.md": b"# fixture: one\n",
+            "subjects/project.work_item/one.json": artifact,
+            "cards/subjects/project.work_item/one.md": b"# fixture: one\n",
         },
     )
 
     _assembler_value, result = _build(tmp_path, repository)
 
-    assert result.row_counts["artifact_envelopes"] == 1
+    assert result.row_counts["subjects"] == 1
 
 
 def test_result_refuses_echo_fields_that_differ_from_embedded_manifest(tmp_path: Path) -> None:
     repository = MemoryLedger(
         tmp_path / "repository",
-        {"artifacts/fixtures/one.yaml": fixture_bytes("one", {"enabled": True})},
+        {"subjects/project.work_item/one.json": subject_bytes("one")},
     )
     _assembler_value, result = _build(tmp_path, repository)
     row_counts = dict(result.row_counts)
@@ -125,26 +125,25 @@ def test_result_refuses_echo_fields_that_differ_from_embedded_manifest(tmp_path:
 
 
 @pytest.mark.parametrize("object_format", ["sha1", "sha256"])
-def test_real_pb_a_instance_builds_and_binds_its_exact_genesis_projection(
+def test_current_instance_publishes_and_binds_its_exact_genesis_projection(
     tmp_path: Path,
     object_format: GitObjectFormat,
 ) -> None:
     instance, _owner = initialize_local(tmp_path, object_format=object_format)
-    assembler = instance.projection_assembler()
-    result = instance.assemble_projection()
-    handle = bind_projection(Path(result.manifest_path), expected=assembler.accepted)
-    assert handle.manifest.git_oid == instance.inspect().head_oid
-    assert handle.manifest.semantic_root == instance.inspect().semantic_root
-    assert handle.manifest.generation_root == instance.inspect().generation_root
-    assert handle.fixture("absent") is None
+    coordinate = instance.accepted_coordinate()
+    with instance.bind_accepted_projection(coordinate) as handle:
+        assert handle.manifest.git_oid == instance.inspect().head_oid
+        assert handle.manifest.semantic_root == instance.inspect().semantic_root
+        assert handle.manifest.generation_root == instance.inspect().generation_root
+        assert handle.subject("Subject:project.work_item/absent") is None
 
 
 def test_repeated_scratch_builds_have_identical_logical_export_and_results(
     tmp_path: Path,
 ) -> None:
     tree = {
-        "artifacts/fixtures/two.yaml": fixture_bytes("two", [3, 2, 1]),
-        "artifacts/fixtures/one.yaml": fixture_bytes("one", {"name": "caf\u00e9"}),
+        "subjects/project.work_item/two.json": subject_bytes("two"),
+        "subjects/project.work_item/one.json": subject_bytes("one"),
     }
     repository = MemoryLedger(tmp_path / "repository", tree)
     first_assembler, first = _build(
@@ -168,13 +167,17 @@ def test_repeated_scratch_builds_have_identical_logical_export_and_results(
         Path(second.manifest_path),
         expected=second_assembler.accepted,
     )
-    assert first_handle.fixture("one") == second_handle.fixture("one")
+    assert first_handle.attach_sources(repository, bodies=None, history=None).typed.source(
+        "Subject:project.work_item/one"
+    ) == second_handle.attach_sources(repository, bodies=None, history=None).typed.source(
+        "Subject:project.work_item/one"
+    )
 
 
-def test_sha1_and_sha256_equal_semantics_have_equal_logical_digest_and_queries(
+def test_sha1_and_sha256_equal_sources_have_distinct_blob_commitments_and_equal_queries(
     tmp_path: Path,
 ) -> None:
-    tree = {"artifacts/fixtures/one.yaml": fixture_bytes("one", {"count": 7})}
+    tree = {"subjects/project.work_item/one.json": subject_bytes("one")}
     sha1 = MemoryLedger(tmp_path / "sha1-repository", tree, object_format="sha1")
     sha256 = MemoryLedger(tmp_path / "sha256-repository", tree, object_format="sha256")
     (tmp_path / "sha1-published").mkdir()
@@ -201,12 +204,16 @@ def test_sha1_and_sha256_equal_semantics_have_equal_logical_digest_and_queries(
     )
     assert sha1_result.git_oid != sha256_result.git_oid
     assert sha1_result.generation_root != sha256_result.generation_root
-    assert sha1_result.logical_digest == sha256_result.logical_digest
+    assert sha1_result.logical_digest != sha256_result.logical_digest  # Exact Git blob IDs differ.
     sha1_handle = bind_projection(Path(sha1_result.manifest_path), expected=sha1_assembler.accepted)
     sha256_handle = bind_projection(
         Path(sha256_result.manifest_path), expected=sha256_assembler.accepted
     )
-    assert sha1_handle.fixture("one") == sha256_handle.fixture("one")
+    assert sha1_handle.attach_sources(sha1, bodies=None, history=None).typed.source(
+        "Subject:project.work_item/one"
+    ) == sha256_handle.attach_sources(sha256, bodies=None, history=None).typed.source(
+        "Subject:project.work_item/one"
+    )
 
 
 @pytest.mark.parametrize(
@@ -214,18 +221,18 @@ def test_sha1_and_sha256_equal_semantics_have_equal_logical_digest_and_queries(
     [
         ({"hooks/pre-commit": b"malicious"}, {}, "no registered"),
         (
-            {"artifacts/fixtures/link.yaml": b"target"},
-            {"artifacts/fixtures/link.yaml": ("120000", "blob")},
+            {"subjects/project.work_item/link.json": b"target"},
+            {"subjects/project.work_item/link.json": ("120000", "blob")},
             "symlink",
         ),
         (
-            {"artifacts/fixtures/module.yaml": b"commit"},
-            {"artifacts/fixtures/module.yaml": ("160000", "commit")},
+            {"subjects/project.work_item/module.json": b"commit"},
+            {"subjects/project.work_item/module.json": ("160000", "commit")},
             "submodule",
         ),
         (
             {
-                "artifacts/fixtures/lfs.yaml": (
+                "subjects/project.work_item/lfs.json": (
                     b"version https://git-lfs.github.com/spec/v1\n"
                     b"oid sha256:" + b"0" * 64 + b"\nsize 1\n"
                 )
@@ -235,15 +242,15 @@ def test_sha1_and_sha256_equal_semantics_have_equal_logical_digest_and_queries(
         ),
         (
             {
-                "artifacts/fixtures/a.yaml": fixture_bytes("duplicate", 1),
-                "artifacts/fixtures/b.yaml": fixture_bytes("duplicate", 1),
+                "subjects/project.work_item/a.json": subject_bytes("duplicate"),
+                "subjects/project.work_item/b.json": subject_bytes("duplicate"),
             },
             {},
-            "duplicate semantic identity",
+            "Subject failed strict validation",
         ),
         (
             {
-                "artifacts/fixtures/wrong.yaml": canonical_bytes(
+                "subjects/project.work_item/wrong.json": canonical_bytes(
                     {
                         "tag": "unknown-format-v1",
                         "kind": "fixture",
@@ -257,7 +264,7 @@ def test_sha1_and_sha256_equal_semantics_have_equal_logical_digest_and_queries(
                 + b"\n"
             },
             {},
-            "strict validation",
+            "Subject|strict validation",
         ),
     ],
 )
@@ -277,16 +284,16 @@ def test_tree_reader_refuses_unregistered_nonregular_and_ambiguous_inputs(
         )
 
 
-def test_noncanonical_yaml_and_resource_limit_are_refused(tmp_path: Path) -> None:
-    canonical = fixture_bytes("one", 1)
+def test_noncanonical_source_and_resource_limit_are_refused(tmp_path: Path) -> None:
+    canonical = subject_bytes("one")
     payload = json.loads(canonical)
-    noncanonical = (json.dumps(payload, indent=2) + "\n").encode()
+    noncanonical = (json.dumps(payload, separators=(",", ":")) + "\n").encode()
     repository = MemoryLedger(
         tmp_path / "repository",
-        {"artifacts/fixtures/one.yaml": noncanonical},
+        {"subjects/project.work_item/one.json": noncanonical},
     )
     assembler = _assembler(tmp_path, repository)
-    with pytest.raises(ProjectionFormatError, match="not canonical"):
+    with pytest.raises(ProjectionFormatError, match="Subject failed strict validation"):
         assembler.assemble(
             assembler.request(
                 output_staging_directory=assembler.publication_directory / ".stage-yaml"
@@ -295,7 +302,7 @@ def test_noncanonical_yaml_and_resource_limit_are_refused(tmp_path: Path) -> Non
 
     limited_repository = MemoryLedger(
         tmp_path / "limited-repository",
-        {"artifacts/fixtures/one.yaml": canonical},
+        {"subjects/project.work_item/one.json": canonical},
     )
     limited = _assembler(tmp_path, limited_repository, publication_name="limited-published")
     request = limited.request(

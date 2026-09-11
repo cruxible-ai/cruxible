@@ -64,17 +64,10 @@ class EvaluationProofs:
     edges: Any
 
 
-class FrozenProjectionStorage(ProjectionIntegrityError):
-    """The frozen publication uses the source-only evaluation oracle."""
-
-
 class EvaluationRows:
     """One accepted or candidate selection, valid only inside its owning request."""
 
     def __init__(self, projection: Any) -> None:
-        if projection.typed is None:
-            projection.close()
-            raise FrozenProjectionStorage("indexed evaluation requires typed accepted storage")
         authenticate = getattr(projection, "require_source_authentication", None)
         if authenticate is not None:
             try:
@@ -91,10 +84,10 @@ class EvaluationRows:
         self.children: list[EvaluationRows] = []
         self.binding = canonical_bytes(projection.accepted.model_dump(mode="json"))
         self.states = SelectedRows(
-            self.state, lambda: self.keys("artifact_lookup", "path", "kind!='fixture'"), owner=self
+            self.state, lambda: self.keys("artifact_lookup", "path", "1"), owner=self
         )
         self.identities = SelectedRows(
-            self.identity_path, lambda: self.keys("artifact_lookup", "identity", "kind!='fixture'")
+            self.identity_path, lambda: self.keys("artifact_lookup", "identity", "1")
         )
         self.members = SelectedRows(
             self.member_digest, lambda: self.keys("members", "path", "path NOT LIKE 'changesets/%'")
@@ -135,14 +128,14 @@ class EvaluationRows:
     def identity_path(self, identity: str) -> str:
         return str(
             self.one(
-                f"SELECT path FROM {self.table('artifact_lookup')} WHERE identity=? AND kind!='fixture'",
+                f"SELECT path FROM {self.table('artifact_lookup')} WHERE identity=?",
                 identity,
             )[0]
         )
 
     def state(self, path: str) -> ArtifactDependencyStateV1:
         row = self.one(
-            f"SELECT kind,format_tag,artifact_digest FROM {self.table('artifact_lookup')} WHERE path=? AND kind!='fixture'",
+            f"SELECT kind,format_tag,artifact_digest FROM {self.table('artifact_lookup')} WHERE path=?",
             path,
         )
         source = OWNER_BY_KIND[row[0]].parse(
@@ -207,7 +200,7 @@ class EvaluationRows:
         return tuple(
             row[0]
             for row in self.connection.execute(
-                f"SELECT DISTINCT {side}.path FROM {self.table('pins')} p JOIN {self.table('artifact_lookup')} source ON source.identity=p.source_identity JOIN {self.table('artifact_lookup')} target ON target.identity=p.target_identity AND target.artifact_digest=p.target_digest WHERE p.edge_kind='required_pin' AND source.kind!='fixture' AND target.kind!='fixture' ORDER BY {side}.path"
+                f"SELECT DISTINCT {side}.path FROM {self.table('pins')} p JOIN {self.table('artifact_lookup')} source ON source.identity=p.source_identity JOIN {self.table('artifact_lookup')} target ON target.identity=p.target_identity AND target.artifact_digest=p.target_digest WHERE p.edge_kind='required_pin' ORDER BY {side}.path"
             )
         )
 
@@ -274,7 +267,9 @@ class EvaluationRows:
     def overlay(self, edits: Mapping[str, bytes | None]) -> EvaluationRows:
         """Create a bound changed-row selection; exact source identity suppresses edges."""
         if self.parent is not None or self.children:
-            raise ProjectionIntegrityError("each candidate selection requires its own accepted handle")
+            raise ProjectionIntegrityError(
+                "each candidate selection requires its own accepted handle"
+            )
         candidate = EvaluationRows(self.projection)
         candidate.parent = self
         # TEMP rows live on the already authenticated SQLite connection. Reopening
@@ -449,8 +444,8 @@ class ChangedMembers(Mapping[str, str]):
         return sum(1 for _ in self)
 
 
-_ACTIVE_SELECTIONS: ContextVar[tuple[ExitStack, dict[SelectionSpec, EvaluationRows]] | None] = ContextVar(
-    "evaluation_selections", default=None
+_ACTIVE_SELECTIONS: ContextVar[tuple[ExitStack, dict[SelectionSpec, EvaluationRows]] | None] = (
+    ContextVar("evaluation_selections", default=None)
 )
 
 
@@ -514,14 +509,14 @@ class SelectionSpec:
             "artifact_lookup",
             lambda rows, path: rows.state(path),
             "path",
-            "kind!='fixture'",
+            "1",
             owner=True,
         )
         identities = self.rows(
             "artifact_lookup",
             lambda rows, identity: rows.identity_path(identity),
             "identity",
-            "kind!='fixture'",
+            "1",
         )
         sources = self.rows(
             "pins",
@@ -569,15 +564,6 @@ class SelectionSpec:
 
 
 def derive_indexed_state(tree: Any) -> Any:
-    try:
-        return _derive_indexed_state(tree)
-    except FrozenProjectionStorage:
-        from cruxible_core.proposals.proposals import build_tree_state
-
-        return build_tree_state(tree)
-
-
-def _derive_indexed_state(tree: Any) -> Any:
     from cruxible_client.contracts.merkle import build_merkle_manifest, update_merkle_manifest
     from cruxible_core.proposals.proposals import build_tree_state
 

@@ -12,7 +12,6 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.projection_extensions import (
     ProjectionExtensionRegistry,
-    fixture_extension_registry,
     playbill_claim_extension_registry,
     playbill_claim_type_extension_registry,
     playbill_evidence_extension_registry,
@@ -219,7 +218,7 @@ def projection_registry_for_compiler(
     compiler: CompilerCoordinate,
 ) -> ProjectionExtensionRegistry:
     if compiler == PB_B_COMPILER:
-        return fixture_extension_registry()
+        return ProjectionExtensionRegistry(())
     if compiler == PB_C_COMPILER:
         return playbill_extension_registry()
     if compiler == PB_D_COMPILER:

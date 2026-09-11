@@ -738,20 +738,16 @@ def reverse_pin_closure(
     """
 
     from cruxible_core.derived.derived_state import CandidateTree, SnapshotTree
-    from cruxible_core.indexes.evaluated_state import EvaluationRows, FrozenProjectionStorage
+    from cruxible_core.indexes.evaluated_state import EvaluationRows
 
     snapshot = tree.snapshot() if isinstance(tree, CandidateTree) else tree
     if isinstance(snapshot, SnapshotTree) and snapshot._accepted_reader is not None:
+        base = EvaluationRows(snapshot._accepted_reader())
         try:
-            base = EvaluationRows(snapshot._accepted_reader())
-        except FrozenProjectionStorage:
-            pass
-        else:
-            try:
-                selected = base if snapshot._parent is None else base.overlay(snapshot._edits)
-                return _walk_reverse_pin_closure(root, include, selected.reverse_neighbors)
-            finally:
-                base.close()
+            selected = base if snapshot._parent is None else base.overlay(snapshot._edits)
+            return _walk_reverse_pin_closure(root, include, selected.reverse_neighbors)
+        finally:
+            base.close()
 
     index = build_dependency_index(tree)
     digest_identities = dict(claim_identity_by_digest or {})

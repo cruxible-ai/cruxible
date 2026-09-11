@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Literal, Mapping, cast
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ValidationError
 
 from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_IDENTITY,
@@ -25,7 +25,6 @@ from cruxible_client.contracts.artifacts import (
 from cruxible_client.contracts.canonical import (
     CURRENT_ARTIFACT_CODEC,
     ArtifactCodec,
-    ArtifactDigest,
     artifact_bytes_for_path,
     canonical_bytes,
     file_digest,
@@ -145,14 +144,6 @@ P2_B0_ARTIFACT_KINDS = ArtifactKindRegistry(
         ArtifactPathKind(
             "exhaust-promotion",
             re.compile(r"^exhaust-promotions/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
-        ),
-        ArtifactPathKind(
-            "fixture",
-            re.compile(r"^artifacts/fixtures/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
-        ),
-        ArtifactPathKind(
-            "presentation",
-            re.compile(r"^presentation/fixtures/[a-z][a-z0-9_.-]{0,255}\.json$"),
         ),
         ArtifactPathKind(
             "changeset",
@@ -382,9 +373,7 @@ RegisteredPathKind = Literal[
     "claim-type",
     "document",
     "exhaust-promotion",
-    "fixture",
     "line",
-    "presentation",
     "principal",
     "procedure",
     "procedure-mandate",
@@ -395,108 +384,6 @@ RegisteredPathKind = Literal[
     "standing-mandate",
     "subject",
 ]
-
-
-class _StrictArtifactModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-def _identifier(value: str, *, label: str) -> str:
-    normalized = unicodedata.normalize("NFC", value)
-    if normalized != value or not _IDENTIFIER_RE.fullmatch(value):
-        raise ValueError(f"{label} must be a canonical lowercase identifier")
-    return value
-
-
-class FixturePin(_StrictArtifactModel):
-    target_identity: str
-    target_digest: str
-
-    @field_validator("target_identity")
-    @classmethod
-    def _target_identity(cls, value: str) -> str:
-        return _identifier(value, label="pin target_identity")
-
-    @field_validator("target_digest")
-    @classmethod
-    def _target_digest(cls, value: str) -> str:
-        ArtifactDigest.from_tagged(value)
-        return value
-
-
-class FixtureArtifact(_StrictArtifactModel):
-    """Minimal semantic envelope used only to prove the PB-B compiler contract."""
-
-    tag: Literal["playbill-fixture-v1"] = "playbill-fixture-v1"
-    kind: Literal["fixture"] = "fixture"
-    artifact_id: str
-    revision: int = Field(ge=1, le=2**63 - 1)
-    predecessor_digest: str | None = None
-    pins: tuple[FixturePin, ...] = ()
-    extension_facts: tuple[ProjectionFact, ...] = ()
-
-    @field_validator("artifact_id")
-    @classmethod
-    def _artifact_id(cls, value: str) -> str:
-        return _identifier(value, label="fixture artifact_id")
-
-    @field_validator("predecessor_digest")
-    @classmethod
-    def _predecessor_digest(cls, value: str | None) -> str | None:
-        if value is not None:
-            ArtifactDigest.from_tagged(value)
-        return value
-
-    @field_validator("pins")
-    @classmethod
-    def _pins(cls, value: tuple[FixturePin, ...]) -> tuple[FixturePin, ...]:
-        ordered = tuple(
-            sorted(
-                value,
-                key=lambda item: (
-                    item.target_identity.encode("utf-8"),
-                    item.target_digest.encode("ascii"),
-                ),
-            )
-        )
-        if value != ordered or len({item.target_identity for item in value}) != len(value):
-            raise ValueError("fixture pins must be sorted and unique by target_identity")
-        return value
-
-    @field_validator("extension_facts")
-    @classmethod
-    def _extension_facts(cls, value: tuple[ProjectionFact, ...]) -> tuple[ProjectionFact, ...]:
-        def key(fact: ProjectionFact) -> tuple[bytes, int, bytes, bytes]:
-            return (
-                fact.schema_id.encode("utf-8"),
-                fact.schema_version,
-                fact.subject_identity.encode("utf-8"),
-                fact.fact_key.encode("utf-8"),
-            )
-
-        ordered = tuple(sorted(value, key=key))
-        if value != ordered or len({key(fact) for fact in value}) != len(value):
-            raise ValueError("fixture extension facts must be sorted and unique")
-        return value
-
-    @model_validator(mode="after")
-    def _fact_subjects(self) -> "FixtureArtifact":
-        if any(fact.subject_identity != self.artifact_id for fact in self.extension_facts):
-            raise ValueError("fixture extension facts must name their containing artifact")
-        return self
-
-
-class FixturePresentation(_StrictArtifactModel):
-    """Disposable rendered/cache content excluded from the canonical logical export."""
-
-    tag: Literal["playbill-fixture-presentation-v1"] = "playbill-fixture-presentation-v1"
-    subject_identity: str
-    label: str
-
-    @field_validator("subject_identity")
-    @classmethod
-    def _subject_identity(cls, value: str) -> str:
-        return _identifier(value, label="fixture presentation subject_identity")
 
 
 @dataclass(frozen=True)
@@ -523,7 +410,6 @@ class ParsedProjectionTree:
     pins: tuple[PinRow, ...]
     retired_identities: tuple[str, ...]
     semantic_facts: tuple[ProjectionFact, ...]
-    presentation_facts: tuple[ProjectionFact, ...]
 
 
 def registered_path_kind(
@@ -793,7 +679,6 @@ def parse_projection_tree(
     pins: list[PinRow] = []
     retired_identities: list[str] = []
     semantic_facts: list[ProjectionFact] = []
-    presentation_facts: list[ProjectionFact] = []
     identities: dict[str, str] = {}
     change_sets: list[tuple[str, ChangeSetRecordAnyVersion]] = []
 
@@ -2323,66 +2208,7 @@ def parse_projection_tree(
                         )
                     )
                 continue
-            if kind == "fixture":
-                artifact = FixtureArtifact.model_validate(payload)
-                if (
-                    artifact_bytes_for_path(
-                        pretty_canonical_bytes(artifact.model_dump(mode="json")),
-                        path,
-                        codec=artifact_codec,
-                    )
-                    != content
-                ):
-                    raise ProjectionFormatError(f"fixture artifact is not canonical: {path}")
-                previous = identities.get(artifact.artifact_id)
-                if previous is not None:
-                    raise ProjectionFormatError(
-                        f"duplicate semantic identity {artifact.artifact_id!r}: "
-                        f"{previous} and {path}"
-                    )
-                identities[artifact.artifact_id] = path
-                digest = file_digest(content).tagged
-                envelopes.append(
-                    ArtifactEnvelopeRow(
-                        identity=artifact.artifact_id,
-                        kind=artifact.kind,
-                        format_tag=artifact.tag,
-                        path=path,
-                        artifact_digest=digest,
-                        predecessor_digest=artifact.predecessor_digest,
-                        revision=artifact.revision,
-                    )
-                )
-                pins.extend(
-                    PinRow(
-                        source_identity=artifact.artifact_id,
-                        target_identity=pin.target_identity,
-                        target_digest=pin.target_digest,
-                    )
-                    for pin in artifact.pins
-                )
-                semantic_facts.extend(artifact.extension_facts)
-                continue
-
-            presentation = FixturePresentation.model_validate(payload)
-            if (
-                artifact_bytes_for_path(
-                    pretty_canonical_bytes(presentation.model_dump(mode="json")),
-                    path,
-                    codec=artifact_codec,
-                )
-                != content
-            ):
-                raise ProjectionFormatError(f"presentation artifact is not canonical: {path}")
-            presentation_facts.append(
-                ProjectionFact(
-                    schema_id="playbill.fixture.label",
-                    schema_version=1,
-                    subject_identity=presentation.subject_identity,
-                    fact_key="label",
-                    value=presentation.label,
-                )
-            )
+            raise ProjectionFormatError(f"registered artifact kind is unsupported: {kind}")
         except ValidationError as exc:
             raise ProjectionFormatError(
                 f"registered artifact failed strict validation: {path}"
@@ -2399,10 +2225,7 @@ def parse_projection_tree(
         pin_dependencies[key] = pin
 
     validated_semantic = registry.validate(semantic_facts, classification="semantic")
-    validated_presentation = registry.validate(
-        presentation_facts,
-        classification="presentation",
-    )
+
     return ParsedProjectionTree(
         envelopes=tuple(sorted(envelopes, key=lambda item: item.identity.encode("utf-8"))),
         pins=tuple(
@@ -2416,16 +2239,12 @@ def parse_projection_tree(
         ),
         retired_identities=tuple(sorted(retired_identities, key=lambda item: item.encode("utf-8"))),
         semantic_facts=validated_semantic,
-        presentation_facts=validated_presentation,
     )
 
 
 __all__ = [
     "projected_revision",
     "ArtifactEnvelopeRow",
-    "FixtureArtifact",
-    "FixturePin",
-    "FixturePresentation",
     "ParsedProjectionTree",
     "PLAYBILL_ARTIFACT_KINDS",
     "P2_B1_ARTIFACT_KINDS",

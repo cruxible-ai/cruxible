@@ -1,4 +1,4 @@
-"""All-field frozen parity and bounded request-owned SQL candidate selection."""
+"""All-field current compiler parity and bounded request-owned SQL candidate selection."""
 
 from __future__ import annotations
 
@@ -54,7 +54,6 @@ def _fixture(tmp_path, sources):
         path,
         request=request,
         parsed=parsed,
-        registry=assembler.registry,
         assembler_implementation="test",
         sources=sources,
     )
@@ -284,23 +283,6 @@ def test_reverse_closure_keeps_cycles_boundaries_and_first_trigger_order(tmp_pat
         assert actual == expected
         assert len(actual) == (3 if excluded is None else 2)
     assert counts["opened"] == counts["closed"]
-
-
-def test_frozen_storage_uses_full_source_oracle_and_closes_handle():
-    from cruxible_core.claims.closure import reverse_pin_closure
-
-    tree = SnapshotTree(_tree())
-    closed = []
-    tree._accepted_reader = lambda: SimpleNamespace(typed=None, close=lambda: closed.append(True))
-    assert derive_indexed_state(tree) == build_tree_state(tree)
-    assert reverse_pin_closure(
-        tree, root=_subject("anchor").identity, include=lambda state: True
-    ) == (
-        reverse_pin_closure(
-            dict(tree), root=_subject("anchor").identity, include=lambda state: True
-        )
-    )
-    assert len(closed) == 2
 
 
 def test_migration_claim_type_inventory_uses_required_pin_selection(tmp_path, monkeypatch):

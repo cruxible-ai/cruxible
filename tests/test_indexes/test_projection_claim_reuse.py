@@ -49,7 +49,6 @@ def _assert_same_rows_and_digest(tmp_path, cold, warm):
             path,
             request=request,
             parsed=parsed,
-            registry=registry,
             assembler_implementation=PYTHON_REFERENCE_ASSEMBLER,
         )
         exports.append(canonical_logical_export(path))

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import shutil
 import sqlite3
 from datetime import datetime, timezone
@@ -16,8 +15,8 @@ from cruxible_client.contracts.projection_extensions import (
     ProjectionExtensionRegistry,
     ProjectionFact,
     ProjectionFactDeclaration,
-    fixture_extension_registry,
     normalize_projection_value,
+    playbill_subject_extension_registry,
 )
 from cruxible_core.compiler.assembler import ProjectionAssembler
 from cruxible_core.indexes.sqlite import (
@@ -28,8 +27,7 @@ from cruxible_core.indexes.sqlite import (
 from tests.core_support._projection_support import (
     MemoryLedger,
     accepted_coordinate,
-    fixture_bytes,
-    presentation_bytes,
+    subject_bytes,
 )
 
 
@@ -45,7 +43,6 @@ def _build(
     publication.mkdir()
     assembler = ProjectionAssembler(
         repository,
-        storage_schema_version=1,
         accepted=accepted_coordinate(repository, generation_byte=("2" if name == "a" else "3") * 2),
         publication_directory=publication,
     )
@@ -67,8 +64,8 @@ def test_projection_value_normalization_is_closed_and_explicit() -> None:
     assert normalize_projection_value({"$digest": "sha256:" + "a" * 64}) == {
         "$digest": "sha256:" + "a" * 64
     }
-    assert normalize_projection_value({"$path": "artifacts/fixtures/one.yaml"}) == {
-        "$path": "artifacts/fixtures/one.yaml"
+    assert normalize_projection_value({"$path": "subjects/project.work_item/one.json"}) == {
+        "$path": "subjects/project.work_item/one.json"
     }
     assert normalize_projection_value({"$name": "fixture.one"}) == {"$name": "fixture.one"}
     assert list(normalize_projection_value({"z": 1, "a": 2})) == ["a", "z"]
@@ -78,47 +75,10 @@ def test_projection_value_normalization_is_closed_and_explicit() -> None:
             normalize_projection_value(refused)
 
 
-@pytest.mark.parametrize(
-    ("schema_id", "schema_version", "match"),
-    [
-        ("playbill.unknown.fact", 1, "undeclared"),
-        ("playbill.fixture.fact", 2, "version mismatch"),
-        ("playbill.fixture.label", 1, "declared presentation"),
-    ],
-)
-def test_unknown_mismatched_or_misclassified_semantic_fact_refuses(
-    tmp_path: Path,
-    schema_id: str,
-    schema_version: int,
-    match: str,
-) -> None:
-    tree = {
-        "artifacts/fixtures/one.yaml": fixture_bytes(
-            "one",
-            1,
-            schema_id=schema_id,
-            schema_version=schema_version,
-        )
-    }
-    repository = MemoryLedger(tmp_path / "repository", tree)
-    publication = tmp_path / "published"
-    publication.mkdir()
-    assembler = ProjectionAssembler(
-        repository,
-        storage_schema_version=1,
-        accepted=accepted_coordinate(repository),
-        publication_directory=publication,
-    )
-    with pytest.raises(ProjectionFormatError, match=match):
-        assembler.assemble(
-            assembler.request(output_staging_directory=publication / ".stage-refusal")
-        )
-
-
 def test_duplicate_extension_fact_refuses_at_registry_boundary() -> None:
-    registry = fixture_extension_registry()
+    registry = playbill_subject_extension_registry()
     fact = ProjectionFact(
-        schema_id="playbill.fixture.fact",
+        schema_id="playbill.subject.identity",
         schema_version=1,
         subject_identity="one",
         fact_key="value",
@@ -132,19 +92,19 @@ def test_registry_can_carry_additive_versions_but_refuses_undeclared_version() -
     registry = ProjectionExtensionRegistry(
         (
             ProjectionFactDeclaration(
-                schema_id="playbill.fixture.versioned",
+                schema_id="test.versioned",
                 schema_version=1,
                 classification="semantic",
             ),
             ProjectionFactDeclaration(
-                schema_id="playbill.fixture.versioned",
+                schema_id="test.versioned",
                 schema_version=2,
                 classification="semantic",
             ),
         )
     )
     version_two = ProjectionFact(
-        schema_id="playbill.fixture.versioned",
+        schema_id="test.versioned",
         schema_version=2,
         subject_identity="one",
         fact_key="value",
@@ -161,13 +121,13 @@ def test_registry_can_carry_additive_versions_but_refuses_undeclared_version() -
 def test_semantic_fact_change_changes_logical_digest(tmp_path: Path) -> None:
     _assembler_a, result_a = _build(
         tmp_path,
-        {"artifacts/fixtures/one.yaml": fixture_bytes("one", {"enabled": True})},
+        {"subjects/project.work_item/one.json": subject_bytes("one")},
         name="a",
         oid_seed="a",
     )
     _assembler_b, result_b = _build(
         tmp_path,
-        {"artifacts/fixtures/one.yaml": fixture_bytes("one", {"enabled": False})},
+        {"subjects/project.work_item/one.json": subject_bytes("one", retired=True)},
         name="b",
         oid_seed="b",
     )
@@ -175,13 +135,13 @@ def test_semantic_fact_change_changes_logical_digest(tmp_path: Path) -> None:
 
 
 def test_tree_and_fact_row_iteration_order_do_not_change_logical_digest(tmp_path: Path) -> None:
-    first = fixture_bytes("first", 1)
-    second = fixture_bytes("second", 2)
+    first = subject_bytes("first")
+    second = subject_bytes("second")
     _assembler_a, result_a = _build(
         tmp_path,
         {
-            "artifacts/fixtures/second.yaml": second,
-            "artifacts/fixtures/first.yaml": first,
+            "subjects/project.work_item/second.json": second,
+            "subjects/project.work_item/first.json": first,
         },
         name="a",
         oid_seed="order-a",
@@ -189,8 +149,8 @@ def test_tree_and_fact_row_iteration_order_do_not_change_logical_digest(tmp_path
     _assembler_b, result_b = _build(
         tmp_path,
         {
-            "artifacts/fixtures/first.yaml": first,
-            "artifacts/fixtures/second.yaml": second,
+            "subjects/project.work_item/first.json": first,
+            "subjects/project.work_item/second.json": second,
         },
         name="b",
         oid_seed="order-b",
@@ -198,32 +158,10 @@ def test_tree_and_fact_row_iteration_order_do_not_change_logical_digest(tmp_path
     assert result_a.logical_digest == result_b.logical_digest
 
 
-def test_presentation_cache_add_remove_or_label_change_is_nonlogical(tmp_path: Path) -> None:
-    fixture = fixture_bytes("one", {"enabled": True})
-    trees = (
-        {"artifacts/fixtures/one.yaml": fixture},
-        {
-            "artifacts/fixtures/one.yaml": fixture,
-            "presentation/fixtures/one.json": presentation_bytes("one", "First label"),
-        },
-        {
-            "artifacts/fixtures/one.yaml": fixture,
-            "presentation/fixtures/one.json": presentation_bytes("one", "Changed label"),
-        },
-    )
-    results = [
-        _build(tmp_path, tree, name=f"label-{index}", oid_seed=f"label-{index}")[1]
-        for index, tree in enumerate(trees)
-    ]
-    assert len({result.logical_digest for result in results}) == 1
-    assert [result.row_counts["presentation_facts"] for result in results] == [0, 1, 1]
-    assert len({result.manifest.pieces[0].physical_digest for result in results}) == 3
-
-
 def test_logical_export_is_independent_of_sqlite_page_layout(tmp_path: Path) -> None:
     _assembler, result = _build(
         tmp_path,
-        {"artifacts/fixtures/one.yaml": fixture_bytes("one", [1, 2, 3])},
+        {"subjects/project.work_item/one.json": subject_bytes("one")},
         name="a",
         oid_seed="layout",
     )
@@ -245,7 +183,7 @@ def test_logical_export_is_independent_of_sqlite_page_layout(tmp_path: Path) -> 
 def test_assembler_implementation_is_nonlogical_build_metadata(tmp_path: Path) -> None:
     _assembler, result = _build(
         tmp_path,
-        {"artifacts/fixtures/one.yaml": fixture_bytes("one", {"count": 1})},
+        {"subjects/project.work_item/one.json": subject_bytes("one")},
         name="a",
         oid_seed="assembler-metadata",
     )
@@ -265,51 +203,8 @@ def test_assembler_implementation_is_nonlogical_build_metadata(tmp_path: Path) -
     compiler_table = next(
         table for table in exported["tables"] if table["name"] == "compiler_coordinates"
     )
-    assert [column["name"] for column in compiler_table["columns"]] == [
-        "singleton",
-        "schema_version",
-        "compiler_digest",
-    ]
+    assert compiler_table["rows"][0][1] == 1
     assert all(table["name"] != "assembler_metadata" for table in exported["tables"])
     assert canonical_logical_export(alternate) == exported
     assert projection_logical_digest(alternate) == projection_logical_digest(original)
     assert physical_file_digest(alternate) != physical_file_digest(original)
-
-
-def test_fact_declarations_constraints_and_rows_are_in_logical_export(tmp_path: Path) -> None:
-    _assembler, result = _build(
-        tmp_path,
-        {"artifacts/fixtures/one.yaml": fixture_bytes("one", {"count": 2})},
-        name="a",
-        oid_seed="export",
-    )
-    index = Path(result.manifest_path).parent / result.manifest.pieces[0].name
-    exported = canonical_logical_export(index)
-    tables = {table["name"]: table for table in exported["tables"]}
-    assert tables["projection_fact_schemas"]["rows"] == [
-        [
-            "playbill.fixture.fact",
-            1,
-            '["unique(subject_identity,fact_key)"]',
-        ]
-    ]
-    assert tables["semantic_facts"]["rows"] == [
-        ["playbill.fixture.fact", 1, "one", "value", '{"count":2}']
-    ]
-    assert "presentation_facts" not in tables
-
-
-def test_language_neutral_projection_golden_is_pinned(tmp_path: Path) -> None:
-    golden_path = Path(__file__).parents[1] / "goldens" / "playbill" / "projection-v1.json"
-    golden = json.loads(golden_path.read_bytes())
-    tree = {path: content.encode("utf-8") for path, content in golden["tree"].items()}
-    _assembler, result = _build(
-        tmp_path,
-        tree,
-        name="a",
-        oid_seed="golden",
-    )
-    index = Path(result.manifest_path).parent / result.manifest.pieces[0].name
-    assert golden["contract"] == "playbill-projection-logical-v1"
-    assert result.logical_digest == golden["expected"]["logical_digest"]
-    assert canonical_logical_export(index) == golden["expected"]["logical_export"]

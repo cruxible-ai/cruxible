@@ -171,7 +171,7 @@ def test_delta_rejects_wrong_successor_before_consuming_artifacts(tmp_path, monk
 
 @pytest.mark.parametrize("parent_state", ["missing", "corrupt"])
 def test_parent_recovery_or_refusal_preserves_authority(tmp_path, monkeypatch, parent_state):
-    from cruxible_core.indexes.projection import AssemblerRequestV2, projection_manifest_name
+    from cruxible_core.indexes.projection import AssemblerRequest, projection_manifest_name
 
     instance, owner = initialize_local(tmp_path)
     _seed_claim_surface(instance, owner)
@@ -196,7 +196,7 @@ def test_parent_recovery_or_refusal_preserves_authority(tmp_path, monkeypatch, p
         if delta is None:
             return assemble(assembler, request, crash_hook=crash_hook)
         base = delta.base
-        parent_request = AssemblerRequestV2(
+        parent_request = AssemblerRequest(
             instance_id=base.instance_id,
             repository_path=base.repository_path,
             git_object_format=base.git_object_format,
@@ -324,8 +324,8 @@ def test_unrelated_document_carries_nonempty_citation_relations_without_rebuild(
     assert _rows(directory / rebuilt.manifest.pieces[0].name) == expected
 
 
-def test_warm_citation_successor_reads_no_global_relation_slice(tmp_path, monkeypatch):
-    from cruxible_core.indexes.sqlite import ProjectionHandle
+def test_warm_citation_successor_reconstructs_only_changed_claims(tmp_path, monkeypatch):
+    from cruxible_core.indexes import typed_sqlite
 
     instance, owner = initialize_local(tmp_path)
     _seed_claim_surface(instance, owner)
@@ -338,22 +338,22 @@ def test_warm_citation_successor_reads_no_global_relation_slice(tmp_path, monkey
     before = instance.accepted_coordinate()
     with instance.bind_accepted_projection(before) as handle:
         assert handle._connection.execute("SELECT count(*) FROM citation_uses").fetchone()[0] > 0
-    original = ProjectionHandle.semantic_facts
-    reads = []
+    original = typed_sqlite.populate_citations
+    selected_sources = []
 
-    def bounded(handle, schema, **kwargs):
-        if schema.startswith("playbill.citation_relation.") and not kwargs:
-            reads.append(schema)
-            raise AssertionError("warm citation apply cannot enumerate prior relations")
-        return original(handle, schema, **kwargs)
+    def bounded(connection, sources, **kwargs):
+        claim_paths = tuple(path for path in sources if path.startswith("claims/"))
+        assert len(claim_paths) <= 1
+        selected_sources.append(claim_paths)
+        return original(connection, sources, **kwargs)
 
     second = coordinator.create(
         actor=actor, payload=_change_set(_claim(qualifier="second")), canonical_timestamp=TIMESTAMP
     ).intent
     with monkeypatch.context() as patch:
-        patch.setattr(ProjectionHandle, "semantic_facts", bounded)
+        patch.setattr(typed_sqlite, "populate_citations", bounded)
         _accept(instance, owner, coordinator, second.intent_id, actor)
-    assert reads == []
+    assert any(selected_sources)
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as handle:
         assert handle._connection.execute("SELECT count(*) FROM citation_uses").fetchone()[0] > 0
     with instance.bind_accepted_projection(before) as handle:

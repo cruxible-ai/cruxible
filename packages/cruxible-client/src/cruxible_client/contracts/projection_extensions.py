@@ -20,7 +20,7 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.errors import ProjectionFormatError
 
-ProjectionFactClassification = Literal["semantic", "presentation"]
+ProjectionFactClassification = Literal["semantic"]
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 
@@ -337,32 +337,9 @@ class ProjectionExtensionRegistry:
         )
 
 
-def fixture_extension_registry() -> ProjectionExtensionRegistry:
-    """Return PB-B's minimal frozen extension registry."""
-
-    return ProjectionExtensionRegistry(
-        (
-            ProjectionFactDeclaration(
-                schema_id="playbill.fixture.fact",
-                schema_version=1,
-                classification="semantic",
-                constraints=("unique(subject_identity,fact_key)",),
-            ),
-            ProjectionFactDeclaration(
-                schema_id="playbill.fixture.label",
-                schema_version=1,
-                classification="presentation",
-                constraints=("unique(subject_identity,fact_key)",),
-            ),
-        )
-    )
-
-
 def playbill_extension_registry() -> ProjectionExtensionRegistry:
-    """Return the additive PB-C registry, preserving every PB-B declaration."""
+    """Return the declared Document facts used by the source compiler."""
 
-    fixture = fixture_extension_registry().declarations("semantic")
-    presentation = fixture_extension_registry().declarations("presentation")
     document = tuple(
         ProjectionFactDeclaration(
             schema_id=schema_id,
@@ -377,14 +354,13 @@ def playbill_extension_registry() -> ProjectionExtensionRegistry:
             "playbill.document.subject",
         )
     )
-    return ProjectionExtensionRegistry((*fixture, *document, *presentation))
+    return ProjectionExtensionRegistry(document)
 
 
 def playbill_governance_extension_registry() -> ProjectionExtensionRegistry:
     """Return PB-D's additive accepted-governance explanation schemas."""
 
     pb_c_semantic = playbill_extension_registry().declarations("semantic")
-    presentation = playbill_extension_registry().declarations("presentation")
     explanation = tuple(
         ProjectionFactDeclaration(
             schema_id=schema_id,
@@ -399,7 +375,7 @@ def playbill_governance_extension_registry() -> ProjectionExtensionRegistry:
             "playbill.document.provenance",
         )
     )
-    return ProjectionExtensionRegistry((*pb_c_semantic, *explanation, *presentation))
+    return ProjectionExtensionRegistry((*pb_c_semantic, *explanation))
 
 
 def playbill_subject_extension_registry() -> ProjectionExtensionRegistry:
@@ -423,9 +399,7 @@ def playbill_subject_extension_registry() -> ProjectionExtensionRegistry:
             "playbill.subject.references",
         )
     )
-    return ProjectionExtensionRegistry(
-        (*prior.declarations("semantic"), *subject, *prior.declarations("presentation"))
-    )
+    return ProjectionExtensionRegistry((*prior.declarations("semantic"), *subject))
 
 
 def playbill_claim_type_extension_registry() -> ProjectionExtensionRegistry:
@@ -462,7 +436,6 @@ def playbill_claim_type_extension_registry() -> ProjectionExtensionRegistry:
             *prior.declarations("semantic"),
             *claim_type,
             *claim_type_v2,
-            *prior.declarations("presentation"),
         )
     )
 
@@ -488,9 +461,7 @@ def playbill_claim_extension_registry() -> ProjectionExtensionRegistry:
             "playbill.claim.statement",
         )
     )
-    return ProjectionExtensionRegistry(
-        (*prior.declarations("semantic"), *claim, *prior.declarations("presentation"))
-    )
+    return ProjectionExtensionRegistry((*prior.declarations("semantic"), *claim))
 
 
 def playbill_evidence_extension_registry() -> ProjectionExtensionRegistry:
@@ -518,9 +489,7 @@ def playbill_evidence_extension_registry() -> ProjectionExtensionRegistry:
             "playbill.standing_mandate.authority",
         )
     )
-    return ProjectionExtensionRegistry(
-        (*prior.declarations("semantic"), *evidence, *prior.declarations("presentation"))
-    )
+    return ProjectionExtensionRegistry((*prior.declarations("semantic"), *evidence))
 
 
 def playbill_procedure_extension_registry() -> ProjectionExtensionRegistry:
@@ -550,9 +519,7 @@ def playbill_procedure_extension_registry() -> ProjectionExtensionRegistry:
             "playbill.procedure.source_mapping",
         )
     )
-    return ProjectionExtensionRegistry(
-        (*prior.declarations("semantic"), *procedures, *prior.declarations("presentation"))
-    )
+    return ProjectionExtensionRegistry((*prior.declarations("semantic"), *procedures))
 
 
 def playbill_runtime_extension_registry() -> ProjectionExtensionRegistry:
@@ -592,9 +559,7 @@ def playbill_runtime_extension_registry() -> ProjectionExtensionRegistry:
             "playbill.query_definition.references",
         )
     )
-    return ProjectionExtensionRegistry(
-        (*prior.declarations("semantic"), *runtime, *prior.declarations("presentation"))
-    )
+    return ProjectionExtensionRegistry((*prior.declarations("semantic"), *runtime))
 
 
 def playbill_replay_extension_registry() -> ProjectionExtensionRegistry:
@@ -626,7 +591,6 @@ def playbill_provider_runtime_extension_registry() -> ProjectionExtensionRegistr
         (
             *prior.declarations("semantic"),
             *provider_runtime,
-            *prior.declarations("presentation"),
         ),
         artifact_kinds=("procedure-runtime-policy", "provider-interface"),
     )
@@ -643,7 +607,7 @@ def playbill_p2c_extension_registry() -> ProjectionExtensionRegistry:
         constraints=("unique(subject_identity,fact_key)",),
     )
     return ProjectionExtensionRegistry(
-        (*prior.declarations("semantic"), mandate, *prior.declarations("presentation")),
+        (*prior.declarations("semantic"), mandate),
         artifact_kinds=("procedure-runtime-policy", "provider-interface", "procedure-mandate"),
     )
 
@@ -653,7 +617,6 @@ __all__ = [
     "ProjectionFact",
     "ProjectionFactClassification",
     "ProjectionFactDeclaration",
-    "fixture_extension_registry",
     "normalize_projection_value",
     "playbill_claim_extension_registry",
     "playbill_evidence_extension_registry",

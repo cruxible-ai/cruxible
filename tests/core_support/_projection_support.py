@@ -6,58 +6,30 @@ import hashlib
 from collections.abc import Sequence
 from pathlib import Path
 
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.canonical import (
-    ArtifactDigest,
     GenerationRoot,
     SemanticRoot,
-    canonical_bytes,
 )
-from cruxible_client.contracts.projection_extensions import ProjectionFact
+from cruxible_client.contracts.subjects import SubjectShell, render_subject
 from cruxible_client.contracts.types import CompilerCoordinate, GitObjectFormat
-from cruxible_core.compiler.projection_artifacts import (
-    FixtureArtifact,
-    FixturePin,
-    FixturePresentation,
-)
+from cruxible_core.compiler.compiler import P2_B5_COMPILER
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.ledger.git import GitTreeEntry
 
-COMPILER_DIGEST = "sha256:cc2ec0b2922da1c83a65734be3f911c782a7b2ab34ce2e4a5f006e47aa52b2d4"
+COMPILER_DIGEST = P2_B5_COMPILER.rule_digest
 SEMANTIC_ROOT = SemanticRoot("11" * 32).tagged
 
 
-def fixture_bytes(
-    artifact_id: str,
-    value: object,
-    *,
-    revision: int = 1,
-    predecessor_digest: str | None = None,
-    pins: tuple[FixturePin, ...] = (),
-    schema_id: str = "playbill.fixture.fact",
-    schema_version: int = 1,
-    fact_key: str = "value",
-) -> bytes:
-    artifact = FixtureArtifact(
-        artifact_id=artifact_id,
-        revision=revision,
-        predecessor_digest=predecessor_digest,
-        pins=pins,
-        extension_facts=(
-            ProjectionFact(
-                schema_id=schema_id,
-                schema_version=schema_version,
-                subject_identity=artifact_id,
-                fact_key=fact_key,
-                value=value,
-            ),
-        ),
+def subject_bytes(name: str, *, retired: bool = False) -> bytes:
+    return render_subject(
+        SubjectShell(
+            identity=ArtifactIdentity(kind="Subject", name=f"project.work_item/{name}"),
+            subject_kind="project.work_item",
+            subject_id=name,
+            lifecycle=ArtifactLifecycle(state="retired" if retired else "live"),
+        )
     )
-    return canonical_bytes(artifact.model_dump(mode="json")) + b"\n"
-
-
-def presentation_bytes(subject_identity: str, label: str) -> bytes:
-    presentation = FixturePresentation(subject_identity=subject_identity, label=label)
-    return canonical_bytes(presentation.model_dump(mode="json")) + b"\n"
 
 
 class MemoryLedger:
@@ -87,7 +59,9 @@ class MemoryLedger:
         self.list_calls = 0
         self.read_calls = 0
         for content in tree.values():
-            blob_oid = digest(b"blob\0" + content).hexdigest()
+            blob_oid = digest(
+                b"blob " + str(len(content)).encode("ascii") + b"\0" + content
+            ).hexdigest()
             self._blob_by_oid[blob_oid] = content
 
     @property
@@ -119,7 +93,9 @@ class MemoryLedger:
                 path=path,
                 mode=self._modes.get(path, ("100644", "blob"))[0],
                 object_type=self._modes.get(path, ("100644", "blob"))[1],
-                oid=digest(b"blob\0" + content).hexdigest(),
+                oid=digest(
+                    b"blob " + str(len(content)).encode("ascii") + b"\0" + content
+                ).hexdigest(),
                 size=self._listed_sizes.get(path, len(content)) if with_sizes else None,
             )
             for path, content in self._tree.items()
@@ -158,16 +134,10 @@ def accepted_coordinate(
     )
 
 
-def predecessor_digest() -> str:
-    return ArtifactDigest("33" * 32).tagged
-
-
 __all__ = [
     "COMPILER_DIGEST",
     "MemoryLedger",
     "SEMANTIC_ROOT",
     "accepted_coordinate",
-    "fixture_bytes",
-    "predecessor_digest",
-    "presentation_bytes",
+    "subject_bytes",
 ]

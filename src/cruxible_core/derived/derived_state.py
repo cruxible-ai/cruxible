@@ -80,21 +80,14 @@ class SnapshotTree(Mapping[str, bytes]):
 
     def claim_items(self, statement: ClaimStatement) -> tuple[tuple[str, bytes], ...]:
         if self._accepted_reader is not None:
-            from cruxible_core.indexes.evaluated_state import (
-                EvaluationRows,
-                FrozenProjectionStorage,
-            )
+            from cruxible_core.indexes.evaluated_state import EvaluationRows
 
+            base = EvaluationRows(self._accepted_reader())
             try:
-                base = EvaluationRows(self._accepted_reader())
-            except FrozenProjectionStorage:
-                pass
-            else:
-                try:
-                    selected = base if self._parent is None else base.overlay(self._edits)
-                    return selected.claim_items(statement)
-                finally:
-                    base.close()
+                selected = base if self._parent is None else base.overlay(self._edits)
+                return selected.claim_items(statement)
+            finally:
+                base.close()
         # Cold source-only ingress remains the exact full builder oracle.
         rows = []
         for path in self:

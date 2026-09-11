@@ -308,9 +308,7 @@ def _update_p2_b0_artifact_codec_golden() -> None:
             raise TypeError("P2-B0 codec artifact identity is malformed")
         if not isinstance(model, dict):
             raise TypeError("P2-B0 codec artifact model is malformed")
-        p2_b0_path = (
-            current_path if kind == "presentation" else current_path.removesuffix(".json") + ".yaml"
-        )
+        p2_b0_path = current_path.removesuffix(".json") + ".yaml"
         compact = canonical_bytes(model) + b"\n"
         raw["p2_b0_path"] = p2_b0_path
         raw["compact_wire"] = compact.decode("utf-8")

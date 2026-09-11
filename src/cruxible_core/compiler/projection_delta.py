@@ -20,7 +20,6 @@ from cruxible_core.compiler.projection_tree import _read_registered_entries
 from cruxible_core.indexes.projection import (
     AcceptedProjectionCoordinate,
     AssemblerRequest,
-    AssemblerRequestV2,
     CandidateGenerationProjectionCoordinate,
     projection_manifest_name,
 )
@@ -36,9 +35,7 @@ if TYPE_CHECKING:
     from cruxible_core.compiler.assembler import ProjectionAssembler
 
 # These compilers emit rows owned by their artifact identity. Promotion outputs
-# can emit Procedure-owned rows; fixtures allow extensions and presentation can
-# name arbitrary owners.
-# Their updates need an explicit row-ownership adapter before using this path.
+# can emit Procedure-owned rows and still use full current reconstruction.
 _LOCAL_KINDS = frozenset(
     {
         "document",
@@ -86,8 +83,6 @@ def populate_successor(
     timings: dict[str, int],
 ) -> dict[str, int] | None:
     """Update an independently staged database, or select the cold path before writing."""
-    if not isinstance(request, AssemblerRequestV2):
-        return None
     bundle, base = delta.bundle, delta.base
     if not isinstance(assembler.accepted, CandidateGenerationProjectionCoordinate):
         raise ProjectionIntegrityError("an accepted rebuild cannot consume a candidate delta")
@@ -104,7 +99,7 @@ def populate_successor(
     if any(member.artifact_kind not in _LOCAL_KINDS for member in bundle.record.members):
         return None
 
-    parent_request = AssemblerRequestV2(
+    parent_request = AssemblerRequest(
         instance_id=base.instance_id,
         repository_path=base.repository_path,
         git_object_format=base.git_object_format,
@@ -154,14 +149,6 @@ def populate_successor(
     members, inputs = _timed(timings, "git_traversal", changed_inputs)
     with bind_projection(parent_manifest, expected=base) as parent:
         parent.require_source_authentication(repository=assembler._repository)
-        # Fixture extensions and presentation rows can be owned by arbitrary
-        # subjects, including a changed artifact. They need full reconstruction
-        # even when their own source files are unchanged.
-        if (
-            parent._connection.execute("SELECT 1 FROM fixtures LIMIT 1").fetchone()
-            or parent._connection.execute("SELECT 1 FROM presentation_facts LIMIT 1").fetchone()
-        ):
-            return None
         records = (*delta.verified_prefix, (bundle.record_path, bundle.record))
         parsed = _timed(
             timings,

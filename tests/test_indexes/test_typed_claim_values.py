@@ -20,7 +20,6 @@ from cruxible_client.contracts.claims import (
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
 from cruxible_core.compiler.assembler import PYTHON_REFERENCE_ASSEMBLER
 from cruxible_core.compiler.projection_artifacts import parse_projection_tree
-from cruxible_core.indexes.projection import AssemblerRequest
 from cruxible_core.indexes.sqlite import ProjectionHandle, initialize_projection_database
 from cruxible_core.indexes.typed_state import TypedStateReader
 from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
@@ -55,7 +54,6 @@ def _stored_claim(claim_world, tmp_path, claim):
         request=request,
         parsed=parsed,
         sources={path: content},
-        registry=assembler.registry,
         assembler_implementation=PYTHON_REFERENCE_ASSEMBLER,
         bodies=instance.body_store(),
     )
@@ -75,7 +73,12 @@ def _stored_claim(claim_world, tmp_path, claim):
         row = dict(connection.execute("SELECT * FROM claims").fetchone())
         assert row["artifact_digest"] == claim_artifact_digest(claim).tagged
         assert row["statement_digest"] == claim_statement_digest(claim.statement).tagged
-        assert connection.execute("SELECT COUNT(*) FROM semantic_facts").fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name='semantic_facts'"
+            ).fetchone()[0]
+            == 0
+        )
     return row
 
 
@@ -168,9 +171,8 @@ def test_subject_and_object_nonwhole_selectors_roundtrip(claim_world, tmp_path):
     )
 
 
-@pytest.mark.parametrize("storage_version", [1, 2])
 def test_filtered_claim_selection_distinguishes_selectors_before_materialization(
-    claim_world, tmp_path, storage_version
+    claim_world, tmp_path
 ):
     instance, path, original = claim_world
     address = SemanticAddress.procedure_node("procedures/selected.json", "inspect")
@@ -180,8 +182,6 @@ def test_filtered_claim_selection_distinguishes_selectors_before_materialization
     content = render_claim(claim)
     assembler = instance.projection_assembler()
     request = assembler.request(output_staging_directory=tmp_path / ".stage-filter")
-    if storage_version == 1:
-        request = AssemblerRequest(**request.model_dump(exclude={"tag", "storage_schema_version"}))
     parsed = parse_projection_tree(
         {path: content},
         registry=assembler.registry,
@@ -195,7 +195,6 @@ def test_filtered_claim_selection_distinguishes_selectors_before_materialization
         request=request,
         parsed=parsed,
         sources={path: content},
-        registry=assembler.registry,
         assembler_implementation=PYTHON_REFERENCE_ASSEMBLER,
         bodies=instance.body_store(),
     )
@@ -210,7 +209,6 @@ def test_filtered_claim_selection_distinguishes_selectors_before_materialization
         handle = SimpleNamespace(
             _connection=connection,
             _closed=False,
-            typed=object() if storage_version == 2 else None,
             claim=materialize,
         )
         for mismatched in (

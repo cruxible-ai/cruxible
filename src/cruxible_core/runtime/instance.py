@@ -41,7 +41,6 @@ from cruxible_client.contracts.ledger_mirror import validate_mirror_url
 from cruxible_client.contracts.principals import (
     PrincipalRegistrySnapshot,
     parse_principal_record,
-    principal_registry_from_tree,
 )
 from cruxible_client.contracts.temporal import format_datetime, utc_now
 from cruxible_client.contracts.types import (
@@ -1031,18 +1030,13 @@ class PlaybillInstance:
                 semantic_root=coordinate.semantic_root, principals=self._verified_genesis.principals
             )
         with self.bind_accepted_projection(coordinate) as projection:
-            if projection.typed is not None:
-                registry = projection.typed.principal_registry()
-                generation = self._generation_for_oid(coordinate.git_oid)
-                if generation is None or registry != generation.principals:
-                    raise PrincipalIntegrityError(
-                        "indexed principals differ from the replay-verified accepted registry"
-                    )
-                return registry
-            # Frozen v1 publications have no typed principal relation.
-            return principal_registry_from_tree(
-                self.immutable_tree_at(coordinate.git_oid), semantic_root=coordinate.semantic_root
-            )
+            registry = projection.typed.principal_registry()
+            generation = self._generation_for_oid(coordinate.git_oid)
+            if generation is None or registry != generation.principals:
+                raise PrincipalIntegrityError(
+                    "indexed principals differ from the replay-verified accepted registry"
+                )
+            return registry
 
     def require_accepted_principal(
         self, coordinate: AcceptedProjectionCoordinate, principal_id: str
@@ -1052,19 +1046,13 @@ class PlaybillInstance:
             self.accepted_principal_registry(coordinate).require_active(principal_id)
             return
         with self.bind_accepted_projection(coordinate) as projection:
-            if projection.typed is not None:
-                principal = projection.typed.principal(principal_id, active=True)
-                path = f"principals/{principal_id}.json"
-                raw = self.blob_at(coordinate.git_oid, path)
-                if raw is None or principal != parse_principal_record(raw, path=path):
-                    raise PrincipalIntegrityError(
-                        "indexed principal differs from its exact accepted Git record"
-                    )
-            else:
-                principal_registry_from_tree(
-                    self.immutable_tree_at(coordinate.git_oid),
-                    semantic_root=coordinate.semantic_root,
-                ).require_active(principal_id)
+            principal = projection.typed.principal(principal_id, active=True)
+            path = f"principals/{principal_id}.json"
+            raw = self.blob_at(coordinate.git_oid, path)
+            if raw is None or principal != parse_principal_record(raw, path=path):
+                raise PrincipalIntegrityError(
+                    "indexed principal differs from its exact accepted Git record"
+                )
 
     def proposal_service(self) -> ProposalService:
         """Bind PB-C proposal evaluation to authenticated main and inert storage."""
@@ -1393,10 +1381,9 @@ class PlaybillInstance:
             )
             if manifest.exists():
                 with bind_projection(manifest, expected=coordinate) as projection:
-                    if projection.typed is not None:
-                        projection.require_source_authentication(repository=self._ledger)
-                        return projection.artifact_envelopes(paths=changed)
-            # Missing historical publications and frozen v1 pieces derive
+                    projection.require_source_authentication(repository=self._ledger)
+                    return projection.artifact_envelopes(paths=changed)
+            # Missing historical publications derive
             # membership from retained contracts. Document bodies and promoted
             # output availability are independent of accepted membership.
             sources = {

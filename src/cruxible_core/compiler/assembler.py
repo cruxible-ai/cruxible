@@ -7,7 +7,7 @@ import sys
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, Literal, Protocol, TypeVar
+from typing import TYPE_CHECKING, Final, Protocol, TypeVar
 
 from cruxible_client.contracts.errors import (
     ProjectionCoordinateError,
@@ -23,20 +23,15 @@ from cruxible_core.compiler.compiler import (
 )
 from cruxible_core.compiler.projection_artifacts import ParsedProjectionTree, parse_projection_tree
 from cruxible_core.compiler.projection_tree import read_registered_tree
-from cruxible_core.evidence.citation_relations import build_citation_relation_facts
 from cruxible_core.indexes.projection import (
     AcceptedCoordinate,
     AcceptedProjectionCoordinate,
     AssemblerRequest,
-    AssemblerRequestV2,
     AssemblerResult,
-    AssemblerResultV2,
     BuildInstrumentation,
     CandidateGenerationProjectionCoordinate,
     ProjectionManifest,
-    ProjectionManifestV2,
     ProjectionPiece,
-    ProjectionPieceV2,
     projection_manifest_name,
     projection_piece_name,
     render_projection_manifest,
@@ -168,13 +163,11 @@ class ProjectionAssembler:
         bodies: BodyProjectionProtocol | None = None,
         accepted_coordinates_by_sequence: Mapping[int, AcceptedCoordinate] | None = None,
         resolve_claim_digest: Callable[[str], tuple[str, ...]] | None = None,
-        storage_schema_version: Literal[1, 2] = 2,
     ) -> None:
         if publication_directory.is_symlink() or not publication_directory.is_dir():
             raise ProjectionPublicationError(
                 "projection publication directory must be an existing regular directory"
             )
-        self.storage_schema_version = storage_schema_version
         self._repository = repository
         self.accepted = accepted
         self.publication_directory = publication_directory.resolve(strict=True)
@@ -188,8 +181,7 @@ class ProjectionAssembler:
     def request(self, *, output_staging_directory: Path) -> AssemblerRequest:
         """Create the exact serializable request for this verified coordinate."""
 
-        request_type = AssemblerRequestV2 if self.storage_schema_version == 2 else AssemblerRequest
-        return request_type(
+        return AssemblerRequest(
             instance_id=self.accepted.instance_id,
             repository_path=self.accepted.repository_path,
             git_object_format=self.accepted.git_object_format,
@@ -314,12 +306,7 @@ class ProjectionAssembler:
             _checkpoint(PROJECTION_PIECE_DIRECTORY_FSYNC, "after", crash_hook)
 
         _timed(timings, "fsync", publish_piece)
-        typed_storage = isinstance(request, AssemblerRequestV2)
-        manifest_type: type[ProjectionManifest] = (
-            ProjectionManifestV2 if typed_storage else ProjectionManifest
-        )
-        piece_type: type[ProjectionPiece] = ProjectionPieceV2 if typed_storage else ProjectionPiece
-        manifest = manifest_type(
+        manifest = ProjectionManifest(
             instance_id=request.instance_id,
             git_object_format=request.git_object_format,
             git_oid=request.git_oid,
@@ -328,7 +315,7 @@ class ProjectionAssembler:
             compiler_digest=request.compiler_digest,
             schema_version=request.schema_version,
             pieces=(
-                piece_type(
+                ProjectionPiece(
                     ordinal=0,
                     name=piece_name,
                     byte_length=byte_length,
@@ -369,11 +356,9 @@ class ProjectionAssembler:
         staging.rmdir()
         _fsync_directory(self.publication_directory)
 
-        if typed_storage:
-            record_source_built_piece(final_piece, accepted=self.accepted, manifest=manifest)
+        record_source_built_piece(final_piece, accepted=self.accepted, manifest=manifest)
 
-        result_type: type[AssemblerResult] = AssemblerResultV2 if typed_storage else AssemblerResult
-        return result_type(
+        return AssemblerResult(
             manifest_path=str(final_manifest),
             manifest=manifest,
             git_oid=request.git_oid,
@@ -430,28 +415,9 @@ class ProjectionAssembler:
                 accepted_coordinates_by_sequence=self.accepted_coordinates_by_sequence,
             ),
         )
-        if (
-            not isinstance(request, AssemblerRequestV2)
-            and self.bodies is not None
-            and self.registry.supports(
-                "playbill.citation_relation.use", 1, classification="semantic"
-            )
-        ):
-            # Frozen storage v1 commits these exact relation payloads. New
-            # publications use D's normalized tables without duplicate facts.
-            parsed = ParsedProjectionTree(
-                envelopes=parsed.envelopes,
-                pins=parsed.pins,
-                retired_identities=parsed.retired_identities,
-                semantic_facts=(
-                    *parsed.semantic_facts,
-                    *build_citation_relation_facts(blob_map, bodies=self.bodies),
-                ),
-                presentation_facts=parsed.presentation_facts,
-            )
         parsed = _timed(timings, "sort", lambda: _sorted_projection_tree(parsed))
         resolver = self.resolve_claim_digest
-        if isinstance(request, AssemblerRequestV2) and resolver is None:
+        if resolver is None:
             from cruxible_core.indexes.typed_sqlite import cold_claim_digest_resolver
 
             resolver = cold_claim_digest_resolver(
@@ -469,7 +435,6 @@ class ProjectionAssembler:
                 staged_piece,
                 request=request,
                 parsed=parsed,
-                registry=self.registry,
                 assembler_implementation=PYTHON_REFERENCE_ASSEMBLER,
                 sources=blob_map,
                 bodies=self.bodies,
@@ -498,17 +463,6 @@ def _sorted_projection_tree(parsed: ParsedProjectionTree) -> ParsedProjectionTre
         semantic_facts=tuple(
             sorted(
                 parsed.semantic_facts,
-                key=lambda fact: (
-                    fact.schema_id.encode("utf-8"),
-                    fact.schema_version,
-                    fact.subject_identity.encode("utf-8"),
-                    fact.fact_key.encode("utf-8"),
-                ),
-            )
-        ),
-        presentation_facts=tuple(
-            sorted(
-                parsed.presentation_facts,
                 key=lambda fact: (
                     fact.schema_id.encode("utf-8"),
                     fact.schema_version,

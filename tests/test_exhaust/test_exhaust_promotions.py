@@ -398,7 +398,7 @@ def test_promotion_passes_proposal_replay_and_projects_canonical_output(
     )
     assert updates == [frozenset({"documents/unrelated.json"})]
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as handle:
-        facts = handle.semantic_facts("playbill.procedure.track_record")
+        facts = handle.typed.facts("playbill.procedure.track_record")
         assert len(facts) == 1
         assert facts[0].value == projected
         expected_rows = _rows(handle.index_path)

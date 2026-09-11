@@ -356,25 +356,21 @@ def _current_dependents(
     """Return every live or retired Claim directly governed by one ClaimType."""
 
     from cruxible_core.derived.derived_state import SnapshotTree
-    from cruxible_core.indexes.evaluated_state import FrozenProjectionStorage, SelectionSpec
+    from cruxible_core.indexes.evaluated_state import SelectionSpec
 
     if isinstance(tree, SnapshotTree) and tree._accepted_reader is not None:
         selection = SelectionSpec(tree._accepted_reader)
         if tree._parent is not None:
             selection = selection.overlay(tree._edits)
-        try:
-            rows = selection.call(lambda selected: selected.claim_type_items(identity))
-        except FrozenProjectionStorage:
-            pass
-        else:
-            claims = ((path, parse_claim(content, path=path)) for path, content in rows)
-            return {
-                claim.identity.name: (path, claim)
-                for path, claim in claims
-                if _include_migration_dependent(
-                    artifact_kind="claim", lifecycle_state=claim.lifecycle.state
-                )
-            }
+        rows = selection.call(lambda selected: selected.claim_type_items(identity))
+        claims = ((path, parse_claim(content, path=path)) for path, content in rows)
+        return {
+            claim.identity.name: (path, claim)
+            for path, claim in claims
+            if _include_migration_dependent(
+                artifact_kind="claim", lifecycle_state=claim.lifecycle.state
+            )
+        }
 
     result: dict[str, tuple[str, ClaimArtifactAny]] = {}
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):

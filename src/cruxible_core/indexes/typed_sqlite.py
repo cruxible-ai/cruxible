@@ -1,4 +1,4 @@
-"""Version-two physical publication mechanics for the shared typed directory."""
+"""Physical publication mechanics for the current typed directory."""
 
 # ruff: noqa: E501
 
@@ -12,7 +12,6 @@ from typing import Any
 
 from cruxible_client.contracts.canonical import ArtifactCodec, file_digest, is_candidate_card_path
 from cruxible_client.contracts.errors import ProjectionIntegrityError
-from cruxible_client.contracts.projection_extensions import ProjectionExtensionRegistry
 from cruxible_core.compiler.projection_artifacts import ParsedProjectionTree
 from cruxible_core.indexes.evidence.citation_sql import (
     SCHEMA_SQL,
@@ -20,7 +19,6 @@ from cruxible_core.indexes.evidence.citation_sql import (
     remove_owner_citations,
 )
 from cruxible_core.indexes.projection import AssemblerRequest
-from cruxible_core.indexes.sqlite_v1 import _TABLE_SPECS
 from cruxible_core.indexes.typed_state import (
     OWNER_CODECS,
     insert_owners,
@@ -28,15 +26,21 @@ from cruxible_core.indexes.typed_state import (
     schema_sql,
 )
 
-_METADATA_TABLES = ("compiler_coordinates", "generation_metadata", "assembler_metadata")
-# Extensible fixture output remains a true extension boundary, not a duplicate
-# copy of the built-in records now owned by typed tables and exact Git sources.
-_EXTENSION_TABLES = (
-    "semantic_facts",
-    "projection_fact_schemas",
-    "presentation_facts",
-    "presentation_fact_schemas",
-)
+_METADATA_SQL = """
+CREATE TABLE compiler_coordinates (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    schema_version INTEGER NOT NULL, compiler_digest TEXT NOT NULL
+) STRICT;
+CREATE TABLE assembler_metadata (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    implementation TEXT NOT NULL, contract_version INTEGER NOT NULL
+) STRICT;
+CREATE TABLE generation_metadata (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    instance_id TEXT NOT NULL, git_object_format TEXT NOT NULL, git_oid TEXT NOT NULL,
+    semantic_root TEXT NOT NULL, generation_root TEXT NOT NULL
+) STRICT;
+"""
 
 
 def cold_claim_digest_resolver(
@@ -117,7 +121,6 @@ def parse_static_owners(sources: Mapping[str, bytes], *, accepted: Any) -> Parse
     )
     from cruxible_core.compiler.projection_artifacts import (
         ArtifactEnvelopeRow,
-        FixtureArtifact,
         PinRow,
         parse_projection_tree,
     )
@@ -128,15 +131,8 @@ def parse_static_owners(sources: Mapping[str, bytes], *, accepted: Any) -> Parse
         path: None if is_candidate_card_path(path) else kinds.resolve_path(path) for path in sources
     }
     documents = {path: body for path, body in sources.items() if source_kinds[path] == "document"}
-    fixtures = {path: body for path, body in sources.items() if source_kinds[path] == "fixture"}
     parsed = parse_projection_tree(
-        {
-            path: body
-            for path, body in sources.items()
-            if path not in documents
-            and path not in fixtures
-            and source_kinds[path] != "presentation"
-        },
+        {path: body for path, body in sources.items() if path not in documents},
         registry=projection_registry_for_compiler(accepted.compiler),
         artifact_kinds=kinds,
         artifact_codec=codec,
@@ -164,31 +160,6 @@ def parse_static_owners(sources: Mapping[str, bytes], *, accepted: Any) -> Parse
                     "one artifact pins the same dependency identity at conflicting digests"
                 )
             pins[key] = PinRow(document.identity, pin.target_identity, pin.target_digest)
-    # Extension declarations govern produced facts, not the static fixture owner.
-    # Read its accepted source contract without substituting the default registry.
-    for path, content in fixtures.items():
-        fixture = FixtureArtifact.model_validate_json(content)
-        envelopes.append(
-            ArtifactEnvelopeRow(
-                fixture.artifact_id,
-                fixture.kind,
-                fixture.tag,
-                path,
-                file_digest(content).tagged,
-                fixture.predecessor_digest,
-                fixture.revision,
-            )
-        )
-        for fixture_pin in fixture.pins:
-            key = (fixture.artifact_id, fixture_pin.target_identity)
-            previous = pins.get(key)
-            if previous is not None and previous.target_digest != fixture_pin.target_digest:
-                raise ProjectionIntegrityError(
-                    "one artifact pins the same dependency identity at conflicting digests"
-                )
-            pins[key] = PinRow(
-                fixture.artifact_id, fixture_pin.target_identity, fixture_pin.target_digest
-            )
     return replace(
         parsed,
         envelopes=tuple(sorted(envelopes, key=lambda row: row.identity)),
@@ -200,8 +171,8 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
     """Cold completeness proof for static owner selection; requires no live CAS.
 
     Covers all member commitments, every registered typed owner field, principal
-    rows and both pin kinds. Citation envelope availability and presentation
-    outputs are evaluated under their own live/source rules, outside this proof.
+    rows and both pin kinds. Citation envelope availability is evaluated under
+    its own live source rules, outside this proof.
     """
     from cruxible_core.compiler.compiler import (
         artifact_codec_for_compiler,
@@ -256,14 +227,7 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
 
 
 def complete_schema_sql() -> str:
-    specs = [spec for spec in _TABLE_SPECS if spec.name in (*_METADATA_TABLES, *_EXTENSION_TABLES)]
-    statements = [schema_sql(), SCHEMA_SQL]
-    for spec in specs:
-        statements.append(spec.create_sql + ";")
-        statements.extend(
-            f"CREATE INDEX {name} ON {spec.name} ({columns});" for name, columns in spec.indexes
-        )
-    return "\n".join(statements)
+    return "\n".join((schema_sql(), SCHEMA_SQL, _METADATA_SQL))
 
 
 def schema_objects(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
@@ -298,7 +262,7 @@ def logical_export(connection: sqlite3.Connection) -> dict[str, object]:
         rows = connection.execute(f"SELECT * FROM {name} ORDER BY {','.join(keys)}").fetchall()
         tables.append({"name": name, "sql": sql, "rows": [list(row) for row in rows]})
     return {
-        "storage_schema_version": 2,
+        "storage_schema_version": 3,
         "schema": [list(row) for row in schema_objects(connection)],
         "tables": tables,
     }
@@ -406,12 +370,11 @@ def initialize(
     assembler_implementation: str,
     resolve_digest: Callable[[str], Iterable[str]] | None = None,
     bodies: Any = None,
-    registry: ProjectionExtensionRegistry | None = None,
 ) -> dict[str, int]:
     connection = sqlite3.connect(path)
     try:
         connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("PRAGMA user_version=2")
+        connection.execute("PRAGMA user_version=3")
         connection.executescript(complete_schema_sql())
         replace_rows(
             connection,
@@ -440,47 +403,6 @@ def initialize(
                 request.generation_root,
             ),
         )
-        from cruxible_client.contracts.canonical import canonical_bytes
-
-        fixture_ids = {row.identity for row in parsed.envelopes if row.kind == "fixture"}
-        for table, facts, declarations in (
-            (
-                "semantic_facts",
-                tuple(f for f in parsed.semantic_facts if f.subject_identity in fixture_ids),
-                "projection_fact_schemas",
-            ),
-            ("presentation_facts", parsed.presentation_facts, "presentation_fact_schemas"),
-        ):
-            connection.executemany(
-                f"INSERT INTO {table} VALUES (?,?,?,?,?)",
-                [
-                    (
-                        fact.schema_id,
-                        fact.schema_version,
-                        fact.subject_identity,
-                        fact.fact_key,
-                        canonical_bytes(fact.value).decode(),
-                    )
-                    for fact in facts
-                ],
-            )
-            if registry is not None:
-                keys = {(fact.schema_id, fact.schema_version) for fact in facts}
-                selected = registry.declarations(
-                    "semantic" if table == "semantic_facts" else "presentation"
-                )
-                connection.executemany(
-                    f"INSERT INTO {declarations} VALUES (?,?,?)",
-                    [
-                        (
-                            declaration.schema_id,
-                            declaration.schema_version,
-                            canonical_bytes(list(declaration.constraints)).decode(),
-                        )
-                        for declaration in selected
-                        if (declaration.schema_id, declaration.schema_version) in keys
-                    ],
-                )
         connection.commit()
         verify_schema(connection)
         return row_counts(connection)

@@ -7,17 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactKindRegistry
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import (
-    CURRENT_ARTIFACT_CODEC,
     P2_B0_ARTIFACT_CODEC,
     canonical_bytes,
     file_digest,
-    pretty_canonical_bytes,
 )
 from cruxible_client.contracts.discovery import DESCRIPTOR_CLAIM_TYPE_SEEDS
 from cruxible_client.contracts.errors import ProjectionFormatError, SubjectFormatError
-from cruxible_client.contracts.projection_extensions import fixture_extension_registry
 from cruxible_client.contracts.subjects import SubjectShell, parse_subject, render_subject
 from cruxible_core.compiler.compiler import (
     P2_B0_COMPILER,
@@ -36,9 +33,6 @@ from cruxible_core.compiler.projection_artifacts import (
     P2_C_ARTIFACT_KINDS,
     PLAYBILL_ARTIFACT_KINDS,
     PLAYBILL_FORMAT_RESERVATIONS,
-    FixtureArtifact,
-    FixturePresentation,
-    parse_projection_tree,
     registered_path_kind,
 )
 
@@ -165,7 +159,6 @@ def test_p2_b0_compact_bytes_are_pinned_for_every_non_changeset_governed_kind() 
         "subject": parse_subject,
     }
     seen: set[str] = set()
-    fixture_rows: dict[str, bytes] = {}
     for row in fixture["artifacts"]:
         kind = row["kind"]
         path = row["p2_b0_path"]
@@ -176,41 +169,11 @@ def test_p2_b0_compact_bytes_are_pinned_for_every_non_changeset_governed_kind() 
             parsers[kind](content, path=path, codec=P2_B0_ARTIFACT_CODEC)
         elif kind == "principal":
             assert PrincipalRecord.model_validate_json(content).principal_id == "owner"
-        elif kind in {"fixture", "presentation"}:
-            fixture_rows[path] = content
         else:  # pragma: no cover - the fixture inventory is closed
             raise AssertionError(f"unverified P2-B0 artifact kind: {kind}")
         seen.add(kind)
 
     assert seen == set(P2_B0_ARTIFACT_KINDS.implemented_kinds()) - {"changeset"}
-    parse_projection_tree(
-        fixture_rows,
-        registry=fixture_extension_registry(),
-        artifact_kinds=P2_B0_ARTIFACT_KINDS,
-        artifact_codec=P2_B0_ARTIFACT_CODEC,
-    )
-
-
-def test_current_fixture_and_presentation_codec_does_not_depend_on_registry_identity() -> None:
-    copied_kinds = ArtifactKindRegistry(PLAYBILL_ARTIFACT_KINDS.entries())
-    fixture = FixtureArtifact(artifact_id="example", revision=1)
-    presentation = FixturePresentation(subject_identity="example", label="Example")
-    parsed = parse_projection_tree(
-        {
-            "artifacts/fixtures/example.json": pretty_canonical_bytes(
-                fixture.model_dump(mode="json")
-            ),
-            "presentation/fixtures/example.json": pretty_canonical_bytes(
-                presentation.model_dump(mode="json")
-            ),
-        },
-        registry=fixture_extension_registry(),
-        artifact_kinds=copied_kinds,
-        artifact_codec=CURRENT_ARTIFACT_CODEC,
-    )
-
-    assert parsed.envelopes[0].identity == "example"
-    assert parsed.presentation_facts[0].value == "Example"
 
 
 def test_historical_claim_type_path_error_names_the_historical_spelling() -> None:

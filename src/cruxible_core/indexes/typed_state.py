@@ -1,8 +1,8 @@
 """Typed accepted-state directory; exact source bodies remain in governed Git.
 
-This is storage schema v2. It neither changes an artifact digest nor participates
-in frozen schema-v1 logical exports. The registry is the sole owner/table codec
-mapping, including legacy Document identities and the two singleton exceptions.
+The registry maps registered kinds to their typed owners, including Document
+identities and the two singleton exceptions. Source bytes and their original
+artifact digest rules remain authoritative.
 """
 
 # ruff: noqa: E501
@@ -50,7 +50,6 @@ from cruxible_client.contracts.subjects import parse_subject
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.compiler.projection_artifacts import (
     ArtifactEnvelopeRow,
-    FixtureArtifact,
     ParsedProjectionTree,
 )
 from cruxible_core.exhaust.promotions import parse_exhaust_promotion
@@ -245,13 +244,6 @@ OWNER_CODECS = (
             ("receipt_set_manifest_digest", "TEXT NOT NULL"),
         ),
     ),
-    OwnerCodec(
-        "fixture",
-        None,
-        "fixtures",
-        lambda body, **_: FixtureArtifact.model_validate_json(body),
-        lifecycle=False,
-    ),
 )
 OWNER_BY_KIND = {owner.kind: owner for owner in OWNER_CODECS}
 OWNER_BY_IDENTITY_KIND = {
@@ -273,7 +265,7 @@ def owner_for_identity(identity: str) -> OwnerCodec | None:
     try:
         return OWNER_BY_IDENTITY_KIND.get(parse_artifact_identity(identity).kind)
     except ValueError:
-        # Legacy Document and fixture identities are resolved against indexed
+        # Document identities are resolved against indexed
         # UNION branches. Their strings are not assigned a fabricated modern kind.
         return None
 
@@ -729,7 +721,7 @@ class TypedStateReader:
         from cruxible_core.claims.closure import ArtifactDependencyStateV1
 
         row = self.envelope(identity)
-        if row is None or row.kind not in OWNER_BY_KIND or row.kind == "fixture":
+        if row is None or row.kind not in OWNER_BY_KIND:
             return None
         source = OWNER_BY_KIND[row.kind].parse(
             self.member_bytes(row.path), path=row.path, codec=self.codec
@@ -831,7 +823,7 @@ class TypedStateReader:
         rows: tuple[ArtifactEnvelopeRow, ...]
         if identity is not None:
             envelope = self.envelope(identity)
-            rows = () if envelope is None or envelope.kind == "fixture" else (envelope,)
+            rows = () if envelope is None else (envelope,)
         else:
             kind = None
             if schema_id is not None and schema_id.startswith("playbill."):

@@ -398,22 +398,6 @@
       "p2_b0_path": "exhaust-promotions/run-a.yaml"
     },
     {
-      "compact_wire": "{\"artifact_id\":\"example\",\"extension_facts\":[],\"kind\":\"fixture\",\"pins\":[],\"predecessor_digest\":null,\"revision\":1,\"tag\":\"playbill-fixture-v1\"}\n",
-      "current_path": "artifacts/fixtures/example.json",
-      "exact_member_digest": "sha256:ea91557594b93faf30195d8b407db04c8c6bb03e053582f3581776226ff72315",
-      "kind": "fixture",
-      "model": {
-        "artifact_id": "example",
-        "extension_facts": [],
-        "kind": "fixture",
-        "pins": [],
-        "predecessor_digest": null,
-        "revision": 1,
-        "tag": "playbill-fixture-v1"
-      },
-      "p2_b0_path": "artifacts/fixtures/example.yaml"
-    },
-    {
       "compact_wire": "{\"acquisition_policy\":null,\"artifact_format\":\"playbill-line-v1\",\"budgets\":{\"max_capture_bytes\":0,\"max_items\":100,\"max_provider_calls\":0,\"max_wall_clock_microseconds\":1000000},\"epsilon\":{\"$decimal\":\"0.1\"},\"identity\":{\"kind\":\"Line\",\"name\":\"triage-hourly\"},\"lifecycle\":{\"predecessor_digest\":null,\"state\":\"live\"},\"occurrence_epoch\":1,\"parameters\":{\"status\":\"open\"},\"pins\":[{\"artifact_digest\":\"sha256:4d7f6e912d3d84ff23196bd8c29f99654f59a896b61e55db0ed7b14118090627\",\"role\":\"procedure\",\"target\":{\"kind\":\"Procedure\",\"name\":\"triage\"}},{\"artifact_digest\":\"sha256:3c9d71cf8fd8c28641da6ffe5b38b4017d31d0a8fd95e0d184514d2e274c36a7\",\"role\":\"query\",\"target\":{\"kind\":\"QueryDefinition\",\"name\":\"claims-by-status\"}}],\"procedure\":{\"artifact_digest\":\"sha256:4d7f6e912d3d84ff23196bd8c29f99654f59a896b61e55db0ed7b14118090627\",\"role\":\"procedure\",\"target\":{\"kind\":\"Procedure\",\"name\":\"triage\"}},\"requested_terminal_rung\":2,\"slot_bindings\":[{\"artifact_pin\":{\"artifact_digest\":\"sha256:3c9d71cf8fd8c28641da6ffe5b38b4017d31d0a8fd95e0d184514d2e274c36a7\",\"role\":\"query\",\"target\":{\"kind\":\"QueryDefinition\",\"name\":\"claims-by-status\"}},\"slot_name\":\"query\",\"tag\":\"playbill-line-slot-binding-v1\"}],\"trigger_policy\":{\"kind\":\"manual\",\"tag\":\"playbill-manual-trigger-v1\"}}\n",
       "current_path": "lines/triage-hourly.json",
       "exact_member_digest": "sha256:03b7b7d75832feb78f49d1a42e112039504816cb41504deb6e666bc7639a21c2",
@@ -489,18 +473,6 @@
         }
       },
       "p2_b0_path": "lines/triage-hourly.yaml"
-    },
-    {
-      "compact_wire": "{\"label\":\"Example\",\"subject_identity\":\"example\",\"tag\":\"playbill-fixture-presentation-v1\"}\n",
-      "current_path": "presentation/fixtures/example.json",
-      "exact_member_digest": "sha256:12777ce87cdc319c2c5e45701b60b85671764bbf71fa4d586382a1f996c8f26e",
-      "kind": "presentation",
-      "model": {
-        "label": "Example",
-        "subject_identity": "example",
-        "tag": "playbill-fixture-presentation-v1"
-      },
-      "p2_b0_path": "presentation/fixtures/example.json"
     },
     {
       "compact_wire": "{\"algorithm\":\"ed25519-v1\",\"kind\":\"ordinary\",\"principal_id\":\"owner\",\"public_key\":\"0202020202020202020202020202020202020202020202020202020202020202\",\"status\":\"active\",\"tag\":\"playbill-principal-v1\"}\n",
