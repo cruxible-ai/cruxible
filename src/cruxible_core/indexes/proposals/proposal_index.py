@@ -591,9 +591,9 @@ def close_working_database(
     """One owner finalizer; no component finalizers race a WAL checkpoint.
 
     The proof contains values only, never its owner or a bound callback. A
-    graceful close may change the physical SQLite/WAL identity, so verify the
-    old binding before closing every connection and then publish that new
-    physical identity. Unexpected source/database changes leave it untrusted.
+    graceful close may checkpoint SQLite/WAL bytes. Verify the old binding,
+    acquire exclusive SQLite ownership, and publish the checkpoint's physical
+    identity before releasing that ownership. Unexpected changes stay untrusted.
     """
     from cruxible_core.indexes.history.history_index import working_file_stamp
 
@@ -638,24 +638,44 @@ def close_working_database(
                         "SELECT source_epoch,verified_sequence,source_root FROM proposal_progress"
                     ).fetchall()
                     valid = progress == [(marker["epoch"], marker["sequence"], str(root))]
+        last = next(
+            (connection for connection in reversed(connections) if _is_open(connection)), None
+        )
         for connection in connections:
-            connection.close()
-        connections.clear()
-        if (
-            valid
-            and root is not None
-            and marker is not None
-            and ProposalIndex._marker(root) == marker
-        ):
-            after_inventory = [
-                [st.st_dev, st.st_ino, st.st_mtime_ns, st.st_ctime_ns]
-                for directory in directories
-                if not directory.is_symlink()
-                for st in (directory.stat(),)
-            ]
-            if marker["inventory"] == after_inventory:
-                marker["database_stamp"] = working_file_stamp(path)
-                ProposalIndex._write_marker(root, marker)
+            if connection is not last:
+                connection.close()
+        if valid and last is not None and root is not None and marker is not None:
+            # EXCLUSIVE mode retains ownership after COMMIT. No other SQLite
+            # writer can change the checked bytes between this lock acquisition,
+            # the WAL checkpoint, and publishing its new physical identity.
+            last.execute("PRAGMA busy_timeout=0")
+            if last.execute("PRAGMA locking_mode=EXCLUSIVE").fetchone() != ("exclusive",):
+                return
+            last.execute("BEGIN EXCLUSIVE")
+            if working_file_stamp(path) != stamp or ProposalIndex._marker(root) != marker:
+                return
+            last.commit()
+            checkpoint = last.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            after = working_file_stamp(path)
+            if (
+                checkpoint is not None
+                and checkpoint[0] == 0
+                and after is not None
+                and stamp is not None
+                and after[:2] == stamp[:2]
+            ):
+                after_inventory = [
+                    [st.st_dev, st.st_ino, st.st_mtime_ns, st.st_ctime_ns]
+                    for directory in directories
+                    if not directory.is_symlink()
+                    for st in (directory.stat(),)
+                ]
+                if marker["inventory"] == after_inventory:
+                    marker["database_stamp"] = after
+                    ProposalIndex._write_marker(root, marker)
+            # Never refresh the marker after releasing exclusive ownership.
+            # Empty WAL removal carries no bytes; any other close-time or later
+            # mutation leaves a different stamp and requires reconstruction.
     except (OSError, sqlite3.DatabaseError, ProposalIntegrityError):
         # Cleanup cannot certify a changed or unavailable source. Retain its
         # old checkpoint so the next reader must reconstruct.

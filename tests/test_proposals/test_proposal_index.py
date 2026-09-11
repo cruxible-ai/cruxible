@@ -376,3 +376,55 @@ evidence.write_withdrawal(ProposalWithdrawalRecordV1(
     assert evidence.read_withdrawal(first.admission.proposal_id).reason == "other writer"
     assert service_list_playbill_proposals(instance).entries[0].terminal_reason == "withdrawn"
     _oracle(instance)
+
+
+@pytest.mark.parametrize("replace_file", [False, True])
+def test_close_does_not_certify_mutation_after_exclusive_lock_release(tmp_path, replace_file):
+    from cruxible_core.indexes.history.history_index import AcceptedHistoryIndex
+
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    evidence = instance.proposal_evidence()
+    owner = instance._accepted_history_index
+    replacement = tmp_path / "replacement.sqlite3"
+    if replace_file:
+        from contextlib import closing
+
+        with (
+            closing(sqlite3.connect(owner.path)) as source,
+            closing(sqlite3.connect(replacement)) as target,
+        ):
+            source.backup(target)
+            target.execute("DELETE FROM proposals")
+            target.commit()
+
+    class MutateAfterClose:
+        def __init__(self, connection):
+            self.connection = connection
+            self.done = False
+
+        def execute(self, *args):
+            return self.connection.execute(*args)
+
+        def commit(self):
+            self.connection.commit()
+
+        def close(self):
+            self.connection.close()
+            if not self.done:
+                self.done = True
+                if replace_file:
+                    os.replace(replacement, owner.path)
+                else:
+                    with sqlite3.connect(owner.path) as changed:
+                        changed.execute("DELETE FROM proposals")
+
+    owner._connections[-1] = MutateAfterClose(owner._connections[-1])
+    owner.close()
+    restarted = AcceptedHistoryIndex(owner.path)
+    fresh = ProposalEvidenceStore(
+        evidence.root, index=restarted.proposals, transport=instance._ledger
+    )
+    assert fresh.read_admission(first.admission.proposal_id) == first.admission
+    assert restarted.proposals.reconstructions == 1
+    restarted.close()
