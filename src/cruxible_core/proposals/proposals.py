@@ -2964,6 +2964,8 @@ def _evaluate_scoped_members(
     query_facts_provider: ClaimQueryFactsProvider | None,
     replay_claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] | None,
     acceptance_laws: AcceptanceLawRegistry,
+    principal_registry_provider: Callable[[AcceptedProjectionCoordinate], PrincipalRegistrySnapshot]
+    | None,
     historical_law_coordinates: Mapping[str, tuple[str, str]],
 ) -> CandidateEvaluation:
     """Judge every scoped member under its own law and close the change set.
@@ -3067,7 +3069,13 @@ def _evaluate_scoped_members(
             rebased,
         )
 
-    principals = principal_registry_from_tree(current_tree, semantic_root=current.semantic_root)
+    principals = (
+        principal_registry_from_tree(current_tree, semantic_root=current.semantic_root)
+        if principal_registry_provider is None
+        else principal_registry_provider(current)
+    )
+    if principals.semantic_root != current.semantic_root:
+        raise ProposalIntegrityError("principal registry differs from evaluation coordinate")
     if actor_id is not None:
         try:
             principals.require_active(actor_id)
@@ -3550,6 +3558,8 @@ def evaluate_proposal_tree(
     acceptance_laws: AcceptanceLawRegistry = PLAYBILL_ACCEPTANCE_LAWS,
     historical_law_coordinates: Mapping[str, tuple[str, str]] | None = None,
     candidate_card_renderer_digest: str | None = None,
+    principal_registry_provider: Callable[[AcceptedProjectionCoordinate], PrincipalRegistrySnapshot]
+    | None = None,
     tree_state_provider: TreeStateProvider | None = None,
 ) -> CandidateEvaluation:
     """Rebase, scope, judge every member, and close: the whole evaluation.
@@ -3674,6 +3684,7 @@ def evaluate_proposal_tree(
         replay_claim_admission_accounts=replay_claim_admission_accounts,
         acceptance_laws=acceptance_laws,
         historical_law_coordinates=historical_law_coordinates or {},
+        principal_registry_provider=principal_registry_provider,
     )
 
 
@@ -3764,6 +3775,12 @@ class ProposalService:
         note_index_provider: Callable[[], ProposalNoteIndex] | None = None,
         accepted_tree_provider: Callable[[str], Mapping[str, bytes]] | None = None,
         prepared_evaluations: PreparedEvaluationAdapter | None = None,
+        principal_registry_provider: Callable[
+            [AcceptedProjectionCoordinate], PrincipalRegistrySnapshot
+        ]
+        | None = None,
+        active_principal_provider: Callable[[AcceptedProjectionCoordinate, str], None]
+        | None = None,
     ) -> None:
         self.transport = transport
         self.accepted = accepted
@@ -3789,6 +3806,8 @@ class ProposalService:
         self.tree_state_provider = tree_state_provider
         self._accepted_tree_provider = accepted_tree_provider or self.transport.read_tree
         self._prepared_evaluations = prepared_evaluations
+        self.principal_registry_provider = principal_registry_provider
+        self._active_principal_provider = active_principal_provider
 
     def submit(
         self,
@@ -3844,10 +3863,12 @@ class ProposalService:
             raise ProposalAdmissionError("current coordinate is not the accepted main ref")
         current_tree = self._accepted_tree_provider(current.git_oid)
         try:
-            principal_registry_from_tree(
-                current_tree,
-                semantic_root=current.semantic_root,
-            ).require_active(actor.actor_id)
+            if self._active_principal_provider is None:
+                principal_registry_from_tree(
+                    current_tree, semantic_root=current.semantic_root
+                ).require_active(actor.actor_id)
+            else:
+                self._active_principal_provider(current, actor.actor_id)
         except PrincipalIntegrityError as exc:
             raise ProposalAdmissionError(
                 "playbill.proposal.creator_principal_invalid: authenticated actor does not "
@@ -3903,6 +3924,7 @@ class ProposalService:
                 producer_receipt_resolver=self.producer_receipt_resolver,
                 query_facts_provider=self.query_facts_provider,
                 tree_state_provider=self.tree_state_provider,
+                principal_registry_provider=self.principal_registry_provider,
             )
         # A refused proposal has no members to summarize, so it keeps the bare
         # subject the ledger has always written for it -- unless the author said

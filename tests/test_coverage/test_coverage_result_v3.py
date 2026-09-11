@@ -21,12 +21,10 @@ from cruxible_core.coverage.contracts import (
     PlaybillCitationWindowObservationV1,
 )
 from cruxible_core.coverage.indexes import (
-    CaptureCitationInputV2,
     CoverageClaimCitationV2,
     CoverageScanBudgetV1,
     EvidenceCitationIndexV2,
     WorkingSourceContent,
-    build_evidence_citation_index_v2,
     build_working_occurrence_overlay,
 )
 from cruxible_core.coverage.manifest import coverage_manifest_body_v2
@@ -37,6 +35,10 @@ from cruxible_core.service.discovery.next import (
     PlaybillNextSourceObservationV4,
     _CitationCommitment,
     _source_citation_item,
+)
+from tests.core_support._citation_index_oracle import (
+    CaptureCitationInputV2,
+    build_evidence_citation_index_v2,
 )
 from tests.core_support._coverage_support import CITED, capture, coordinate, profile, sha256
 

@@ -29,14 +29,16 @@ from cruxible_core.coverage.contracts import (
     occurrence_identity_digest,
 )
 from cruxible_core.coverage.indexes import (
-    CaptureCitationInputV2,
     CoverageScanBudgetV1,
     accepted_logical_source,
-    build_evidence_citation_index,
-    build_evidence_citation_index_v2,
     build_working_occurrence_overlay,
     evidence_citation_index_digest,
     working_occurrence_overlay_digest,
+)
+from tests.core_support._citation_index_oracle import (
+    CaptureCitationInputV2,
+    build_evidence_citation_index,
+    build_evidence_citation_index_v2,
 )
 from tests.core_support._coverage_support import (
     CATALOG,

@@ -78,8 +78,8 @@ from cruxible_client.contracts.subjects import (
 )
 from cruxible_core.authoring.id_prefixes import resolve_id_prefix
 from cruxible_core.indexes.claims.projection_claims import ClaimProjectionView
-from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
-from cruxible_core.proposals.settlement import ChangeSetRecord
+from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.proposals.settlement import ChangeSetRecord, ChangeSetRecordAnyVersion
 from cruxible_core.query.cards import (
     ClaimTypeUsageRowV1,
     SemanticRelationV1,
@@ -394,6 +394,12 @@ def _resolved_claim_id(
     """Accept a unique CLM- prefix where a full Claim id is expected."""
 
     bare = identity.removeprefix("Claim:")
+    try:
+        claim_path(bare)
+    except ValueError:
+        pass
+    else:
+        return bare
     return resolve_id_prefix(
         bare,
         _accepted_claim_ids(instance, coordinate=coordinate),
@@ -407,11 +413,16 @@ def _accepted_claim_ids(
     *,
     coordinate: AcceptedProjectionCoordinate,
 ) -> tuple[str, ...]:
-    return tuple(
-        path.rsplit("/", 1)[-1].removesuffix(".json")
-        for path in instance.paths_at(coordinate.git_oid)
-        if path.startswith("claims/") and path.endswith(".json")
-    )
+    with instance.accepted_history_reader(
+        at=AcceptedCoordinate.from_internal(coordinate)
+    ) as history:
+        if history.sequence == 0:
+            return ()
+    with instance.bind_accepted_projection(coordinate) as projection:
+        return tuple(
+            row.identity.removeprefix("Claim:")
+            for row in projection.artifact_envelopes(kind="claim")
+        )
 
 
 def _observed_at(timestamp: str) -> datetime:
@@ -442,11 +453,11 @@ def service_get_playbill_claim(
             f"Claim not found; expected {expected}; received {identity!r}"
         ) from exc
     qualified = f"Claim:{bare}"
-    generation = next(
-        item for item in instance.accepted_history() if item.oid == coordinate.git_oid
-    )
-    if generation.sequence == 0:
-        raise ClaimNotFoundError(f"Claim not found; expected {expected}; received {identity!r}")
+    with instance.accepted_history_reader(
+        at=AcceptedCoordinate.from_internal(coordinate)
+    ) as history:
+        if history.sequence == 0:
+            raise ClaimNotFoundError(f"Claim not found; expected {expected}; received {identity!r}")
     with instance.bind_accepted_projection(coordinate) as projection:
         claim = projection.claim(qualified)
     if claim is None:
@@ -561,15 +572,10 @@ def _claim_law_evidence_index(
     *,
     at: AcceptedProjectionCoordinate,
 ) -> dict[str, ClaimLawEvidenceAny]:
-    """Return an owned mapping over the shared immutable accepted-history fold."""
+    """Materialize the explicitly requested full map from retained evidence locators."""
 
     from cruxible_core.service.evidence.evidence import _claim_read_history_index
 
-    # Individual Claim reads and bulk verdict reads need the same latest law
-    # evidence. Reuse its bounded coordinate memo, but preserve this helper's
-    # caller-owned mapping rather than exposing the memo's mutable dictionary.
-    # Admission accounts and source-dependent verdicts are still rebuilt by
-    # their readers; neither belongs in an accepted-history cache.
     return dict(_claim_read_history_index(instance, coordinate=at).law_evidence)
 
 
@@ -581,21 +587,22 @@ def _claim_law_evidence_by_artifact_index(
     """Index every accepted Claim law account in one bounded history pass."""
 
     found: dict[tuple[str, str], ClaimLawEvidenceAny] = {}
-    target_sequence = next(
-        item.sequence for item in instance.accepted_history() if item.oid == at.git_oid
-    )
-    for generation in instance.accepted_history()[1:]:
-        if generation.sequence > target_sequence:
-            break
-        record = generation.record
-        if record is None or isinstance(record, ChangeSetRecord):
-            continue
-        for evidence in record.law_evidence:
-            raw = evidence.result.get("claim_evidence")
-            if raw is None:
+    with instance.accepted_history_reader(at=AcceptedCoordinate.from_internal(at)) as history:
+        records: dict[int, ChangeSetRecordAnyVersion] = {}
+        for location in history.claim_law_locations():
+            record = records.get(location.sequence)
+            if record is None:
+                record = history.read_member_record(location, instance.blob_at)
+                records[location.sequence] = record
+            if isinstance(record, ChangeSetRecord):
                 continue
-            parsed = parse_claim_law_evidence(raw)
-            found[(evidence.path, parsed.artifact_digest)] = parsed
+            evidence = next(
+                item for item in record.law_evidence if item.path == location.member_path
+            )
+            raw = evidence.result.get("claim_evidence")
+            if raw is not None:
+                parsed = parse_claim_law_evidence(raw)
+                found.setdefault((evidence.path, parsed.artifact_digest), parsed)
     return found
 
 
@@ -603,12 +610,11 @@ def _accepted_generation_time(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
 ) -> datetime:
-    generation = next(
-        item for item in instance.accepted_history() if item.oid == coordinate.git_oid
-    )
-    if generation.record is None:
-        raise ProposalIntegrityError("a Claim read requires an accepted candidate timestamp")
-    return datetime.fromisoformat(generation.record.candidate.timestamp.replace("Z", "+00:00"))
+    with instance.accepted_history_reader(
+        at=AcceptedCoordinate.from_internal(coordinate)
+    ) as history:
+        record = history.read_generation_record(history.sequence, instance.blob_at)
+    return datetime.fromisoformat(record.candidate.timestamp.replace("Z", "+00:00"))
 
 
 def _claim_admission_tree(
@@ -617,15 +623,22 @@ def _claim_admission_tree(
     claim: ClaimArtifactAny,
     coordinate: AcceptedProjectionCoordinate,
 ) -> dict[str, bytes]:
-    """Read exactly the accepted paths one Claim's admission accounts resolve.
-
-    ``_claim_admission_accounts`` reads the Claim's own ClaimType and every
-    accepted CaptureContract, and nothing else in the generation. Listing the
-    contract names costs one ``ls-tree`` with no blob payloads, so one Claim
-    read never materializes the whole generation to answer for one Claim.
-    """
-
+    """Read the ClaimType and CaptureContracts cited by this exact accepted Claim."""
     wanted = [claim_type_path(claim.statement.predicate)]
+    with instance.bind_accepted_projection(coordinate) as projection:
+        if projection.typed is not None:
+            wanted.extend(
+                row[0]
+                for row in projection.typed.connection.execute(
+                    "SELECT DISTINCT t.path FROM citation_uses u "
+                    "JOIN captures c ON c.capture_digest=u.capture_digest "
+                    "JOIN capture_contracts t ON t.artifact_digest=c.contract_digest "
+                    "WHERE u.owner_kind='Claim' AND u.owner_key=? ORDER BY t.path",
+                    (claim.identity.qualified,),
+                )
+            )
+            return {path: projection.typed.member_bytes(path) for path in wanted}
+    # Frozen storage-v1 has no normalized citation relation.
     wanted.extend(
         path
         for path in instance.paths_at(coordinate.git_oid)

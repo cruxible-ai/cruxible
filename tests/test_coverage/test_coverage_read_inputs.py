@@ -25,15 +25,15 @@ from cruxible_core.coverage.adapter import (
     observe_working_source,
 )
 from cruxible_core.coverage.contracts import LogicalSourceIdentityV1
-from cruxible_core.coverage.indexes import (
-    CaptureCitationInputV2,
-    build_evidence_citation_index_v2,
-)
 from cruxible_core.indexes.evidence import citation_sql
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.claims.claims import _claim_from_view, service_list_playbill_claims
 from cruxible_core.service.discovery import coverage as coverage
 from cruxible_core.storage.cas import BodyAccessContext
+from tests.core_support._citation_index_oracle import (
+    CaptureCitationInputV2,
+    build_evidence_citation_index_v2,
+)
 from tests.test_authoring.test_authoring_existing_capture import shared_capture_world
 from tests.test_evidence.test_citation_retirement_relations import _retire_claim
 from tests.test_indexes.test_projection_scanner_integration import _foreign_world
@@ -131,9 +131,6 @@ def test_service_reuses_captures_and_matches_projection_route(
     monkeypatch.setattr(citation_sql, "parse_capture_envelope", counted)
     monkeypatch.setattr(
         "cruxible_core.service.claims.claims.service_list_playbill_claims", forbidden
-    )
-    monkeypatch.setattr(
-        "cruxible_core.coverage.indexes.build_evidence_citation_index_v2", forbidden
     )
     arguments = dict(
         instance_id=instance.descriptor.instance_id, observations=(observation,), at=at

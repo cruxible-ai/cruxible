@@ -13,14 +13,16 @@ from cruxible_core.coverage.contracts import (
     CoverageCommitmentMaterializationCorrupt,
 )
 from cruxible_core.coverage.indexes import (
-    CaptureCitationInputV2,
     CoverageScanBudgetV1,
     WorkingOccurrenceOverlayV2,
     WorkingSourceContent,
-    build_evidence_citation_index_v2,
     build_working_occurrence_overlay,
 )
 from cruxible_core.service.discovery.coverage import _materialized_wanted_selections
+from tests.core_support._citation_index_oracle import (
+    CaptureCitationInputV2,
+    build_evidence_citation_index_v2,
+)
 from tests.core_support._coverage_support import (
     CITED,
     HANDBOOK,

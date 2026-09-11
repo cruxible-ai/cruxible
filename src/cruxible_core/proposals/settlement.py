@@ -721,6 +721,8 @@ def prepare_generation(
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
     tree_state_provider: TreeStateProvider | None = None,
     accepted_tree_provider: Callable[[str], Mapping[str, bytes]] | None = None,
+    principal_registry_provider: Callable[[AcceptedProjectionCoordinate], PrincipalRegistrySnapshot]
+    | None = None,
 ) -> VerifiedGenerationBundle:
     """Build and verify a generation bundle without mutating main or serving state."""
 
@@ -750,6 +752,7 @@ def prepare_generation(
         wire_version=candidate.tag,
         acceptance_laws=laws,
         tree_state_provider=tree_state_provider,
+        principal_registry_provider=principal_registry_provider,
         historical_law_coordinates={
             member.path: (
                 member.law_identifier,
@@ -778,10 +781,13 @@ def prepare_generation(
     for identifier, digest in candidate.law_digests.items():
         laws.require_historical(identifier=identifier, digest=digest)
 
-    principals = principal_registry_from_tree(
-        base_tree,
-        semantic_root=base.semantic_root,
+    principals = (
+        principal_registry_from_tree(base_tree, semantic_root=base.semantic_root)
+        if principal_registry_provider is None
+        else principal_registry_provider(base)
     )
+    if principals.semantic_root != base.semantic_root:
+        raise SettlementIntegrityError("principal registry differs from settlement coordinate")
     principal_lifecycle = all(
         member.artifact_kind == "principal-lifecycle" for member in candidate.members
     )
