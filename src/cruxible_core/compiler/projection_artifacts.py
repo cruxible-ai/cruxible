@@ -769,6 +769,7 @@ def parse_projection_tree(
     coordinate: ProjectionCoordinateContext | None = None,
     accepted_coordinates_by_sequence: Mapping[int, AcceptedCoordinate] | None = None,
     verified_change_sets: tuple[tuple[str, ChangeSetRecordAnyVersion], ...] | None = None,
+    selected_member_history: tuple[tuple[str, ChangeSetRecordAnyVersion], ...] | None = None,
 ) -> ParsedProjectionTree:
     """Parse all registered blobs and produce one sorted, typed row stream."""
 
@@ -796,7 +797,10 @@ def parse_projection_tree(
     identities: dict[str, str] = {}
     change_sets: list[tuple[str, ChangeSetRecordAnyVersion]] = []
 
-    if verified_change_sets is not None:
+    if selected_member_history is not None:
+        # Only a bound typed reader supplies sparse history already verified by C.
+        change_sets = list(selected_member_history)
+    elif verified_change_sets is not None:
         # Internal activation supplies the already verified parent prefix plus
         # its verified successor. Public/recovery parsing always uses blob bytes.
         change_sets = list(verified_change_sets)
@@ -818,7 +822,9 @@ def parse_projection_tree(
             if path != expected_path:
                 raise ProjectionFormatError("change-set sequence differs from its canonical path")
             change_sets.append((path, record))
-    if [record.sequence for _path, record in change_sets] != list(range(1, len(change_sets) + 1)):
+    if selected_member_history is None and [
+        record.sequence for _path, record in change_sets
+    ] != list(range(1, len(change_sets) + 1)):
         raise ProjectionFormatError("change-set history must be contiguous from sequence one")
     accepted_change_sets = tuple(change_sets)
     accepted_coordinates = dict(accepted_coordinates_by_sequence or {})
