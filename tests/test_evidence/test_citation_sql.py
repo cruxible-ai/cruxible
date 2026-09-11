@@ -41,10 +41,6 @@ from cruxible_client.contracts.source_references import (
     ExternalSourceReferenceV1,
 )
 from cruxible_core.coverage.indexes import (
-    CaptureCitationInputV1,
-    CaptureCitationInputV2,
-    build_evidence_citation_index,
-    build_evidence_citation_index_v2,
     evidence_citation_index_digest,
 )
 from cruxible_core.evidence.citation_relations import (
@@ -63,6 +59,12 @@ from cruxible_core.indexes.evidence.citation_sql import (
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.storage.cas import ContentAddressedBodyStore
+from tests.core_support._citation_index_oracle import (
+    CaptureCitationInputV1,
+    CaptureCitationInputV2,
+    build_evidence_citation_index,
+    build_evidence_citation_index_v2,
+)
 from tests.core_support._pc_c_support import capture_contract
 from tests.test_claims.test_claims import _claim
 

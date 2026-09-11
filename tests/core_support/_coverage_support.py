@@ -35,14 +35,10 @@ from cruxible_core.coverage.contracts import (
     LogicalSourceIdentityV1,
 )
 from cruxible_core.coverage.indexes import (
-    CaptureCitationInputV1,
-    CaptureCitationInputV2,
     EvidenceCitationIndexV1,
     EvidenceCitationIndexV2,
     WorkingOccurrenceOverlayV2,
     WorkingSourceContent,
-    build_evidence_citation_index,
-    build_evidence_citation_index_v2,
     build_working_occurrence_overlay,
 )
 from cruxible_core.coverage.manifest import (
@@ -52,6 +48,12 @@ from cruxible_core.coverage.manifest import (
     coverage_manifest_body_v2,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
+from tests.core_support._citation_index_oracle import (
+    CaptureCitationInputV1,
+    CaptureCitationInputV2,
+    build_evidence_citation_index,
+    build_evidence_citation_index_v2,
+)
 
 INSTANCE_ID = "inst_coverage"
 NOW = datetime(2026, 8, 19, 9, 0, tzinfo=UTC)
