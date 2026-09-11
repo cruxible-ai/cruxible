@@ -283,9 +283,9 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
 ) -> None:
     # The operator's control namespace is asserted in place, so the sample socket
     # path has to stay inside the 103-byte AF_UNIX budget or the store takes the
-    # ruled per-user fallback. The repo's gitignored scratch prefix is the shortest
-    # root available on any checkout; the budget itself is unchanged.
-    state_root = Path(tempfile.mkdtemp(prefix=".b2-", dir=Path(__file__).resolve().parents[2]))
+    # ruled per-user fallback. Use a short system temporary root; the budget
+    # itself is unchanged.
+    state_root = Path(tempfile.mkdtemp(prefix=".b2-", dir="/tmp")).resolve()
     request.addfinalizer(lambda: shutil.rmtree(state_root, ignore_errors=True))
     materialization = state_root / "materializations" / "demo"
     materialization.mkdir(parents=True)
@@ -526,7 +526,7 @@ def test_overlong_state_root_degrades_provider_at_operator_construction(
 ) -> None:
     """Retracted P2-B2 oracle: a verified fallback keeps the Provider lane live."""
 
-    runtime_root = Path(tempfile.mkdtemp(prefix=".u8-operator-", dir=Path.cwd()))
+    runtime_root = Path(tempfile.mkdtemp(prefix=".u8-operator-", dir="/tmp"))
     request.addfinalizer(lambda: shutil.rmtree(runtime_root, ignore_errors=True))
     monkeypatch.setenv("TMPDIR", str(runtime_root))
     state_root = tmp_path / ("overlong-" + "x" * 110)

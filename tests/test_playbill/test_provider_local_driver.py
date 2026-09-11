@@ -16,6 +16,7 @@ import stat
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -72,11 +73,19 @@ def _digest(label: str) -> str:
     return "sha256:" + hashlib.sha256(label.encode()).hexdigest()
 
 
-def _lease_store(root: Path) -> ProviderProcessLeaseStore:
-    """Give direct-driver tests a disposable AF_UNIX-safe control namespace."""
+@pytest.fixture
+def _lease_store(
+    request: pytest.FixtureRequest,
+) -> Callable[[Path], ProviderProcessLeaseStore]:
+    """Own short socket namespaces for the test, including failure teardown."""
 
-    control_root = Path(tempfile.mkdtemp(prefix=".provider-control-", dir=Path.cwd()))
-    return ProviderProcessLeaseStore(root, control_root=control_root)
+    def create(root: Path) -> ProviderProcessLeaseStore:
+        # macOS's default temporary root can exceed the AF_UNIX path budget.
+        control = tempfile.TemporaryDirectory(prefix="provider-control-", dir="/tmp")
+        request.addfinalizer(control.cleanup)
+        return ProviderProcessLeaseStore(root, control_root=Path(control.name))
+
+    return create
 
 
 def _budget(*, capture_bytes: int = 2_000_000) -> ProcedureBudgetV3:
@@ -402,6 +411,7 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
 
 
 def test_local_driver_runs_in_isolated_directory_with_fd_secret_and_attribution_egress(
+    _lease_store: Callable[[Path], ProviderProcessLeaseStore],
     tmp_path: Path,
 ) -> None:
     interpreter = _fake_interpreter(tmp_path / "fake-python")
@@ -458,7 +468,9 @@ def test_local_driver_runs_in_isolated_directory_with_fd_secret_and_attribution_
     assert tuple(leases.root.glob("*.json")) == ()
 
 
-def test_local_driver_detects_raw_secret_leak_before_parsing(tmp_path: Path) -> None:
+def test_local_driver_detects_raw_secret_leak_before_parsing(
+    _lease_store: Callable[[Path], ProviderProcessLeaseStore], tmp_path: Path
+) -> None:
     interpreter = _fake_interpreter(tmp_path / "fake-python")
     # Put the secret in the ordinary payload so the pre-spawn byte check is decisive.
     context = ProviderRuntimeRunContextV1(
@@ -510,7 +522,9 @@ def test_local_driver_detects_raw_secret_leak_before_parsing(tmp_path: Path) -> 
     assert caught.value.code == "secret_leak"
 
 
-def test_secret_channel_read_descriptor_has_exactly_one_parent_owner(tmp_path: Path) -> None:
+def test_secret_channel_read_descriptor_has_exactly_one_parent_owner(
+    _lease_store: Callable[[Path], ProviderProcessLeaseStore], tmp_path: Path
+) -> None:
     leases = _lease_store(tmp_path / "secret-owner-leases")
     with _open_secret_channel({"ref": "secret"}, join_timeout_seconds=2) as secret_fd:
         assert secret_fd is not None
@@ -530,7 +544,9 @@ def test_secret_channel_read_descriptor_has_exactly_one_parent_owner(tmp_path: P
 
 
 def test_successful_invocation_kills_only_inside_the_unreaped_zombie_window(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    _lease_store: Callable[[Path], ProviderProcessLeaseStore],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     signals: list[tuple[int, int]] = []
     termination_entry: list[tuple[int | None, bool]] = []
@@ -568,7 +584,9 @@ def test_successful_invocation_kills_only_inside_the_unreaped_zombie_window(
     assert len([item for item in signals if item[1] == signal.SIGKILL]) == 1
 
 
-def test_process_recovery_kills_an_echo_verified_invocation_group(tmp_path: Path) -> None:
+def test_process_recovery_kills_an_echo_verified_invocation_group(
+    _lease_store: Callable[[Path], ProviderProcessLeaseStore], tmp_path: Path
+) -> None:
     interpreter = _fake_interpreter(tmp_path / "fake-python")
     leases = _lease_store(tmp_path / "process-leases")
     invocation_id = _digest("orphaned-invocation")
@@ -601,7 +619,7 @@ def test_process_recovery_kills_an_echo_verified_invocation_group(tmp_path: Path
 
 
 def test_process_recovery_waits_through_a_transient_permission_probe(
-    tmp_path: Path, monkeypatch
+    _lease_store: Callable[[Path], ProviderProcessLeaseStore], tmp_path: Path, monkeypatch
 ) -> None:
     leases = _lease_store(tmp_path / "process-leases")
     invocation_id = _digest("permission-probe")
@@ -648,7 +666,7 @@ def test_process_recovery_waits_through_a_transient_permission_probe(
 
 
 def test_spawned_child_is_killed_when_its_owned_lease_cannot_be_verified(
-    tmp_path: Path, monkeypatch
+    _lease_store: Callable[[Path], ProviderProcessLeaseStore], tmp_path: Path, monkeypatch
 ) -> None:
     leases = _lease_store(tmp_path / "process-leases")
     invocation_id = _digest("unverified-child")
@@ -705,6 +723,7 @@ def test_spawned_child_is_killed_when_its_owned_lease_cannot_be_verified(
 
 
 def test_wall_clock_escape_is_typed_killed_and_unfenced_only_after_death(
+    _lease_store: Callable[[Path], ProviderProcessLeaseStore],
     tmp_path: Path,
 ) -> None:
     marker = tmp_path / "alive.txt"
@@ -762,6 +781,7 @@ with open({str(marker)!r}, "a") as handle:
 
 
 def test_descendant_sweep_reaps_a_grandchild_that_leaves_the_process_session(
+    _lease_store: Callable[[Path], ProviderProcessLeaseStore],
     tmp_path: Path,
 ) -> None:
     interpreter = tmp_path / "setsid-grandchild-python"
@@ -839,6 +859,7 @@ sys.stdout.flush()
 
 
 def test_fence_survivor_never_masks_the_original_typed_refusal(
+    _lease_store: Callable[[Path], ProviderProcessLeaseStore],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -883,7 +904,9 @@ def test_every_provider_process_timeout_reads_the_operational_config_source() ->
     assert "time.monotonic() + 5" not in lease_source
 
 
-def test_recovery_removes_dead_records_without_starving_later_records(tmp_path: Path) -> None:
+def test_recovery_removes_dead_records_without_starving_later_records(
+    _lease_store: Callable[[Path], ProviderProcessLeaseStore], tmp_path: Path
+) -> None:
     leases = _lease_store(tmp_path / "recovery-leases")
     invocation_ids = tuple(_digest(f"dead-{index}") for index in range(4))
     for invocation_id in invocation_ids:
@@ -907,7 +930,9 @@ def test_recovery_removes_dead_records_without_starving_later_records(tmp_path: 
 
 
 def test_recovery_never_signals_a_reused_pid_without_exact_os_identity(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    _lease_store: Callable[[Path], ProviderProcessLeaseStore],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     leases = _lease_store(tmp_path / "reused-pid-leases")
     invocation_id = _digest("reused-pid")
@@ -937,7 +962,9 @@ def test_recovery_never_signals_a_reused_pid_without_exact_os_identity(
 
 
 def test_recovery_isolates_a_survivor_and_continues_to_later_records(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    _lease_store: Callable[[Path], ProviderProcessLeaseStore],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     leases = _lease_store(tmp_path / "isolated-recovery-leases")
     invocation_ids = (_digest("blocked"), _digest("later"))
@@ -976,6 +1003,7 @@ def test_recovery_isolates_a_survivor_and_continues_to_later_records(
 
 
 def test_malformed_recovery_record_is_removed_without_inventing_an_invocation_id(
+    _lease_store: Callable[[Path], ProviderProcessLeaseStore],
     tmp_path: Path,
 ) -> None:
     leases = _lease_store(tmp_path / "malformed-recovery-leases")
@@ -991,7 +1019,9 @@ def test_malformed_recovery_record_is_removed_without_inventing_an_invocation_id
     assert not record_path.exists()
 
 
-def test_control_namespace_is_private_and_stale_socket_is_retryable(tmp_path: Path) -> None:
+def test_control_namespace_is_private_and_stale_socket_is_retryable(
+    _lease_store: Callable[[Path], ProviderProcessLeaseStore], tmp_path: Path
+) -> None:
     leases = _lease_store(tmp_path / "private-leases")
     invocation_id = _digest("stale-socket")
     _record_path, control_path = leases.paths(invocation_id)
@@ -1018,10 +1048,9 @@ def test_control_namespaces_are_state_local_and_finalize_without_orphans(
 ) -> None:
     # The oracle is in-place locality, so the sample socket path has to stay inside
     # the 103-byte AF_UNIX budget or the store takes the ruled per-user fallback and
-    # the assertion reads a checkout name rather than the law. The repo's gitignored
-    # scratch prefix is the shortest root available on any checkout. The budget in
-    # provider_process_leases is unchanged.
-    short_root = Path(tempfile.mkdtemp(prefix=".b2-", dir=Path(__file__).resolve().parents[2]))
+    # the assertion tests fallback instead of locality. Use a short system temporary
+    # root; the budget in provider_process_leases is unchanged.
+    short_root = Path(tempfile.mkdtemp(prefix=".b2-", dir="/tmp"))
     request.addfinalizer(lambda: shutil.rmtree(short_root, ignore_errors=True))
     roots = tuple(tmp_path / f"leases-{index}" for index in range(5))
     stores = [
@@ -1059,7 +1088,7 @@ def test_overlong_control_socket_path_falls_back_to_the_private_runtime_namespac
     so rather than keeping the retracted one.
     """
 
-    runtime_root = Path(tempfile.mkdtemp(prefix=".u8-runtime-", dir=Path.cwd()))
+    runtime_root = Path(tempfile.mkdtemp(prefix=".u8-runtime-", dir="/tmp"))
     request.addfinalizer(lambda: shutil.rmtree(runtime_root, ignore_errors=True))
     runtime_root.chmod(0o755)
     monkeypatch.setattr(process_lease_module.platform, "system", lambda: system)
@@ -1081,8 +1110,7 @@ def test_overlong_control_socket_path_falls_back_to_the_private_runtime_namespac
     second = leases.paths(_digest("another-control-path"))
     assert first[1].parent == second[1].parent == leases.control_root
     assert len(os.fsencode(first[1])) <= 103
-    # The measurement above runs against a fixture runtime root under the
-    # working directory, whose absolute path is environment-dependent, so it is
+    # The measurement above runs against a temporary fixture runtime root, so it is
     # taken with a fixed-width stand-in. This one is unpatched and real: the
     # namespace the fallback constructs fits the AF_UNIX budget under the
     # canonical per-user runtime directory the law names.
@@ -1095,7 +1123,7 @@ def test_overlong_control_fallback_refuses_symlinked_namespace_component(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_root = Path(tempfile.mkdtemp(prefix=".u8-runtime-", dir=Path.cwd()))
+    runtime_root = Path(tempfile.mkdtemp(prefix=".u8-runtime-", dir="/tmp"))
     request.addfinalizer(lambda: shutil.rmtree(runtime_root, ignore_errors=True))
     target = runtime_root / "target"
     target.mkdir()
@@ -1177,7 +1205,7 @@ def test_environment_secret_keys_are_injective_across_separator_collisions(
     ],
 )
 def test_invoker_rebinds_before_spawn_and_surfaces_every_bind_refusal(
-    tmp_path: Path, code: str
+    _lease_store: Callable[[Path], ProviderProcessLeaseStore], tmp_path: Path, code: str
 ) -> None:
     binding = VerifiedProviderBindingV1(
         provider_artifact_digest=_digest("provider"),
@@ -1245,7 +1273,9 @@ def test_invoker_rebinds_before_spawn_and_surfaces_every_bind_refusal(
     assert caught.value.code == code
 
 
-def test_output_cap_refuses_before_buffering_more_than_one_extra_byte(tmp_path: Path) -> None:
+def test_output_cap_refuses_before_buffering_more_than_one_extra_byte(
+    _lease_store: Callable[[Path], ProviderProcessLeaseStore], tmp_path: Path
+) -> None:
     interpreter = tmp_path / "flooding-python"
     interpreter.write_text(
         """#!/usr/bin/env python3
@@ -1297,7 +1327,9 @@ def test_secret_scan_refuses_cheap_encoded_variants(transform) -> None:  # type:
         )
 
 
-def test_unknown_dynamic_endpoint_form_is_typed_before_spawn(tmp_path: Path) -> None:
+def test_unknown_dynamic_endpoint_form_is_typed_before_spawn(
+    _lease_store: Callable[[Path], ProviderProcessLeaseStore], tmp_path: Path
+) -> None:
     interpreter = _fake_interpreter(tmp_path / "never-spawned")
     binding = BoundLocalProviderV1(
         binding=VerifiedProviderBindingV1(
