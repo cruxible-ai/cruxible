@@ -255,6 +255,61 @@ def test_schema_tampering_and_symlinks_refuse(tmp_path, seeded):
             pass
 
 
+def test_proposal_commit_preserves_only_previously_verified_history(tmp_path, seeded):
+    index = AcceptedHistoryIndex(tmp_path / "working.sqlite3")
+    state = prefix(seeded, 2)
+    calls = []
+
+    def source(sequence):
+        calls.append(sequence)
+        return [envelope(str(sequence))]
+
+    with index.read(state, source):
+        pass
+    with index._lock, sqlite3.connect(index.path) as db:
+        db.execute("BEGIN IMMEDIATE")
+        before = index._file_stamp()
+        db.execute("CREATE TABLE proposals (proposal_id TEXT PRIMARY KEY) STRICT")
+        db.execute("INSERT INTO proposals VALUES ('p')")
+        db.commit()
+        index.proposal_committed(before)
+    with index.read(state, source) as reader:
+        assert reader.artifact("1") is not None
+    assert calls == [0, 1]
+
+    # An unexplained mutation before a known proposal update must not be
+    # laundered into readiness by its post-commit callback.
+    with sqlite3.connect(index.path) as db:
+        db.execute("DELETE FROM artifact_versions")
+    with index._lock, sqlite3.connect(index.path) as db:
+        db.execute("BEGIN IMMEDIATE")
+        before = index._file_stamp()
+        db.execute("INSERT INTO proposals VALUES ('q')")
+        db.commit()
+        index.proposal_committed(before)
+    with index.read(state, source) as reader:
+        assert reader.artifact("1") is not None
+    assert calls == [0, 1, 0, 1]
+
+
+def test_proposal_trigger_cannot_mutate_history_through_shared_database(tmp_path, seeded):
+    from cruxible_client.contracts.errors import ProjectionIntegrityError
+
+    index = AcceptedHistoryIndex(tmp_path / "working.sqlite3")
+    state = prefix(seeded, 1)
+    with index.read(state, lambda n: [envelope()]):
+        pass
+    with sqlite3.connect(index.path) as db:
+        db.execute("CREATE TABLE proposals (proposal_id TEXT PRIMARY KEY) STRICT")
+        db.execute(
+            "CREATE TRIGGER sabotage AFTER INSERT ON proposals "
+            "BEGIN DELETE FROM artifact_versions; END"
+        )
+    with pytest.raises(ProjectionIntegrityError, match="schema differs"):
+        with index.read(state, lambda n: [envelope()]):
+            pytest.fail("proposal triggers must not bypass the shared schema check")
+
+
 def test_binding_includes_compiler_and_read_handle_expires(tmp_path, seeded):
     index = AcceptedHistoryIndex(tmp_path / "history.sqlite3")
     state = prefix(seeded, 1)

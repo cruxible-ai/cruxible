@@ -59,9 +59,18 @@ CREATE TABLE IF NOT EXISTS history_progress (
 
 
 def _schema_rows(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
-    return connection.execute(
+    rows = connection.execute(
         "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name"
     ).fetchall()
+    # The shared working database also contains the proposal component. That
+    # component verifies its own tables and indexes before using them. Unknown
+    # objects and triggers still fail this check, including triggers on either
+    # component that could mutate history as a side effect of a proposal write.
+    return [
+        row
+        for row in rows
+        if not (row[0] in {"table", "index"} and row[2] in {"proposals", "proposal_progress"})
+    ]
 
 
 def _expected_schema() -> list[tuple[object, ...]]:
@@ -205,6 +214,27 @@ class AcceptedHistoryIndex:
         with self._lock:
             self._ready = None
             self._stamp = None
+
+    def proposal_committed(self, before_stamp: tuple[int, ...] | None) -> None:
+        """Preserve verified history across a known proposal-only transaction.
+
+        The proposal component holds our lock and captures ``before_stamp``
+        after acquiring its SQLite writer transaction, before changing rows.
+        Call only after commit. A previously unexplained file change must still
+        force reconciliation; this callback cannot certify that earlier change.
+        """
+        with self._lock:
+            after_stamp = self._file_stamp()
+            if (
+                self._ready is not None
+                and before_stamp is not None
+                and before_stamp == self._stamp
+                and after_stamp is not None
+                and after_stamp[:2] == before_stamp[:2]
+            ):
+                self._stamp = after_stamp
+            else:
+                self.invalidate()
 
     def _file_stamp(self) -> tuple[int, ...] | None:
         if self.path.is_symlink():
