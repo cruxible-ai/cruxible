@@ -76,7 +76,6 @@ from cruxible_core.derived.derived_state import (
     advance_accepted_tree,
 )
 from cruxible_core.derived.evaluation_state_cache import EvaluationStateCache
-from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.exhaust.producer_receipts import local_producer_receipt_resolver
 from cruxible_core.governance.keys import (
     ALLOWED_SIGNERS_FILE,
@@ -225,12 +224,6 @@ def _validate_client_principals(
     return ordered, posture
 
 
-# An accepted tree is immutable, so the only cost of a stale entry is memory.
-# Four generations cover every read path that walks a bounded lineage while
-# keeping the resident set to a handful of trees per served instance.
-_TREE_MEMO_GENERATIONS = 4
-
-
 class PlaybillInstance:
     """A verified opt-in Playbill substrate rooted outside agent workspaces."""
 
@@ -278,7 +271,6 @@ class PlaybillInstance:
         self._receive_limits = ProposalReceiveLimits()
         self._mirror_condition = threading.Condition()
         self._mirror_thread: threading.Thread | None = None
-        self._tree_memo: OrderedDict[str, dict[str, bytes]] = OrderedDict()
         # Read services keyed by accepted coordinate park their derived
         # history indexes here so activation drops them with one clear().
         # Immutable-coordinate exports survive head movement; keys include their
@@ -603,9 +595,11 @@ class PlaybillInstance:
         storage_directories = {
             name: str(path) for name, path in paths.items() if name != "credentials"
         }
-        accepted_tree = self.tree_at(self._recovered.head.oid)
+        policy_bytes = self.blob_at(self._recovered.head.oid, APPROVAL_POLICY_PATH)
+        if policy_bytes is None:
+            raise PlaybillFormatError("accepted approval policy is absent")
         approval_policy = parse_approval_policy(
-            accepted_tree[APPROVAL_POLICY_PATH],
+            policy_bytes,
             path=APPROVAL_POLICY_PATH,
         )
         return PlaybillInspection(
@@ -1522,21 +1516,9 @@ class PlaybillInstance:
         return self.derived.accepted_tree(binding, lambda: self.tree_at(oid), advance)
 
     def tree_at(self, oid: str) -> dict[str, bytes]:
-        """Read an exact Git tree only after proving the OID is accepted history.
-
-        An accepted generation's tree is immutable by construction, so the read
-        is memoized per OID behind the same acceptance proof: the proof runs on
-        every call and only the Git subprocess pair is elided. Callers keep the
-        mutable-dict contract they had before, so each hit returns a fresh
-        shallow copy (a pointer copy per path, not a byte copy).
-        """
-
+        """Explicitly materialize an owned tree after proving accepted membership."""
         self.coordinate_for_oid(oid)
-        cached = memo_get(self._tree_memo, oid)
-        if cached is None:
-            cached = self._ledger.read_tree(oid)
-            memo_put(self._tree_memo, oid, cached, capacity=_TREE_MEMO_GENERATIONS)
-        return dict(cached)
+        return self._ledger.read_tree(oid)
 
     def paths_at(self, oid: str) -> tuple[str, ...]:
         """List accepted paths without reading a single blob payload.
@@ -1547,9 +1529,6 @@ class PlaybillInstance:
         """
 
         self.coordinate_for_oid(oid)
-        cached = memo_get(self._tree_memo, oid)
-        if cached is not None:
-            return tuple(cached)
         return self._ledger.paths_at(oid)
 
     def blob_at(self, oid: str, path: str) -> bytes | None:
@@ -1561,9 +1540,6 @@ class PlaybillInstance:
         """Read an exact set of accepted paths under the same acceptance proof."""
 
         self.coordinate_for_oid(oid)
-        cached = memo_get(self._tree_memo, oid)
-        if cached is not None:
-            return {path: cached[path] for path in dict.fromkeys(paths) if path in cached}
         return self._ledger.blobs_at(oid, paths)
 
     def proposal_tree(self, oid: str, *, base_oid: str | None = None) -> dict[str, bytes]:
@@ -1649,7 +1625,6 @@ class PlaybillInstance:
         """Recover with both the instance and ledger activation locks held."""
         paths = self._validated_paths(self.root, self.descriptor.storage)
         bodies = ContentAddressedBodyStore(paths["cas"])
-        self._tree_memo.clear()
         self.derived.clear()
         self._evaluation_state_cache.clear()
         self._recovered = recover_instance(
@@ -1816,7 +1791,6 @@ class PlaybillInstance:
                     coordinate=copy.deepcopy(result.accepted),
                     projection=copy.deepcopy(result.projection),
                 )
-                self._tree_memo.clear()
                 self._recovered = advanced
 
             try:
