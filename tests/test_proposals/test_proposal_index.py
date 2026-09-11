@@ -140,9 +140,15 @@ def test_source_write_crash_never_publishes_a_false_checkpoint(tmp_path, monkeyp
     assert index is not None
 
     index.rows(evidence)
+    finish = index._finish
 
     def crash(*args):
-        raise OSError("after evidence before index commit")
+        pending = args[0]._pending_records
+        if pending and pending.get("admission"):
+            raise OSError("after evidence before index commit")
+        # Evaluation can synchronize the shared history owner before the
+        # publication begins. Interrupt only after the authoritative admission.
+        return finish(*args)
 
     with monkeypatch.context() as patch:
         patch.setattr(index, "_finish", crash)
