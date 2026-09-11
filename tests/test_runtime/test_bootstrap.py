@@ -68,6 +68,30 @@ def test_explicit_sha1_instance_initializes_and_reopens(tmp_path: Path) -> None:
     assert reopened.inspect().generation_root == created.inspect().generation_root
 
 
+def test_genesis_serves_typed_owners_and_rebuilds_deleted_projection(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    coordinate = instance.accepted_coordinate()
+
+    def owners(source):
+        with source.bind_accepted_projection(coordinate) as projection:
+            assert projection.typed is not None
+            return (
+                projection.typed.envelopes(),
+                projection.typed.principal_registry(),
+            )
+
+    initial = owners(instance)
+    assert {row.kind for row in initial[0]} >= {"approval-policy", "procedure-runtime-policy"}
+    assert {p.principal_id for p in initial[1].principals} >= {"daemon", "owner"}
+    directory = instance.root / instance.descriptor.storage.projections
+    for path in directory.iterdir():
+        if path.is_file():
+            path.unlink()
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    assert owners(reopened) == initial
+    assert reopened.accepted_coordinate() == coordinate
+
+
 def test_inspection_exposes_posture_and_public_digests_without_private_paths(
     tmp_path: Path,
 ) -> None:

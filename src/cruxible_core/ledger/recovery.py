@@ -996,7 +996,6 @@ def recover_instance(
         generation_root=head.generation_root.tagged,
         compiler=compiler,
     )
-    projection: AssemblerResult | None = None
     if head.sequence > 0:
         # Only the generations this process actually replayed can have a torn
         # note: a checkpointed prefix was noted when it was accepted, and its
@@ -1007,18 +1006,21 @@ def recover_instance(
                     generation.oid,
                     render_generation_descriptor(generation.descriptor),
                 )
-        projection = _projection_for_head(
-            ledger,
-            coordinate=coordinate,
-            history=recovered_history,
-            publication_directory=publication_directory,
-            bodies=bodies,
-        )
-        _repair_serving(
-            publication_directory,
-            coordinate=coordinate,
-            projection=projection,
-        )
+    # Genesis has accepted principals and policy owners too. Bring every
+    # accepted head into service before opening typed readers, including a
+    # newly initialized instance or a rebuild after deleting its projections.
+    projection = _projection_for_head(
+        ledger,
+        coordinate=coordinate,
+        history=recovered_history,
+        publication_directory=publication_directory,
+        bodies=bodies,
+    )
+    _repair_serving(
+        publication_directory,
+        coordinate=coordinate,
+        projection=projection,
+    )
     if witness is not None:
         _repair_witness(
             recovered_history,
