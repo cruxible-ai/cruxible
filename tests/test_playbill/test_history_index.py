@@ -93,10 +93,13 @@ def test_incremental_publication_rollback_restart_and_delete_rebuild(tmp_path, s
     with index.read(prefix(seeded, 2), lambda n: [envelope(str(n))]):
         pass
     initial_writes = index.generations_written
+
+    def crash(n):
+        raise RuntimeError("crash during synchronization")
+
     with pytest.raises(RuntimeError, match="crash"):
-        with index.read(state, lambda n: [envelope(str(n))]) as reader:
-            assert reader.artifact("2") is not None
-            raise RuntimeError("crash before transaction commit")
+        with index.read(state, crash):
+            pytest.fail("failed synchronization must not yield a reader")
     with sqlite3.connect(index.path) as db:
         assert db.execute("SELECT sequence FROM history_progress").fetchone() == (1,)
         assert db.execute("SELECT MAX(sequence) FROM accepted_generations").fetchone() == (1,)
@@ -331,7 +334,8 @@ def test_file_replacement_during_reader_revokes_readiness(tmp_path, seeded):
     with index.read(state, lambda n: [envelope()]):
         pass
     replacement = tmp_path / "replacement.sqlite3"
-    replacement.write_bytes(index.path.read_bytes())
+    with sqlite3.connect(replacement) as destination, sqlite3.connect(index.path) as source:
+        source.backup(destination)
     with pytest.raises(ProjectionIntegrityError, match="replaced during read"):
         with index.read(state, lambda n: [envelope()]) as reader:
             assert reader.artifact("old") is not None
@@ -339,3 +343,112 @@ def test_file_replacement_during_reader_revokes_readiness(tmp_path, seeded):
     assert index._ready is None
     with index.read(state, lambda n: [envelope()]) as reader:
         assert reader.artifact("old") is not None
+
+
+def test_held_reader_allows_publication_and_keeps_snapshot(tmp_path, seeded):
+    from concurrent.futures import ThreadPoolExecutor
+
+    index = AcceptedHistoryIndex(tmp_path / "history.sqlite3")
+
+    def source(n):
+        return [envelope(str(n))]
+
+    with ThreadPoolExecutor(max_workers=1) as workers:
+        with index.read(prefix(seeded, 2), source) as old_reader:
+
+            def publish():
+                with index.read(prefix(seeded, 3), source) as new_reader:
+                    return new_reader.artifact("2")
+
+            assert workers.submit(publish).result(timeout=2).occurrence_sequence == 2
+            # Check the actual snapshot, not just the public cutoff filter.
+            assert old_reader._connection.execute(
+                "SELECT MAX(sequence) FROM accepted_generations"
+            ).fetchone() == (1,)
+            assert old_reader.artifact("2") is None
+            with pytest.raises(sqlite3.OperationalError, match="readonly"):
+                old_reader._connection.execute("DELETE FROM artifact_versions")
+    with index.read(prefix(seeded, 3), source) as reader:
+        assert reader.artifact("2") is not None
+
+
+def test_held_reader_does_not_block_other_process_writer(tmp_path, seeded):
+    import subprocess
+    import sys
+
+    index = AcceptedHistoryIndex(tmp_path / "history.sqlite3")
+    with index.read(prefix(seeded, 2), lambda n: [envelope(str(n))]):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                """
+import sqlite3, sys
+with sqlite3.connect(sys.argv[1], timeout=0.2) as db:
+    assert db.execute('PRAGMA journal_mode').fetchone() == ('wal',)
+    db.execute('BEGIN IMMEDIATE')
+    db.execute('UPDATE history_progress SET sequence=sequence WHERE singleton=1')
+""",
+                str(index.path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        assert result.returncode == 0, result.stderr
+
+
+def test_instance_reader_releases_state_lock_and_accepts_second_reader(seeded):
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=1) as workers:
+        with seeded.accepted_history_reader() as first:
+
+            def acquire():
+                with seeded._state_lock:
+                    pass
+                with seeded.accepted_history_reader() as second:
+                    return second.sequence
+
+            assert workers.submit(acquire).result(timeout=2) == first.sequence
+
+
+def test_caller_exception_does_not_undo_completed_sync(tmp_path, seeded):
+    index = AcceptedHistoryIndex(tmp_path / "history.sqlite3")
+    with pytest.raises(RuntimeError, match="caller"):
+        with index.read(prefix(seeded, 2), lambda n: [envelope(str(n))]):
+            raise RuntimeError("caller failed after acquiring a snapshot")
+    with sqlite3.connect(index.path) as db:
+        assert db.execute("SELECT sequence FROM history_progress").fetchone() == (1,)
+
+
+def test_proposal_file_reads_are_outside_history_snapshot(seeded, monkeypatch):
+    from contextlib import contextmanager
+
+    from cruxible_core.service.playbill_proposals import service_list_playbill_proposals
+
+    original_reader = seeded.accepted_history_reader
+    active = False
+
+    @contextmanager
+    def reader_scope(**kwargs):
+        nonlocal active
+        with original_reader(**kwargs) as reader:
+            active = True
+            try:
+                yield reader
+            finally:
+                active = False
+
+    evidence = seeded.proposal_evidence()
+    monkeypatch.setattr(seeded, "proposal_evidence", lambda: evidence)
+    monkeypatch.setattr(seeded, "accepted_history_reader", reader_scope)
+    for name in ("list_admissions", "read_evaluation", "read_candidate"):
+        original = getattr(evidence, name)
+
+        def read_file(*args, _original=original, **kwargs):
+            assert not active, "proposal file IO held the history snapshot open"
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(evidence, name, read_file)
+    assert service_list_playbill_proposals(seeded).entries

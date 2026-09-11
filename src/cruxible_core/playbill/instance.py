@@ -1304,67 +1304,67 @@ class PlaybillInstance:
         """Acquire one verified epoch and a cutoff-bound shared history reader."""
         with self._state_lock:
             recovered = self._recovered
-            paths = self._validated_paths(self.root, self.descriptor.storage)
-            if self._accepted_history_index.path.parent != paths["projections"]:
-                raise ProjectionIntegrityError("history index storage binding changed")
+        paths = self._validated_paths(self.root, self.descriptor.storage)
+        if self._accepted_history_index.path.parent != paths["projections"]:
+            raise ProjectionIntegrityError("history index storage binding changed")
 
-            def envelopes(sequence: int) -> tuple[ArtifactEnvelopeRow, ...]:
-                generation = recovered.history[sequence]
-                coordinate = recovered.coordinate.model_copy(
-                    update={
-                        "git_oid": generation.oid,
-                        "semantic_root": generation.semantic_root.tagged,
-                        "generation_root": generation.generation_root.tagged,
-                    }
+        def envelopes(sequence: int) -> tuple[ArtifactEnvelopeRow, ...]:
+            generation = recovered.history[sequence]
+            coordinate = recovered.coordinate.model_copy(
+                update={
+                    "git_oid": generation.oid,
+                    "semantic_root": generation.semantic_root.tagged,
+                    "generation_root": generation.generation_root.tagged,
+                }
+            )
+            assembler = ProjectionAssembler(
+                self._ledger,
+                accepted=coordinate,
+                publication_directory=paths["projections"],
+                bodies=ContentAddressedBodyStore(paths["cas"]),
+            )
+            request = assembler.request(
+                output_staging_directory=paths["projections"]
+                / f".stage-history-{secrets.token_hex(12)}"
+            )
+            manifest = paths["projections"] / projection_manifest_name(request)
+            changed = (
+                None
+                if sequence == 0
+                else self._ledger.changed_tree_paths(
+                    recovered.history[sequence - 1].oid, generation.oid
                 )
-                assembler = ProjectionAssembler(
-                    self._ledger,
-                    accepted=coordinate,
-                    publication_directory=paths["projections"],
-                    bodies=ContentAddressedBodyStore(paths["cas"]),
+            )
+            if not manifest.exists():
+                # Historical publications (including genesis) may be absent.
+                # Reuse the frozen compiler's row derivation over verified Git
+                # bytes, without pretending this historical commit is main.
+                parsed = parse_projection_tree(
+                    self._ledger.read_tree(generation.oid),
+                    registry=assembler.registry,
+                    artifact_kinds=assembler.artifact_kinds,
+                    artifact_codec=assembler.artifact_codec,
+                    bodies=assembler.bodies,
+                    coordinate=request,
+                    accepted_coordinates_by_sequence={
+                        item.sequence: AcceptedCoordinate(
+                            git_oid=item.oid,
+                            semantic_root=item.semantic_root.tagged,
+                            generation_root=item.generation_root.tagged,
+                            compiler_digest=coordinate.compiler.rule_digest,
+                        )
+                        for item in recovered.history[: sequence + 1]
+                    },
                 )
-                request = assembler.request(
-                    output_staging_directory=paths["projections"]
-                    / f".stage-history-{secrets.token_hex(12)}"
+                selected = None if changed is None else frozenset(changed)
+                return tuple(
+                    row for row in parsed.envelopes if selected is None or row.path in selected
                 )
-                manifest = paths["projections"] / projection_manifest_name(request)
-                changed = (
-                    None
-                    if sequence == 0
-                    else self._ledger.changed_tree_paths(
-                        recovered.history[sequence - 1].oid, generation.oid
-                    )
-                )
-                if not manifest.exists():
-                    # Historical publications (including genesis) may be absent.
-                    # Reuse the frozen compiler's row derivation over verified Git
-                    # bytes, without pretending this historical commit is main.
-                    parsed = parse_projection_tree(
-                        self._ledger.read_tree(generation.oid),
-                        registry=assembler.registry,
-                        artifact_kinds=assembler.artifact_kinds,
-                        artifact_codec=assembler.artifact_codec,
-                        bodies=assembler.bodies,
-                        coordinate=request,
-                        accepted_coordinates_by_sequence={
-                            item.sequence: AcceptedCoordinate(
-                                git_oid=item.oid,
-                                semantic_root=item.semantic_root.tagged,
-                                generation_root=item.generation_root.tagged,
-                                compiler_digest=coordinate.compiler.rule_digest,
-                            )
-                            for item in recovered.history[: sequence + 1]
-                        },
-                    )
-                    selected = None if changed is None else frozenset(changed)
-                    return tuple(
-                        row for row in parsed.envelopes if selected is None or row.path in selected
-                    )
-                with bind_projection(manifest, expected=coordinate) as projection:
-                    return projection.artifact_envelopes(paths=changed)
+            with bind_projection(manifest, expected=coordinate) as projection:
+                return projection.artifact_envelopes(paths=changed)
 
-            with self._accepted_history_index.read(recovered, envelopes, at=at) as reader:
-                yield reader
+        with self._accepted_history_index.read(recovered, envelopes, at=at) as reader:
+            yield reader
 
     def _generation_for_oid(self, oid: str) -> RecoveredGeneration | None:
         """Resolve unique membership only in this captured replay-verified epoch.

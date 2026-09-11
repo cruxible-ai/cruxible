@@ -12,6 +12,7 @@ from __future__ import annotations
 import sqlite3
 import stat
 import threading
+import weakref
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -186,7 +187,10 @@ class AcceptedHistoryIndex:
         self.path = path
         self._lock = threading.RLock()
         self._ready: tuple[int, str, str, str, int] | None = None
-        self._stamp: tuple[int, int, int, int, int] | None = None
+        self._stamp: tuple[int, ...] | None = None
+        self._writer: sqlite3.Connection | None = None
+        self._writer_identity: tuple[int, ...] | None = None
+        self._close_writer: Callable[[], None] | None = None
         self.generations_checked = 0
         self.generations_written = 0
         self.artifact_rows_written = 0
@@ -202,7 +206,7 @@ class AcceptedHistoryIndex:
             self._ready = None
             self._stamp = None
 
-    def _file_stamp(self) -> tuple[int, int, int, int, int] | None:
+    def _file_stamp(self) -> tuple[int, ...] | None:
         if self.path.is_symlink():
             raise ProjectionIntegrityError("history index must not be a symlink")
         try:
@@ -211,7 +215,48 @@ class AcceptedHistoryIndex:
             return None
         if not stat.S_ISREG(value.st_mode):
             raise ProjectionIntegrityError("history index must be a regular file")
-        return value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns
+        result = (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+        wal = self.path.with_name(self.path.name + "-wal")
+        if wal.is_symlink():
+            raise ProjectionIntegrityError("history WAL must not be a symlink")
+        try:
+            value = wal.stat()
+        except FileNotFoundError:
+            return result
+        return (
+            *result,
+            value.st_dev,
+            value.st_ino,
+            value.st_size,
+            value.st_mtime_ns,
+            value.st_ctime_ns,
+        )
+
+    def _write_connection(self) -> sqlite3.Connection:
+        """Keep one idle connection so closing readers does not checkpoint the WAL.
+
+        The connection has no transaction between synchronizations. Its finalizer
+        closes it when this instance-owned adapter is released.
+        """
+        stamp = self._file_stamp()
+        identity = None if stamp is None else stamp[:2]
+        if self._writer is not None and identity != self._writer_identity:
+            assert self._close_writer is not None
+            self._close_writer()
+            self._writer = None
+            self.invalidate()
+        if self._writer is None:
+            connection = sqlite3.connect(self.path, check_same_thread=False)
+            self._writer = connection
+            self._close_writer = weakref.finalize(self, connection.close)
+            connection.execute("PRAGMA foreign_keys=ON")
+            if connection.execute("PRAGMA journal_mode=WAL").fetchone() != ("wal",):
+                raise ProjectionIntegrityError("history index requires WAL mode")
+            if not _schema_rows(connection):
+                connection.executescript(_SCHEMA)
+            stamp = self._file_stamp()
+            self._writer_identity = None if stamp is None else stamp[:2]
+        return self._writer
 
     @contextmanager
     def read(
@@ -221,37 +266,28 @@ class AcceptedHistoryIndex:
         *,
         at: AcceptedCoordinate | None = None,
     ) -> Iterator[HistoryReader]:
-        # Serialize local publication and reader acquisition. The SQLite read
-        # transaction also keeps other processes' suffix publication invisible.
-        with self._lock:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            opened_stamp = self._file_stamp()  # Refuse symlinks before opening.
-            connection = sqlite3.connect(self.path)
-            try:
-                connection.execute("PRAGMA foreign_keys=ON")
-                # Check the schema before issuing DML: unexpected triggers or
-                # views must not rewrite rows during source reconciliation.
-                if not _schema_rows(connection):
-                    connection.executescript(_SCHEMA)
-                connection.execute("BEGIN IMMEDIATE")
-                if _schema_rows(connection) != _EXPECTED_SCHEMA:
-                    raise ProjectionIntegrityError("history index schema differs; rebuild required")
-                stamp = self._file_stamp()
-                if opened_stamp is not None and (stamp is None or opened_stamp[:2] != stamp[:2]):
-                    self.invalidate()
-                    raise ProjectionIntegrityError("history index file was replaced while opening")
-                ready = self._ready if stamp is not None and stamp == self._stamp else None
-                self._sync(connection, recovered, load_envelopes, ready)
-                connection.execute("PRAGMA query_only=ON")
-                reader = HistoryReader(connection, recovered.head.sequence)
-                if at is not None:
-                    reader = HistoryReader(connection, reader.resolve(at).sequence)
-                yield reader
-                connection.commit()
+        connection: sqlite3.Connection | None = None
+        try:
+            # Serialize only synchronization and snapshot acquisition. Neither
+            # this lock nor the writer transaction survives into caller code.
+            with self._lock:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                writer = self._write_connection()
+                try:
+                    writer.execute("BEGIN IMMEDIATE")
+                    if _schema_rows(writer) != _EXPECTED_SCHEMA:
+                        raise ProjectionIntegrityError(
+                            "history index schema differs; rebuild required"
+                        )
+                    source_version = writer.execute("PRAGMA data_version").fetchone()
+                    stamp = self._file_stamp()
+                    ready = self._ready if stamp is not None and stamp == self._stamp else None
+                    self._sync(writer, recovered, load_envelopes, ready)
+                    writer.commit()
+                except BaseException:
+                    writer.rollback()
+                    raise
                 published_stamp = self._file_stamp()
-                if stamp is None or published_stamp is None or stamp[:2] != published_stamp[:2]:
-                    self.invalidate()
-                    raise ProjectionIntegrityError("history index file was replaced during read")
                 self._stamp = published_stamp
                 self._ready = (
                     recovered.head.sequence,
@@ -260,12 +296,46 @@ class AcceptedHistoryIndex:
                     recovered.coordinate.compiler.rule_digest,
                     recovered.coordinate.compiler.schema_version,
                 )
-            except sqlite3.DatabaseError as exc:
+                connection = sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True)
+                connection.execute("PRAGMA query_only=ON")
+                connection.execute("BEGIN DEFERRED")
+                reader = HistoryReader(connection, recovered.head.sequence)
+                # BEGIN alone does not establish a snapshot. Pin it before
+                # releasing the acquisition lock, including for an empty caller.
+                reader.resolve(
+                    AcceptedCoordinate(
+                        git_oid=recovered.head.oid,
+                        semantic_root=recovered.head.semantic_root.tagged,
+                        generation_root=recovered.head.generation_root.tagged,
+                        compiler_digest=recovered.coordinate.compiler.rule_digest,
+                    )
+                )
+                if (
+                    self._file_stamp() != published_stamp
+                    or writer.execute("PRAGMA data_version").fetchone() != source_version
+                ):
+                    self.invalidate()
+                    raise ProjectionIntegrityError(
+                        "history index changed during snapshot acquisition"
+                    )
+                if at is not None:
+                    reader = HistoryReader(connection, reader.resolve(at).sequence)
+            yield reader
+            current_stamp = self._file_stamp()
+            if (
+                published_stamp is None
+                or current_stamp is None
+                or published_stamp[:2] != current_stamp[:2]
+            ):
                 self.invalidate()
-                raise ProjectionIntegrityError(
-                    "accepted history index could not be read or updated; repair or retry required"
-                ) from exc
-            finally:
+                raise ProjectionIntegrityError("history index file was replaced during read")
+        except sqlite3.DatabaseError as exc:
+            self.invalidate()
+            raise ProjectionIntegrityError(
+                "accepted history index could not be read or updated; repair or retry required"
+            ) from exc
+        finally:
+            if connection is not None:
                 connection.close()
 
     def _sync(

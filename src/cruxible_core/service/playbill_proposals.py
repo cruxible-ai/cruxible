@@ -119,43 +119,52 @@ def service_list_playbill_proposals(
     evidence = instance.proposal_evidence()
     entries: list[PlaybillProposalListEntryV1] = []
     withdrawn = evidence.withdrawn_proposal_ids()
+    records = tuple(
+        (admission, evidence.read_evaluation(admission.proposal_id))
+        for admission in evidence.list_admissions()
+    )
     with instance.accepted_history_reader(at=coordinate) as history:
-        for admission in evidence.list_admissions():
-            evaluation = evidence.read_evaluation(admission.proposal_id)
-            candidate_digest = evaluation.candidate_digest
-            if evaluation.verdict == "refused":
-                entry_status: ProposalInventoryStatus = "settled"
-                terminal_reason: ProposalTerminalReason | None = "refused"
-            elif candidate_digest is not None and history.candidate_accepted(candidate_digest):
+        accepted_candidates = {
+            evaluation.candidate_digest
+            for _, evaluation in records
+            if evaluation.candidate_digest is not None
+            and history.candidate_accepted(evaluation.candidate_digest)
+        }
+    for admission, evaluation in records:
+        candidate_digest = evaluation.candidate_digest
+        if evaluation.verdict == "refused":
+            entry_status: ProposalInventoryStatus = "settled"
+            terminal_reason: ProposalTerminalReason | None = "refused"
+        elif candidate_digest in accepted_candidates:
+            entry_status = "settled"
+            terminal_reason = "accepted"
+        else:
+            assert candidate_digest is not None
+            candidate = evidence.read_candidate(candidate_digest)
+            if admission.proposal_id in withdrawn:
+                # A withdrawal outranks staleness: an actor who said this
+                # proposal will never be settled has answered the question
+                # `readmit` would otherwise keep open.
                 entry_status = "settled"
-                terminal_reason = "accepted"
+                terminal_reason = "withdrawn"
+            elif candidate.candidate.parent_semantic_root == coordinate.semantic_root:
+                entry_status = "open"
+                terminal_reason = None
             else:
-                assert candidate_digest is not None
-                candidate = evidence.read_candidate(candidate_digest)
-                if admission.proposal_id in withdrawn:
-                    # A withdrawal outranks staleness: an actor who said this
-                    # proposal will never be settled has answered the question
-                    # `readmit` would otherwise keep open.
-                    entry_status = "settled"
-                    terminal_reason = "withdrawn"
-                elif candidate.candidate.parent_semantic_root == coordinate.semantic_root:
-                    entry_status = "open"
-                    terminal_reason = None
-                else:
-                    entry_status = "settled"
-                    terminal_reason = "stale"
-            entry = PlaybillProposalListEntryV1(
-                proposal_id=admission.proposal_id,
-                actor_id=admission.actor_id,
-                target_ref=admission.target_ref,
-                admitted_at=admission.admitted_at,
-                verdict=evaluation.verdict,
-                candidate_digest=candidate_digest,
-                status=entry_status,
-                terminal_reason=terminal_reason,
-            )
-            if status is None or status == entry.status:
-                entries.append(entry)
+                entry_status = "settled"
+                terminal_reason = "stale"
+        entry = PlaybillProposalListEntryV1(
+            proposal_id=admission.proposal_id,
+            actor_id=admission.actor_id,
+            target_ref=admission.target_ref,
+            admitted_at=admission.admitted_at,
+            verdict=evaluation.verdict,
+            candidate_digest=candidate_digest,
+            status=entry_status,
+            terminal_reason=terminal_reason,
+        )
+        if status is None or status == entry.status:
+            entries.append(entry)
     entries.sort(key=lambda item: (item.admitted_at.encode("utf-8"), item.proposal_id.encode()))
     return PlaybillProposalListV1(
         coordinate=coordinate,
