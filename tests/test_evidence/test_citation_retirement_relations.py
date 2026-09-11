@@ -112,7 +112,7 @@ def test_shared_capture_emits_one_claim_cites_retired_row_and_retirement_clears_
     instance, owner, live_claim_id = claim_cites_retired_world(tmp_path)
 
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
-        conflicts = projection.citations.conflicts(bodies=instance.body_store())
+        conflicts = projection.citations.conflicts()
     assert len(conflicts) == 1
     assert conflicts[0].value["relation_kind"] == "capture"  # type: ignore[index]
     assert conflicts[0].value["live_claim_identity"] == f"Claim:{live_claim_id}"  # type: ignore[index]
@@ -348,9 +348,7 @@ def test_relation_delta_reopens_only_the_changed_claim_captures(
     assert parse_calls == 1
 
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
-        assert sorted(
-            projection.citations.conflicts(bodies=instance.body_store()), key=key
-        ) == sorted(
+        assert sorted(projection.citations.conflicts(), key=key) == sorted(
             full_conflicts,
             key=key,
         )
