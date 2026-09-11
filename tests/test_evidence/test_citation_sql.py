@@ -605,6 +605,7 @@ def _next_relation_findings(world, reader):
         generation_root=AT.generation_root,
         compiler=P2_B5_COMPILER,
     )
+
     def refuse_tree_read(*_args):
         pytest.fail("citation relation service enumerated the accepted tree")
 
