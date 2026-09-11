@@ -8,7 +8,10 @@ import pytest
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow
-from cruxible_core.indexes.history.history_index import AcceptedHistoryIndex
+from cruxible_core.indexes.history.history_index import (
+    AcceptedHistoryIndex,
+    commit_working_write,
+)
 from tests.core_support._knowledge_loop_support import seed_claims
 
 
@@ -276,8 +279,9 @@ def test_proposal_commit_preserves_only_previously_verified_history(tmp_path, se
         before = index._file_stamp()
         db.execute("CREATE TABLE proposals (proposal_id TEXT PRIMARY KEY) STRICT")
         db.execute("INSERT INTO proposals VALUES ('p')")
-        db.commit()
-        index.proposal_committed(before)
+        after = commit_working_write(db, index._file_stamp, before)
+        index.proposal_committed(before, after)
+        db.rollback()
     with index.read(state, source) as reader:
         assert reader.artifact("1") is not None
     assert calls == [0, 1]
@@ -290,8 +294,9 @@ def test_proposal_commit_preserves_only_previously_verified_history(tmp_path, se
         db.execute("BEGIN IMMEDIATE")
         before = index._file_stamp()
         db.execute("INSERT INTO proposals VALUES ('q')")
-        db.commit()
-        index.proposal_committed(before)
+        after = commit_working_write(db, index._file_stamp, before)
+        index.proposal_committed(before, after)
+        db.rollback()
     with index.read(state, source) as reader:
         assert reader.artifact("1") is not None
     assert calls == [0, 1, 0, 1]

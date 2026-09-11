@@ -360,6 +360,32 @@ class HistoryReader:
 EnvelopeLoader = Callable[[int], Sequence[ArtifactEnvelopeRow]]
 
 
+def commit_working_write(
+    connection: sqlite3.Connection,
+    file_stamp: Callable[[], tuple[int, ...] | None],
+    before: tuple[int, ...] | None,
+) -> tuple[int, ...]:
+    """Commit and retain writer ownership for publishing a proven physical stamp.
+
+    SQLite releases its writer lock at COMMIT. Reacquiring it and checking this
+    same connection's data_version detects another writer winning that gap.
+    The caller must release the reacquired transaction after publishing its
+    checkpoint and pinning any reader snapshot, before yielding to user code.
+    """
+    version = connection.execute("PRAGMA data_version").fetchone()
+    connection.commit()
+    connection.execute("BEGIN IMMEDIATE")
+    after = file_stamp()
+    if (
+        connection.execute("PRAGMA data_version").fetchone() != version
+        or before is None
+        or after is None
+        or before[:2] != after[:2]
+    ):
+        raise sqlite3.DatabaseError("working database changed across commit ownership")
+    return after
+
+
 def working_file_stamp(path: Path) -> tuple[int, ...] | None:
     if path.is_symlink():
         raise ProjectionIntegrityError("history index must not be a symlink")
@@ -473,16 +499,18 @@ class AcceptedHistoryIndex:
             self._ready = None
             self._stamp = None
 
-    def proposal_committed(self, before_stamp: tuple[int, ...] | None) -> None:
+    def proposal_committed(
+        self, before_stamp: tuple[int, ...] | None, after_stamp: tuple[int, ...]
+    ) -> None:
         """Preserve verified history across a known proposal-only transaction.
 
         The proposal component holds our lock and captures ``before_stamp``
         after acquiring its SQLite writer transaction, before changing rows.
-        Call only after commit. A previously unexplained file change must still
-        force reconciliation; this callback cannot certify that earlier change.
+        ``after_stamp`` comes from commit_working_write while the reacquired
+        SQLite writer transaction remains held. This callback never samples a
+        later stamp that could include an unrelated writer's changes.
         """
         with self._lock:
-            after_stamp = self._file_stamp()
             if (
                 self._ready is not None
                 and before_stamp is not None
@@ -554,13 +582,12 @@ class AcceptedHistoryIndex:
                     stamp = self._file_stamp()
                     ready = self._ready if stamp is not None and stamp == self._stamp else None
                     self._sync(writer, recovered, load_envelopes, ready)
-                    writer.commit()
-                    if self._file_stamp() != before_commit and hasattr(self, "_proposals"):
-                        self._proposals.database_committed(before_commit)
+                    published_stamp = commit_working_write(writer, self._file_stamp, before_commit)
+                    if published_stamp != before_commit and hasattr(self, "_proposals"):
+                        self._proposals.database_committed(before_commit, published_stamp)
                 except BaseException:
                     writer.rollback()
                     raise
-                published_stamp = self._file_stamp()
                 self._stamp = published_stamp
                 self._ready = (
                     recovered.head.sequence,
@@ -593,6 +620,7 @@ class AcceptedHistoryIndex:
                     )
                 if at is not None:
                     reader = HistoryReader(connection, reader.resolve(at).sequence)
+                writer.rollback()
             yield reader
             current_stamp = self._file_stamp()
             if (
@@ -608,6 +636,9 @@ class AcceptedHistoryIndex:
                 "accepted history index could not be read or updated; repair or retry required"
             ) from exc
         finally:
+            with self._lock:
+                if self._writer is not None and self._writer.in_transaction:
+                    self._writer.rollback()
             if connection is not None:
                 connection.close()
 
