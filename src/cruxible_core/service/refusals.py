@@ -20,7 +20,6 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureInternalFailureCodeV1,
     ProcedureNodeRefusalCodeV1,
     ProcedureOperationalFailureCodeV1,
-    ProcedureSettlementRefusalCodeV1,
 )
 from cruxible_client.contracts.repairs import (
     DECLARED_HAND_EDIT_CHANGES,
@@ -41,7 +40,6 @@ CLOSED_SERVED_REFUSAL_VOCABULARIES: dict[str, frozenset[str]] = {
     "procedure_node_refusal": frozenset(get_args(ProcedureNodeRefusalCodeV1)),
     "procedure_operational_failure": frozenset(get_args(ProcedureOperationalFailureCodeV1)),
     "procedure_internal_failure": frozenset(get_args(ProcedureInternalFailureCodeV1)),
-    "procedure_settlement_refusal": frozenset(get_args(ProcedureSettlementRefusalCodeV1)),
     "prediction_refusal": frozenset(get_args(PredictionRefusalCodeV1)),
     "procedure_measurement_refusal": frozenset(get_args(ProcedureMeasurementRefusalCodeV1)),
 }

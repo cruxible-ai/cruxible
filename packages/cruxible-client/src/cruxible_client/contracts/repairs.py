@@ -56,22 +56,6 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "environment_divergence": "rematerialize_the_provider_environment_against_its_seal",
     "provider_replay_receipt_required": "record_the_durable_provider_completion_before_replay",
     "state_tap_refused": "restore_the_accepted_state_query_backend",
-    "settlement_lost_cas": "resubmit_the_settlement_against_the_current_accepted_coordinate",
-    "settlement_activation_coordinate_changed": (
-        "resubmit_the_settlement_against_the_current_accepted_coordinate"
-    ),
-    "settlement_actor_principal_invalid": (
-        "settle_as_an_active_principal_at_the_accepted_coordinate"
-    ),
-    "settlement_base_semantic_root_mismatch": (
-        "rebase_the_candidate_onto_the_current_semantic_root"
-    ),
-    "settlement_candidate_mismatch": "resubmit_the_exact_admitted_candidate",
-    "settlement_candidate_scope_mismatch": (
-        "resubmit_the_candidate_whose_scope_matches_its_admission"
-    ),
-    "settlement_proposal_id_mismatch": "settle_the_proposal_the_candidate_was_admitted_under",
-    "settlement_receipt_mismatch": "reproduce_the_terminal_receipt_before_settling",
     "block_frame_invalid": "restore_the_block_marker_frame_the_stamp_declares",
     # The refusal already names its path class and its repair commands. The
     # change itself is the author's: point the Source at a regular, unlinked

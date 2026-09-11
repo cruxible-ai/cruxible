@@ -76,19 +76,19 @@ def test_server_envelope_repairs_name_commands_the_cli_actually_serves() -> None
 def test_the_served_refusal_models_read_the_declared_change() -> None:
     """A producer that carries no repair still projects the declared change."""
 
-    from cruxible_client.contracts.procedures.results import ProcedureSettlementRefusalV1
+    from cruxible_client.contracts.procedures.results import ProcedureNodeRefusalV1
 
-    refusal = ProcedureSettlementRefusalV1.model_validate(
+    refusal = ProcedureNodeRefusalV1.model_validate(
         {
-            "code": "settlement_candidate_scope_mismatch",
+            "code": "proposal_target_paths_mismatch",
             "message": "the candidate scope differs from its admission",
-            "node_id": "settlement",
+            "node_id": "propose",
         }
     )
     assert isinstance(refusal.repair, HandEditRepairV1)
     assert (
         refusal.repair.hand_edit.required_change
-        == (DECLARED_HAND_EDIT_CHANGES["settlement_candidate_scope_mismatch"])
+        == (DECLARED_HAND_EDIT_CHANGES["proposal_target_paths_mismatch"])
     )
 
 

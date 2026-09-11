@@ -13,7 +13,6 @@ from cruxible_client.contracts.candidates import (
 )
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.procedure_mandates import ProcedureMandateV1
-from cruxible_client.contracts.procedures.results import ProcedureSettlementRefusalCodeV1
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.procedures.egress import (
     TerminalEgressChildReceiptV2,
@@ -59,23 +58,6 @@ class ProposalDeliveryRefused(EffectfulTerminalError, TerminalEgressError):
         super().__init__(f"{code}: {message}")
         self.code = code
         self.details = {} if details is None else details
-
-
-class ProcedureSettlementRefused(EffectfulTerminalError, TerminalEgressError):
-    """Typed settlement-door refusal preserved by Procedure run projection."""
-
-    def __init__(
-        self,
-        code: ProcedureSettlementRefusalCodeV1,
-        message: str,
-        *,
-        details: object | None = None,
-        retryable: bool = False,
-    ) -> None:
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.details = {} if details is None else details
-        self.retryable = retryable
 
 
 def _changed_paths(base: Mapping[str, bytes], candidate: Mapping[str, bytes]) -> tuple[str, ...]:
@@ -259,5 +241,4 @@ __all__ = [
     "ProposalTerminalAdapter",
     "proposal_terminal_receipt",
     "proposal_terminal_ref",
-    "ProcedureSettlementRefused",
 ]

@@ -19,7 +19,6 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureAdmissionRefusalCodeV1,
     ProcedureInternalFailureCodeV1,
     ProcedureOperationalFailureCodeV1,
-    ProcedureSettlementRefusalCodeV1,
 )
 
 _SOURCE_ROOT = Path(__file__).resolve().parents[2] / "src" / "cruxible_core"
@@ -100,14 +99,6 @@ def test_every_admission_refusal_member_is_produced_in_production_source() -> No
     produced = _produced_strings()
     missing = sorted(
         code for code in get_args(ProcedureAdmissionRefusalCodeV1) if code not in produced
-    )
-    assert missing == []
-
-
-def test_every_settlement_refusal_member_is_produced_in_production_source() -> None:
-    produced = _produced_strings()
-    missing = sorted(
-        code for code in get_args(ProcedureSettlementRefusalCodeV1) if code not in produced
     )
     assert missing == []
 

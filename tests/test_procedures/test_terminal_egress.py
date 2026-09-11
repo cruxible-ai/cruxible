@@ -11,7 +11,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinitionV3,
     StateTapNodeV3,
 )
-from cruxible_client.contracts.procedures.results import ProcedureSettlementRefusalV1
+from cruxible_client.contracts.procedures.results import ProcedureNodeRefusalV1
 from cruxible_core.exhaust import parse_journal_payload
 from cruxible_core.procedures.egress import (
     TerminalEgressChildReceiptV1,
@@ -25,7 +25,7 @@ from cruxible_core.procedures.execution import (
     ProcedureRunAdmissionV2,
     procedure_admission_digest,
 )
-from cruxible_core.procedures.terminal_services import ProcedureSettlementRefused
+from cruxible_core.procedures.terminal_services import ProposalDeliveryRefused
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.test_procedures.test_procedure_execution import (
     NOW,
@@ -113,10 +113,10 @@ class _InboxSink:
         )
 
 
-class _SettlementRefusingSink:
+class _ProposalRefusingSink:
     def deliver_terminal_egress(self, *, request: TerminalEgressRequestV1) -> None:
-        raise ProcedureSettlementRefused(
-            "settlement_candidate_scope_mismatch",
+        raise ProposalDeliveryRefused(
+            "proposal_target_paths_mismatch",
             "Target paths differ from the admitted candidate.",
             details={"target_paths": ["claims/expected.json"]},
         )
@@ -214,11 +214,11 @@ def test_terminal_sink_delivery_is_receipted_after_item_dependencies(tmp_path) -
     assert payload["receipt"]["disposition"] == "posted"
 
 
-def test_settlement_refusal_projects_as_its_dedicated_public_terminal(
+def test_proposal_refusal_projects_as_a_repairable_public_node_terminal(
     tmp_path,
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
-    root = tmp_path / "settlement-refusal"
+    root = tmp_path / "proposal-refusal"
     root.mkdir()
     fixture = _fixture(root)
     accepted = _terminal_procedure()
@@ -227,7 +227,7 @@ def test_settlement_refusal_projects_as_its_dedicated_public_terminal(
             accepted,
             fixture,
             _StateReader({"items": [{"id": "one"}]}),
-            run_id="line-settlement-refusal",
+            run_id="line-proposal-refusal",
         )
     )
     admission = prepared.admission
@@ -254,12 +254,12 @@ def test_settlement_refusal_projects_as_its_dedicated_public_terminal(
         activation_authority=_Authority(accepted.artifact_digest),
         contract_validator=_Contracts(),
         effective_rung=rung,
-        egress_sink=_SettlementRefusingSink(),  # type: ignore[arg-type]
+        egress_sink=_ProposalRefusingSink(),  # type: ignore[arg-type]
     ).execute(prepared, accepted)
 
     assert result.status == "refused"
     assert result.refusal is not None
-    assert result.refusal.code == "settlement_candidate_scope_mismatch"
+    assert result.refusal.code == "proposal_target_paths_mismatch"
     records = fixture.journal.all_records(fixture.stream, "runs")
     monkeypatch.setattr(
         procedure_run_service,
@@ -271,12 +271,11 @@ def test_settlement_refusal_projects_as_its_dedicated_public_terminal(
         run_id=prepared.admission.run_id,
         receipt=result.receipt,
     )
-    assert isinstance(state.terminal, ProcedureSettlementRefusalV1)
-    assert state.terminal.code == "settlement_candidate_scope_mismatch"
-    # The declared change, not the code restated: the settlement family carries
-    # real instructions from the source-owned catalog.
+    assert isinstance(state.terminal, ProcedureNodeRefusalV1)
+    assert state.terminal.code == "proposal_target_paths_mismatch"
+    # The live proposal refusal retains its declared repair through journal projection.
     assert state.terminal.repair.hand_edit.required_change == (
-        "resubmit_the_candidate_whose_scope_matches_its_admission"
+        "rebind_the_terminal_from_the_exact_admitted_run"
     )
 
 

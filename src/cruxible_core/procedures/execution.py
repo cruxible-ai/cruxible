@@ -3872,21 +3872,9 @@ class ProcedureExecutor:
         """Project a typed door refusal as the run's own node refusal, code intact."""
 
         from cruxible_core.procedures.terminal_services import (
-            ProcedureSettlementRefused,
             ProposalDeliveryRefused,
         )
 
-        if isinstance(exc, ProcedureSettlementRefused):
-            return _RunRefusal(
-                exc.code,
-                str(exc),
-                node_id=node_id,
-                details={
-                    "settlement_refusal": True,
-                    "retryable": exc.retryable,
-                    "detail": exc.details,
-                },
-            )
         if isinstance(exc, ProposalDeliveryRefused):
             return _RunRefusal(
                 cast(ProcedureNodeRefusalCodeV1, exc.code),

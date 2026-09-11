@@ -119,8 +119,6 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunReceiptV5,
     ProcedureRunReceiptV6,
     ProcedureSelectionDecisionV1,
-    ProcedureSettlementRefusalCodeV1,
-    ProcedureSettlementRefusalV1,
     ProcedureSourceCaptureAssociationV1,
     ProcedureSourceObservationV1,
     ProcedureTerminalEgressChildV1,
@@ -2243,23 +2241,6 @@ def _state_from_records(
                         details=ProcedureBudgetExceededDetailV1.model_validate(
                             refusal.get("details", {})
                         ),
-                    )
-                elif refusal_code in get_args(ProcedureSettlementRefusalCodeV1):
-                    terminal = ProcedureSettlementRefusalV1.model_validate(
-                        {
-                            "code": refusal_code,
-                            "message": str(refusal.get("message", "Procedure settlement refused.")),
-                            "node_id": str(refusal.get("node_id") or last_node_id),
-                            "journal_coordinate": _journal_coordinate(final_record),
-                            "details": refusal.get("details", {}),
-                            "retryable": bool(
-                                cast(dict[str, object], refusal.get("details", {})).get(
-                                    "retryable", False
-                                )
-                                if isinstance(refusal.get("details"), dict)
-                                else False
-                            ),
-                        }
                     )
                 else:
                     terminal = ProcedureNodeRefusalV1.model_validate(
