@@ -223,6 +223,14 @@ class HistoryReader:
             )
         )
 
+    def latest_member(self, path: str) -> AcceptedMemberLocation | None:
+        row = self._connection.execute(
+            "SELECT * FROM accepted_member_locations WHERE member_path=? AND sequence<=? "
+            "ORDER BY sequence DESC,member_ordinal DESC LIMIT 1",
+            (path, self.sequence),
+        ).fetchone()
+        return None if row is None else AcceptedMemberLocation(*row)
+
     def claim_law_locations(
         self, *, path: str | None = None, latest: bool = False
     ) -> tuple[AcceptedMemberLocation, ...]:

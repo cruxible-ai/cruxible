@@ -166,3 +166,58 @@ def test_successful_refresh_releases_index_and_failed_recovery_adds_no_authority
     assert instance._recovered is original
     with pytest.raises(PlaybillFormatError):
         instance.coordinate_for_oid("0" * 64)
+
+
+def test_cold_membership_does_not_require_unrelated_document_body(tmp_path):
+    from cruxible_client.contracts.documents import (
+        DocumentAuthority,
+        DocumentLifecycle,
+        DocumentShell,
+        render_document,
+    )
+    from cruxible_core.compiler.assembler import ProjectionAssembler
+    from cruxible_core.indexes.projection import projection_manifest_name
+    from tests.core_support._support import initialize_local
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+
+    instance, owner = initialize_local(tmp_path)
+    body = instance.store_document_body(b"historical unrelated body")
+    document = DocumentShell(
+        identity="document:review",
+        document_kind="note",
+        title="Review",
+        media_type="text/plain",
+        body_digest=body.digest,
+        authority=DocumentAuthority(required_tier="governed_write"),
+        governance_scope=("project:test",),
+        lifecycle=DocumentLifecycle(revision=1),
+    )
+    path = "documents/review.json"
+    source = render_document(document)
+    _accept_tree(
+        instance,
+        owner,
+        {**instance.tree_at(instance.accepted_coordinate().git_oid), path: source},
+        timestamp="2026-08-17T14:00:00.000000Z",
+        proposal_name="review-document",
+    )
+    coordinate = instance.accepted_coordinate()
+    publication = instance.root / instance.descriptor.storage.projections
+    assembler = ProjectionAssembler(
+        instance._ledger,
+        accepted=coordinate,
+        publication_directory=publication,
+        bodies=instance.body_store(),
+    )
+    request = assembler.request(output_staging_directory=publication / ".unused")
+    (publication / projection_manifest_name(request)).unlink()
+    instance.body_store()._path(body.digest).unlink()
+    instance._accepted_history_index.invalidate()
+
+    assert instance.coordinate_for_oid(coordinate.git_oid) == coordinate
+    assert instance.accepted_evaluation_time(coordinate.git_oid).tzinfo is not None
+    assert instance.blob_at(coordinate.git_oid, path) == source
+    with instance.accepted_history_reader() as history:
+        members = history.member_history(path)
+        assert history.latest_member(path) == members[-1]
+        assert history.latest_member("documents/absent.json") is None
