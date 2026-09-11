@@ -28,6 +28,7 @@ from cruxible_client.contracts.proposal_models import (
     ProposalEvaluationRecord,
     ProposalWithdrawalRecordV1,
 )
+from cruxible_core.indexes.acquisition import open_working_snapshot
 from cruxible_core.indexes.history.history_index import commit_working_write
 from cruxible_core.proposals.proposal_notes import admission_bytes
 
@@ -463,11 +464,12 @@ class ProposalIndex:
                 except BaseException:
                     writer.rollback()
                     raise
-                reader = sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True)
+                assert self._stamp is not None
+                reader = open_working_snapshot(
+                    self.path, expected_stamp=self._stamp, file_stamp=self._file_stamp
+                )
                 reader.row_factory = sqlite3.Row
                 reader.execute("PRAGMA foreign_keys=ON")
-                reader.execute("PRAGMA query_only=ON")
-                reader.execute("BEGIN DEFERRED")
                 progress = reader.execute(
                     "SELECT source_epoch,verified_sequence FROM proposal_progress"
                 ).fetchone()
