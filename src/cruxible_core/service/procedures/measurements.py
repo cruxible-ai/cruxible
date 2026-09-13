@@ -35,6 +35,7 @@ from typing import Literal, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from cruxible_client.contracts.accepted_attestations import AcceptedClaimAttestationEvidenceV1
 from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
 from cruxible_client.contracts.claim_attestation_store import ClaimAttestationEventPayloadV1
 from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
@@ -132,7 +133,7 @@ from cruxible_core.service.discovery.query import (
 from cruxible_core.service.discovery.query_definitions import accepted_query_definition
 from cruxible_core.service.evidence.evidence import (
     _claim_read_history_index,
-    current_verified_claim_attestations,
+    accepted_claim_attestations,
     service_evaluate_playbill_claim_verdict,
 )
 from cruxible_core.service.procedures.procedure_runs import (
@@ -792,8 +793,12 @@ def _evaluate_claim_attestation(
         )
     parse_claim_type(tree[type_path], path=type_path)
     stances = frozenset(measurement.stances)
-    accepted_attestations = current_verified_claim_attestations(
-        tree, claim, law_evidence.verified_attestations
+    accepted_attestations = accepted_claim_attestations(
+        instance,
+        coordinate=observation,
+        tree=tree,
+        claim=claim,
+        historical=law_evidence.verified_attestations,
     )
     store = instance.claim_attestation_evidence_store()
     attestation_head = store.head()
@@ -851,6 +856,10 @@ def _evaluate_claim_attestation(
         statement_v1 = item.statement
         if (
             not item.current
+            or (
+                isinstance(item, AcceptedClaimAttestationEvidenceV1)
+                and item.envelope.statement.attestation_basis != "examined_existing"
+            )
             or item.attestation_grade != "verified_principal"
             or statement_v1.provider_or_principal.kind != "Principal"
             or statement_v1.claim_statement_digest != measurement.claim_statement_digest

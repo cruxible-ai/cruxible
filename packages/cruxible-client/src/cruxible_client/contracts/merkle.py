@@ -34,7 +34,6 @@ from collections.abc import (
 from dataclasses import dataclass
 from typing import Final, Generic, TypeVar, cast
 
-from cruxible_client.contracts.persistent import MapMutation, PersistentMap
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     CanonicalScalar,
@@ -50,6 +49,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.errors import CanonicalEncodingError, MerkleIntegrityError
+from cruxible_client.contracts.persistent import MapMutation, PersistentMap
 
 MERKLE_LEAF_DOMAIN: Final = "playbill-merkle-leaf-v1"
 MERKLE_NODE_DOMAIN: Final = "playbill-merkle-node-v1"

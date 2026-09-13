@@ -180,6 +180,15 @@ P2_C_ARTIFACT_KINDS = ArtifactKindRegistry(
     )
 )
 
+ATTESTATION_ARTIFACT_KINDS = ArtifactKindRegistry(
+    (
+        *P2_C_ARTIFACT_KINDS.entries(),
+        ArtifactPathKind(
+            "attestation", re.compile(r"^attestations/[0-9a-f]{2}/[0-9a-f]{64}\.json$")
+        ),
+    )
+)
+
 PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
     tuple(
         ArtifactFormatTag(
@@ -193,6 +202,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
                 "playbill-capture-envelope-v2",
                 "playbill-capture-procedure-egress-evidence-v1",
                 "playbill-capture-provider-invocation-evidence-v1",
+                "playbill-claim-attestation-envelope-v2",
                 "playbill-claim-v2",
                 "playbill-claim-v3",
                 "playbill-accepted-state-run-input-v1",
@@ -274,6 +284,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             },
         )
         for tag in (
+            "playbill-claim-attestation-envelope-v2",
             "playbill-approval-policy-v1",
             "playbill-procedure-runtime-policy-v1",
             "playbill-accepted-state-run-input-v1",
@@ -365,6 +376,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
 )
 
 RegisteredPathKind = Literal[
+    "attestation",
     "approval-policy",
     "procedure-runtime-policy",
     "capture-contract",
@@ -777,6 +789,30 @@ def parse_projection_tree(
                             input_digest=file_digest(content).tagged,
                             artifact_digest=digest,
                         ),
+                    )
+                )
+                continue
+            if kind == "attestation":
+                from cruxible_client.contracts.accepted_attestations import (
+                    attestation_artifact_digest,
+                    attestation_identity,
+                    parse_accepted_attestation,
+                )
+
+                attestation = parse_accepted_attestation(content, path=path, codec=artifact_codec)
+                identity = attestation_identity(attestation).qualified
+                if identity in identities:
+                    raise ProjectionFormatError("duplicate accepted attestation identity")
+                identities[identity] = path
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity,
+                        kind,
+                        attestation.tag,
+                        path,
+                        attestation_artifact_digest(attestation).tagged,
+                        None,
+                        1,
                     )
                 )
                 continue

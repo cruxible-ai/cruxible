@@ -109,9 +109,21 @@ def threshold_world(
     monkeypatch: pytest.MonkeyPatch,
     *,
     minimum: int = 2,
+    frozen: bool = True,
     attestation_mutator=None,  # type: ignore[no-untyped-def]
 ):
-    instance, owner = initialize_local(root)
+    # These fixtures inject V1 law evidence to exercise the frozen reducer.
+    # Keep their ledger bound to the compiler that actually consumed that form.
+    if frozen:
+        from cruxible_core.compiler.compiler import P2_B5_COMPILER
+
+        with monkeypatch.context() as init_patch:
+            init_patch.setattr(
+                "cruxible_core.runtime.instance.current_compiler_coordinate", lambda: P2_B5_COMPILER
+            )
+            instance, owner = initialize_local(root)
+    else:
+        instance, owner = initialize_local(root)
     base_type = _claim_type()
     claim_type = base_type.model_copy(
         update={

@@ -200,6 +200,7 @@ def test_p2_b2_reserves_every_current_artifact_tag() -> None:
         "playbill-capture-envelope-v2",
         "playbill-capture-procedure-egress-evidence-v1",
         "playbill-capture-provider-invocation-evidence-v1",
+        "playbill-claim-attestation-envelope-v2",
         "playbill-claim-v2",
         "playbill-claim-v3",
         "playbill-exhaust-promotion-v1",

@@ -252,14 +252,14 @@ def _claim_from_public_view(view: Any) -> ClaimArtifactAny:
     )
 
 
-def append_prepared_claim_attestation(
+def prepare_claim_attestation(
     client: Any,
     instance_id: str,
     *,
     prepared: PreparedClaimAttestationRequestV1,
     signer: ClaimAttestationV2Signer,
-) -> ClaimAttestationAppendResultV1:
-    """Lower a digest-free client request to the exact signed append wire."""
+) -> ClaimAttestationV2:
+    """Bind and sign an exact accepted Claim without appending or accepting it."""
 
     whoami = client.playbill_whoami(instance_id)
     principals = tuple(
@@ -333,10 +333,21 @@ def append_prepared_claim_attestation(
         attested_at=prepared.attested_at,
         valid_until=prepared.valid_until,
     )
+    return signer.sign_claim_attestation_v2(statement)
+
+
+def append_prepared_claim_attestation(
+    client: Any,
+    instance_id: str,
+    *,
+    prepared: PreparedClaimAttestationRequestV1,
+    signer: ClaimAttestationV2Signer,
+) -> ClaimAttestationAppendResultV1:
+    attestation = prepare_claim_attestation(client, instance_id, prepared=prepared, signer=signer)
     result = client.append_playbill_claim_attestation(
         instance_id,
         request=ClaimAttestationAppendRequestV1(
-            attestation=signer.sign_claim_attestation_v2(statement),
+            attestation=attestation,
             capture_references=(
                 tuple(
                     ClaimAttestationCaptureReferenceV1(capture_digest=item.capture_digest)
@@ -356,6 +367,7 @@ __all__ = [
     "LocalClaimAttestationKeyUnavailable",
     "LocalEd25519ClaimAttestationSigner",
     "PRINCIPAL_KEY_PATH_ENV",
+    "prepare_claim_attestation",
     "append_prepared_claim_attestation",
     "local_attestation_signer_from_environment",
 ]

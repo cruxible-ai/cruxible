@@ -6,8 +6,8 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
-from cruxible_client.contracts.persistent import MapMutation, PersistentMap
 from cruxible_client.contracts.claims import parse_claim
+from cruxible_client.contracts.persistent import MapMutation, PersistentMap
 
 CLAIM_PATH_RE = re.compile(r"^claims/[0-9a-f]{2}/CLM-[0-9a-f]{32}\.json$")
 

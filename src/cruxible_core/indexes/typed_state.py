@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
+from cruxible_client.contracts.accepted_attestations import parse_accepted_attestation
 from cruxible_client.contracts.acquisition_policies import parse_acquisition_policy
 from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_IDENTITY,
@@ -28,6 +29,11 @@ from cruxible_client.contracts.canonical import (
     artifact_path_for_codec,
 )
 from cruxible_client.contracts.captures import parse_capture_contract
+from cruxible_client.contracts.claim_attestations import (
+    ClaimAttestationV2,
+    claim_attestation_v2_envelope_digest,
+    claim_attestation_v2_statement_digest,
+)
 from cruxible_client.contracts.claim_types import parse_claim_type
 from cruxible_client.contracts.claims import claim_statement_digest, parse_claim
 from cruxible_client.contracts.documents import parse_document
@@ -75,11 +81,39 @@ class OwnerCodec:
     parse: Callable[..., Any]
     fields: tuple[tuple[str, str], ...] = ()
     lifecycle: bool = True
+    versioned: bool = True
 
 
 # Field names intentionally follow the source contracts; nested executable and
 # policy content is not duplicated as SQL JSON or speculative child relations.
 OWNER_CODECS = (
+    OwnerCodec(
+        "attestation",
+        "ClaimAttestation",
+        "attestations",
+        parse_accepted_attestation,
+        (
+            ("envelope_digest", "TEXT PRIMARY KEY NOT NULL"),
+            ("statement_digest", "TEXT NOT NULL"),
+            ("claim_identity", "TEXT NOT NULL"),
+            ("claim_artifact_digest", "TEXT NOT NULL"),
+            ("claim_statement_digest", "TEXT NOT NULL"),
+            ("principal_id", "TEXT NOT NULL"),
+            ("signing_key_digest", "TEXT NOT NULL"),
+            ("basis", "TEXT NOT NULL CHECK(basis IN ('examined_existing','new_capture'))"),
+            ("stance", "TEXT NOT NULL CHECK(stance IN ('support','contradict','unsure'))"),
+            ("attested_at_us", "INTEGER NOT NULL"),
+            ("valid_until_us", "INTEGER"),
+            ("subject_shell_digest", "TEXT NOT NULL"),
+            ("object_shell_digest", "TEXT"),
+            ("referent_git_oid", "TEXT NOT NULL"),
+            ("referent_semantic_root", "TEXT NOT NULL"),
+            ("referent_generation_root", "TEXT NOT NULL"),
+            ("referent_compiler_digest", "TEXT NOT NULL"),
+        ),
+        lifecycle=False,
+        versioned=False,
+    ),
     OwnerCodec(
         "claim",
         "Claim",
@@ -307,12 +341,16 @@ def schema_sql() -> str:
             "path TEXT NOT NULL UNIQUE REFERENCES members(path)",
             "format_tag TEXT NOT NULL",
             "artifact_digest TEXT NOT NULL",
-            "predecessor_digest TEXT",
-            "revision INTEGER NOT NULL CHECK(revision>=1)",
         ]
+        if owner.versioned:
+            columns.extend(
+                ("predecessor_digest TEXT", "revision INTEGER NOT NULL CHECK(revision>=1)")
+            )
         if owner.lifecycle:
             values = "'active'" if owner.kind == "document" else "'live','retired'"
             columns.append(f"lifecycle TEXT NOT NULL CHECK(lifecycle IN ({values}))")
+        if owner.kind == "attestation":
+            columns[0] = "identity TEXT NOT NULL UNIQUE"
         columns.extend(f"{name} {definition}" for name, definition in owner.fields)
         if owner.kind == "claim":
             columns.append(_CLAIM_CHECK)
@@ -321,8 +359,13 @@ def schema_sql() -> str:
             f"CREATE INDEX {owner.table}_by_digest ON {owner.table}(artifact_digest,identity)"
         )
         lifecycle = "lifecycle" if owner.lifecycle else "NULL AS lifecycle"
+        version = (
+            "predecessor_digest,revision"
+            if owner.versioned
+            else "NULL AS predecessor_digest,1 AS revision"
+        )
         branches.append(
-            f"SELECT identity,'{owner.kind}' AS kind,format_tag,path,artifact_digest,predecessor_digest,revision,{lifecycle} FROM {owner.table}"
+            f"SELECT identity,'{owner.kind}' AS kind,format_tag,path,artifact_digest,{version},{lifecycle} FROM {owner.table}"
         )
     statements.extend(
         [
@@ -346,6 +389,8 @@ def schema_sql() -> str:
             "CREATE INDEX pins_by_target ON pins(target_identity,edge_kind,source_identity,ordinal) WHERE target_identity IS NOT NULL",
             "CREATE INDEX pins_by_target_digest ON pins(target_digest,edge_kind,source_identity,ordinal)",
             "CREATE INDEX claims_by_subject_predicate ON claims(subject_path,predicate,subject_selector_scheme,subject_selector_value,identity)",
+            "CREATE INDEX attestations_by_claim_version ON attestations(claim_identity,claim_artifact_digest,attested_at_us,envelope_digest)",
+            "CREATE INDEX attestations_by_principal_basis ON attestations(claim_identity,claim_artifact_digest,principal_id,basis,attested_at_us DESC,envelope_digest)",
             "CREATE INDEX claims_by_lifecycle ON claims(lifecycle,identity)",
             "CREATE INDEX claims_by_object_subject ON claims(object_path,identity) WHERE object_kind='subject'",
             "CREATE INDEX provider_interfaces_by_interface ON provider_interfaces(interface_digest,identity)",
@@ -414,6 +459,27 @@ def _claim_fields(claim: Any) -> dict[str, SQLValue]:
 
 
 def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
+    if owner.kind == "attestation":
+        s = source.statement
+        return {
+            "envelope_digest": claim_attestation_v2_envelope_digest(source),
+            "statement_digest": claim_attestation_v2_statement_digest(s),
+            "claim_identity": s.claim_identity.qualified,
+            "claim_artifact_digest": s.claim_artifact_digest,
+            "claim_statement_digest": s.claim_statement_digest,
+            "principal_id": s.attesting_principal_id,
+            "signing_key_digest": s.signing_key_digest,
+            "basis": s.attestation_basis,
+            "stance": s.stance,
+            "attested_at_us": utc_microseconds(s.attested_at),
+            "valid_until_us": utc_microseconds(s.valid_until),
+            "subject_shell_digest": s.subject_shell_digest,
+            "object_shell_digest": s.object_shell_digest,
+            **{
+                "referent_" + k: getattr(s.referent_coordinate, k)
+                for k in ("git_oid", "semantic_root", "generation_root", "compiler_digest")
+            },
+        }
     if owner.kind == "claim":
         return _claim_fields(source)
     result = {name: getattr(source, name) for name, _ in owner.fields if hasattr(source, name)}
@@ -464,9 +530,9 @@ def insert_owners(
             "path": row.path,
             "format_tag": row.format_tag,
             "artifact_digest": row.artifact_digest,
-            "predecessor_digest": row.predecessor_digest,
-            "revision": row.revision,
         }
+        if owner.versioned:
+            values.update(predecessor_digest=row.predecessor_digest, revision=row.revision)
         if owner.lifecycle:
             values["lifecycle"] = (
                 source.lifecycle.status if row.kind == "document" else source.lifecycle.state
@@ -658,7 +724,8 @@ class TypedStateReader:
         if owner is None:
             sql = f"SELECT {COMMON_COLUMNS} FROM artifact_lookup WHERE identity=?"
         else:
-            sql = f"SELECT identity,'{owner.kind}',format_tag,path,artifact_digest,predecessor_digest,revision FROM {owner.table} WHERE identity=?"
+            version = "predecessor_digest,revision" if owner.versioned else "NULL,1"
+            sql = f"SELECT identity,'{owner.kind}',format_tag,path,artifact_digest,{version} FROM {owner.table} WHERE identity=?"
         row = self.connection.execute(sql, (identity,)).fetchone()
         self.work["owners_selected"] += row is not None
         return None if row is None else ArtifactEnvelopeRow(*row)
@@ -725,6 +792,63 @@ class TypedStateReader:
             )
         return result
 
+    def claim_attestations(
+        self,
+        claim_identity: str | None = None,
+        claim_artifact_digest: str | None = None,
+        *,
+        basis: str | None = None,
+        current_claims_only: bool = False,
+    ) -> tuple[ClaimAttestationV2, ...]:
+        from cruxible_client.contracts.accepted_attestations import (
+            attestation_artifact_digest,
+            parse_accepted_attestation,
+        )
+        from cruxible_client.contracts.claim_attestations import (
+            claim_attestation_v2_envelope_digest,
+        )
+
+        predicates: list[str] = []
+        parameters: list[str] = []
+        if claim_identity is not None:
+            if claim_artifact_digest is None:
+                raise ValueError("attestation selection requires an exact Claim version")
+            predicates.extend(("claim_identity=?", "claim_artifact_digest=?"))
+            parameters.extend((claim_identity, claim_artifact_digest))
+        if basis is not None:
+            predicates.append("basis=?")
+            parameters.append(basis)
+        if current_claims_only:
+            predicates.append(
+                "EXISTS (SELECT 1 FROM claims c WHERE c.identity=attestations.claim_identity "
+                "AND c.artifact_digest=attestations.claim_artifact_digest)"
+            )
+        rows = self.connection.execute(
+            "SELECT path,envelope_digest,artifact_digest FROM attestations "
+            + ("WHERE " + " AND ".join(predicates) if predicates else "")
+            + " ORDER BY attested_at_us,envelope_digest",
+            parameters,
+        ).fetchall()
+        self.prefetch_members(tuple(row[0] for row in rows))
+        values = []
+        for path, digest, artifact_digest in rows:
+            value = parse_accepted_attestation(self.member_bytes(path), path=path)
+            if (
+                claim_attestation_v2_envelope_digest(value) != digest
+                or attestation_artifact_digest(value).tagged != artifact_digest
+                or (basis is not None and value.statement.attestation_basis != basis)
+                or (
+                    claim_identity is not None
+                    and (
+                        value.statement.claim_identity.qualified != claim_identity
+                        or value.statement.claim_artifact_digest != claim_artifact_digest
+                    )
+                )
+            ):
+                raise ProjectionIntegrityError("attestation lookup differs from its signed member")
+            values.append(value)
+        return tuple(values)
+
     def procedure_inventory(self) -> tuple[ProcedureInventoryRow, ...]:
         """Return the accepted Procedure catalog without decoding graph bytes."""
         return tuple(
@@ -742,6 +866,10 @@ class TypedStateReader:
         row = self.envelope(identity)
         if row is None or row.kind not in OWNER_BY_KIND:
             return None
+        if row.kind == "attestation":
+            from cruxible_core.claims.closure import parse_dependency_artifact
+
+            return parse_dependency_artifact(row.path, self.member_bytes(row.path))
         source = OWNER_BY_KIND[row.kind].parse(
             self.member_bytes(row.path), path=row.path, codec=self.codec
         )

@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.persistent import PersistentMap
 from cruxible_client.contracts.authoring.models import SubjectAuthoringPayloadV1
 from cruxible_client.contracts.claims import claim_path, render_claim
+from cruxible_client.contracts.persistent import PersistentMap
 from cruxible_client.contracts.subjects import render_subject
 from cruxible_core.authoring.lowering import _same_predicate_claims
 from cruxible_core.derived.derived_state import SnapshotTree

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from fractions import Fraction
 
+from cruxible_client.contracts.accepted_attestations import ClaimAttestationEvidence
 from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact_identity
 from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV1,
@@ -21,7 +22,6 @@ from cruxible_client.contracts.captures import (
     parse_capture_envelope,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
-from cruxible_client.contracts.claim_attestations import VerifiedClaimAttestationV1
 from cruxible_client.contracts.claim_types import parse_claim_type
 from cruxible_client.contracts.claim_verdicts import (
     CaptureVerdictEvidenceV1,
@@ -1073,7 +1073,7 @@ def _provenance_concentration(
         if len(members) < PROVENANCE_MINIMUM_LIVE_SUPPORTED_CLAIMS:
             continue
         captures: dict[str, CaptureVerdictEvidenceV1] = {}
-        attestations: dict[str, VerifiedClaimAttestationV1] = {}
+        attestations: dict[str, ClaimAttestationEvidence] = {}
         refs: list[CurationEvidenceRefV1] = []
         for row, verdict in members:
             current_evidence = {

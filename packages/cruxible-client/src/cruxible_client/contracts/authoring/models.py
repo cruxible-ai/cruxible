@@ -20,6 +20,7 @@ from pydantic import (
     model_validator,
 )
 
+from cruxible_client.contracts.accepted_attestations import attestation_identity
 from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicyV1
 from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_IDENTITY,
@@ -35,6 +36,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import CaptureContractV1
+from cruxible_client.contracts.claim_attestations import ClaimAttestationV2
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import (
@@ -852,6 +854,15 @@ class AuthoringCandidateReferenceV1(_StrictAuthoringModel):
     resolution: Literal["candidate_in_change_set"] = "candidate_in_change_set"
 
 
+class AttestationAuthoringPayloadV1(_StrictAuthoringModel):
+    """One immutable signed statement proposed through ordinary acceptance."""
+
+    tag: Literal["cruxible-attestation-authoring-payload-v1"] = (
+        "cruxible-attestation-authoring-payload-v1"
+    )
+    attestation: ClaimAttestationV2
+
+
 class SubjectAuthoringPayloadV1(_StrictAuthoringModel):
     tag: Literal["playbill-subject-authoring-payload-v1"] = "playbill-subject-authoring-payload-v1"
     subject: SubjectShell
@@ -1231,6 +1242,7 @@ AuthoringChangeSetMemberV1: TypeAlias = Annotated[
     | ClaimTypeAuthoringPayloadV1
     | ClaimTypeSuccessionMemberV1
     | ClaimRetirementMemberV1
+    | AttestationAuthoringPayloadV1
     | SubjectAuthoringPayloadV1
     | QueryDefinitionAuthoringPayloadV1
     | ApprovalPolicyAuthoringPayloadV1
@@ -1268,6 +1280,8 @@ def authoring_claim_member_identity(payload: ClaimAuthoringPayloadV1) -> str:
 
 
 def authoring_member_identity(payload: AuthoringChangeSetMemberV1) -> str:
+    if isinstance(payload, AttestationAuthoringPayloadV1):
+        return attestation_identity(payload.attestation).qualified
     if isinstance(payload, ClaimAuthoringPayloadV1):
         return authoring_claim_member_identity(payload)
     if isinstance(payload, ClaimTypeAuthoringPayloadV1):
@@ -1370,6 +1384,7 @@ AuthoringPayloadV1 = Annotated[
     | ClaimAuthoringPayloadV3
     | ProcedureAuthoringPayloadV1
     | ProcedureAuthoringPayloadV2
+    | AttestationAuthoringPayloadV1
     | SubjectAuthoringPayloadV1
     | QueryDefinitionAuthoringPayloadV1
     | ApprovalPolicyAuthoringPayloadV1
@@ -2954,6 +2969,7 @@ __all__ = [
     "ProcedureRuntimePolicyAuthoringPayloadV1",
     "ProcedureMandateAuthoringPayloadV1",
     "QueryDefinitionAuthoringPayloadV1",
+    "AttestationAuthoringPayloadV1",
     "SubjectAuthoringPayloadV1",
     "RepairAlternativeV1",
     "ExistingCaptureCitationSourceV1",

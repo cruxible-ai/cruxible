@@ -54,6 +54,24 @@ def test_sdk_attest_signs_with_a_real_local_key_and_appends_once(tmp_path: Path)
     assert retry == first
     assert len(instance.claim_attestation_evidence_store().events()) == 1
 
+    # A governed changeset shares signing, but does not append an observation
+    # or imply acceptance merely because its member has been prepared.
+    before = instance.accepted_coordinate()
+    from cruxible_client.contracts.projection import AcceptedCoordinate
+
+    draft = (
+        pb.at(AcceptedCoordinate.from_internal(before))
+        .changes()
+        .attestation(claim_id, stance="contradict", signer=signer)
+    )
+    payload = draft._compiled().payload
+    assert len(payload.members) == 1
+    member = payload.members[0]
+    assert member.attestation.statement.stance == "contradict"
+    assert member.attestation.statement.claim_identity.name == claim_id
+    assert len(instance.claim_attestation_evidence_store().events()) == 1
+    assert instance.accepted_coordinate() == before
+
 
 @pytest.mark.parametrize(
     "failure", ["relative", "permissions", "mismatch", "workspace", "daemon_state"]

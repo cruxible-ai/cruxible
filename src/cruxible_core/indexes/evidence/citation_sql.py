@@ -217,6 +217,26 @@ def populate_citations(
     connection.execute("SAVEPOINT populate_citations")
     try:
         for path, content in sorted(sources.items()):
+            if path.startswith("attestations/"):
+                from cruxible_client.contracts.accepted_attestations import (
+                    parse_accepted_attestation,
+                )
+                from cruxible_client.contracts.claim_attestations import (
+                    claim_attestation_v2_envelope_digest,
+                )
+
+                value = parse_accepted_attestation(content, path=path, codec=artifact_codec)
+                key = claim_attestation_v2_envelope_digest(value)
+                if not owner_exists("attestation", key):
+                    raise ProjectionFormatError("citation attestation owner is not published")
+                remove_owner_citations(connection, (("attestation", key),))
+                for digest in value.statement.cited_capture_digests:
+                    _insert_capture(connection, digest, bodies)
+                    connection.execute(
+                        "INSERT INTO citation_uses VALUES ('attestation',?,?,?,NULL,NULL)",
+                        (key, digest, digest),
+                    )
+                continue
             if not path.startswith("claims/"):
                 continue
             claim = parse_claim(content, path=path, codec=artifact_codec)

@@ -8,10 +8,10 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+from cruxible_client.contracts.accepted_attestations import ClaimAttestationEvidence
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import ArtifactDigest, CasDigest, Sha256Value, typed_digest
 from cruxible_client.contracts.captures import CanonicalDurationV1
-from cruxible_client.contracts.claim_attestations import VerifiedClaimAttestationV1
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV1
 from cruxible_client.contracts.providers import ProviderV1
@@ -203,7 +203,7 @@ def _control_closure(
 
 def evidence_control_components(
     captures: tuple[CaptureVerdictEvidenceV1, ...],
-    attestations: tuple[VerifiedClaimAttestationV1, ...],
+    attestations: tuple[ClaimAttestationEvidence, ...],
     *,
     providers: Mapping[str, ProviderV1],
 ) -> tuple[EvidenceControlComponentV1, ...]:
@@ -270,7 +270,7 @@ def evidence_control_components(
 
 def _require_unique_evidence_digests(
     captures: tuple[CaptureVerdictEvidenceV1, ...],
-    attestations: tuple[VerifiedClaimAttestationV1, ...],
+    attestations: tuple[ClaimAttestationEvidence, ...],
 ) -> None:
     """Refuse one CAS object presented as more than one evidence node."""
 
@@ -473,7 +473,7 @@ def evaluate_claim_verdict(
     rule: ClaimAdjudicationRuleV1,
     evaluation_time: datetime,
     captures: tuple[CaptureVerdictEvidenceV1, ...],
-    attestations: tuple[VerifiedClaimAttestationV1, ...],
+    attestations: tuple[ClaimAttestationEvidence, ...],
     providers: Mapping[str, ProviderV1],
     claim_effective_from: datetime | None = None,
     claim_effective_until: datetime | None = None,
@@ -525,7 +525,7 @@ def evaluate_claim_verdict(
         if item.admission in {"direct", "derivational"} and item.observed_at <= evaluation_time
     }
 
-    def attestation_has_relevant_captures(item: VerifiedClaimAttestationV1) -> bool:
+    def attestation_has_relevant_captures(item: ClaimAttestationEvidence) -> bool:
         cited = set(item.statement.capture_digests)
         return bool(cited) and cited.issubset(admitted_capture_digests)
 

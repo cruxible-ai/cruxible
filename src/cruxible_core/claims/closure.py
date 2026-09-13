@@ -20,7 +20,6 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter, field_validator, model_validator
 
-from cruxible_client.contracts.persistent import MapMutation, PersistentMap
 from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicyError,
     acquisition_policy_digest,
@@ -72,6 +71,7 @@ from cruxible_client.contracts.merkle import (
     update_merkle_tree,
     verify_merkle_tree,
 )
+from cruxible_client.contracts.persistent import MapMutation, PersistentMap
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandateError,
     parse_procedure_mandate,
@@ -123,6 +123,7 @@ class _StrictClosureModel(BaseModel):
 class ArtifactDependencyStateV1(_StrictClosureModel):
     path: str
     artifact_kind: Literal[
+        "attestation",
         "document",
         "subject",
         "claim-type",
@@ -171,6 +172,23 @@ def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyS
     """Derive metadata from exact artifact bytes, preserving parser refusals."""
 
     try:
+        if path.startswith("attestations/"):
+            from cruxible_client.contracts.accepted_attestations import (
+                attestation_artifact_digest,
+                attestation_identity,
+                parse_accepted_attestation,
+            )
+
+            value = parse_accepted_attestation(content, path=path)
+            return ArtifactDependencyStateV1(
+                path=path,
+                artifact_kind="attestation",
+                artifact_tag=value.tag,
+                identity=attestation_identity(value),
+                artifact_digest=attestation_artifact_digest(value).tagged,
+                pins=(),
+                lifecycle=ArtifactLifecycle(),
+            )
         if path.startswith("documents/"):
             document = parse_document(content, path=path)
             adapter = DocumentArtifactAdapter(document)

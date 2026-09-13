@@ -38,8 +38,8 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+from cruxible_client.contracts.accepted_attestations import ClaimAttestationEvidence
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_client.contracts.claim_attestations import VerifiedClaimAttestationV1
 from cruxible_client.contracts.claim_verdicts import (
     CaptureVerdictEvidenceV1,
     ClaimAdjudicationRuleV1,
@@ -80,7 +80,7 @@ class ClaimFactRowV1(_StrictQueryBackendModel):
     accepted: AcceptedClaim
     rule: ClaimAdjudicationRuleV1
     captures: tuple[CaptureVerdictEvidenceV1, ...] = ()
-    attestations: tuple[VerifiedClaimAttestationV1, ...] = ()
+    attestations: tuple[ClaimAttestationEvidence, ...] = ()
     referent_current: bool = True
     resolved_authority_basis: tuple[str, ...] = ()
 

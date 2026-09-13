@@ -15,7 +15,6 @@ from pydantic import (
     field_validator,
 )
 
-from cruxible_client.contracts.persistent import PersistentMap
 from cruxible_client.contracts.acquisition_policies import (
     AcceptedSourceAcquisitionPolicyV1,
     SourceAcquisitionPolicyError,
@@ -99,6 +98,7 @@ from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     ClaimArtifactV3,
     ClaimFormatError,
+    ClaimLawEvidenceAny,
     ExactContentClaimObject,
     LiteralClaimObject,
     SubjectClaimObject,
@@ -129,6 +129,7 @@ from cruxible_client.contracts.documents import (
 from cruxible_client.contracts.errors import (
     DocumentFormatError,
     PlaybillError,
+    PlaybillFormatError,
     PlaybillReseedRequired,
     PrincipalIntegrityError,
     ProposalAdmissionError,
@@ -157,6 +158,7 @@ from cruxible_client.contracts.merkle import (
     build_merkle_manifest,
     update_merkle_manifest,
 )
+from cruxible_client.contracts.persistent import PersistentMap
 from cruxible_client.contracts.policies import (
     ClaimAdmissionCandidateContextV1,
     ClaimAdmissionCandidateResultV1,
@@ -324,6 +326,9 @@ _CLAIM_TYPE_PATH_RE = re.compile(
     r"^claim-types/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/"
     r"[a-z][a-z0-9_]{0,63}\.json$"
 )
+ClaimLawEvidenceProvider = Callable[[AcceptedCoordinate, str, str], ClaimLawEvidenceAny | None]
+
+_ATTESTATION_PATH_RE = re.compile(r"^attestations/[0-9a-f]{2}/[0-9a-f]{64}\.json$")
 _CAPTURE_CONTRACT_PATH_RE = re.compile(r"^capture-contracts/[a-z][a-z0-9_.-]{0,255}\.json$")
 _PROVIDER_PATH_RE = re.compile(r"^providers/[a-z][a-z0-9_.-]{0,255}\.json$")
 _PROVIDER_INTERFACE_PATH_RE = re.compile(r"^provider-interfaces/[a-z][a-z0-9_.-]{0,255}\.json$")
@@ -340,6 +345,7 @@ _EXHAUST_PROMOTION_PATH_RE = re.compile(r"^exhaust-promotions/[a-z][a-z0-9_.-]{0
 _DEPENDENCY_CLOSED_PATTERNS: Final = (
     _CLAIM_TYPE_PATH_RE,
     _CAPTURE_CONTRACT_PATH_RE,
+    _ATTESTATION_PATH_RE,
     _PROVIDER_PATH_RE,
     _PROVIDER_INTERFACE_PATH_RE,
     _SOURCE_ACQUISITION_POLICY_PATH_RE,
@@ -1615,6 +1621,9 @@ class _MemberContext:
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None
     accepted_referent_coordinates: frozenset[AcceptedCoordinate]
     candidate_tree: Mapping[str, bytes]
+    current_tree: Mapping[str, bytes]
+    retained_tree: Callable[[str], Mapping[str, bytes]] | None
+    claim_law_provider: ClaimLawEvidenceProvider | None
     candidate_states: Mapping[str, ArtifactDependencyStateV1]
     candidate_identities: Mapping[str, tuple[ArtifactIdentity, str]]
     resolved: _ResolvedArtifacts
@@ -2127,6 +2136,124 @@ def _procedure_mandate_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _attestation_member(context: _MemberContext) -> _MemberVerdict:
+    from cruxible_core.evidence.attestation_verification import ClaimAttestationRefusal
+
+    if not any(
+        entry.kind == "attestation"
+        for entry in artifact_kinds_for_compiler(context.current.compiler).entries()
+    ):
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "playbill.attestation.compiler_unsupported",
+                    "This compiler does not admit standalone attestations.",
+                    context.path,
+                ),
+            )
+        )
+    try:
+        return _verified_attestation_member(context)
+    except ClaimAttestationRefusal as exc:
+        return _MemberVerdict(diagnostics=(_diagnostic(exc.error_code, str(exc), context.path),))
+    except (PlaybillError, ValueError) as exc:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic("playbill.attestation.binding_invalid", str(exc), context.path),
+            )
+        )
+
+
+def _verified_attestation_member(context: _MemberContext) -> _MemberVerdict:
+    from cruxible_client.contracts.accepted_attestations import (
+        attestation_artifact_digest,
+        parse_accepted_attestation,
+    )
+    from cruxible_client.contracts.claims import claim_path, parse_claim_law_evidence
+    from cruxible_core.evidence.attestation_verification import verify_attestation_binding
+    from cruxible_core.proposals.settlement import parse_change_set_record
+
+    value = parse_accepted_attestation(context.content, path=context.path)
+    s = value.statement
+    if context.parent_content is not None and context.parent_content != context.content:
+        raise ProposalIntegrityError("accepted attestation bytes are immutable")
+    if s.referent_coordinate not in context.accepted_referent_coordinates:
+        raise ProposalIntegrityError("attestation referent is not an accepted coordinate")
+    if not isinstance(context.bodies, CaptureObjectStoreProtocol):
+        raise ProposalIntegrityError("attestation validation requires managed captures")
+    if s.referent_coordinate == context.accepted_coordinate():
+        referent_tree = context.current_tree
+    elif context.retained_tree is not None:
+        referent_tree = context.retained_tree(s.referent_coordinate.git_oid)
+    else:
+        raise ProposalIntegrityError("historical attestation requires a retained source reader")
+    # Retained law evidence is needed only for new-capture eligibility; ordinary
+    # examined-existing statements do not scan history or load unrelated laws.
+    law = None
+    if s.attestation_basis == "new_capture":
+        path = claim_path(s.claim_identity.name)
+        if context.claim_law_provider is not None:
+            law = context.claim_law_provider(
+                s.referent_coordinate, s.claim_identity.qualified, s.claim_artifact_digest
+            )
+        else:
+            # Cold replay has no served SQL. Verify the exact retained member;
+            # normal proposal and settlement callers use the C history locator.
+            for record_path in sorted(
+                (p for p in referent_tree if p.startswith("changesets/")), reverse=True
+            ):
+                record = parse_change_set_record(referent_tree[record_path], path=record_path)
+                if not any(
+                    member.path == path
+                    and getattr(member, "candidate_artifact_digest", None)
+                    == s.claim_artifact_digest
+                    for member in record.members
+                ):
+                    continue
+                for evidence in getattr(record, "law_evidence", ()):
+                    if evidence.path == path:
+                        raw = evidence.result.get("claim_evidence")
+                        if raw is not None:
+                            law = parse_claim_law_evidence(raw)
+                            break
+                if law is not None:
+                    break
+    admitted, resolved = verify_attestation_binding(
+        value,
+        instance_id=context.current.instance_id,
+        referent_tree=referent_tree,
+        referent_principals=(
+            context.principals
+            if s.referent_coordinate == context.accepted_coordinate()
+            else principal_registry_from_tree(
+                referent_tree, semantic_root=s.referent_coordinate.semantic_root
+            )
+        ),
+        current_tree=context.current_tree,
+        current_principals=context.principals,
+        at=datetime.fromisoformat(context.timestamp.replace("Z", "+00:00")),
+        bodies=context.bodies,
+        law=law,
+        producer_receipt_resolver=context.producer_receipt_resolver,
+    )
+    digest = attestation_artifact_digest(value).tagged
+    return _accepted(
+        context,
+        _installed(context, value.tag),
+        predecessor_artifact_digest=None,
+        candidate_artifact_digest=digest,
+        required_tier="governed_write",
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={
+            "verdict": "accepted",
+            "artifact_digest": digest,
+            "admitted_capture_digests": list(admitted),
+            "resolved_artifacts": [v.model_dump(mode="json") for v in resolved],
+        },
+    )
+
+
 def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
     contract = parse_capture_contract(context.content, path=context.path)
     predecessor: AcceptedCaptureContract | None = None
@@ -2163,6 +2290,20 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
     from cruxible_core.indexes.evaluated_state import mapped_values
 
     claim = parse_claim(context.content, path=context.path)
+    if claim.backing.attestation_digests and any(
+        entry.kind == "attestation"
+        for entry in artifact_kinds_for_compiler(context.current.compiler).entries()
+    ):
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "playbill.claim.embedded_attestations_retired",
+                    "Propose standalone signed attestation artifacts; "
+                    "Claim-backed attestations are no longer authored.",
+                    context.path,
+                ),
+            )
+        )
     predecessor: AcceptedClaim | None = None
     if context.parent_content is not None:
         previous = parse_claim(context.parent_content, path=context.path)
@@ -2600,6 +2741,13 @@ def _principal_member(context: _MemberContext) -> _MemberVerdict:
 
 _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
     _MemberKind(
+        name="attestation",
+        pattern=_ATTESTATION_PATH_RE,
+        removal_code="playbill.attestation.removal_unsupported",
+        removal_message="Signed attestations are immutable retained statements.",
+        evaluate=_attestation_member,
+    ),
+    _MemberKind(
         name="approval-policy",
         pattern=_APPROVAL_POLICY_PATH_RE,
         removal_code="playbill.approval_policy.removal_unsupported",
@@ -2725,6 +2873,7 @@ _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
     ),
 )
 ROLE_DEMOTED_MEMBER_FAMILIES: Final[tuple[str, ...]] = (
+    "attestation",
     "approval-policy",
     "procedure-runtime-policy",
     "procedure",
@@ -2980,6 +3129,8 @@ def _evaluate_scoped_members(
     principal_registry_provider: Callable[[AcceptedProjectionCoordinate], PrincipalRegistrySnapshot]
     | None,
     historical_law_coordinates: Mapping[str, tuple[str, str]],
+    retained_tree: Callable[[str], Mapping[str, bytes]] | None,
+    claim_law_provider: ClaimLawEvidenceProvider | None,
 ) -> CandidateEvaluation:
     """Judge every scoped member under its own law and close the change set.
 
@@ -3039,6 +3190,16 @@ def _evaluate_scoped_members(
                 candidate_tree,
                 None,
                 (_diagnostic(kind.format_code, str(exc), path),),
+                rebased,
+            )
+
+        except PlaybillFormatError as exc:
+            if kind.name != "attestation":
+                raise
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                (_diagnostic("playbill.attestation.format_invalid", str(exc), path),),
                 rebased,
             )
 
@@ -3233,6 +3394,9 @@ def _evaluate_scoped_members(
                 producer_receipt_resolver=producer_receipt_resolver,
                 accepted_referent_coordinates=accepted_referents,
                 candidate_tree=candidate_tree,
+                current_tree=current_tree,
+                retained_tree=retained_tree,
+                claim_law_provider=claim_law_provider,
                 candidate_states=candidate_states,
                 candidate_identities=candidate_identities,
                 resolved=resolved,
@@ -3581,6 +3745,8 @@ def evaluate_proposal_tree(
     principal_registry_provider: Callable[[AcceptedProjectionCoordinate], PrincipalRegistrySnapshot]
     | None = None,
     tree_state_provider: TreeStateProvider | None = None,
+    retained_tree: Callable[[str], Mapping[str, bytes]] | None = None,
+    claim_law_provider: ClaimLawEvidenceProvider | None = None,
 ) -> CandidateEvaluation:
     """Rebase, scope, judge every member, and close: the whole evaluation.
 
@@ -3705,6 +3871,8 @@ def evaluate_proposal_tree(
             replay_claim_admission_accounts=replay_claim_admission_accounts,
             acceptance_laws=acceptance_laws,
             historical_law_coordinates=historical_law_coordinates or {},
+            retained_tree=retained_tree,
+            claim_law_provider=claim_law_provider,
             principal_registry_provider=principal_registry_provider,
         )
 
@@ -3795,6 +3963,7 @@ class ProposalService:
         ledger_publisher: Callable[[], object] | None = None,
         tree_state_provider: TreeStateProvider | None = None,
         accepted_tree_provider: Callable[[str], Mapping[str, bytes]] | None = None,
+        claim_law_provider: ClaimLawEvidenceProvider | None = None,
         prepared_evaluations: PreparedEvaluationAdapter | None = None,
         principal_registry_provider: Callable[
             [AcceptedProjectionCoordinate], PrincipalRegistrySnapshot
@@ -3822,6 +3991,7 @@ class ProposalService:
         # Publication, not persistence: called after the last ledger write of a
         # submission, and by contract it never raises.
         self._ledger_publisher = ledger_publisher or (lambda: None)
+        self.claim_law_provider = claim_law_provider
         self.tree_state_provider = tree_state_provider
         self._accepted_tree_provider = accepted_tree_provider or self.transport.read_tree
         self._prepared_evaluations = prepared_evaluations
@@ -3944,6 +4114,8 @@ class ProposalService:
                 query_facts_provider=self.query_facts_provider,
                 tree_state_provider=self.tree_state_provider,
                 principal_registry_provider=self.principal_registry_provider,
+                retained_tree=self._accepted_tree_provider,
+                claim_law_provider=self.claim_law_provider,
             )
         # A refused proposal has no members to summarize, so it keeps the bare
         # subject the ledger has always written for it -- unless the author said

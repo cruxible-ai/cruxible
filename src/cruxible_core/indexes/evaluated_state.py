@@ -138,6 +138,12 @@ class EvaluationRows:
             f"SELECT kind,format_tag,artifact_digest FROM {self.table('artifact_lookup')} WHERE path=?",
             path,
         )
+        if row[0] == "attestation":
+            from cruxible_core.claims.closure import parse_dependency_artifact
+
+            state = parse_dependency_artifact(path, self.source_bytes(path))
+            assert state is not None
+            return state
         source = OWNER_BY_KIND[row[0]].parse(
             self.source_bytes(path), path=path, codec=self.reader.codec
         )
@@ -340,7 +346,7 @@ class EvaluationRows:
                 f"CREATE TEMP VIEW selected_{table} AS SELECT * FROM main.{table} WHERE path NOT IN (SELECT path FROM changed_paths) UNION ALL SELECT * FROM temp.{table}"
             )
         branches = [
-            f"SELECT identity,'{owner.kind}' AS kind,format_tag,path,artifact_digest,predecessor_digest,revision,{('lifecycle' if owner.lifecycle else 'NULL AS lifecycle')} FROM selected_{owner.table}"
+            f"SELECT identity,'{owner.kind}' AS kind,format_tag,path,artifact_digest,{('predecessor_digest,revision' if owner.versioned else 'NULL AS predecessor_digest,1 AS revision')},{('lifecycle' if owner.lifecycle else 'NULL AS lifecycle')} FROM selected_{owner.table}"
             for owner in OWNER_CODECS
         ]
         candidate.connection.execute(

@@ -45,6 +45,7 @@ from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.store import AuthoringIntentStore
 from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.evidence.attestation_verification import _examined_capture_semantics
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.ledger.signing import LocalEd25519ClaimAttestationSigner
 from cruxible_core.proposals.proposals import AuthenticatedActor
@@ -55,7 +56,6 @@ from cruxible_core.service.discovery.next import (
 )
 from cruxible_core.service.evidence.claim_attestations import (
     ClaimAttestationRefusal,
-    _examined_capture_semantics,
     service_append_claim_attestation,
 )
 from tests.test_authoring.test_authoring_existing_capture import _activate, shared_capture_world
@@ -218,7 +218,7 @@ def test_served_append_refuses_a_terminally_retired_current_claim(
 ) -> None:
     instance, claim_id, owner = _accepted_claim_world(tmp_path)
     request = _request(instance, owner, claim_id, tmp_path)
-    from cruxible_core.service.evidence import claim_attestations as service_module
+    from cruxible_core.evidence import attestation_verification as service_module
 
     accepted_claim = service_module._accepted_claim
     calls = 0
@@ -263,7 +263,7 @@ def test_service_gate_independently_refuses_nonordinary_principal(
         lambda *_args, **_kwargs: Registry(),
     )
     monkeypatch.setattr(
-        "cruxible_core.service.evidence.claim_attestations.verify_claim_attestation_v2_principal",
+        "cruxible_core.evidence.attestation_verification.verify_claim_attestation_v2_principal",
         lambda *_args, **_kwargs: None,
     )
 
@@ -331,21 +331,16 @@ def test_signing_key_digest_is_checked_at_each_coordinate_independently(
         owner,
         signing_key_digest="sha256:" + "7" * 64,
     )
-    from cruxible_core.service.evidence import claim_attestations as service_module
+    from cruxible_core.evidence import attestation_verification as service_module
 
-    original = service_module._principal_at
+    original = service_module._verify_principal
 
-    def phase_selective(tree, *, coordinate, statement, phase):  # type: ignore[no-untyped-def]
+    def phase_selective(attestation, registry, *, phase):  # type: ignore[no-untyped-def]
         if phase != checked_phase:
             return owner.principal
-        return original(
-            tree,
-            coordinate=coordinate,
-            statement=statement,
-            phase=phase,
-        )
+        return original(attestation, registry, phase=phase)
 
-    monkeypatch.setattr(service_module, "_principal_at", phase_selective)
+    monkeypatch.setattr(service_module, "_verify_principal", phase_selective)
     if checked_phase == "append":
         monkeypatch.setattr(
             service_module,
@@ -361,7 +356,7 @@ def test_principal_inactive_codes_are_distinct_by_coordinate(
 ) -> None:
     instance, claim_id, owner = _accepted_claim_world(tmp_path)
     request = _request(instance, owner, claim_id, tmp_path)
-    from cruxible_core.service.evidence import claim_attestations as service_module
+    from cruxible_core.evidence import attestation_verification as service_module
 
     class InactiveRegistry:
         def require_active(self, _principal_id: str):  # type: ignore[no-untyped-def]
@@ -374,14 +369,14 @@ def test_principal_inactive_codes_are_distinct_by_coordinate(
     )
     _assert_refusal(instance, request, "principal_inactive_at_referent")
 
-    original = service_module._principal_at
+    original = service_module._verify_principal
 
-    def referent_allowed(tree, *, coordinate, statement, phase):  # type: ignore[no-untyped-def]
+    def referent_allowed(attestation, registry, *, phase):  # type: ignore[no-untyped-def]
         if phase == "referent":
             return owner.principal
-        return original(tree, coordinate=coordinate, statement=statement, phase=phase)
+        return original(attestation, registry, phase=phase)
 
-    monkeypatch.setattr(service_module, "_principal_at", referent_allowed)
+    monkeypatch.setattr(service_module, "_verify_principal", referent_allowed)
     _assert_refusal(instance, request, "principal_inactive_at_append")
 
 
@@ -556,7 +551,7 @@ def test_new_capture_refuses_provider_executable_binding_and_admission_failures(
         )
 
     monkeypatch.setattr(
-        "cruxible_core.service.evidence.claim_attestations.evaluate_capture_evidence_admissions",
+        "cruxible_core.evidence.attestation_verification.evaluate_capture_evidence_admissions",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("unreproducible policy")),
     )
     _assert_refusal(
@@ -619,14 +614,17 @@ def test_new_capture_refuses_contract_not_live_at_referent(tmp_path: Path) -> No
     referent_tree = instance.tree_at(referent.git_oid)
     referent_tree[capture_contract_path(retired.identity.name)] = render_capture_contract(retired)
     claim = parse_claim(referent_tree[claim_path(claim_id)], path=claim_path(claim_id))
-    from cruxible_core.service.evidence.claim_attestations import _new_capture_accounts
+    from cruxible_core.evidence.attestation_verification import _new_capture_accounts
+    from cruxible_core.service.claims.claims import _claim_law_evidence
 
     with pytest.raises(ClaimAttestationRefusal) as error:
         _new_capture_accounts(
-            instance,
+            bodies=instance.body_store(),
+            principals=instance.accepted_principal_registry(referent),
+            law=_claim_law_evidence(instance, path=claim_path(claim_id), at=referent),
+            producer_receipt_resolver=None,
             statement=request.attestation.statement,
             claim=claim,
-            referent=referent,
             referent_tree=referent_tree,
             append_tree=referent_tree,
         )
@@ -699,6 +697,7 @@ def test_next_v2_reads_one_exact_evidence_head_while_v1_stays_legacy(
         "claim_artifact_digest",
         "capture_digest",
         "attestation_event_digest",
+        "attestation_envelope_digest",
         "attestation_basis",
         "stance",
         "attesting_principal",

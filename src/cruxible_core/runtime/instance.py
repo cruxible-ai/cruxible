@@ -27,6 +27,11 @@ from cruxible_client.contracts.approval_policy import (
 from cruxible_client.contracts.attestations import ApprovalSubmission
 from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.claims import (
+    ClaimLawEvidenceAny,
+    claim_path,
+    parse_claim_law_evidence,
+)
 from cruxible_client.contracts.errors import (
     PlaybillBootstrapError,
     PlaybillFormatError,
@@ -1054,6 +1059,22 @@ class PlaybillInstance:
                     "indexed principal differs from its exact accepted Git record"
                 )
 
+    def accepted_claim_law_evidence(
+        self, coordinate: AcceptedCoordinate, identity: str, artifact_digest: str
+    ) -> ClaimLawEvidenceAny | None:
+        """Resolve one exact Claim admission through the shared history index."""
+        path = claim_path(identity.removeprefix("Claim:"))
+        with self.accepted_history_reader(at=coordinate) as history:
+            evidence = history.read_claim_law_evidence(
+                identity, artifact_digest=artifact_digest, path=path, load_record=self.blob_at
+            )
+        if evidence is None:
+            return None
+        raw = evidence.result.get("claim_evidence")
+        if raw is None:
+            raise ProposalIntegrityError("Claim admission has no retained law evidence")
+        return parse_claim_law_evidence(raw)
+
     def proposal_service(self) -> ProposalService:
         """Bind PB-C proposal evaluation to authenticated main and inert storage."""
 
@@ -1067,6 +1088,7 @@ class PlaybillInstance:
             review_projection_lock=self.review_projection_lock,
             note_index_provider=self.proposal_note_index,
             accepted_tree_provider=self.immutable_tree_at,
+            claim_law_provider=self.accepted_claim_law_evidence,
             prepared_evaluations=self.prepared_evaluations,
             principal_registry_provider=self.accepted_principal_registry,
             active_principal_provider=self.require_accepted_principal,
@@ -1699,6 +1721,7 @@ class PlaybillInstance:
             query_facts_provider=lambda coordinate: self._accepted_query_facts(self, coordinate),
             tree_state_provider=derive_indexed_state,
             accepted_tree_provider=self.immutable_tree_at,
+            claim_law_provider=self.accepted_claim_law_evidence,
             principal_registry_provider=self.accepted_principal_registry,
         )
 

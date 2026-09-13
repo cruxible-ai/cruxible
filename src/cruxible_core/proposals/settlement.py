@@ -72,6 +72,7 @@ from cruxible_core.ledger.bootstrap import generation_root
 from cruxible_core.ledger.git import GitLedger
 from cruxible_core.proposals.proposal_message import generation_commit_message
 from cruxible_core.proposals.proposals import (
+    ClaimLawEvidenceProvider,
     ClaimQueryFactsProvider,
     ExhaustPromotionVerifierProtocol,
     TreeStateProvider,
@@ -732,6 +733,7 @@ def prepare_generation(
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
     tree_state_provider: TreeStateProvider | None = None,
     accepted_tree_provider: Callable[[str], Mapping[str, bytes]] | None = None,
+    claim_law_provider: ClaimLawEvidenceProvider | None = None,
     principal_registry_provider: Callable[[AcceptedProjectionCoordinate], PrincipalRegistrySnapshot]
     | None = None,
 ) -> VerifiedGenerationBundle:
@@ -763,6 +765,8 @@ def prepare_generation(
         wire_version=candidate.tag,
         acceptance_laws=laws,
         tree_state_provider=tree_state_provider,
+        retained_tree=accepted_tree_provider or ledger.read_tree,
+        claim_law_provider=claim_law_provider,
         principal_registry_provider=principal_registry_provider,
         historical_law_coordinates={
             member.path: (

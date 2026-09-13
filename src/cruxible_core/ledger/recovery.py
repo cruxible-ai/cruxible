@@ -502,6 +502,7 @@ def _verify_successor(
         claim_type_expansions=claim_type_expansions_from_candidate(candidate),
         query_facts_provider=query_facts_provider,
         replay_claim_admission_accounts=claim_admission_accounts_from_candidate(candidate),
+        retained_tree=ledger.read_tree,
         promotion_verifier=promotion_verifier,
         producer_receipt_resolver=producer_receipt_resolver,
         parent_state=window.state,

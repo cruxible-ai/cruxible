@@ -24,6 +24,7 @@ from cruxible_client.authoring.approval import ReviewedProposal, approve_reviewe
 from cruxible_client.authoring.attestations import (
     ClaimAttestationV2Signer,
     append_prepared_claim_attestation,
+    prepare_claim_attestation,
 )
 from cruxible_client.authoring.blocks import (
     assert_independent_projection_evidence,
@@ -94,6 +95,7 @@ from cruxible_client.contracts.artifacts import (
 from cruxible_client.contracts.authoring.models import (
     AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
     AUTHORING_SDK_VERSION,
+    AttestationAuthoringPayloadV1,
     AuthoringChangeSetMemberV1,
     AuthoringClaimStatementV1,
     AuthoringExactContentObjectV1,
@@ -134,6 +136,7 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendResultV1,
+    ClaimAttestationV2,
     ClaimStance,
     PreparedClaimAttestationRequestV1,
 )
@@ -709,6 +712,56 @@ class ChangeSetDraft:
             )
         )
         return self
+
+    def signed_attestation(self, attestation: ClaimAttestationV2) -> ChangeSetDraft:
+        """Add an already signed statement, without changing its bytes or Claim.
+
+        It becomes accepted only when this changeset passes ordinary approval
+        and activation. The authenticated submitter need not be its signer.
+        """
+        self._members.append(
+            _ChangeSetMember(
+                payload=AttestationAuthoringPayloadV1(attestation=attestation),
+                expectations=(),
+                source_map=DiagnosticSourceMap(()),
+                decisions={
+                    "kind": "attestation",
+                    "claim": attestation.statement.claim_identity.qualified,
+                },
+            )
+        )
+        return self
+
+    def attestation(
+        self,
+        claim: ClaimRef | str,
+        *,
+        stance: ClaimStance,
+        signer: ClaimAttestationV2Signer,
+        valid_until: datetime | None = None,
+    ) -> ChangeSetDraft:
+        """Sign an exact Claim and stage it in this governed batch."""
+        identity = claim.address if isinstance(claim, ClaimRef) else claim
+        prepared = PreparedClaimAttestationRequestV1(
+            claim_id=identity.removeprefix("Claim:"),
+            attestation_basis="examined_existing",
+            stance=stance,
+            valid_until=valid_until,
+            referent_coordinate=claim.coordinate
+            if isinstance(claim, ClaimRef)
+            else self._playbill.coordinate
+            if self._playbill._pinned
+            else None,
+            attested_at=datetime.fromisoformat(self._playbill._evaluation_time()),
+        )
+        return self.signed_attestation(
+            prepare_claim_attestation(
+                self._playbill._client,
+                self._playbill._instance_id,
+                prepared=prepared,
+                signer=signer,
+            )
+        )
 
     def _staged_object_kinds(self) -> dict[str, str]:
         """The object kinds this set's own ClaimType definitions declare, by predicate.

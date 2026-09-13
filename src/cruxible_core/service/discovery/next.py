@@ -17,6 +17,7 @@ from cruxible_client.contracts import (
     PlaybillNextReason,
     ProviderLaneStatusV1,
 )
+from cruxible_client.contracts.accepted_attestations import AcceptedClaimAttestationEvidenceV1
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
     Sha256Value,
@@ -34,6 +35,7 @@ from cruxible_client.contracts.claim_attestation_store import (
     ClaimAttestationEventPayloadV1,
     ClaimAttestationEventV1,
 )
+from cruxible_client.contracts.claim_attestations import ClaimAttestationV2
 from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_digest,
@@ -120,7 +122,7 @@ from cruxible_core.service.discovery.query import (
 from cruxible_core.service.discovery.query_definitions import accepted_query_definition
 from cruxible_core.service.discovery.search import claim_resolution_statuses
 from cruxible_core.service.evidence.evidence import (
-    current_verified_claim_attestations,
+    accepted_claim_attestations,
     service_evaluate_playbill_claim_verdict,
 )
 from cruxible_core.service.proposals.publications import (
@@ -875,10 +877,17 @@ def _claim_attestation_threshold_items(
         evidence = law_evidence.get(claim_path(claim.identity.name))
         if evidence is None:
             raise ProposalIntegrityError("accepted Claim has no reproducible Claim law evidence")
-        current = current_verified_claim_attestations(
-            tree,
-            claim,
-            evidence.verified_attestations,
+        current = accepted_claim_attestations(
+            instance,
+            coordinate=instance.resolve_accepted_coordinate(
+                git_oid=coordinate.git_oid,
+                semantic_root=coordinate.semantic_root,
+                generation_root=coordinate.generation_root,
+                compiler_digest=coordinate.compiler_digest,
+            ),
+            tree=tree,
+            claim=claim,
+            historical=evidence.verified_attestations,
         )
         exact_door = tuple(
             (event, payload)
@@ -896,18 +905,22 @@ def _claim_attestation_threshold_items(
             previous = latest_door_by_principal.get(principal_id)
             if previous is None or event.sequence > previous[0].sequence:
                 latest_door_by_principal[principal_id] = (event, payload)
-        superseded_legacy = frozenset(latest_door_by_principal)
+        superseded_accepted = frozenset(latest_door_by_principal)
         for rule in policy.rules:
-            matching_legacy = tuple(
+            matching_accepted = tuple(
                 item
                 for item in current
                 if item.current
+                and (
+                    not isinstance(item, AcceptedClaimAttestationEvidenceV1)
+                    or item.envelope.statement.attestation_basis == "examined_existing"
+                )
                 and item.attestation_grade == "verified_principal"
                 and item.statement.provider_or_principal.kind == "Principal"
                 and item.statement.claim_statement_digest
                 == claim_statement_digest(claim.statement).tagged
                 and item.statement.stance == rule.stance
-                and item.statement.provider_or_principal.name not in superseded_legacy
+                and item.statement.provider_or_principal.name not in superseded_accepted
                 and item.statement.observed_at <= evaluation_time
                 and (
                     item.statement.valid_until is None
@@ -927,7 +940,7 @@ def _claim_attestation_threshold_items(
             )
             principal_identities = frozenset(
                 (
-                    *(item.statement.provider_or_principal.name for item in matching_legacy),
+                    *(item.statement.provider_or_principal.name for item in matching_accepted),
                     *(item.attesting_principal_id for item in matching_door),
                 )
             )
@@ -936,7 +949,7 @@ def _claim_attestation_threshold_items(
             attestation_digests = tuple(
                 sorted(
                     (
-                        *(item.attestation_digest for item in matching_legacy),
+                        *(item.attestation_digest for item in matching_accepted),
                         *(item.envelope_digest for item in matching_door),
                     ),
                     key=lambda item: item.encode("ascii"),
@@ -1996,6 +2009,22 @@ def _claim_attestation_door_items(
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Fold new-capture memberships against immutable acceptance-time accounts."""
 
+    from cruxible_client.contracts.claim_attestations import claim_attestation_v2_envelope_digest
+
+    observations: list[tuple[ClaimAttestationV2, str | None, bool | None]] = [
+        (payload.attestation, event.event_digest, payload.current_at_append)
+        for event, payload in door_events
+    ]
+    seen = {claim_attestation_v2_envelope_digest(envelope) for envelope, _, _ in observations}
+    with instance.bind_accepted_projection(coordinate) as projection:
+        accepted = projection.typed.claim_attestations(basis="new_capture")
+    observations.extend(
+        (envelope, None, None)
+        for envelope in accepted
+        if claim_attestation_v2_envelope_digest(envelope) not in seen
+    )
+    if not observations:
+        return ()
     law_by_artifact = _claim_law_evidence_by_artifact_index(instance, at=coordinate)
     lineage_cache: dict[str, tuple[tuple[_AttestationLineageArtifact, ...], bool]] = {}
     account_cache: dict[str, tuple[dict[str, tuple[CaptureAdmissionAccountV1, ...]], bool]] = {}
@@ -2017,8 +2046,8 @@ def _claim_attestation_door_items(
             "adjudicate_unreviewed_evidence",
         ),
     }
-    for event, payload in door_events:
-        statement = payload.attestation.statement
+    for envelope, event_digest, current_at_append in observations:
+        statement = envelope.statement
         if statement.attestation_basis != "new_capture":
             continue
         claim_id = statement.claim_identity.name
@@ -2082,11 +2111,14 @@ def _claim_attestation_door_items(
                         "claim_id": claim_id,
                         "claim_artifact_digest": statement.claim_artifact_digest,
                         "capture_digest": capture_digest,
-                        "attestation_event_digest": event.event_digest,
+                        "attestation_event_digest": event_digest,
+                        "attestation_envelope_digest": claim_attestation_v2_envelope_digest(
+                            envelope
+                        ),
                         "attestation_basis": statement.attestation_basis,
                         "stance": statement.stance,
                         "attesting_principal": statement.attesting_principal_id,
-                        "current_at_append": payload.current_at_append,
+                        "current_at_append": current_at_append,
                         "lineage_status": lineage_status,
                     },
                     repair=PlaybillNextRepairV1(
@@ -3369,14 +3401,8 @@ def service_playbill_next(
                     verdicts_by_identity=verdicts_by_identity,
                     claims=parsed_claims,
                 ),
-                *(
-                    _claim_attestation_door_items(
-                        instance,
-                        coordinate=coordinate,
-                        door_events=door_events,
-                    )
-                    if isinstance(request, PlaybillNextRequestV2)
-                    else ()
+                *_claim_attestation_door_items(
+                    instance, coordinate=coordinate, door_events=door_events
                 ),
                 *workspace_items,
                 *_projection_items(

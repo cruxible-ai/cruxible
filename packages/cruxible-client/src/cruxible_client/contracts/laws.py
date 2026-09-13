@@ -456,11 +456,22 @@ EXHAUST_PROMOTION_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="exhaust-promotion",
     artifact_tag="playbill-exhaust-promotion-v1",
 )
+ATTESTATION_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.accepted-claim-attestation.v1",
+        "playbill-claim-attestation-envelope-v2",
+        semantic_revision=1,
+    ),
+    artifact_kind="attestation",
+    artifact_tag="playbill-claim-attestation-envelope-v2",
+)
+
 PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
     (
         APPROVAL_POLICY_ACCEPTANCE_LAW,
         PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
         CAPTURE_CONTRACT_ACCEPTANCE_LAW,
+        ATTESTATION_ACCEPTANCE_LAW,
         CLAIM_V2_ACCEPTANCE_LAW,
         CLAIM_V3_ACCEPTANCE_LAW,
         CLAIM_V3_REVISION_7_ACCEPTANCE_LAW,

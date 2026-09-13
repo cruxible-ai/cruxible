@@ -262,7 +262,7 @@ def logical_export(connection: sqlite3.Connection) -> dict[str, object]:
         rows = connection.execute(f"SELECT * FROM {name} ORDER BY {','.join(keys)}").fetchall()
         tables.append({"name": name, "sql": sql, "rows": [list(row) for row in rows]})
     return {
-        "storage_schema_version": 3,
+        "storage_schema_version": 4,
         "schema": [list(row) for row in schema_objects(connection)],
         "tables": tables,
     }
@@ -310,6 +310,11 @@ def replace_rows(
         ).fetchall():
             if kind == "claim":
                 remove_owner_citations(connection, (("Claim", identity),))
+            if kind == "attestation":
+                key = connection.execute(
+                    "SELECT envelope_digest FROM attestations WHERE identity=?", (identity,)
+                ).fetchone()[0]
+                remove_owner_citations(connection, (("attestation", key),))
             connection.execute("DELETE FROM pins WHERE source_identity=?", (identity,))
             if kind == "exhaust-promotion":
                 connection.execute(
@@ -329,9 +334,11 @@ def replace_rows(
             sources,
             bodies=bodies,
             owner_exists=lambda kind, identity: (
-                kind == "Claim"
-                and connection.execute(
-                    "SELECT 1 FROM claims WHERE identity=?", (identity,)
+                connection.execute(
+                    "SELECT 1 FROM claims WHERE identity=?"
+                    if kind == "Claim"
+                    else "SELECT 1 FROM attestations WHERE envelope_digest=?",
+                    (identity,),
                 ).fetchone()
                 is not None
             ),
@@ -374,7 +381,7 @@ def initialize(
     connection = sqlite3.connect(path)
     try:
         connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("PRAGMA user_version=3")
+        connection.execute("PRAGMA user_version=4")
         connection.executescript(complete_schema_sql())
         replace_rows(
             connection,

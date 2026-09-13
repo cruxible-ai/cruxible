@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+from cruxible_client.contracts.accepted_attestations import ClaimAttestationEvidence
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.candidates import CandidateMemberEvidence
 from cruxible_client.contracts.canonical import (
@@ -20,7 +21,6 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.captures import (
     parse_capture_envelope,
 )
-from cruxible_client.contracts.claim_attestations import VerifiedClaimAttestationV1
 from cruxible_client.contracts.claim_type_structure import claim_type_structural_signature
 from cruxible_client.contracts.claim_types import (
     claim_type_digest,
@@ -213,7 +213,7 @@ class PlaybillClaimExplanationV1(_StrictClaimServiceModel):
     claim: PlaybillClaimView
     law_evidence: ClaimLawEvidenceV1
     verdict: ClaimVerdictResultV1
-    exact_attestations: tuple[VerifiedClaimAttestationV1, ...]
+    exact_attestations: tuple[ClaimAttestationEvidence, ...]
     approval_coverage: Literal["containing_change_set"] = "containing_change_set"
     source_handles: tuple[SourceHandleV1, ...]
     coverage: CoverageDescriptorV1
@@ -226,7 +226,7 @@ class PlaybillClaimExplanationV2(_StrictClaimServiceModel):
     claim: PlaybillClaimView
     law_evidence: ClaimLawEvidenceV1
     verdict: ClaimVerdictResultV1
-    exact_attestations: tuple[VerifiedClaimAttestationV1, ...]
+    exact_attestations: tuple[ClaimAttestationEvidence, ...]
     approval_coverage: Literal["containing_change_set"] = "containing_change_set"
     source_handles: tuple[SourceHandleV1, ...]
     coverage: CoverageDescriptorV1
@@ -265,7 +265,7 @@ class PlaybillClaimExplanationV3(_StrictClaimServiceModel):
     claim: PlaybillClaimView
     law_evidence: ClaimLawEvidenceAny
     verdict: ClaimVerdictResultV2
-    exact_attestations: tuple[VerifiedClaimAttestationV1, ...]
+    exact_attestations: tuple[ClaimAttestationEvidence, ...]
     approval_coverage: Literal["containing_change_set"] = "containing_change_set"
     source_handles: tuple[SourceHandleV1, ...]
     coverage: CoverageDescriptorV1
@@ -605,7 +605,7 @@ def _claim_admission_accounts(
     tree: dict[str, bytes],
     law: ClaimLawEvidenceAny,
 ) -> tuple[CaptureAdmissionAccountV1, ...]:
-    from cruxible_core.service.evidence.evidence import _capture_contracts
+    from cruxible_core.evidence.attestation_verification import _capture_contracts
 
     claim_type_path_value = claim_type_path(claim.statement.predicate)
     claim_type = parse_claim_type(tree[claim_type_path_value], path=claim_type_path_value)
@@ -836,6 +836,7 @@ def service_explain_playbill_claim(
     evaluation_time: datetime | None = None,
 ) -> PlaybillClaimExplanationV2 | PlaybillClaimExplanationV3:
     from cruxible_core.service.evidence.evidence import (
+        accepted_claim_attestations,
         service_evaluate_playbill_claim_verdict,
     )
 
@@ -869,7 +870,7 @@ def service_explain_playbill_claim(
     citations_by_capture: dict[str, list[str]] = {}
     for citation in claim_citation_references(claim):
         citations_by_capture.setdefault(citation.capture_digest, []).append(citation.citation_id)
-    from cruxible_core.service.evidence.evidence import _capture_contracts
+    from cruxible_core.evidence.attestation_verification import _capture_contracts
 
     contracts = _capture_contracts(
         _claim_admission_tree(instance, claim=claim, coordinate=coordinate)
@@ -952,7 +953,13 @@ def service_explain_playbill_claim(
             claim=view,
             law_evidence=law,
             verdict=verdict.verdict,
-            exact_attestations=law.verified_attestations,
+            exact_attestations=accepted_claim_attestations(
+                instance,
+                coordinate=coordinate,
+                tree=instance.tree_at(coordinate.git_oid),
+                claim=claim,
+                historical=law.verified_attestations,
+            ),
             source_handles=tuple(handles),
             coverage=coverage,
             admission_evaluation_time=evaluated_at,
@@ -971,7 +978,13 @@ def service_explain_playbill_claim(
         claim=view,
         law_evidence=law,
         verdict=verdict.verdict,
-        exact_attestations=law.verified_attestations,
+        exact_attestations=accepted_claim_attestations(
+            instance,
+            coordinate=coordinate,
+            tree=instance.tree_at(coordinate.git_oid),
+            claim=claim,
+            historical=law.verified_attestations,
+        ),
         source_handles=tuple(handles),
         coverage=coverage,
         admission_evaluation_time=evaluated_at,

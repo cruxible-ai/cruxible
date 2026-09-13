@@ -251,7 +251,7 @@ def test_naive_evaluation_time_is_refused_rather_than_localized(tmp_path: Path) 
         )
 
 
-def test_query_fact_projection_indexes_claim_law_history_once(
+def test_query_fact_projection_uses_history_locator_without_enumeration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     instance, _owner = _instance_with_query(tmp_path)
@@ -270,4 +270,4 @@ def test_query_fact_projection_indexes_claim_law_history_once(
     )
 
     assert len(facts.claims) == 2
-    assert calls == 1
+    assert calls == 0

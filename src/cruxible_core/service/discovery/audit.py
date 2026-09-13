@@ -8,11 +8,15 @@ from typing import Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
+from cruxible_client.contracts.accepted_attestations import (
+    AcceptedClaimAttestationEvidenceV1,
+    ClaimAttestationEvidence,
+    attestation_identity,
+)
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes
 from cruxible_client.contracts.captures import parse_capture_envelope
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
-from cruxible_client.contracts.claim_attestations import VerifiedClaimAttestationV1
 from cruxible_client.contracts.claim_verdicts import (
     CaptureVerdictEvidenceV1,
     ClaimVerdictResultAny,
@@ -27,7 +31,7 @@ from cruxible_client.contracts.claims import (
     parse_claim,
     parse_claim_law_evidence,
 )
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.providers import ProviderV1
 from cruxible_client.contracts.query.definitions import QueryEvaluationPolicyV1
@@ -318,6 +322,25 @@ def _history_index(
         key = (path, row.accepted.statement_digest)
         first.setdefault(key, target_generation)
         lineages[path].add(row.accepted.artifact_digest)
+    with instance.accepted_history_reader() as retained:
+        for path, row in current_claims.items():
+            for item in row.attestations:
+                if isinstance(item, AcceptedClaimAttestationEvidenceV1):
+                    occurrences = retained.occurrences(
+                        attestation_identity(item.envelope).qualified
+                    )
+                    eligible = [
+                        v.occurrence_sequence
+                        for v in occurrences
+                        if v.occurrence_sequence <= target_generation
+                    ]
+                    if not eligible:
+                        raise ProposalIntegrityError(
+                            "accepted attestation has no retained occurrence"
+                        )
+                    attestations[(path, row.accepted.statement_digest, item.attestation_digest)] = (
+                        min(eligible)
+                    )
     return _AuditHistoryIndex(
         claim_lineages={
             path: tuple(sorted(digests, key=lambda item: item.encode("ascii")))
@@ -331,7 +354,7 @@ def _history_index(
 
 def _connected_to_lineage_actor(
     *,
-    attestation: VerifiedClaimAttestationV1,
+    attestation: ClaimAttestationEvidence,
     lineage_actor: str | None,
     providers: Mapping[str, ProviderV1],
 ) -> bool:

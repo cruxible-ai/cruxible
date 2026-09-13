@@ -14,7 +14,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from cruxible_client.contracts.claim_attestations import VerifiedClaimAttestationV1
+from cruxible_client.contracts.accepted_attestations import parse_accepted_attestation
+from cruxible_client.contracts.claim_attestations import ClaimAttestationV2
 from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_path,
@@ -60,6 +61,7 @@ from cruxible_core.service.evidence.evidence import (
     _current_replay_available,
     _referent_digests,
     _reproduced_claim_adjudication_rule,
+    accepted_claim_attestations,
     accepted_claim_providers,
 )
 
@@ -126,6 +128,7 @@ def _fact_row(
     history: ClaimReadHistoryIndex,
     claim: ClaimArtifactAny,
     claim_types: dict[str, ClaimType],
+    attestation_envelopes: tuple[ClaimAttestationV2, ...],
 ) -> ClaimFactRowV1:
     """Assemble one Claim's verdict inputs exactly as the verdict service does."""
 
@@ -167,20 +170,13 @@ def _fact_row(
         claim.backing.referent_context.subject_content_digest == subject_content_digest
         and claim.backing.referent_context.object_content_digest == object_content_digest
     )
-    attestations: tuple[VerifiedClaimAttestationV1, ...] = tuple(
-        item.model_copy(
-            update={
-                "coverage": (
-                    "exact_subject"
-                    if item.statement.subject_content_digest == subject_content_digest
-                    and item.statement.object_content_digest == object_content_digest
-                    else "shell_stale"
-                ),
-                "current": item.statement.subject_content_digest == subject_content_digest
-                and item.statement.object_content_digest == object_content_digest,
-            }
-        )
-        for item in evidence.verified_attestations
+    attestations = accepted_claim_attestations(
+        instance,
+        coordinate=coordinate,
+        tree=tree,
+        claim=claim,
+        historical=evidence.verified_attestations,
+        envelopes=attestation_envelopes,
     )
     return ClaimFactRowV1(
         accepted=accepted,
@@ -218,6 +214,7 @@ class _AcceptedQueryFactsRead:
         self._claim_paths: tuple[str, ...] = ()
         self._subject_paths: tuple[str, ...] = ()
         self._history: ClaimReadHistoryIndex | None = None
+        self._attestations: dict[tuple[str, str], list[ClaimAttestationV2]] = {}
         self._claims: dict[str, ClaimArtifactAny] = {}
         self._claim_types: dict[str, ClaimType] = {}
         self._rows: dict[str, ClaimFactRowV1] = {}
@@ -247,6 +244,14 @@ class _AcceptedQueryFactsRead:
                     self._subject_paths = tuple(
                         row.path for row in projection.typed.envelopes(kind="subject")
                     )
+                    for value in projection.typed.claim_attestations(current_claims_only=True):
+                        self._attestations.setdefault(
+                            (
+                                value.statement.claim_identity.qualified,
+                                value.statement.claim_artifact_digest,
+                            ),
+                            [],
+                        ).append(value)
                     type_paths = tuple(
                         row[0]
                         for row in projection.typed.connection.execute(
@@ -263,6 +268,16 @@ class _AcceptedQueryFactsRead:
                 self._subject_paths = tuple(
                     p for p in self._tree if p.startswith(SUBJECT_PATH_PREFIX)
                 )
+                for path, content in self._tree.items():
+                    if path.startswith("attestations/"):
+                        value = parse_accepted_attestation(content, path=path)
+                        self._attestations.setdefault(
+                            (
+                                value.statement.claim_identity.qualified,
+                                value.statement.claim_artifact_digest,
+                            ),
+                            [],
+                        ).append(value)
         tree = self._tree
         if self._history is None:
             self._history = _claim_read_history_index(self._instance, coordinate=self._coordinate)
@@ -300,6 +315,11 @@ class _AcceptedQueryFactsRead:
                     history=history,
                     claim=claim,
                     claim_types=self._claim_types,
+                    attestation_envelopes=tuple(
+                        self._attestations.get(
+                            (claim.identity.qualified, claim_artifact_digest(claim).tagged), ()
+                        )
+                    ),
                 )
                 self._rows[path] = row
             rows.append(row)

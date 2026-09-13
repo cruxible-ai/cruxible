@@ -27,6 +27,7 @@ from cruxible_client.contracts.approval_policy import (
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.authoring.models import (
     ApprovalPolicyAuthoringPayloadV1,
+    AttestationAuthoringPayloadV1,
     AuthoringArtifactReferenceV1,
     AuthoringCandidateReferenceV1,
     AuthoringChangeSetMemberV1,
@@ -1209,9 +1210,6 @@ def _lower_claim(
             referent_context=context,
             capture_digests=capture_digests,
             citations=merge_claim_citations(predecessor_citations, (citation,)),
-            attestation_digests=(
-                () if predecessor is None else predecessor.backing.attestation_digests
-            ),
             input_claim_digests=(
                 () if predecessor is None else predecessor.backing.input_claim_digests
             ),
@@ -1795,7 +1793,8 @@ def _lower_procedure(
 
 
 def _render_non_procedure_member(
-    payload: SubjectAuthoringPayloadV1
+    payload: AttestationAuthoringPayloadV1
+    | SubjectAuthoringPayloadV1
     | QueryDefinitionAuthoringPayloadV1
     | ClaimTypeAuthoringPayloadV1
     | ApprovalPolicyAuthoringPayloadV1
@@ -1803,6 +1802,20 @@ def _render_non_procedure_member(
     | CaptureContractAuthoringPayloadV1
     | SourceAcquisitionPolicyAuthoringPayloadV1,
 ) -> tuple[str, bytes, str]:
+    if isinstance(payload, AttestationAuthoringPayloadV1):
+        from cruxible_client.contracts.accepted_attestations import (
+            attestation_artifact_digest,
+            attestation_identity,
+            attestation_path,
+            render_accepted_attestation,
+        )
+
+        value = payload.attestation
+        return (
+            attestation_path(attestation_identity(value).name),
+            render_accepted_attestation(value),
+            attestation_artifact_digest(value).tagged,
+        )
     if isinstance(payload, CaptureContractAuthoringPayloadV1):
         contract = payload.capture_contract
         return (
@@ -2016,7 +2029,8 @@ def _render_procedure_mandate_member(
 
 def _lower_non_procedure(
     *,
-    payload: SubjectAuthoringPayloadV1
+    payload: AttestationAuthoringPayloadV1
+    | SubjectAuthoringPayloadV1
     | QueryDefinitionAuthoringPayloadV1
     | ApprovalPolicyAuthoringPayloadV1
     | ProcedureRuntimePolicyAuthoringPayloadV1

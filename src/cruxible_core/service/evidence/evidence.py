@@ -7,19 +7,21 @@ from collections.abc import Iterator, Mapping, MutableSet
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from cruxible_client.contracts.accepted_attestations import (
+    AcceptedClaimAttestationEvidenceV1,
+    ClaimAttestationEvidence,
+)
 from cruxible_client.contracts.candidates import MemberLawEvaluationV2
 from cruxible_client.contracts.captures import (
-    AcceptedCaptureContract,
-    capture_contract_digest,
-    parse_capture_contract,
     parse_capture_envelope,
 )
 from cruxible_client.contracts.cas_contracts import BodyProjectionProtocol
 from cruxible_client.contracts.claim_attestations import (
+    ClaimAttestationV2,
     VerifiedClaimAttestationV1,
 )
 from cruxible_client.contracts.claim_types import (
@@ -284,7 +286,7 @@ def accepted_claim_providers(
     return result
 
 
-def current_verified_claim_attestations(
+def _historical_verified_claim_attestations(
     tree: Mapping[str, bytes],
     claim: ClaimArtifactAny,
     attestations: tuple[VerifiedClaimAttestationV1, ...],
@@ -309,21 +311,44 @@ def current_verified_claim_attestations(
     )
 
 
-def _capture_contracts(
+def accepted_claim_attestations(
+    instance: Any,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
     tree: Mapping[str, bytes],
-) -> dict[str, AcceptedCaptureContract]:
-    result: dict[str, AcceptedCaptureContract] = {}
-    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not path.startswith("capture-contracts/"):
-            continue
-        contract = parse_capture_contract(tree[path], path=path)
-        digest = capture_contract_digest(contract).tagged
-        result[digest] = AcceptedCaptureContract(
-            path=path,
-            contract=contract,
-            artifact_digest=digest,
+    claim: ClaimArtifactAny,
+    historical: tuple[VerifiedClaimAttestationV1, ...] = (),
+    envelopes: tuple[ClaimAttestationV2, ...] | None = None,
+) -> tuple[ClaimAttestationEvidence, ...]:
+    from cruxible_core.compiler.compiler import artifact_kinds_for_compiler
+
+    if not any(
+        entry.kind == "attestation"
+        for entry in artifact_kinds_for_compiler(coordinate.compiler).entries()
+    ):
+        return _historical_verified_claim_attestations(tree, claim, historical)
+    if envelopes is None:
+        with instance.bind_accepted_projection(coordinate) as projection:
+            envelopes = projection.typed.claim_attestations(
+                claim.identity.qualified,
+                claim_artifact_digest(claim).tagged,
+            )
+    subject_digest, object_digest = _referent_digests(tree, claim)
+    return tuple(
+        AcceptedClaimAttestationEvidenceV1(
+            envelope=envelope,
+            coverage="exact_subject"
+            if (
+                current := (
+                    envelope.statement.subject_shell_digest == subject_digest
+                    and envelope.statement.object_shell_digest == object_digest
+                )
+            )
+            else "shell_stale",
+            current=current,
         )
-    return result
+        for envelope in envelopes
+    )
 
 
 def _referent_digest(tree: Mapping[str, bytes], path: str) -> str:
@@ -606,7 +631,7 @@ def _record_verdict_time_boundaries(
     rule: ClaimAdjudicationRuleV1,
     claim: ClaimArtifactAny,
     captures: tuple[CaptureVerdictEvidenceV1, ...],
-    attestations: tuple[VerifiedClaimAttestationV1, ...],
+    attestations: tuple[ClaimAttestationEvidence, ...],
 ) -> None:
     """Record every instant at which this verdict's answer could change.
 
@@ -697,10 +722,12 @@ def service_evaluate_playbill_claim_verdict(
         accepted.claim.backing.referent_context.subject_content_digest == subject_content_digest
         and accepted.claim.backing.referent_context.object_content_digest == object_content_digest
     )
-    attestations = current_verified_claim_attestations(
-        tree,
-        accepted.claim,
-        evidence.verified_attestations,
+    attestations = accepted_claim_attestations(
+        instance,
+        coordinate=coordinate,
+        tree=tree,
+        claim=accepted.claim,
+        historical=evidence.verified_attestations,
     )
     if time_boundaries is not None:
         _record_verdict_time_boundaries(
@@ -768,7 +795,7 @@ __all__ = [
     "PlaybillClaimVerdictQueryV2",
     "PlaybillClaimVerdictQueryAny",
     "accepted_claim_providers",
-    "current_verified_claim_attestations",
+    "accepted_claim_attestations",
     "service_evaluate_playbill_claim_verdict",
     "service_get_playbill_standing_mandate",
 ]
