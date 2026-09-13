@@ -17,6 +17,7 @@ import cruxible_core.compiler.compiler as compiler_module
 from cruxible_client.contracts.canonical import AcceptanceLawDigest, canonical_digest, typed_digest
 from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_ACCEPTANCE_LAW,
+    ATTESTATION_ACCEPTANCE_LAW,
     CAPTURE_CONTRACT_ACCEPTANCE_LAW,
     CLAIM_LAW_V3_REVISION_8,
     CLAIM_TYPE_ACCEPTANCE_LAW,
@@ -47,6 +48,7 @@ from cruxible_client.contracts.laws import (
     InstalledAcceptanceLaw,
 )
 from cruxible_core.compiler.compiler import (
+    ATTESTATION_COMPILER,
     P2_B0_COMPILER,
     P2_B1_COMPILER,
     P2_B2_COMPILER,
@@ -67,6 +69,13 @@ LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],
     ...,
 ] = (
+    (
+        ATTESTATION_ACCEPTANCE_LAW,
+        "cruxible.accepted-claim-attestation.v1",
+        "playbill-claim-attestation-envelope-v2",
+        1,
+        "sha256:9dd4ea044be49926f2d5d82e5d265b83e10dafbd7868631ef4d95fc607effd2b",
+    ),
     (
         APPROVAL_POLICY_ACCEPTANCE_LAW,
         "playbill.approval-policy.v1",
@@ -416,7 +425,21 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
         "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
     )
     assert P2_B5_COMPILER.rule_digest == p2_b5_expected
-    assert current_compiler_coordinate() == P2_B5_COMPILER
+    attestation_expected = "sha256:" + canonical_digest(
+        "playbill-compiler-v1",
+        {
+            "implementation": "python-reference",
+            "projection_content": "claims-procedures-runtime-v1",
+            "schema_version": 1,
+            "semantic_revision": 20,
+            "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
+        },
+    )
+    assert attestation_expected == (
+        "sha256:d98c2200d77534868510aac15f52e646ed973b8177a0468e6aa069f8c848dea9"
+    )
+    assert ATTESTATION_COMPILER.rule_digest == attestation_expected
+    assert current_compiler_coordinate() == ATTESTATION_COMPILER
     assert P2_B4_COMPILER in SUPPORTED_COMPILERS
     assert P2_B4_UNIT2_COMPILER in SUPPORTED_COMPILERS
     # The renderer resolves from the current coordinate itself, so cards derive
@@ -438,7 +461,7 @@ def test_succeeding_the_semantic_revision_keeps_candidate_cards_deriving(
     """
 
     source = Path(compiler_module.__file__).read_text(encoding="utf-8")
-    current_revision = 19
+    current_revision = 20
     anchor = "\n    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,\n"
     bumped = source.replace(
         f"    semantic_revision={current_revision},{anchor}",
@@ -522,24 +545,18 @@ def test_installed_compiler_revision_labels_are_exact_and_complete() -> None:
         "p2-b4",
         "p2-b4-u2",
         "p2-b5",
+        "accepted-attestations-v1",
     )
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "p2-b5"
+    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "accepted-attestations-v1"
 
 
 def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
-    """The freeze guardrail: minting a semantic revision must fail here first.
+    """Pin the explicit E succession; further revisions need their own ruling.
 
-    Register ruling 2026-09-04, "P2-B6.1 LANDED = FEATURE FREEZE": *patches
-    only, additive wire, no compiler revision label may be added*. Every other
-    coordinate guardrail in this module checks that a revision is well formed;
-    this one checks that no revision is MINTED at all, so a commit that adds a
-    twentieth compiler -- and with it a new accepted derivation and a new
-    ledger lineage -- cannot land under a freeze that forbids exactly that.
-
-    The freeze lifts with the compiler-succession program the same ruling
-    defers to after the dogfood: the release that mints semantic revision 20
-    moves both numbers below, in the same commit that ratifies the succession.
-    Until then, a failure here is the guardrail working.
+    The September 10 accepted-attestation ruling authorizes governed immutable
+    attestations and a compiler transition, landed as revision 20 in Batch E
+    (September 13). This supersedes the earlier P2-B6.1 freeze for that feature
+    only; it does not permit unreviewed future semantic revisions.
     """
 
     from cruxible_core.compiler.compiler import (
@@ -547,5 +564,5 @@ def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
         current_compiler_coordinate,
     )
 
-    assert len(COMPILER_REVISION_LABELS) == 18
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "p2-b5"
+    assert len(COMPILER_REVISION_LABELS) == 19
+    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "accepted-attestations-v1"
