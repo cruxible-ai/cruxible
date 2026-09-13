@@ -20,7 +20,7 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter, field_validator, model_validator
 
-from cruxible_client._persistent import MapMutation, PersistentMap
+from cruxible_client.contracts.persistent import MapMutation, PersistentMap
 from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicyError,
     acquisition_policy_digest,

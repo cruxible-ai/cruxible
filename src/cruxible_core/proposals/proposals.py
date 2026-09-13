@@ -15,7 +15,7 @@ from pydantic import (
     field_validator,
 )
 
-from cruxible_client._persistent import PersistentMap
+from cruxible_client.contracts.persistent import PersistentMap
 from cruxible_client.contracts.acquisition_policies import (
     AcceptedSourceAcquisitionPolicyV1,
     SourceAcquisitionPolicyError,

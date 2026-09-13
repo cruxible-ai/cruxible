@@ -274,7 +274,7 @@ def test_subject_index_remains_immutable_in_cold_evaluation_oracle():
 
 
 def test_warm_subject_update_does_not_iterate_retained_maps(monkeypatch):
-    from cruxible_client._persistent import PersistentMap
+    from cruxible_client.contracts.persistent import PersistentMap
 
     first, second = _make_claim(1), _at_subject(_make_claim(2), OTHER)
     tree = _tree(first, second)

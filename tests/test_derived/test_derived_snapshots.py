@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client._persistent import PersistentMap
+from cruxible_client.contracts.persistent import PersistentMap
 from cruxible_client.contracts.authoring.models import SubjectAuthoringPayloadV1
 from cruxible_client.contracts.claims import claim_path, render_claim
 from cruxible_client.contracts.subjects import render_subject
@@ -210,7 +210,7 @@ def test_external_nfc_input_keeps_cold_normalization_boundary():
 
 
 def test_fork_and_seal_do_not_enumerate_for_resource_accounting(monkeypatch):
-    from cruxible_client._persistent import PersistentMap
+    from cruxible_client.contracts.persistent import PersistentMap
 
     base = SnapshotTree(_tree())
 

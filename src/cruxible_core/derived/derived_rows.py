@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterator, Mapping, MutableMapping
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
-from cruxible_client._persistent import MapMutation, PersistentMap
+from cruxible_client.contracts.persistent import MapMutation, PersistentMap
 
 T = TypeVar("T")
 

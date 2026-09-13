@@ -312,7 +312,7 @@ def test_retained_dependency_rows_and_parse_memo_cannot_be_poisoned() -> None:
 
 
 def test_warm_dependency_update_does_not_iterate_unrelated_maps(monkeypatch) -> None:
-    from cruxible_client._persistent import PersistentMap
+    from cruxible_client.contracts.persistent import PersistentMap
     from cruxible_core.derived.derived_rows import CanonicalRows
 
     anchor = _subject("anchor")

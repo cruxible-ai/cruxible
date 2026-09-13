@@ -34,7 +34,7 @@ from collections.abc import (
 from dataclasses import dataclass
 from typing import Final, Generic, TypeVar, cast
 
-from cruxible_client._persistent import MapMutation, PersistentMap
+from cruxible_client.contracts.persistent import MapMutation, PersistentMap
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     CanonicalScalar,

@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
-from cruxible_client._error_base import CoreError
+from cruxible_core.errors import CoreError
 
 V = TypeVar("V")
 

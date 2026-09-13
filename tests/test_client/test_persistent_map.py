@@ -9,7 +9,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from cruxible_client._persistent import MapMutation, PersistentMap, _Node
+from cruxible_client.contracts.persistent import MapMutation, PersistentMap, _Node
 
 
 def _assert_tree(node: _Node[int] | None) -> tuple[int, int, list[str]]:

@@ -16,7 +16,7 @@ from tests.test_indexes.test_projection_claim_reuse import _parse
 
 def test_typed_claim_source_parity_and_no_builtin_payload_copy(tmp_path):
     instance, claim_id, _ = _accepted_claim_world(tmp_path)
-    parsed, original, registry = _parse(instance)
+    parsed, original = _parse(instance)
     request = AssemblerRequest(**original.model_dump(exclude={"tag"}))
     assert request.compiler_digest == original.compiler_digest
     path = tmp_path / "typed.sqlite"
@@ -107,7 +107,7 @@ def test_registered_procedure_and_singletons_read_exact_selected_sources(tmp_pat
     from tests.test_procedures.test_procedure_measurement_readings import _world
 
     instance, _, procedure = _world(tmp_path)
-    parsed, _, _ = _parse(instance)
+    parsed, _ = _parse(instance)
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
         reader = projection.typed
         assert reader is not None
