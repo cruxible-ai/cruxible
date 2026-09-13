@@ -922,6 +922,10 @@ def compute_preflight(
                         ),
                         tree_state_provider=service.tree_state_provider,
                         principal_registry_provider=service.principal_registry_provider,
+                        retained_tree=instance.immutable_tree_at,
+                        claim_law_provider=service.claim_law_provider,
+                        attestation_principal_provider=service.attestation_principal_provider,
+                        accepted_referents_provider=service.accepted_referents_provider,
                     )
                     if prepared is not None:
                         prepared.retain(

@@ -1047,17 +1047,35 @@ class PlaybillInstance:
         self, coordinate: AcceptedProjectionCoordinate, principal_id: str
     ) -> None:
         """Check an admission actor with a single indexed principal lookup."""
+        self.accepted_principal(AcceptedCoordinate.from_internal(coordinate), principal_id)
+
+    def accepted_referent_coordinates(
+        self, coordinate: AcceptedProjectionCoordinate
+    ) -> frozenset[AcceptedCoordinate]:
+        with self.accepted_history_reader(
+            at=AcceptedCoordinate.from_internal(coordinate)
+        ) as history:
+            return history.accepted_coordinates()
+
+    def accepted_principal(self, at: AcceptedCoordinate, principal_id: str) -> PrincipalRecord:
+        """Read and authenticate one active principal at an exact accepted coordinate."""
+        coordinate = self.resolve_accepted_coordinate(
+            git_oid=at.git_oid,
+            semantic_root=at.semantic_root,
+            generation_root=at.generation_root,
+            compiler_digest=at.compiler_digest,
+        )
         if coordinate.git_oid == self._verified_genesis.oid:
-            self.accepted_principal_registry(coordinate).require_active(principal_id)
-            return
+            return self.accepted_principal_registry(coordinate).require_active(principal_id)
         with self.bind_accepted_projection(coordinate) as projection:
             principal = projection.typed.principal(principal_id, active=True)
             path = f"principals/{principal_id}.json"
-            raw = self.blob_at(coordinate.git_oid, path)
-            if raw is None or principal != parse_principal_record(raw, path=path):
+            raw = projection.typed.member_bytes(path)
+            if principal is None or principal != parse_principal_record(raw, path=path):
                 raise PrincipalIntegrityError(
-                    "indexed principal differs from its exact accepted Git record"
+                    "indexed attestation principal differs from accepted member"
                 )
+            return principal
 
     def accepted_claim_law_evidence(
         self, coordinate: AcceptedCoordinate, identity: str, artifact_digest: str
@@ -1089,6 +1107,8 @@ class PlaybillInstance:
             note_index_provider=self.proposal_note_index,
             accepted_tree_provider=self.immutable_tree_at,
             claim_law_provider=self.accepted_claim_law_evidence,
+            attestation_principal_provider=self.accepted_principal,
+            accepted_referents_provider=self.accepted_referent_coordinates,
             prepared_evaluations=self.prepared_evaluations,
             principal_registry_provider=self.accepted_principal_registry,
             active_principal_provider=self.require_accepted_principal,
@@ -1722,6 +1742,8 @@ class PlaybillInstance:
             tree_state_provider=derive_indexed_state,
             accepted_tree_provider=self.immutable_tree_at,
             claim_law_provider=self.accepted_claim_law_evidence,
+            attestation_principal_provider=self.accepted_principal,
+            accepted_referents_provider=self.accepted_referent_coordinates,
             principal_registry_provider=self.accepted_principal_registry,
         )
 

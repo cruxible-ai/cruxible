@@ -538,6 +538,7 @@ def service_retire_claim(
         promotion_verifier=instance.proposal_service().promotion_verifier,
         query_facts_provider=instance.proposal_service().query_facts_provider,
         principal_registry_provider=instance.accepted_principal_registry,
+        accepted_referents_provider=instance.accepted_referent_coordinates,
     )
     if request.mode == "preflight":
         return ClaimRetirePreflightV1(

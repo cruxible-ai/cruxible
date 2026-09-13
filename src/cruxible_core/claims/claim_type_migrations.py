@@ -1116,6 +1116,7 @@ def _service_migrate_claim_type_v2(
         promotion_verifier=instance.proposal_service().promotion_verifier,
         query_facts_provider=instance.proposal_service().query_facts_provider,
         principal_registry_provider=instance.accepted_principal_registry,
+        accepted_referents_provider=instance.accepted_referent_coordinates,
     )
     if evaluation.candidate is None:
         diagnostics = tuple(item.code for item in evaluation.diagnostics)
@@ -1214,6 +1215,7 @@ def _service_migrate_claim_type_v3(
         promotion_verifier=instance.proposal_service().promotion_verifier,
         query_facts_provider=instance.proposal_service().query_facts_provider,
         principal_registry_provider=instance.accepted_principal_registry,
+        accepted_referents_provider=instance.accepted_referent_coordinates,
     )
     if evaluation.candidate is None:
         diagnostics = tuple(item.code for item in evaluation.diagnostics)

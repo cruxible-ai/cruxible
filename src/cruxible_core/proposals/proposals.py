@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import cache
 from typing import Any, Callable, Final, Literal, Protocol, cast
 
 from pydantic import (
@@ -248,6 +249,7 @@ from cruxible_client.contracts.subjects import (
     subject_digest,
     subject_reuse_signature,
 )
+from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
     PlaybillWorkspaceAdvertisement,
@@ -326,7 +328,21 @@ _CLAIM_TYPE_PATH_RE = re.compile(
     r"^claim-types/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/"
     r"[a-z][a-z0-9_]{0,63}\.json$"
 )
+
 ClaimLawEvidenceProvider = Callable[[AcceptedCoordinate, str, str], ClaimLawEvidenceAny | None]
+
+AcceptedReferentsProvider = Callable[[AcceptedProjectionCoordinate], frozenset[AcceptedCoordinate]]
+AttestationPrincipalProvider = Callable[[AcceptedCoordinate, str], PrincipalRecord]
+
+
+@dataclass(frozen=True)
+class _AttestationPrincipalReader:
+    coordinate: AcceptedCoordinate
+    lookup: AttestationPrincipalProvider
+
+    def require_active(self, principal_id: str) -> PrincipalRecord:
+        return self.lookup(self.coordinate, principal_id)
+
 
 _ATTESTATION_PATH_RE = re.compile(r"^attestations/[0-9a-f]{2}/[0-9a-f]{64}\.json$")
 _CAPTURE_CONTRACT_PATH_RE = re.compile(r"^capture-contracts/[a-z][a-z0-9_.-]{0,255}\.json$")
@@ -1624,6 +1640,7 @@ class _MemberContext:
     current_tree: Mapping[str, bytes]
     retained_tree: Callable[[str], Mapping[str, bytes]] | None
     claim_law_provider: ClaimLawEvidenceProvider | None
+    attestation_principal_provider: AttestationPrincipalProvider | None
     candidate_states: Mapping[str, ArtifactDependencyStateV1]
     candidate_identities: Mapping[str, tuple[ArtifactIdentity, str]]
     resolved: _ResolvedArtifacts
@@ -2225,8 +2242,14 @@ def _verified_attestation_member(context: _MemberContext) -> _MemberVerdict:
         referent_principals=(
             context.principals
             if s.referent_coordinate == context.accepted_coordinate()
-            else principal_registry_from_tree(
-                referent_tree, semantic_root=s.referent_coordinate.semantic_root
+            else (
+                _AttestationPrincipalReader(
+                    s.referent_coordinate, context.attestation_principal_provider
+                )
+                if context.attestation_principal_provider is not None
+                else principal_registry_from_tree(
+                    referent_tree, semantic_root=s.referent_coordinate.semantic_root
+                )
             )
         ),
         current_tree=context.current_tree,
@@ -3131,6 +3154,8 @@ def _evaluate_scoped_members(
     historical_law_coordinates: Mapping[str, tuple[str, str]],
     retained_tree: Callable[[str], Mapping[str, bytes]] | None,
     claim_law_provider: ClaimLawEvidenceProvider | None,
+    attestation_principal_provider: AttestationPrincipalProvider | None,
+    accepted_referents_provider: AcceptedReferentsProvider | None,
 ) -> CandidateEvaluation:
     """Judge every scoped member under its own law and close the change set.
 
@@ -3343,6 +3368,9 @@ def _evaluate_scoped_members(
         )
         diagnostics.extend(claim_admission_diagnostics)
 
+    if attestation_principal_provider is not None:
+        # Bound to this evaluation only; never carry authorization across writes.
+        attestation_principal_provider = cache(attestation_principal_provider)
     used_expansions: set[str] = set()
     accepted: list[_AcceptedMember] = []
     accepted_referents: frozenset[AcceptedCoordinate] | None = None
@@ -3364,8 +3392,12 @@ def _evaluate_scoped_members(
             diagnostics.append(_unregistered(path))
             continue
         if accepted_referents is None:
-            accepted_referents = accepted_referent_coordinates_from_tree(
-                current_tree, current=AcceptedCoordinate.from_internal(current)
+            accepted_referents = (
+                accepted_referent_coordinates_from_tree(
+                    current_tree, current=AcceptedCoordinate.from_internal(current)
+                )
+                if accepted_referents_provider is None
+                else accepted_referents_provider(current)
             )
             from cruxible_core.indexes.evaluated_state import SelectedRows
 
@@ -3397,6 +3429,7 @@ def _evaluate_scoped_members(
                 current_tree=current_tree,
                 retained_tree=retained_tree,
                 claim_law_provider=claim_law_provider,
+                attestation_principal_provider=attestation_principal_provider,
                 candidate_states=candidate_states,
                 candidate_identities=candidate_identities,
                 resolved=resolved,
@@ -3747,6 +3780,8 @@ def evaluate_proposal_tree(
     tree_state_provider: TreeStateProvider | None = None,
     retained_tree: Callable[[str], Mapping[str, bytes]] | None = None,
     claim_law_provider: ClaimLawEvidenceProvider | None = None,
+    attestation_principal_provider: AttestationPrincipalProvider | None = None,
+    accepted_referents_provider: AcceptedReferentsProvider | None = None,
 ) -> CandidateEvaluation:
     """Rebase, scope, judge every member, and close: the whole evaluation.
 
@@ -3873,6 +3908,8 @@ def evaluate_proposal_tree(
             historical_law_coordinates=historical_law_coordinates or {},
             retained_tree=retained_tree,
             claim_law_provider=claim_law_provider,
+            attestation_principal_provider=attestation_principal_provider,
+            accepted_referents_provider=accepted_referents_provider,
             principal_registry_provider=principal_registry_provider,
         )
 
@@ -3964,6 +4001,8 @@ class ProposalService:
         tree_state_provider: TreeStateProvider | None = None,
         accepted_tree_provider: Callable[[str], Mapping[str, bytes]] | None = None,
         claim_law_provider: ClaimLawEvidenceProvider | None = None,
+        attestation_principal_provider: AttestationPrincipalProvider | None = None,
+        accepted_referents_provider: AcceptedReferentsProvider | None = None,
         prepared_evaluations: PreparedEvaluationAdapter | None = None,
         principal_registry_provider: Callable[
             [AcceptedProjectionCoordinate], PrincipalRegistrySnapshot
@@ -3992,6 +4031,8 @@ class ProposalService:
         # submission, and by contract it never raises.
         self._ledger_publisher = ledger_publisher or (lambda: None)
         self.claim_law_provider = claim_law_provider
+        self.attestation_principal_provider = attestation_principal_provider
+        self.accepted_referents_provider = accepted_referents_provider
         self.tree_state_provider = tree_state_provider
         self._accepted_tree_provider = accepted_tree_provider or self.transport.read_tree
         self._prepared_evaluations = prepared_evaluations
@@ -4116,6 +4157,8 @@ class ProposalService:
                 principal_registry_provider=self.principal_registry_provider,
                 retained_tree=self._accepted_tree_provider,
                 claim_law_provider=self.claim_law_provider,
+                attestation_principal_provider=self.attestation_principal_provider,
+                accepted_referents_provider=self.accepted_referents_provider,
             )
         # A refused proposal has no members to summarize, so it keeps the bare
         # subject the ledger has always written for it -- unless the author said

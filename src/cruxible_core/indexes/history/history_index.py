@@ -230,6 +230,22 @@ class HistoryReader:
             raise PlaybillFormatError("coordinate is not one generation in requested history")
         return AcceptedGenerationLocation(*rows[0])
 
+    def accepted_coordinates(self) -> frozenset[AcceptedCoordinate]:
+        """Return the accepted referents within this reader's verified cutoff."""
+        return frozenset(
+            AcceptedCoordinate(
+                git_oid=row[0],
+                semantic_root=row[1],
+                generation_root=row[2],
+                compiler_digest=row[3],
+            )
+            for row in self._connection.execute(
+                "SELECT git_oid,semantic_root,generation_root,compiler_digest "
+                "FROM accepted_generations WHERE sequence<=?",
+                (self.sequence,),
+            )
+        )
+
     def generation_for_oid(self, oid: str) -> AcceptedGenerationLocation | None:
         rows = self._connection.execute(
             "SELECT * FROM accepted_generations WHERE git_oid=? AND sequence<=? LIMIT 2",

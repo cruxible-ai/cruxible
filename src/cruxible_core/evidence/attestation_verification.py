@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, Mapping, NoReturn
+from typing import Literal, Mapping, NoReturn, Protocol
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import (
@@ -39,7 +39,6 @@ from cruxible_client.contracts.claims import (
     parse_claim,
 )
 from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
-from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
 from cruxible_client.contracts.procedures.artifacts import (
     parse_procedure,
     procedure_artifact_digest,
@@ -48,7 +47,14 @@ from cruxible_client.contracts.procedures.artifacts import (
 from cruxible_client.contracts.providers import parse_provider, provider_digest, provider_path
 from cruxible_client.contracts.source_references import LedgerSourceReferenceV1
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
+from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.indexes.projection import AcceptedCoordinate
+
+
+class ActivePrincipalReader(Protocol):
+    """The exact accepted principal lookup needed by attestation verification."""
+
+    def require_active(self, principal_id: str) -> PrincipalRecord: ...
 
 
 def _capture_contracts(
@@ -196,7 +202,7 @@ def _live_at_append(
 def _new_capture_accounts(
     *,
     bodies: CaptureObjectStoreProtocol,
-    principals: PrincipalRegistrySnapshot,
+    principals: ActivePrincipalReader,
     law: ClaimLawEvidenceAny,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
     statement: ClaimAttestationStatementV2,
@@ -370,7 +376,7 @@ def verify_attestation_referent(
     *,
     instance_id: str,
     referent_tree: Mapping[str, bytes],
-    referent_principals: PrincipalRegistrySnapshot,
+    referent_principals: ActivePrincipalReader,
     at: datetime,
 ) -> ClaimArtifactAny:
     """Verify immutable input for both pending append and governed acceptance.
@@ -403,7 +409,7 @@ def verify_attestation_referent(
 
 def _verify_principal(
     attestation: ClaimAttestationV2,
-    registry: PrincipalRegistrySnapshot,
+    registry: ActivePrincipalReader,
     *,
     phase: Literal["referent", "append"],
 ) -> None:
@@ -432,9 +438,9 @@ def verify_attestation_admission(
     *,
     claim: ClaimArtifactAny,
     referent_tree: Mapping[str, bytes],
-    referent_principals: PrincipalRegistrySnapshot,
+    referent_principals: ActivePrincipalReader,
     current_tree: Mapping[str, bytes],
-    current_principals: PrincipalRegistrySnapshot,
+    current_principals: ActivePrincipalReader,
     bodies: CaptureObjectStoreProtocol,
     law: ClaimLawEvidenceAny | None,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
@@ -468,9 +474,9 @@ def verify_attestation_binding(
     *,
     instance_id: str,
     referent_tree: Mapping[str, bytes],
-    referent_principals: PrincipalRegistrySnapshot,
+    referent_principals: ActivePrincipalReader,
     current_tree: Mapping[str, bytes],
-    current_principals: PrincipalRegistrySnapshot,
+    current_principals: ActivePrincipalReader,
     at: datetime,
     bodies: CaptureObjectStoreProtocol,
     law: ClaimLawEvidenceAny | None,
