@@ -44,6 +44,8 @@ def test_signed_attestation_is_accepted_without_revising_its_claim(tmp_path: Pat
         ] == [(digest,)]
         fields = {row[1] for row in connection.execute("PRAGMA table_info(attestations)")}
         assert not fields.intersection({"revision", "predecessor_digest", "lifecycle"})
+        indexes = {row[1] for row in connection.execute("PRAGMA index_list(attestations)")}
+        assert "attestations_by_principal_basis" not in indexes
         uses = connection.execute(
             "SELECT owner_kind,owner_key,capture_digest,role,origin FROM citation_uses "
             "WHERE owner_kind='attestation'"
@@ -92,7 +94,7 @@ def test_typed_batch_pending_and_historical_verdict_boundaries(tmp_path: Path) -
         owner,
         claim_id,
         tmp_path,
-        stance="unsure",
+        stance="support",
         attested_at=RECORDED_AT + timedelta(seconds=1),
     )
     payload = ChangeSetAuthoringPayloadV1(
@@ -121,6 +123,12 @@ def test_typed_batch_pending_and_historical_verdict_boundaries(tmp_path: Path) -
     assert (
         claim_attestation_v2_envelope_digest(request.attestation)
         in current.verdict.contradicting_evidence_digests
+    )
+    # A later stance is not an explicit signed replacement. Both statements
+    # still contribute under the existing law.
+    assert (
+        claim_attestation_v2_envelope_digest(second.attestation)
+        in current.verdict.supporting_evidence_digests
     )
     assert current.verdict != old.verdict
     assert (

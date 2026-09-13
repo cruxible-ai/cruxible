@@ -205,12 +205,14 @@ class _AcceptedQueryFactsRead:
         coordinate: AcceptedProjectionCoordinate,
         external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
         source_tree: Mapping[str, bytes] | None = None,
+        predicates: tuple[str, ...] | None = None,
     ) -> None:
         self._instance = instance
         self._coordinate = coordinate
         self._readers = dict(external_readers or {})
         self._tree: Mapping[str, bytes] | None = None
         self._source_tree = source_tree
+        self._predicates = predicates
         self._claim_paths: tuple[str, ...] = ()
         self._subject_paths: tuple[str, ...] = ()
         self._history: ClaimReadHistoryIndex | None = None
@@ -238,13 +240,26 @@ class _AcceptedQueryFactsRead:
                 context = ClaimVerdictReadContext(self._instance, self._coordinate)
                 self._tree = self._source_tree if self._source_tree is not None else context.tree
                 with self._instance.bind_accepted_projection(self._coordinate) as projection:
-                    self._claim_paths = tuple(
-                        row.path for row in projection.typed.envelopes(kind="claim")
-                    )
+                    if self._predicates is None:
+                        self._claim_paths = tuple(
+                            row.path for row in projection.typed.envelopes(kind="claim")
+                        )
+                    else:
+                        self._claim_paths = tuple(
+                            row[0]
+                            for row in projection.typed.connection.execute(
+                                "SELECT path FROM claims WHERE predicate IN ("
+                                + ",".join("?" for _ in self._predicates)
+                                + ") ORDER BY path",
+                                self._predicates,
+                            )
+                        )
                     self._subject_paths = tuple(
                         row.path for row in projection.typed.envelopes(kind="subject")
                     )
-                    for value in projection.typed.claim_attestations(current_claims_only=True):
+                    for value in projection.typed.claim_attestations(
+                        current_claims_only=True, claim_predicates=self._predicates
+                    ):
                         self._attestations.setdefault(
                             (
                                 value.statement.claim_identity.qualified,
@@ -301,6 +316,8 @@ class _AcceptedQueryFactsRead:
             if claim is None:
                 claim = parse_claim(tree[path], path=path)
                 self._claims[path] = claim
+            if self._predicates is not None and claim.statement.predicate not in self._predicates:
+                continue
             if not include_retired and claim.lifecycle.state != "live":
                 continue
             row = self._rows.get(path)
@@ -349,17 +366,20 @@ def build_accepted_query_facts(
     coordinate: AcceptedProjectionCoordinate,
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
     include_retired: bool = False,
+    predicates: tuple[str, ...] | None = None,
 ) -> ClaimQueryFactsV1:
     """Project accepted ledger state into the facts one evaluation may read.
 
     Normal query evaluation admits only live Claims. Read-side lineage folds may
     opt into retired heads explicitly; the shared visibility path still judges
     verdicts rather than lifecycle, and callers remain responsible for limiting
-    dependents to live rows.
+    dependents to live rows. A served QueryDefinition supplies its complete
+    referenced-predicate inventory so unrelated Claim and attestation bodies
+    never enter the snapshot. General discovery callers leave it unrestricted.
     """
 
     return _AcceptedQueryFactsRead(
-        instance, coordinate=coordinate, external_readers=external_readers
+        instance, coordinate=coordinate, external_readers=external_readers, predicates=predicates
     ).build(include_retired=include_retired)
 
 
@@ -434,6 +454,7 @@ def service_run_playbill_query(
         instance,
         coordinate=coordinate,
         external_readers=external_readers,
+        predicates=definition.query.referenced_predicates,
     )
     result = evaluate_claim_query(
         definition,

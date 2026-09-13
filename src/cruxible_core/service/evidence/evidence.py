@@ -320,6 +320,12 @@ def accepted_claim_attestations(
     historical: tuple[VerifiedClaimAttestationV1, ...] = (),
     envelopes: tuple[ClaimAttestationV2, ...] | None = None,
 ) -> tuple[ClaimAttestationEvidence, ...]:
+    """Read applicable immutable statements without inferring supersession.
+
+    A later timestamp is not a signed replacement instruction. Distinct records
+    remain evidence under the existing reducer; changing stance does not erase
+    the earlier statement. Explicit replacement requires its own signed contract.
+    """
     from cruxible_core.compiler.compiler import artifact_kinds_for_compiler
 
     if not any(

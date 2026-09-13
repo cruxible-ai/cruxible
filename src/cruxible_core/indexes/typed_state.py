@@ -390,7 +390,6 @@ def schema_sql() -> str:
             "CREATE INDEX pins_by_target_digest ON pins(target_digest,edge_kind,source_identity,ordinal)",
             "CREATE INDEX claims_by_subject_predicate ON claims(subject_path,predicate,subject_selector_scheme,subject_selector_value,identity)",
             "CREATE INDEX attestations_by_claim_version ON attestations(claim_identity,claim_artifact_digest,attested_at_us,envelope_digest)",
-            "CREATE INDEX attestations_by_principal_basis ON attestations(claim_identity,claim_artifact_digest,principal_id,basis,attested_at_us DESC,envelope_digest)",
             "CREATE INDEX claims_by_lifecycle ON claims(lifecycle,identity)",
             "CREATE INDEX claims_by_object_subject ON claims(object_path,identity) WHERE object_kind='subject'",
             "CREATE INDEX provider_interfaces_by_interface ON provider_interfaces(interface_digest,identity)",
@@ -799,6 +798,7 @@ class TypedStateReader:
         *,
         basis: str | None = None,
         current_claims_only: bool = False,
+        claim_predicates: tuple[str, ...] | None = None,
     ) -> tuple[ClaimAttestationV2, ...]:
         from cruxible_client.contracts.accepted_attestations import (
             attestation_artifact_digest,
@@ -818,10 +818,16 @@ class TypedStateReader:
         if basis is not None:
             predicates.append("basis=?")
             parameters.append(basis)
-        if current_claims_only:
+        if current_claims_only or claim_predicates is not None:
+            selected = ""
+            if claim_predicates is not None:
+                if not claim_predicates:
+                    return ()
+                selected = " WHERE predicate IN (" + ",".join("?" for _ in claim_predicates) + ")"
+                parameters.extend(claim_predicates)
             predicates.append(
-                "EXISTS (SELECT 1 FROM claims c WHERE c.identity=attestations.claim_identity "
-                "AND c.artifact_digest=attestations.claim_artifact_digest)"
+                "(claim_identity,claim_artifact_digest) IN "
+                "(SELECT identity,artifact_digest FROM claims" + selected + ")"
             )
         rows = self.connection.execute(
             "SELECT path,envelope_digest,artifact_digest FROM attestations "
