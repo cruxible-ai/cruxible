@@ -467,7 +467,13 @@ def test_capture_trigger_uses_exact_retained_event_not_git_changes(tmp_path: Pat
         bind_investigation(instance, reference, event=ref, now=now)
 
 
-def test_window_line_runs_once_and_replays_its_original_investigation(tmp_path: Path) -> None:
+@pytest.mark.parametrize("restart", [False, True], ids=["same-instance", "fresh-process"])
+def test_window_line_runs_once_and_replays_its_original_investigation(
+    tmp_path: Path, restart: bool
+) -> None:
+    import json
+    import subprocess
+    import sys
     from datetime import timedelta
     from types import SimpleNamespace
 
@@ -496,6 +502,7 @@ def test_window_line_runs_once_and_replays_its_original_investigation(tmp_path: 
     )
     from cruxible_client.contracts.procedures.models import ProcedureDefinitionV4
     from cruxible_client.contracts.resolution_contracts import ResolutionContractReferenceV1
+    from cruxible_core.service.procedures import procedure_runs
     from cruxible_core.service.procedures.procedure_runs import (
         LineRunRequestV1,
         service_get_playbill_procedure_run,
@@ -576,10 +583,89 @@ def test_window_line_runs_once_and_replays_its_original_investigation(tmp_path: 
     assert first.investigation.contract == ref
     assert first.trigger_binding.window == first.investigation.window
     assert first.investigation.window.ends_at == end
-    assert run(end + timedelta(days=2)) == first
+
+    def journal_snapshot():
+        journal, _ = procedure_runs._journal(instance)
+        stream = procedure_runs._stream(instance)
+        return tuple(
+            (
+                partition,
+                tuple(
+                    (r.record.event_kind, r.record_digest)
+                    for r in journal.all_records(stream, partition)
+                ),
+            )
+            for partition in journal.partition_ids(stream)
+        )
+
+    before = journal_snapshot()
+    assert sum(kind == "admission_bound" for _, records in before for kind, _ in records) == 1
+    if restart:
+        # A new interpreter cannot inherit any daemon object or in-memory memo.
+        # Only the invocation, trust root and retained managed directory cross
+        # this boundary; the original run/binding is reconstructed from storage.
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                """
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+from types import SimpleNamespace
+
+from cruxible_client.contracts.types import PlaybillTrustRoot
+from cruxible_core.governance.actor_context import GovernedActorContext
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.procedures import procedure_runs
+
+args = json.load(sys.stdin)
+instance = PlaybillInstance.open(
+    Path(args["root"]), trust_root=PlaybillTrustRoot.model_validate(args["trust_root"])
+)
+request = procedure_runs.LineRunRequestV1.model_validate(args["request"])
+
+def unexpected_execution(*args, **kwargs):
+    raise AssertionError("restarting a retained occurrence must not execute it again")
+
+procedure_runs.service_execute_direct_procedure = unexpected_execution
+result = procedure_runs.service_run_playbill_line(
+    instance,
+    path_identity_digest=request.line_identity_digest,
+    request=request,
+    actor_context=GovernedActorContext.model_validate(args["actor"]),
+    caller_rung=3,
+    daemon_clock=SimpleNamespace(now=lambda: datetime.fromisoformat(args["now"])),
+)
+assert procedure_runs.service_get_playbill_procedure_run(instance, run_id=result.run_id) == result
+print(result.model_dump_json())
+""",
+            ],
+            input=json.dumps(
+                {
+                    "root": str(instance.root),
+                    "trust_root": instance.trust_root.model_dump(mode="json"),
+                    "request": LineRunRequestV1(
+                        line_identity_digest=line_id, resolution_contract=ref
+                    ).model_dump(mode="json"),
+                    "actor": _actor(instance).model_dump(mode="json"),
+                    "now": (end + timedelta(days=2)).isoformat(),
+                }
+            ),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert completed.returncode == 0, completed.stderr
+        assert json.loads(completed.stdout) == first.model_dump(mode="json")
+    else:
+        assert run(end + timedelta(days=2)) == first
+    assert journal_snapshot() == before
     assert service_get_playbill_procedure_run(instance, run_id=first.run_id) == first
     # A retry cannot quietly drop or replace the investigation.
     from cruxible_client.contracts.errors import PlaybillExecutionError
 
     with pytest.raises(PlaybillExecutionError, match="original investigation"):
         run(end + timedelta(days=2), None)
+    assert journal_snapshot() == before
