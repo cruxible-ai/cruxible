@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
+from hashlib import sha256
+from pathlib import Path
 
 import pytest
 
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.exhaust import (
@@ -17,7 +21,10 @@ from cruxible_core.exhaust import (
 from cruxible_core.procedures.resolution import (
     ProcedureProofReferenceV1,
     ProcedureResolutionBook,
+    ProcedureResolutionV1,
+    ProcedureResolutionV2,
     ResolutionClaimEndpointV1,
+    ResolutionContractActivationV1,
     ResolutionContractActivationV2,
     append_procedure_resolution,
     append_resolution_disposition,
@@ -28,6 +35,8 @@ from cruxible_core.procedures.resolution import (
     build_settled_outcome_relation,
     derive_resolution_activations,
     evaluate_procedure_resolution,
+    procedure_resolution_digest,
+    resolution_activation_digest,
     resolution_contract_partition_id,
 )
 from cruxible_core.procedures.settled_outcomes import (
@@ -38,7 +47,7 @@ from cruxible_core.procedures.settled_outcomes import (
     classify_settled_outcome_history,
     query_settled_outcomes,
 )
-from cruxible_core.storage.cas import ContentAddressedBodyStore
+from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
 from tests.test_indexes.test_resolution_contracts import (
     NOW,
     _accepted,
@@ -563,3 +572,58 @@ def test_open_indeterminate_and_overturned_histories_are_not_settled_rows(tmp_pa
         bodies=bodies,
     )
     assert classify_settled_outcome_history(activation, overturned_book).status == "overturned"
+
+
+@pytest.mark.parametrize("version", (1, 2))
+def test_pre_f3_retained_bytes_keep_their_verification_and_replay(tmp_path, version):
+    # Captured using 2f329991, before independent contracts existed. Do not
+    # regenerate these bodies/digests with the current builders on succession.
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "goldens/playbill/resolution-pre-f3.json").read_text()
+    )["records"][version - 1]
+    activation_bytes = fixture["activation_body"].encode()
+    resolution_bytes = fixture["resolution_body"].encode()
+    assert sha256(activation_bytes).hexdigest() == fixture["activation_sha256"]
+    assert sha256(resolution_bytes).hexdigest() == fixture["resolution_sha256"]
+    activation_type = (
+        ResolutionContractActivationV1 if version == 1 else ResolutionContractActivationV2
+    )
+    resolution_type = ProcedureResolutionV1 if version == 1 else ProcedureResolutionV2
+    activation = activation_type.model_validate_json(activation_bytes)
+    resolution = resolution_type.model_validate_json(resolution_bytes)
+    assert canonical_bytes(activation.model_dump(mode="json")) == activation_bytes
+    assert canonical_bytes(resolution.model_dump(mode="json")) == resolution_bytes
+    assert resolution_activation_digest(activation) == fixture["activation_digest"]
+    assert procedure_resolution_digest(resolution) == fixture["resolution_digest"]
+    assert evaluate_procedure_resolution(activation, resolution).verdict == "accepted"
+
+    journal, bodies, stream, writer = _store(tmp_path, (activation,))
+    stored = append_procedure_resolution(
+        writer, activation=activation, resolution=resolution, stream=stream
+    )
+    assert stored.record.payload_digest == "sha256:" + fixture["resolution_journal_sha256"]
+    assert (
+        bodies.read(
+            stored.record.payload_digest,
+            access=BodyAccessContext(principal_id="frozen-replay-test", can_read_body=True),
+        )
+        == fixture["resolution_journal_body"].encode()
+    )
+    book = ProcedureResolutionBook((activation,))
+    book.replay(
+        journal.all_records(stream, resolution_contract_partition_id(activation)), bodies=bodies
+    )
+    assert book.latest_non_overturned(activation.contract_id) == resolution
+    assert (
+        procedure_resolution_digest(book.latest_non_overturned(activation.contract_id))
+        == fixture["resolution_digest"]
+    )
+
+    changed = json.loads(resolution_bytes)
+    changed["value"] = {"count": 999}
+    with pytest.raises(ValueError, match="resolution_id"):
+        resolution_type.model_validate(changed)
+    changed = json.loads(activation_bytes)
+    changed["measurement_name"] = "another-measurement"
+    with pytest.raises(ValueError):
+        activation_type.model_validate(changed)
