@@ -51,6 +51,7 @@ from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_client.contracts.provider_interfaces import parse_provider_interface
 from cruxible_client.contracts.providers import parse_provider
 from cruxible_client.contracts.query.definitions import parse_query_definition
+from cruxible_client.contracts.resolution_contracts import parse_resolution_contract
 from cruxible_client.contracts.standing_mandates import parse_standing_mandate
 from cruxible_client.contracts.subjects import parse_subject
 from cruxible_client.contracts.types import PrincipalRecord
@@ -87,6 +88,25 @@ class OwnerCodec:
 # Field names intentionally follow the source contracts; nested executable and
 # policy content is not duplicated as SQL JSON or speculative child relations.
 OWNER_CODECS = (
+    OwnerCodec(
+        "resolution-contract",
+        "ResolutionContract",
+        "resolution_contracts",
+        parse_resolution_contract,
+        tuple(
+            (name, "TEXT NOT NULL")
+            for name in (
+                "hypothesis_identity",
+                "hypothesis_artifact_digest",
+                "hypothesis_statement_digest",
+                "hypothesis_git_oid",
+                "hypothesis_semantic_root",
+                "hypothesis_generation_root",
+                "hypothesis_compiler_digest",
+                "rule_kind",
+            )
+        ),
+    ),
     OwnerCodec(
         "attestation",
         "ClaimAttestation",
@@ -389,6 +409,7 @@ def schema_sql() -> str:
             "CREATE INDEX pins_by_target ON pins(target_identity,edge_kind,source_identity,ordinal) WHERE target_identity IS NOT NULL",
             "CREATE INDEX pins_by_target_digest ON pins(target_digest,edge_kind,source_identity,ordinal)",
             "CREATE INDEX claims_by_subject_predicate ON claims(subject_path,predicate,subject_selector_scheme,subject_selector_value,identity)",
+            "CREATE INDEX resolution_contracts_by_hypothesis_version ON resolution_contracts(hypothesis_identity,hypothesis_artifact_digest,identity)",
             "CREATE INDEX attestations_by_claim_version ON attestations(claim_identity,claim_artifact_digest,attested_at_us,envelope_digest)",
             "CREATE INDEX claims_by_lifecycle ON claims(lifecycle,identity)",
             "CREATE INDEX claims_by_object_subject ON claims(object_path,identity) WHERE object_kind='subject'",
@@ -458,6 +479,19 @@ def _claim_fields(claim: Any) -> dict[str, SQLValue]:
 
 
 def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
+    if owner.kind == "resolution-contract":
+        h = source.hypothesis
+        return {
+            "hypothesis_identity": h.identity.qualified,
+            "hypothesis_artifact_digest": h.artifact_digest,
+            "hypothesis_statement_digest": h.statement_digest,
+            "rule_kind": source.rule.operator,
+            **{
+                "hypothesis_" + k: getattr(h.coordinate, k)
+                for k in ("git_oid", "semantic_root", "generation_root", "compiler_digest")
+            },
+        }
+
     if owner.kind == "attestation":
         s = source.statement
         return {

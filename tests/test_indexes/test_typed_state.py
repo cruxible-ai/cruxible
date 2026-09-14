@@ -60,7 +60,7 @@ def test_typed_claim_source_parity_and_no_builtin_payload_copy(tmp_path):
     assert reader.principal("owner", active=True).principal_id == "owner"
     assert reader.principal_registry().semantic_root == instance.accepted_coordinate().semantic_root
     exported = canonical_logical_export(path)
-    assert exported["storage_schema_version"] == 4
+    assert exported["storage_schema_version"] == 5
     assert projection_logical_digest(path) == projection_logical_digest(path)
     connection.close()
 
@@ -84,7 +84,7 @@ def test_typed_reverse_and_full_address_indexes_are_present():
         )
     )
     searches = tuple(row[3] for row in branches if row[3].startswith("SEARCH "))
-    assert len(searches) == 15
+    assert len(searches) == 16
     assert all("(identity=?)" in detail for detail in searches)
     connection.close()
 

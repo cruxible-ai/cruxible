@@ -726,13 +726,25 @@ async def recover_claim_attestations(instance_id: str) -> Response:
 
 
 @router.post(
+    "/{instance_id}/playbill/resolution-contracts/query",
+    response_model=contracts.ResolutionContractsResultV1,
+)
+async def resolution_contracts(
+    instance_id: str, req: contracts.ResolutionContractsRequestV1
+) -> contracts.ResolutionContractsResultV1:
+    return playbill_api.playbill_resolution_contracts(
+        resolve_server_instance_id(instance_id), request=req
+    )
+
+
+@router.post(
     "/{instance_id}/playbill/predictions",
-    response_model=contracts.PlaybillPredictResultV1,
+    response_model=contracts.PlaybillPredictResultV2,
 )
 async def predict(
     instance_id: str,
-    req: contracts.PlaybillPredictRequestV1,
-) -> contracts.PlaybillPredictResultV1:
+    req: contracts.PlaybillPredictRequestV2,
+) -> contracts.PlaybillPredictResultV2:
     return playbill_api.playbill_predict(
         resolve_server_instance_id(instance_id),
         request=req,
@@ -741,13 +753,13 @@ async def predict(
 
 @router.post(
     "/{instance_id}/playbill/predictions/{prediction_id}/settlements",
-    response_model=contracts.PlaybillSettleResultV1,
+    response_model=contracts.PlaybillSettleResultV2,
 )
 async def settle_prediction(
     instance_id: str,
     prediction_id: str,
-    req: contracts.PlaybillSettleRequestV1,
-) -> contracts.PlaybillSettleResultV1:
+    req: contracts.PlaybillSettleRequestV2,
+) -> contracts.PlaybillSettleResultV2:
     return playbill_api.playbill_settle_prediction(
         resolve_server_instance_id(instance_id),
         prediction_id,

@@ -46,10 +46,12 @@ def test_init_and_explain_publish_their_protocol_enums() -> None:
     assert explain["properties"]["detail"]["enum"] == ["summary", "evidence", "proof"]
 
 
-def test_line_run_schema_exposes_only_daemon_occurrence_assertions() -> None:
+def test_line_run_schema_exposes_occurrence_assertions_and_exact_investigation() -> None:
     schema = _schemas()["cruxible_playbill_line_run"].inputSchema
 
     assert set(schema["properties"]) == {
+        "resolution_contract",
+        "trigger_event",
         "instance_id",
         "line_identity_digest",
         "evaluation_time",

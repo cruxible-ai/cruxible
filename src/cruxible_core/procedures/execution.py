@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
-from typing import Callable, Literal, Protocol, cast
+from typing import Callable, Literal, Protocol, cast, overload
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -107,6 +107,7 @@ from cruxible_client.contracts.procedures.results import (
     procedure_admission_material_digest,
     procedure_selection_decision_digest,
 )
+from cruxible_client.contracts.procedures.windows import LineTriggerBindingV1
 from cruxible_client.contracts.provider_execution import (
     ProviderEgressObservationV1,
     ProviderExternalOccurrencePlanV1,
@@ -123,6 +124,7 @@ from cruxible_client.contracts.provider_execution import (
     provider_secret_binding_identity_digest,
 )
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+from cruxible_client.contracts.resolution_contracts import InvestigationBindingV1
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
 from cruxible_client.contracts.workspace_file import (
@@ -678,6 +680,21 @@ class ProcedureRunAdmissionV5(ProcedureRunAdmissionV4):
         if self.semantic_replay_key_digest != procedure_semantic_replay_key_digest(self):
             raise ValueError("v5 semantic replay key does not reproduce")
         return self
+
+
+class ProcedureRunAdmissionV6(ProcedureRunAdmissionV2):
+    """Direct investigation successor; older admission digest domains stay frozen."""
+
+    tag: Literal["playbill-procedure-run-admission-v6"] = "playbill-procedure-run-admission-v6"  # type: ignore[assignment]
+    investigation: InvestigationBindingV1 | None = None
+
+
+class ProcedureRunAdmissionV7(ProcedureRunAdmissionV5):
+    """Acquisition/Line admission with exact investigation and trigger bindings."""
+
+    tag: Literal["playbill-procedure-run-admission-v7"] = "playbill-procedure-run-admission-v7"  # type: ignore[assignment]
+    investigation: InvestigationBindingV1 | None = None
+    trigger_binding: LineTriggerBindingV1 | None = None
 
 
 class LandedCaptureRunMaterialV1(_StrictExecutionModel):
@@ -1426,6 +1443,111 @@ def procedure_line_run_id(
     return "RUN-" + digest.removeprefix("sha256:")
 
 
+class PreparedProcedureRunV6(PreparedProcedureRunV2):
+    tag: Literal["playbill-prepared-procedure-run-v6"] = "playbill-prepared-procedure-run-v6"  # type: ignore[assignment]
+    admission: ProcedureRunAdmissionV6
+
+
+class PreparedProcedureRunV7(PreparedProcedureRunV5):
+    tag: Literal["playbill-prepared-procedure-run-v7"] = "playbill-prepared-procedure-run-v7"  # type: ignore[assignment]
+    admission: ProcedureRunAdmissionV7
+
+
+class ProcedureAdmissionBoundPayloadV6(ProcedureAdmissionBoundPayloadV2):
+    tag: Literal["playbill-procedure-admission-bound-payload-v6"] = (
+        "playbill-procedure-admission-bound-payload-v6"  # type: ignore[assignment]
+    )
+    admission: ProcedureRunAdmissionV6
+
+
+class ProcedureAdmissionBoundPayloadV7(ProcedureAdmissionBoundPayloadV5):
+    tag: Literal["playbill-procedure-admission-bound-payload-v7"] = (
+        "playbill-procedure-admission-bound-payload-v7"  # type: ignore[assignment]
+    )
+    admission: ProcedureRunAdmissionV7
+
+
+def parse_admission_payload(
+    payload: object,
+) -> ProcedureAdmissionBoundPayloadV2 | ProcedureAdmissionBoundPayloadV3:
+    if not isinstance(payload, dict):
+        raise PlaybillExecutionError("admission payload is not an object")
+    models = {
+        model.model_fields["tag"].default: model
+        for model in (
+            ProcedureAdmissionBoundPayloadV2,
+            ProcedureAdmissionBoundPayloadV3,
+            ProcedureAdmissionBoundPayloadV4,
+            ProcedureAdmissionBoundPayloadV5,
+            ProcedureAdmissionBoundPayloadV6,
+            ProcedureAdmissionBoundPayloadV7,
+        )
+    }
+    model = models.get(payload.get("tag"))
+    if model is None:
+        raise PlaybillExecutionError("admission payload version is unsupported")
+    return model.model_validate(payload)
+
+
+@overload
+def bind_prepared_investigation(
+    prepared: PreparedProcedureRunV5,
+    *,
+    investigation: InvestigationBindingV1 | None,
+    trigger: LineTriggerBindingV1 | None = None,
+) -> PreparedProcedureRunV7: ...
+@overload
+def bind_prepared_investigation(
+    prepared: PreparedProcedureRunV2,
+    *,
+    investigation: InvestigationBindingV1 | None,
+    trigger: LineTriggerBindingV1 | None = None,
+) -> PreparedProcedureRunV6 | PreparedProcedureRunV7: ...
+
+
+def bind_prepared_investigation(
+    prepared: PreparedProcedureRunV2 | PreparedProcedureRunV5,
+    *,
+    investigation: InvestigationBindingV1 | None,
+    trigger: LineTriggerBindingV1 | None = None,
+) -> PreparedProcedureRunV6 | PreparedProcedureRunV7:
+    modern = isinstance(prepared, PreparedProcedureRunV5)
+    admission_type = ProcedureRunAdmissionV7 if modern else ProcedureRunAdmissionV6
+    fields = {
+        name: getattr(prepared.admission, name)
+        for name in type(prepared.admission).model_fields
+        if name != "tag"
+    }
+    fields["investigation"] = investigation
+    if modern:
+        fields["trigger_binding"] = trigger
+    elif trigger is not None:
+        raise PlaybillExecutionError("Line trigger requires a Line acquisition admission")
+    provisional = admission_type.model_construct(**fields)
+    replay = procedure_semantic_replay_key_digest(provisional)
+    provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay})
+    digest = procedure_admission_digest(provisional)
+    updates: dict[str, object] = {"admission_binding_digest": digest}
+    if isinstance(provisional, ProcedureRunAdmissionV7) and provisional.invocation_origin == "line":
+        assert provisional.occurrence_id is not None
+        updates["run_id"] = procedure_line_run_id(
+            occurrence_id=provisional.occurrence_id,
+            attempt=provisional.attempt,
+            admission_binding_digest=digest,
+            occurrence_evaluation_time=provisional.occurrence_evaluation_time,
+        )
+    else:
+        updates.update(
+            run_id=procedure_semantic_run_id(replay),
+            journal_partition_id=procedure_direct_partition(replay),
+        )
+    admission = admission_type.model_validate({**provisional.model_dump(mode="python"), **updates})
+    prepared_type = PreparedProcedureRunV7 if modern else PreparedProcedureRunV6
+    return prepared_type.model_validate(
+        {**prepared.model_dump(mode="python", exclude={"tag", "admission"}), "admission": admission}
+    )
+
+
 def procedure_semantic_run_id(semantic_replay_key_digest: str) -> str:
     """Return the direct lane's run id: exact replay semantics, one identity."""
 
@@ -1474,7 +1596,9 @@ def bind_line_admission_runtime_policy(
         occurrence_evaluation_time=provisional.occurrence_evaluation_time,
     )
     admission_type = (
-        ProcedureRunAdmissionV5
+        ProcedureRunAdmissionV7
+        if isinstance(admission, ProcedureRunAdmissionV7)
+        else ProcedureRunAdmissionV5
         if isinstance(admission, ProcedureRunAdmissionV5)
         else ProcedureRunAdmissionV4
         if isinstance(admission, ProcedureRunAdmissionV4)
@@ -1490,6 +1614,29 @@ def bind_line_admission_runtime_policy(
 
 
 def procedure_semantic_replay_key_digest(admission: ProcedureRunAdmissionV2) -> str:
+    if isinstance(admission, (ProcedureRunAdmissionV6, ProcedureRunAdmissionV7)):
+        base_type = (
+            ProcedureRunAdmissionV5
+            if isinstance(admission, ProcedureRunAdmissionV7)
+            else ProcedureRunAdmissionV2
+        )
+        base = base_type.model_construct(
+            **{name: getattr(admission, name) for name in base_type.model_fields if name != "tag"}
+        )
+        return typed_digest(
+            Sha256Value,
+            "playbill-investigation-replay-key-v1",
+            {
+                "execution": procedure_semantic_replay_key_digest(base),
+                "investigation": None
+                if admission.investigation is None
+                else admission.investigation.model_dump(mode="json"),
+                "trigger": admission.trigger_binding.model_dump(mode="json")
+                if isinstance(admission, ProcedureRunAdmissionV7)
+                and admission.trigger_binding is not None
+                else None,
+            },
+        ).tagged
     if isinstance(admission, ProcedureRunAdmissionV5):
         pins = [pin.model_dump(mode="json") for pin in admission.full_pins]
         pins.sort(key=canonical_bytes)
@@ -1628,6 +1775,12 @@ def procedure_semantic_replay_key_digest(admission: ProcedureRunAdmissionV2) -> 
 
 
 def procedure_admission_digest(admission: ProcedureRunAdmissionV1) -> str:
+    if isinstance(admission, (ProcedureRunAdmissionV6, ProcedureRunAdmissionV7)):
+        return typed_digest(
+            ArtifactDigest,
+            admission.tag,
+            {"semantic_replay_key_digest": admission.semantic_replay_key_digest},
+        ).tagged
     if isinstance(admission, ProcedureRunAdmissionV5):
         return typed_digest(
             ArtifactDigest,
@@ -2257,8 +2410,12 @@ class ProcedureExecutor:
             records,
             "admission_bound",
             (
-                ProcedureAdmissionBoundPayloadV5(
-                    admission=admission,
+                (
+                    ProcedureAdmissionBoundPayloadV7
+                    if isinstance(admission, ProcedureRunAdmissionV7)
+                    else ProcedureAdmissionBoundPayloadV5
+                )(
+                    admission=cast(ProcedureRunAdmissionV7, admission),
                     admission_material_manifest=prepared.admission_material_manifest,
                     admission_material_manifest_digest=(
                         prepared.admission_material_manifest_digest
@@ -2287,8 +2444,12 @@ class ProcedureExecutor:
                 ).model_dump(mode="json")
                 if isinstance(admission, ProcedureRunAdmissionV3)
                 and isinstance(prepared, PreparedProcedureRunV3)
-                else ProcedureAdmissionBoundPayloadV2(
-                    admission=admission,
+                else (
+                    ProcedureAdmissionBoundPayloadV6
+                    if isinstance(admission, ProcedureRunAdmissionV6)
+                    else ProcedureAdmissionBoundPayloadV2
+                )(
+                    admission=cast(ProcedureRunAdmissionV6, admission),
                     accepted_state_materials=prepared.accepted_state_materials,
                 ).model_dump(mode="json")
                 if isinstance(admission, ProcedureRunAdmissionV2)

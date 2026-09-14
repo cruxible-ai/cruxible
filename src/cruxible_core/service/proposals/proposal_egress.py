@@ -56,6 +56,7 @@ from cruxible_core.procedures.egress import (
 from cruxible_core.procedures.execution import (
     ProcedureAdmissionBoundPayloadV5,
     ProcedureRunAdmissionV5,
+    parse_admission_payload,
 )
 from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
 from cruxible_core.procedures.terminal_services import ProposalDeliveryRefused
@@ -124,8 +125,13 @@ def _fold_partition(
         payload = parse_journal_payload(bodies.read(stored.record.payload_digest, access=access))
         kind = stored.record.event_kind
         if kind == "admission_bound" and isinstance(payload, dict):
-            if payload.get("tag") == "playbill-procedure-admission-bound-payload-v5":
-                fold.admission = ProcedureAdmissionBoundPayloadV5.model_validate(payload).admission
+            if payload.get("tag") in {
+                "playbill-procedure-admission-bound-payload-v5",
+                "playbill-procedure-admission-bound-payload-v7",
+            }:
+                bound_payload = parse_admission_payload(payload)
+                if isinstance(bound_payload, ProcedureAdmissionBoundPayloadV5):
+                    fold.admission = bound_payload.admission
         elif kind == "provider_invocation_completed" and isinstance(payload, dict):
             fold.provider_calls += 1
             digest = payload.get("receipt_digest")

@@ -31,6 +31,7 @@ from cruxible_core.compiler.projection_artifacts import (
     P2_B1_ARTIFACT_KINDS,
     P2_C_ARTIFACT_KINDS,
     PLAYBILL_ARTIFACT_KINDS,
+    RESOLUTION_ARTIFACT_KINDS,
 )
 from cruxible_core.proposals.candidate_cards import CARD_RENDERER_DIGEST
 
@@ -110,6 +111,11 @@ ATTESTATION_COMPILER = _coordinate(
     semantic_revision=20,
     candidate_card_renderer_digest=CARD_RENDERER_DIGEST,
 )
+RESOLUTION_COMPILER = _coordinate(
+    projection_content="claims-procedures-runtime-v1",
+    semantic_revision=21,
+    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,
+)
 # The renderer a coordinate commits to is resolved from the coordinate itself,
 # never from a second copy of its preimage. A duplicated preimage with its own
 # revision literal silently returns None the moment the revision is succeeded,
@@ -118,6 +124,7 @@ ATTESTATION_COMPILER = _coordinate(
 _CARD_RENDERER_BY_COMPILER: dict[str, str] = {
     P2_B5_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
     ATTESTATION_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
+    RESOLUTION_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
 }
 
 
@@ -149,6 +156,7 @@ SUPPORTED_COMPILERS = (
     P2_B4_UNIT2_COMPILER,
     P2_B5_COMPILER,
     ATTESTATION_COMPILER,
+    RESOLUTION_COMPILER,
 )
 # Immutable human-facing revision labels.  The digest remains the authority;
 # these labels are display metadata and must never be inferred from the moving
@@ -173,6 +181,7 @@ COMPILER_REVISION_LABELS = {
     P2_B4_UNIT2_COMPILER: "p2-b4-u2",
     P2_B5_COMPILER: "p2-b5",
     ATTESTATION_COMPILER: "accepted-attestations-v1",
+    RESOLUTION_COMPILER: "independent-resolution-contracts-v1",
 }
 PC_HR_ARTIFACT_CODEC_COMPILERS = frozenset(
     {
@@ -185,17 +194,20 @@ PC_HR_ARTIFACT_CODEC_COMPILERS = frozenset(
         P2_B4_UNIT2_COMPILER,
         P2_B5_COMPILER,
         ATTESTATION_COMPILER,
+        RESOLUTION_COMPILER,
     }
 )
 
 
 def current_compiler_coordinate() -> CompilerCoordinate:
-    return ATTESTATION_COMPILER
+    return RESOLUTION_COMPILER
 
 
 def artifact_kinds_for_compiler(compiler: CompilerCoordinate) -> ArtifactKindRegistry:
     """Return the frozen ledger path grammar selected by one compiler."""
 
+    if compiler == RESOLUTION_COMPILER:
+        return RESOLUTION_ARTIFACT_KINDS
     if compiler == ATTESTATION_COMPILER:
         return ATTESTATION_ARTIFACT_KINDS
 
@@ -230,6 +242,10 @@ def artifact_codec_for_compiler(compiler: CompilerCoordinate) -> ArtifactCodec:
 def projection_registry_for_compiler(
     compiler: CompilerCoordinate,
 ) -> ProjectionExtensionRegistry:
+    if compiler == RESOLUTION_COMPILER:
+        return playbill_p2c_extension_registry().with_artifact_kinds(
+            "attestation", "resolution-contract"
+        )
     if compiler == ATTESTATION_COMPILER:
         return playbill_p2c_extension_registry().with_artifact_kinds("attestation")
     if compiler == PB_B_COMPILER:
@@ -270,6 +286,7 @@ def projection_registry_for_compiler(
 
 __all__ = [
     "ATTESTATION_COMPILER",
+    "RESOLUTION_COMPILER",
     "PB_B_COMPILER",
     "PB_C_COMPILER",
     "PB_D_COMPILER",

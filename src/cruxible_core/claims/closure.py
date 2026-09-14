@@ -128,6 +128,7 @@ class ArtifactDependencyStateV1(_StrictClosureModel):
         "subject",
         "claim-type",
         "capture-contract",
+        "resolution-contract",
         "provider",
         "provider-interface",
         "source-acquisition-policy",
@@ -172,6 +173,22 @@ def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyS
     """Derive metadata from exact artifact bytes, preserving parser refusals."""
 
     try:
+        if path.startswith("resolution-contracts/"):
+            from cruxible_client.contracts.resolution_contracts import (
+                parse_resolution_contract,
+                resolution_contract_digest,
+            )
+
+            resolution = parse_resolution_contract(content, path=path)
+            return ArtifactDependencyStateV1(
+                path=path,
+                artifact_kind="resolution-contract",
+                artifact_tag=resolution.artifact_format,
+                identity=resolution.identity,
+                artifact_digest=resolution_contract_digest(resolution).tagged,
+                pins=resolution.pins,
+                lifecycle=resolution.lifecycle,
+            )
         if path.startswith("attestations/"):
             from cruxible_client.contracts.accepted_attestations import (
                 attestation_artifact_digest,

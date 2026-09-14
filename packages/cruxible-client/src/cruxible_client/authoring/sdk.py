@@ -100,6 +100,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatementV1,
     AuthoringExactContentObjectV1,
     AuthoringExistingClaimDispositionV1,
+    AuthoringIntentViewV1,
     AuthoringProgramOperationV1,
     AuthoringProgramStampV1,
     AuthoringReferenceExpectationV1,
@@ -116,6 +117,7 @@ from cruxible_client.contracts.authoring.models import (
     ExistingCaptureCitationSourceV1,
     LineAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
+    ResolutionContractAuthoringPayloadV1,
     SelfSourceBodyV1,
     SourceAcquisitionPolicyAuthoringPayloadV1,
     SubjectAuthoringPayloadV1,
@@ -165,25 +167,28 @@ from cruxible_client.contracts.policies import (
     ClaimResolutionPolicyV1,
 )
 from cruxible_client.contracts.predictions import (
-    ObservationSettlementEvidenceV1,
-    PlaybillPredictRequestV1,
-    PredictionClaimPayloadV1,
-    PredictionEqualityRuleV1,
-    PredictionObservationSelectorV1,
-    PredictionPresenceRuleV1,
+    ObservationSettlementEvidenceV2,
+    PlaybillPredictRequestV2,
     PredictionRuleV1,
-    PredictionThresholdRuleV1,
-    TerminalSettlementEvidenceV1,
+    TerminalSettlementEvidenceV2,
 )
 from cruxible_client.contracts.procedures.line_specs import (
     ManualTriggerPolicyV1,
-    TriggerPolicyV1,
+    TriggerPolicyV2,
 )
 from cruxible_client.contracts.procedures.models import (
     ProcedureDefinitionV3,
     ProcedureDefinitionV4,
 )
+from cruxible_client.contracts.procedures.windows import (
+    TriggerEventReferenceV1,
+)
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.resolution_contracts import (
+    ClaimVersionReferenceV1,
+    ResolutionContractReferenceV1,
+    ResolutionContractV1,
+)
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
@@ -543,14 +548,13 @@ class ClaimDraft(_IntentDraft):
 
 @dataclass(frozen=True)
 class Prediction:
-    """A submitted predicted Claim and its immutable settlement declaration."""
+    """A proposed governed test; its hypothesis already exists in accepted state."""
 
     _playbill: Playbill = field(repr=False, compare=False)
-    prediction_id: str
+    contract_identity: str
+    contract_digest: str
     intent_id: str
     proposal_id: str
-    predicted_claim_id: str
-    declaration_digest: str
 
     @property
     def proposal(self) -> Proposal:
@@ -818,6 +822,19 @@ class ChangeSetDraft:
         )
         return self
 
+    def resolution_contract(self, contract: ResolutionContractV1) -> ChangeSetDraft:
+        """Define one ResolutionContract inside this changeset."""
+
+        self._members.append(
+            _ChangeSetMember(
+                payload=ResolutionContractAuthoringPayloadV1(resolution_contract=contract),
+                expectations=(),
+                source_map=DiagnosticSourceMap(()),
+                decisions={"kind": "resolution_contract", "name": contract.identity.name},
+            )
+        )
+        return self
+
     def acquisition_policy(self, policy: SourceAcquisitionPolicyV1) -> ChangeSetDraft:
         """Define one SourceAcquisitionPolicy inside this changeset."""
 
@@ -838,7 +855,7 @@ class ChangeSetDraft:
         procedure: str,
         acquisition_policy: str,
         requested_terminal_rung: Literal[1, 2, 3],
-        trigger_policy: TriggerPolicyV1 | None = None,
+        trigger_policy: TriggerPolicyV2 | None = None,
         parameters: CanonicalValue | None = None,
         budgets: Mapping[str, int] | None = None,
         occurrence_epoch: int = 1,
@@ -1700,111 +1717,62 @@ class Playbill:
         self._observe_read(result_coordinate, expected=requested)
         return tuple(self._typed_claim_view(view) for view in result.claims)
 
-    def predict(
-        self,
-        prediction: ClaimDraft,
-        *,
-        procedure: str | ProcedureRef,
-        measurement_name: str,
-        observation_subject: str | SubjectRef,
-        observation_predicate: str | ClaimTypeRef,
-        rule: PredictionRuleV1 | Mapping[str, object],
-        deadline: datetime,
-        observation_qualifier: str | None = None,
-        outcome_class: str = "prediction-correctness",
-    ) -> Prediction:
-        """Submit a predicted Claim and bind its later settlement rule."""
-
-        if prediction._playbill is not self:
-            raise ValueError("prediction draft belongs to another Playbill connection")
-        procedure_name = _address(procedure, RefKind.PROCEDURE)
-        subject_name = _address(observation_subject, RefKind.SUBJECT)
-        predicate_name = _address(observation_predicate, RefKind.CLAIM_TYPE)
-        for reference in (procedure, observation_subject, observation_predicate):
-            if isinstance(reference, TypedRef):
-                self._assert_coordinate(reference.coordinate)
-        typed_rule = (
-            rule
-            if isinstance(
-                rule,
-                (
-                    PredictionEqualityRuleV1,
-                    PredictionThresholdRuleV1,
-                    PredictionPresenceRuleV1,
-                ),
-            )
-            else _PREDICTION_RULE_ADAPTER.validate_python(dict(rule))
-        )
-        result = self._client.predict_playbill(
+    def resolution_contracts(
+        self, hypothesis: ClaimVersionReferenceV1
+    ) -> api.ResolutionContractsResultV1:
+        """Find accepted tests of this exact Claim version, including retired tests."""
+        return self._client.resolution_contracts(
             self._instance_id,
-            request=PlaybillPredictRequestV1(
-                prediction=cast(PredictionClaimPayloadV1, prediction.payload),
-                procedure=procedure_name,
-                measurement_name=measurement_name,
-                observation=PredictionObservationSelectorV1(
-                    subject=_subject_address(subject_name),
-                    predicate=predicate_name,
-                    qualifier=observation_qualifier,
-                ),
-                rule=typed_rule,
-                deadline=deadline,
-                outcome_class=outcome_class,
-            ),
+            request=api.ResolutionContractsRequestV1(hypothesis=hypothesis, at=self.coordinate),
         )
-        declaration = result.declaration
+
+    def predict(self, contract: ResolutionContractV1) -> Prediction:
+        """Propose a governed test of an exact, already accepted Claim version."""
+        result = self._client.predict_playbill(
+            self._instance_id, request=PlaybillPredictRequestV2(contract=contract)
+        )
+        view = AuthoringIntentViewV1.model_validate(result.intent)
         return Prediction(
             self,
-            prediction_id=declaration.prediction_id,
-            intent_id=declaration.intent_id,
-            proposal_id=declaration.proposal_id,
-            predicted_claim_id=declaration.predicted_claim_id,
-            declaration_digest=declaration.declaration_digest,
+            contract_identity=result.contract_identity,
+            contract_digest=result.contract_digest,
+            intent_id=view.intent.intent_id,
+            proposal_id=result.proposal_id,
         )
 
     def settle(
         self,
-        prediction: Prediction | str,
+        contract: ResolutionContractReferenceV1,
         *,
-        observation: ClaimRef | str,
+        observation: ClaimVersionReferenceV1,
+        trigger_event: TriggerEventReferenceV1 | None = None,
         terminal_run_id: str | None = None,
         terminal_record_digest: str | None = None,
     ) -> PredictionSettlement:
-        """Settle a prediction from a later observation or retained terminal record."""
-
-        if isinstance(prediction, Prediction):
-            if prediction._playbill is not self:
-                raise ValueError("prediction belongs to another Playbill connection")
-            prediction_id = prediction.prediction_id
-        else:
-            prediction_id = prediction
-        claim_id = _address(observation, RefKind.CLAIM)
-        if isinstance(observation, ClaimRef):
-            self._assert_coordinate(observation.coordinate)
+        """Settle a retained contract using an exact accepted observation version."""
         if (terminal_run_id is None) != (terminal_record_digest is None):
-            raise ValueError(
-                "terminal settlement requires both terminal_run_id and terminal_record_digest"
-            )
+            raise ValueError("terminal settlement requires its run and record digest")
         evidence = (
-            ObservationSettlementEvidenceV1(claim_id=claim_id)
+            ObservationSettlementEvidenceV2(claim=observation)
             if terminal_run_id is None
-            else TerminalSettlementEvidenceV1(
-                claim_id=claim_id,
+            else TerminalSettlementEvidenceV2(
+                claim=observation,
                 run_id=terminal_run_id,
                 terminal_record_digest=cast(str, terminal_record_digest),
             )
         )
         result = self._client.settle_playbill_prediction(
             self._instance_id,
-            prediction_id,
-            request=api.PlaybillSettleRequestV1(evidence=evidence),
+            contract.identity.name,
+            request=api.PlaybillSettleRequestV2(
+                contract=contract, trigger_event=trigger_event, evidence=evidence
+            ),
         )
         outcome = result.resolution.get("settlement_outcome")
         if not isinstance(outcome, bool):
-            raise ValueError("prediction settlement response omitted its mechanical outcome")
+            raise ValueError("settlement response omitted its mechanical outcome")
         return PredictionSettlement(
-            prediction_id=result.prediction_id,
-            outcome=outcome,
-            relation=result.relation,
+            prediction_id=result.prediction_id, outcome=outcome, relation=result.relation
         )
 
     def resume_intent(self, intent_id: str) -> Intent:
@@ -2705,6 +2673,8 @@ class Playbill:
         line_identity_digest: str,
         *,
         occurrence_id: str | None = None,
+        resolution_contract: ResolutionContractReferenceV1 | None = None,
+        trigger_event: TriggerEventReferenceV1 | None = None,
     ) -> ProcedureRun:
         """Trigger one daemon-derived occurrence of an accepted Line."""
 
@@ -2712,6 +2682,8 @@ class Playbill:
             self._instance_id,
             line_identity_digest,
             occurrence_id=occurrence_id,
+            resolution_contract=resolution_contract,
+            trigger_event=trigger_event,
             evaluation_time=self._evaluation_time(),
         )
         return ProcedureRun(self, result)
@@ -3346,6 +3318,8 @@ class Procedure:
         self,
         *,
         at: AcceptedCoordinate | None = None,
+        resolution_contract: ResolutionContractReferenceV1 | None = None,
+        trigger_event: TriggerEventReferenceV1 | None = None,
         **inputs: CanonicalValue,
     ) -> ProcedureRun:
         if at is not None and self._coordinate is not None and at != self._coordinate:
@@ -3357,6 +3331,8 @@ class Procedure:
             evaluation_time=self._playbill._evaluation_time(),
             at=self._playbill._read_at(at or self._coordinate),
             input=normalized,
+            resolution_contract=resolution_contract,
+            trigger_event=trigger_event,
         )
         return ProcedureRun(self._playbill, result)
 

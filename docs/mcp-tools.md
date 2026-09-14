@@ -191,7 +191,8 @@ themselves a governed track record; promotion remains a separate governed act.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_predict` | Propose a predicted Claim and retain its settlement declaration | `GOVERNED_WRITE` |
+| `cruxible_playbill_resolution_contracts` | Find governed tests of an exact Claim version | `READ_ONLY` |
+| `cruxible_playbill_predict` | Propose a governed resolution contract | `GOVERNED_WRITE` |
 | `cruxible_playbill_settle` | Settle one prediction from accepted observation evidence or its governed terminal | `GOVERNED_WRITE` |
 
 Prediction settlement records the declared score and resolution as governed

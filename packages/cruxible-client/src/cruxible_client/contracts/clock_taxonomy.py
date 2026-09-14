@@ -74,6 +74,13 @@ def is_time_bearing_field(name: str, annotation: str) -> bool:
 # `observed_at` the instant the daemon evaluated the source, while an attestation
 # is `observed_at` the time its attestor asserts.
 CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
+    ("FixedWindowV1", "starts_at"): "VALIDITY WINDOW",
+    ("FixedWindowV1", "duration_seconds"): "VALIDITY WINDOW",
+    ("CaptureEventWindowV1", "duration_seconds"): "VALIDITY WINDOW",
+    ("BoundObservationWindowV1", "starts_at"): "VALIDITY WINDOW",
+    ("BoundObservationWindowV1", "ends_at"): "VALIDITY WINDOW",
+    ("TriggerEventReferenceV1", "sequence"): "SETTLEMENT ORDER",
+    ("ResolutionContractActivationV3", "activated_at"): "EVALUATION INSTANT",
     ("AcceptedGenerationLocation", "sequence"): "SETTLEMENT ORDER",
     ("AcceptedGenerationLocation", "parent_sequence"): "SETTLEMENT ORDER",
     ("ArtifactVersionLocation", "occurrence_sequence"): "SETTLEMENT ORDER",
@@ -242,9 +249,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillNextRequestV1", "expiring_within"): "VALIDITY WINDOW",
     ("PlaybillNextResult", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillNextResultV1", "evaluation_time"): "EVALUATION INSTANT",
-    ("PlaybillPredictRequestV1", "deadline"): "VALIDITY WINDOW",
-    ("PlaybillPredictionDeclarationV1", "deadline"): "VALIDITY WINDOW",
-    ("PlaybillPredictionDeclarationV1", "declared_at"): "EVALUATION INSTANT",
     ("PlaybillProcedureReadiness", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillProcedureRunState", "evaluation_time"): "EVALUATION INSTANT",
     # When the daemon last tried to push. An assertion about an attempt, not a

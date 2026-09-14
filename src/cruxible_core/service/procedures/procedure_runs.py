@@ -62,10 +62,10 @@ from cruxible_client.contracts.procedures.graph import compute_procedure_definit
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpecV1,
     CadenceTriggerPolicyV1,
-    CaptureLandingTriggerPolicyV1,
+    CaptureLandingTriggerPolicyV2,
     LineSpecV2,
     ManualTriggerPolicyV1,
-    WindowCloseTriggerPolicyV1,
+    WindowCloseTriggerPolicyV2,
     evaluate_line_spec_law,
     line_identity_digest,
 )
@@ -129,6 +129,10 @@ from cruxible_client.contracts.procedures.results import (
     procedure_admission_material_digest,
     procedure_selection_decision_digest,
 )
+from cruxible_client.contracts.procedures.windows import (
+    LineTriggerBindingV1,
+    TriggerEventReferenceV1,
+)
 from cruxible_client.contracts.provider_execution import (
     ProcedureDerivedSourceRequestV1,
     ProviderEgressObservationV1,
@@ -152,6 +156,10 @@ from cruxible_client.contracts.providers import (
     ProviderV2,
 )
 from cruxible_client.contracts.repairs import served_repair_for_refusal
+from cruxible_client.contracts.resolution_contracts import (
+    InvestigationBindingV1,
+    ResolutionContractReferenceV1,
+)
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
@@ -188,21 +196,24 @@ from cruxible_core.procedures.execution import (
     AcceptedStateRunMaterialV2,
     PreparedProcedureRunV2,
     PreparedProcedureRunV5,
-    ProcedureAdmissionBoundPayloadV2,
     ProcedureAdmissionBoundPayloadV3,
-    ProcedureAdmissionBoundPayloadV4,
     ProcedureAdmissionBoundPayloadV5,
+    ProcedureAdmissionBoundPayloadV7,
     ProcedureClockProtocol,
     ProcedureRunAdmissionV2,
     ProcedureRunAdmissionV3,
     ProcedureRunAdmissionV4,
     ProcedureRunAdmissionV5,
+    ProcedureRunAdmissionV6,
+    ProcedureRunAdmissionV7,
     ProcedureRunReceiptV1,
     ProcedureRuntimePolicyAbsent,
     ProviderRuntimeInvokerProtocol,
     SystemProcedureClock,
     bind_accepted_state_materials,
     bind_line_admission_runtime_policy,
+    bind_prepared_investigation,
+    parse_admission_payload,
     prepare_direct_procedure_run,
     procedure_admission_digest,
     procedure_direct_partition,
@@ -232,6 +243,12 @@ from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.procedures.procedures import (
     PlaybillProcedureStateTapReader,
     service_execute_direct_procedure,
+)
+from cruxible_core.service.procedures.resolution_contracts import (
+    bind_investigation,
+    bind_window,
+    capture_event_time,
+    require_current_investigation,
 )
 from cruxible_core.storage.cas import BodyAccessContext
 from cruxible_core.storage.material_reservations import ProcedureMaterialReservationStore
@@ -481,6 +498,8 @@ class ProcedureRunRequestV1(_StrictProcedureSurfaceModel):
 
 
 class ProcedureRunRequestV2(_StrictProcedureSurfaceModel):
+    resolution_contract: ResolutionContractReferenceV1 | None = None
+    trigger_event: TriggerEventReferenceV1 | None = None
     tag: Literal["playbill-procedure-run-request-v2"] = "playbill-procedure-run-request-v2"
     at: AcceptedCoordinate | None = None
     evaluation_time: datetime | None = None
@@ -501,6 +520,8 @@ class LineRunRequestV1(_StrictProcedureSurfaceModel):
     """An assertion against one daemon-derived accepted Line occurrence."""
 
     tag: Literal["playbill-line-run-request-v1"] = "playbill-line-run-request-v1"
+    resolution_contract: ResolutionContractReferenceV1 | None = None
+    trigger_event: TriggerEventReferenceV1 | None = None
     line_identity_digest: str
     occurrence_id: str | None = None
     evaluation_time: datetime | None = Field(
@@ -575,6 +596,7 @@ def load_procedure_run_config(state_root: Path) -> ProcedureRunOperationalConfig
 
 
 class ProcedureRunOutcomeV1(_StrictProcedureSurfaceModel):
+    capture_event: TriggerEventReferenceV1 | None = None
     sequence: int = Field(ge=1)
     event_kind: str
     node_id: str | None = None
@@ -582,6 +604,8 @@ class ProcedureRunOutcomeV1(_StrictProcedureSurfaceModel):
 
 
 class ProcedureRunStateV2(_StrictProcedureSurfaceModel):
+    investigation: InvestigationBindingV1 | None = None
+    trigger_binding: LineTriggerBindingV1 | None = None
     tag: Literal["playbill-procedure-run-state-v2"] = "playbill-procedure-run-state-v2"
     run_id: str | None
     procedure_identity: ArtifactIdentity
@@ -774,7 +798,7 @@ def _line_admissions(
     instance: PlaybillInstance,
     accepted_line: AcceptedLineSpecV1,
 ) -> tuple[ProcedureRunAdmissionV5, ...]:
-    journal, _root = _journal_for_write(instance)
+    journal, _root = _journal(instance)
     stream = procedure_line_journal_stream(instance.descriptor.instance_id)
     partition = procedure_line_partition(accepted_line.line.identity)
     admissions: list[ProcedureRunAdmissionV5] = []
@@ -790,65 +814,61 @@ def _line_admissions(
                 ),
             )
         )
-        if not isinstance(payload, dict) or payload.get("tag") != (
-            "playbill-procedure-admission-bound-payload-v5"
-        ):
+        if not isinstance(payload, dict) or payload.get("tag") not in {
+            "playbill-procedure-admission-bound-payload-v5",
+            "playbill-procedure-admission-bound-payload-v7",
+        }:
             continue
-        admissions.append(ProcedureAdmissionBoundPayloadV5.model_validate(payload).admission)
+        admissions.append(
+            (
+                ProcedureAdmissionBoundPayloadV7
+                if payload.get("tag") == "playbill-procedure-admission-bound-payload-v7"
+                else ProcedureAdmissionBoundPayloadV5
+            )
+            .model_validate(payload)
+            .admission
+        )
     return tuple(admissions)
-
-
-def _trigger_interval_seconds(accepted_line: AcceptedLineSpecV1) -> int:
-    """Read the accepted Line's own cadence or window period.
-
-    The period is a field of the accepted LineSpec, which is the artifact the
-    projection registry produces at `lines/<name>.json` and which
-    `_accepted_line_by_identity_digest` already resolved by identity. Reading it
-    from anywhere else means reading a path no accepted tree can hold: the
-    trigger Policy pin's target kind is a deferred pin kind with no ledger
-    artifact envelope, so no registry produces it and no digest verifies it.
-    """
-
-    trigger = accepted_line.line.trigger_policy
-    if isinstance(trigger, CadenceTriggerPolicyV1):
-        return int(trigger.interval_seconds)
-    if isinstance(trigger, WindowCloseTriggerPolicyV1):
-        return int(trigger.window_seconds)
-    raise PlaybillExecutionError("accepted Line trigger policy carries no scheduled period")
 
 
 def _line_occurrence(
     accepted_line: AcceptedLineSpecV1,
     *,
-    coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
     prior: tuple[ProcedureRunAdmissionV5, ...],
-) -> tuple[str, datetime | None, str | None]:
+    binding: LineTriggerBindingV1 | None = None,
+) -> tuple[str, datetime | None]:
     trigger = accepted_line.line.trigger_policy
     last = max(prior, key=lambda item: item.occurrence_evaluation_time, default=None)
-    next_due: datetime | None = None
-    awaited: str | None = None
+    next_due = None
     if isinstance(trigger, ManualTriggerPolicyV1):
         occurrence_basis: object = format_datetime(evaluation_time)
-    elif isinstance(trigger, CaptureLandingTriggerPolicyV1):
-        if last is not None and coordinate.git_oid == last.bound_coordinate.git_oid:
-            awaited = trigger.anchor_capture_contract_digest
-        occurrence_basis = coordinate.git_oid
-    else:
-        interval = _trigger_interval_seconds(accepted_line)
+    elif isinstance(trigger, CadenceTriggerPolicyV1):
         if last is not None:
-            next_due = last.occurrence_evaluation_time + timedelta(seconds=interval)
+            next_due = last.occurrence_evaluation_time + timedelta(seconds=trigger.interval_seconds)
         occurrence_basis = format_datetime(next_due or evaluation_time)
+    elif isinstance(trigger, (CaptureLandingTriggerPolicyV2, WindowCloseTriggerPolicyV2)):
+        if binding is None or binding.kind != trigger.kind:
+            raise PlaybillExecutionError("trigger requires an exact retained event or window")
+        occurrence_basis = binding.model_dump(mode="json")
+        if binding.window is not None:
+            next_due = binding.window.ends_at
+    else:
+        raise PlaybillExecutionError(
+            "accept a Line successor with explicit event/window bindings before running "
+            "this trigger"
+        )
     occurrence_id = typed_digest(
         Sha256Value,
-        "playbill-line-occurrence-v1",
+        "playbill-line-occurrence-v2",
         {
             "line_identity_digest": line_identity_digest(accepted_line.line.identity),
+            "occurrence_epoch": accepted_line.line.occurrence_epoch,
             "trigger_kind": trigger.kind,
-            "trigger_instant_or_landing_digest": occurrence_basis,
+            "trigger_binding": occurrence_basis,
         },
     ).tagged
-    return occurrence_id, next_due, awaited
+    return occurrence_id, next_due
 
 
 def _line_budget(
@@ -1942,37 +1962,26 @@ def _state_from_records(
             terminal_egress[folded.node_id] = folded
         if stored.record.event_kind == "admission_bound":
             admission_count += 1
-            if isinstance(payload, dict) and payload.get("tag") == (
-                "playbill-procedure-admission-bound-payload-v5"
-            ):
-                bound_v5 = ProcedureAdmissionBoundPayloadV5.model_validate(payload)
-                admission = bound_v5.admission
-                admission_material_manifest = bound_v5.admission_material_manifest
-                admission_material_manifest_digest = bound_v5.admission_material_manifest_digest
-                acquisition_plan = bound_v5.acquisition_plan
-                acquisition_plan_digest = bound_v5.acquisition_plan_digest
-            elif isinstance(payload, dict) and payload.get("tag") == (
-                "playbill-procedure-admission-bound-payload-v4"
-            ):
-                bound_v4 = ProcedureAdmissionBoundPayloadV4.model_validate(payload)
-                admission = bound_v4.admission
-                admission_material_manifest = bound_v4.admission_material_manifest
-                admission_material_manifest_digest = bound_v4.admission_material_manifest_digest
-            elif isinstance(payload, dict) and payload.get("tag") == (
-                "playbill-procedure-admission-bound-payload-v3"
-            ):
-                bound = ProcedureAdmissionBoundPayloadV3.model_validate(payload)
-                admission = bound.admission
+            bound = parse_admission_payload(payload)
+            admission = bound.admission
+            if isinstance(bound, ProcedureAdmissionBoundPayloadV3):
                 admission_material_manifest = bound.admission_material_manifest
                 admission_material_manifest_digest = bound.admission_material_manifest_digest
-            elif isinstance(payload, dict) and payload.get("tag") == (
-                "playbill-procedure-admission-bound-payload-v2"
-            ):
-                admission = ProcedureAdmissionBoundPayloadV2.model_validate(payload).admission
-        if stored.record.event_kind in {"node_fired", "attempt_finalized"}:
+            if isinstance(bound, ProcedureAdmissionBoundPayloadV5):
+                acquisition_plan = bound.acquisition_plan
+                acquisition_plan_digest = bound.acquisition_plan_digest
+        if stored.record.event_kind in {"node_fired", "attempt_finalized", "produced_capture"}:
             node_id = payload.get("node_id") if isinstance(payload, dict) else None
             outcomes.append(
                 ProcedureRunOutcomeV1(
+                    capture_event=TriggerEventReferenceV1(
+                        run_id=run_id,
+                        partition_id=stored.record.partition_id,
+                        sequence=stored.record.sequence,
+                        record_digest=stored.record_digest,
+                    )
+                    if stored.record.event_kind == "produced_capture"
+                    else None,
                     sequence=stored.record.sequence,
                     event_kind=stored.record.event_kind,
                     node_id=node_id if isinstance(node_id, str) else None,
@@ -2571,6 +2580,12 @@ def _state_from_records(
     )
     return ProcedureRunStateV2(
         run_id=run_id,
+        investigation=admission.investigation
+        if isinstance(admission, (ProcedureRunAdmissionV6, ProcedureRunAdmissionV7))
+        else None,
+        trigger_binding=admission.trigger_binding
+        if isinstance(admission, ProcedureRunAdmissionV7)
+        else None,
         procedure_identity=admission.procedure_identity,
         procedure_artifact_digest=admission.procedure_artifact_digest,
         bound_coordinate=PlaybillAcceptedCoordinate.model_validate(
@@ -2895,8 +2910,10 @@ def service_run_playbill_procedure(
 ) -> ProcedureRunStateV2:
     instance.require_writable()
     coordinate = _resolve_coordinate(instance, request.at)
-    evaluation_time = request.evaluation_time or instance.accepted_evaluation_time(
-        coordinate.git_oid
+    evaluation_time = request.evaluation_time or (
+        ensure_utc(SystemProcedureClock().now())
+        if request.resolution_contract is not None
+        else instance.accepted_evaluation_time(coordinate.git_oid)
     )
     head_at_admission = instance.accepted_coordinate()
     # ``at`` binds a live invocation to an accepted coordinate. Exact replay is
@@ -2979,6 +2996,15 @@ def service_run_playbill_procedure(
         raise ProcedureRunNotCurrent(
             f"{ProcedureRunNotCurrent.code}: Procedure is not current before journal creation"
         )
+    if request.trigger_event is not None and request.resolution_contract is None:
+        raise PlaybillExecutionError("direct trigger event requires a resolution contract")
+    investigation = (
+        None
+        if request.resolution_contract is None
+        else bind_investigation(
+            instance, request.resolution_contract, event=request.trigger_event, now=evaluation_time
+        )
+    )
     stream = _stream(instance)
     state_reader = PlaybillProcedureStateTapReader(
         instance=instance,
@@ -3022,7 +3048,13 @@ def service_run_playbill_procedure(
         )
     # The journal is created only once an admission exists: a Source run that
     # cannot be admitted leaves no run history behind it.
+    if investigation is not None:
+        prepared = bind_prepared_investigation(prepared, investigation=investigation)
     journal, root = _journal_for_write(instance)
+    if investigation is not None and not journal.all_records(
+        stream, prepared.admission.journal_partition_id
+    ):
+        require_current_investigation(instance, investigation)
     _activate_writer(journal, stream, prepared.admission.journal_partition_id)
     if request.at is None and instance.accepted_coordinate() != coordinate:
         raise ProcedureRunNotCurrent(
@@ -3251,12 +3283,74 @@ def service_run_playbill_line(
                 "repair": "Author and accept a ProcedureMandate pinning this exact Procedure."
             },
         )
+    trigger = accepted_line.line.trigger_policy
+    trigger_binding = None
+    if isinstance(trigger, CaptureLandingTriggerPolicyV2):
+        if request.trigger_event is None:
+            return _line_refusal_state(
+                accepted,
+                accepted_line,
+                coordinate=coordinate,
+                head_at_admission=head_at_admission,
+                evaluation_time=evaluation_time,
+                code="occurrence_not_due",
+                message="The Line is waiting for a matching retained capture event.",
+                details={"repair": "Supply the retained capture event when it arrives."},
+            )
+        capture_event_time(instance, trigger.event, request.trigger_event, now=evaluation_time)
+        trigger_binding = LineTriggerBindingV1(kind="capture_landing", event=request.trigger_event)
+    elif isinstance(trigger, WindowCloseTriggerPolicyV2):
+        from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
+
+        if isinstance(trigger.window, CaptureEventWindowV1) and request.trigger_event is None:
+            return _line_refusal_state(
+                accepted,
+                accepted_line,
+                coordinate=coordinate,
+                head_at_admission=head_at_admission,
+                evaluation_time=evaluation_time,
+                code="occurrence_not_due",
+                message="The observation window is waiting for its capture event anchor.",
+                details={"repair": "Supply the retained anchor event when it arrives."},
+            )
+        line_event = request.trigger_event
+        if (
+            not isinstance(trigger.window, CaptureEventWindowV1)
+            and request.resolution_contract is not None
+        ):
+            line_event = None
+        window = bind_window(instance, trigger.window, line_event, now=evaluation_time)
+        trigger_binding = LineTriggerBindingV1(
+            kind="window_close", window=window, event=window.event
+        )
+    elif request.trigger_event is not None and request.resolution_contract is None:
+        raise PlaybillExecutionError("this Line trigger does not accept a capture event")
+    investigation = (
+        None
+        if request.resolution_contract is None
+        else bind_investigation(
+            instance,
+            request.resolution_contract,
+            event=request.trigger_event,
+            now=evaluation_time,
+            trigger_binding=trigger_binding,
+        )
+    )
+    if (
+        investigation is not None
+        and trigger_binding is not None
+        and trigger_binding.window is not None
+        and investigation.window != trigger_binding.window
+    ):
+        raise PlaybillExecutionError(
+            "Line and resolution contract must bind the same observation window"
+        )
     prior = _line_admissions(instance, accepted_line)
-    occurrence_id, next_due, awaited = _line_occurrence(
+    occurrence_id, next_due = _line_occurrence(
         accepted_line,
-        coordinate=coordinate,
         evaluation_time=evaluation_time,
         prior=prior,
+        binding=trigger_binding,
     )
     if request.occurrence_id is not None and request.occurrence_id != occurrence_id:
         return _line_refusal_state(
@@ -3283,28 +3377,26 @@ def service_run_playbill_line(
                 "repair": "Re-run at or after next_due.",
             },
         )
-    if awaited is not None:
-        return _line_refusal_state(
-            accepted,
-            accepted_line,
-            coordinate=coordinate,
-            head_at_admission=head_at_admission,
-            evaluation_time=evaluation_time,
-            code="occurrence_not_due",
-            message="The Line is waiting for a newer capture landing.",
-            details={"awaited_source": awaited, "repair": "Retry after the awaited source lands."},
-        )
-    if any(item.occurrence_id == occurrence_id for item in prior):
-        return _line_refusal_state(
-            accepted,
-            accepted_line,
-            coordinate=coordinate,
-            head_at_admission=head_at_admission,
-            evaluation_time=evaluation_time,
-            code="occurrence_already_admitted",
-            message="This daemon-derived Line occurrence is already admitted.",
-            details={"occurrence_id": occurrence_id, "repair": "Read the existing run state."},
-        )
+    existing = next((item for item in prior if item.occurrence_id == occurrence_id), None)
+    if existing is not None:
+        if not isinstance(existing, ProcedureRunAdmissionV7):
+            return _line_refusal_state(
+                accepted,
+                accepted_line,
+                coordinate=coordinate,
+                head_at_admission=head_at_admission,
+                evaluation_time=evaluation_time,
+                code="occurrence_already_admitted",
+                message="The retained occurrence has already been admitted.",
+                details={"occurrence_id": occurrence_id, "repair": "Read its retained run."},
+            )
+        if existing.investigation != investigation or existing.trigger_binding != trigger_binding:
+            raise PlaybillExecutionError(
+                "occurrence retry must retain its original investigation and trigger binding"
+            )
+        return _state_from_records(instance, run_id=existing.run_id)
+    if investigation is not None:
+        require_current_investigation(instance, investigation)
     if any(isinstance(node, ExhaustTapNodeV3) for node in accepted.procedure.definition.nodes):
         return _line_refusal_state(
             accepted,
@@ -3604,11 +3696,15 @@ def service_run_playbill_line(
         )
         else None
     )
+    if investigation is not None or trigger_binding is not None:
+        prepared = bind_prepared_investigation(
+            prepared, investigation=investigation, trigger=trigger_binding
+        )
     journal, root = _journal_for_write(instance)
     _activate_writer(
         journal,
-        prepared_admission.journal_stream,
-        prepared_admission.journal_partition_id,
+        prepared.admission.journal_stream,
+        prepared.admission.journal_partition_id,
     )
     if instance.accepted_coordinate() != coordinate:
         raise ProcedureRunNotCurrent(
@@ -3640,7 +3736,7 @@ def service_run_playbill_line(
     )
     return _state_from_records(
         instance,
-        run_id=prepared_admission.run_id,
+        run_id=prepared.admission.run_id,
         receipt=result.receipt,
     )
 
@@ -3706,15 +3802,7 @@ def load_playbill_procedure_run_grain(
         if not isinstance(payload, dict):
             continue
         if kind == "admission_bound":
-            tag = payload.get("tag")
-            if tag == "playbill-procedure-admission-bound-payload-v5":
-                admission = ProcedureAdmissionBoundPayloadV5.model_validate(payload).admission
-            elif tag == "playbill-procedure-admission-bound-payload-v4":
-                admission = ProcedureAdmissionBoundPayloadV4.model_validate(payload).admission
-            elif tag == "playbill-procedure-admission-bound-payload-v3":
-                admission = ProcedureAdmissionBoundPayloadV3.model_validate(payload).admission
-            elif tag == "playbill-procedure-admission-bound-payload-v2":
-                admission = ProcedureAdmissionBoundPayloadV2.model_validate(payload).admission
+            admission = parse_admission_payload(payload).admission
         elif kind == "node_fired":
             node_id = payload.get("node_id")
             verdict = payload.get("verdict")
@@ -3776,8 +3864,9 @@ def service_recover_provider_invocations(
                 bodies.read(stored.record.payload_digest, access=access)
             )
             if stored.record.event_kind == "admission_bound" and isinstance(payload, dict):
-                if payload.get("tag") == "playbill-procedure-admission-bound-payload-v5":
-                    bound = ProcedureAdmissionBoundPayloadV5.model_validate(payload)
+                parsed_bound = parse_admission_payload(payload)
+                if isinstance(parsed_bound, ProcedureAdmissionBoundPayloadV5):
+                    bound = parsed_bound
                     admission = bound.admission
                     plan = bound.acquisition_plan
             elif stored.record.event_kind == "provider_invocation_started":

@@ -26,12 +26,18 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
+from cruxible_client.contracts.claims import claim_path, claim_statement_address
 from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
 from cruxible_client.contracts.procedures.measurements import (
     ClaimAttestationProcedureMeasurementV1,
     ClaimStatementProcedureMeasurementV1,
     ProcedureMeasurementDeclarationV1,
+)
+from cruxible_client.contracts.resolution_contracts import (
+    InvestigationBindingV1,
+    ResolutionContractV1,
+    resolution_contract_digest,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
@@ -235,7 +241,9 @@ def _validate_grain_fields(
         raise ValueError("arm resolution subject requires endpoint and subtree digests")
 
 
-def resolution_contract_id(activation: ResolutionContractActivationV1) -> str:
+def resolution_contract_id(
+    activation: ResolutionContractActivationV1 | ResolutionContractActivationV3,
+) -> str:
     payload = activation.model_dump(mode="json")
     tag = payload.pop("tag", None)
     payload.pop("contract_id", None)
@@ -243,7 +251,9 @@ def resolution_contract_id(activation: ResolutionContractActivationV1) -> str:
     digest = typed_digest(
         ArtifactDigest,
         (
-            "playbill-resolution-contract-v2"
+            "playbill-resolution-contract-v3"
+            if tag == "playbill-resolution-contract-activation-v3"
+            else "playbill-resolution-contract-v2"
             if tag == "playbill-resolution-contract-activation-v2"
             else "playbill-resolution-contract-v1"
         ),
@@ -252,7 +262,9 @@ def resolution_contract_id(activation: ResolutionContractActivationV1) -> str:
     return f"RSC-{digest[:32]}"
 
 
-def resolution_activation_id(activation: ResolutionContractActivationV1) -> str:
+def resolution_activation_id(
+    activation: ResolutionContractActivationV1 | ResolutionContractActivationV3,
+) -> str:
     digest = typed_digest(
         ArtifactDigest,
         activation.tag,
@@ -264,7 +276,9 @@ def resolution_activation_id(activation: ResolutionContractActivationV1) -> str:
     return f"RSA-{digest[:32]}"
 
 
-def resolution_activation_digest(activation: ResolutionContractActivationV1) -> str:
+def resolution_activation_digest(
+    activation: ResolutionContractActivationV1 | ResolutionContractActivationV3,
+) -> str:
     """Commit one complete activation without changing either historical ID law."""
 
     return typed_digest(
@@ -306,6 +320,106 @@ class ResolutionContractActivationV2(ResolutionContractActivationV1):
                 "resolution prediction and activation must name the same accepted coordinate"
             )
         return self
+
+
+class ResolutionContractActivationV3(_StrictResolutionModel):
+    """An exact governed test and observation window, with no owning Procedure."""
+
+    tag: Literal["playbill-resolution-contract-activation-v3"] = (
+        "playbill-resolution-contract-activation-v3"
+    )
+    contract_id: str
+    activation_id: str
+    contract: ResolutionContractV1
+    investigation: InvestigationBindingV1
+    activated_at: datetime
+
+    @field_validator("activated_at")
+    @classmethod
+    def _time(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @field_serializer("activated_at", when_used="json")
+    def _serialize(self, value: datetime) -> str | None:
+        return format_datetime(value)
+
+    @model_validator(mode="after")
+    def _binding(self) -> "ResolutionContractActivationV3":
+        if self.contract.lifecycle.state != "live":
+            raise ValueError("resolution activation requires a live contract version")
+        ref = self.investigation.contract
+        if (
+            self.contract.identity != ref.identity
+            or resolution_contract_digest(self.contract).tagged != ref.artifact_digest
+            or self.contract.hypothesis != self.investigation.hypothesis
+        ):
+            raise ValueError("resolution activation does not reproduce its governed contract")
+        if self.contract_id != resolution_contract_id(
+            self
+        ) or self.activation_id != resolution_activation_id(self):
+            raise ValueError("resolution activation identity does not reproduce")
+        return self
+
+    @property
+    def subject(self) -> ResolutionSubjectV1:
+        hypothesis = self.investigation.hypothesis
+        return ResolutionSubjectV1(
+            address=claim_statement_address(claim_path(hypothesis.identity.name)),
+            content_digest=hypothesis.statement_digest,
+            accepted_coordinate=hypothesis.coordinate,
+        )
+
+    @property
+    def prediction(self) -> ResolutionClaimEndpointV1:
+        return ResolutionClaimEndpointV1(
+            statement_address=self.subject.address,
+            content_digest=self.subject.content_digest,
+            accepted_coordinate=self.subject.accepted_coordinate,
+        )
+
+    @property
+    def procedure_artifact_digest(self) -> None:
+        return None
+
+    @property
+    def definition_digest(self) -> str:
+        return self.investigation.contract.artifact_digest
+
+    @property
+    def measurement_name(self) -> str:
+        return self.contract.identity.name
+
+    @property
+    def outcome_class(self) -> str:
+        return self.contract.outcome_class
+
+    @property
+    def correctness_condition(self) -> object:
+        return self.contract.rule.model_dump(mode="json")
+
+    @property
+    def check_at(self) -> datetime:
+        return self.investigation.window.starts_at
+
+    @property
+    def expires_at(self) -> datetime:
+        return self.investigation.window.ends_at
+
+
+def build_independent_activation(
+    contract: ResolutionContractV1, investigation: InvestigationBindingV1, *, activated_at: datetime
+) -> ResolutionContractActivationV3:
+    provisional = ResolutionContractActivationV3.model_construct(
+        contract=contract,
+        investigation=investigation,
+        activated_at=ensure_utc(activated_at),
+        contract_id="",
+        activation_id="",
+    )
+    bound = provisional.model_copy(update={"contract_id": resolution_contract_id(provisional)})
+    return ResolutionContractActivationV3.model_validate(
+        bound.model_copy(update={"activation_id": resolution_activation_id(bound)}).model_dump()
+    )
 
 
 def procedure_arm_content_digest(
@@ -545,21 +659,31 @@ class ProcedureResolutionV2(ProcedureResolutionV1):
         return self
 
 
-def resolution_contract_partition_id(activation: ResolutionContractActivationV1) -> str:
+class ProcedureResolutionV3(ProcedureResolutionV2):
+    """Same mechanical evidence, bound to an independent governed contract."""
+
+    tag: Literal["playbill-resolution-v3"] = "playbill-resolution-v3"  # type: ignore[assignment]
+
+
+def resolution_contract_partition_id(
+    activation: ResolutionContractActivationV1 | ResolutionContractActivationV3,
+) -> str:
     """Return the sole journal partition for one derived contract activation."""
 
     return f"resolutions:{activation.contract_id}"
 
 
 def resolution_event_accepted_coordinate(
-    activation: ResolutionContractActivationV1 | ResolutionContractActivationV2,
+    activation: ResolutionContractActivationV1
+    | ResolutionContractActivationV2
+    | ResolutionContractActivationV3,
     resolution: ProcedureResolutionV1 | ProcedureResolutionV2,
 ) -> AcceptedCoordinate:
     """Bind v1 history as frozen and v2 events to their exact settlement coordinate."""
 
-    if isinstance(activation, ResolutionContractActivationV2) and isinstance(
-        resolution, ProcedureResolutionV2
-    ):
+    if isinstance(
+        activation, (ResolutionContractActivationV2, ResolutionContractActivationV3)
+    ) and isinstance(resolution, ProcedureResolutionV2):
         return resolution.settlement.accepted_coordinate
     return activation.subject.accepted_coordinate
 
@@ -598,7 +722,7 @@ def build_procedure_resolution(
 
 
 def build_procedure_resolution_v2(
-    activation: ResolutionContractActivationV2,
+    activation: ResolutionContractActivationV2 | ResolutionContractActivationV3,
     *,
     sequence: int,
     verdict: ResolutionSettlementVerdictV2,
@@ -611,7 +735,12 @@ def build_procedure_resolution_v2(
     actor_context: GovernedActorContext,
     note: str | None = None,
 ) -> ProcedureResolutionV2:
-    provisional = ProcedureResolutionV2.model_construct(
+    model = (
+        ProcedureResolutionV3
+        if isinstance(activation, ResolutionContractActivationV3)
+        else ProcedureResolutionV2
+    )
+    provisional = model.model_construct(
         resolution_id="",
         contract_id=activation.contract_id,
         sequence=sequence,
@@ -627,7 +756,7 @@ def build_procedure_resolution_v2(
         actor_context=actor_context,
         note=note,
     )
-    return ProcedureResolutionV2.model_validate(
+    return model.model_validate(
         provisional.model_copy(
             update={"resolution_id": procedure_resolution_id(provisional)}
         ).model_dump(mode="python")
@@ -742,7 +871,7 @@ def evaluate_prediction_correctness_condition(
 
 
 def _evaluate_served_prediction_settlement(
-    activation: ResolutionContractActivationV2,
+    activation: ResolutionContractActivationV2 | ResolutionContractActivationV3,
     resolution: ProcedureResolutionV2,
 ) -> ProcedureResolutionLawResultV1 | None:
     value = resolution.value
@@ -806,11 +935,45 @@ def _evaluate_served_prediction_settlement(
 
 
 def evaluate_procedure_resolution(
-    activation: ResolutionContractActivationV1,
+    activation: ResolutionContractActivationV1 | ResolutionContractActivationV3,
     resolution: ProcedureResolutionV1,
 ) -> ProcedureResolutionLawResultV1:
     """Enforce declaration-before-observation, clock, proof-kind, and expectation laws."""
 
+    if isinstance(activation, ResolutionContractActivationV3):
+        if not isinstance(resolution, ProcedureResolutionV3):
+            return _resolution_refused(
+                "resolution.version_mismatch",
+                "Independent contracts require an independent settlement.",
+            )
+        if (
+            resolution.contract_id != activation.contract_id
+            or resolution.subject != activation.subject
+            or resolution.measurement_name != activation.measurement_name
+        ):
+            return _resolution_refused(
+                "resolution.activation_mismatch",
+                "Settlement must bind its exact governed test and window.",
+            )
+        if (
+            resolution.observed_at <= activation.activated_at
+            or not activation.check_at <= resolution.observed_at <= activation.expires_at
+        ):
+            return _resolution_refused(
+                "resolution.outside_window",
+                "Evidence must follow contract acceptance and lie within its fixed "
+                "observation window.",
+            )
+        result = _evaluate_served_prediction_settlement(activation, resolution)
+        return result or _resolution_refused(
+            "resolution.prediction_value_invalid",
+            "Independent settlement requires mechanical observation evidence.",
+        )
+    if isinstance(resolution, ProcedureResolutionV3):
+        return _resolution_refused(
+            "resolution.version_mismatch",
+            "Independent settlement cannot reinterpret a Procedure measurement.",
+        )
     activation_is_v2 = isinstance(activation, ResolutionContractActivationV2)
     resolution_is_v2 = isinstance(resolution, ProcedureResolutionV2)
     if activation_is_v2 != resolution_is_v2:
@@ -934,6 +1097,12 @@ class SettledOutcomeRelationV1(_StrictResolutionModel):
         return self
 
 
+class SettledOutcomeRelationV2(SettledOutcomeRelationV1):
+    tag: Literal["playbill-settled-outcome-relation-v2"] = "playbill-settled-outcome-relation-v2"  # type: ignore[assignment]
+    activation: ResolutionContractActivationV3  # type: ignore[assignment]
+    resolution: ProcedureResolutionV3
+
+
 def settled_outcome_relation_digest(activation_digest: str, resolution_digest: str) -> str:
     _digest(activation_digest, label="settled relation activation digest")
     _digest(resolution_digest, label="settled relation resolution digest")
@@ -948,20 +1117,27 @@ def settled_outcome_relation_digest(activation_digest: str, resolution_digest: s
 
 
 def build_settled_outcome_relation(
-    activation: ResolutionContractActivationV2,
+    activation: ResolutionContractActivationV2 | ResolutionContractActivationV3,
     resolution: ProcedureResolutionV2,
-) -> SettledOutcomeRelationV1:
+) -> SettledOutcomeRelationV1 | SettledOutcomeRelationV2:
     activation_digest = resolution_activation_digest(activation)
     resolution_digest = procedure_resolution_digest(resolution)
-    return SettledOutcomeRelationV1(
-        activation=activation,
-        resolution=resolution,
-        activation_digest=activation_digest,
-        resolution_digest=resolution_digest,
-        relation_digest=settled_outcome_relation_digest(
-            activation_digest,
-            resolution_digest,
-        ),
+    model = (
+        SettledOutcomeRelationV2
+        if isinstance(activation, ResolutionContractActivationV3)
+        else SettledOutcomeRelationV1
+    )
+    return model.model_validate(
+        dict(
+            activation=activation,
+            resolution=resolution,
+            activation_digest=activation_digest,
+            resolution_digest=resolution_digest,
+            relation_digest=settled_outcome_relation_digest(
+                activation_digest,
+                resolution_digest,
+            ),
+        )
     )
 
 
@@ -1035,7 +1211,12 @@ class ProcedureResolutionBook:
 
     def __init__(
         self,
-        activations: tuple[ResolutionContractActivationV1 | ResolutionContractActivationV2, ...],
+        activations: tuple[
+            ResolutionContractActivationV1
+            | ResolutionContractActivationV2
+            | ResolutionContractActivationV3,
+            ...,
+        ],
     ) -> None:
         self.activations = {item.contract_id: item for item in activations}
         if len(self.activations) != len(activations):
@@ -1068,6 +1249,8 @@ class ProcedureResolutionBook:
                         resolution: ProcedureResolutionV1 | ProcedureResolutionV2 = (
                             ProcedureResolutionV1.model_validate(payload)
                         )
+                    elif payload.get("tag") == "playbill-resolution-v3":
+                        resolution = ProcedureResolutionV3.model_validate(payload)
                     elif payload.get("tag") == "playbill-procedure-resolution-v2":
                         resolution = ProcedureResolutionV2.model_validate(payload)
                     else:
@@ -1161,7 +1344,9 @@ class ProcedureResolutionBook:
 def append_procedure_resolution(
     writer: ProcedureExhaustWriter,
     *,
-    activation: ResolutionContractActivationV1 | ResolutionContractActivationV2,
+    activation: ResolutionContractActivationV1
+    | ResolutionContractActivationV2
+    | ResolutionContractActivationV3,
     resolution: ProcedureResolutionV1 | ProcedureResolutionV2,
     stream: JournalStreamIdentityV1,
     expected_head: JournalPartitionHeadV1 | None = None,
@@ -1207,7 +1392,9 @@ def append_procedure_resolution(
 def append_resolution_disposition(
     writer: ProcedureExhaustWriter,
     *,
-    activation: ResolutionContractActivationV1 | ResolutionContractActivationV2,
+    activation: ResolutionContractActivationV1
+    | ResolutionContractActivationV2
+    | ResolutionContractActivationV3,
     resolution: ProcedureResolutionV1 | ProcedureResolutionV2,
     disposition: ProcedureResolutionDispositionV1,
     stream: JournalStreamIdentityV1,

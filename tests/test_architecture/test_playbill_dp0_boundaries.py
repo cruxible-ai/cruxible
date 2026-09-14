@@ -333,6 +333,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         if callable(value) and not name.startswith("_")
     }
     assert public_client_methods == {
+        "resolution_contracts",
         "close",
         "version",
         "server_info",
@@ -629,7 +630,7 @@ def test_pc_f2_coverage_delivery_adds_no_authority() -> None:
         "cruxible_core.ledger.activation",
         "cruxible_core.compiler.compiler",
         "cruxible_core.ledger.git",
-            "cruxible_core.proposals.proposals",
+        "cruxible_core.proposals.proposals",
         "cruxible_core.proposals.settlement",
         "cruxible_core.server",
         "cruxible_core.service",

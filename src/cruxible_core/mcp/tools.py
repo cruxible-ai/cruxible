@@ -650,12 +650,16 @@ def register_tools(
         input: Any,
         evaluation_time: str | None = None,
         at: dict[str, Any] | None = None,
+        resolution_contract: contracts.ResolutionContractReferenceV1 | None = None,
+        trigger_event: contracts.TriggerEventReferenceV1 | None = None,
     ) -> contracts.PlaybillProcedureRunState:
         """Run one accepted query-only Procedure deterministically."""
         return handlers.handle_playbill_procedure_run(
             instance_id,
             name,
             evaluation_time=evaluation_time,
+            resolution_contract=resolution_contract,
+            trigger_event=trigger_event,
             at=at,
             input=input,
         )
@@ -692,6 +696,8 @@ def register_tools(
         line_identity_digest: str,
         evaluation_time: str | None = None,
         occurrence_id: str | None = None,
+        resolution_contract: contracts.ResolutionContractReferenceV1 | None = None,
+        trigger_event: contracts.TriggerEventReferenceV1 | None = None,
     ) -> contracts.PlaybillProcedureRunState:
         """Trigger one due occurrence of an accepted Line."""
         return handlers.handle_playbill_line_run(
@@ -699,13 +705,22 @@ def register_tools(
             line_identity_digest,
             occurrence_id=occurrence_id,
             evaluation_time=evaluation_time,
+            resolution_contract=resolution_contract,
+            trigger_event=trigger_event,
         )
+
+    @_tool
+    def cruxible_playbill_resolution_contracts(
+        instance_id: str, request: contracts.ResolutionContractsRequestV1
+    ) -> contracts.ResolutionContractsResultV1:
+        """Find accepted resolution contracts for an exact hypothesis version."""
+        return handlers.handle_playbill_resolution_contracts(instance_id, request)
 
     @_tool
     def cruxible_playbill_predict(
         instance_id: str,
-        request: contracts.PlaybillPredictRequestV1,
-    ) -> contracts.PlaybillPredictResultV1:
+        request: contracts.PlaybillPredictRequestV2,
+    ) -> contracts.PlaybillPredictResultV2:
         """Propose a predicted Claim with an exact settlement rule and deadline."""
         return handlers.handle_playbill_predict(instance_id, request)
 
@@ -713,8 +728,8 @@ def register_tools(
     def cruxible_playbill_settle(
         instance_id: str,
         prediction_id: str,
-        request: contracts.PlaybillSettleRequestV1,
-    ) -> contracts.PlaybillSettleResultV1:
+        request: contracts.PlaybillSettleRequestV2,
+    ) -> contracts.PlaybillSettleResultV2:
         """Settle one prediction from an accepted observation or mandated terminal."""
         return handlers.handle_playbill_settle_prediction(instance_id, prediction_id, request)
 

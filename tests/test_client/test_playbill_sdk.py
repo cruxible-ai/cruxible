@@ -578,10 +578,27 @@ def test_sdk_line_run_carries_the_asserted_identity_and_occurrence(tmp_path: Pat
 
     assert pb.run_line(_DIGEST, occurrence_id="sha256:" + "c" * 64).status == "succeeded"
     assert client.line_request == {
+        "resolution_contract": None,
+        "trigger_event": None,
         "line_identity_digest": _DIGEST,
         "occurrence_id": "sha256:" + "c" * 64,
         "evaluation_time": "2026-08-24T12:00:00+00:00",
     }
+
+    contract = api.ResolutionContractReferenceV1(
+        identity={"kind": "ResolutionContract", "name": "test"},
+        artifact_digest=_DIGEST,
+        coordinate=_COORDINATE.model_dump(),
+    )
+    event = api.TriggerEventReferenceV1(
+        run_id="RUN-anchor",
+        partition_id="direct:anchor",
+        sequence=1,
+        record_digest=_DIGEST,
+    )
+    pb.run_line(_DIGEST, resolution_contract=contract, trigger_event=event)
+    assert client.line_request["resolution_contract"] == contract
+    assert client.line_request["trigger_event"] == event
 
 
 def test_sdk_plain_retirement_replay_uses_accepted_operation_coordinate(

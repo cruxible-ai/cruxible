@@ -90,10 +90,10 @@ def test_accepted_claim_builder_expands_to_complete_expert_graph_golden() -> Non
     )
 
     assert first == second
-    # Pinned at the current compiler, P2-B5 semantic revision 19; retention is by
+    # Pinned at the F.3 independent-contract compiler; retention is by
     # replaying each retired coordinate, never by keeping its literal here.
     assert first.expanded_output_digest == (
-        "sha256:1bdd4176247287c88aa75b4c5866293d828303cfb88859c5ba9e76af75e89c2c"
+        "sha256:f347e77617631667c8963243dd82d484600796053e2b884d7f3d911a2ebdc53e"
     )
     assert [node.kind for node in first.definition.nodes] == ["state_tap", "guard", "project"]
     assert isinstance(first.definition.nodes[0], StateTapNodeV3)

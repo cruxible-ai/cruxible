@@ -70,8 +70,10 @@ from cruxible_client.contracts.errors import (
     PlaybillSinceRequestInvalid,
 )
 from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.procedures.windows import TriggerEventReferenceV1
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
 from cruxible_client.contracts.repairs import render_served_repair
+from cruxible_client.contracts.resolution_contracts import ResolutionContractReferenceV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
 from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
@@ -2392,15 +2394,36 @@ def claim_group() -> None:
     """Propose, read, and explain first-class governed Claims."""
 
 
+@playbill_group.command("resolution-contracts")
+@click.argument("request_file", type=click.Path(exists=True, dir_okay=False))
+@json_option
+@handle_errors
+def resolution_contracts(request_file: str, output_json: bool) -> None:
+    """Find accepted tests of an exact Claim version."""
+    request = _read_model(request_file, contracts.ResolutionContractsRequestV1)
+    result = _server_call(
+        lambda client, instance_id: client.resolution_contracts(instance_id, request=request),
+        command_name="playbill resolution-contracts",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    for view in result.contracts:
+        click.echo(
+            f"{view.reference.identity.qualified} {view.reference.artifact_digest} "
+            f"{view.contract.lifecycle.state}"
+        )
+
+
 @playbill_group.command("predict")
 @click.argument("request_file", type=click.Path(exists=True, dir_okay=False))
 @json_option
 @handle_errors
 def predict(request_file: str, output_json: bool) -> None:
-    """Submit a predicted Claim and its settlement declaration."""
+    """Submit a governed resolution contract for an accepted Claim."""
 
     try:
-        request = contracts.PlaybillPredictRequestV1.model_validate(_read_mapping(request_file))
+        request = contracts.PlaybillPredictRequestV2.model_validate(_read_mapping(request_file))
     except ValidationError as exc:
         raise click.ClickException(f"Invalid prediction request: {exc}") from exc
     result = _server_call(
@@ -2410,9 +2433,8 @@ def predict(request_file: str, output_json: bool) -> None:
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    click.echo(f"Prediction: {result.declaration.prediction_id}")
-    click.echo(f"Proposal: {result.declaration.proposal_id}")
-    click.echo(f"Claim: Claim:{result.declaration.predicted_claim_id}")
+    click.echo(f"Contract: {result.contract_identity}")
+    click.echo(f"Proposal: {result.proposal_id}")
 
 
 @playbill_group.command("settle")
@@ -2424,7 +2446,7 @@ def settle(prediction_id: str, request_file: str, output_json: bool) -> None:
     """Settle one prediction from a later observation or retained terminal."""
 
     try:
-        request = contracts.PlaybillSettleRequestV1.model_validate(_read_mapping(request_file))
+        request = contracts.PlaybillSettleRequestV2.model_validate(_read_mapping(request_file))
     except ValidationError as exc:
         raise click.ClickException(f"Invalid settlement request: {exc}") from exc
     result = _server_call(
@@ -3611,6 +3633,18 @@ def _echo_terminal_egress(result: contracts.PlaybillProcedureRunState) -> None:
     type=click.Path(exists=True, dir_okay=False),
     help="AcceptedCoordinate JSON/YAML file; its presence selects replay lane.",
 )
+@click.option(
+    "--resolution-contract",
+    "contract_file",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Exact accepted ResolutionContract reference JSON/YAML.",
+)
+@click.option(
+    "--trigger-event",
+    "event_file",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Exact retained Capture event reference JSON/YAML.",
+)
 @json_option
 @handle_errors
 def run_procedure(
@@ -3619,13 +3653,21 @@ def run_procedure(
     evaluation_time: str | None,
     at_file: str | None,
     output_json: bool,
+    contract_file: str | None,
+    event_file: str | None,
 ) -> None:
+    resolution_contract = (
+        None if contract_file is None else _read_model(contract_file, ResolutionContractReferenceV1)
+    )
+    trigger_event = None if event_file is None else _read_model(event_file, TriggerEventReferenceV1)
     at = None if at_file is None else _read_model(at_file, AcceptedCoordinate)
     result = _server_call(
         lambda client, instance_id: client.run_playbill_procedure(
             instance_id,
             name,
             evaluation_time=evaluation_time,
+            resolution_contract=resolution_contract,
+            trigger_event=trigger_event,
             at=None if at is None else at.model_dump(mode="json"),
             input=_read_mapping(input_file),
         ),
@@ -3775,6 +3817,18 @@ def line_group() -> None:
 @click.argument("line_identity_digest")
 @click.option("--occurrence-id", default=None, help="Assert the daemon-derived occurrence id.")
 @click.option("--evaluation-time", required=True, help="Explicit ISO-8601 evaluation time.")
+@click.option(
+    "--resolution-contract",
+    "contract_file",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Exact accepted ResolutionContract reference JSON/YAML.",
+)
+@click.option(
+    "--trigger-event",
+    "event_file",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Exact retained Capture event reference JSON/YAML.",
+)
 @json_option
 @handle_errors
 def run_line(
@@ -3782,12 +3836,20 @@ def run_line(
     occurrence_id: str | None,
     evaluation_time: str | None,
     output_json: bool,
+    contract_file: str | None,
+    event_file: str | None,
 ) -> None:
+    resolution_contract = (
+        None if contract_file is None else _read_model(contract_file, ResolutionContractReferenceV1)
+    )
+    trigger_event = None if event_file is None else _read_model(event_file, TriggerEventReferenceV1)
     request = LineRunRequestV1.model_validate(
         {
             "line_identity_digest": line_identity_digest,
             "occurrence_id": occurrence_id,
             "evaluation_time": evaluation_time,
+            "resolution_contract": resolution_contract,
+            "trigger_event": trigger_event,
         }
     )
     result = _server_call(
@@ -3795,6 +3857,8 @@ def run_line(
             instance_id,
             line_identity_digest,
             occurrence_id=request.occurrence_id,
+            resolution_contract=resolution_contract,
+            trigger_event=trigger_event,
             evaluation_time=(
                 None if request.evaluation_time is None else request.evaluation_time.isoformat()
             ),

@@ -634,6 +634,26 @@ def test_a_direct_run_reads_the_workspace_file_and_retains_its_receipt(
         "sha256:" + hashlib.sha256(canonical_bytes(ADVISORY)).hexdigest()
     )
     assert observation.capture_digest is not None
+    from cruxible_client.contracts.procedures.windows import CaptureEventSelectorV1
+    from cruxible_core.service.procedures.resolution_contracts import capture_event_time
+
+    event = next(
+        item.capture_event for item in state.outcomes if item.event_kind == "produced_capture"
+    )
+    assert event is not None and event.run_id == state.run_id
+    capture = capture_contract()
+    assert (
+        capture_event_time(
+            instance,
+            CaptureEventSelectorV1(
+                capture_contract_identity=capture.identity,
+                capture_contract_digest=capture_contract_digest(capture).tagged,
+            ),
+            event,
+            now=NOW,
+        )
+        == NOW
+    )
     assert invoker.observed_bytes_digest == observation.source_read_receipt.bytes_digest
 
     # The admission really planned this occurrence under the accepted policy,

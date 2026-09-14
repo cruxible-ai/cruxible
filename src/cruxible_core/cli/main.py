@@ -589,10 +589,13 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 module="playbill",
                 attr="claim_attestation_group",
             ),
+            "resolution-contracts": _command(
+                "playbill", "resolution_contracts", "Find accepted tests of an exact Claim version."
+            ),
             "predict": _command(
                 "playbill",
                 "predict",
-                "Propose a predicted Claim and settlement declaration.",
+                "Propose a governed resolution contract.",
             ),
             "settle": _command(
                 "playbill",

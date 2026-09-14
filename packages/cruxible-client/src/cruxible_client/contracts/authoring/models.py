@@ -57,7 +57,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     ProcedureRuntimePolicyV1,
 )
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
-from cruxible_client.contracts.procedures.line_specs import TriggerPolicyV1
+from cruxible_client.contracts.procedures.line_specs import TriggerPolicyV2
 from cruxible_client.contracts.procedures.models import ProcedureHardCapsV3
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import (
@@ -68,6 +68,7 @@ from cruxible_client.contracts.proposal_models import (
 )
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.repairs import ServedRepairV1, served_repair_for_refusal
+from cruxible_client.contracts.resolution_contracts import ResolutionContractV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
@@ -99,7 +100,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:990283051b3d9a5d30f101a42b78844dd41f90fef03835ca56a4ada002233480"
+    "sha256:a35971bbc60b672cf69aeb0fc4f0c1b797e4ddf6a492756f8b24437419300412"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -854,6 +855,13 @@ class AuthoringCandidateReferenceV1(_StrictAuthoringModel):
     resolution: Literal["candidate_in_change_set"] = "candidate_in_change_set"
 
 
+class ResolutionContractAuthoringPayloadV1(_StrictAuthoringModel):
+    tag: Literal["playbill-resolution-contract-authoring-payload-v1"] = (
+        "playbill-resolution-contract-authoring-payload-v1"
+    )
+    resolution_contract: ResolutionContractV1
+
+
 class AttestationAuthoringPayloadV1(_StrictAuthoringModel):
     """One immutable signed statement proposed through ordinary acceptance."""
 
@@ -937,7 +945,7 @@ class LineAuthoringPayloadV1(_StrictAuthoringModel):
     procedure_name: str
     acquisition_policy_name: str
     requested_terminal_rung: Literal[1, 2, 3]
-    trigger_policy: TriggerPolicyV1
+    trigger_policy: TriggerPolicyV2
     parameters: object = Field(default_factory=dict)
     budgets: dict[str, int] | None = None
     epsilon: object = Field(default_factory=lambda: {"$decimal": "0.1"})
@@ -1242,6 +1250,7 @@ AuthoringChangeSetMemberV1: TypeAlias = Annotated[
     | ClaimTypeAuthoringPayloadV1
     | ClaimTypeSuccessionMemberV1
     | ClaimRetirementMemberV1
+    | ResolutionContractAuthoringPayloadV1
     | AttestationAuthoringPayloadV1
     | SubjectAuthoringPayloadV1
     | QueryDefinitionAuthoringPayloadV1
@@ -1280,6 +1289,8 @@ def authoring_claim_member_identity(payload: ClaimAuthoringPayloadV1) -> str:
 
 
 def authoring_member_identity(payload: AuthoringChangeSetMemberV1) -> str:
+    if isinstance(payload, ResolutionContractAuthoringPayloadV1):
+        return payload.resolution_contract.identity.qualified
     if isinstance(payload, AttestationAuthoringPayloadV1):
         return attestation_identity(payload.attestation).qualified
     if isinstance(payload, ClaimAuthoringPayloadV1):
@@ -1384,6 +1395,7 @@ AuthoringPayloadV1 = Annotated[
     | ClaimAuthoringPayloadV3
     | ProcedureAuthoringPayloadV1
     | ProcedureAuthoringPayloadV2
+    | ResolutionContractAuthoringPayloadV1
     | AttestationAuthoringPayloadV1
     | SubjectAuthoringPayloadV1
     | QueryDefinitionAuthoringPayloadV1
@@ -2970,6 +2982,7 @@ __all__ = [
     "ProcedureMandateAuthoringPayloadV1",
     "QueryDefinitionAuthoringPayloadV1",
     "AttestationAuthoringPayloadV1",
+    "ResolutionContractAuthoringPayloadV1",
     "SubjectAuthoringPayloadV1",
     "RepairAlternativeV1",
     "ExistingCaptureCitationSourceV1",

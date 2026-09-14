@@ -918,30 +918,39 @@ class CruxibleClient:
         )
         self._check_error(response)
 
+    def resolution_contracts(
+        self, instance_id: str, *, request: contracts.ResolutionContractsRequestV1
+    ) -> contracts.ResolutionContractsResultV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/resolution-contracts/query",
+            json=request.model_dump(mode="json"),
+        )
+        return self._parse_model(response, contracts.ResolutionContractsResultV1)
+
     def predict_playbill(
         self,
         instance_id: str,
         *,
-        request: contracts.PlaybillPredictRequestV1,
-    ) -> contracts.PlaybillPredictResultV1:
+        request: contracts.PlaybillPredictRequestV2,
+    ) -> contracts.PlaybillPredictResultV2:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/predictions",
             json=request.model_dump(mode="json"),
         )
-        return self._parse_model(response, contracts.PlaybillPredictResultV1)
+        return self._parse_model(response, contracts.PlaybillPredictResultV2)
 
     def settle_playbill_prediction(
         self,
         instance_id: str,
         prediction_id: str,
         *,
-        request: contracts.PlaybillSettleRequestV1,
-    ) -> contracts.PlaybillSettleResultV1:
+        request: contracts.PlaybillSettleRequestV2,
+    ) -> contracts.PlaybillSettleResultV2:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/predictions/{prediction_id}/settlements",
             json=request.model_dump(mode="json"),
         )
-        return self._parse_model(response, contracts.PlaybillSettleResultV1)
+        return self._parse_model(response, contracts.PlaybillSettleResultV2)
 
     def create_playbill_authoring_intent(
         self,
@@ -1343,10 +1352,22 @@ class CruxibleClient:
         evaluation_time: str | None,
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
         input: Any,
+        resolution_contract: contracts.ResolutionContractReferenceV1 | None = None,
+        trigger_event: contracts.TriggerEventReferenceV1 | None = None,
     ) -> contracts.PlaybillProcedureRunState:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/procedures/{name}/runs",
             json={
+                **(
+                    {"resolution_contract": resolution_contract.model_dump(mode="json")}
+                    if resolution_contract is not None
+                    else {}
+                ),
+                **(
+                    {"trigger_event": trigger_event.model_dump(mode="json")}
+                    if trigger_event is not None
+                    else {}
+                ),
                 "tag": "playbill-procedure-run-request-v2",
                 "at": self._playbill_coordinate_body(at),
                 "evaluation_time": evaluation_time,
@@ -1396,10 +1417,22 @@ class CruxibleClient:
         *,
         occurrence_id: str | None,
         evaluation_time: str | None = None,
+        resolution_contract: contracts.ResolutionContractReferenceV1 | None = None,
+        trigger_event: contracts.TriggerEventReferenceV1 | None = None,
     ) -> contracts.PlaybillProcedureRunState:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/lines/{line_identity_digest}/runs",
             json={
+                **(
+                    {"resolution_contract": resolution_contract.model_dump(mode="json")}
+                    if resolution_contract is not None
+                    else {}
+                ),
+                **(
+                    {"trigger_event": trigger_event.model_dump(mode="json")}
+                    if trigger_event is not None
+                    else {}
+                ),
                 "tag": "playbill-line-run-request-v1",
                 "line_identity_digest": line_identity_digest,
                 "occurrence_id": occurrence_id,

@@ -279,7 +279,7 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_playbill_host_workspace_detach": None,  # path only
     "cruxible_playbill_init": TypeAdapter(PlaybillInitRequest),
     "cruxible_playbill_instance_decommission": TypeAdapter(PlaybillInstanceDecommissionRequest),
-    "cruxible_playbill_predict": TypeAdapter(contracts.PlaybillPredictRequestV1),
+    "cruxible_playbill_predict": TypeAdapter(contracts.PlaybillPredictRequestV2),
     "cruxible_playbill_procedure_bind": TypeAdapter(ProcedureBindRequestV1),
     "cruxible_playbill_proposal_readmit": TypeAdapter(PlaybillProposalReadmitRequest),
     "cruxible_playbill_proposal_withdraw": TypeAdapter(PlaybillProposalWithdrawRequest),
@@ -292,7 +292,7 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_playbill_propose_source_bundle": TypeAdapter(PlaybillSourceProposeRequest),
     "cruxible_playbill_propose_subject": TypeAdapter(PlaybillProposeSubjectRequest),
     "cruxible_playbill_procedure_measure": TypeAdapter(contracts.PlaybillProcedureMeasureRequestV1),
-    "cruxible_playbill_settle": TypeAdapter(contracts.PlaybillSettleRequestV1),
+    "cruxible_playbill_settle": TypeAdapter(contracts.PlaybillSettleRequestV2),
     "cruxible_playbill_store_body": TypeAdapter(PlaybillStoreBodyRequest),
     "cruxible_playbill_submit_approval": TypeAdapter(PlaybillApprovalRequest),
 }
@@ -1364,15 +1364,25 @@ def handle_playbill_procedure_run(
     evaluation_time: str | None,
     at: dict[str, Any] | None,
     input: Any,
+    resolution_contract: contracts.ResolutionContractReferenceV1 | None = None,
+    trigger_event: contracts.TriggerEventReferenceV1 | None = None,
 ) -> contracts.PlaybillProcedureRunState:
     evaluated_at = parse_datetime(evaluation_time)
     request = ProcedureRunRequestV2.model_validate(
-        {"evaluation_time": evaluated_at, "at": at, "input": input}
+        {
+            "evaluation_time": evaluated_at,
+            "at": at,
+            "input": input,
+            "resolution_contract": resolution_contract,
+            "trigger_event": trigger_event,
+        }
     )
     return _dispatch_remote_or_local(
         lambda client: client.run_playbill_procedure(
             instance_id,
-            name,
+            resolution_contract=resolution_contract,
+            trigger_event=trigger_event,
+            name=name,
             evaluation_time=(
                 None if request.evaluation_time is None else request.evaluation_time.isoformat()
             ),
@@ -1426,10 +1436,14 @@ def handle_playbill_line_run(
     *,
     occurrence_id: str | None,
     evaluation_time: str | None = None,
+    resolution_contract: contracts.ResolutionContractReferenceV1 | None = None,
+    trigger_event: contracts.TriggerEventReferenceV1 | None = None,
 ) -> contracts.PlaybillProcedureRunState:
     request = LineRunRequestV1.model_validate(
         {
             "line_identity_digest": line_identity_digest,
+            "resolution_contract": resolution_contract,
+            "trigger_event": trigger_event,
             "occurrence_id": occurrence_id,
             "evaluation_time": (
                 None if evaluation_time is None else parse_datetime(evaluation_time)
@@ -1439,7 +1453,9 @@ def handle_playbill_line_run(
     return _dispatch_remote_or_local(
         lambda client: client.run_playbill_line(
             instance_id,
-            line_identity_digest,
+            resolution_contract=resolution_contract,
+            trigger_event=trigger_event,
+            line_identity_digest=line_identity_digest,
             occurrence_id=request.occurrence_id,
             evaluation_time=(
                 None if request.evaluation_time is None else request.evaluation_time.isoformat()
@@ -1454,10 +1470,20 @@ def handle_playbill_line_run(
     )
 
 
+def handle_playbill_resolution_contracts(
+    instance_id: str, request: contracts.ResolutionContractsRequestV1
+) -> contracts.ResolutionContractsResultV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.resolution_contracts(instance_id, request=request),
+        lambda: playbill_api.playbill_resolution_contracts(instance_id, request=request),
+        operation_name="cruxible_playbill_resolution_contracts",
+    )
+
+
 def handle_playbill_predict(
     instance_id: str,
-    request: contracts.PlaybillPredictRequestV1,
-) -> contracts.PlaybillPredictResultV1:
+    request: contracts.PlaybillPredictRequestV2,
+) -> contracts.PlaybillPredictResultV2:
     return _dispatch_remote_or_local(
         lambda client: client.predict_playbill(instance_id, request=request),
         lambda: playbill_api.playbill_predict(instance_id, request=request),
@@ -1469,8 +1495,8 @@ def handle_playbill_predict(
 def handle_playbill_settle_prediction(
     instance_id: str,
     prediction_id: str,
-    request: contracts.PlaybillSettleRequestV1,
-) -> contracts.PlaybillSettleResultV1:
+    request: contracts.PlaybillSettleRequestV2,
+) -> contracts.PlaybillSettleResultV2:
     return _dispatch_remote_or_local(
         lambda client: client.settle_playbill_prediction(
             instance_id,

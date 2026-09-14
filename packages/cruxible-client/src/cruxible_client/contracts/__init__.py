@@ -28,17 +28,14 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.claims import ClaimStatementCardV1 as ClaimStatementCardV1
 from cruxible_client.contracts.predictions import (
-    ObservationSettlementEvidenceV1 as ObservationSettlementEvidenceV1,
+    ObservationSettlementEvidenceV2 as ObservationSettlementEvidenceV2,
 )
 from cruxible_client.contracts.predictions import (
-    PlaybillPredictionDeclarationV1 as PlaybillPredictionDeclarationV1,
+    PlaybillPredictRequestV2 as PlaybillPredictRequestV2,
 )
-from cruxible_client.contracts.predictions import (
-    PlaybillPredictRequestV1 as PlaybillPredictRequestV1,
-)
-from cruxible_client.contracts.predictions import PlaybillPredictResultV1 as PlaybillPredictResultV1
-from cruxible_client.contracts.predictions import PlaybillSettleRequestV1 as PlaybillSettleRequestV1
-from cruxible_client.contracts.predictions import PlaybillSettleResultV1 as PlaybillSettleResultV1
+from cruxible_client.contracts.predictions import PlaybillPredictResultV2 as PlaybillPredictResultV2
+from cruxible_client.contracts.predictions import PlaybillSettleRequestV2 as PlaybillSettleRequestV2
+from cruxible_client.contracts.predictions import PlaybillSettleResultV2 as PlaybillSettleResultV2
 from cruxible_client.contracts.predictions import (
     PredictionEqualityRuleV1 as PredictionEqualityRuleV1,
 )
@@ -52,7 +49,7 @@ from cruxible_client.contracts.predictions import (
     PredictionThresholdRuleV1 as PredictionThresholdRuleV1,
 )
 from cruxible_client.contracts.predictions import (
-    TerminalSettlementEvidenceV1 as TerminalSettlementEvidenceV1,
+    TerminalSettlementEvidenceV2 as TerminalSettlementEvidenceV2,
 )
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedures.readings import (
@@ -96,6 +93,30 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureSourceObservationV1,
     ProcedureTerminalEgressV1,
     ProcedureTerminalV1,
+)
+from cruxible_client.contracts.procedures.windows import (
+    LineTriggerBindingV1,
+)
+from cruxible_client.contracts.procedures.windows import (
+    TriggerEventReferenceV1 as TriggerEventReferenceV1,
+)
+from cruxible_client.contracts.resolution_contracts import (
+    ClaimVersionReferenceV1 as ClaimVersionReferenceV1,
+)
+from cruxible_client.contracts.resolution_contracts import (
+    InvestigationBindingV1,
+)
+from cruxible_client.contracts.resolution_contracts import (
+    ResolutionContractReferenceV1 as ResolutionContractReferenceV1,
+)
+from cruxible_client.contracts.resolution_contracts import (
+    ResolutionContractsRequestV1 as ResolutionContractsRequestV1,
+)
+from cruxible_client.contracts.resolution_contracts import (
+    ResolutionContractsResultV1 as ResolutionContractsResultV1,
+)
+from cruxible_client.contracts.resolution_contracts import (
+    ResolutionContractV1 as ResolutionContractV1,
 )
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
@@ -1451,6 +1472,8 @@ class PlaybillProcedureBindResult(BaseModel):
 
 
 class PlaybillProcedureRunState(BaseModel):
+    investigation: InvestigationBindingV1 | None = None
+    trigger_binding: LineTriggerBindingV1 | None = None
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-procedure-run-state-v2"] = "playbill-procedure-run-state-v2"

@@ -193,7 +193,7 @@ def initialize_projection_database(
 
 
 def _verify_projection_schema(connection: sqlite3.Connection) -> None:
-    if connection.execute("PRAGMA user_version").fetchone()[0] != 4:
+    if connection.execute("PRAGMA user_version").fetchone()[0] != 5:
         raise ProjectionIntegrityError("projection SQLite schema version is unsupported")
     from cruxible_core.indexes.typed_sqlite import verify_schema
 
@@ -668,7 +668,7 @@ def bind_projection(
         # run rather than synthesizing a passing result for it: a forged "ok"
         # would read, here and to anything that later surfaced it, as a check
         # that ran.
-        if connection.execute("PRAGMA user_version").fetchone()[0] != 4:
+        if connection.execute("PRAGMA user_version").fetchone()[0] != 5:
             raise ProjectionIntegrityError("manifest and SQLite storage versions differ")
         integrity_ok = already_verified
         if not already_verified:

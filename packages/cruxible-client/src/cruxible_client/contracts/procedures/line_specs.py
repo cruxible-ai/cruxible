@@ -55,6 +55,11 @@ from cruxible_client.contracts.procedures.pin_expectations import (
     PinExpectation,
     validate_exact_pin_expectation,
 )
+from cruxible_client.contracts.procedures.windows import (
+    CaptureEventSelectorV1,
+    CaptureEventWindowV1,
+    ObservationWindowV1,
+)
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistrationV1,
 )
@@ -127,6 +132,18 @@ class WindowCloseTriggerPolicyV1(_StrictLineModel):
     _digest = field_validator("window_policy_digest")(_artifact_digest)
 
 
+class CaptureLandingTriggerPolicyV2(_StrictLineModel):
+    tag: Literal["playbill-capture-landing-trigger-v2"] = "playbill-capture-landing-trigger-v2"
+    kind: Literal["capture_landing"] = "capture_landing"
+    event: CaptureEventSelectorV1
+
+
+class WindowCloseTriggerPolicyV2(_StrictLineModel):
+    tag: Literal["playbill-window-close-trigger-v2"] = "playbill-window-close-trigger-v2"
+    kind: Literal["window_close"] = "window_close"
+    window: ObservationWindowV1
+
+
 class ManualTriggerPolicyV1(_StrictLineModel):
     tag: Literal["playbill-manual-trigger-v1"] = "playbill-manual-trigger-v1"
     kind: Literal["manual"] = "manual"
@@ -136,6 +153,15 @@ TriggerPolicyV1 = Annotated[
     CadenceTriggerPolicyV1
     | CaptureLandingTriggerPolicyV1
     | WindowCloseTriggerPolicyV1
+    | ManualTriggerPolicyV1,
+    Field(discriminator="kind"),
+]
+
+
+TriggerPolicyV2: TypeAlias = Annotated[
+    CadenceTriggerPolicyV1
+    | CaptureLandingTriggerPolicyV2
+    | WindowCloseTriggerPolicyV2
     | ManualTriggerPolicyV1,
     Field(discriminator="kind"),
 ]
@@ -276,16 +302,42 @@ class LineSpecV2(LineSpecV1):
         return value
 
 
+class LineSpecV3(LineSpecV2):
+    """Line with verifiable event triggers and fixed observation windows."""
+
+    artifact_format: Literal["playbill-line-v3"] = "playbill-line-v3"  # type: ignore[assignment]
+    trigger_policy: TriggerPolicyV2  # type: ignore[assignment]
+
+
 LineSpecAny: TypeAlias = Annotated[
-    LineSpecV1 | LineSpecV2,
+    LineSpecV1 | LineSpecV2 | LineSpecV3,
     Field(discriminator="artifact_format"),
 ]
 _LINE_SPEC_ADAPTER: TypeAdapter[LineSpecAny] = TypeAdapter(LineSpecAny)
 
 
 def _trigger_pin_requirements(
-    trigger: TriggerPolicyV1,
+    trigger: TriggerPolicyV1 | TriggerPolicyV2,
 ) -> tuple[tuple[str, str, PinExpectation], ...]:
+    if isinstance(trigger, (CaptureLandingTriggerPolicyV2, WindowCloseTriggerPolicyV2)):
+        selector = (
+            trigger.event
+            if isinstance(trigger, CaptureLandingTriggerPolicyV2)
+            else (
+                trigger.window.event if isinstance(trigger.window, CaptureEventWindowV1) else None
+            )
+        )
+        return (
+            ()
+            if selector is None
+            else (
+                (
+                    "trigger-capture-contract",
+                    selector.capture_contract_digest,
+                    TRIGGER_CAPTURE_CONTRACT,
+                ),
+            )
+        )
     if isinstance(trigger, CadenceTriggerPolicyV1):
         return (
             (
@@ -706,6 +758,10 @@ __all__ = [
     "LineSpecAny",
     "LineSpecV1",
     "LineSpecV2",
+    "LineSpecV3",
+    "TriggerPolicyV2",
+    "CaptureLandingTriggerPolicyV2",
+    "WindowCloseTriggerPolicyV2",
     "LINE_IDENTITY_DIGEST_DOMAIN",
     "ManualTriggerPolicyV1",
     "TriggerPolicyV1",

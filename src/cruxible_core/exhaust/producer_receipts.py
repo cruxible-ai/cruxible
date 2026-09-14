@@ -37,6 +37,7 @@ from cruxible_core.procedures.egress import (
 )
 from cruxible_core.procedures.execution import (
     ProcedureAdmissionBoundPayloadV5,
+    parse_admission_payload,
     procedure_line_journal_stream,
 )
 from cruxible_core.storage.cas import ContentAddressedBodyStore
@@ -222,10 +223,15 @@ class JournalProducerReceiptResolver:
                     continue
                 candidate_digest = self._candidate_digest(record.event_kind, payload)
                 if record.event_kind == "admission_bound" and isinstance(payload, dict):
-                    if payload.get("tag") != "playbill-procedure-admission-bound-payload-v5":
+                    if payload.get("tag") not in {
+                        "playbill-procedure-admission-bound-payload-v5",
+                        "playbill-procedure-admission-bound-payload-v7",
+                    }:
                         continue
                     try:
-                        bound_payload = ProcedureAdmissionBoundPayloadV5.model_validate(payload)
+                        bound_payload = parse_admission_payload(payload)
+                        if not isinstance(bound_payload, ProcedureAdmissionBoundPayloadV5):
+                            raise ValueError("capture source requires an acquisition admission")
                         admission = bound_payload.admission
                         if (
                             record.run_id != admission.run_id

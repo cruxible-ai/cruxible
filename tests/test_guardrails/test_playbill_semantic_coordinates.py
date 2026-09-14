@@ -30,6 +30,7 @@ from cruxible_client.contracts.laws import (
     EXHAUST_PROMOTION_ACCEPTANCE_LAW,
     LINE_ACCEPTANCE_LAW,
     LINE_V2_ACCEPTANCE_LAW,
+    LINE_V3_ACCEPTANCE_LAW,
     PLAYBILL_ACCEPTANCE_LAWS,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_ACCEPTANCE_LAW,
@@ -42,6 +43,7 @@ from cruxible_client.contracts.laws import (
     PROVIDER_INTERFACE_ACCEPTANCE_LAW,
     PROVIDER_V2_ACCEPTANCE_LAW,
     QUERY_DEFINITION_ACCEPTANCE_LAW,
+    RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
     SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW,
     STANDING_MANDATE_ACCEPTANCE_LAW,
     SUBJECT_ACCEPTANCE_LAW,
@@ -59,6 +61,7 @@ from cruxible_core.compiler.compiler import (
     PC_DF2_COMPILER,
     PC_E1_COMPILER,
     PC_HR_COMPILER,
+    RESOLUTION_COMPILER,
     SUPPORTED_COMPILERS,
     candidate_card_renderer_digest_for_compiler,
     current_compiler_coordinate,
@@ -69,6 +72,13 @@ LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],
     ...,
 ] = (
+    (
+        RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
+        "cruxible.resolution-contract.v1",
+        "playbill-resolution-contract-v1",
+        1,
+        "sha256:d2255339f91b465d0f98e7770e052adf08a1775cae7c670ed5d8884410685913",
+    ),
     (
         ATTESTATION_ACCEPTANCE_LAW,
         "cruxible.accepted-claim-attestation.v1",
@@ -215,6 +225,13 @@ LAW_COORDINATES: tuple[
         "playbill-line-v1",
         3,
         "sha256:ec822853eb8d3dbfddc0a54291205f5310cbf8bdf11f4326d300a1ab70ad5249",
+    ),
+    (
+        LINE_V3_ACCEPTANCE_LAW,
+        "playbill.line.v3",
+        "playbill-line-v3",
+        1,
+        "sha256:86ad9d9bfbaad2c1b74c81d0f043804cf0bec1b85c447b8468029e9b65159a17",
     ),
     (
         LINE_V2_ACCEPTANCE_LAW,
@@ -439,7 +456,11 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
         "sha256:d98c2200d77534868510aac15f52e646ed973b8177a0468e6aa069f8c848dea9"
     )
     assert ATTESTATION_COMPILER.rule_digest == attestation_expected
-    assert current_compiler_coordinate() == ATTESTATION_COMPILER
+    assert (
+        RESOLUTION_COMPILER.rule_digest
+        == "sha256:492275f171993c039166cfaccd6aa549ca74f143d35978b70e045d9c504cb598"
+    )
+    assert current_compiler_coordinate() == RESOLUTION_COMPILER
     assert P2_B4_COMPILER in SUPPORTED_COMPILERS
     assert P2_B4_UNIT2_COMPILER in SUPPORTED_COMPILERS
     # The renderer resolves from the current coordinate itself, so cards derive
@@ -461,7 +482,7 @@ def test_succeeding_the_semantic_revision_keeps_candidate_cards_deriving(
     """
 
     source = Path(compiler_module.__file__).read_text(encoding="utf-8")
-    current_revision = 20
+    current_revision = 21
     anchor = "\n    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,\n"
     bumped = source.replace(
         f"    semantic_revision={current_revision},{anchor}",
@@ -546,17 +567,17 @@ def test_installed_compiler_revision_labels_are_exact_and_complete() -> None:
         "p2-b4-u2",
         "p2-b5",
         "accepted-attestations-v1",
+        "independent-resolution-contracts-v1",
     )
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "accepted-attestations-v1"
+    assert (
+        COMPILER_REVISION_LABELS[current_compiler_coordinate()]
+        == "independent-resolution-contracts-v1"
+    )
 
 
 def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
-    """Pin the explicit E succession; further revisions need their own ruling.
-
-    The September 10 accepted-attestation ruling authorizes governed immutable
-    attestations and a compiler transition, landed as revision 20 in Batch E
-    (September 13). This supersedes the earlier P2-B6.1 freeze for that feature
-    only; it does not permit unreviewed future semantic revisions.
+    """The September 14 F.3 ruling admits independent governed contracts and shared
+    Line event/window bindings as compiler revision 21. Older pins stay exact.
     """
 
     from cruxible_core.compiler.compiler import (
@@ -564,5 +585,8 @@ def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
         current_compiler_coordinate,
     )
 
-    assert len(COMPILER_REVISION_LABELS) == 19
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "accepted-attestations-v1"
+    assert len(COMPILER_REVISION_LABELS) == 20
+    assert (
+        COMPILER_REVISION_LABELS[current_compiler_coordinate()]
+        == "independent-resolution-contracts-v1"
+    )

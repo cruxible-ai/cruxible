@@ -158,10 +158,10 @@
     "GET": "PlaybillPolicyInForceList"
   },
   "/api/v1/{instance_id}/playbill/predictions": {
-    "POST": "PlaybillPredictResultV1"
+    "POST": "PlaybillPredictResultV2"
   },
   "/api/v1/{instance_id}/playbill/predictions/{prediction_id}/settlements": {
-    "POST": "PlaybillSettleResultV1"
+    "POST": "PlaybillSettleResultV2"
   },
   "/api/v1/{instance_id}/playbill/principals": {
     "GET": "PlaybillPrincipalList"
@@ -234,6 +234,9 @@
   },
   "/api/v1/{instance_id}/playbill/queries/{name}/run": {
     "POST": "PlaybillQueryRun"
+  },
+  "/api/v1/{instance_id}/playbill/resolution-contracts/query": {
+    "POST": "ResolutionContractsResultV1"
   },
   "/api/v1/{instance_id}/playbill/search": {
     "POST": "PlaybillSearchResult"

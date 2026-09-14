@@ -36,9 +36,7 @@ from cruxible_client.contracts.procedures.graph import (
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpecV1,
     CadenceTriggerPolicyV1,
-    CaptureLandingTriggerPolicyV1,
     LineSpecV1,
-    WindowCloseTriggerPolicyV1,
     line_identity_digest,
     line_spec_digest,
     line_spec_path,
@@ -391,35 +389,71 @@ def _accept_line_tree(
 def test_daemon_derives_manual_and_capture_occurrences() -> None:
     manual, _accepted, _interfaces = _line()
     manual_line = _accepted_line(manual)
-    coordinate = SimpleNamespace(git_oid="a" * 40)
-    first, next_due, awaited = procedure_run_service._line_occurrence(  # noqa: SLF001
+    first, next_due = procedure_run_service._line_occurrence(  # noqa: SLF001
         manual_line,
-        coordinate=coordinate,
         evaluation_time=READ_TIME,
         prior=(),
     )
     assert first.startswith("sha256:")
-    assert next_due is None and awaited is None
-
-    capture, _accepted, _interfaces = _line(
-        trigger=CaptureLandingTriggerPolicyV1(
-            anchor_capture_contract_digest=_line_digest("anchor-capture"),
-            landing_filter_digest=_line_digest("landing-filter"),
-        )
-    )
-    _occurrence, next_due, awaited = procedure_run_service._line_occurrence(  # noqa: SLF001
-        _accepted_line(capture),
-        coordinate=coordinate,
-        evaluation_time=READ_TIME + timedelta(hours=1),
-        prior=(
-            SimpleNamespace(
-                occurrence_evaluation_time=READ_TIME,
-                bound_coordinate=coordinate,
-            ),
-        ),  # type: ignore[arg-type]
-    )
     assert next_due is None
-    assert awaited == capture.trigger_policy.anchor_capture_contract_digest
+
+    from cruxible_client.contracts.procedures.line_specs import (
+        CaptureLandingTriggerPolicyV2,
+        LineSpecV3,
+    )
+    from cruxible_client.contracts.procedures.windows import (
+        CaptureEventSelectorV1,
+        LineTriggerBindingV1,
+        TriggerEventReferenceV1,
+    )
+    from tests.test_integration.test_graph_v4_provider_closure import _line as graph_line
+
+    base = graph_line()
+    selector = CaptureEventSelectorV1(
+        capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="anchor"),
+        capture_contract_digest=_line_digest("anchor"),
+    )
+    pin = ArtifactPin(
+        role="trigger-capture-contract",
+        target=selector.capture_contract_identity,
+        artifact_digest=selector.capture_contract_digest,
+    )
+    payload = base.model_dump()
+    payload.update(
+        artifact_format="playbill-line-v3",
+        trigger_policy=CaptureLandingTriggerPolicyV2(event=selector),
+        pins=tuple(
+            sorted((*base.pins, pin), key=lambda p: (p.role, p.target.qualified, p.artifact_digest))
+        ),
+    )
+    line = _accepted_line(LineSpecV3.model_validate(payload))
+    ref = TriggerEventReferenceV1(
+        run_id="RUN-anchor",
+        partition_id="run:anchor",
+        sequence=1,
+        record_digest=_line_digest("event"),
+    )
+    binding = LineTriggerBindingV1(kind="capture_landing", event=ref)
+    first = procedure_run_service._line_occurrence(
+        line, evaluation_time=READ_TIME, prior=(), binding=binding
+    )
+    later = procedure_run_service._line_occurrence(
+        line,
+        evaluation_time=READ_TIME + timedelta(days=1),
+        prior=(),
+        binding=binding,
+    )
+    assert first == later
+    assert first[1:] == (None,)
+    other = binding.model_copy(
+        update={"event": ref.model_copy(update={"record_digest": _line_digest("other-event")})}
+    )
+    assert (
+        procedure_run_service._line_occurrence(
+            line, evaluation_time=READ_TIME, prior=(), binding=other
+        )[0]
+        != first[0]
+    )
 
 
 def test_a_cadence_line_admits_two_occurrences_one_period_apart_over_a_real_tree(
@@ -450,36 +484,30 @@ def test_a_cadence_line_admits_two_occurrences_one_period_apart_over_a_real_tree
     assert accepted_line.path in tree
     assert [path for path in tree if path.startswith("policies/")] == []
 
-    coordinate = SimpleNamespace(git_oid="a" * 40)
-    first, next_due, awaited = procedure_run_service._line_occurrence(  # noqa: SLF001
+    first, next_due = procedure_run_service._line_occurrence(  # noqa: SLF001
         accepted_line,
-        coordinate=coordinate,
         evaluation_time=READ_TIME,
         prior=(),
     )
-    assert next_due is None and awaited is None
+    assert next_due is None
 
     prior = SimpleNamespace(
         occurrence_evaluation_time=READ_TIME,
         bound_coordinate=SimpleNamespace(git_oid="9" * 40),
     )
-    _early, next_due, awaited = procedure_run_service._line_occurrence(  # noqa: SLF001
+    _early, next_due = procedure_run_service._line_occurrence(  # noqa: SLF001
         accepted_line,
-        coordinate=coordinate,
         evaluation_time=READ_TIME + timedelta(minutes=30),
         prior=(prior,),  # type: ignore[arg-type]
     )
     assert next_due == READ_TIME + timedelta(hours=1)
-    assert awaited is None
 
-    second, next_due, awaited = procedure_run_service._line_occurrence(  # noqa: SLF001
+    second, next_due = procedure_run_service._line_occurrence(  # noqa: SLF001
         accepted_line,
-        coordinate=coordinate,
         evaluation_time=READ_TIME + timedelta(hours=1),
         prior=(prior,),  # type: ignore[arg-type]
     )
     assert next_due == READ_TIME + timedelta(hours=1)
-    assert awaited is None
     assert second != first
 
 
@@ -551,57 +579,45 @@ def test_a_caller_cannot_walk_the_cadence_by_advancing_the_claimed_instant(
     # is derived from is the daemon's, not the caller's.
     inside = procedure_run_service._line_occurrence(  # noqa: SLF001
         accepted_line,
-        coordinate=instance.accepted_coordinate(),
         evaluation_time=READ_TIME,
         prior=(),
     )
     assert inside[0].startswith("sha256:")
 
 
-def test_a_window_line_becomes_due_across_its_boundary_over_a_real_tree(
-    tmp_path: Path,
-) -> None:
-    instance, owner = initialize_local(tmp_path)
-    accepted = _slotless_procedure("scheduled-window")
-    line = _scheduled_line(
-        "scheduled-window-daily",
-        trigger=WindowCloseTriggerPolicyV1(
-            window_policy_digest=_line_digest("window-policy"),
-            window_seconds=86_400,
-        ),
-        accepted=accepted,
+def test_a_window_line_has_fixed_boundary_even_when_dispatch_is_late(tmp_path: Path) -> None:
+    from cruxible_client.contracts.procedures.line_specs import (
+        LineSpecV3,
+        WindowCloseTriggerPolicyV2,
     )
-    accepted_line = _accept_line_tree(
-        instance,
-        owner,
-        line=line,
-        accepted=accepted,
-        proposal_name="window-line",
+    from cruxible_client.contracts.procedures.windows import (
+        FixedWindowV1,
+        LineTriggerBindingV1,
+        bind_observation_window,
     )
-    coordinate = SimpleNamespace(git_oid="a" * 40)
-    prior = SimpleNamespace(
-        occurrence_evaluation_time=READ_TIME,
-        bound_coordinate=SimpleNamespace(git_oid="9" * 40),
-    )
-    boundary = READ_TIME + timedelta(days=1)
+    from tests.test_integration.test_graph_v4_provider_closure import _line as graph_line
 
-    _before, next_due, awaited = procedure_run_service._line_occurrence(  # noqa: SLF001
-        accepted_line,
-        coordinate=coordinate,
-        evaluation_time=boundary - timedelta(seconds=1),
-        prior=(prior,),  # type: ignore[arg-type]
+    base = graph_line()
+    window = FixedWindowV1(starts_at=READ_TIME, duration_seconds=86400)
+    payload = base.model_dump()
+    payload.update(
+        artifact_format="playbill-line-v3", trigger_policy=WindowCloseTriggerPolicyV2(window=window)
     )
-    assert next_due == boundary
-    assert awaited is None
-
-    _after, next_due, awaited = procedure_run_service._line_occurrence(  # noqa: SLF001
-        accepted_line,
-        coordinate=coordinate,
-        evaluation_time=boundary,
-        prior=(prior,),  # type: ignore[arg-type]
-    )
-    assert next_due == boundary
-    assert awaited is None
+    line = _accepted_line(LineSpecV3.model_validate(payload))
+    bound = bind_observation_window(window)
+    binding = LineTriggerBindingV1(kind="window_close", window=bound)
+    prior = SimpleNamespace(occurrence_evaluation_time=READ_TIME + timedelta(hours=6))
+    results = [
+        procedure_run_service._line_occurrence(
+            line,
+            evaluation_time=at,
+            prior=(prior,),
+            binding=binding,
+        )
+        for at in (READ_TIME, READ_TIME + timedelta(days=1), READ_TIME + timedelta(days=3))
+    ]
+    assert results[0] == results[1] == results[2]
+    assert results[0][1] == READ_TIME + timedelta(days=1)
 
 
 def test_genesis_evaluation_time_comes_from_the_signed_commit(tmp_path: Path) -> None:
@@ -1850,9 +1866,8 @@ def test_a_replayed_occurrence_refuses_instead_of_running_twice(
     line, accepted, _interfaces = _line()
     accepted_line = _accepted_line(line)
     coordinate = instance.accepted_coordinate()
-    occurrence_id, _next_due, _awaited = procedure_run_service._line_occurrence(  # noqa: SLF001
+    occurrence_id, _next_due = procedure_run_service._line_occurrence(  # noqa: SLF001
         accepted_line,
-        coordinate=coordinate,
         evaluation_time=READ_TIME,
         prior=(),
     )

@@ -525,6 +525,139 @@
         "subject"
       ]
     },
+    "ClaimVersionReferenceV1": {
+      "fields": {
+        "artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "artifact_digest",
+          "required": true,
+          "schema": {
+            "title": "Artifact Digest",
+            "type": "string"
+          }
+        },
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "identity",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ArtifactIdentity"
+          }
+        },
+        "statement_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "statement_digest",
+          "required": true,
+          "schema": {
+            "title": "Statement Digest",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "artifact_digest": {
+            "title": "Artifact Digest",
+            "type": "string"
+          },
+          "coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "identity": {
+            "$ref": "#/$defs/ArtifactIdentity"
+          },
+          "statement_digest": {
+            "title": "Statement Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identity",
+          "artifact_digest",
+          "statement_digest",
+          "coordinate"
+        ],
+        "title": "ClaimVersionReferenceV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "artifact_digest",
+        "coordinate",
+        "identity",
+        "statement_digest"
+      ]
+    },
     "GitWorkspaceNoteV1": {
       "fields": {
         "code": {
@@ -589,6 +722,238 @@
         "code",
         "cwd_workspace_root",
         "inherited_workspace_root"
+      ]
+    },
+    "InvestigationBindingV1": {
+      "fields": {
+        "contract": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "contract",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ResolutionContractReferenceV1"
+          }
+        },
+        "hypothesis": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "hypothesis",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ClaimVersionReferenceV1"
+          }
+        },
+        "window": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "window",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/BoundObservationWindowV1"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "BoundObservationWindowV1": {
+            "additionalProperties": false,
+            "description": "Exact boundaries retained at admission, including the verified event anchor.",
+            "properties": {
+              "ends_at": {
+                "description": "Reads VALIDITY WINDOW.",
+                "format": "date-time",
+                "title": "Ends At",
+                "type": "string"
+              },
+              "event": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TriggerEventReferenceV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "starts_at": {
+                "description": "Reads VALIDITY WINDOW.",
+                "format": "date-time",
+                "title": "Starts At",
+                "type": "string"
+              }
+            },
+            "required": [
+              "starts_at",
+              "ends_at"
+            ],
+            "title": "BoundObservationWindowV1",
+            "type": "object"
+          },
+          "ClaimVersionReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "statement_digest": {
+                "title": "Statement Digest",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "artifact_digest",
+              "statement_digest",
+              "coordinate"
+            ],
+            "title": "ClaimVersionReferenceV1",
+            "type": "object"
+          },
+          "ResolutionContractReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "identity",
+              "artifact_digest",
+              "coordinate"
+            ],
+            "title": "ResolutionContractReferenceV1",
+            "type": "object"
+          },
+          "TriggerEventReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "partition_id": {
+                "minLength": 1,
+                "title": "Partition Id",
+                "type": "string"
+              },
+              "record_digest": {
+                "title": "Record Digest",
+                "type": "string"
+              },
+              "run_id": {
+                "minLength": 1,
+                "title": "Run Id",
+                "type": "string"
+              },
+              "sequence": {
+                "description": "Reads SETTLEMENT ORDER.",
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "run_id",
+              "partition_id",
+              "sequence",
+              "record_digest"
+            ],
+            "title": "TriggerEventReferenceV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "contract": {
+            "$ref": "#/$defs/ResolutionContractReferenceV1"
+          },
+          "hypothesis": {
+            "$ref": "#/$defs/ClaimVersionReferenceV1"
+          },
+          "window": {
+            "$ref": "#/$defs/BoundObservationWindowV1"
+          }
+        },
+        "required": [
+          "contract",
+          "hypothesis",
+          "window"
+        ],
+        "title": "InvestigationBindingV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "contract",
+        "hypothesis",
+        "window"
       ]
     },
     "IsolatedExecutorRegistrationV1": {
@@ -691,55 +1056,308 @@
         "implementation_digest"
       ]
     },
-    "ObservationSettlementEvidenceV1": {
+    "LineTriggerBindingV1": {
       "fields": {
-        "claim_id": {
+        "event": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "event",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TriggerEventReferenceV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "kind": {
           "has_default": false,
           "has_default_factory": false,
-          "json_name": "claim_id",
+          "json_name": "kind",
           "required": true,
           "schema": {
-            "title": "Claim Id",
+            "enum": [
+              "capture_landing",
+              "window_close"
+            ],
+            "title": "Kind",
             "type": "string"
           }
         },
+        "window": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "window",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BoundObservationWindowV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "BoundObservationWindowV1": {
+            "additionalProperties": false,
+            "description": "Exact boundaries retained at admission, including the verified event anchor.",
+            "properties": {
+              "ends_at": {
+                "description": "Reads VALIDITY WINDOW.",
+                "format": "date-time",
+                "title": "Ends At",
+                "type": "string"
+              },
+              "event": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TriggerEventReferenceV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "starts_at": {
+                "description": "Reads VALIDITY WINDOW.",
+                "format": "date-time",
+                "title": "Starts At",
+                "type": "string"
+              }
+            },
+            "required": [
+              "starts_at",
+              "ends_at"
+            ],
+            "title": "BoundObservationWindowV1",
+            "type": "object"
+          },
+          "TriggerEventReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "partition_id": {
+                "minLength": 1,
+                "title": "Partition Id",
+                "type": "string"
+              },
+              "record_digest": {
+                "title": "Record Digest",
+                "type": "string"
+              },
+              "run_id": {
+                "minLength": 1,
+                "title": "Run Id",
+                "type": "string"
+              },
+              "sequence": {
+                "description": "Reads SETTLEMENT ORDER.",
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "run_id",
+              "partition_id",
+              "sequence",
+              "record_digest"
+            ],
+            "title": "TriggerEventReferenceV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Semantic cause of one occurrence, independent of its dispatch instant.",
+        "properties": {
+          "event": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TriggerEventReferenceV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "kind": {
+            "enum": [
+              "capture_landing",
+              "window_close"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "window": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BoundObservationWindowV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "LineTriggerBindingV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "kind"
+      ]
+    },
+    "ObservationSettlementEvidenceV2": {
+      "fields": {
+        "claim": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "claim",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ClaimVersionReferenceV1"
+          }
+        },
         "tag": {
-          "default": "playbill-observation-settlement-evidence-v1",
+          "default": "playbill-observation-settlement-evidence-v2",
           "default_json_serializable": true,
           "has_default": true,
           "has_default_factory": false,
           "json_name": "tag",
           "required": false,
           "schema": {
-            "const": "playbill-observation-settlement-evidence-v1",
-            "default": "playbill-observation-settlement-evidence-v1",
+            "const": "playbill-observation-settlement-evidence-v2",
+            "default": "playbill-observation-settlement-evidence-v2",
             "title": "Tag",
             "type": "string"
           }
         }
       },
       "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "ClaimVersionReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "statement_digest": {
+                "title": "Statement Digest",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "artifact_digest",
+              "statement_digest",
+              "coordinate"
+            ],
+            "title": "ClaimVersionReferenceV1",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "properties": {
-          "claim_id": {
-            "title": "Claim Id",
-            "type": "string"
+          "claim": {
+            "$ref": "#/$defs/ClaimVersionReferenceV1"
           },
           "tag": {
-            "const": "playbill-observation-settlement-evidence-v1",
-            "default": "playbill-observation-settlement-evidence-v1",
+            "const": "playbill-observation-settlement-evidence-v2",
+            "default": "playbill-observation-settlement-evidence-v2",
             "title": "Tag",
             "type": "string"
           }
         },
         "required": [
-          "claim_id"
+          "claim"
         ],
-        "title": "ObservationSettlementEvidenceV1",
+        "title": "ObservationSettlementEvidenceV2",
         "type": "object"
       },
       "required_fields": [
-        "claim_id"
+        "claim"
       ]
     },
     "PlaybillAcceptedCoordinate": {
@@ -20913,128 +21531,27 @@
         "policies"
       ]
     },
-    "PlaybillPredictRequestV1": {
+    "PlaybillPredictRequestV2": {
       "fields": {
-        "deadline": {
+        "contract": {
           "has_default": false,
           "has_default_factory": false,
-          "json_name": "deadline",
+          "json_name": "contract",
           "required": true,
           "schema": {
-            "description": "Reads VALIDITY WINDOW.",
-            "format": "date-time",
-            "title": "Deadline",
-            "type": "string"
-          }
-        },
-        "measurement_name": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "measurement_name",
-          "required": true,
-          "schema": {
-            "title": "Measurement Name",
-            "type": "string"
-          }
-        },
-        "observation": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "observation",
-          "required": true,
-          "schema": {
-            "$ref": "#/$defs/PredictionObservationSelectorV1"
-          }
-        },
-        "outcome_class": {
-          "default": "prediction-correctness",
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "outcome_class",
-          "required": false,
-          "schema": {
-            "default": "prediction-correctness",
-            "title": "Outcome Class",
-            "type": "string"
-          }
-        },
-        "prediction": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "prediction",
-          "required": true,
-          "schema": {
-            "discriminator": {
-              "mapping": {
-                "playbill-claim-authoring-payload-v1": "#/$defs/ClaimAuthoringPayloadV1",
-                "playbill-claim-authoring-payload-v2": "#/$defs/ClaimAuthoringPayloadV2",
-                "playbill-claim-authoring-payload-v3": "#/$defs/ClaimAuthoringPayloadV3"
-              },
-              "propertyName": "tag"
-            },
-            "oneOf": [
-              {
-                "$ref": "#/$defs/ClaimAuthoringPayloadV1"
-              },
-              {
-                "$ref": "#/$defs/ClaimAuthoringPayloadV2"
-              },
-              {
-                "$ref": "#/$defs/ClaimAuthoringPayloadV3"
-              }
-            ],
-            "title": "Prediction"
-          }
-        },
-        "procedure": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "procedure",
-          "required": true,
-          "schema": {
-            "title": "Procedure",
-            "type": "string"
-          }
-        },
-        "rule": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "rule",
-          "required": true,
-          "schema": {
-            "discriminator": {
-              "mapping": {
-                "playbill-prediction-equality-rule-v1": "#/$defs/PredictionEqualityRuleV1",
-                "playbill-prediction-presence-rule-v1": "#/$defs/PredictionPresenceRuleV1",
-                "playbill-prediction-threshold-rule-v1": "#/$defs/PredictionThresholdRuleV1"
-              },
-              "propertyName": "tag"
-            },
-            "oneOf": [
-              {
-                "$ref": "#/$defs/PredictionEqualityRuleV1"
-              },
-              {
-                "$ref": "#/$defs/PredictionThresholdRuleV1"
-              },
-              {
-                "$ref": "#/$defs/PredictionPresenceRuleV1"
-              }
-            ],
-            "title": "Rule"
+            "$ref": "#/$defs/ResolutionContractV1"
           }
         },
         "tag": {
-          "default": "playbill-predict-request-v1",
+          "default": "playbill-predict-request-v2",
           "default_json_serializable": true,
           "has_default": true,
           "has_default_factory": false,
           "json_name": "tag",
           "required": false,
           "schema": {
-            "const": "playbill-predict-request-v1",
-            "default": "playbill-predict-request-v1",
+            "const": "playbill-predict-request-v2",
+            "default": "playbill-predict-request-v2",
             "title": "Tag",
             "type": "string"
           }
@@ -21042,6 +21559,42 @@
       },
       "json_schema": {
         "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
           "ArtifactIdentity": {
             "additionalProperties": false,
             "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
@@ -21090,1195 +21643,105 @@
             "title": "ArtifactLifecycle",
             "type": "object"
           },
-          "ArtifactPin": {
+          "CaptureEventSelectorV1": {
+            "additionalProperties": false,
+            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "properties": {
+              "capture_contract_digest": {
+                "title": "Capture Contract Digest",
+                "type": "string"
+              },
+              "capture_contract_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "capture_contract_identity",
+              "capture_contract_digest"
+            ],
+            "title": "CaptureEventSelectorV1",
+            "type": "object"
+          },
+          "CaptureEventWindowV1": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Duration Seconds",
+                "type": "integer"
+              },
+              "event": {
+                "$ref": "#/$defs/CaptureEventSelectorV1"
+              },
+              "kind": {
+                "const": "capture_event",
+                "default": "capture_event",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "duration_seconds"
+            ],
+            "title": "CaptureEventWindowV1",
+            "type": "object"
+          },
+          "ClaimVersionReferenceV1": {
             "additionalProperties": false,
             "properties": {
               "artifact_digest": {
                 "title": "Artifact Digest",
                 "type": "string"
               },
-              "role": {
-                "title": "Role",
-                "type": "string"
-              },
-              "target": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              }
-            },
-            "required": [
-              "role",
-              "target",
-              "artifact_digest"
-            ],
-            "title": "ArtifactPin",
-            "type": "object"
-          },
-          "AuthoringClaimStatementV1": {
-            "additionalProperties": false,
-            "properties": {
-              "effective_from": {
-                "anyOf": [
-                  {
-                    "format": "date-time",
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Effective From"
-              },
-              "effective_until": {
-                "anyOf": [
-                  {
-                    "format": "date-time",
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Effective Until"
-              },
-              "object": {
-                "discriminator": {
-                  "mapping": {
-                    "exact_content_body": "#/$defs/AuthoringExactContentObjectV1",
-                    "literal": "#/$defs/LiteralClaimObject",
-                    "subject": "#/$defs/SubjectClaimObject"
-                  },
-                  "propertyName": "kind"
-                },
-                "oneOf": [
-                  {
-                    "$ref": "#/$defs/LiteralClaimObject"
-                  },
-                  {
-                    "$ref": "#/$defs/SubjectClaimObject"
-                  },
-                  {
-                    "$ref": "#/$defs/AuthoringExactContentObjectV1"
-                  }
-                ],
-                "title": "Object"
-              },
-              "predicate": {
-                "title": "Predicate",
-                "type": "string"
-              },
-              "qualifier": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Qualifier"
-              },
-              "role": {
-                "enum": [
-                  "normative",
-                  "observation",
-                  "environment_binding",
-                  "derivation"
-                ],
-                "title": "Role",
-                "type": "string"
-              },
-              "subject": {
-                "$ref": "#/$defs/SemanticAddress"
-              },
-              "tag": {
-                "const": "playbill-authoring-claim-statement-v1",
-                "default": "playbill-authoring-claim-statement-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "subject",
-              "predicate",
-              "object",
-              "role"
-            ],
-            "title": "AuthoringClaimStatementV1",
-            "type": "object"
-          },
-          "AuthoringExactContentObjectV1": {
-            "additionalProperties": false,
-            "properties": {
-              "content_base64": {
-                "title": "Content Base64",
-                "type": "string"
-              },
-              "kind": {
-                "const": "exact_content_body",
-                "default": "exact_content_body",
-                "title": "Kind",
-                "type": "string"
-              }
-            },
-            "required": [
-              "content_base64"
-            ],
-            "title": "AuthoringExactContentObjectV1",
-            "type": "object"
-          },
-          "AuthoringExistingClaimDispositionV1": {
-            "additionalProperties": false,
-            "properties": {
-              "claim_id": {
-                "title": "Claim Id",
-                "type": "string"
-              },
-              "disposition": {
-                "enum": [
-                  "not_tested",
-                  "support",
-                  "contradict",
-                  "unsure"
-                ],
-                "title": "Disposition",
-                "type": "string"
-              }
-            },
-            "required": [
-              "claim_id",
-              "disposition"
-            ],
-            "title": "AuthoringExistingClaimDispositionV1",
-            "type": "object"
-          },
-          "ClaimAdmissionPolicyV1": {
-            "additionalProperties": false,
-            "properties": {
-              "corroboration_requirements": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/CorroborationRequirementV1"
-                },
-                "title": "Corroboration Requirements",
-                "type": "array"
-              },
-              "freeze_requirements": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/FreezeRequirementV1"
-                },
-                "title": "Freeze Requirements",
-                "type": "array"
-              },
-              "tag": {
-                "const": "playbill-claim-admission-policy-v1",
-                "default": "playbill-claim-admission-policy-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "title": "ClaimAdmissionPolicyV1",
-            "type": "object"
-          },
-          "ClaimAttestationConsequencePolicyV1": {
-            "additionalProperties": false,
-            "properties": {
-              "rules": {
-                "items": {
-                  "$ref": "#/$defs/ClaimAttestationConsequenceRuleV1"
-                },
-                "minItems": 1,
-                "title": "Rules",
-                "type": "array"
-              },
-              "tag": {
-                "const": "playbill-claim-attestation-consequence-policy-v1",
-                "default": "playbill-claim-attestation-consequence-policy-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "rules"
-            ],
-            "title": "ClaimAttestationConsequencePolicyV1",
-            "type": "object"
-          },
-          "ClaimAttestationConsequenceRuleV1": {
-            "additionalProperties": false,
-            "properties": {
-              "consequence": {
-                "const": "next_claim_attestation_threshold",
-                "default": "next_claim_attestation_threshold",
-                "title": "Consequence",
-                "type": "string"
-              },
-              "minimum_independent_control_components": {
-                "minimum": 0,
-                "title": "Minimum Independent Control Components",
-                "type": "integer"
-              },
-              "require_current": {
-                "const": true,
-                "default": true,
-                "title": "Require Current",
-                "type": "boolean"
-              },
-              "rule_id": {
-                "title": "Rule Id",
-                "type": "string"
-              },
-              "stance": {
-                "enum": [
-                  "unsure",
-                  "contradict"
-                ],
-                "title": "Stance",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-claim-attestation-consequence-rule-v1",
-                "default": "playbill-claim-attestation-consequence-rule-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "rule_id",
-              "stance",
-              "minimum_independent_control_components"
-            ],
-            "title": "ClaimAttestationConsequenceRuleV1",
-            "type": "object"
-          },
-          "ClaimAuthoringPayloadV1": {
-            "additionalProperties": false,
-            "properties": {
-              "citation_role": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "evidence",
-                      "copy"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Citation Role"
-              },
-              "claim_ref": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Claim Ref"
-              },
-              "existing_claim_dispositions": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/AuthoringExistingClaimDispositionV1"
-                },
-                "title": "Existing Claim Dispositions",
-                "type": "array"
-              },
-              "insertion_target": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/InsertionTargetV2"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "rationale": {
-                "title": "Rationale",
-                "type": "string"
-              },
-              "source": {
-                "discriminator": {
-                  "mapping": {
-                    "playbill-self-source-body-v1": "#/$defs/SelfSourceBodyV1",
-                    "playbill-working-selection-observation-v1": "#/$defs/WorkingSelectionObservationV1"
-                  },
-                  "propertyName": "tag"
-                },
-                "oneOf": [
-                  {
-                    "$ref": "#/$defs/WorkingSelectionObservationV1"
-                  },
-                  {
-                    "$ref": "#/$defs/SelfSourceBodyV1"
-                  }
-                ],
-                "title": "Source"
-              },
-              "statement": {
-                "$ref": "#/$defs/AuthoringClaimStatementV1"
-              },
-              "tag": {
-                "const": "playbill-claim-authoring-payload-v1",
-                "default": "playbill-claim-authoring-payload-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "statement",
-              "rationale",
-              "source"
-            ],
-            "title": "ClaimAuthoringPayloadV1",
-            "type": "object"
-          },
-          "ClaimAuthoringPayloadV2": {
-            "additionalProperties": false,
-            "properties": {
-              "citation_role": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "evidence",
-                      "copy"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Citation Role"
-              },
-              "claim_ref": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Claim Ref"
-              },
-              "dependency_drafts": {
-                "$ref": "#/$defs/ClaimDependencyDraftsV1"
-              },
-              "existing_claim_dispositions": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/AuthoringExistingClaimDispositionV1"
-                },
-                "title": "Existing Claim Dispositions",
-                "type": "array"
-              },
-              "insertion_target": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/InsertionTargetV2"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "rationale": {
-                "title": "Rationale",
-                "type": "string"
-              },
-              "source": {
-                "discriminator": {
-                  "mapping": {
-                    "playbill-self-source-body-v1": "#/$defs/SelfSourceBodyV1",
-                    "playbill-working-selection-observation-v1": "#/$defs/WorkingSelectionObservationV1"
-                  },
-                  "propertyName": "tag"
-                },
-                "oneOf": [
-                  {
-                    "$ref": "#/$defs/WorkingSelectionObservationV1"
-                  },
-                  {
-                    "$ref": "#/$defs/SelfSourceBodyV1"
-                  }
-                ],
-                "title": "Source"
-              },
-              "statement": {
-                "$ref": "#/$defs/AuthoringClaimStatementV1"
-              },
-              "tag": {
-                "const": "playbill-claim-authoring-payload-v2",
-                "default": "playbill-claim-authoring-payload-v2",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "statement",
-              "rationale",
-              "source",
-              "dependency_drafts"
-            ],
-            "title": "ClaimAuthoringPayloadV2",
-            "type": "object"
-          },
-          "ClaimAuthoringPayloadV3": {
-            "additionalProperties": false,
-            "properties": {
-              "citation_role": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "evidence",
-                      "copy"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Citation Role"
-              },
-              "claim_ref": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Claim Ref"
-              },
-              "dependency_drafts": {
-                "$ref": "#/$defs/ClaimDependencyDraftsV1"
-              },
-              "existing_claim_dispositions": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/AuthoringExistingClaimDispositionV1"
-                },
-                "title": "Existing Claim Dispositions",
-                "type": "array"
-              },
-              "insertion_target": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/InsertionTargetV2"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "rationale": {
-                "title": "Rationale",
-                "type": "string"
-              },
-              "source": {
-                "discriminator": {
-                  "mapping": {
-                    "playbill-existing-capture-citation-source-v1": "#/$defs/ExistingCaptureCitationSourceV1",
-                    "playbill-self-source-body-v1": "#/$defs/SelfSourceBodyV1",
-                    "playbill-working-selection-observation-v1": "#/$defs/WorkingSelectionObservationV1"
-                  },
-                  "propertyName": "tag"
-                },
-                "oneOf": [
-                  {
-                    "$ref": "#/$defs/WorkingSelectionObservationV1"
-                  },
-                  {
-                    "$ref": "#/$defs/SelfSourceBodyV1"
-                  },
-                  {
-                    "$ref": "#/$defs/ExistingCaptureCitationSourceV1"
-                  }
-                ],
-                "title": "Source"
-              },
-              "statement": {
-                "$ref": "#/$defs/AuthoringClaimStatementV1"
-              },
-              "tag": {
-                "const": "playbill-claim-authoring-payload-v3",
-                "default": "playbill-claim-authoring-payload-v3",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "statement",
-              "rationale",
-              "source",
-              "dependency_drafts"
-            ],
-            "title": "ClaimAuthoringPayloadV3",
-            "type": "object"
-          },
-          "ClaimDependencyDraftsV1": {
-            "additionalProperties": false,
-            "properties": {
-              "claim_type": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ClaimType"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "subject": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/SubjectShell"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "tag": {
-                "const": "playbill-claim-dependency-drafts-v1",
-                "default": "playbill-claim-dependency-drafts-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "title": "ClaimDependencyDraftsV1",
-            "type": "object"
-          },
-          "ClaimEvidenceAdmissionPolicyV1": {
-            "additionalProperties": false,
-            "properties": {
-              "rules": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/ClaimEvidenceAdmissionRuleV1"
-                },
-                "title": "Rules",
-                "type": "array"
-              },
-              "tag": {
-                "const": "playbill-claim-evidence-admission-policy-v1",
-                "default": "playbill-claim-evidence-admission-policy-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "title": "ClaimEvidenceAdmissionPolicyV1",
-            "type": "object"
-          },
-          "ClaimEvidenceAdmissionRuleV1": {
-            "additionalProperties": false,
-            "properties": {
-              "admission": {
-                "enum": [
-                  "origin_only",
-                  "direct",
-                  "derivational"
-                ],
-                "title": "Admission",
-                "type": "string"
-              },
-              "allowed_reducer_digests": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Allowed Reducer Digests",
-                "type": "array"
-              },
-              "attestation_requirement": {
-                "default": "none",
-                "enum": [
-                  "none",
-                  "verified_provider",
-                  "verified_principal",
-                  "any_verified"
-                ],
-                "title": "Attestation Requirement",
-                "type": "string"
-              },
-              "capture_contract_digests": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Capture Contract Digests",
-                "type": "array"
-              },
-              "claim_roles": {
-                "items": {
-                  "enum": [
-                    "normative",
-                    "observation",
-                    "environment_binding",
-                    "derivation"
-                  ],
-                  "type": "string"
-                },
-                "title": "Claim Roles",
-                "type": "array"
-              },
-              "evidence_kinds": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Evidence Kinds",
-                "type": "array"
-              },
-              "rule_id": {
-                "title": "Rule Id",
-                "type": "string"
-              },
-              "subject_binding": {
-                "enum": [
-                  "exact_claim_subject",
-                  "contract_source_mapping"
-                ],
-                "title": "Subject Binding",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-claim-evidence-admission-rule-v1",
-                "default": "playbill-claim-evidence-admission-rule-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "rule_id",
-              "claim_roles",
-              "capture_contract_digests",
-              "evidence_kinds",
-              "admission",
-              "subject_binding"
-            ],
-            "title": "ClaimEvidenceAdmissionRuleV1",
-            "type": "object"
-          },
-          "ClaimEvidenceFreshnessV1": {
-            "additionalProperties": false,
-            "properties": {
-              "stale_after": {
-                "$ref": "#/$defs/ClaimFreshnessDurationV1"
-              },
-              "tag": {
-                "const": "playbill-claim-evidence-freshness-v1",
-                "default": "playbill-claim-evidence-freshness-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "stale_after"
-            ],
-            "title": "ClaimEvidenceFreshnessV1",
-            "type": "object"
-          },
-          "ClaimFreshnessDurationV1": {
-            "additionalProperties": false,
-            "properties": {
-              "microseconds": {
-                "minimum": 0,
-                "title": "Microseconds",
-                "type": "integer"
-              },
-              "tag": {
-                "const": "playbill-duration-v1",
-                "default": "playbill-duration-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "microseconds"
-            ],
-            "title": "ClaimFreshnessDurationV1",
-            "type": "object"
-          },
-          "ClaimResolutionPolicyV1": {
-            "additionalProperties": false,
-            "properties": {
-              "cardinality": {
-                "enum": [
-                  "one",
-                  "many"
-                ],
-                "title": "Cardinality",
-                "type": "string"
-              },
-              "conflict_result": {
-                "default": "unresolved",
-                "enum": [
-                  "unresolved",
-                  "refuse"
-                ],
-                "title": "Conflict Result",
-                "type": "string"
-              },
-              "eligible_verdicts": {
-                "items": {
-                  "enum": [
-                    "supported",
-                    "contradicted",
-                    "unresolved",
-                    "uncovered",
-                    "stale"
-                  ],
-                  "type": "string"
-                },
-                "title": "Eligible Verdicts",
-                "type": "array"
-              },
-              "require_current": {
-                "default": true,
-                "title": "Require Current",
-                "type": "boolean"
-              },
-              "required_basis_kinds": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Required Basis Kinds",
-                "type": "array"
-              },
-              "selector": {
-                "enum": [
-                  "all",
-                  "only_contender"
-                ],
-                "title": "Selector",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-claim-resolution-policy-v1",
-                "default": "playbill-claim-resolution-policy-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "cardinality",
-              "eligible_verdicts",
-              "selector"
-            ],
-            "title": "ClaimResolutionPolicyV1",
-            "type": "object"
-          },
-          "ClaimType": {
-            "additionalProperties": false,
-            "properties": {
-              "admission_policy": {
-                "$ref": "#/$defs/ClaimAdmissionPolicyV1"
-              },
-              "allowed_object_subject_kinds": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Allowed Object Subject Kinds",
-                "type": "array"
-              },
-              "allowed_subject_kinds": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Allowed Subject Kinds",
-                "type": "array"
-              },
-              "artifact_format": {
-                "default": "playbill-claim-type-v1",
-                "enum": [
-                  "playbill-claim-type-v1",
-                  "playbill-claim-type-v3",
-                  "playbill-claim-type-v4"
-                ],
-                "title": "Artifact Format",
-                "type": "string"
-              },
-              "attestation_consequence_policy": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ClaimAttestationConsequencePolicyV1"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "cardinality": {
-                "enum": [
-                  "one",
-                  "many"
-                ],
-                "title": "Cardinality",
-                "type": "string"
-              },
-              "evidence_admission_policy": {
-                "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV1"
-              },
-              "evidence_freshness": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ClaimEvidenceFreshnessV1"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
+              "coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
               },
               "identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
               },
-              "lifecycle": {
-                "$ref": "#/$defs/ArtifactLifecycle",
-                "default": {
-                  "predecessor_digest": null,
-                  "state": "live"
-                }
-              },
-              "literal_schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Literal Schema"
-              },
-              "object_kind": {
-                "enum": [
-                  "literal",
-                  "subject",
-                  "exact_content"
-                ],
-                "title": "Object Kind",
+              "statement_digest": {
+                "title": "Statement Digest",
                 "type": "string"
-              },
-              "permitted_roles": {
-                "items": {
-                  "enum": [
-                    "normative",
-                    "observation",
-                    "environment_binding",
-                    "derivation"
-                  ],
-                  "type": "string"
-                },
-                "title": "Permitted Roles",
-                "type": "array"
-              },
-              "pins": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/ArtifactPin"
-                },
-                "title": "Pins",
-                "type": "array"
-              },
-              "predicate": {
-                "title": "Predicate",
-                "type": "string"
-              },
-              "referent_sensitivity": {
-                "default": "identity",
-                "enum": [
-                  "identity",
-                  "shell"
-                ],
-                "title": "Referent Sensitivity",
-                "type": "string"
-              },
-              "resolution_policy": {
-                "$ref": "#/$defs/ClaimResolutionPolicyV1"
-              },
-              "slot_policy": {
-                "default": null,
-                "title": "Slot Policy",
-                "type": "null"
-              },
-              "subject_scope": {
-                "default": null,
-                "title": "Subject Scope",
-                "type": "null"
               }
             },
             "required": [
               "identity",
-              "predicate",
-              "allowed_subject_kinds",
-              "object_kind",
-              "cardinality",
-              "permitted_roles",
-              "evidence_admission_policy",
-              "admission_policy",
-              "resolution_policy"
+              "artifact_digest",
+              "statement_digest",
+              "coordinate"
             ],
-            "title": "ClaimType",
+            "title": "ClaimVersionReferenceV1",
             "type": "object"
           },
-          "CorroborationRequirementV1": {
+          "FixedWindowV1": {
             "additionalProperties": false,
             "properties": {
-              "min_count": {
-                "minimum": 1,
-                "title": "Min Count",
+              "duration_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Duration Seconds",
                 "type": "integer"
               },
-              "query_definition_digest": {
-                "title": "Query Definition Digest",
-                "type": "string"
-              },
-              "requirement_id": {
-                "title": "Requirement Id",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-corroboration-requirement-v1",
-                "default": "playbill-corroboration-requirement-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "requirement_id",
-              "query_definition_digest",
-              "min_count"
-            ],
-            "title": "CorroborationRequirementV1",
-            "type": "object"
-          },
-          "ExistingCaptureCitationSourceV1": {
-            "additionalProperties": false,
-            "description": "Reference one already-materialized Capture without re-authoring its bytes.",
-            "properties": {
-              "capture_digest": {
-                "title": "Capture Digest",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-existing-capture-citation-source-v1",
-                "default": "playbill-existing-capture-citation-source-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "capture_digest"
-            ],
-            "title": "ExistingCaptureCitationSourceV1",
-            "type": "object"
-          },
-          "FreezeRequirementV1": {
-            "additionalProperties": false,
-            "properties": {
-              "except_transition_requirements": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Except Transition Requirements",
-                "type": "array"
-              },
-              "frozen_predicates": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Frozen Predicates",
-                "type": "array"
-              },
-              "requirement_id": {
-                "title": "Requirement Id",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-freeze-requirement-v1",
-                "default": "playbill-freeze-requirement-v1",
-                "title": "Tag",
-                "type": "string"
-              },
-              "while_predicate": {
-                "title": "While Predicate",
-                "type": "string"
-              },
-              "while_values": {
-                "items": {},
-                "title": "While Values",
-                "type": "array"
-              }
-            },
-            "required": [
-              "requirement_id",
-              "while_predicate",
-              "while_values",
-              "frozen_predicates"
-            ],
-            "title": "FreezeRequirementV1",
-            "type": "object"
-          },
-          "InsertionAnchorWindowV1": {
-            "additionalProperties": false,
-            "properties": {
-              "anchor_bytes_digest": {
-                "title": "Anchor Bytes Digest",
-                "type": "string"
-              },
-              "anchor_content_base64": {
-                "title": "Anchor Content Base64",
-                "type": "string"
-              },
-              "end_byte": {
-                "minimum": 0,
-                "title": "End Byte",
-                "type": "integer"
-              },
-              "insertion_offset": {
-                "minimum": 0,
-                "title": "Insertion Offset",
-                "type": "integer"
-              },
-              "observed_occurrence_count": {
-                "minimum": 0,
-                "title": "Observed Occurrence Count",
-                "type": "integer"
-              },
-              "start_byte": {
-                "minimum": 0,
-                "title": "Start Byte",
-                "type": "integer"
-              },
-              "tag": {
-                "const": "playbill-insertion-anchor-window-v1",
-                "default": "playbill-insertion-anchor-window-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "anchor_content_base64",
-              "anchor_bytes_digest",
-              "start_byte",
-              "end_byte",
-              "insertion_offset",
-              "observed_occurrence_count"
-            ],
-            "title": "InsertionAnchorWindowV1",
-            "type": "object"
-          },
-          "InsertionTargetV2": {
-            "additionalProperties": false,
-            "properties": {
-              "coordinate": {
-                "discriminator": {
-                  "mapping": {
-                    "git_blob": "#/$defs/WorkingGitBlobCoordinateV1",
-                    "observed_digest": "#/$defs/WorkingDigestCoordinateV1"
-                  },
-                  "propertyName": "kind"
-                },
-                "oneOf": [
-                  {
-                    "$ref": "#/$defs/WorkingGitBlobCoordinateV1"
-                  },
-                  {
-                    "$ref": "#/$defs/WorkingDigestCoordinateV1"
-                  }
-                ],
-                "title": "Coordinate"
-              },
-              "initial_preimage_byte_length": {
-                "maximum": 4194304,
-                "minimum": 0,
-                "title": "Initial Preimage Byte Length",
-                "type": "integer"
-              },
-              "initial_preimage_digest": {
-                "title": "Initial Preimage Digest",
-                "type": "string"
-              },
-              "operation": {
-                "enum": [
-                  "insert_before",
-                  "insert_after",
-                  "replace_window",
-                  "append"
-                ],
-                "title": "Operation",
-                "type": "string"
-              },
-              "selector": {
-                "$ref": "#/$defs/InsertionAnchorWindowV1"
-              },
-              "source_id": {
-                "title": "Source Id",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-insertion-target-v2",
-                "default": "playbill-insertion-target-v2",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "source_id",
-              "coordinate",
-              "initial_preimage_digest",
-              "initial_preimage_byte_length",
-              "selector",
-              "operation"
-            ],
-            "title": "InsertionTargetV2",
-            "type": "object"
-          },
-          "LiteralClaimObject": {
-            "additionalProperties": false,
-            "properties": {
               "kind": {
-                "const": "literal",
-                "default": "literal",
+                "const": "fixed",
+                "default": "fixed",
                 "title": "Kind",
                 "type": "string"
               },
-              "value": {
-                "title": "Value"
+              "starts_at": {
+                "description": "Reads VALIDITY WINDOW.",
+                "format": "date-time",
+                "title": "Starts At",
+                "type": "string"
               }
             },
             "required": [
-              "value"
+              "starts_at",
+              "duration_seconds"
             ],
-            "title": "LiteralClaimObject",
+            "title": "FixedWindowV1",
             "type": "object"
           },
           "PredictionEqualityRuleV1": {
@@ -22397,98 +21860,17 @@
             "title": "PredictionThresholdRuleV1",
             "type": "object"
           },
-          "SelfSourceBodyV1": {
+          "ResolutionContractV1": {
             "additionalProperties": false,
-            "properties": {
-              "content_base64": {
-                "title": "Content Base64",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-self-source-body-v1",
-                "default": "playbill-self-source-body-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "content_base64"
-            ],
-            "title": "SelfSourceBodyV1",
-            "type": "object"
-          },
-          "SemanticAddress": {
-            "additionalProperties": false,
-            "description": "Stable meaning identity, independent of source-line presentation.",
-            "properties": {
-              "artifact_path": {
-                "title": "Artifact Path",
-                "type": "string"
-              },
-              "selector": {
-                "$ref": "#/$defs/SemanticSelector"
-              },
-              "tag": {
-                "const": "playbill-semantic-address-v1",
-                "default": "playbill-semantic-address-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "artifact_path",
-              "selector"
-            ],
-            "title": "SemanticAddress",
-            "type": "object"
-          },
-          "SemanticSelector": {
-            "additionalProperties": false,
-            "properties": {
-              "scheme": {
-                "title": "Scheme",
-                "type": "string"
-              },
-              "value": {
-                "title": "Value",
-                "type": "string"
-              }
-            },
-            "required": [
-              "scheme",
-              "value"
-            ],
-            "title": "SemanticSelector",
-            "type": "object"
-          },
-          "SubjectClaimObject": {
-            "additionalProperties": false,
-            "properties": {
-              "address": {
-                "$ref": "#/$defs/SemanticAddress"
-              },
-              "kind": {
-                "const": "subject",
-                "default": "subject",
-                "title": "Kind",
-                "type": "string"
-              }
-            },
-            "required": [
-              "address"
-            ],
-            "title": "SubjectClaimObject",
-            "type": "object"
-          },
-          "SubjectShell": {
-            "additionalProperties": false,
-            "description": "A stable referent with no mutable properties or free metadata.",
             "properties": {
               "artifact_format": {
-                "const": "playbill-subject-v1",
-                "default": "playbill-subject-v1",
+                "const": "playbill-resolution-contract-v1",
+                "default": "playbill-resolution-contract-v1",
                 "title": "Artifact Format",
                 "type": "string"
+              },
+              "hypothesis": {
+                "$ref": "#/$defs/ClaimVersionReferenceV1"
               },
               "identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
@@ -22500,466 +21882,12 @@
                   "state": "live"
                 }
               },
-              "pins": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/ArtifactPin"
-                },
-                "title": "Pins",
-                "type": "array"
-              },
-              "subject_id": {
-                "title": "Subject Id",
-                "type": "string"
-              },
-              "subject_kind": {
-                "title": "Subject Kind",
-                "type": "string"
-              }
-            },
-            "required": [
-              "identity",
-              "subject_kind",
-              "subject_id"
-            ],
-            "title": "SubjectShell",
-            "type": "object"
-          },
-          "WorkingAnchorWindowV1": {
-            "additionalProperties": false,
-            "properties": {
-              "anchor": {
-                "title": "Anchor",
-                "type": "string"
-              },
-              "end_byte": {
-                "minimum": 1,
-                "title": "End Byte",
-                "type": "integer"
-              },
-              "observed_occurrence_count": {
-                "minimum": 0,
-                "title": "Observed Occurrence Count",
-                "type": "integer"
-              },
-              "selected_occurrence": {
-                "anyOf": [
-                  {
-                    "minimum": 1,
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Selected Occurrence"
-              },
-              "start_byte": {
-                "minimum": 0,
-                "title": "Start Byte",
-                "type": "integer"
-              },
-              "tag": {
-                "const": "playbill-working-anchor-window-v1",
-                "default": "playbill-working-anchor-window-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "anchor",
-              "start_byte",
-              "end_byte",
-              "observed_occurrence_count"
-            ],
-            "title": "WorkingAnchorWindowV1",
-            "type": "object"
-          },
-          "WorkingDigestCoordinateV1": {
-            "additionalProperties": false,
-            "properties": {
-              "kind": {
-                "const": "observed_digest",
-                "default": "observed_digest",
-                "title": "Kind",
-                "type": "string"
-              },
-              "source_byte_length": {
-                "minimum": 0,
-                "title": "Source Byte Length",
-                "type": "integer"
-              },
-              "source_content_digest": {
-                "title": "Source Content Digest",
-                "type": "string"
-              }
-            },
-            "required": [
-              "source_content_digest",
-              "source_byte_length"
-            ],
-            "title": "WorkingDigestCoordinateV1",
-            "type": "object"
-          },
-          "WorkingGitBlobCoordinateV1": {
-            "additionalProperties": false,
-            "properties": {
-              "blob_oid": {
-                "title": "Blob Oid",
-                "type": "string"
-              },
-              "commit_oid": {
-                "title": "Commit Oid",
-                "type": "string"
-              },
-              "kind": {
-                "const": "git_blob",
-                "default": "git_blob",
-                "title": "Kind",
-                "type": "string"
-              },
-              "repository_id": {
-                "title": "Repository Id",
-                "type": "string"
-              },
-              "source_byte_length": {
-                "minimum": 0,
-                "title": "Source Byte Length",
-                "type": "integer"
-              }
-            },
-            "required": [
-              "repository_id",
-              "commit_oid",
-              "blob_oid",
-              "source_byte_length"
-            ],
-            "title": "WorkingGitBlobCoordinateV1",
-            "type": "object"
-          },
-          "WorkingSelectionObservationV1": {
-            "additionalProperties": false,
-            "properties": {
-              "coordinate": {
-                "discriminator": {
-                  "mapping": {
-                    "git_blob": "#/$defs/WorkingGitBlobCoordinateV1",
-                    "observed_digest": "#/$defs/WorkingDigestCoordinateV1"
-                  },
-                  "propertyName": "kind"
-                },
-                "oneOf": [
-                  {
-                    "$ref": "#/$defs/WorkingGitBlobCoordinateV1"
-                  },
-                  {
-                    "$ref": "#/$defs/WorkingDigestCoordinateV1"
-                  }
-                ],
-                "title": "Coordinate"
-              },
-              "selected_bytes_digest": {
-                "title": "Selected Bytes Digest",
-                "type": "string"
-              },
-              "selected_content_base64": {
-                "title": "Selected Content Base64",
-                "type": "string"
-              },
-              "selector": {
-                "$ref": "#/$defs/WorkingAnchorWindowV1"
-              },
-              "source_content_base64": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Source Content Base64"
-              },
-              "source_id": {
-                "title": "Source Id",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-working-selection-observation-v1",
-                "default": "playbill-working-selection-observation-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "source_id",
-              "coordinate",
-              "selected_content_base64",
-              "selected_bytes_digest",
-              "selector"
-            ],
-            "title": "WorkingSelectionObservationV1",
-            "type": "object"
-          }
-        },
-        "additionalProperties": false,
-        "properties": {
-          "deadline": {
-            "description": "Reads VALIDITY WINDOW.",
-            "format": "date-time",
-            "title": "Deadline",
-            "type": "string"
-          },
-          "measurement_name": {
-            "title": "Measurement Name",
-            "type": "string"
-          },
-          "observation": {
-            "$ref": "#/$defs/PredictionObservationSelectorV1"
-          },
-          "outcome_class": {
-            "default": "prediction-correctness",
-            "title": "Outcome Class",
-            "type": "string"
-          },
-          "prediction": {
-            "discriminator": {
-              "mapping": {
-                "playbill-claim-authoring-payload-v1": "#/$defs/ClaimAuthoringPayloadV1",
-                "playbill-claim-authoring-payload-v2": "#/$defs/ClaimAuthoringPayloadV2",
-                "playbill-claim-authoring-payload-v3": "#/$defs/ClaimAuthoringPayloadV3"
-              },
-              "propertyName": "tag"
-            },
-            "oneOf": [
-              {
-                "$ref": "#/$defs/ClaimAuthoringPayloadV1"
-              },
-              {
-                "$ref": "#/$defs/ClaimAuthoringPayloadV2"
-              },
-              {
-                "$ref": "#/$defs/ClaimAuthoringPayloadV3"
-              }
-            ],
-            "title": "Prediction"
-          },
-          "procedure": {
-            "title": "Procedure",
-            "type": "string"
-          },
-          "rule": {
-            "discriminator": {
-              "mapping": {
-                "playbill-prediction-equality-rule-v1": "#/$defs/PredictionEqualityRuleV1",
-                "playbill-prediction-presence-rule-v1": "#/$defs/PredictionPresenceRuleV1",
-                "playbill-prediction-threshold-rule-v1": "#/$defs/PredictionThresholdRuleV1"
-              },
-              "propertyName": "tag"
-            },
-            "oneOf": [
-              {
-                "$ref": "#/$defs/PredictionEqualityRuleV1"
-              },
-              {
-                "$ref": "#/$defs/PredictionThresholdRuleV1"
-              },
-              {
-                "$ref": "#/$defs/PredictionPresenceRuleV1"
-              }
-            ],
-            "title": "Rule"
-          },
-          "tag": {
-            "const": "playbill-predict-request-v1",
-            "default": "playbill-predict-request-v1",
-            "title": "Tag",
-            "type": "string"
-          }
-        },
-        "required": [
-          "prediction",
-          "procedure",
-          "measurement_name",
-          "observation",
-          "rule",
-          "deadline"
-        ],
-        "title": "PlaybillPredictRequestV1",
-        "type": "object"
-      },
-      "required_fields": [
-        "deadline",
-        "measurement_name",
-        "observation",
-        "prediction",
-        "procedure",
-        "rule"
-      ]
-    },
-    "PlaybillPredictResultV1": {
-      "fields": {
-        "declaration": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "declaration",
-          "required": true,
-          "schema": {
-            "$ref": "#/$defs/PlaybillPredictionDeclarationV1"
-          }
-        },
-        "intent": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "intent",
-          "required": true,
-          "schema": {
-            "additionalProperties": true,
-            "title": "Intent",
-            "type": "object"
-          }
-        },
-        "tag": {
-          "default": "playbill-predict-result-v1",
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "tag",
-          "required": false,
-          "schema": {
-            "const": "playbill-predict-result-v1",
-            "default": "playbill-predict-result-v1",
-            "title": "Tag",
-            "type": "string"
-          }
-        }
-      },
-      "json_schema": {
-        "$defs": {
-          "AcceptedCoordinate": {
-            "additionalProperties": false,
-            "description": "Path-free public handle for one fully verified accepted generation.",
-            "properties": {
-              "compiler_digest": {
-                "title": "Compiler Digest",
-                "type": "string"
-              },
-              "generation_root": {
-                "title": "Generation Root",
-                "type": "string"
-              },
-              "git_oid": {
-                "title": "Git Oid",
-                "type": "string"
-              },
-              "semantic_root": {
-                "title": "Semantic Root",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-accepted-coordinate-v1",
-                "default": "playbill-accepted-coordinate-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "git_oid",
-              "semantic_root",
-              "generation_root",
-              "compiler_digest"
-            ],
-            "title": "AcceptedCoordinate",
-            "type": "object"
-          },
-          "ArtifactIdentity": {
-            "additionalProperties": false,
-            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
-            "properties": {
-              "kind": {
-                "title": "Kind",
-                "type": "string"
-              },
-              "name": {
-                "title": "Name",
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "name"
-            ],
-            "title": "ArtifactIdentity",
-            "type": "object"
-          },
-          "PlaybillPredictionDeclarationV1": {
-            "additionalProperties": false,
-            "properties": {
-              "actor_id": {
-                "title": "Actor Id",
-                "type": "string"
-              },
-              "base_coordinate": {
-                "$ref": "#/$defs/AcceptedCoordinate"
-              },
-              "candidate_digest": {
-                "title": "Candidate Digest",
-                "type": "string"
-              },
-              "deadline": {
-                "description": "Reads VALIDITY WINDOW.",
-                "format": "date-time",
-                "title": "Deadline",
-                "type": "string"
-              },
-              "declaration_digest": {
-                "title": "Declaration Digest",
-                "type": "string"
-              },
-              "declared_at": {
-                "description": "Reads EVALUATION INSTANT.",
-                "format": "date-time",
-                "title": "Declared At",
-                "type": "string"
-              },
-              "intent_id": {
-                "title": "Intent Id",
-                "type": "string"
-              },
-              "measurement_name": {
-                "title": "Measurement Name",
-                "type": "string"
-              },
               "observation": {
                 "$ref": "#/$defs/PredictionObservationSelectorV1"
               },
               "outcome_class": {
+                "default": "prediction-correctness",
                 "title": "Outcome Class",
-                "type": "string"
-              },
-              "predicted_claim_id": {
-                "title": "Predicted Claim Id",
-                "type": "string"
-              },
-              "prediction_id": {
-                "title": "Prediction Id",
-                "type": "string"
-              },
-              "procedure_artifact_digest": {
-                "title": "Procedure Artifact Digest",
-                "type": "string"
-              },
-              "procedure_identity": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              },
-              "procedure_path": {
-                "title": "Procedure Path",
-                "type": "string"
-              },
-              "proposal_id": {
-                "title": "Proposal Id",
                 "type": "string"
               },
               "rule": {
@@ -22984,149 +21912,33 @@
                 ],
                 "title": "Rule"
               },
-              "tag": {
-                "const": "playbill-prediction-declaration-v1",
-                "default": "playbill-prediction-declaration-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "prediction_id",
-              "intent_id",
-              "proposal_id",
-              "candidate_digest",
-              "predicted_claim_id",
-              "actor_id",
-              "base_coordinate",
-              "procedure_identity",
-              "procedure_path",
-              "procedure_artifact_digest",
-              "measurement_name",
-              "observation",
-              "rule",
-              "outcome_class",
-              "declared_at",
-              "deadline",
-              "declaration_digest"
-            ],
-            "title": "PlaybillPredictionDeclarationV1",
-            "type": "object"
-          },
-          "PredictionEqualityRuleV1": {
-            "additionalProperties": false,
-            "properties": {
-              "operator": {
-                "const": "equality",
-                "default": "equality",
-                "title": "Operator",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-prediction-equality-rule-v1",
-                "default": "playbill-prediction-equality-rule-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "title": "PredictionEqualityRuleV1",
-            "type": "object"
-          },
-          "PredictionObservationSelectorV1": {
-            "additionalProperties": false,
-            "properties": {
-              "predicate": {
-                "title": "Predicate",
-                "type": "string"
-              },
-              "qualifier": {
-                "anyOf": [
+              "window": {
+                "discriminator": {
+                  "mapping": {
+                    "capture_event": "#/$defs/CaptureEventWindowV1",
+                    "fixed": "#/$defs/FixedWindowV1"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
                   {
-                    "type": "string"
+                    "$ref": "#/$defs/FixedWindowV1"
                   },
                   {
-                    "type": "null"
+                    "$ref": "#/$defs/CaptureEventWindowV1"
                   }
                 ],
-                "default": null,
-                "title": "Qualifier"
-              },
-              "role": {
-                "const": "observation",
-                "default": "observation",
-                "title": "Role",
-                "type": "string"
-              },
-              "subject": {
-                "$ref": "#/$defs/SemanticAddress"
-              },
-              "tag": {
-                "const": "playbill-prediction-observation-selector-v1",
-                "default": "playbill-prediction-observation-selector-v1",
-                "title": "Tag",
-                "type": "string"
+                "title": "Window"
               }
             },
             "required": [
-              "subject",
-              "predicate"
+              "identity",
+              "hypothesis",
+              "observation",
+              "rule",
+              "window"
             ],
-            "title": "PredictionObservationSelectorV1",
-            "type": "object"
-          },
-          "PredictionPresenceRuleV1": {
-            "additionalProperties": false,
-            "properties": {
-              "operator": {
-                "const": "presence",
-                "default": "presence",
-                "title": "Operator",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-prediction-presence-rule-v1",
-                "default": "playbill-prediction-presence-rule-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "title": "PredictionPresenceRuleV1",
-            "type": "object"
-          },
-          "PredictionThresholdRuleV1": {
-            "additionalProperties": false,
-            "properties": {
-              "comparison": {
-                "enum": [
-                  "gt",
-                  "gte",
-                  "lt",
-                  "lte"
-                ],
-                "title": "Comparison",
-                "type": "string"
-              },
-              "operator": {
-                "const": "threshold",
-                "default": "threshold",
-                "title": "Operator",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-prediction-threshold-rule-v1",
-                "default": "playbill-prediction-threshold-rule-v1",
-                "title": "Tag",
-                "type": "string"
-              },
-              "threshold": {
-                "title": "Threshold"
-              }
-            },
-            "required": [
-              "comparison",
-              "threshold"
-            ],
-            "title": "PredictionThresholdRuleV1",
+            "title": "ResolutionContractV1",
             "type": "object"
           },
           "SemanticAddress": {
@@ -23176,184 +21988,57 @@
         },
         "additionalProperties": false,
         "properties": {
-          "declaration": {
-            "$ref": "#/$defs/PlaybillPredictionDeclarationV1"
-          },
-          "intent": {
-            "additionalProperties": true,
-            "title": "Intent",
-            "type": "object"
+          "contract": {
+            "$ref": "#/$defs/ResolutionContractV1"
           },
           "tag": {
-            "const": "playbill-predict-result-v1",
-            "default": "playbill-predict-result-v1",
+            "const": "playbill-predict-request-v2",
+            "default": "playbill-predict-request-v2",
             "title": "Tag",
             "type": "string"
           }
         },
         "required": [
-          "declaration",
-          "intent"
+          "contract"
         ],
-        "title": "PlaybillPredictResultV1",
+        "title": "PlaybillPredictRequestV2",
         "type": "object"
       },
       "required_fields": [
-        "declaration",
-        "intent"
+        "contract"
       ]
     },
-    "PlaybillPredictionDeclarationV1": {
+    "PlaybillPredictResultV2": {
       "fields": {
-        "actor_id": {
+        "contract_digest": {
           "has_default": false,
           "has_default_factory": false,
-          "json_name": "actor_id",
+          "json_name": "contract_digest",
           "required": true,
           "schema": {
-            "title": "Actor Id",
+            "title": "Contract Digest",
             "type": "string"
           }
         },
-        "base_coordinate": {
+        "contract_identity": {
           "has_default": false,
           "has_default_factory": false,
-          "json_name": "base_coordinate",
+          "json_name": "contract_identity",
           "required": true,
           "schema": {
-            "$ref": "#/$defs/AcceptedCoordinate"
-          }
-        },
-        "candidate_digest": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "candidate_digest",
-          "required": true,
-          "schema": {
-            "title": "Candidate Digest",
+            "title": "Contract Identity",
             "type": "string"
           }
         },
-        "deadline": {
+        "intent": {
           "has_default": false,
           "has_default_factory": false,
-          "json_name": "deadline",
+          "json_name": "intent",
           "required": true,
           "schema": {
-            "description": "Reads VALIDITY WINDOW.",
-            "format": "date-time",
-            "title": "Deadline",
-            "type": "string"
-          }
-        },
-        "declaration_digest": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "declaration_digest",
-          "required": true,
-          "schema": {
-            "title": "Declaration Digest",
-            "type": "string"
-          }
-        },
-        "declared_at": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "declared_at",
-          "required": true,
-          "schema": {
-            "description": "Reads EVALUATION INSTANT.",
-            "format": "date-time",
-            "title": "Declared At",
-            "type": "string"
-          }
-        },
-        "intent_id": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "intent_id",
-          "required": true,
-          "schema": {
-            "title": "Intent Id",
-            "type": "string"
-          }
-        },
-        "measurement_name": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "measurement_name",
-          "required": true,
-          "schema": {
-            "title": "Measurement Name",
-            "type": "string"
-          }
-        },
-        "observation": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "observation",
-          "required": true,
-          "schema": {
-            "$ref": "#/$defs/PredictionObservationSelectorV1"
-          }
-        },
-        "outcome_class": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "outcome_class",
-          "required": true,
-          "schema": {
-            "title": "Outcome Class",
-            "type": "string"
-          }
-        },
-        "predicted_claim_id": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "predicted_claim_id",
-          "required": true,
-          "schema": {
-            "title": "Predicted Claim Id",
-            "type": "string"
-          }
-        },
-        "prediction_id": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "prediction_id",
-          "required": true,
-          "schema": {
-            "title": "Prediction Id",
-            "type": "string"
-          }
-        },
-        "procedure_artifact_digest": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "procedure_artifact_digest",
-          "required": true,
-          "schema": {
-            "title": "Procedure Artifact Digest",
-            "type": "string"
-          }
-        },
-        "procedure_identity": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "procedure_identity",
-          "required": true,
-          "schema": {
-            "$ref": "#/$defs/ArtifactIdentity"
-          }
-        },
-        "procedure_path": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "procedure_path",
-          "required": true,
-          "schema": {
-            "title": "Procedure Path",
-            "type": "string"
+            "additionalProperties": true,
+            "title": "Intent",
+            "type": "object"
           }
         },
         "proposal_id": {
@@ -23366,404 +22051,62 @@
             "type": "string"
           }
         },
-        "rule": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "rule",
-          "required": true,
-          "schema": {
-            "discriminator": {
-              "mapping": {
-                "playbill-prediction-equality-rule-v1": "#/$defs/PredictionEqualityRuleV1",
-                "playbill-prediction-presence-rule-v1": "#/$defs/PredictionPresenceRuleV1",
-                "playbill-prediction-threshold-rule-v1": "#/$defs/PredictionThresholdRuleV1"
-              },
-              "propertyName": "tag"
-            },
-            "oneOf": [
-              {
-                "$ref": "#/$defs/PredictionEqualityRuleV1"
-              },
-              {
-                "$ref": "#/$defs/PredictionThresholdRuleV1"
-              },
-              {
-                "$ref": "#/$defs/PredictionPresenceRuleV1"
-              }
-            ],
-            "title": "Rule"
-          }
-        },
         "tag": {
-          "default": "playbill-prediction-declaration-v1",
+          "default": "playbill-predict-result-v2",
           "default_json_serializable": true,
           "has_default": true,
           "has_default_factory": false,
           "json_name": "tag",
           "required": false,
           "schema": {
-            "const": "playbill-prediction-declaration-v1",
-            "default": "playbill-prediction-declaration-v1",
+            "const": "playbill-predict-result-v2",
+            "default": "playbill-predict-result-v2",
             "title": "Tag",
             "type": "string"
           }
         }
       },
       "json_schema": {
-        "$defs": {
-          "AcceptedCoordinate": {
-            "additionalProperties": false,
-            "description": "Path-free public handle for one fully verified accepted generation.",
-            "properties": {
-              "compiler_digest": {
-                "title": "Compiler Digest",
-                "type": "string"
-              },
-              "generation_root": {
-                "title": "Generation Root",
-                "type": "string"
-              },
-              "git_oid": {
-                "title": "Git Oid",
-                "type": "string"
-              },
-              "semantic_root": {
-                "title": "Semantic Root",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-accepted-coordinate-v1",
-                "default": "playbill-accepted-coordinate-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "git_oid",
-              "semantic_root",
-              "generation_root",
-              "compiler_digest"
-            ],
-            "title": "AcceptedCoordinate",
-            "type": "object"
-          },
-          "ArtifactIdentity": {
-            "additionalProperties": false,
-            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
-            "properties": {
-              "kind": {
-                "title": "Kind",
-                "type": "string"
-              },
-              "name": {
-                "title": "Name",
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "name"
-            ],
-            "title": "ArtifactIdentity",
-            "type": "object"
-          },
-          "PredictionEqualityRuleV1": {
-            "additionalProperties": false,
-            "properties": {
-              "operator": {
-                "const": "equality",
-                "default": "equality",
-                "title": "Operator",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-prediction-equality-rule-v1",
-                "default": "playbill-prediction-equality-rule-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "title": "PredictionEqualityRuleV1",
-            "type": "object"
-          },
-          "PredictionObservationSelectorV1": {
-            "additionalProperties": false,
-            "properties": {
-              "predicate": {
-                "title": "Predicate",
-                "type": "string"
-              },
-              "qualifier": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Qualifier"
-              },
-              "role": {
-                "const": "observation",
-                "default": "observation",
-                "title": "Role",
-                "type": "string"
-              },
-              "subject": {
-                "$ref": "#/$defs/SemanticAddress"
-              },
-              "tag": {
-                "const": "playbill-prediction-observation-selector-v1",
-                "default": "playbill-prediction-observation-selector-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "subject",
-              "predicate"
-            ],
-            "title": "PredictionObservationSelectorV1",
-            "type": "object"
-          },
-          "PredictionPresenceRuleV1": {
-            "additionalProperties": false,
-            "properties": {
-              "operator": {
-                "const": "presence",
-                "default": "presence",
-                "title": "Operator",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-prediction-presence-rule-v1",
-                "default": "playbill-prediction-presence-rule-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "title": "PredictionPresenceRuleV1",
-            "type": "object"
-          },
-          "PredictionThresholdRuleV1": {
-            "additionalProperties": false,
-            "properties": {
-              "comparison": {
-                "enum": [
-                  "gt",
-                  "gte",
-                  "lt",
-                  "lte"
-                ],
-                "title": "Comparison",
-                "type": "string"
-              },
-              "operator": {
-                "const": "threshold",
-                "default": "threshold",
-                "title": "Operator",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-prediction-threshold-rule-v1",
-                "default": "playbill-prediction-threshold-rule-v1",
-                "title": "Tag",
-                "type": "string"
-              },
-              "threshold": {
-                "title": "Threshold"
-              }
-            },
-            "required": [
-              "comparison",
-              "threshold"
-            ],
-            "title": "PredictionThresholdRuleV1",
-            "type": "object"
-          },
-          "SemanticAddress": {
-            "additionalProperties": false,
-            "description": "Stable meaning identity, independent of source-line presentation.",
-            "properties": {
-              "artifact_path": {
-                "title": "Artifact Path",
-                "type": "string"
-              },
-              "selector": {
-                "$ref": "#/$defs/SemanticSelector"
-              },
-              "tag": {
-                "const": "playbill-semantic-address-v1",
-                "default": "playbill-semantic-address-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "artifact_path",
-              "selector"
-            ],
-            "title": "SemanticAddress",
-            "type": "object"
-          },
-          "SemanticSelector": {
-            "additionalProperties": false,
-            "properties": {
-              "scheme": {
-                "title": "Scheme",
-                "type": "string"
-              },
-              "value": {
-                "title": "Value",
-                "type": "string"
-              }
-            },
-            "required": [
-              "scheme",
-              "value"
-            ],
-            "title": "SemanticSelector",
-            "type": "object"
-          }
-        },
         "additionalProperties": false,
         "properties": {
-          "actor_id": {
-            "title": "Actor Id",
+          "contract_digest": {
+            "title": "Contract Digest",
             "type": "string"
           },
-          "base_coordinate": {
-            "$ref": "#/$defs/AcceptedCoordinate"
-          },
-          "candidate_digest": {
-            "title": "Candidate Digest",
+          "contract_identity": {
+            "title": "Contract Identity",
             "type": "string"
           },
-          "deadline": {
-            "description": "Reads VALIDITY WINDOW.",
-            "format": "date-time",
-            "title": "Deadline",
-            "type": "string"
-          },
-          "declaration_digest": {
-            "title": "Declaration Digest",
-            "type": "string"
-          },
-          "declared_at": {
-            "description": "Reads EVALUATION INSTANT.",
-            "format": "date-time",
-            "title": "Declared At",
-            "type": "string"
-          },
-          "intent_id": {
-            "title": "Intent Id",
-            "type": "string"
-          },
-          "measurement_name": {
-            "title": "Measurement Name",
-            "type": "string"
-          },
-          "observation": {
-            "$ref": "#/$defs/PredictionObservationSelectorV1"
-          },
-          "outcome_class": {
-            "title": "Outcome Class",
-            "type": "string"
-          },
-          "predicted_claim_id": {
-            "title": "Predicted Claim Id",
-            "type": "string"
-          },
-          "prediction_id": {
-            "title": "Prediction Id",
-            "type": "string"
-          },
-          "procedure_artifact_digest": {
-            "title": "Procedure Artifact Digest",
-            "type": "string"
-          },
-          "procedure_identity": {
-            "$ref": "#/$defs/ArtifactIdentity"
-          },
-          "procedure_path": {
-            "title": "Procedure Path",
-            "type": "string"
+          "intent": {
+            "additionalProperties": true,
+            "title": "Intent",
+            "type": "object"
           },
           "proposal_id": {
             "title": "Proposal Id",
             "type": "string"
           },
-          "rule": {
-            "discriminator": {
-              "mapping": {
-                "playbill-prediction-equality-rule-v1": "#/$defs/PredictionEqualityRuleV1",
-                "playbill-prediction-presence-rule-v1": "#/$defs/PredictionPresenceRuleV1",
-                "playbill-prediction-threshold-rule-v1": "#/$defs/PredictionThresholdRuleV1"
-              },
-              "propertyName": "tag"
-            },
-            "oneOf": [
-              {
-                "$ref": "#/$defs/PredictionEqualityRuleV1"
-              },
-              {
-                "$ref": "#/$defs/PredictionThresholdRuleV1"
-              },
-              {
-                "$ref": "#/$defs/PredictionPresenceRuleV1"
-              }
-            ],
-            "title": "Rule"
-          },
           "tag": {
-            "const": "playbill-prediction-declaration-v1",
-            "default": "playbill-prediction-declaration-v1",
+            "const": "playbill-predict-result-v2",
+            "default": "playbill-predict-result-v2",
             "title": "Tag",
             "type": "string"
           }
         },
         "required": [
-          "prediction_id",
-          "intent_id",
+          "contract_identity",
+          "contract_digest",
           "proposal_id",
-          "candidate_digest",
-          "predicted_claim_id",
-          "actor_id",
-          "base_coordinate",
-          "procedure_identity",
-          "procedure_path",
-          "procedure_artifact_digest",
-          "measurement_name",
-          "observation",
-          "rule",
-          "outcome_class",
-          "declared_at",
-          "deadline",
-          "declaration_digest"
+          "intent"
         ],
-        "title": "PlaybillPredictionDeclarationV1",
+        "title": "PlaybillPredictResultV2",
         "type": "object"
       },
       "required_fields": [
-        "actor_id",
-        "base_coordinate",
-        "candidate_digest",
-        "deadline",
-        "declaration_digest",
-        "declared_at",
-        "intent_id",
-        "measurement_name",
-        "observation",
-        "outcome_class",
-        "predicted_claim_id",
-        "prediction_id",
-        "procedure_artifact_digest",
-        "procedure_identity",
-        "procedure_path",
-        "proposal_id",
-        "rule"
+        "contract_digest",
+        "contract_identity",
+        "intent",
+        "proposal_id"
       ]
     },
     "PlaybillPrincipalList": {
@@ -26613,6 +24956,25 @@
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
           }
         },
+        "investigation": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "investigation",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InvestigationBindingV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "lane": {
           "has_default": false,
           "has_default_factory": false,
@@ -26915,6 +25277,25 @@
             "title": "Terminal Egress",
             "type": "array"
           }
+        },
+        "trigger_binding": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "trigger_binding",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LineTriggerBindingV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
         }
       },
       "json_schema": {
@@ -27065,6 +25446,41 @@
             "title": "ArtifactPin",
             "type": "object"
           },
+          "BoundObservationWindowV1": {
+            "additionalProperties": false,
+            "description": "Exact boundaries retained at admission, including the verified event anchor.",
+            "properties": {
+              "ends_at": {
+                "description": "Reads VALIDITY WINDOW.",
+                "format": "date-time",
+                "title": "Ends At",
+                "type": "string"
+              },
+              "event": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TriggerEventReferenceV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "starts_at": {
+                "description": "Reads VALIDITY WINDOW.",
+                "format": "date-time",
+                "title": "Starts At",
+                "type": "string"
+              }
+            },
+            "required": [
+              "starts_at",
+              "ends_at"
+            ],
+            "title": "BoundObservationWindowV1",
+            "type": "object"
+          },
           "CanonicalDurationV1": {
             "additionalProperties": false,
             "properties": {
@@ -27084,6 +25500,33 @@
               "microseconds"
             ],
             "title": "CanonicalDurationV1",
+            "type": "object"
+          },
+          "ClaimVersionReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "statement_digest": {
+                "title": "Statement Digest",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "artifact_digest",
+              "statement_digest",
+              "coordinate"
+            ],
+            "title": "ClaimVersionReferenceV1",
             "type": "object"
           },
           "HandEditInstructionV1": {
@@ -27118,6 +25561,68 @@
               "hand_edit"
             ],
             "title": "HandEditRepairV1",
+            "type": "object"
+          },
+          "InvestigationBindingV1": {
+            "additionalProperties": false,
+            "properties": {
+              "contract": {
+                "$ref": "#/$defs/ResolutionContractReferenceV1"
+              },
+              "hypothesis": {
+                "$ref": "#/$defs/ClaimVersionReferenceV1"
+              },
+              "window": {
+                "$ref": "#/$defs/BoundObservationWindowV1"
+              }
+            },
+            "required": [
+              "contract",
+              "hypothesis",
+              "window"
+            ],
+            "title": "InvestigationBindingV1",
+            "type": "object"
+          },
+          "LineTriggerBindingV1": {
+            "additionalProperties": false,
+            "description": "Semantic cause of one occurrence, independent of its dispatch instant.",
+            "properties": {
+              "event": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TriggerEventReferenceV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "kind": {
+                "enum": [
+                  "capture_landing",
+                  "window_close"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "window": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BoundObservationWindowV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "title": "LineTriggerBindingV1",
             "type": "object"
           },
           "PlaybillAcceptedCoordinate": {
@@ -30251,6 +28756,28 @@
             "title": "RepairOperationV1",
             "type": "object"
           },
+          "ResolutionContractReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "identity",
+              "artifact_digest",
+              "coordinate"
+            ],
+            "title": "ResolutionContractReferenceV1",
+            "type": "object"
+          },
           "SourceReadReceiptV1": {
             "additionalProperties": false,
             "description": "Daemon receipt independently attesting one bounded authorized file read.",
@@ -30348,6 +28875,39 @@
             ],
             "title": "SourceReadReceiptV1",
             "type": "object"
+          },
+          "TriggerEventReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "partition_id": {
+                "minLength": 1,
+                "title": "Partition Id",
+                "type": "string"
+              },
+              "record_digest": {
+                "title": "Record Digest",
+                "type": "string"
+              },
+              "run_id": {
+                "minLength": 1,
+                "title": "Run Id",
+                "type": "string"
+              },
+              "sequence": {
+                "description": "Reads SETTLEMENT ORDER.",
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "run_id",
+              "partition_id",
+              "sequence",
+              "record_digest"
+            ],
+            "title": "TriggerEventReferenceV1",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -30372,6 +28932,17 @@
           },
           "head_at_admission": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "investigation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InvestigationBindingV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "lane": {
             "enum": [
@@ -30559,6 +29130,17 @@
             },
             "title": "Terminal Egress",
             "type": "array"
+          },
+          "trigger_binding": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LineTriggerBindingV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [
@@ -35007,8 +33589,17 @@
         "value"
       ]
     },
-    "PlaybillSettleRequestV1": {
+    "PlaybillSettleRequestV2": {
       "fields": {
+        "contract": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "contract",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ResolutionContractReferenceV1"
+          }
+        },
         "evidence": {
           "has_default": false,
           "has_default_factory": false,
@@ -35017,73 +33608,195 @@
           "schema": {
             "discriminator": {
               "mapping": {
-                "playbill-observation-settlement-evidence-v1": "#/$defs/ObservationSettlementEvidenceV1",
-                "playbill-terminal-settlement-evidence-v1": "#/$defs/TerminalSettlementEvidenceV1"
+                "playbill-observation-settlement-evidence-v2": "#/$defs/ObservationSettlementEvidenceV2",
+                "playbill-terminal-settlement-evidence-v2": "#/$defs/TerminalSettlementEvidenceV2"
               },
               "propertyName": "tag"
             },
             "oneOf": [
               {
-                "$ref": "#/$defs/ObservationSettlementEvidenceV1"
+                "$ref": "#/$defs/ObservationSettlementEvidenceV2"
               },
               {
-                "$ref": "#/$defs/TerminalSettlementEvidenceV1"
+                "$ref": "#/$defs/TerminalSettlementEvidenceV2"
               }
             ],
             "title": "Evidence"
           }
         },
         "tag": {
-          "default": "playbill-settle-request-v1",
+          "default": "playbill-settle-request-v2",
           "default_json_serializable": true,
           "has_default": true,
           "has_default_factory": false,
           "json_name": "tag",
           "required": false,
           "schema": {
-            "const": "playbill-settle-request-v1",
-            "default": "playbill-settle-request-v1",
+            "const": "playbill-settle-request-v2",
+            "default": "playbill-settle-request-v2",
             "title": "Tag",
             "type": "string"
+          }
+        },
+        "trigger_event": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "trigger_event",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TriggerEventReferenceV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         }
       },
       "json_schema": {
         "$defs": {
-          "ObservationSettlementEvidenceV1": {
+          "AcceptedCoordinate": {
             "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
             "properties": {
-              "claim_id": {
-                "title": "Claim Id",
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
                 "type": "string"
               },
               "tag": {
-                "const": "playbill-observation-settlement-evidence-v1",
-                "default": "playbill-observation-settlement-evidence-v1",
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
                 "title": "Tag",
                 "type": "string"
               }
             },
             "required": [
-              "claim_id"
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
             ],
-            "title": "ObservationSettlementEvidenceV1",
+            "title": "AcceptedCoordinate",
             "type": "object"
           },
-          "TerminalSettlementEvidenceV1": {
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "ClaimVersionReferenceV1": {
             "additionalProperties": false,
             "properties": {
-              "claim_id": {
-                "title": "Claim Id",
+              "artifact_digest": {
+                "title": "Artifact Digest",
                 "type": "string"
+              },
+              "coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "statement_digest": {
+                "title": "Statement Digest",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "artifact_digest",
+              "statement_digest",
+              "coordinate"
+            ],
+            "title": "ClaimVersionReferenceV1",
+            "type": "object"
+          },
+          "ObservationSettlementEvidenceV2": {
+            "additionalProperties": false,
+            "properties": {
+              "claim": {
+                "$ref": "#/$defs/ClaimVersionReferenceV1"
+              },
+              "tag": {
+                "const": "playbill-observation-settlement-evidence-v2",
+                "default": "playbill-observation-settlement-evidence-v2",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim"
+            ],
+            "title": "ObservationSettlementEvidenceV2",
+            "type": "object"
+          },
+          "ResolutionContractReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "identity",
+              "artifact_digest",
+              "coordinate"
+            ],
+            "title": "ResolutionContractReferenceV1",
+            "type": "object"
+          },
+          "TerminalSettlementEvidenceV2": {
+            "additionalProperties": false,
+            "properties": {
+              "claim": {
+                "$ref": "#/$defs/ClaimVersionReferenceV1"
               },
               "run_id": {
                 "title": "Run Id",
                 "type": "string"
               },
               "tag": {
-                "const": "playbill-terminal-settlement-evidence-v1",
-                "default": "playbill-terminal-settlement-evidence-v1",
+                "const": "playbill-terminal-settlement-evidence-v2",
+                "default": "playbill-terminal-settlement-evidence-v2",
                 "title": "Tag",
                 "type": "string"
               },
@@ -35093,52 +33806,101 @@
               }
             },
             "required": [
-              "claim_id",
+              "claim",
               "run_id",
               "terminal_record_digest"
             ],
-            "title": "TerminalSettlementEvidenceV1",
+            "title": "TerminalSettlementEvidenceV2",
+            "type": "object"
+          },
+          "TriggerEventReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "partition_id": {
+                "minLength": 1,
+                "title": "Partition Id",
+                "type": "string"
+              },
+              "record_digest": {
+                "title": "Record Digest",
+                "type": "string"
+              },
+              "run_id": {
+                "minLength": 1,
+                "title": "Run Id",
+                "type": "string"
+              },
+              "sequence": {
+                "description": "Reads SETTLEMENT ORDER.",
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "run_id",
+              "partition_id",
+              "sequence",
+              "record_digest"
+            ],
+            "title": "TriggerEventReferenceV1",
             "type": "object"
           }
         },
         "additionalProperties": false,
         "properties": {
+          "contract": {
+            "$ref": "#/$defs/ResolutionContractReferenceV1"
+          },
           "evidence": {
             "discriminator": {
               "mapping": {
-                "playbill-observation-settlement-evidence-v1": "#/$defs/ObservationSettlementEvidenceV1",
-                "playbill-terminal-settlement-evidence-v1": "#/$defs/TerminalSettlementEvidenceV1"
+                "playbill-observation-settlement-evidence-v2": "#/$defs/ObservationSettlementEvidenceV2",
+                "playbill-terminal-settlement-evidence-v2": "#/$defs/TerminalSettlementEvidenceV2"
               },
               "propertyName": "tag"
             },
             "oneOf": [
               {
-                "$ref": "#/$defs/ObservationSettlementEvidenceV1"
+                "$ref": "#/$defs/ObservationSettlementEvidenceV2"
               },
               {
-                "$ref": "#/$defs/TerminalSettlementEvidenceV1"
+                "$ref": "#/$defs/TerminalSettlementEvidenceV2"
               }
             ],
             "title": "Evidence"
           },
           "tag": {
-            "const": "playbill-settle-request-v1",
-            "default": "playbill-settle-request-v1",
+            "const": "playbill-settle-request-v2",
+            "default": "playbill-settle-request-v2",
             "title": "Tag",
             "type": "string"
+          },
+          "trigger_event": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TriggerEventReferenceV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [
+          "contract",
           "evidence"
         ],
-        "title": "PlaybillSettleRequestV1",
+        "title": "PlaybillSettleRequestV2",
         "type": "object"
       },
       "required_fields": [
+        "contract",
         "evidence"
       ]
     },
-    "PlaybillSettleResultV1": {
+    "PlaybillSettleResultV2": {
       "fields": {
         "activation": {
           "has_default": false,
@@ -35198,15 +33960,15 @@
           }
         },
         "tag": {
-          "default": "playbill-settle-result-v1",
+          "default": "playbill-settle-result-v2",
           "default_json_serializable": true,
           "has_default": true,
           "has_default_factory": false,
           "json_name": "tag",
           "required": false,
           "schema": {
-            "const": "playbill-settle-result-v1",
-            "default": "playbill-settle-result-v1",
+            "const": "playbill-settle-result-v2",
+            "default": "playbill-settle-result-v2",
             "title": "Tag",
             "type": "string"
           }
@@ -35241,8 +34003,8 @@
             "type": "string"
           },
           "tag": {
-            "const": "playbill-settle-result-v1",
-            "default": "playbill-settle-result-v1",
+            "const": "playbill-settle-result-v2",
+            "default": "playbill-settle-result-v2",
             "title": "Tag",
             "type": "string"
           }
@@ -35253,7 +34015,7 @@
           "resolution",
           "relation"
         ],
-        "title": "PlaybillSettleResultV1",
+        "title": "PlaybillSettleResultV2",
         "type": "object"
       },
       "required_fields": [
@@ -52798,6 +51560,1344 @@
         "state"
       ]
     },
+    "ResolutionContractReferenceV1": {
+      "fields": {
+        "artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "artifact_digest",
+          "required": true,
+          "schema": {
+            "title": "Artifact Digest",
+            "type": "string"
+          }
+        },
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "identity",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ArtifactIdentity"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "artifact_digest": {
+            "title": "Artifact Digest",
+            "type": "string"
+          },
+          "coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "identity": {
+            "$ref": "#/$defs/ArtifactIdentity"
+          }
+        },
+        "required": [
+          "identity",
+          "artifact_digest",
+          "coordinate"
+        ],
+        "title": "ResolutionContractReferenceV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "artifact_digest",
+        "coordinate",
+        "identity"
+      ]
+    },
+    "ResolutionContractV1": {
+      "fields": {
+        "artifact_format": {
+          "default": "playbill-resolution-contract-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "artifact_format",
+          "required": false,
+          "schema": {
+            "const": "playbill-resolution-contract-v1",
+            "default": "playbill-resolution-contract-v1",
+            "title": "Artifact Format",
+            "type": "string"
+          }
+        },
+        "hypothesis": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "hypothesis",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ClaimVersionReferenceV1"
+          }
+        },
+        "identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "identity",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ArtifactIdentity"
+          }
+        },
+        "lifecycle": {
+          "default_json_serializable": false,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "lifecycle",
+          "required": false,
+          "schema": {
+            "$ref": "#/$defs/ArtifactLifecycle",
+            "default": {
+              "predecessor_digest": null,
+              "state": "live"
+            }
+          }
+        },
+        "observation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "observation",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PredictionObservationSelectorV1"
+          }
+        },
+        "outcome_class": {
+          "default": "prediction-correctness",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "outcome_class",
+          "required": false,
+          "schema": {
+            "default": "prediction-correctness",
+            "title": "Outcome Class",
+            "type": "string"
+          }
+        },
+        "rule": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "rule",
+          "required": true,
+          "schema": {
+            "discriminator": {
+              "mapping": {
+                "playbill-prediction-equality-rule-v1": "#/$defs/PredictionEqualityRuleV1",
+                "playbill-prediction-presence-rule-v1": "#/$defs/PredictionPresenceRuleV1",
+                "playbill-prediction-threshold-rule-v1": "#/$defs/PredictionThresholdRuleV1"
+              },
+              "propertyName": "tag"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/PredictionEqualityRuleV1"
+              },
+              {
+                "$ref": "#/$defs/PredictionThresholdRuleV1"
+              },
+              {
+                "$ref": "#/$defs/PredictionPresenceRuleV1"
+              }
+            ],
+            "title": "Rule"
+          }
+        },
+        "window": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "window",
+          "required": true,
+          "schema": {
+            "discriminator": {
+              "mapping": {
+                "capture_event": "#/$defs/CaptureEventWindowV1",
+                "fixed": "#/$defs/FixedWindowV1"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/FixedWindowV1"
+              },
+              {
+                "$ref": "#/$defs/CaptureEventWindowV1"
+              }
+            ],
+            "title": "Window"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "ArtifactLifecycle": {
+            "additionalProperties": false,
+            "properties": {
+              "predecessor_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Predecessor Digest"
+              },
+              "state": {
+                "default": "live",
+                "enum": [
+                  "live",
+                  "retired"
+                ],
+                "title": "State",
+                "type": "string"
+              }
+            },
+            "title": "ArtifactLifecycle",
+            "type": "object"
+          },
+          "CaptureEventSelectorV1": {
+            "additionalProperties": false,
+            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "properties": {
+              "capture_contract_digest": {
+                "title": "Capture Contract Digest",
+                "type": "string"
+              },
+              "capture_contract_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "capture_contract_identity",
+              "capture_contract_digest"
+            ],
+            "title": "CaptureEventSelectorV1",
+            "type": "object"
+          },
+          "CaptureEventWindowV1": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Duration Seconds",
+                "type": "integer"
+              },
+              "event": {
+                "$ref": "#/$defs/CaptureEventSelectorV1"
+              },
+              "kind": {
+                "const": "capture_event",
+                "default": "capture_event",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "duration_seconds"
+            ],
+            "title": "CaptureEventWindowV1",
+            "type": "object"
+          },
+          "ClaimVersionReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "statement_digest": {
+                "title": "Statement Digest",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "artifact_digest",
+              "statement_digest",
+              "coordinate"
+            ],
+            "title": "ClaimVersionReferenceV1",
+            "type": "object"
+          },
+          "FixedWindowV1": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Duration Seconds",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "fixed",
+                "default": "fixed",
+                "title": "Kind",
+                "type": "string"
+              },
+              "starts_at": {
+                "description": "Reads VALIDITY WINDOW.",
+                "format": "date-time",
+                "title": "Starts At",
+                "type": "string"
+              }
+            },
+            "required": [
+              "starts_at",
+              "duration_seconds"
+            ],
+            "title": "FixedWindowV1",
+            "type": "object"
+          },
+          "PredictionEqualityRuleV1": {
+            "additionalProperties": false,
+            "properties": {
+              "operator": {
+                "const": "equality",
+                "default": "equality",
+                "title": "Operator",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-prediction-equality-rule-v1",
+                "default": "playbill-prediction-equality-rule-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "PredictionEqualityRuleV1",
+            "type": "object"
+          },
+          "PredictionObservationSelectorV1": {
+            "additionalProperties": false,
+            "properties": {
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              },
+              "qualifier": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Qualifier"
+              },
+              "role": {
+                "const": "observation",
+                "default": "observation",
+                "title": "Role",
+                "type": "string"
+              },
+              "subject": {
+                "$ref": "#/$defs/SemanticAddress"
+              },
+              "tag": {
+                "const": "playbill-prediction-observation-selector-v1",
+                "default": "playbill-prediction-observation-selector-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject",
+              "predicate"
+            ],
+            "title": "PredictionObservationSelectorV1",
+            "type": "object"
+          },
+          "PredictionPresenceRuleV1": {
+            "additionalProperties": false,
+            "properties": {
+              "operator": {
+                "const": "presence",
+                "default": "presence",
+                "title": "Operator",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-prediction-presence-rule-v1",
+                "default": "playbill-prediction-presence-rule-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "PredictionPresenceRuleV1",
+            "type": "object"
+          },
+          "PredictionThresholdRuleV1": {
+            "additionalProperties": false,
+            "properties": {
+              "comparison": {
+                "enum": [
+                  "gt",
+                  "gte",
+                  "lt",
+                  "lte"
+                ],
+                "title": "Comparison",
+                "type": "string"
+              },
+              "operator": {
+                "const": "threshold",
+                "default": "threshold",
+                "title": "Operator",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-prediction-threshold-rule-v1",
+                "default": "playbill-prediction-threshold-rule-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "threshold": {
+                "title": "Threshold"
+              }
+            },
+            "required": [
+              "comparison",
+              "threshold"
+            ],
+            "title": "PredictionThresholdRuleV1",
+            "type": "object"
+          },
+          "SemanticAddress": {
+            "additionalProperties": false,
+            "description": "Stable meaning identity, independent of source-line presentation.",
+            "properties": {
+              "artifact_path": {
+                "title": "Artifact Path",
+                "type": "string"
+              },
+              "selector": {
+                "$ref": "#/$defs/SemanticSelector"
+              },
+              "tag": {
+                "const": "playbill-semantic-address-v1",
+                "default": "playbill-semantic-address-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifact_path",
+              "selector"
+            ],
+            "title": "SemanticAddress",
+            "type": "object"
+          },
+          "SemanticSelector": {
+            "additionalProperties": false,
+            "properties": {
+              "scheme": {
+                "title": "Scheme",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "scheme",
+              "value"
+            ],
+            "title": "SemanticSelector",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "artifact_format": {
+            "const": "playbill-resolution-contract-v1",
+            "default": "playbill-resolution-contract-v1",
+            "title": "Artifact Format",
+            "type": "string"
+          },
+          "hypothesis": {
+            "$ref": "#/$defs/ClaimVersionReferenceV1"
+          },
+          "identity": {
+            "$ref": "#/$defs/ArtifactIdentity"
+          },
+          "lifecycle": {
+            "$ref": "#/$defs/ArtifactLifecycle",
+            "default": {
+              "predecessor_digest": null,
+              "state": "live"
+            }
+          },
+          "observation": {
+            "$ref": "#/$defs/PredictionObservationSelectorV1"
+          },
+          "outcome_class": {
+            "default": "prediction-correctness",
+            "title": "Outcome Class",
+            "type": "string"
+          },
+          "rule": {
+            "discriminator": {
+              "mapping": {
+                "playbill-prediction-equality-rule-v1": "#/$defs/PredictionEqualityRuleV1",
+                "playbill-prediction-presence-rule-v1": "#/$defs/PredictionPresenceRuleV1",
+                "playbill-prediction-threshold-rule-v1": "#/$defs/PredictionThresholdRuleV1"
+              },
+              "propertyName": "tag"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/PredictionEqualityRuleV1"
+              },
+              {
+                "$ref": "#/$defs/PredictionThresholdRuleV1"
+              },
+              {
+                "$ref": "#/$defs/PredictionPresenceRuleV1"
+              }
+            ],
+            "title": "Rule"
+          },
+          "window": {
+            "discriminator": {
+              "mapping": {
+                "capture_event": "#/$defs/CaptureEventWindowV1",
+                "fixed": "#/$defs/FixedWindowV1"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/FixedWindowV1"
+              },
+              {
+                "$ref": "#/$defs/CaptureEventWindowV1"
+              }
+            ],
+            "title": "Window"
+          }
+        },
+        "required": [
+          "identity",
+          "hypothesis",
+          "observation",
+          "rule",
+          "window"
+        ],
+        "title": "ResolutionContractV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "hypothesis",
+        "identity",
+        "observation",
+        "rule",
+        "window"
+      ]
+    },
+    "ResolutionContractsRequestV1": {
+      "fields": {
+        "at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "hypothesis": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "hypothesis",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ClaimVersionReferenceV1"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "ClaimVersionReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "statement_digest": {
+                "title": "Statement Digest",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "artifact_digest",
+              "statement_digest",
+              "coordinate"
+            ],
+            "title": "ClaimVersionReferenceV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "hypothesis": {
+            "$ref": "#/$defs/ClaimVersionReferenceV1"
+          }
+        },
+        "required": [
+          "hypothesis"
+        ],
+        "title": "ResolutionContractsRequestV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "hypothesis"
+      ]
+    },
+    "ResolutionContractsResultV1": {
+      "fields": {
+        "contracts": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "contracts",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/ResolutionContractViewV1"
+            },
+            "title": "Contracts",
+            "type": "array"
+          }
+        },
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "ArtifactLifecycle": {
+            "additionalProperties": false,
+            "properties": {
+              "predecessor_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Predecessor Digest"
+              },
+              "state": {
+                "default": "live",
+                "enum": [
+                  "live",
+                  "retired"
+                ],
+                "title": "State",
+                "type": "string"
+              }
+            },
+            "title": "ArtifactLifecycle",
+            "type": "object"
+          },
+          "CaptureEventSelectorV1": {
+            "additionalProperties": false,
+            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "properties": {
+              "capture_contract_digest": {
+                "title": "Capture Contract Digest",
+                "type": "string"
+              },
+              "capture_contract_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "capture_contract_identity",
+              "capture_contract_digest"
+            ],
+            "title": "CaptureEventSelectorV1",
+            "type": "object"
+          },
+          "CaptureEventWindowV1": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Duration Seconds",
+                "type": "integer"
+              },
+              "event": {
+                "$ref": "#/$defs/CaptureEventSelectorV1"
+              },
+              "kind": {
+                "const": "capture_event",
+                "default": "capture_event",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "duration_seconds"
+            ],
+            "title": "CaptureEventWindowV1",
+            "type": "object"
+          },
+          "ClaimVersionReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "statement_digest": {
+                "title": "Statement Digest",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "artifact_digest",
+              "statement_digest",
+              "coordinate"
+            ],
+            "title": "ClaimVersionReferenceV1",
+            "type": "object"
+          },
+          "FixedWindowV1": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Duration Seconds",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "fixed",
+                "default": "fixed",
+                "title": "Kind",
+                "type": "string"
+              },
+              "starts_at": {
+                "description": "Reads VALIDITY WINDOW.",
+                "format": "date-time",
+                "title": "Starts At",
+                "type": "string"
+              }
+            },
+            "required": [
+              "starts_at",
+              "duration_seconds"
+            ],
+            "title": "FixedWindowV1",
+            "type": "object"
+          },
+          "PredictionEqualityRuleV1": {
+            "additionalProperties": false,
+            "properties": {
+              "operator": {
+                "const": "equality",
+                "default": "equality",
+                "title": "Operator",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-prediction-equality-rule-v1",
+                "default": "playbill-prediction-equality-rule-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "PredictionEqualityRuleV1",
+            "type": "object"
+          },
+          "PredictionObservationSelectorV1": {
+            "additionalProperties": false,
+            "properties": {
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              },
+              "qualifier": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Qualifier"
+              },
+              "role": {
+                "const": "observation",
+                "default": "observation",
+                "title": "Role",
+                "type": "string"
+              },
+              "subject": {
+                "$ref": "#/$defs/SemanticAddress"
+              },
+              "tag": {
+                "const": "playbill-prediction-observation-selector-v1",
+                "default": "playbill-prediction-observation-selector-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject",
+              "predicate"
+            ],
+            "title": "PredictionObservationSelectorV1",
+            "type": "object"
+          },
+          "PredictionPresenceRuleV1": {
+            "additionalProperties": false,
+            "properties": {
+              "operator": {
+                "const": "presence",
+                "default": "presence",
+                "title": "Operator",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-prediction-presence-rule-v1",
+                "default": "playbill-prediction-presence-rule-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "PredictionPresenceRuleV1",
+            "type": "object"
+          },
+          "PredictionThresholdRuleV1": {
+            "additionalProperties": false,
+            "properties": {
+              "comparison": {
+                "enum": [
+                  "gt",
+                  "gte",
+                  "lt",
+                  "lte"
+                ],
+                "title": "Comparison",
+                "type": "string"
+              },
+              "operator": {
+                "const": "threshold",
+                "default": "threshold",
+                "title": "Operator",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-prediction-threshold-rule-v1",
+                "default": "playbill-prediction-threshold-rule-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "threshold": {
+                "title": "Threshold"
+              }
+            },
+            "required": [
+              "comparison",
+              "threshold"
+            ],
+            "title": "PredictionThresholdRuleV1",
+            "type": "object"
+          },
+          "ResolutionContractReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "identity",
+              "artifact_digest",
+              "coordinate"
+            ],
+            "title": "ResolutionContractReferenceV1",
+            "type": "object"
+          },
+          "ResolutionContractV1": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_format": {
+                "const": "playbill-resolution-contract-v1",
+                "default": "playbill-resolution-contract-v1",
+                "title": "Artifact Format",
+                "type": "string"
+              },
+              "hypothesis": {
+                "$ref": "#/$defs/ClaimVersionReferenceV1"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "lifecycle": {
+                "$ref": "#/$defs/ArtifactLifecycle",
+                "default": {
+                  "predecessor_digest": null,
+                  "state": "live"
+                }
+              },
+              "observation": {
+                "$ref": "#/$defs/PredictionObservationSelectorV1"
+              },
+              "outcome_class": {
+                "default": "prediction-correctness",
+                "title": "Outcome Class",
+                "type": "string"
+              },
+              "rule": {
+                "discriminator": {
+                  "mapping": {
+                    "playbill-prediction-equality-rule-v1": "#/$defs/PredictionEqualityRuleV1",
+                    "playbill-prediction-presence-rule-v1": "#/$defs/PredictionPresenceRuleV1",
+                    "playbill-prediction-threshold-rule-v1": "#/$defs/PredictionThresholdRuleV1"
+                  },
+                  "propertyName": "tag"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/PredictionEqualityRuleV1"
+                  },
+                  {
+                    "$ref": "#/$defs/PredictionThresholdRuleV1"
+                  },
+                  {
+                    "$ref": "#/$defs/PredictionPresenceRuleV1"
+                  }
+                ],
+                "title": "Rule"
+              },
+              "window": {
+                "discriminator": {
+                  "mapping": {
+                    "capture_event": "#/$defs/CaptureEventWindowV1",
+                    "fixed": "#/$defs/FixedWindowV1"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/FixedWindowV1"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureEventWindowV1"
+                  }
+                ],
+                "title": "Window"
+              }
+            },
+            "required": [
+              "identity",
+              "hypothesis",
+              "observation",
+              "rule",
+              "window"
+            ],
+            "title": "ResolutionContractV1",
+            "type": "object"
+          },
+          "ResolutionContractViewV1": {
+            "additionalProperties": false,
+            "properties": {
+              "contract": {
+                "$ref": "#/$defs/ResolutionContractV1"
+              },
+              "reference": {
+                "$ref": "#/$defs/ResolutionContractReferenceV1"
+              }
+            },
+            "required": [
+              "reference",
+              "contract"
+            ],
+            "title": "ResolutionContractViewV1",
+            "type": "object"
+          },
+          "SemanticAddress": {
+            "additionalProperties": false,
+            "description": "Stable meaning identity, independent of source-line presentation.",
+            "properties": {
+              "artifact_path": {
+                "title": "Artifact Path",
+                "type": "string"
+              },
+              "selector": {
+                "$ref": "#/$defs/SemanticSelector"
+              },
+              "tag": {
+                "const": "playbill-semantic-address-v1",
+                "default": "playbill-semantic-address-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifact_path",
+              "selector"
+            ],
+            "title": "SemanticAddress",
+            "type": "object"
+          },
+          "SemanticSelector": {
+            "additionalProperties": false,
+            "properties": {
+              "scheme": {
+                "title": "Scheme",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "scheme",
+              "value"
+            ],
+            "title": "SemanticSelector",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "contracts": {
+            "items": {
+              "$ref": "#/$defs/ResolutionContractViewV1"
+            },
+            "title": "Contracts",
+            "type": "array"
+          },
+          "coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "required": [
+          "coordinate",
+          "contracts"
+        ],
+        "title": "ResolutionContractsResultV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "contracts",
+        "coordinate"
+      ]
+    },
     "RuntimeCredentialBootstrapResult": {
       "fields": {
         "credential_id": {
@@ -54144,16 +54244,15 @@
         "workspace_binding_digest"
       ]
     },
-    "TerminalSettlementEvidenceV1": {
+    "TerminalSettlementEvidenceV2": {
       "fields": {
-        "claim_id": {
+        "claim": {
           "has_default": false,
           "has_default_factory": false,
-          "json_name": "claim_id",
+          "json_name": "claim",
           "required": true,
           "schema": {
-            "title": "Claim Id",
-            "type": "string"
+            "$ref": "#/$defs/ClaimVersionReferenceV1"
           }
         },
         "run_id": {
@@ -54167,15 +54266,15 @@
           }
         },
         "tag": {
-          "default": "playbill-terminal-settlement-evidence-v1",
+          "default": "playbill-terminal-settlement-evidence-v2",
           "default_json_serializable": true,
           "has_default": true,
           "has_default_factory": false,
           "json_name": "tag",
           "required": false,
           "schema": {
-            "const": "playbill-terminal-settlement-evidence-v1",
-            "default": "playbill-terminal-settlement-evidence-v1",
+            "const": "playbill-terminal-settlement-evidence-v2",
+            "default": "playbill-terminal-settlement-evidence-v2",
             "title": "Tag",
             "type": "string"
           }
@@ -54192,19 +54291,103 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "ClaimVersionReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "statement_digest": {
+                "title": "Statement Digest",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "artifact_digest",
+              "statement_digest",
+              "coordinate"
+            ],
+            "title": "ClaimVersionReferenceV1",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "properties": {
-          "claim_id": {
-            "title": "Claim Id",
-            "type": "string"
+          "claim": {
+            "$ref": "#/$defs/ClaimVersionReferenceV1"
           },
           "run_id": {
             "title": "Run Id",
             "type": "string"
           },
           "tag": {
-            "const": "playbill-terminal-settlement-evidence-v1",
-            "default": "playbill-terminal-settlement-evidence-v1",
+            "const": "playbill-terminal-settlement-evidence-v2",
+            "default": "playbill-terminal-settlement-evidence-v2",
             "title": "Tag",
             "type": "string"
           },
@@ -54214,17 +54397,104 @@
           }
         },
         "required": [
-          "claim_id",
+          "claim",
           "run_id",
           "terminal_record_digest"
         ],
-        "title": "TerminalSettlementEvidenceV1",
+        "title": "TerminalSettlementEvidenceV2",
         "type": "object"
       },
       "required_fields": [
-        "claim_id",
+        "claim",
         "run_id",
         "terminal_record_digest"
+      ]
+    },
+    "TriggerEventReferenceV1": {
+      "fields": {
+        "partition_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "partition_id",
+          "required": true,
+          "schema": {
+            "minLength": 1,
+            "title": "Partition Id",
+            "type": "string"
+          }
+        },
+        "record_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "record_digest",
+          "required": true,
+          "schema": {
+            "title": "Record Digest",
+            "type": "string"
+          }
+        },
+        "run_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "run_id",
+          "required": true,
+          "schema": {
+            "minLength": 1,
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "sequence": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "sequence",
+          "required": true,
+          "schema": {
+            "description": "Reads SETTLEMENT ORDER.",
+            "minimum": 1,
+            "title": "Sequence",
+            "type": "integer"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "partition_id": {
+            "minLength": 1,
+            "title": "Partition Id",
+            "type": "string"
+          },
+          "record_digest": {
+            "title": "Record Digest",
+            "type": "string"
+          },
+          "run_id": {
+            "minLength": 1,
+            "title": "Run Id",
+            "type": "string"
+          },
+          "sequence": {
+            "description": "Reads SETTLEMENT ORDER.",
+            "minimum": 1,
+            "title": "Sequence",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "run_id",
+          "partition_id",
+          "sequence",
+          "record_digest"
+        ],
+        "title": "TriggerEventReferenceV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "partition_id",
+        "record_digest",
+        "run_id",
+        "sequence"
       ]
     },
     "WorkspaceFileSourceRequestV1": {

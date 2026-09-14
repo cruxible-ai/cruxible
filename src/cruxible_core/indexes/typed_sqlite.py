@@ -262,7 +262,7 @@ def logical_export(connection: sqlite3.Connection) -> dict[str, object]:
         rows = connection.execute(f"SELECT * FROM {name} ORDER BY {','.join(keys)}").fetchall()
         tables.append({"name": name, "sql": sql, "rows": [list(row) for row in rows]})
     return {
-        "storage_schema_version": 4,
+        "storage_schema_version": 5,
         "schema": [list(row) for row in schema_objects(connection)],
         "tables": tables,
     }
@@ -381,7 +381,7 @@ def initialize(
     connection = sqlite3.connect(path)
     try:
         connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("PRAGMA user_version=4")
+        connection.execute("PRAGMA user_version=5")
         connection.executescript(complete_schema_sql())
         replace_rows(
             connection,

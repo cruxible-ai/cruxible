@@ -359,6 +359,7 @@ _QUERY_DEFINITION_PATH_RE = re.compile(r"^query-definitions/[a-z][a-z0-9_.-]{0,2
 _EXHAUST_PROMOTION_PATH_RE = re.compile(r"^exhaust-promotions/[a-z][a-z0-9_.-]{0,255}\.json$")
 
 _DEPENDENCY_CLOSED_PATTERNS: Final = (
+    re.compile(r"^resolution-contracts/[a-z][a-z0-9_.-]{0,255}\.json$"),
     _CLAIM_TYPE_PATH_RE,
     _CAPTURE_CONTRACT_PATH_RE,
     _ATTESTATION_PATH_RE,
@@ -2153,6 +2154,82 @@ def _procedure_mandate_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _resolution_contract_member(context: _MemberContext) -> _MemberVerdict:
+    try:
+        return _verified_resolution_contract_member(context)
+    except (PlaybillError, ValueError) as exc:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic("playbill.resolution_contract.binding_invalid", str(exc), context.path),
+            )
+        )
+
+
+def _verified_resolution_contract_member(context: _MemberContext) -> _MemberVerdict:
+    from cruxible_client.contracts.claims import claim_path
+    from cruxible_client.contracts.resolution_contracts import (
+        parse_resolution_contract,
+        resolution_contract_digest,
+    )
+    from cruxible_client.contracts.types import CompilerCoordinate
+    from cruxible_core.compiler.compiler import artifact_codec_for_compiler
+
+    if not any(
+        k.kind == "resolution-contract"
+        for k in artifact_kinds_for_compiler(context.current.compiler).entries()
+    ):
+        raise PlaybillFormatError("compiler does not admit independent resolution contracts")
+    value = parse_resolution_contract(context.content, path=context.path)
+    previous = (
+        None
+        if context.parent_content is None
+        else parse_resolution_contract(context.parent_content, path=context.path)
+    )
+    predecessor = None if previous is None else resolution_contract_digest(previous).tagged
+    if value.lifecycle.predecessor_digest != predecessor or (
+        previous is not None and value.identity != previous.identity
+    ):
+        raise PlaybillFormatError(
+            "resolution contract predecessor does not match the accepted version"
+        )
+    h = value.hypothesis
+    if h.coordinate not in context.accepted_referent_coordinates:
+        raise PlaybillFormatError("resolution hypothesis coordinate is not accepted")
+    tree = (
+        context.current_tree
+        if h.coordinate == context.accepted_coordinate()
+        else (
+            None if context.retained_tree is None else context.retained_tree(h.coordinate.git_oid)
+        )
+    )
+    if tree is None:
+        raise PlaybillFormatError("resolution hypothesis requires retained history")
+    raw = tree.get(claim_path(h.identity.name))
+    if raw is None:
+        raise PlaybillFormatError("resolution hypothesis Claim is absent at its bound coordinate")
+    value.verify_hypothesis(
+        parse_claim(
+            raw,
+            path=claim_path(h.identity.name),
+            codec=artifact_codec_for_compiler(
+                CompilerCoordinate(rule_digest=h.coordinate.compiler_digest)
+            ),
+        )
+    )
+    digest = resolution_contract_digest(value).tagged
+    return _accepted(
+        context,
+        _installed(context, value.artifact_format),
+        predecessor_artifact_digest=predecessor,
+        candidate_artifact_digest=digest,
+        required_tier="governed_write",
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={"artifact_digest": digest, "verdict": "accepted"},
+        retired=value.lifecycle.state == "retired",
+    )
+
+
 def _attestation_member(context: _MemberContext) -> _MemberVerdict:
     from cruxible_core.evidence.attestation_verification import ClaimAttestationRefusal
 
@@ -2764,6 +2841,13 @@ def _principal_member(context: _MemberContext) -> _MemberVerdict:
 
 _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
     _MemberKind(
+        name="resolution-contract",
+        pattern=re.compile(r"^resolution-contracts/[a-z][a-z0-9_.-]{0,255}\.json$"),
+        removal_code="playbill.resolution_contract.removal_unsupported",
+        removal_message="Retire a resolution contract through an explicit successor.",
+        evaluate=_resolution_contract_member,
+    ),
+    _MemberKind(
         name="attestation",
         pattern=_ATTESTATION_PATH_RE,
         removal_code="playbill.attestation.removal_unsupported",
@@ -2896,6 +2980,7 @@ _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
     ),
 )
 ROLE_DEMOTED_MEMBER_FAMILIES: Final[tuple[str, ...]] = (
+    "resolution-contract",
     "attestation",
     "approval-policy",
     "procedure-runtime-policy",
@@ -3219,12 +3304,12 @@ def _evaluate_scoped_members(
             )
 
         except PlaybillFormatError as exc:
-            if kind.name != "attestation":
+            if kind.name not in {"attestation", "resolution-contract"}:
                 raise
             return CandidateEvaluation(
                 candidate_tree,
                 None,
-                (_diagnostic("playbill.attestation.format_invalid", str(exc), path),),
+                (_diagnostic(f"playbill.{kind.name}.format_invalid", str(exc), path),),
                 rebased,
             )
 

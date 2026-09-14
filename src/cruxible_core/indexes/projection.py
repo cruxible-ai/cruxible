@@ -36,7 +36,7 @@ class AssemblerRequest(_StrictProjectionModel):
 
     tag: Literal["playbill-assembler-request-v3"] = "playbill-assembler-request-v3"
     contract_version: Literal[1] = 1
-    storage_schema_version: Literal[4] = 4
+    storage_schema_version: Literal[5] = 5
     instance_id: str = Field(min_length=1, max_length=256)
     repository_path: str
     git_object_format: GitObjectFormat
@@ -111,7 +111,7 @@ class ProjectionManifest(_StrictProjectionModel):
 
     tag: Literal["playbill-projection-manifest-v3"] = "playbill-projection-manifest-v3"
     manifest_version: Literal[1] = 1
-    storage_schema_version: Literal[4] = 4
+    storage_schema_version: Literal[5] = 5
     instance_id: str
     git_object_format: GitObjectFormat
     git_oid: str

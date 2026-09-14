@@ -466,12 +466,29 @@ ATTESTATION_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_tag="playbill-claim-attestation-envelope-v2",
 )
 
+LINE_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "playbill.line.v3", "playbill-line-v3", semantic_revision=1
+    ),
+    artifact_kind="line",
+    artifact_tag="playbill-line-v3",
+)
+
+RESOLUTION_CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.resolution-contract.v1", "playbill-resolution-contract-v1", semantic_revision=1
+    ),
+    artifact_kind="resolution-contract",
+    artifact_tag="playbill-resolution-contract-v1",
+)
+
 PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
     (
         APPROVAL_POLICY_ACCEPTANCE_LAW,
         PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
         CAPTURE_CONTRACT_ACCEPTANCE_LAW,
         ATTESTATION_ACCEPTANCE_LAW,
+        RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
         CLAIM_V2_ACCEPTANCE_LAW,
         CLAIM_V3_ACCEPTANCE_LAW,
         CLAIM_V3_REVISION_7_ACCEPTANCE_LAW,
@@ -487,6 +504,7 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         PROCEDURE_V2_REVISION_5_ACCEPTANCE_LAW,
         LINE_ACCEPTANCE_LAW,
         LINE_V2_ACCEPTANCE_LAW,
+        LINE_V3_ACCEPTANCE_LAW,
         PROVIDER_ACCEPTANCE_LAW,
         PROVIDER_V2_ACCEPTANCE_LAW,
         PROVIDER_INTERFACE_ACCEPTANCE_LAW,

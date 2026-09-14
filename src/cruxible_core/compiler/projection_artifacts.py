@@ -189,6 +189,16 @@ ATTESTATION_ARTIFACT_KINDS = ArtifactKindRegistry(
     )
 )
 
+RESOLUTION_ARTIFACT_KINDS = ArtifactKindRegistry(
+    (
+        *ATTESTATION_ARTIFACT_KINDS.entries(),
+        ArtifactPathKind(
+            "resolution-contract",
+            re.compile(r"^resolution-contracts/[a-z][a-z0-9_.-]{0,255}\.json$"),
+        ),
+    )
+)
+
 PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
     tuple(
         ArtifactFormatTag(
@@ -203,6 +213,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
                 "playbill-capture-procedure-egress-evidence-v1",
                 "playbill-capture-provider-invocation-evidence-v1",
                 "playbill-claim-attestation-envelope-v2",
+                "playbill-resolution-contract-v1",
                 "playbill-claim-v2",
                 "playbill-claim-v3",
                 "playbill-accepted-state-run-input-v1",
@@ -211,6 +222,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
                 "playbill-landed-capture-run-input-v1",
                 "playbill-line-slot-binding-v1",
                 "playbill-line-v1",
+                "playbill-line-v3",
                 "playbill-procedure-pin-slot-ref-v1",
                 "playbill-procedure-pin-slot-v1",
                 "playbill-procedure-v1",
@@ -272,6 +284,12 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
                 "playbill-procedure-calibration-relation-cohort-witness-v1",
                 "playbill-procedure-calibration-score-v1",
                 "playbill-procedure-resolution-v2",
+                "playbill-resolution-v3",
+                "playbill-resolution-contract-activation-v3",
+                "playbill-procedure-run-admission-v6",
+                "playbill-procedure-run-admission-v7",
+                "playbill-procedure-admission-bound-payload-v6",
+                "playbill-procedure-admission-bound-payload-v7",
                 "playbill-resolution-claim-endpoint-v1",
                 "playbill-resolution-contract-activation-v2",
                 "playbill-settled-outcome-history-v1",
@@ -285,6 +303,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
         )
         for tag in (
             "playbill-claim-attestation-envelope-v2",
+            "playbill-resolution-contract-v1",
             "playbill-approval-policy-v1",
             "playbill-procedure-runtime-policy-v1",
             "playbill-accepted-state-run-input-v1",
@@ -300,6 +319,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             "playbill-landed-capture-run-input-v1",
             "playbill-line-slot-binding-v1",
             "playbill-line-v1",
+            "playbill-line-v3",
             "playbill-procedure-pin-slot-v1",
             "playbill-procedure-pin-slot-ref-v1",
             "playbill-procedure-v1",
@@ -362,6 +382,12 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             "playbill-procedure-calibration-relation-cohort-witness-v1",
             "playbill-procedure-calibration-score-v1",
             "playbill-procedure-resolution-v2",
+            "playbill-resolution-v3",
+            "playbill-resolution-contract-activation-v3",
+            "playbill-procedure-run-admission-v6",
+            "playbill-procedure-run-admission-v7",
+            "playbill-procedure-admission-bound-payload-v6",
+            "playbill-procedure-admission-bound-payload-v7",
             "playbill-resolution-claim-endpoint-v1",
             "playbill-resolution-contract-activation-v2",
             "playbill-settled-outcome-history-v1",
@@ -376,6 +402,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
 )
 
 RegisteredPathKind = Literal[
+    "resolution-contract",
     "attestation",
     "approval-policy",
     "procedure-runtime-policy",
@@ -791,6 +818,37 @@ def parse_projection_tree(
                         ),
                     )
                 )
+                continue
+            if kind == "resolution-contract":
+                from cruxible_client.contracts.resolution_contracts import (
+                    parse_resolution_contract,
+                    resolution_contract_digest,
+                )
+
+                contract = parse_resolution_contract(content, path=path, codec=artifact_codec)
+                identity = contract.identity.qualified
+                if identity in identities:
+                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
+                identities[identity] = path
+                digest = resolution_contract_digest(contract).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity,
+                        kind,
+                        contract.artifact_format,
+                        path,
+                        digest,
+                        contract.lifecycle.predecessor_digest,
+                        projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=file_digest(content).tagged,
+                            artifact_digest=digest,
+                        ),
+                    )
+                )
+                if contract.lifecycle.state == "retired":
+                    retired_identities.append(identity)
                 continue
             if kind == "attestation":
                 from cruxible_client.contracts.accepted_attestations import (
@@ -1725,11 +1783,16 @@ def parse_projection_tree(
                 continue
             if kind == "line":
                 from cruxible_client.contracts.procedures.line_specs import (
+                    LineSpecV3,
                     line_spec_digest,
                     parse_line_spec,
                 )
 
                 line = parse_line_spec(content, path=path, codec=artifact_codec)
+                if isinstance(line, LineSpecV3) and artifact_kinds is not RESOLUTION_ARTIFACT_KINDS:
+                    raise ProjectionFormatError(
+                        "Line v3 requires the independent-resolution compiler"
+                    )
                 identity = line.identity.qualified
                 if identity in identities:
                     raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")

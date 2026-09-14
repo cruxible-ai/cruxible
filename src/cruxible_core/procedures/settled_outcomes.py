@@ -30,7 +30,9 @@ from cruxible_core.procedures.resolution import (
     ProcedureResolutionV2,
     ResolutionContractActivationV1,
     ResolutionContractActivationV2,
+    ResolutionContractActivationV3,
     SettledOutcomeRelationV1,
+    SettledOutcomeRelationV2,
     build_settled_outcome_relation,
     resolution_contract_partition_id,
     settled_outcome_relation_digest,
@@ -154,7 +156,9 @@ class SettledOutcomeHistoryV1(_StrictSettledOutcomeModel):
 
 
 def classify_settled_outcome_history(
-    activation: ResolutionContractActivationV1 | ResolutionContractActivationV2,
+    activation: ResolutionContractActivationV1
+    | ResolutionContractActivationV2
+    | ResolutionContractActivationV3,
     book: ProcedureResolutionBook,
 ) -> SettledOutcomeHistoryV1:
     """Classify current replay state without treating non-settlement as a row."""
@@ -190,7 +194,7 @@ class SettledOutcomeRowV1(_StrictSettledOutcomeModel):
     """One exact visible prediction/settlement pair; no convention can mint it."""
 
     tag: Literal["playbill-settled-outcome-row-v1"] = "playbill-settled-outcome-row-v1"
-    relation: SettledOutcomeRelationV1
+    relation: SettledOutcomeRelationV1 | SettledOutcomeRelationV2
     relation_digest: str
 
     @field_validator("relation_digest")
@@ -321,7 +325,12 @@ def _build_result(
 def query_settled_outcomes(
     request: SettledOutcomesQueryRequestV1,
     *,
-    activations: tuple[ResolutionContractActivationV1 | ResolutionContractActivationV2, ...],
+    activations: tuple[
+        ResolutionContractActivationV1
+        | ResolutionContractActivationV2
+        | ResolutionContractActivationV3,
+        ...,
+    ],
     records_by_partition: Mapping[str, tuple[StoredProcedureJournalRecordV1, ...]],
     bodies: ContentAddressedBodyStore,
 ) -> tuple[SettledOutcomesQueryResultV1, SettledOutcomesQueryReceiptV1]:
@@ -338,7 +347,9 @@ def query_settled_outcomes(
     if access.can_read_resolution_bodies:
         visible_proofs = frozenset(access.visible_proof_digests)
         for activation in activations:
-            if not isinstance(activation, ResolutionContractActivationV2):
+            if not isinstance(
+                activation, (ResolutionContractActivationV2, ResolutionContractActivationV3)
+            ):
                 if request.outcome_classes:
                     raise PlaybillExecutionError(
                         "settled-outcomes outcome_class filter requires v2 activations"

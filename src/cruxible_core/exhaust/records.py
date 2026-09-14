@@ -37,8 +37,10 @@ from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
 
 PROCEDURE_EXHAUST_JOURNAL_FAMILY = "procedure-exhaust-v1"
+RESOLUTION_JOURNAL_FAMILY = "resolution-exhaust-v1"
 QUERY_RECEIPT_JOURNAL_FAMILY = "query-receipt-v1"
 REGISTERED_JOURNAL_FAMILIES: tuple[str, ...] = (
+    RESOLUTION_JOURNAL_FAMILY,
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     QUERY_RECEIPT_JOURNAL_FAMILY,
 )
@@ -121,6 +123,27 @@ def _validate_event_family(
 ) -> None:
     """Bind each event kind to the one family whose coordinates it can honestly fill."""
 
+    if journal_family == RESOLUTION_JOURNAL_FAMILY:
+        if event_kind not in {
+            "resolution_activation",
+            "resolution",
+            "resolution_disposition",
+        } or any(
+            item is not None
+            for item in (
+                procedure_artifact_digest,
+                run_id,
+                line_spec_digest,
+                occurrence_id,
+                attempt,
+                admission_binding_digest,
+            )
+        ):
+            raise ValueError(
+                "independent resolution exhaust carries only resolution records, without "
+                "Procedure coordinates"
+            )
+        return
     if event_kind in (QUERY_RECEIPT_EVENT_KIND, CLAIM_VERDICT_OBSERVATION_EVENT_KIND):
         if journal_family != QUERY_RECEIPT_JOURNAL_FAMILY:
             raise ValueError("query execution receipts require the query-receipt journal family")

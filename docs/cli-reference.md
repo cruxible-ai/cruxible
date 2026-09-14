@@ -884,6 +884,7 @@ the failed law. None of these creates a proposal ref.
 ## playbill predictions
 
 ~~~text
+cruxible playbill resolution-contracts REQUEST_FILE [--json]
 cruxible playbill predict REQUEST_FILE [--json]
 cruxible playbill settle PREDICTION_ID REQUEST_FILE [--json]
 ~~~

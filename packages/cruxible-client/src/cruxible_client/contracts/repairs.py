@@ -42,6 +42,11 @@ UNDECLARED_HAND_EDIT_CHANGE = "read_the_refusal_details_and_revise_the_named_art
 # is declared here beside the vocabularies it covers, never derived from the
 # code, and the served refusal models read it when a producer carries none.
 DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
+    "prediction_unsettleable_rule": (
+        "revise_the_resolution_contract_rule_or_hypothesis_and_submit_a_successor"
+    ),
+    "prediction_deadline_passed": "use_evidence_within_the_bound_window_or_accept_a_new_contract",
+    "settlement_evidence_mismatch": "bind_the_exact_contract_and_matching_accepted_observation",
     "line_not_accepted": "accept_the_line_before_triggering_it",
     "line_closure_incomplete": "restore_or_succeed_the_missing_accepted_closure_member",
     "occurrence_already_admitted": "read_the_existing_run_state_instead_of_readmitting",
@@ -140,9 +145,6 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperationV1] = {
         operation="playbill.authoring.create",
         arguments={"example": "procedure-mandate"},
     ),
-    "prediction_unsettleable_rule": RepairOperationV1(operation="playbill.predict"),
-    "prediction_deadline_passed": RepairOperationV1(operation="playbill.predict"),
-    "settlement_evidence_mismatch": RepairOperationV1(operation="playbill.settle"),
     # Nothing renders a block, so no sync converges one; what `block sync --all`
     # does is FIND every block whose held list has moved and name the repin that
     # answers each. A producer that knows the source and block names the repin

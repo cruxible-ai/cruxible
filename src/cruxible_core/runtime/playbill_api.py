@@ -59,10 +59,10 @@ from cruxible_client.contracts.ledger_mirror import (
     validate_mirror_url,
 )
 from cruxible_client.contracts.predictions import (
-    PlaybillPredictRequestV1,
-    PlaybillPredictResultV1,
-    PlaybillSettleRequestV1,
-    PlaybillSettleResultV1,
+    PlaybillPredictRequestV2,
+    PlaybillPredictResultV2,
+    PlaybillSettleRequestV2,
+    PlaybillSettleResultV2,
 )
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.procedures.artifacts import procedure_path
@@ -1236,12 +1236,21 @@ def playbill_authoring_create_input(
     return contracts.PlaybillAuthoringIntentView.model_validate(result.model_dump(mode="json"))
 
 
+def playbill_resolution_contracts(
+    instance_id: str, *, request: contracts.ResolutionContractsRequestV1
+) -> contracts.ResolutionContractsResultV1:
+    from cruxible_core.service.procedures.resolution_contracts import service_resolution_contracts
+
+    check_permission("cruxible_playbill_resolution_contracts", instance_id=instance_id)
+    return service_resolution_contracts(get_playbill_manager().get(instance_id), request)
+
+
 def playbill_predict(
     instance_id: str,
     *,
-    request: PlaybillPredictRequestV1,
-) -> PlaybillPredictResultV1:
-    """Create and submit one governed predicted Claim plus its settlement declaration."""
+    request: PlaybillPredictRequestV2,
+) -> PlaybillPredictResultV2:
+    """Submit a governed test of an already accepted hypothesis."""
 
     check_permission("cruxible_playbill_predict", instance_id=instance_id)
     actor_context = _actor_context()
@@ -1259,8 +1268,8 @@ def playbill_settle_prediction(
     instance_id: str,
     prediction_id: str,
     *,
-    request: PlaybillSettleRequestV1,
-) -> PlaybillSettleResultV1:
+    request: PlaybillSettleRequestV2,
+) -> PlaybillSettleResultV2:
     """Settle one prediction through admission or retained terminal authority."""
 
     check_permission("cruxible_playbill_settle", instance_id=instance_id)

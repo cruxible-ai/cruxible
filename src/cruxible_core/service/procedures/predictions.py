@@ -2,48 +2,40 @@
 
 from __future__ import annotations
 
-import json
-import os
-import secrets
 from datetime import datetime
-from pathlib import Path
 from typing import Literal
 
 from pydantic import ValidationError
 
-from cruxible_client.contracts.authoring.models import AuthoringIntentViewV1
+from cruxible_client.contracts.authoring.models import (
+    AuthoringIntentViewV1,
+    ResolutionContractAuthoringPayloadV1,
+)
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
-from cruxible_client.contracts.canonical import CanonicalValue, canonical_bytes
+from cruxible_client.contracts.canonical import CanonicalValue
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     LiteralClaimObject,
-    claim_artifact_digest,
     claim_path,
     claim_statement_address,
     claim_statement_digest,
-    parse_claim,
 )
-from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
+from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.predictions import (
-    ObservationSettlementEvidenceV1,
-    PlaybillPredictionDeclarationV1,
-    PlaybillPredictRequestV1,
-    PlaybillPredictResultV1,
-    PlaybillSettleRequestV1,
-    PlaybillSettleResultV1,
-    PredictionPresenceRuleV1,
+    ObservationSettlementEvidenceV2,
+    PlaybillPredictRequestV2,
+    PlaybillPredictResultV2,
+    PlaybillSettleRequestV2,
+    PlaybillSettleResultV2,
     PredictionRefusalCodeV1,
-    PredictionThresholdRuleV1,
-    TerminalSettlementEvidenceV1,
-    build_prediction_declaration,
+    TerminalSettlementEvidenceV2,
 )
-from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
-    parse_procedure,
-    procedure_artifact_digest,
-    procedure_path,
+from cruxible_client.contracts.repairs import ServedRepairV1, served_repair_for_refusal
+from cruxible_client.contracts.resolution_contracts import (
+    InvestigationBindingV1,
+    ResolutionContractV1,
+    resolution_contract_digest,
 )
-from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
@@ -53,12 +45,12 @@ from cruxible_core.exhaust import (
     LocalJournalBackend,
 )
 from cruxible_core.exhaust.records import (
+    RESOLUTION_JOURNAL_FAMILY,
     StoredProcedureJournalRecordV1,
     parse_journal_payload,
 )
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
-from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.procedures.egress import (
     TerminalEgressReceiptV1,
     TerminalEgressReceiptV2,
@@ -68,24 +60,27 @@ from cruxible_core.procedures.resolution import (
     ProcedureResolutionBook,
     ProcedureResolutionV2,
     ResolutionClaimEndpointV1,
-    ResolutionContractActivationV1,
     ResolutionContractActivationV2,
+    ResolutionContractActivationV3,
     append_procedure_resolution,
+    build_independent_activation,
     build_procedure_resolution_v2,
-    build_resolution_contract_activation_v2,
     build_settled_outcome_relation,
-    derive_resolution_activations,
     evaluate_prediction_correctness_condition,
-    resolution_activation_id,
-    resolution_contract_id,
     resolution_contract_partition_id,
 )
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.procedures.resolution_contracts import (
+    artifact_accepted_time,
+    bind_window,
+    canonical_contract_reference,
+    read_claim_reference,
+    read_resolution_contract,
+)
 from cruxible_core.storage.cas import BodyAccessContext
 from cruxible_core.storage.material_reservations import ProcedureMaterialReservationStore
 
-_PREDICTION_STORE = "predictions"
 _PROCEDURE_JOURNAL = "procedure-runs"
 _PROCEDURE_STREAM = "procedures"
 _WRITER_TOKEN = "playbill-procedure-direct-run-v1"
@@ -99,7 +94,7 @@ class PredictionRefused(PlaybillFormatError):
         code: PredictionRefusalCodeV1,
         message: str,
         *,
-        repair: RepairOperationV1,
+        repair: ServedRepairV1,
     ) -> None:
         self.code = code
         self.error_code = code
@@ -110,294 +105,42 @@ class PredictionRefused(PlaybillFormatError):
 def _refuse(
     code: PredictionRefusalCodeV1,
     message: str,
-    *,
-    prediction_id: str | None = None,
 ) -> PredictionRefused:
-    if code == "prediction_unsettleable_rule":
-        repair = RepairOperationV1(
-            operation="playbill.predict",
-            arguments={"rule": "equality"},
-        )
-    elif code == "prediction_deadline_passed":
-        repair = RepairOperationV1(
-            operation="playbill.predict",
-            arguments={"replace_prediction": prediction_id or "current"},
-        )
-    else:
-        repair = RepairOperationV1(
-            operation="playbill.settle",
-            arguments={"prediction_id": prediction_id or "required"},
-        )
-    return PredictionRefused(code, message, repair=repair)
-
-
-def _prediction_root(instance: PlaybillInstance) -> Path:
-    root = instance.root / instance.descriptor.storage.exhaust / _PREDICTION_STORE
-    root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if root.is_symlink() or not root.is_dir():
-        raise PlaybillFormatError("prediction declaration store is invalid")
-    os.chmod(root, 0o700)
-    return root
-
-
-def _render_declaration(value: PlaybillPredictionDeclarationV1) -> bytes:
-    return canonical_bytes(value.model_dump(mode="json")) + b"\n"
-
-
-def _store_declaration(
-    instance: PlaybillInstance,
-    value: PlaybillPredictionDeclarationV1,
-) -> None:
-    root = _prediction_root(instance)
-    target = root / f"{value.prediction_id}.json"
-    content = _render_declaration(value)
-    temporary = root / f".creating-{value.prediction_id}-{secrets.token_hex(8)}"
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        view = memoryview(content)
-        while view:
-            written = os.write(descriptor, view)
-            if written <= 0:  # pragma: no cover - defensive OS contract
-                raise PlaybillFormatError("prediction declaration write made no progress")
-            view = view[written:]
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    try:
-        os.link(temporary, target)
-    except FileExistsError:
-        if target.is_symlink() or target.read_bytes() != content:
-            raise PlaybillFormatError("prediction declaration identity is occupied") from None
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
-def _load_declaration(
-    instance: PlaybillInstance,
-    prediction_id: str,
-) -> PlaybillPredictionDeclarationV1:
-    path = _prediction_root(instance) / f"{prediction_id}.json"
-    if path.is_symlink() or not path.is_file():
-        raise _refuse(
-            "settlement_evidence_mismatch",
-            "The named prediction declaration does not exist.",
-            prediction_id=prediction_id,
-        )
-    try:
-        raw = path.read_bytes()
-        value = PlaybillPredictionDeclarationV1.model_validate(json.loads(raw))
-    except (OSError, ValueError, ValidationError) as exc:
-        raise PlaybillFormatError("prediction declaration is malformed") from exc
-    if raw != _render_declaration(value) or value.prediction_id != prediction_id:
-        raise PlaybillFormatError("prediction declaration does not reproduce")
-    return value
-
-
-def _accepted_procedure(
-    instance: PlaybillInstance,
-    *,
-    name: str,
-    coordinate: AcceptedCoordinate,
-) -> AcceptedProcedureV1:
-    path = procedure_path(name)
-    raw = instance.blob_at(coordinate.git_oid, path)
-    if raw is None:
-        raise _refuse(
-            "prediction_unsettleable_rule",
-            f"Procedure:{name} is absent at the prediction coordinate.",
-        )
-    procedure = parse_procedure(raw, path=path)
-    return AcceptedProcedureV1(
-        path=path,
-        procedure=procedure,
-        artifact_digest=procedure_artifact_digest(procedure).tagged,
-    )
-
-
-def _assert_rule_can_settle(request: PlaybillPredictRequestV1) -> None:
-    prediction_object = request.prediction.statement.object
-    if not isinstance(prediction_object, LiteralClaimObject):
-        raise _refuse(
-            "prediction_unsettleable_rule",
-            "Served prediction rules require a canonical literal Claim object.",
-        )
-    predicted = prediction_object.value
-    if isinstance(request.rule, PredictionThresholdRuleV1) and not isinstance(predicted, bool):
-        raise _refuse(
-            "prediction_unsettleable_rule",
-            "A threshold prediction must predict a boolean result.",
-        )
-    if isinstance(request.rule, PredictionPresenceRuleV1) and not isinstance(predicted, bool):
-        raise _refuse(
-            "prediction_unsettleable_rule",
-            "A presence prediction must predict a boolean result.",
-        )
+    return PredictionRefused(code, message, repair=served_repair_for_refusal(code))
 
 
 def service_predict_playbill(
     instance: PlaybillInstance,
     *,
-    request: PlaybillPredictRequestV1,
+    request: PlaybillPredictRequestV2,
     actor: AuthenticatedActor,
     evaluation_time: datetime,
-) -> PlaybillPredictResultV1:
-    """Create and submit the predicted Claim under ordinary Claim authority."""
-
+) -> PlaybillPredictResultV2:
+    """Submit a governed test of an already accepted exact hypothesis."""
     instance.require_writable()
-    declared_at = ensure_utc(evaluation_time)
-    if request.deadline <= declared_at:
-        raise _refuse(
-            "prediction_deadline_passed",
-            "Prediction deadline must follow its declaration instant.",
-        )
-    _assert_rule_can_settle(request)
-    base = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    procedure = _accepted_procedure(instance, name=request.procedure, coordinate=base)
-    if request.measurement_name not in {
-        item.name for item in procedure.procedure.definition.measurements
-    }:
-        raise _refuse(
-            "prediction_unsettleable_rule",
-            f"Procedure:{request.procedure} has no measurement {request.measurement_name!r}.",
-        )
-
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     created = coordinator.create(
         actor=actor,
-        payload=request.prediction,
-        canonical_timestamp=canonical_candidate_timestamp(declared_at),
+        payload=ResolutionContractAuthoringPayloadV1(resolution_contract=request.contract),
+        canonical_timestamp=canonical_candidate_timestamp(ensure_utc(evaluation_time)),
     )
     submitted = coordinator.submit(created.intent.intent_id, actor=actor)
-    proposal_id = submitted.status.proposal_id
-    candidate_digest = submitted.status.candidate_digest
-    if proposal_id is None or candidate_digest is None:
+    if submitted.status.proposal_id is None or submitted.status.candidate_digest is None:
         raise _refuse(
             "prediction_unsettleable_rule",
-            "The predicted Claim did not produce a proposal; repair its authoring refusal.",
+            "Resolution contract did not produce a valid proposal; repair the authoring "
+            "diagnostics.",
         )
-    declaration = build_prediction_declaration(
-        intent_id=submitted.intent.intent_id,
-        proposal_id=proposal_id,
-        candidate_digest=candidate_digest,
-        predicted_claim_id=submitted.intent.semantic_identity,
-        actor_id=actor.actor_id,
-        base_coordinate=base,
-        procedure_identity=procedure.procedure.identity,
-        procedure_path=procedure.path,
-        procedure_artifact_digest=procedure.artifact_digest,
-        measurement_name=request.measurement_name,
-        observation=request.observation,
-        rule=request.rule,
-        outcome_class=request.outcome_class,
-        declared_at=declared_at,
-        deadline=request.deadline,
-    )
-    _store_declaration(instance, declaration)
-    return PlaybillPredictResultV1(
-        declaration=declaration,
+    return PlaybillPredictResultV2(
+        contract_identity=request.contract.identity.qualified,
+        contract_digest=resolution_contract_digest(request.contract).tagged,
+        proposal_id=submitted.status.proposal_id,
         intent=AuthoringIntentViewV1(intent=submitted.intent).model_dump(mode="json"),
     )
 
 
-def _accepted_claim_revision(
-    instance: PlaybillInstance,
-    *,
-    claim_id: str,
-) -> tuple[ClaimArtifactAny, AcceptedCoordinate, int]:
-    path = claim_path(claim_id.removeprefix("Claim:"))
-    coordinate = instance.accepted_coordinate()
-    current_raw = instance.blob_at(coordinate.git_oid, path)
-    if current_raw is None:
-        raise ValueError("Claim is not accepted")
-    claim = parse_claim(current_raw, path=path)
-    digest = claim_artifact_digest(claim).tagged
-    with instance.accepted_history_reader(
-        at=AcceptedCoordinate.from_internal(coordinate)
-    ) as history:
-        for occurrence in history.occurrences(claim.identity.qualified):
-            if occurrence.path != path or occurrence.artifact_digest != digest:
-                continue
-            generation = history.generation(occurrence.occurrence_sequence)
-            if instance.blob_at(generation.git_oid, path) != current_raw:
-                continue
-            return (
-                claim,
-                AcceptedCoordinate(
-                    git_oid=generation.git_oid,
-                    semantic_root=generation.semantic_root,
-                    generation_root=generation.generation_root,
-                    compiler_digest=generation.compiler_digest,
-                ),
-                generation.sequence,
-            )
-    raise PlaybillFormatError("accepted Claim revision has no accepting generation")
-
-
-def _activation_for_declaration(
-    instance: PlaybillInstance,
-    *,
-    declaration: PlaybillPredictionDeclarationV1,
-    prediction_claim: ClaimArtifactAny,
-    prediction_coordinate: AcceptedCoordinate,
-) -> ResolutionContractActivationV2:
-    raw = instance.blob_at(declaration.base_coordinate.git_oid, declaration.procedure_path)
-    if raw is None:
-        raise PlaybillFormatError("prediction Procedure disappeared from retained history")
-    procedure = parse_procedure(raw, path=declaration.procedure_path)
-    if (
-        procedure.identity != declaration.procedure_identity
-        or procedure_artifact_digest(procedure).tagged != declaration.procedure_artifact_digest
-    ):
-        raise PlaybillFormatError("prediction Procedure pin does not reproduce")
-    accepted = AcceptedProcedureV1(
-        path=declaration.procedure_path,
-        procedure=procedure,
-        artifact_digest=declaration.procedure_artifact_digest,
-    )
-    activated_at = instance.accepted_evaluation_time(prediction_coordinate.git_oid)
-    base = next(
-        (
-            item
-            for item in derive_resolution_activations(
-                accepted,
-                accepted_coordinate=prediction_coordinate,
-                activated_at=activated_at,
-            )
-            if item.measurement_name == declaration.measurement_name
-        ),
-        None,
-    )
-    if base is None:
-        raise PlaybillFormatError("prediction measurement disappeared from its pinned Procedure")
-    provisional = base.model_copy(
-        update={
-            "contract_id": "",
-            "activation_id": "",
-            "check_at": activated_at,
-            "expires_at": declaration.deadline,
-        }
-    )
-    contract = resolution_contract_id(provisional)
-    with_contract = provisional.model_copy(update={"contract_id": contract})
-    bounded = ResolutionContractActivationV1.model_validate(
-        with_contract.model_copy(
-            update={"activation_id": resolution_activation_id(with_contract)}
-        ).model_dump(mode="python")
-    )
-    return build_resolution_contract_activation_v2(
-        bounded,
-        prediction=ResolutionClaimEndpointV1(
-            statement_address=claim_statement_address(claim_path(prediction_claim.identity.name)),
-            content_digest=claim_statement_digest(prediction_claim.statement).tagged,
-            accepted_coordinate=prediction_coordinate,
-        ),
-        outcome_class=declaration.outcome_class,
-        correctness_condition=declaration.rule.model_dump(mode="json"),
-    )
-
-
 def _observation_matches(
-    declaration: PlaybillPredictionDeclarationV1,
+    declaration: ResolutionContractV1,
     claim: ClaimArtifactAny,
 ) -> bool:
     statement = claim.statement
@@ -410,12 +153,16 @@ def _observation_matches(
     )
 
 
-def _journal(instance: PlaybillInstance) -> tuple[LocalJournalBackend, JournalStreamIdentityV1]:
+def _journal(
+    instance: PlaybillInstance, *, independent: bool = True
+) -> tuple[LocalJournalBackend, JournalStreamIdentityV1]:
     root = instance.root / instance.descriptor.storage.exhaust / _PROCEDURE_JOURNAL
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     return LocalJournalBackend(root), JournalStreamIdentityV1(
         instance_id=instance.descriptor.instance_id,
-        journal_family=PROCEDURE_EXHAUST_JOURNAL_FAMILY,
+        journal_family=RESOLUTION_JOURNAL_FAMILY
+        if independent
+        else PROCEDURE_EXHAUST_JOURNAL_FAMILY,
         stream_id=_PROCEDURE_STREAM,
     )
 
@@ -423,10 +170,18 @@ def _journal(instance: PlaybillInstance) -> tuple[LocalJournalBackend, JournalSt
 def _terminal_record(
     instance: PlaybillInstance,
     *,
-    evidence: TerminalSettlementEvidenceV1,
-    procedure_digest: str,
+    evidence: TerminalSettlementEvidenceV2,
+    investigation: InvestigationBindingV1,
 ) -> StoredProcedureJournalRecordV1:
-    journal, stream = _journal(instance)
+    from cruxible_core.service.procedures.procedure_runs import _state_from_records
+
+    state = _state_from_records(instance, run_id=evidence.run_id)
+    if state.investigation != investigation:
+        raise _refuse(
+            "settlement_evidence_mismatch",
+            "Terminal run investigated a different contract or window.",
+        )
+    journal, stream = _journal(instance, independent=False)
     for partition in journal.partition_ids(stream):
         for stored in journal.all_records(stream, partition):
             record = stored.record
@@ -435,7 +190,7 @@ def _terminal_record(
             if (
                 record.event_kind != "terminal_egress"
                 or record.run_id != evidence.run_id
-                or record.procedure_artifact_digest != procedure_digest
+                or record.procedure_artifact_digest != state.procedure_artifact_digest
             ):
                 break
             payload = parse_journal_payload(
@@ -478,7 +233,7 @@ def _terminal_record(
 def _partition_records(
     journal: LocalJournalBackend,
     stream: JournalStreamIdentityV1,
-    activation: ResolutionContractActivationV2,
+    activation: ResolutionContractActivationV3,
 ) -> tuple[StoredProcedureJournalRecordV1, ...]:
     return journal.all_records(stream, resolution_contract_partition_id(activation))
 
@@ -486,7 +241,7 @@ def _partition_records(
 def _append_settlement(
     instance: PlaybillInstance,
     *,
-    activation: ResolutionContractActivationV2,
+    activation: ResolutionContractActivationV3,
     resolution: ProcedureResolutionV2,
 ) -> ProcedureResolutionV2:
     journal, stream = _journal(instance)
@@ -552,11 +307,11 @@ def _append_settlement(
                 stream=stream,
                 partition_id=partition,
                 event_kind="resolution_activation",
-                accepted_coordinate=activation.prediction.accepted_coordinate,
+                accepted_coordinate=activation.investigation.contract.coordinate,
                 procedure_artifact_digest=activation.procedure_artifact_digest,
                 definition_digest=activation.definition_digest,
                 actor_context=resolution.actor_context,
-                recorded_at=activation.activated_at,
+                recorded_at=resolution.recorded_at,
                 payload=activation.model_dump(mode="json"),
             )
         else:
@@ -593,56 +348,54 @@ def service_settle_playbill_prediction(
     instance: PlaybillInstance,
     *,
     prediction_id: str,
-    request: PlaybillSettleRequestV1,
+    request: PlaybillSettleRequestV2,
     actor_context: GovernedActorContext,
     recorded_at: datetime,
-) -> PlaybillSettleResultV1:
+) -> PlaybillSettleResultV2:
     """Settle one accepted predicted Claim from a later accepted outcome."""
 
     instance.require_writable()
-    declaration = _load_declaration(instance, prediction_id)
-    try:
-        prediction_claim, prediction_coordinate, prediction_sequence = _accepted_claim_revision(
-            instance,
-            claim_id=declaration.predicted_claim_id,
-        )
-    except (PlaybillError, ValueError) as exc:
+    reference = request.contract
+    if prediction_id not in {reference.identity.name, reference.identity.qualified}:
         raise _refuse(
             "settlement_evidence_mismatch",
-            "The predicted Claim has not been accepted at an exact coordinate.",
-            prediction_id=prediction_id,
-        ) from exc
-    activation = _activation_for_declaration(
-        instance,
-        declaration=declaration,
-        prediction_claim=prediction_claim,
-        prediction_coordinate=prediction_coordinate,
+            "Settlement route differs from its exact contract reference.",
+        )
+    contract = read_resolution_contract(instance, reference)
+    reference = canonical_contract_reference(instance, reference)
+    if contract.lifecycle.state != "live":
+        raise _refuse(
+            "settlement_evidence_mismatch",
+            "Settlement must reference the original live contract version, not its retirement.",
+        )
+    investigation = InvestigationBindingV1(
+        contract=reference,
+        hypothesis=contract.hypothesis,
+        window=bind_window(
+            instance, contract.window, request.trigger_event, now=ensure_utc(recorded_at)
+        ),
     )
-    try:
-        observation, observation_coordinate, observation_sequence = _accepted_claim_revision(
-            instance,
-            claim_id=request.evidence.claim_id,
-        )
-    except (PlaybillError, ValueError) as exc:
+    activation = build_independent_activation(
+        contract,
+        investigation,
+        activated_at=artifact_accepted_time(instance, reference),
+    )
+    prediction_claim = read_claim_reference(instance, contract.hypothesis)
+    observation = read_claim_reference(instance, request.evidence.claim)
+    observation_coordinate = request.evidence.claim.coordinate
+    if not _observation_matches(contract, observation):
         raise _refuse(
             "settlement_evidence_mismatch",
-            "Settlement Claim has not been accepted at an exact coordinate.",
-            prediction_id=prediction_id,
-        ) from exc
-    if observation_sequence <= prediction_sequence or not _observation_matches(
-        declaration, observation
+            "Observation does not match the accepted contract selector.",
+        )
+    observed_at = artifact_accepted_time(instance, request.evidence.claim)
+    if (
+        observed_at <= activation.activated_at
+        or not activation.check_at <= observed_at <= activation.expires_at
     ):
         raise _refuse(
-            "settlement_evidence_mismatch",
-            "Settlement requires a matching observation Claim accepted after the prediction.",
-            prediction_id=prediction_id,
-        )
-    observed_at = instance.accepted_evaluation_time(observation_coordinate.git_oid)
-    if observed_at > declaration.deadline:
-        raise _refuse(
             "prediction_deadline_passed",
-            "Settlement observation was accepted after the prediction deadline.",
-            prediction_id=prediction_id,
+            "Observation must follow contract acceptance and fall inside its bound window.",
         )
     prediction_object = prediction_claim.statement.object
     observation_object = observation.statement.object
@@ -652,7 +405,6 @@ def service_settle_playbill_prediction(
         raise _refuse(
             "prediction_unsettleable_rule",
             "Served prediction settlement requires canonical literal Claim objects.",
-            prediction_id=prediction_id,
         )
     predicted_value = prediction_object.value
     settlement_value = observation_object.value
@@ -673,7 +425,6 @@ def service_settle_playbill_prediction(
         raise _refuse(
             "prediction_unsettleable_rule",
             "Prediction rule cannot evaluate the accepted settlement value.",
-            prediction_id=prediction_id,
         )
     evidence_kind: Literal["observation_claim", "terminal"] = "observation_claim"
     proof_kind: Literal["claim_statement", "run_receipt"] = "claim_statement"
@@ -685,11 +436,11 @@ def service_settle_playbill_prediction(
         "tag": "playbill-prediction-settlement-authorization-v1",
         "kind": "observation_admission",
     }
-    if isinstance(request.evidence, TerminalSettlementEvidenceV1):
+    if isinstance(request.evidence, TerminalSettlementEvidenceV2):
         terminal = _terminal_record(
             instance,
             evidence=request.evidence,
-            procedure_digest=declaration.procedure_artifact_digest,
+            investigation=investigation,
         )
         # The terminal's mandate is the AUTHORITY; the caller is the ACTOR. A
         # settlement journaled under the mandate holder's actor context would
@@ -701,7 +452,6 @@ def service_settle_playbill_prediction(
             raise _refuse(
                 "settlement_evidence_mismatch",
                 "Terminal settlement requires the principal the mandate settlement ran under.",
-                prediction_id=prediction_id,
             )
         evidence_kind = "terminal"
         proof_kind = "run_receipt"
@@ -713,11 +463,10 @@ def service_settle_playbill_prediction(
             "terminal_record_digest": terminal.record_digest,
             "mandate_actor_id": mandate_actor.actor_id,
         }
-    elif not isinstance(request.evidence, ObservationSettlementEvidenceV1):
+    elif not isinstance(request.evidence, ObservationSettlementEvidenceV2):
         raise _refuse(
             "settlement_evidence_mismatch",
             "Settlement evidence kind is unsupported.",
-            prediction_id=prediction_id,
         )
     settlement_endpoint = ResolutionClaimEndpointV1(
         statement_address=claim_statement_address(claim_path(observation.identity.name)),
@@ -755,7 +504,7 @@ def service_settle_playbill_prediction(
         resolution=resolution,
     )
     relation = build_settled_outcome_relation(activation, resolution)
-    return PlaybillSettleResultV1(
+    return PlaybillSettleResultV2(
         prediction_id=prediction_id,
         activation=activation.model_dump(mode="json"),
         resolution=resolution.model_dump(mode="json"),
@@ -765,38 +514,47 @@ def service_settle_playbill_prediction(
 
 def load_prediction_activations(
     instance: PlaybillInstance,
-) -> tuple[ResolutionContractActivationV2, ...]:
-    """Replay exact served activations for settled-outcome/calibration folds."""
-
-    journal, stream = _journal(instance)
-    activations: dict[str, ResolutionContractActivationV2] = {}
-    for partition in journal.partition_ids(stream):
-        for stored in journal.all_records(stream, partition):
-            if stored.record.event_kind != "resolution_activation":
-                continue
-            payload = parse_journal_payload(
-                instance.body_store().read(
-                    stored.record.payload_digest,
-                    access=BodyAccessContext(
-                        principal_id="playbill-prediction-replay",
-                        can_read_body=True,
-                    ),
+) -> tuple[ResolutionContractActivationV2 | ResolutionContractActivationV3, ...]:
+    """Read retained activations, preserving each generation's verification law."""
+    activations: dict[str, ResolutionContractActivationV2 | ResolutionContractActivationV3] = {}
+    for independent in (False, True):
+        journal, stream = _journal(instance, independent=independent)
+        model = ResolutionContractActivationV3 if independent else ResolutionContractActivationV2
+        for partition in journal.partition_ids(stream):
+            for stored in journal.all_records(stream, partition):
+                if stored.record.event_kind != "resolution_activation":
+                    continue
+                payload = parse_journal_payload(
+                    instance.body_store().read(
+                        stored.record.payload_digest,
+                        access=BodyAccessContext(
+                            principal_id="prediction-replay", can_read_body=True
+                        ),
+                    )
                 )
-            )
-            activation = ResolutionContractActivationV2.model_validate(payload)
-            if partition != resolution_contract_partition_id(activation):
-                raise PlaybillFormatError("prediction activation crossed its journal partition")
-            previous = activations.setdefault(activation.contract_id, activation)
-            if previous != activation:
-                raise PlaybillFormatError("prediction activation history diverged")
-    return tuple(
-        activations[key] for key in sorted(activations, key=lambda item: item.encode("utf-8"))
-    )
-
-
-__all__ = [
-    "PredictionRefused",
-    "load_prediction_activations",
-    "service_predict_playbill",
-    "service_settle_playbill_prediction",
-]
+                activation = model.model_validate(payload)
+                if partition != resolution_contract_partition_id(activation):
+                    raise PlaybillFormatError("prediction activation crossed its journal partition")
+                if isinstance(activation, ResolutionContractActivationV3):
+                    retained = read_resolution_contract(instance, activation.investigation.contract)
+                    if (
+                        canonical_contract_reference(instance, activation.investigation.contract)
+                        != activation.investigation.contract
+                        or artifact_accepted_time(instance, activation.investigation.contract)
+                        != activation.activated_at
+                        or retained != activation.contract
+                        or bind_window(
+                            instance,
+                            retained.window,
+                            activation.investigation.window.event,
+                            now=stored.record.recorded_at,
+                        )
+                        != activation.investigation.window
+                    ):
+                        raise PlaybillFormatError(
+                            "resolution activation differs from its retained authority"
+                        )
+                previous = activations.setdefault(activation.contract_id, activation)
+                if previous != activation:
+                    raise PlaybillFormatError("prediction activation history diverged")
+    return tuple(activations[key] for key in sorted(activations))

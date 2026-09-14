@@ -49,6 +49,7 @@ from cruxible_client.contracts.authoring.models import (
     ProcedureRuntimePolicyAuthoringPayloadV1,
     QueryDefinitionAuthoringPayloadV1,
     RepairAlternativeV1,
+    ResolutionContractAuthoringPayloadV1,
     SelfSourceBodyV1,
     SourceAcquisitionPolicyAuthoringPayloadV1,
     SubjectAuthoringPayloadV1,
@@ -138,7 +139,9 @@ from cruxible_client.contracts.procedures.graph import (
     compute_procedure_definition_digest,
 )
 from cruxible_client.contracts.procedures.line_specs import (
-    LineSpecV2,
+    CaptureLandingTriggerPolicyV2,
+    LineSpecV3,
+    WindowCloseTriggerPolicyV2,
     line_spec_digest,
     line_spec_path,
     parse_line_spec,
@@ -151,6 +154,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedurePinSlotRefV1,
     iter_pin_bindings,
 )
+from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
 from cruxible_client.contracts.providers import parse_provider, provider_digest, provider_path
 from cruxible_client.contracts.query.definitions import (
     query_definition_digest,
@@ -1793,7 +1797,8 @@ def _lower_procedure(
 
 
 def _render_non_procedure_member(
-    payload: AttestationAuthoringPayloadV1
+    payload: ResolutionContractAuthoringPayloadV1
+    | AttestationAuthoringPayloadV1
     | SubjectAuthoringPayloadV1
     | QueryDefinitionAuthoringPayloadV1
     | ClaimTypeAuthoringPayloadV1
@@ -1802,6 +1807,19 @@ def _render_non_procedure_member(
     | CaptureContractAuthoringPayloadV1
     | SourceAcquisitionPolicyAuthoringPayloadV1,
 ) -> tuple[str, bytes, str]:
+    if isinstance(payload, ResolutionContractAuthoringPayloadV1):
+        from cruxible_client.contracts.resolution_contracts import (
+            render_resolution_contract,
+            resolution_contract_digest,
+            resolution_contract_path,
+        )
+
+        contract_value = payload.resolution_contract
+        return (
+            resolution_contract_path(contract_value.identity.name),
+            render_resolution_contract(contract_value),
+            resolution_contract_digest(contract_value).tagged,
+        )
     if isinstance(payload, AttestationAuthoringPayloadV1):
         from cruxible_client.contracts.accepted_attestations import (
             attestation_artifact_digest,
@@ -1946,7 +1964,39 @@ def _render_line_member(
     if previous_content is not None:
         previous = parse_line_spec(previous_content, path=path)
         predecessor_digest = line_spec_digest(previous).tagged
-    line = LineSpecV2(
+    trigger = payload.trigger_policy
+    selector = (
+        trigger.event
+        if isinstance(trigger, CaptureLandingTriggerPolicyV2)
+        else trigger.window.event
+        if isinstance(trigger, WindowCloseTriggerPolicyV2)
+        and isinstance(trigger.window, CaptureEventWindowV1)
+        else None
+    )
+    trigger_pins: tuple[ArtifactPin, ...] = ()
+    if selector is not None:
+        capture_path = capture_contract_path(selector.capture_contract_identity.name)
+        content = tree.get(capture_path)
+        if (
+            content is None
+            or capture_contract_digest(parse_capture_contract(content, path=capture_path)).tagged
+            != selector.capture_contract_digest
+        ):
+            _refuse(
+                "playbill.authoring.trigger_capture_missing",
+                "trigger_policy",
+                "Trigger CaptureContract does not match the accepted or staged version.",
+                repair_kind="replace_trigger_policy",
+                repair_description="Use the exact accepted CaptureContract identity and digest.",
+            )
+        trigger_pins = (
+            ArtifactPin(
+                role="trigger-capture-contract",
+                target=selector.capture_contract_identity,
+                artifact_digest=selector.capture_contract_digest,
+            ),
+        )
+    line = LineSpecV3(
         identity=ArtifactIdentity(kind="Line", name=payload.name),
         occurrence_epoch=payload.occurrence_epoch,
         procedure=procedure_pin,
@@ -1959,7 +2009,7 @@ def _render_line_member(
         epsilon=payload.epsilon,
         pins=tuple(
             sorted(
-                (procedure_pin, policy_pin),
+                (procedure_pin, policy_pin, *trigger_pins),
                 key=lambda pin: (
                     pin.role.encode("utf-8"),
                     pin.target.qualified.encode("utf-8"),
@@ -2029,7 +2079,8 @@ def _render_procedure_mandate_member(
 
 def _lower_non_procedure(
     *,
-    payload: AttestationAuthoringPayloadV1
+    payload: ResolutionContractAuthoringPayloadV1
+    | AttestationAuthoringPayloadV1
     | SubjectAuthoringPayloadV1
     | QueryDefinitionAuthoringPayloadV1
     | ApprovalPolicyAuthoringPayloadV1
