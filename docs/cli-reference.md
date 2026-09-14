@@ -889,9 +889,19 @@ cruxible playbill predict REQUEST_FILE [--json]
 cruxible playbill settle PREDICTION_ID REQUEST_FILE [--json]
 ~~~
 
-`predict` proposes the predicted Claim and retains its settlement declaration.
-`settle` requires later accepted observation evidence or the prediction's
-governed terminal, then records the declared score and resolution as Claims.
+`predict` submits a governed ResolutionContract for an already accepted, exact
+hypothesis Claim version and returns the proposal ID and authoring intent. The
+contract must be accepted before it can bind an investigation or settlement.
+`resolution-contracts` finds accepted contracts for an exact hypothesis version.
+
+`settle` names that contract by ID and exact accepted reference. It checks later
+accepted observation evidence against the contract's selector, mechanical rule,
+and bound window. Terminal-backed settlement additionally verifies retained,
+delivered mandate-settlement evidence from the same investigation. It records
+the activation and resolution in operational exhaust; it does not create or
+mutate Claims. A failed attempt or an unevaluable
+observation does not settle the hypothesis as false. Effectful terminal nodes
+remain disabled in the public Procedure runner.
 
 ## playbill block
 
