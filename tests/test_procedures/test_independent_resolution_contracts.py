@@ -231,7 +231,11 @@ def test_run_binds_contract_and_replays_exact_history(tmp_path: Path) -> None:
             window=FixedWindowV1(starts_at=READ_TIME, duration_seconds=86400),
         )
 
-    from cruxible_client.contracts.procedures.artifacts import procedure_path, render_procedure
+    from cruxible_client.contracts.procedures.artifacts import (
+        procedure_artifact_digest,
+        procedure_path,
+        render_procedure,
+    )
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 
     definition = procedure.definition.model_copy(update={"name": "second-method"})
@@ -293,6 +297,41 @@ def test_run_binds_contract_and_replays_exact_history(tmp_path: Path) -> None:
     assert other_run.status == "succeeded"
     assert other_run.investigation == results[0].investigation
     assert other_run.run_id != results[0].run_id
+
+    # A new version of the same method must retain the question, while getting
+    # its own execution identity. Historical replay still uses the old method.
+    definition = procedure.definition.model_copy(
+        update={"budget": procedure.definition.budget.model_copy(update={"max_items": 90})}
+    )
+    successor = procedure.model_copy(
+        update={
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest_v3(definition).tagged,
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=procedure_artifact_digest(procedure).tagged
+            ),
+        }
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[procedure_path(successor.identity.name)] = render_procedure(successor)
+    _accept_tree(
+        instance, owner, tree, timestamp="2026-08-24T16:05:00.000000Z", proposal_name="method-v2"
+    )
+    revised_run = service_run_playbill_procedure(
+        instance,
+        name=procedure.identity.name,
+        request=ProcedureRunRequestV2(
+            evaluation_time=READ_TIME.replace(minute=10), input={}, resolution_contract=refs[0]
+        ),
+        actor_context=_actor(instance),
+    )
+    assert revised_run.status == "succeeded"
+    assert revised_run.procedure_artifact_digest == procedure_artifact_digest(successor).tagged
+    assert revised_run.procedure_artifact_digest != results[0].procedure_artifact_digest
+    assert revised_run.investigation == results[0].investigation
+    assert revised_run.semantic_replay_key_digest != results[0].semantic_replay_key_digest
+    assert revised_run.run_id != results[0].run_id
+    assert service_get_playbill_procedure_run(instance, run_id=results[0].run_id) == results[0]
     retired = one.model_copy(
         update={
             "lifecycle": ArtifactLifecycle(
