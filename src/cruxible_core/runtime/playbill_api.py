@@ -1768,7 +1768,8 @@ def playbill_procedure_run(
         operation="playbill.procedure.run.resolve",
         coordinate=result.coordinate,
         artifacts=consumption_artifacts_for_dependency_closure(
-            instance.tree_at(result.coordinate.git_oid),
+            instance,
+            result.coordinate,
             procedure_path(name),
         ),
     )

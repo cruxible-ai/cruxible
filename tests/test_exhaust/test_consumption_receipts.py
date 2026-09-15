@@ -18,12 +18,70 @@ from cruxible_core.exhaust.consumption import (
     ConsumptionOperation,
     build_consumption_receipt,
     consumption_aggregate,
+    consumption_artifacts_for_dependency_closure,
     record_consumption,
 )
 from cruxible_core.governance.actor_context import GovernedActorContext
 from tests.core_support._support import initialize_local
 
 NOW = datetime(2026, 8, 26, 14, 0, tzinfo=timezone.utc)
+
+
+def test_procedure_consumption_reads_only_its_transitive_dependencies(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.contracts.procedures.artifacts import procedure_path
+    from cruxible_core.claims.closure import dependency_artifacts
+    from tests.test_procedures.test_procedure_run_surface import _world
+
+    instance, _owner, procedure = _world(tmp_path)
+    accepted = instance.accepted_coordinate()
+    states = dependency_artifacts(instance.tree_at(accepted.git_oid))
+    by_identity = {state.identity.qualified: state for state in states}
+    reachable = {procedure.identity.qualified}
+    while True:
+        expanded = reachable | {
+            pin.target.qualified
+            for identity in reachable
+            for pin in by_identity[identity].pins
+            if pin.target.qualified in by_identity
+        }
+        if expanded == reachable:
+            break
+        reachable = expanded
+    expected = tuple(
+        (by_identity[identity].identity, by_identity[identity].artifact_digest)
+        for identity in sorted(reachable)
+    )
+    assert len(reachable) < len(states)
+    allowed = {by_identity[identity].path for identity in reachable}
+    with instance.bind_accepted_projection(accepted) as projection:
+        reader_type = type(projection.typed)
+    member_bytes = reader_type.member_bytes
+
+    def selected_member(reader, path):
+        assert path in allowed
+        return member_bytes(reader, path)
+
+    monkeypatch.setattr(reader_type, "member_bytes", selected_member)
+    monkeypatch.setattr(
+        instance, "tree_at", lambda _oid: pytest.fail("receipt closure must not load the world")
+    )
+    assert (
+        consumption_artifacts_for_dependency_closure(
+            instance,
+            AcceptedCoordinate.from_internal(accepted),
+            procedure_path(procedure.identity.name),
+        )
+        == expected
+    )
+    assert (
+        consumption_artifacts_for_dependency_closure(
+            instance, AcceptedCoordinate.from_internal(accepted), "procedures/missing.json"
+        )
+        == ()
+    )
 
 
 def test_qualifying_consumption_operations_exhaust_the_closed_wire_vocabulary() -> None:

@@ -12,7 +12,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_core.claims.closure import dependency_artifacts, parse_dependency_artifact
+from cruxible_core.claims.closure import parse_dependency_artifact
 from cruxible_core.curation.review_operational import (
     REVIEW_OPERATIONAL_APPEND_BATCH_LIMIT,
     ReviewOperationalStoreError,
@@ -263,29 +263,31 @@ def consumption_artifacts_for_paths(
 
 
 def consumption_artifacts_for_dependency_closure(
-    tree: Mapping[str, bytes], root_path: str
+    instance: PlaybillInstance, coordinate: AcceptedCoordinate, root_path: str
 ) -> tuple[tuple[ArtifactIdentity, str], ...]:
-    """Return one artifact and the accepted dependencies it actually resolves."""
+    """Read only the root and the accepted owners reached through its pins."""
 
-    states = dependency_artifacts(tree)
-    by_path = {item.path: item for item in states}
-    by_identity = {item.identity.qualified: item for item in states}
-    root = by_path.get(root_path)
-    if root is None:
-        return ()
-    pending = [root]
-    visited: set[str] = set()
-    result: list[tuple[ArtifactIdentity, str]] = []
-    while pending:
-        current = pending.pop()
-        if current.identity.qualified in visited:
-            continue
-        visited.add(current.identity.qualified)
-        result.append((current.identity, current.artifact_digest))
-        for pin in reversed(current.pins):
-            dependency = by_identity.get(pin.target.qualified)
-            if dependency is not None:
-                pending.append(dependency)
+    accepted = instance.resolve_accepted_coordinate(
+        git_oid=coordinate.git_oid,
+        semantic_root=coordinate.semantic_root,
+        generation_root=coordinate.generation_root,
+        compiler_digest=coordinate.compiler_digest,
+    )
+    with instance.bind_accepted_projection(accepted) as projection:
+        roots = projection.typed.envelopes(paths=(root_path,))
+        pending = [row.identity for row in roots]
+        visited: set[str] = set()
+        result: list[tuple[ArtifactIdentity, str]] = []
+        while pending:
+            identity = pending.pop()
+            if identity in visited:
+                continue
+            visited.add(identity)
+            current = projection.typed.dependency_state(identity)
+            if current is None:
+                continue
+            result.append((current.identity, current.artifact_digest))
+            pending.extend(pin.target.qualified for pin in reversed(current.pins))
     return tuple(sorted(result, key=lambda item: item[0].qualified.encode("utf-8")))
 
 
