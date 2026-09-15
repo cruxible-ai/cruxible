@@ -88,6 +88,35 @@ def _request(*, permitted: bool = True) -> PlaybillAuditRequestV1:
     )
 
 
+def test_served_audit_preserves_historical_inputs_and_required_pin_impact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_core.service.discovery import audit as service
+    from tests.test_claims.test_claim_retirement import _accepted_dependency_world
+
+    instance, _owner, root_id, middle_id, leaf_id = _accepted_dependency_world(tmp_path)
+    full_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    original = service.build_reverse_dependency_index
+    comparisons = []
+
+    def compare(**kwargs):
+        selected = original(**kwargs)
+        expected = original(**{**kwargs, "tree": full_tree})
+        assert selected == expected
+        assert any(ref.identity.name == leaf_id for refs in selected.values() for ref in refs)
+        comparisons.append(selected)
+        return selected
+
+    monkeypatch.setattr(service, "build_reverse_dependency_index", compare)
+    monkeypatch.setattr(instance, "tree_at", lambda _oid: pytest.fail("audit must select records"))
+    result = service_playbill_audit(instance, request=_request(), actor_context=_actor())
+    assert comparisons
+    assert {row.claim_identity.name for row in result.rows}.issuperset(
+        {root_id, middle_id, leaf_id}
+    )
+
+
 def test_empty_audit_is_byte_identical_idempotent_and_operational_only(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
     accepted_before = instance.accepted_coordinate()

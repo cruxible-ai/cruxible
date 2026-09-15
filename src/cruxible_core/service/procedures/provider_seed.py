@@ -29,6 +29,7 @@ from cruxible_client.contracts.providers import (
     provider_path,
     render_provider,
 )
+from cruxible_core.derived.derived_state import fork_tree
 from cruxible_core.governance.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_ENTRYPOINT,
     WORKSPACE_FILE_INTERFACE_ID,
@@ -56,7 +57,7 @@ def _seed_candidate_tree(
 ) -> tuple[Mapping[str, bytes], tuple[str, ...]]:
     coordinate = instance.accepted_coordinate()
     tree = instance.immutable_tree_at(coordinate.git_oid)
-    candidate_tree = tree.fork()
+    candidate_tree = fork_tree(tree)
     changed: list[str] = []
 
     interface_path = provider_interface_path(WORKSPACE_FILE_INTERFACE_ID)
