@@ -288,7 +288,7 @@ def _reference_diagnostics(
                 generation_root=expectation.minted_coordinate.generation_root,
                 compiler_digest=expectation.minted_coordinate.compiler_digest,
             )
-            minted_tree = instance.tree_at(minted.git_oid)
+            minted_content = instance.blob_at(minted.git_oid, path)
         except (OSError, PlaybillError, ValueError):
             diagnostics.append(
                 _diagnostic(
@@ -307,7 +307,6 @@ def _reference_diagnostics(
                 )
             )
             continue
-        minted_content = minted_tree.get(path)
         if minted_content is None:
             diagnostics.append(
                 _diagnostic(

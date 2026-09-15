@@ -333,7 +333,7 @@ class AuthoringIntentCoordinator:
         self.instance.require_writable()
         base = self.instance.accepted_coordinate()
         coordinate = AcceptedCoordinate.from_internal(base)
-        payload = lower_authoring_input(input, tree=self.instance.tree_at(base.git_oid))
+        payload = lower_authoring_input(input)
         expectations = self._existing_capture_reference_expectations(
             payload,
             coordinate=base,
@@ -537,10 +537,7 @@ class AuthoringIntentCoordinator:
             )
         else:
             current = self.store.get(intent_id, actor_id=actor.actor_id)
-            payload = lower_authoring_input(
-                input,
-                tree=self.instance.tree_at(current.base_coordinate.git_oid),
-            )
+            payload = lower_authoring_input(input)
             base = self.instance.resolve_accepted_coordinate(
                 git_oid=current.base_coordinate.git_oid,
                 semantic_root=current.base_coordinate.semantic_root,
@@ -1223,9 +1220,7 @@ class AuthoringIntentCoordinator:
         return authoring_member_identity(payload)
 
     def _current_claim(self, intent: AuthoringIntentV1) -> ClaimArtifactAny | None:
-        path = claim_path(intent.semantic_identity)
-        content = self.instance.tree_at(self.instance.accepted_coordinate().git_oid).get(path)
-        return None if content is None else parse_claim(content, path=path)
+        return self._current_claim_by_identity(intent.semantic_identity)
 
     def _publication_claim_current(self, expectation: InsertionExpectationV2) -> bool:
         current_claim = self._current_claim_by_identity(expectation.claim_identity)
@@ -1238,7 +1233,7 @@ class AuthoringIntentCoordinator:
 
     def _current_claim_by_identity(self, claim_identity: str) -> ClaimArtifactAny | None:
         path = claim_path(claim_identity)
-        content = self.instance.tree_at(self.instance.accepted_coordinate().git_oid).get(path)
+        content = self.instance.blob_at(self.instance.accepted_coordinate().git_oid, path)
         return None if content is None else parse_claim(content, path=path)
 
     def _publication_guard_state(

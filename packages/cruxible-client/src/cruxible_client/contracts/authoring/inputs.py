@@ -639,10 +639,8 @@ def _change_set_member(member: AuthoringChangeSetMemberInputV1) -> AuthoringChan
     )
 
 
-def lower_authoring_input(value: AuthoringInputV1, *, tree: dict[str, bytes]) -> AuthoringPayloadV1:
-    """Resolve one input against exactly the supplied accepted tree."""
-
-    del tree
+def lower_authoring_input(value: AuthoringInputV1) -> AuthoringPayloadV1:
+    """Lower typed input; accepted-state references are checked during preflight."""
     if isinstance(value, ClaimInput):
         return _claim_payload(value)
     if isinstance(value, ProcedureInput):

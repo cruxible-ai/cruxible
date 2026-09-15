@@ -330,7 +330,7 @@ def test_http_unsorted_owned_contracts_use_the_typed_artifact_validation_refusal
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:
     client, instance_id, _private_key = playbill_http
-    payload = lower_authoring_input(procedure_example(), tree={})
+    payload = lower_authoring_input(procedure_example())
     assert isinstance(payload, ProcedureAuthoringPayloadV2)
     assert len(payload.owned_contracts) > 1
     unsorted = payload.model_copy(

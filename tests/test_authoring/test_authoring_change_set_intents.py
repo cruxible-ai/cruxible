@@ -1096,7 +1096,7 @@ def test_a_retirement_member_spells_its_claim_ref_the_way_a_claim_does(
         ),
     )
     with pytest.raises(ClaimFormatError, match="Claim ID must be CLM-"):
-        lower_authoring_input(prefixed, tree={})
+        lower_authoring_input(prefixed)
 
     # And the one admissible spelling still creates exactly one intent twice.
     instance, owner = initialize_local(tmp_path)

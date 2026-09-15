@@ -592,7 +592,7 @@ def test_served_procedure_example_reaches_all_six_typed_specs(tmp_path: Path) ->
     coordinator, actor = _coordinator(tmp_path)
     result = coordinator.compile(
         actor=actor,
-        payload=lower_authoring_input(example, tree={}),
+        payload=lower_authoring_input(example),
         canonical_timestamp=TIMESTAMP,
     )
     assert result.verdict == "passed"

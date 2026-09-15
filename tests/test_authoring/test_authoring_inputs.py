@@ -99,11 +99,16 @@ def _claim_input(*, working: bool = False) -> ClaimInput:
 
 def test_input_create_binds_friendly_subject_to_the_stored_intent_base(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     instance, owner = initialize_local(tmp_path)
     _seed_claim_surface(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
+
+    monkeypatch.setattr(
+        instance, "tree_at", lambda _oid: pytest.fail("lowering must not read the world")
+    )
 
     view = coordinator.create_input(
         actor=actor,
@@ -131,7 +136,7 @@ def test_existing_capture_input_lowers_to_the_v3_payload_without_digest_relay() 
         }
     )
 
-    payload = lower_authoring_input(input_value, tree={})
+    payload = lower_authoring_input(input_value)
 
     assert payload.tag == "playbill-claim-authoring-payload-v3"
     assert payload.source.capture_digest == capture_digest  # type: ignore[union-attr]
@@ -149,7 +154,7 @@ def test_existing_capture_input_requires_an_explicit_admitted_citation_role() ->
     )
 
     with pytest.raises(AuthoringInputError) as raised:
-        lower_authoring_input(input_value, tree={})
+        lower_authoring_input(input_value)
 
     assert raised.value.code == "playbill.authoring.existing_capture_not_admitted"
     assert raised.value.field_path == "input.citation_role"
@@ -161,7 +166,6 @@ def test_friendly_change_set_sorts_members_and_typed_refuses_duplicate_identity(
 
     lowered = lower_authoring_input(
         ChangeSetInput(kind="change_set", members=(query, procedure)),
-        tree={},
     )
 
     assert [member.tag for member in lowered.members] == [
@@ -171,7 +175,6 @@ def test_friendly_change_set_sorts_members_and_typed_refuses_duplicate_identity(
     with pytest.raises(AuthoringInputError) as raised:
         lower_authoring_input(
             ChangeSetInput(kind="change_set", members=(query, query)),
-            tree={},
         )
     assert raised.value.code == "playbill.authoring.change_set_duplicate_identity"
     assert raised.value.field_path == "input.members"
@@ -647,7 +650,7 @@ def test_a_procedure_input_names_its_acquisition_policy_and_lowering_owns_the_di
         activation_policy="drain",
         acquisition_policy="advisory-reads",
     )
-    payload = lower_authoring_input(member, tree={})
+    payload = lower_authoring_input(member)
     # A named policy makes this a v2 payload even with no carried Contract, and
     # the payload carries the NAME: no caller ever supplies the digest.
     assert payload.tag == "playbill-procedure-authoring-payload-v2"
