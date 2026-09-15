@@ -18,6 +18,7 @@ from cruxible_client.contracts import (
     ProviderLaneStatusV1,
 )
 from cruxible_client.contracts.accepted_attestations import AcceptedClaimAttestationEvidenceV1
+from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
     Sha256Value,
@@ -75,7 +76,6 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.documents import document_path, parse_document
 from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
-from cruxible_client.contracts.procedures.artifacts import parse_procedure
 from cruxible_client.contracts.query.definitions import QueryEvaluationPolicyV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
@@ -122,6 +122,7 @@ from cruxible_core.service.discovery.query import (
 from cruxible_core.service.discovery.query_definitions import accepted_query_definition
 from cruxible_core.service.discovery.search import claim_resolution_statuses
 from cruxible_core.service.evidence.evidence import (
+    ClaimVerdictReadContext,
     accepted_claim_attestations,
     service_evaluate_playbill_claim_verdict,
 )
@@ -861,7 +862,8 @@ def _claim_attestation_threshold_items(
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Emit v4 queue consequences from current independent attestation components."""
 
-    tree = instance.tree_at(coordinate.git_oid)
+    accepted = _resolve_coordinate(instance, coordinate)
+    tree = ClaimVerdictReadContext(instance, accepted).tree
     claim_types: dict[str, ClaimType] = {}
     items: list[PlaybillNextItemV1] = []
     for claim in sorted(claims, key=lambda item: item.identity.qualified.encode("utf-8")):
@@ -879,12 +881,7 @@ def _claim_attestation_threshold_items(
             raise ProposalIntegrityError("accepted Claim has no reproducible Claim law evidence")
         current = accepted_claim_attestations(
             instance,
-            coordinate=instance.resolve_accepted_coordinate(
-                git_oid=coordinate.git_oid,
-                semantic_root=coordinate.semantic_root,
-                generation_root=coordinate.generation_root,
-                compiler_digest=coordinate.compiler_digest,
-            ),
+            coordinate=accepted,
             tree=tree,
             claim=claim,
             historical=evidence.verified_attestations,
@@ -1288,7 +1285,10 @@ def _claim_retirement_sequences(instance: PlaybillInstance) -> dict[str, int]:
         record = getattr(generation, "record", None)
         if record is None:
             continue
-        tree = instance.tree_at(generation.oid)
+        tree = instance.blobs_at(
+            generation.oid,
+            tuple(member.path for member in record.members if member.artifact_kind == "claim"),
+        )
         for member in record.members:
             if member.artifact_kind != "claim" or member.path not in tree:
                 continue
@@ -1899,7 +1899,7 @@ def _bounded_claim_lineages(
 class _AttestationLineageArtifact:
     claim: ClaimArtifactAny
     artifact_digest: str
-    tree: dict[str, bytes]
+    tree: Mapping[str, bytes]
 
 
 def _attestation_claim_lineage(
@@ -1915,7 +1915,7 @@ def _attestation_claim_lineage(
     target_index = next(
         index for index, item in enumerate(history) if item.oid == coordinate.git_oid
     )
-    current_tree = instance.tree_at(coordinate.git_oid)
+    current_tree = ClaimVerdictReadContext(instance, coordinate).tree
     raw = current_tree.get(path)
     if raw is None:
         return (), True
@@ -1943,9 +1943,9 @@ def _attestation_claim_lineage(
             _AttestationLineageArtifact(
                 claim=predecessor,
                 artifact_digest=digest,
-                # Only a generation that actually carries a lineage member pays
-                # for its whole tree; the admission accounts need it.
-                tree=instance.tree_at(generation.oid),
+                tree=ClaimVerdictReadContext(
+                    instance, instance.coordinate_for_oid(generation.oid)
+                ).tree,
             )
         )
         expected = predecessor.lifecycle.predecessor_digest
@@ -2730,19 +2730,18 @@ def _procedure_projection_items(
         item.artifact.qualified for item in coverage.bindings if item.artifact.kind == "Procedure"
     }
     missing: list[tuple[str, dict[str, object]]] = []
-    tree = instance.tree_at(coordinate.git_oid)
-    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not path.startswith("procedures/") or not path.endswith(".json"):
+    with instance.bind_accepted_projection(coordinate) as projection:
+        procedures = projection.typed.procedure_inventory()
+    for procedure in procedures:
+        if procedure.lifecycle != "live" or procedure.identity in covered:
             continue
-        procedure = parse_procedure(tree[path], path=path)
-        if procedure.lifecycle.state != "live" or procedure.identity.qualified in covered:
-            continue
+        identity = parse_artifact_identity(procedure.identity)
         catalog_entry: dict[str, object] = {
             "kind": "procedure",
-            "procedure_identity": procedure.identity.model_dump(mode="json"),
-            "locator": f"procedures/{procedure.identity.name}.md",
+            "procedure_identity": identity.model_dump(mode="json"),
+            "locator": f"procedures/{identity.name}.md",
         }
-        missing.append((procedure.identity.qualified, catalog_entry))
+        missing.append((identity.qualified, catalog_entry))
     if not missing:
         return ()
     missing.sort(key=lambda item: item[0].encode("utf-8"))
@@ -2782,7 +2781,7 @@ def _document_items(
         or not access_profile.permits("instance")
     ):
         return ()
-    tree = instance.tree_at(coordinate.git_oid)
+    tree = ClaimVerdictReadContext(instance, coordinate).tree
     items: list[PlaybillNextItemV1] = []
     for source in observation.source_observations:
         document_id = getattr(source, "document_id", None)
@@ -2971,7 +2970,7 @@ def _projection_items(
     if not observed_sources:
         return ()
 
-    tree = instance.tree_at(coordinate.git_oid)
+    tree = ClaimVerdictReadContext(instance, coordinate).tree
     # One fold per `next`. The registration fold parses every durable intent
     # event, and the queue used to reach it from three places and once more per
     # syncable block; the retirement release now reads the same folded result.

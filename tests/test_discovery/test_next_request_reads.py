@@ -57,6 +57,9 @@ def test_next_shares_population_and_facts_without_changing_complete_result(
     counts: Counter[str] = Counter()
     original_list = playbill_next.service_list_playbill_claims
     original_row = playbill_query._fact_row
+    monkeypatch.setattr(
+        instance, "tree_at", lambda _oid: pytest.fail("next selected reads must not load the world")
+    )
 
     def listed(*args: Any, **kwargs: Any) -> Any:
         counts["population"] += 1
