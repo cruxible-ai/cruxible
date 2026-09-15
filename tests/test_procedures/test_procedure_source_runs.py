@@ -23,6 +23,7 @@ from typing import Any, cast, get_args
 
 import pytest
 
+from cruxible_client.authoring.inputs import CarriedContractInput, ProcedureInput
 from cruxible_client.contracts.acquisition_policies import (
     ACQUISITION_POLICY_PIN_ROLE,
     IndependentCoherenceV1,
@@ -552,9 +553,7 @@ def test_the_sdk_authors_a_source_node_on_v4_and_refuses_it_on_v3(tmp_path: Path
     instance, _owner, procedure, _root, _policy_artifact = _world(tmp_path)
     draft = Playbill.procedure(
         object(),
-        definition=procedure.definition,
-        activation_policy="drain",
-        retire=False,
+        definition=_sdk_procedure_input(procedure),
     )
     assert isinstance(draft, ProcedureDraft)
 
@@ -562,9 +561,11 @@ def test_the_sdk_authors_a_source_node_on_v4_and_refuses_it_on_v3(tmp_path: Path
     with pytest.raises(CapabilityNotServed) as excinfo:
         Playbill.procedure(
             object(),
-            definition=v3_source,
-            activation_policy="drain",
-            retire=False,
+            definition=ProcedureInput(
+                kind="procedure",
+                definition=v3_source.model_dump(mode="json", by_alias=True),
+                activation_policy="drain",
+            ),
         )
     assert excinfo.value.code == "playbill.sdk.procedure_capability_not_served"
     assert served_node_kinds(4) - served_node_kinds(3) == {"source"}
@@ -1494,10 +1495,9 @@ def test_the_sdk_carries_the_named_policy_into_the_authoring_payload(tmp_path: P
     _instance, _owner, procedure, _root, policy_artifact = _world(tmp_path)
     draft = Playbill.procedure(
         object(),
-        definition=procedure.definition,
-        activation_policy="drain",
-        retire=False,
-        acquisition_policy=policy_artifact.identity.name,
+        definition=_sdk_procedure_input(procedure).model_copy(
+            update={"acquisition_policy": policy_artifact.identity.name}
+        ),
     )
 
     assert isinstance(draft, ProcedureDraft)
@@ -1664,7 +1664,7 @@ def test_the_authoring_path_produces_the_exact_artifact_the_run_lane_executes(
     executed above is what "the same definition gives the same digest" means.
     """
 
-    from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayloadV2
+    from cruxible_client.authoring.sdk import Playbill
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
     from cruxible_core.authoring.preflight import compute_preflight
     from cruxible_core.proposals.proposals import AuthenticatedActor
@@ -1678,12 +1678,7 @@ def test_the_authoring_path_produces_the_exact_artifact_the_run_lane_executes(
     # the digest below an identity claim rather than an echo.
     compiled = coordinator.compile(
         actor=actor,
-        payload=ProcedureAuthoringPayloadV2(
-            definition=_authored_definition(procedure),
-            activation_policy=procedure.activation_policy,
-            owned_contracts=procedure.owned_contracts,
-            retire=False,
-        ),
+        payload=Playbill.procedure(object(), definition=_sdk_procedure_input(procedure)).payload,
         canonical_timestamp=ACCEPT_STAMP,
     )
 
@@ -1724,3 +1719,20 @@ def _authored_definition(procedure: ProcedureArtifactV2) -> dict[str, object]:
 
     rendered = procedure.definition.model_dump(mode="json", by_alias=True)
     return cast(dict[str, object], rewrite(rendered))
+
+
+def _sdk_procedure_input(procedure: ProcedureArtifactV2) -> ProcedureInput:
+    return ProcedureInput(
+        kind="procedure",
+        definition=_authored_definition(procedure),
+        activation_policy=procedure.activation_policy,
+        contracts=tuple(
+            CarriedContractInput(
+                name=contract.identity.name,
+                description=contract.contract_schema.description,
+                fields=contract.contract_schema.fields,
+                allow_extra=contract.contract_schema.allow_extra,
+            )
+            for contract in procedure.owned_contracts
+        ),
+    )

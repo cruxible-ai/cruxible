@@ -411,26 +411,30 @@ while page.cursor:                        # the cursor carries page 1's observat
 The same loop from nothing, declaring the measurement it later evaluates:
 
 ~~~python
-from cruxible_client.contracts.procedures.measurements import (
-    AcceptedQueryProcedureMeasurementV1,
-    ProcedureMeasurementDeclarationV1,
-    ProcedureMeasurementExpectationV1,
-)
+from cruxible_client.authoring.inputs import ProcedureInput
 
-definition = ...                          # any ProcedureDefinitionV3/V4 (see above)
-definition = definition.model_copy(update={"measurements": (
-    ProcedureMeasurementDeclarationV1(
-        name="rows-present",
-        subject_grain="procedure_unit",
-        measurement=AcceptedQueryProcedureMeasurementV1(
-            query=definition.nodes[0].query,          # the pinned QueryDefinition
-            expect=ProcedureMeasurementExpectationV1(min_count=1),
-        ),
-        check_after=CanonicalDurationV1(microseconds=0),
-        expires_after=CanonicalDurationV1(microseconds=86_400_000_000),
-    ),
-)})
-accepted = pb.procedure(definition=definition, activation_policy="abort", retire=False)
+definition: ProcedureInput = ...          # graph, carried schemas, and activation policy
+# Authoring references name accepted dependencies; the daemon binds exact pins.
+measurement = {
+    "name": "rows-present",
+    "subject_grain": "procedure_unit",
+    "measurement": {
+        "kind": "accepted_query",
+        "query": {
+            "kind": "accepted",
+            "role": "query",
+            "target": "QueryDefinition:release-rows",
+        },
+        "expect": {"min_count": 1},
+    },
+    "check_after": {"microseconds": 0},
+    "expires_after": {"microseconds": 86_400_000_000},
+}
+definition = definition.model_copy(update={
+    "definition": {**definition.definition, "measurements": [measurement]},
+    "activation_policy": "abort",
+})
+draft = pb.procedure(definition=definition)
 # ... submit and approve the change set as usual; acceptance activates the window
 proc = pb.accepted_procedure("release-guard")
 run = proc.run()

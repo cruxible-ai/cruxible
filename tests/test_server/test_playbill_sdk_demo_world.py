@@ -11,7 +11,6 @@ from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
 from cruxible_client import (
-    ActivationPolicy,
     Cardinality,
     ClaimObjectKind,
     ClaimRef,
@@ -25,7 +24,7 @@ from cruxible_client import (
 )
 from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.examples import authoring_example
-from cruxible_client.authoring.inputs import ClaimInput, QueryDefinitionInput
+from cruxible_client.authoring.inputs import ClaimInput, ProcedureInput, QueryDefinitionInput
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
@@ -1087,9 +1086,11 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
     }
 
     procedure = pb.procedure(
-        definition=_abstract_assess_procedure(),
-        activation_policy=ActivationPolicy.DRAIN,
-        retire=False,
+        definition=ProcedureInput(
+            kind="procedure",
+            definition=_abstract_assess_procedure().model_dump(mode="json", by_alias=True),
+            activation_policy="drain",
+        ),
     ).prepare()
     assert not procedure.refused, procedure.diagnostics
     procedure.submit()

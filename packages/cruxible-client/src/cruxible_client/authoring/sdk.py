@@ -37,7 +37,6 @@ from cruxible_client.authoring.context import (
 )
 from cruxible_client.authoring.sdk_types import (
     AccessProfile,
-    ActivationPolicy,
     CallSite,
     CapabilityNotServed,
     CaptureRef,
@@ -92,6 +91,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactLifecycle,
     ArtifactPin,
 )
+from cruxible_client.contracts.authoring.inputs import ProcedureInput, lower_authoring_input
 from cruxible_client.contracts.authoring.models import (
     AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
     AUTHORING_SDK_VERSION,
@@ -116,6 +116,7 @@ from cruxible_client.contracts.authoring.models import (
     ClaimTypeSuccessionMemberV1,
     ExistingCaptureCitationSourceV1,
     LineAuthoringPayloadV1,
+    ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
     ResolutionContractAuthoringPayloadV1,
     SelfSourceBodyV1,
@@ -175,10 +176,6 @@ from cruxible_client.contracts.predictions import (
 from cruxible_client.contracts.procedures.line_specs import (
     ManualTriggerPolicyV1,
     TriggerPolicyV2,
-)
-from cruxible_client.contracts.procedures.models import (
-    ProcedureDefinitionV3,
-    ProcedureDefinitionV4,
 )
 from cruxible_client.contracts.procedures.windows import (
     TriggerEventReferenceV1,
@@ -515,6 +512,7 @@ class _IntentDraft:
         ClaimAuthoringPayloadV1
         | ClaimAuthoringPayloadV2
         | ClaimAuthoringPayloadV3
+        | ProcedureAuthoringPayloadV1
         | ProcedureAuthoringPayloadV2
         | SubjectAuthoringPayloadV1
         | ChangeSetAuthoringPayloadV1
@@ -2589,34 +2587,44 @@ class Playbill:
     def procedure(
         self,
         *,
-        definition: ProcedureDefinitionV3 | ProcedureDefinitionV4,
-        activation_policy: ActivationPolicy | str,
-        retire: bool,
-        acquisition_policy: str | None = None,
+        definition: ProcedureInput,
     ) -> ProcedureDraft:
-        """Author one Procedure, optionally pinning the policy its reads obey.
+        """Author a Procedure with the same typed input used by CLI and HTTP.
 
-        `acquisition_policy` names an accepted `SourceAcquisitionPolicy` by its
-        semantic name; lowering resolves that name and declares the exact pin on
-        the Procedure envelope. A direct run reads its policy from that pin, so
-        two Procedures whose Source aliases happen to agree are governed
-        separately, and accepting an unrelated policy cannot change what an
-        already accepted Procedure does.
+        Declare owned input/output schemas in ``definition.contracts`` and use
+        ``carried_contract`` references in its graph. ``accepted`` references
+        resolve at the intent base; ``slot`` references remain deferred. Exact
+        pins belong to accepted graphs and are never silently converted into
+        references to a potentially different version.
+
+        Activation, retirement, and the optional acquisition-policy name are
+        also carried by this input. The daemon resolves the policy at the same
+        base as the graph's other dependencies.
         """
 
         sites = capture_keyword_sites("procedure", stacklevel=1)
-        policy = _enum(activation_policy, ActivationPolicy, label="procedure activation policy")
+        if not isinstance(definition, ProcedureInput):
+            raise TypeError("procedure definition must be a ProcedureInput, not an accepted graph")
+        payload = lower_authoring_input(definition)
+        assert isinstance(payload, (ProcedureAuthoringPayloadV1, ProcedureAuthoringPayloadV2))
         # `source` is served only by the graph-v4 observation path: a v3 Source
         # node names no interface or implementation, so nothing can plan its
         # Provider occurrence. Keep it out of the v3 allow-list rather than
         # letting authoring succeed on a graph no run lane can admit.
         allowed = {"state_tap", "transform", "project", "guard", "repeat", "halt"}
-        if isinstance(definition, ProcedureDefinitionV4):
+        if definition.definition.get("graph_format") == 4:
             # `propose_change_set` is served on the Line lane only: a direct
             # run has no requested rung or mandate coordinate and refuses it
             # at admission, so the SDK admits the node where a Line can run it.
             allowed = allowed | {"source", "propose_change_set"}
-        unsupported = tuple(node.node_id for node in definition.nodes if node.kind not in allowed)
+        nodes = definition.definition.get("nodes")
+        if not isinstance(nodes, list | tuple):
+            raise ValueError("Procedure input must declare its nodes")
+        unsupported = tuple(
+            node.get("node_id")
+            for node in nodes
+            if isinstance(node, Mapping) and node.get("kind") not in allowed
+        )
         if unsupported:
             raise CapabilityNotServed(
                 code="playbill.sdk.procedure_capability_not_served",
@@ -2627,34 +2635,25 @@ class Playbill:
                     "graph-v4 definition."
                 ),
             )
-        payload = ProcedureAuthoringPayloadV2(
-            definition=definition.model_dump(mode="json", by_alias=True),
-            activation_policy=policy.value,
-            owned_contracts=(),
-            acquisition_policy=acquisition_policy,
-            retire=retire,
-        )
         return ProcedureDraft(
             self,
             payload,
             (),
             _program_stamp(
                 "procedure",
-                {
-                    "definition": definition.model_dump(mode="json", by_alias=True),
-                    "activation_policy": policy.value,
-                    "acquisition_policy": acquisition_policy,
-                    "retire": retire,
-                },
+                definition.model_dump(mode="json"),
             ),
             DiagnosticSourceMap(
                 entries_for_keywords(
                     builder="procedure",
                     emitted={
-                        "definition": ("definition",),
-                        "activation_policy": ("activation_policy",),
-                        "acquisition_policy": ("acquisition_policy",),
-                        "retire": ("retire",),
+                        "definition": (
+                            "definition",
+                            "owned_contracts",
+                            "activation_policy",
+                            "acquisition_policy",
+                            "retire",
+                        ),
                     },
                     sites=sites,
                 )
