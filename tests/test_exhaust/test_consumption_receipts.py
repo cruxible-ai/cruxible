@@ -6,9 +6,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import get_args
 
+import pytest
+
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_core.curation.review_operational import ReviewOperationalStoreError
 from cruxible_core.exhaust.consumption import (
     QUALIFYING_CONSUMPTION_OPERATIONS,
     ConsumptionContextV1,
@@ -152,4 +155,18 @@ def test_internal_read_without_outer_context_writes_nothing(tmp_path: Path) -> N
         )
         == ()
     )
+    assert instance.review_operational_store().head().initialized is False
+
+
+def test_consumption_checks_the_complete_coordinate_before_writing(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    with pytest.raises(ReviewOperationalStoreError, match="coordinate is not accepted"):
+        record_consumption(
+            instance,
+            context=_context(),
+            operation="playbill.claim_type.get",
+            coordinate=coordinate.model_copy(update={"semantic_root": "sha256:" + "a" * 64}),
+            artifacts=(_artifact(),),
+        )
     assert instance.review_operational_store().head().initialized is False

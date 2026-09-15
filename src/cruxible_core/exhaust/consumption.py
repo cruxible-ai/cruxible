@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.claims.closure import dependency_artifacts, parse_dependency_artifact
 from cruxible_core.curation.review_operational import (
@@ -20,7 +21,8 @@ from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.runtime.instance import PlaybillInstance
 
 CONSUMPTION_RECEIPT_ID_DOMAIN = "playbill-consumption-receipt-v1"
-CONSUMPTION_PARTITION_ID = "receipts"
+# Keep the epoch's original locator; only new receipts get singleton partitions.
+CONSUMPTION_EPOCH_PARTITION_ID = "receipts"
 CONSUMPTION_EPOCH_EVENT_ID = "consumption-epoch"
 
 ConsumptionOperation: TypeAlias = Literal[
@@ -159,14 +161,13 @@ def build_consumption_receipt(
 
 
 def _generation(instance: PlaybillInstance, coordinate: AcceptedCoordinate) -> int:
-    matches = tuple(
-        item.sequence for item in instance.accepted_history() if item.oid == coordinate.git_oid
-    )
-    if len(matches) != 1:
+    try:
+        with instance.accepted_history_reader(at=coordinate) as history:
+            return history.sequence
+    except PlaybillFormatError as exc:
         raise ReviewOperationalStoreError(
             "consumption receipt coordinate is not accepted by this instance"
-        )
-    return matches[0]
+        ) from exc
 
 
 def record_consumption(
@@ -181,7 +182,6 @@ def record_consumption(
 
     if context is None:
         return ()
-    generation = _generation(instance, coordinate)
     ordered = tuple(
         sorted(
             set(artifacts),
@@ -190,6 +190,7 @@ def record_consumption(
     )
     if not ordered:
         return ()
+    generation = _generation(instance, coordinate)
     store = instance.review_operational_store()
     ensure_consumption_epoch(
         instance,
@@ -210,7 +211,6 @@ def record_consumption(
     for offset in range(0, len(receipts), REVIEW_OPERATIONAL_APPEND_BATCH_LIMIT):
         store.append_batch(
             family="consumption",
-            partition_id=CONSUMPTION_PARTITION_ID,
             entries=tuple(
                 (receipt.receipt_id, receipt)
                 for receipt in receipts[offset : offset + REVIEW_OPERATIONAL_APPEND_BATCH_LIMIT]
@@ -232,32 +232,20 @@ def ensure_consumption_epoch(
 ) -> ConsumptionEpochV1:
     """Initialize the dead-vocabulary observation epoch without a fake touch."""
 
-    store = instance.review_operational_store()
-    existing = store.events(family="consumption")
-    epochs = tuple(
-        ConsumptionEpochV1.model_validate(payload)
-        for _event, payload in existing
-        if payload.get("tag") == "playbill-consumption-epoch-v1"
-    )
-    if epochs:
-        if any(item != epochs[0] for item in epochs[1:]):
-            raise ReviewOperationalStoreError("consumption epoch is not unique")
-        return epochs[0]
     epoch = ConsumptionEpochV1(
         consumption_epoch_generation=generation,
         accepted_coordinate=coordinate,
     )
-    store.append(
+    _event, payload = instance.review_operational_store().ensure_first(
         family="consumption",
-        partition_id=CONSUMPTION_PARTITION_ID,
-        event_id=epoch.event_id,
+        partition_id=CONSUMPTION_EPOCH_PARTITION_ID,
         payload=epoch,
         coordinate=coordinate,
         generation=generation,
         actor_context=actor_context,
         recorded_at=actor_context.timestamp,
     )
-    return epoch
+    return ConsumptionEpochV1.model_validate(payload)
 
 
 def consumption_artifacts_for_paths(
@@ -304,7 +292,7 @@ def consumption_artifacts_for_dependency_closure(
 def consumption_aggregate(instance: PlaybillInstance) -> ConsumptionAggregateV1:
     events = instance.review_operational_store().events(family="consumption")
     epoch: ConsumptionEpochV1 | None = None
-    receipts: list[ConsumptionReceiptV1] = []
+    receipts: dict[str, ConsumptionReceiptV1] = {}
     for _event, payload in events:
         if payload.get("tag") == "playbill-consumption-epoch-v1":
             parsed_epoch = ConsumptionEpochV1.model_validate(payload)
@@ -312,13 +300,16 @@ def consumption_aggregate(instance: PlaybillInstance) -> ConsumptionAggregateV1:
                 raise ReviewOperationalStoreError("consumption epoch is not unique")
             epoch = parsed_epoch
         elif payload.get("tag") == "playbill-consumption-receipt-v1":
-            receipts.append(ConsumptionReceiptV1.model_validate(payload))
+            receipt = ConsumptionReceiptV1.model_validate(payload)
+            # A retained chained receipt and a new independent retry represent
+            # the same touch. Keep the original bytes, fold the stable ID once.
+            receipts[receipt.receipt_id] = receipt
         else:
             raise ReviewOperationalStoreError("consumption partition has an unknown payload")
 
     by_identity: dict[str, list[ConsumptionReceiptV1]] = {}
     identities: dict[str, ArtifactIdentity] = {}
-    for receipt in receipts:
+    for receipt in receipts.values():
         key = receipt.response_artifact_identity.qualified
         identities[key] = receipt.response_artifact_identity
         by_identity.setdefault(key, []).append(receipt)
