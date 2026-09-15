@@ -27,6 +27,7 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.claims.closure import ReversePinClosureItem, reverse_pin_closure
+from cruxible_core.derived.derived_state import CandidateTree, fork_tree
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
@@ -210,7 +211,7 @@ def build_claim_retirement_candidate(
     *,
     root: ClaimRetireDependentV1,
     dependents: tuple[ClaimRetireDependentV1, ...],
-) -> tuple[dict[str, bytes], tuple[ClaimRetirementResultItemV1, ...]]:
+) -> tuple[CandidateTree, tuple[ClaimRetirementResultItemV1, ...]]:
     requests = {item.artifact_identity.qualified: item for item in (root, *dependents)}
     claims = {
         identity: parse_claim(
@@ -225,7 +226,7 @@ def build_claim_retirement_candidate(
                 f"{ClaimRetireStale.error_code}: predecessor changed for {identity}"
             )
 
-    candidate_tree = dict(tree)
+    candidate_tree = fork_tree(tree)
     successor_digests: dict[str, str] = {}
     successors: dict[str, ClaimArtifactV3] = {}
     pending = set(requests)
@@ -355,8 +356,9 @@ def _accepted_retirement_operation(
         raise ClaimRetireClosureMismatch(
             f"{ClaimRetireClosureMismatch.error_code}: retirement generation lacks a ChangeSet"
         )
-    parent_tree = instance.tree_at(parent_coordinate.git_oid)
-    candidate_tree = instance.tree_at(generation.oid)
+    paths = tuple(member.path for member in record.members if member.path.startswith("claims/"))
+    parent_tree = instance.blobs_at(parent_coordinate.git_oid, paths)
+    candidate_tree = instance.blobs_at(generation.oid, paths)
     retired: dict[str, tuple[ClaimArtifactAny, ClaimArtifactV3]] = {}
     for member in record.members:
         if not member.path.startswith("claims/") or member.path not in candidate_tree:
@@ -446,7 +448,7 @@ def service_retire_claim(
         raise ClaimRetireError("request claim_ref differs from the route Claim")
     current = instance.accepted_coordinate()
     coordinate = AcceptedCoordinate.from_internal(current)
-    tree = instance.tree_at(current.git_oid)
+    tree = instance.immutable_tree_at(current.git_oid)
     content = tree.get(path)
     if content is None:
         raise ClaimRetireError(f"Claim not found: {claim_id}")
