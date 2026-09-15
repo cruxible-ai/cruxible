@@ -188,7 +188,7 @@ def service_propose_playbill_document(
     """Admit and deterministically evaluate one exact Document envelope change."""
 
     proposed_base = _resolve_coordinate(instance, base)
-    candidate_tree = instance.tree_at(proposed_base.git_oid)
+    candidate_tree = instance.immutable_tree_at(proposed_base.git_oid).fork()
     candidate_tree[document_path(shell.document_id)] = render_document(shell)
     ref_name = canonical_playbill_proposal_name(proposal_name, family="document")
     result = instance.proposal_service().submit(
@@ -222,7 +222,7 @@ def service_propose_playbill_principal_change(
     """Use the distinct principal-lifecycle law; never the ordinary Document path."""
 
     proposed_base = _resolve_coordinate(instance, base)
-    candidate_tree = instance.tree_at(proposed_base.git_oid)
+    candidate_tree = instance.immutable_tree_at(proposed_base.git_oid).fork()
     candidate_tree[f"principals/{principal.principal_id}.json"] = render_principal(principal)
     ref_name = canonical_playbill_proposal_name(proposal_name, family="principal")
     result = instance.proposal_service().submit(

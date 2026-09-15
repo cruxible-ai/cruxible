@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -52,10 +53,10 @@ def _without_lifecycle(value: Any) -> dict[str, object]:
 
 def _seed_candidate_tree(
     instance: PlaybillInstance,
-) -> tuple[dict[str, bytes], tuple[str, ...]]:
+) -> tuple[Mapping[str, bytes], tuple[str, ...]]:
     coordinate = instance.accepted_coordinate()
-    tree = instance.tree_at(coordinate.git_oid)
-    candidate_tree = dict(tree)
+    tree = instance.immutable_tree_at(coordinate.git_oid)
+    candidate_tree = tree.fork()
     changed: list[str] = []
 
     interface_path = provider_interface_path(WORKSPACE_FILE_INTERFACE_ID)
@@ -280,7 +281,7 @@ def _validate_local_materialization(
 def _pending_seed(
     instance: PlaybillInstance,
     *,
-    candidate_tree: dict[str, bytes],
+    candidate_tree: Mapping[str, bytes],
     changed_paths: tuple[str, ...],
 ) -> contracts.PlaybillProviderSeedResultV1 | None:
     coordinate = instance.accepted_coordinate()

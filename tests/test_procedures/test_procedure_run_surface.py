@@ -1352,7 +1352,9 @@ def test_old_final_payload_without_budget_reconstructs_a_v2_receipt(tmp_path: Pa
     assert not isinstance(reconstructed.receipt, ProcedureRunReceiptV3)
 
 
-def test_binding_proposes_same_identity_successor_with_exact_query_pin(tmp_path: Path) -> None:
+def test_binding_proposes_same_identity_successor_with_exact_query_pin(
+    tmp_path: Path, monkeypatch
+) -> None:
     instance, owner = seed_claims(tmp_path)
     query = work_item_query()
     query_digest = query_definition_digest(query).tagged
@@ -1408,6 +1410,17 @@ def test_binding_proposes_same_identity_successor_with_exact_query_pin(tmp_path:
     assert blocked.status == "admission_refused"
     assert isinstance(blocked.terminal, ProcedureAdmissionRefusalV1)
     assert blocked.terminal.code == "binding_required"
+
+    parent = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
+    submit = instance.proposal_service().submit
+
+    def submit_delta(**kwargs):
+        candidate = kwargs["candidate_tree"]
+        edits = candidate.edits_from(parent)
+        assert edits is not None and tuple(edits) == (procedure_path(abstract.identity.name),)
+        return submit(**kwargs)
+
+    monkeypatch.setattr(instance.proposal_service(), "submit", submit_delta)
 
     result = service_bind_playbill_procedure(
         instance,

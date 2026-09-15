@@ -1641,7 +1641,7 @@ def service_bind_playbill_procedure(
         raise ProcedureBindingStaleCoordinate(
             f"{ProcedureBindingStaleCoordinate.code}: accepted coordinate advanced"
         )
-    candidate_tree = instance.tree_at(coordinate.git_oid)
+    candidate_tree = instance.immutable_tree_at(coordinate.git_oid).fork()
     candidate_tree[accepted.path] = render_procedure(successor)
     operation = typed_digest(
         Sha256Value,
