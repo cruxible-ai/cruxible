@@ -691,11 +691,23 @@ class ProviderRuntimeOperator:
                     detail=self.unavailable_reason,
                 )
             assert self.process_leases is not None
-        tree = instance.tree_at(accepted_oid)
+        coordinate = instance.coordinate_for_oid(accepted_oid)
+        with instance.bind_accepted_projection(coordinate) as projection:
+            rows = sorted(
+                (
+                    *projection.typed.envelopes(kind="provider"),
+                    *projection.typed.envelopes(kind="provider-interface"),
+                ),
+                key=lambda row: row.path.encode("utf-8"),
+            )
+            projection.typed.prefetch_members(tuple(row.path for row in rows))
+            contents = {row.path: projection.typed.member_bytes(row.path) for row in rows}
         providers: dict[str, AcceptedProviderV1] = {}
         interfaces: dict[str, AcceptedProviderInterfaceRegistrationV1] = {}
-        for path, content in tree.items():
-            if path.startswith("providers/") and path.endswith(".json"):
+        for row in rows:
+            path = row.path
+            content = contents[path]
+            if row.kind == "provider":
                 provider = parse_provider(content, path=path)
                 if provider.lifecycle.state != "live":
                     continue
@@ -705,7 +717,7 @@ class ProviderRuntimeOperator:
                     provider=provider,
                     artifact_digest=digest,
                 )
-            elif path.startswith("provider-interfaces/") and path.endswith(".json"):
+            elif row.kind == "provider-interface":
                 registration = parse_provider_interface(content, path=path)
                 if registration.lifecycle.state != "live":
                     continue

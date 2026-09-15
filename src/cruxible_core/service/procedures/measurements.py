@@ -132,6 +132,7 @@ from cruxible_core.service.discovery.query import (
 )
 from cruxible_core.service.discovery.query_definitions import accepted_query_definition
 from cruxible_core.service.evidence.evidence import (
+    ClaimVerdictReadContext,
     _claim_read_history_index,
     accepted_claim_attestations,
     service_evaluate_playbill_claim_verdict,
@@ -1265,7 +1266,7 @@ def service_measure_playbill_procedure(
     basis = measurement_activation_basis(instance, accepted=accepted, observation=observation)
     activations = _selected_activations(basis, request.measurement_names)
     public_observation = AcceptedCoordinate.from_internal(observation)
-    tree = instance.tree_at(observation.git_oid)
+    tree = ClaimVerdictReadContext(instance, observation).tree
 
     grain: ProcedureRunGrainRecordV1 | None = None
     if request.run_id is not None:

@@ -127,6 +127,25 @@ from tests.test_server.test_playbill_line_run_refusals import (
 )
 
 
+def _indexed_instance(tree: dict[str, bytes]) -> SimpleNamespace:
+    """Unit double for the selected member reader, without a whole-tree API."""
+    rows = tuple(
+        SimpleNamespace(
+            path=path, kind=("provider" if path.startswith("providers/") else "provider-interface")
+        )
+        for path in tree
+    )
+    typed = SimpleNamespace(
+        envelopes=lambda *, kind: tuple(row for row in rows if row.kind == kind),
+        prefetch_members=lambda paths: None,
+        member_bytes=lambda path: tree[path],
+    )
+    return SimpleNamespace(
+        coordinate_for_oid=lambda oid: oid,
+        bind_accepted_projection=lambda coordinate: nullcontext(SimpleNamespace(typed=typed)),
+    )
+
+
 def _digest(label: str) -> str:
     return "sha256:" + hashlib.sha256(label.encode()).hexdigest()
 
@@ -355,13 +374,12 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
         )
     )
 
-    class _Instance:
-        def tree_at(self, oid: str) -> dict[str, bytes]:
-            assert oid == "a" * 40
-            return {
-                accepted_provider.path: render_provider(accepted_provider.provider),
-                interface.path: render_provider_interface(interface.registration),
-            }
+    instance = _indexed_instance(
+        {
+            accepted_provider.path: render_provider(accepted_provider.provider),
+            interface.path: render_provider_interface(interface.registration),
+        }
+    )
 
     implementation = provider.implementations[0]
     deployment = LocalProviderDeploymentV1(
@@ -382,7 +400,7 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
     assert recovery.recovered == ()
     assert recovery.removed == ()
     assert recovery.could_not_clean == ()
-    invoker = operator.invoker_for(_Instance(), accepted_oid="a" * 40)  # type: ignore[arg-type]
+    invoker = operator.invoker_for(instance, accepted_oid="a" * 40)  # type: ignore[arg-type]
     admitted_binding = operator.driver.bind(
         accepted_provider,
         interface,
@@ -565,7 +583,7 @@ def test_classifier_installation_failure_degrades_only_provider_lane(
     )
 
     invoker = operator.invoker_for(
-        SimpleNamespace(tree_at=lambda _oid: tree),  # type: ignore[arg-type]
+        _indexed_instance(tree),  # type: ignore[arg-type]
         accepted_oid="a" * 40,
     )
 
@@ -703,7 +721,7 @@ def test_lazy_rearm_is_serialized_and_never_runs_during_an_invocation(
     )
     operator._in_flight = 1  # noqa: SLF001 - directly pins the K-9 exclusion
     unavailable = operator.invoker_for(
-        SimpleNamespace(tree_at=lambda _oid: {}),  # type: ignore[arg-type]
+        _indexed_instance({}),  # type: ignore[arg-type]
         accepted_oid="a" * 40,
     )
     assert calls == []
@@ -712,7 +730,7 @@ def test_lazy_rearm_is_serialized_and_never_runs_during_an_invocation(
 
     operator._in_flight = 0  # noqa: SLF001
     operator.invoker_for(
-        SimpleNamespace(tree_at=lambda _oid: {}),  # type: ignore[arg-type]
+        _indexed_instance({}),  # type: ignore[arg-type]
         accepted_oid="a" * 40,
     )
     assert calls == ["recover"]
@@ -987,6 +1005,11 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
         },
         timestamp="2026-09-03T09:00:00.000000Z",
     )
+
+    def unexpected_tree(_oid: str) -> None:
+        pytest.fail("Line runtime setup must read only selected accepted artifacts")
+
+    monkeypatch.setattr(instance, "tree_at", unexpected_tree)
 
     classifier_registry = ProviderBucketClassifierRegistry()
     install_demo_classifier(classifier_registry)

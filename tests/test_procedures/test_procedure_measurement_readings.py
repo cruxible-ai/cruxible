@@ -507,10 +507,16 @@ def _rows(result):  # type: ignore[no-untyped-def]
 
 def test_all_kinds_and_grains_resolve_from_real_evidence_and_credit_the_run(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     instance, owner, procedure = _world(tmp_path)
     _attest(instance, owner, tmp_path)
     run = _run(instance, procedure)
+
+    def unexpected_tree(_oid: str) -> None:
+        pytest.fail("measurement must not materialize the observation tree")
+
+    monkeypatch.setattr(instance, "tree_at", unexpected_tree)
 
     result = _measure(instance, procedure, run_id=run.run_id)
     rows = _rows(result)
