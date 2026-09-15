@@ -499,12 +499,18 @@ def service_export_playbill_floor(
         base_files, claims = structure
         files = base_files.copy()
     else:
-        tree = instance.tree_at(coordinate.git_oid)
+        with instance.bind_accepted_projection(coordinate) as projection:
+            paths = tuple(
+                row.path
+                for kind in ("claim-type", "subject")
+                for row in projection.typed.envelopes(kind=kind)
+            )
+            projection.typed.prefetch_members(paths)
+            tree = {path: projection.typed.member_bytes(path) for path in paths}
         read = _AcceptedQueryFactsRead(
             instance,
             coordinate=coordinate,
             external_readers=external_readers,
-            source_tree=tree,
         )
         facts = read.build()
         vocabulary = build_accepted_discovery_vocabulary(

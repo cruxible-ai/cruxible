@@ -6,6 +6,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from cruxible_client import contracts
 from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayloadV1
 from cruxible_client.contracts.canonical import canonical_bytes
@@ -104,9 +106,12 @@ def _instance_with_procedure(tmp_path: Path):
     return instance
 
 
-def test_floor_carries_a_card_per_claim_type_and_a_profile_per_subject(tmp_path: Path) -> None:
+def test_floor_carries_a_card_per_claim_type_and_a_profile_per_subject(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     instance, _owner = _instance_with_query(tmp_path)
 
+    monkeypatch.setattr(instance, "tree_at", lambda _oid: pytest.fail("floor must use typed reads"))
     floor = service_export_playbill_floor(instance)
 
     assert MANIFEST_PATH in floor
