@@ -11,10 +11,10 @@ at the same coordinate, so this remembers it. It is a cache and nothing else:
 
 * it is per-process and cold after a restart, so no answer depends on it;
 * it is keyed on everything the derivation reads -- the instance root, the
-  accepted coordinate, the exact Claim set, and a fingerprint of the two stores
-  a verdict consults BESIDES the accepted tree: the content-addressed body
-  store, whose contents decide whether a capture can be replayed now, and the
-  principal-authored attestation ledger;
+  accepted coordinate, the exact Claim set, and a fingerprint of CAS shard
+  directories, whose contents decide whether a capture can be replayed now.
+  Accepted attestations are bound by the coordinate; pending door attestations
+  are not consumed by this derivation;
 * the evaluation instant is NOT in the key, because every real surface stamps a
   fresh `utc_now()` and a wall-clock key can therefore never be hit twice. A
   verdict is a step function of time whose only breakpoints are the instants it
@@ -38,74 +38,41 @@ from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 
-from cruxible_core.evidence.claim_attestation_store import (
-    STORE_DIRECTORY as CLAIM_ATTESTATION_STORE_DIRECTORY,
-)
-
 MEMO_CAPACITY = 4
 
-_STORE_FINGERPRINT_UNREADABLE = "unreadable"
 
-
-def _directory_fingerprint(root: Path, *, depth: int) -> str:
-    """Fingerprint a store's shape without reading a single object.
-
-    Only directory metadata is read: a shard's mtime moves when an object lands
-    in it or leaves it, which is exactly the event that can change a replay
-    availability answer. Walking the objects themselves would cost more than
-    the derivation this memo exists to skip -- which is why the CAS is
-    fingerprinted at ``depth=0``, on the shard directories alone. A CAS object
-    is named by its own content, so it is never rewritten in place: every
-    arrival and every removal renames an entry in a shard and moves that
-    shard's mtime. A store whose files ARE rewritten in place -- the attestation
-    ledger's partitions -- is fingerprinted one level deeper, on the files.
-    """
-
-    digest = hashlib.sha256()
-    try:
-        stack = [(root, 0)]
-        while stack:
-            directory, level = stack.pop()
-            entries = sorted(os.scandir(directory), key=lambda item: item.name)
-            for entry in entries:
-                metadata = entry.stat(follow_symlinks=False)
-                digest.update(entry.name.encode("utf-8"))
-                digest.update(
-                    f"{metadata.st_mode}:{metadata.st_size}:{metadata.st_mtime_ns}".encode()
-                )
-                if entry.is_dir(follow_symlinks=False) and level < depth:
-                    stack.append((Path(entry.path), level + 1))
-    except OSError:
-        return _STORE_FINGERPRINT_UNREADABLE
-    return digest.hexdigest()
-
-
-def verdict_input_fingerprint(instance: object) -> str:
+def verdict_input_fingerprint(instance: object) -> str | None:
     """Fingerprint every input a Claim verdict reads besides the accepted tree.
 
-    An unreadable store fingerprints as unreadable rather than as empty, and an
-    unreadable fingerprint never equals the readable one it replaced, so a
-    transient fault misses the memo instead of serving a stale answer from it.
+    CAS publishes immutable bodies by adding entries under cas/sha256/<shard>.
+    Read those shard directories, not their parent or every body. This bounds
+    metadata work by the 256 shards while detecting arrivals and removals in
+    existing shards. This is a writer-owned availability signal, not a proof
+    against in-place tampering with body bytes. An unreadable store disables
+    reuse entirely: two failed observations must never form a reusable key.
     """
 
     root = getattr(instance, "root", None)
     descriptor = getattr(instance, "descriptor", None)
     if not isinstance(root, Path) or descriptor is None:
-        return _STORE_FINGERPRINT_UNREADABLE
+        return None
     storage = getattr(descriptor, "storage", None)
     if storage is None:
-        return _STORE_FINGERPRINT_UNREADABLE
-    cas = root / getattr(storage, "cas", "cas")
-    exhaust = root / getattr(storage, "exhaust", "exhaust")
-    # The CAS is sharded one level deep and its shard mtimes are the store's own
-    # change signal; the attestation ledger rewrites partition files in place,
-    # so those files are read.
-    return "-".join(
-        (
-            _directory_fingerprint(cas, depth=0),
-            _directory_fingerprint(exhaust / CLAIM_ATTESTATION_STORE_DIRECTORY, depth=1),
-        )
-    )
+        return None
+    algorithm_root = root / getattr(storage, "cas", "cas") / "sha256"
+    digest = hashlib.sha256()
+    try:
+        with os.scandir(algorithm_root) as entries:
+            for entry in sorted(entries, key=lambda item: item.name):
+                metadata = entry.stat(follow_symlinks=False)
+                digest.update(entry.name.encode("utf-8"))
+                digest.update(
+                    f"{metadata.st_dev}:{metadata.st_ino}:{metadata.st_mode}:"
+                    f"{metadata.st_size}:{metadata.st_mtime_ns}:{metadata.st_ctime_ns}".encode()
+                )
+    except OSError:
+        return None
+    return digest.hexdigest()
 
 
 def memo_key(

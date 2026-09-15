@@ -27,6 +27,7 @@ session does could fail against a healthy instance.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -875,9 +876,8 @@ def test_the_resolution_memo_hits_on_the_surfaces_and_misses_when_its_inputs_mov
     be a no-op nobody noticed. Time is not ignored, though: a verdict is a step
     function whose breakpoints are the instants it compares against, so the
     entry carries the interval its answer holds over, and an instant outside
-    that interval evaluates again. So do a moved CAS, a new attestation and a
-    second accepted coordinate -- everything a verdict reads that the accepted
-    coordinate does not name.
+    that interval evaluates again. So do a moved CAS and a second accepted
+    coordinate. Pending attestations are not inputs to this derivation.
     """
 
     instance = resolution_world
@@ -924,6 +924,16 @@ def test_the_resolution_memo_hits_on_the_surfaces_and_misses_when_its_inputs_mov
     assert counted[0] > evaluated
     evaluated = counted[0]
 
+    # Pre-create the shard: adding a new shard accidentally moved the old
+    # fingerprint's parent directory and hid this regression.
+    body = b"a body no verdict has seen yet\n"
+    prefix = hashlib.sha256(body).hexdigest()[:2]
+    seed = next(
+        value
+        for n in range(10000)
+        if hashlib.sha256(value := f"seed-{n}".encode()).hexdigest().startswith(prefix)
+    )
+    instance.body_store().store(seed)
     reset_claim_resolution_memo()
     _orient(instance)
     evaluated = counted[0]
@@ -931,7 +941,7 @@ def test_the_resolution_memo_hits_on_the_surfaces_and_misses_when_its_inputs_mov
     # A capture's replay availability is decided by the content-address store,
     # which the accepted coordinate does not name.
     before = verdict_input_fingerprint(instance)
-    instance.body_store().store(b"a body no verdict has seen yet\n")
+    stored = instance.body_store().store(body)
     assert verdict_input_fingerprint(instance) != before
     _orient(instance)
     assert counted[0] > evaluated
@@ -939,14 +949,36 @@ def test_the_resolution_memo_hits_on_the_surfaces_and_misses_when_its_inputs_mov
     _orient(instance)
     assert counted[0] == evaluated
 
-    # As is whether a principal has attested, which lives in its own ledger.
+    # Removal from the existing shard also invalidates; restoring the body
+    # must be observed without another accepted generation.
+    path = instance.body_store()._path(stored.digest)
+    for action in (path.unlink, lambda: instance.body_store().store(body)):
+        before = verdict_input_fingerprint(instance)
+        action()
+        assert verdict_input_fingerprint(instance) != before
+        _orient(instance)
+        assert counted[0] > evaluated
+        evaluated = counted[0]
+        _orient(instance)
+        assert counted[0] == evaluated
+
+    # Pending door attestations are not consumed. Changing their store must
+    # neither scan its contents nor invalidate the accepted-state verdict.
     attestation_root = (
         instance.root / instance.descriptor.storage.exhaust / CLAIM_ATTESTATION_STORE_DIRECTORY
     )
     attestation_root.mkdir(parents=True, exist_ok=True)
     (attestation_root / "partition-0000.json").write_bytes(b"{}\n")
     _orient(instance)
-    assert counted[0] > evaluated
+    assert counted[0] == evaluated
+
+    # Repeated failures to observe the CAS are not a stable revision. Each
+    # request derives fresh results rather than caching an "unreadable" key.
+    monkeypatch.setattr(search_service, "verdict_input_fingerprint", lambda _: None)
+    for _ in range(2):
+        _orient(instance)
+        assert counted[0] > evaluated
+        evaluated = counted[0]
 
 
 def test_two_accepted_coordinates_do_not_share_a_resolution_entry(

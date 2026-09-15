@@ -117,8 +117,8 @@ def claim_resolution_statuses(
     that pair.
 
     The whole derivation is memoized per process on the instance, the accepted
-    coordinate, the exact Claim set, and a fingerprint of the two stores a
-    verdict reads besides the accepted tree. The evaluation instant is NOT in
+    coordinate, the exact Claim set, and CAS shard metadata for live replay
+    availability. Pending door attestations are not an input. The evaluation instant is NOT in
     the key: every real surface stamps a fresh `utc_now()`, so a wall-clock key
     could never be hit twice. A verdict is a step function of time whose only
     breakpoints are the instants it compares against, so the entry carries the
@@ -130,13 +130,14 @@ def claim_resolution_statuses(
     per-process, cold after a restart, and bounded.
     """
 
+    input_fingerprint = verdict_input_fingerprint(instance)
     key = memo_key(
         instance_root=str(instance.root),
         coordinate_digest=canonical_bytes(at.model_dump(mode="json")).hex(),
         claim_set_digest=claim_set_digest(tuple(claim.identity.qualified for claim in claims)),
-        input_fingerprint=verdict_input_fingerprint(instance),
+        input_fingerprint=input_fingerprint or "",
     )
-    remembered = memo_get(_RESOLUTION_MEMO, key)
+    remembered = None if input_fingerprint is None else memo_get(_RESOLUTION_MEMO, key)
     if remembered is not None:
         memoized_statuses, memoized_verdicts, interval = remembered
         if interval_holds(interval, evaluation_time=evaluation_time):
@@ -153,7 +154,7 @@ def claim_resolution_statuses(
     # derived here, so the boundaries this fold can see are not all of them and
     # the interval would be wider than the truth. Such a fold answers from the
     # verdicts it was given and remembers nothing.
-    remember = not verdicts_by_identity
+    remember = input_fingerprint is not None and not verdicts_by_identity
     boundaries: set[datetime] = set()
     verdicts: MutableMapping[str, ClaimVerdictResultAny] = (
         {} if verdicts_by_identity is None else verdicts_by_identity
