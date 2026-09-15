@@ -373,7 +373,9 @@ def _read_playbill_block_sync_backing(
         original_digest = (
             claim_artifact_digest(
                 parse_claim(
-                    instance.tree_at(declared.git_oid)[claim_path(backing.identity.name)],
+                    instance.blobs_at(declared.git_oid, (claim_path(backing.identity.name),))[
+                        claim_path(backing.identity.name)
+                    ],
                     path=claim_path(backing.identity.name),
                 )
             ).tagged

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import MutableMapping, MutableSet
+from collections.abc import Mapping, MutableMapping, MutableSet
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
@@ -602,7 +602,7 @@ def _claim_admission_accounts(
     instance: PlaybillInstance,
     *,
     claim: ClaimArtifactAny,
-    tree: dict[str, bytes],
+    tree: Mapping[str, bytes],
     law: ClaimLawEvidenceAny,
 ) -> tuple[CaptureAdmissionAccountV1, ...]:
     from cruxible_core.evidence.attestation_verification import _capture_contracts
@@ -836,6 +836,7 @@ def service_explain_playbill_claim(
     evaluation_time: datetime | None = None,
 ) -> PlaybillClaimExplanationV2 | PlaybillClaimExplanationV3:
     from cruxible_core.service.evidence.evidence import (
+        ClaimVerdictReadContext,
         accepted_claim_attestations,
         service_evaluate_playbill_claim_verdict,
     )
@@ -956,7 +957,7 @@ def service_explain_playbill_claim(
             exact_attestations=accepted_claim_attestations(
                 instance,
                 coordinate=coordinate,
-                tree=instance.tree_at(coordinate.git_oid),
+                tree=ClaimVerdictReadContext(instance, coordinate).tree,
                 claim=claim,
                 historical=law.verified_attestations,
             ),
@@ -981,7 +982,7 @@ def service_explain_playbill_claim(
         exact_attestations=accepted_claim_attestations(
             instance,
             coordinate=coordinate,
-            tree=instance.tree_at(coordinate.git_oid),
+            tree=ClaimVerdictReadContext(instance, coordinate).tree,
             claim=claim,
             historical=law.verified_attestations,
         ),
@@ -1008,14 +1009,30 @@ _EXPAND_FACETS = frozenset(
 
 
 def _expand_subject_relations(
-    tree: dict[str, bytes],
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
     address: SemanticAddress,
 ) -> tuple[dict[str, object], ...]:
     relations: list[dict[str, object]] = []
-    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not path.startswith("claims/"):
-            continue
-        claim = parse_claim(tree[path], path=path)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        paths = tuple(
+            row[0]
+            for row in projection.typed.connection.execute(
+                "SELECT path FROM claims WHERE lifecycle='live' "
+                "AND predicate IN ('semantic.alias','semantic.distinct_from',"
+                "'semantic.related_to','semantic.tag') "
+                "AND subject_path=? "
+                "UNION SELECT path FROM claims WHERE lifecycle='live' "
+                "AND predicate IN ('semantic.alias','semantic.distinct_from',"
+                "'semantic.related_to','semantic.tag') "
+                "AND object_kind='subject' AND object_path=? ORDER BY path",
+                (address.artifact_path, address.artifact_path),
+            )
+        )
+        projection.typed.prefetch_members(paths)
+        selected = tuple((path, projection.typed.member_bytes(path)) for path in paths)
+    for path, content in selected:
+        claim = parse_claim(content, path=path)
         if claim.lifecycle.state != "live" or claim.statement.predicate not in {
             "semantic.alias",
             "semantic.distinct_from",
@@ -1085,7 +1102,7 @@ def _interface_vocabulary(
     )
 
 
-def _subject_identity(tree: dict[str, bytes], path: str) -> str | None:
+def _subject_identity(tree: Mapping[str, bytes], path: str) -> str | None:
     """Return one accepted Subject's identity, or None when it is absent.
 
     An accepted Claim pins the Subject it is about, so the absent case is
@@ -1130,13 +1147,15 @@ def service_expand_playbill_semantic(
     if unknown:
         raise ProposalIntegrityError(f"unknown expand facets: {sorted(unknown)!r}")
 
-    tree = instance.tree_at(coordinate.git_oid)
+    from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
+
+    tree = ClaimVerdictReadContext(instance, coordinate).tree
     path = request.address.artifact_path
     content = tree.get(path)
     if content is None:
         raise ClaimNotFoundError(path)
 
-    all_relations = _expand_subject_relations(tree, request.address)
+    all_relations = _expand_subject_relations(instance, coordinate, request.address)
     aliases, tags, relation_edges = _interface_vocabulary(all_relations, request.address)
     at = PlaybillAcceptedCoordinate.from_internal(coordinate)
 

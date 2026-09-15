@@ -59,9 +59,14 @@ def _accepted(tmp_path: Path):
     return instance, proposal
 
 
-def test_summary_and_evidence_preserve_coverage_without_body_leakage(tmp_path: Path) -> None:
+def test_summary_and_evidence_preserve_coverage_without_body_leakage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     instance, proposal = _accepted(tmp_path)
     coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    monkeypatch.setattr(
+        instance, "tree_at", lambda _oid: pytest.fail("selected reads must not load the world")
+    )
     subject = SemanticAddress.whole_artifact("documents/design.json")
 
     summary = service_explain_playbill_subject(

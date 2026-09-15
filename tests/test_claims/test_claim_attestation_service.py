@@ -165,9 +165,14 @@ def _assert_refusal(
     assert error.value.error_code == f"playbill.claim_attestation.{code}"
 
 
-def test_served_append_verifies_and_duplicate_is_an_identical_read(tmp_path: Path) -> None:
+def test_served_append_verifies_and_duplicate_is_an_identical_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     instance, claim_id, owner = _accepted_claim_world(tmp_path)
     request = _request(instance, owner, claim_id, tmp_path)
+    monkeypatch.setattr(
+        instance, "tree_at", lambda _oid: pytest.fail("selected reads must not load the world")
+    )
 
     first = service_append_claim_attestation(
         instance,

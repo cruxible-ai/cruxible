@@ -56,8 +56,10 @@ def service_append_claim_attestation(
         raise ClaimAttestationRefusal(
             "referent_coordinate_unaccepted", "referent is not an accepted coordinate"
         ) from exc
+    from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
+
     at = recorded_at or utc_now()
-    referent_tree = instance.tree_at(referent.git_oid)
+    referent_tree = ClaimVerdictReadContext(instance, referent).tree
     principals = instance.accepted_principal_registry(referent)
     claim = verify_attestation_referent(
         request.attestation,
@@ -72,7 +74,7 @@ def service_append_claim_attestation(
     if duplicate is not None:
         return duplicate
     append_coordinate = instance.accepted_coordinate()
-    append_tree = instance.tree_at(append_coordinate.git_oid)
+    append_tree = ClaimVerdictReadContext(instance, append_coordinate).tree
     admitted, resolved = verify_attestation_admission(
         request.attestation,
         claim=claim,

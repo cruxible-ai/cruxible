@@ -216,8 +216,7 @@ def service_explain_playbill_subject(
             coordinate=public_coordinate,
         )
 
-    tree = instance.tree_at(coordinate.git_oid)
-    content = tree.get(subject.artifact_path)
+    content = instance.blob_at(coordinate.git_oid, subject.artifact_path)
     if content is None:
         raise DocumentNotFoundError(subject.artifact_path)
     if is_candidate_card_path(subject.artifact_path):

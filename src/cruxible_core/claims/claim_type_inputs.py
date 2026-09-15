@@ -15,7 +15,6 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
     foreign_source_capture_contract,
-    parse_capture_contract,
 )
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicyV1,
@@ -186,7 +185,6 @@ def lint_claim_type_input(
     coordinate: AcceptedProjectionCoordinate,
     anticipated_source_ids: tuple[str, ...] = (),
 ) -> ClaimTypeProposalLintV1:
-    tree = instance.tree_at(coordinate.git_oid)
     accepted_contracts: dict[str, str] = {}
     source_ids = set(anticipated_source_ids)
     if isinstance(value, ClaimTypeInputV1):
@@ -198,11 +196,11 @@ def lint_claim_type_input(
     for source_id in sorted(source_ids, key=lambda item: item.encode("utf-8")):
         contract = foreign_source_capture_contract(source_id)
         resolvable_contracts[capture_contract_digest(contract).tagged] = contract.identity.qualified
-    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not path.startswith("capture-contracts/"):
-            continue
-        contract = parse_capture_contract(tree[path], path=path)
-        accepted_contracts[capture_contract_digest(contract).tagged] = contract.identity.qualified
+    with instance.bind_accepted_projection(coordinate) as projection:
+        accepted_contracts.update(
+            (row.artifact_digest, row.identity)
+            for row in projection.typed.envelopes(kind="capture-contract")
+        )
     resolvable_contracts.update(accepted_contracts)
 
     policy = (

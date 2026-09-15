@@ -28,6 +28,7 @@ from tests.core_support._support import initialize_local
 
 def test_expand_is_coordinate_bound_and_open_source_enforces_access_and_budget(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     instance, owner = initialize_local(tmp_path)
     proposed = service_propose_playbill_claim(
@@ -39,6 +40,9 @@ def test_expand_is_coordinate_bound_and_open_source_enforces_access_and_budget(
     )
     _activate_direct_claim(instance, owner, proposed)
     accepted = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    monkeypatch.setattr(
+        instance, "tree_at", lambda _oid: pytest.fail("selected reads must not load the world")
+    )
     capsule = service_expand_playbill_semantic(
         instance,
         request=ExpandRequestV1(
