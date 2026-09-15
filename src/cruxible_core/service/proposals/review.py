@@ -487,8 +487,9 @@ def service_review_playbill_proposal(
         raise ProposalIntegrityError("refused proposal has no reviewable candidate")
     base = instance.coordinate_for_oid(proposal.evaluation.evaluated_base_oid)
     base_public = AcceptedCoordinate.from_internal(base)
-    base_tree = instance.tree_at(base.git_oid)
-    candidate_tree = instance.proposal_tree(proposal.evaluation.evaluated_tree_oid)
+    paths = tuple(member.path for member in candidate.members)
+    base_tree = instance.blobs_at(base.git_oid, paths)
+    candidate_tree = instance.proposal_blobs(proposal.evaluation.evaluated_tree_oid, paths)
     documents = tuple(
         _review_document(
             instance,

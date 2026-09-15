@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import cast, get_args
@@ -547,14 +548,17 @@ def test_freshness_calibration_uses_changed_commitment_intervals_without_recomme
         capture_contract_path(contract.identity.name): render_capture_contract(contract),
         row.accepted.path: render_claim(claim),
     }
-    history = (SimpleNamespace(sequence=1, oid="one"),)
+    history = _CurationHistoryIndex(
+        claims=((1, row.accepted.path, claim),),
+        capture_contract_identities={contract_digest: contract.identity.qualified},
+        first_accepted_generations={claim.identity.qualified: 1},
+        last_generation=1,
+    )
     fake = SimpleNamespace(
-        accepted_history=lambda: history,
-        tree_at=lambda _oid: tree,
-        body_store=lambda: SimpleNamespace(read=lambda value, access: bodies[value]),
+        body_store=lambda: SimpleNamespace(read=lambda value, access: bodies[value])
     )
 
-    detected, coverage = _freshness_calibration(instance=fake, tree=tree)  # type: ignore[arg-type]
+    detected, coverage = _freshness_calibration(instance=fake, tree=tree, history=history)  # type: ignore[arg-type]
 
     assert coverage.status == "complete"
     assert len(detected) == 1
@@ -612,26 +616,74 @@ def test_dead_vocabulary_starts_at_the_later_of_acceptance_and_receipt_epoch(
     assert due[0].detail == {"artifact_family": "ClaimType"}
 
 
+def test_retained_occurrences_preserve_first_capture_and_artifact_generations(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.contracts.claims import parse_claim
+    from cruxible_core.claims.closure import dependency_artifacts
+    from tests.core_support._knowledge_loop_support import seed_claims
+
+    instance, _owner = seed_claims(tmp_path)
+    first_artifacts = {}
+    first_captures = {}
+    for generation in instance.accepted_history():
+        for state in dependency_artifacts(instance.tree_at(generation.oid)):
+            first_artifacts.setdefault(state.identity.qualified, generation.sequence)
+            if state.artifact_kind == "claim":
+                claim = parse_claim(instance.blob_at(generation.oid, state.path), path=state.path)
+                for digest in claim.backing.capture_digests:
+                    first_captures.setdefault(
+                        (claim.statement.predicate, digest), generation.sequence
+                    )
+
+    monkeypatch.setattr(instance, "tree_at", lambda _oid: pytest.fail("no historical tree scans"))
+    indexed = _curation_history_index(instance)
+    assert all(
+        indexed.first_accepted_generations[key] == value for key, value in first_artifacts.items()
+    )
+    observed = {}
+    for sequence, _path, claim in indexed.claims:
+        for digest in claim.backing.capture_digests:
+            observed.setdefault((claim.statement.predicate, digest), sequence)
+    assert observed == first_captures
+
+
 def test_shared_history_index_prevents_per_detector_and_per_claim_rescans() -> None:
     subject_row = subject("project.work_item", "wi-42")
     claim = claim_fact(1, subject_row=subject_row, predicate=PREDICATE, value="ready")
     tree = {claim.accepted.path: render_claim(claim.accepted.claim)}
     calls = {"history": 0, "tree": 0}
 
-    def history():  # type: ignore[no-untyped-def]
+    from cruxible_core.indexes.history.history_index import ArtifactVersionLocation
+
+    def history():
         calls["history"] += 1
-        return (
-            SimpleNamespace(sequence=1, oid="one"),
-            SimpleNamespace(sequence=2, oid="two"),
+        return nullcontext(
+            SimpleNamespace(
+                sequence=2,
+                artifact_occurrences=lambda: (
+                    ArtifactVersionLocation(
+                        claim.accepted.claim.identity.qualified,
+                        claim.accepted.artifact_digest,
+                        1,
+                        claim.accepted.path,
+                        None,
+                        1,
+                    ),
+                ),
+                generation=lambda _sequence: SimpleNamespace(git_oid="one"),
+            )
         )
 
-    def tree_at(_oid):  # type: ignore[no-untyped-def]
+    def blobs_at(_oid, paths):
         calls["tree"] += 1
+        assert tuple(paths) == (claim.accepted.path,)
         return tree
 
     fake = SimpleNamespace(
-        accepted_history=history,
-        tree_at=tree_at,
+        accepted_history_reader=history,
+        blobs_at=blobs_at,
         body_store=lambda: None,
     )
 
@@ -643,7 +695,9 @@ def test_shared_history_index_prevents_per_detector_and_per_claim_rescans() -> N
         history=indexed,
     )
 
-    assert calls == {"history": 1, "tree": 2}
+    assert calls == {"history": 1, "tree": 1}
+    assert len(indexed.claims) == 1
+    assert indexed.first_accepted_generations == {claim.accepted.claim.identity.qualified: 1}
 
 
 def test_run_curation_detectors_builds_shared_history_once_for_all_history_consumers(
@@ -662,7 +716,13 @@ def test_run_curation_detectors_builds_shared_history_once_for_all_history_consu
     empty_facts = SimpleNamespace(claims=(), subjects=(), providers=())
     fake = SimpleNamespace(
         resolve_accepted_coordinate=lambda **_kwargs: SimpleNamespace(git_oid="tree"),
-        tree_at=lambda _oid: {},
+        bind_accepted_projection=lambda _coordinate: nullcontext(
+            SimpleNamespace(
+                typed=SimpleNamespace(
+                    envelopes=lambda **_kwargs: (), prefetch_members=lambda _paths: None
+                )
+            )
+        ),
     )
     monkeypatch.setattr(detector_module, "_curation_history_index", history)
     monkeypatch.setattr(detector_module, "_active_writing_principal_count", lambda *_a, **_k: 2)

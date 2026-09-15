@@ -34,10 +34,11 @@ from cruxible_client.contracts.claim_verdicts import (
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     LiteralClaimObject,
+    claim_artifact_digest,
     claim_statement_digest,
     parse_claim,
 )
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import PlaybillError, ProjectionIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.providers import ProviderV1
 from cruxible_client.contracts.query.definitions import QueryEvaluationPolicyV1
@@ -74,6 +75,7 @@ from cruxible_core.curation.curation_calibration import (
 )
 from cruxible_core.curation.review_operational import PlaybillReviewOperationalEventV1
 from cruxible_core.exhaust.consumption import consumption_aggregate
+from cruxible_core.indexes.history.history_index import ArtifactVersionLocation
 from cruxible_core.query.backends import ClaimFactRowV1, claim_row_visibility
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.query import build_accepted_query_facts
@@ -150,18 +152,38 @@ def _curation_history_index(instance: PlaybillInstance) -> _CurationHistoryIndex
     claims: list[tuple[int, str, ClaimArtifactAny]] = []
     contracts: dict[str, str] = {}
     first: dict[str, int] = {}
-    last_generation = 0
-    for generation in instance.accepted_history():
-        last_generation = generation.sequence
-        tree = instance.tree_at(generation.oid)
-        for state in dependency_artifacts(tree):
-            first.setdefault(state.identity.qualified, generation.sequence)
-        for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-            if path.startswith("claims/"):
-                claims.append((generation.sequence, path, parse_claim(tree[path], path=path)))
-            elif path.startswith("capture-contracts/"):
-                contract = parse_capture_contract(tree[path], path=path)
-                contracts[capture_contract_digest(contract).tagged] = contract.identity.qualified
+    with instance.accepted_history_reader() as retained:
+        last_generation = retained.sequence
+        occurrences = retained.artifact_occurrences()
+        sequences = {
+            item.occurrence_sequence
+            for item in occurrences
+            if item.identity.startswith(("Claim:", "CaptureContract:"))
+        }
+        generations = {sequence: retained.generation(sequence).git_oid for sequence in sequences}
+    selected: dict[int, list[ArtifactVersionLocation]] = defaultdict(list)
+    for occurrence in occurrences:
+        first.setdefault(occurrence.identity, occurrence.occurrence_sequence)
+        if occurrence.identity.startswith(("Claim:", "CaptureContract:")):
+            selected[occurrence.occurrence_sequence].append(occurrence)
+    for sequence, versions in selected.items():
+        tree = instance.blobs_at(generations[sequence], tuple(item.path for item in versions))
+        for item in versions:
+            if item.identity.startswith("Claim:"):
+                claim = parse_claim(tree[item.path], path=item.path)
+                if claim_artifact_digest(claim).tagged != item.artifact_digest:
+                    raise ProjectionIntegrityError(
+                        "curation Claim occurrence does not match retained bytes"
+                    )
+                claims.append((sequence, item.path, claim))
+            else:
+                contract = parse_capture_contract(tree[item.path], path=item.path)
+                digest = capture_contract_digest(contract).tagged
+                if digest != item.artifact_digest:
+                    raise ProjectionIntegrityError(
+                        "curation capture contract occurrence does not match retained bytes"
+                    )
+                contracts[digest] = contract.identity.qualified
     return _CurationHistoryIndex(
         claims=tuple(claims),
         capture_contract_identities=contracts,
@@ -507,10 +529,6 @@ def _block_churn(
     coverage = _Coverage(kind)
     for _ in range(document_association_omissions):
         coverage.omit("block_document_association_unavailable")
-    current_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    state_by_identity = {
-        state.identity.qualified: state for state in dependency_artifacts(current_tree)
-    }
     grouped: dict[
         tuple[str, str, str],
         list[tuple[PlaybillReviewOperationalEventV1, BlockObservationV1]],
@@ -529,6 +547,17 @@ def _block_churn(
                 observation.block_id,
             )
         ].append((event, observation))
+    backing_ids = {
+        backing.identity.qualified
+        for observations in grouped.values()
+        for _event, observation in observations
+        for backing in observation.marker_summary.stamp.backing
+    }
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        state_by_identity = {
+            identity: projection.typed.dependency_state(identity)
+            for identity in sorted(backing_ids)
+        }
     frozen_coverage = coverage.freeze()
     detections: list[CurationDetectionV1] = []
     lower = max(0, generation - (BLOCK_CHURN_ACCEPTED_GENERATION_WINDOW - 1))
@@ -735,8 +764,13 @@ def _admission_failures(
             coverage.omit("admission_record_missing")
             continue
         try:
-            candidate_tree = instance.proposal_tree(admission.candidate_tree_oid)
-            base_tree = instance.tree_at(admission.proposed_base_oid)
+            paths = tuple(
+                diagnostic.subject.artifact_path
+                for diagnostic in evaluation.diagnostics
+                if diagnostic.subject is not None
+            )
+            candidate_tree = instance.proposal_blobs(admission.candidate_tree_oid, paths)
+            base_tree = instance.blobs_at(admission.proposed_base_oid, paths)
         except (OSError, PlaybillError, ValueError):
             coverage.omit("admission_tree_unavailable")
             continue
@@ -1160,7 +1194,14 @@ def run_curation_detectors(
         generation_root=coordinate.generation_root,
         compiler_digest=coordinate.compiler_digest,
     )
-    tree = instance.tree_at(internal.git_oid)
+    with instance.bind_accepted_projection(internal) as projection:
+        paths = tuple(
+            row.path
+            for kind in ("claim", "claim-type", "subject", "query-definition", "procedure")
+            for row in projection.typed.envelopes(kind=kind)
+        )
+        projection.typed.prefetch_members(paths)
+        tree = {path: projection.typed.member_bytes(path) for path in paths}
     facts = build_accepted_query_facts(instance, coordinate=internal)
     rows = _current_claim_rows(
         facts.claims,

@@ -75,7 +75,9 @@ def _review_observation(instance, *, coordinate=None):  # type: ignore[no-untype
     )
 
 
-def test_review_and_signing_keep_private_key_outside_wire_contract(tmp_path: Path) -> None:
+def test_review_and_signing_keep_private_key_outside_wire_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     instance, _owner, reviewer = _instance(tmp_path)
     body = service_store_playbill_body(instance, content=b"# Playbill\n\nGoverned prose.\n")
     proposed = service_propose_playbill_document(
@@ -87,6 +89,12 @@ def test_review_and_signing_keep_private_key_outside_wire_contract(tmp_path: Pat
     )
     proposal_id = proposed.proposal.admission.proposal_id
 
+    monkeypatch.setattr(instance, "tree_at", lambda _oid: pytest.fail("review must select members"))
+    monkeypatch.setattr(
+        instance,
+        "proposal_tree",
+        lambda *_a, **_k: pytest.fail("review must select proposal members"),
+    )
     review = service_review_playbill_proposal(
         instance,
         proposal_id=proposal_id,

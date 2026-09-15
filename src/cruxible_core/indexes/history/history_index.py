@@ -435,6 +435,17 @@ class HistoryReader:
         ).fetchall()
         return tuple(ArtifactVersionLocation(*row) for row in rows)
 
+    def artifact_occurrences(self) -> tuple[ArtifactVersionLocation, ...]:
+        """Enumerate retained artifact appearances for whole-history curation."""
+        return tuple(
+            ArtifactVersionLocation(*row)
+            for row in self._connection.execute(
+                "SELECT * FROM artifact_versions WHERE occurrence_sequence<=? "
+                "ORDER BY occurrence_sequence,path,identity,artifact_digest",
+                (self.sequence,),
+            )
+        )
+
 
 EnvelopeLoader = Callable[[int], Sequence[ArtifactEnvelopeRow]]
 

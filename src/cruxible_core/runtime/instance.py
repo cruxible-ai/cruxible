@@ -1587,6 +1587,10 @@ class PlaybillInstance:
         parent = self.immutable_tree_at(base_oid)
         return self._ledger.read_tree_delta(base_oid, oid, parent_tree=parent)
 
+    def proposal_blobs(self, oid: str, paths: Sequence[str]) -> dict[str, bytes]:
+        """Read selected retained proposal members without asserting acceptance."""
+        return self._ledger.blobs_at(oid, paths)
+
     def resolve_accepted_coordinate(
         self,
         *,
