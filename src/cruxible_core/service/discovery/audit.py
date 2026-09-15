@@ -298,7 +298,7 @@ def _history_index(
     for generation in instance.accepted_history():
         if generation.sequence > target_generation:
             break
-        tree = instance.tree_at(generation.oid)
+        tree = instance.blobs_at(generation.oid, tuple(sorted(paths)))
         for path in paths:
             raw = tree.get(path)
             if raw is not None:
@@ -744,7 +744,28 @@ def _service_playbill_audit(
         current_claims=visible,
         target_generation=generation,
     )
-    tree = instance.tree_at(coordinate.git_oid)
+    target_ids = tuple(row.accepted.claim.identity.qualified for row in visible.values())
+    with instance.bind_accepted_projection(internal) as projection:
+        source_ids: set[str] = set()
+        for start in range(0, len(target_ids), 500):
+            batch = target_ids[start : start + 500]
+            placeholders = ",".join("?" for _ in batch)
+            source_ids.update(
+                row[0]
+                for row in projection.typed.connection.execute(
+                    "SELECT DISTINCT source_identity FROM pins WHERE edge_kind='required_pin' "
+                    f"AND target_identity IN ({placeholders})",
+                    batch,
+                )
+            )
+        paths = tuple(
+            envelope.path
+            for identity in sorted(source_ids)
+            if (envelope := projection.typed.envelope(identity)) is not None
+            and envelope.kind in {"claim", "line", "procedure", "query-definition"}
+        )
+        projection.typed.prefetch_members(paths)
+        tree = {path: projection.typed.member_bytes(path) for path in paths}
     reverse_index = build_reverse_dependency_index(
         tree=tree,
         facts=facts,

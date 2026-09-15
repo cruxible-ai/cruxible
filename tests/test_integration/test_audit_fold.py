@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -721,7 +722,8 @@ def test_history_index_carries_backing_only_verification_and_resets_on_statement
     }
     fake = SimpleNamespace(
         accepted_history=lambda: histories,
-        tree_at=lambda oid: trees[oid],
+        blobs_at=lambda oid, paths: {p: trees[oid][p] for p in paths if p in trees[oid]},
+        accepted_history_reader=lambda: nullcontext(None),
     )
 
     carried = _history_index(
