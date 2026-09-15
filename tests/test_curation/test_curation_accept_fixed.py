@@ -308,7 +308,7 @@ def test_dead_vocabulary_auto_resolves_to_the_accepted_retirement_changeset(
     )
 
 
-def test_dead_vocabulary_retirement_scan_loads_each_generation_once(
+def test_dead_vocabulary_retirement_reads_changed_members_once_per_generation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -377,14 +377,16 @@ def test_dead_vocabulary_retirement_scan_loads_each_generation_once(
         timestamp="2026-08-26T18:01:00.000000Z",
     )
     accept_proposal(instance, owner, retirement)
-    original_tree_at = instance.tree_at
+    original_blobs_at = instance.blobs_at
     loaded_oids: list[str] = []
 
-    def counted_tree_at(oid: str) -> dict[str, bytes]:
+    def counted_blobs_at(oid: str, paths) -> dict[str, bytes]:
         loaded_oids.append(oid)
-        return original_tree_at(oid)
+        assert set(paths) == {subject_path(retired.subject_kind, retired.subject_id)}
+        return original_blobs_at(oid, paths)
 
-    monkeypatch.setattr(instance, "tree_at", counted_tree_at)
+    monkeypatch.setattr(instance, "blobs_at", counted_blobs_at)
+    monkeypatch.setattr(instance, "tree_at", lambda _oid: pytest.fail("no whole-tree replay"))
 
     resolutions = _accepted_retirements_for_items(instance, (item, second_item))
 

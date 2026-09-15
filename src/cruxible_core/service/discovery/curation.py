@@ -43,6 +43,7 @@ from cruxible_core.service.discovery.next import (
     PlaybillNextWorkspaceObservationInvalid,
     PlaybillNextWorkspaceObservationV1,
 )
+from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 
 BLOCK_OBSERVATION_ID_DOMAIN = "playbill-block-observation-v1"
 CURATION_RESULT_DIGEST_DOMAIN = "playbill-curation-list-result-v1"
@@ -343,7 +344,9 @@ def _generation(instance: PlaybillInstance, coordinate: AcceptedCoordinate) -> i
     return matches[0]
 
 
-def _valid_document_identity(tree: dict[str, bytes], document_id: str) -> ArtifactIdentity | None:
+def _valid_document_identity(
+    tree: Mapping[str, bytes], document_id: str
+) -> ArtifactIdentity | None:
     path = document_path(document_id)
     content = tree.get(path)
     if content is None:
@@ -361,9 +364,10 @@ def _record_block_observations(
     request: PlaybillCurationListRequestV1,
     actor_context: GovernedActorContext,
 ) -> PlaybillCurationObservationCoverageV1:
-    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    accepted = instance.accepted_coordinate()
+    coordinate = AcceptedCoordinate.from_internal(accepted)
     generation = _generation(instance, coordinate)
-    tree = instance.tree_at(coordinate.git_oid)
+    tree = ClaimVerdictReadContext(instance, accepted).tree
     counts: Counter[PlaybillCurationObservationOmissionReason] = Counter()
     source_count = 0
     observed = 0
@@ -485,8 +489,9 @@ def _accepted_retirements_for_items(
             # Imported ledgers can preserve the accepted receipt without local
             # proposal exhaust.  Do not invent a resolving proposal identity.
             continue
-        parent_tree = instance.tree_at(history[index - 1].oid)
-        candidate_tree = instance.tree_at(accepted.oid)
+        paths = tuple(member.path for member in accepted.record.members)
+        parent_tree = instance.blobs_at(history[index - 1].oid, paths)
+        candidate_tree = instance.blobs_at(accepted.oid, paths)
         affected = _affected_members(
             accepted.record,
             parent_tree=parent_tree,
@@ -893,8 +898,9 @@ def _accepted_change(
         )
     index, generation = matches[0]
     assert generation.record is not None
-    parent_tree = instance.tree_at(history[index - 1].oid)
-    candidate_tree = instance.tree_at(generation.oid)
+    paths = tuple(member.path for member in generation.record.members)
+    parent_tree = instance.blobs_at(history[index - 1].oid, paths)
+    candidate_tree = instance.blobs_at(generation.oid, paths)
     return generation.sequence, generation.record, parent_tree, candidate_tree
 
 
@@ -951,6 +957,8 @@ def _related_paths(
     *,
     tree: Mapping[str, bytes],
 ) -> set[str]:
+    # Only changed members can intersect this resolution; unchanged owner paths
+    # cannot make an unrelated ChangeSet resolve the item.
     paths = {ref.path for ref in item.latest_evidence_refs if ref.path is not None}
     paths.update(
         state.path for state in dependency_artifacts(tree) if state.identity == item.subject
