@@ -39,6 +39,7 @@ class ProposalNoteIndex:
     proposal_ids_by_oid: Mapping[str, set[str]]
 
     proposal_ids_by_candidate: Mapping[str, set[str]] = field(default_factory=dict)
+    active_proposal_ids: frozenset[str] | None = None
     _oids_by_candidate: dict[str, set[str]] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:

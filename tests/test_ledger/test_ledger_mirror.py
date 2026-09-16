@@ -139,7 +139,7 @@ def test_an_approval_reaches_the_mirror_as_its_own_note_ref(tmp_path: Path) -> N
     assert NOTE_REFS["approval"] in _remote_refs(remote)
 
 
-def test_activation_moves_main_and_replaces_the_branch_with_a_settled_ref(
+def test_activation_moves_main_and_removes_the_closed_branch(
     tmp_path: Path,
 ) -> None:
     instance, remote = _mirrored(tmp_path)
@@ -176,8 +176,7 @@ def test_activation_moves_main_and_replaces_the_branch_with_a_settled_ref(
     )
     assert after != before
     assert f"refs/heads/proposals/{digest}" not in refs
-    assert f"refs/settled/{digest}" in refs
-    assert f"refs/settled/{digest}" in instance._ledger.settled_proposal_refs()
+    assert f"refs/settled/{digest}" not in refs
 
 
 def test_withdrawal_retires_the_branch_on_both_sides(tmp_path: Path) -> None:
@@ -198,7 +197,7 @@ def test_withdrawal_retires_the_branch_on_both_sides(tmp_path: Path) -> None:
 
     refs = _remote_refs(remote)
     assert f"refs/heads/proposals/{digest}" not in refs
-    assert f"refs/settled/{digest}" in refs
+    assert f"refs/settled/{digest}" not in refs
 
 
 def test_a_failed_push_lands_the_write_and_records_the_lag(tmp_path: Path) -> None:

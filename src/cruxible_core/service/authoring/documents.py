@@ -498,9 +498,7 @@ def service_activate_playbill_proposal(
 
     reset_claim_resolution_memo()
     advertisement = instance.advertise_workspace()
-    # Main moved and the settled candidate's branch has just been archived, so
-    # the mirror is republished last: a reviewer following the old branch finds
-    # it under `refs/settled/` rather than finding nothing.
+    # Publish accepted main and remove the closed review branch.
     instance.request_ledger_mirror()
     return PlaybillActivationReceipt(
         proposal_id=proposal_id,

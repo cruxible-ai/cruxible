@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import (
     ProposalAdmissionRecord,
     ProposalEvaluationRecord,
@@ -24,6 +25,7 @@ def proposal_note_snapshot(
     *,
     oids: Iterable[str] | None = None,
     candidate_digests: Iterable[str] = (),
+    open_at: AcceptedCoordinate | None = None,
 ) -> ProposalNoteIndex:
     """Read exact groups once; approvals remain fresh under their existing locks.
 
@@ -32,6 +34,37 @@ def proposal_note_snapshot(
     """
     assert evidence.index is not None
     with evidence.index.read(evidence, review_context=True) as connection:
+        active_ids = None
+        if open_at is not None:
+            generation = connection.execute(
+                "SELECT sequence,semantic_root,generation_root,compiler_digest "
+                "FROM accepted_generations "
+                "WHERE git_oid=?",
+                (open_at.git_oid,),
+            ).fetchone()
+            if generation is None or tuple(generation)[1:] != (
+                open_at.semantic_root,
+                open_at.generation_root,
+                open_at.compiler_digest,
+            ):
+                raise ProposalIntegrityError("review projection history binding differs")
+            active = connection.execute(
+                f"SELECT * FROM proposals p WHERE {_COMPLETE} AND "
+                "evaluation_status='candidate' AND withdrawal_path IS NULL "
+                "AND candidate_parent_semantic_root=? AND NOT EXISTS "
+                "(SELECT 1 FROM accepted_generations g WHERE g.candidate_digest=p.candidate_digest "
+                "AND g.sequence<=?)",
+                (open_at.semantic_root, generation[0]),
+            ).fetchall()
+            active_ids = frozenset(row["proposal_id"] for row in active)
+            # Notes sharing an active alias keep the complete group, including
+            # a withdrawn admission with exactly the same commit identity.
+            oids = {
+                row[key]
+                for row in active
+                for key in ("candidate_commit_oid", "review_commit_oid")
+                if row[key] is not None
+            }
         if oids is None:
             rows = connection.execute(f"SELECT * FROM proposals WHERE {_COMPLETE}").fetchall()
         else:
@@ -77,4 +110,12 @@ def proposal_note_snapshot(
             if row["review_commit_oid"] is not None:
                 review_oids[pid] = row["review_commit_oid"]
                 groups.setdefault(row["review_commit_oid"], set()).add(pid)
-    return ProposalNoteIndex(evidence, admissions, evaluations, candidates, review_oids, groups)
+    return ProposalNoteIndex(
+        evidence,
+        admissions,
+        evaluations,
+        candidates,
+        review_oids,
+        groups,
+        active_proposal_ids=active_ids,
+    )

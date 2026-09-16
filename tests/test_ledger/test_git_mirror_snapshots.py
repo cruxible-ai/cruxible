@@ -12,7 +12,6 @@ from cruxible_core.ledger.git import NOTE_REFS, GitLedger
 MAIN = "refs/heads/main"
 NOTE = NOTE_REFS["approval"]
 PROPOSAL = "refs/heads/proposals/" + "a" * 64
-SETTLED = "refs/settled/" + "a" * 64
 
 
 @pytest.fixture(params=("sha1", "sha256"))
@@ -77,7 +76,7 @@ def test_leased_replacement_and_only_known_deletion(repos):
     refs(remote, **{unrelated: first})
     # Notes may be restated onto an unrelated commit; the lease authorizes it.
     restated = commit(local, "restated")
-    refs(local, **{NOTE: restated, SETTLED: first})
+    refs(local, **{NOTE: restated})
     local._git(["update-ref", "-d", PROPOSAL])
     desired = local.mirror_refs()
     assert local.push_mirror(str(remote.path), snapshot=desired, expected_remote=before) is None
@@ -93,7 +92,7 @@ def test_uncertain_older_attempt_and_empty_remote_repair(repos):
     attempted = local.mirror_refs()
     assert local.push_mirror(str(remote.path)) is None
     later = commit(local, "later", first)
-    refs(local, **{MAIN: later, NOTE: later, SETTLED: first})
+    refs(local, **{MAIN: later, NOTE: later})
     local._git(["update-ref", "-d", PROPOSAL])
     desired = local.mirror_refs()
     assert local.push_mirror(str(remote.path), snapshot=desired, previous_attempt=attempted) is None
@@ -104,15 +103,21 @@ def test_uncertain_older_attempt_and_empty_remote_repair(repos):
     assert remote.mirror_refs() == desired
 
 
-def test_state_loss_proves_forward_notes_and_exact_settlement(repos):
+def test_state_loss_requires_exact_retired_proposal_proof(repos):
     local, remote = repos
     first = commit(local, "first")
     refs(local, **{MAIN: first, NOTE: first, PROPOSAL: first})
     assert local.push_mirror(str(remote.path)) is None
     later = commit(local, "later", first)
-    refs(local, **{MAIN: later, NOTE: later, SETTLED: first})
+    refs(local, **{MAIN: later, NOTE: later})
     local._git(["update-ref", "-d", PROPOSAL])
-    assert local.push_mirror(str(remote.path)) is None
+    assert "diverged" in local.push_mirror(str(remote.path))
+    assert (
+        local.push_mirror(
+            str(remote.path), retired_proposal=lambda ref, oid: ref == PROPOSAL and oid == first
+        )
+        is None
+    )
     assert remote.mirror_refs() == local.mirror_refs()
 
 
@@ -234,14 +239,18 @@ def test_lost_uncertain_attempt_recovers_from_ancestry_and_exact_settlement(repo
     assert not pins(local)
 
     desired_oid = commit(local, "recorded B", attempted_oid)
-    refs(local, **{MAIN: desired_oid, NOTE: desired_oid, SETTLED: attempted_oid})
+    refs(local, **{MAIN: desired_oid, NOTE: desired_oid})
     local._git(["update-ref", "-d", PROPOSAL])
     desired = local.mirror_refs()
     # B replaced attempted_refs on disk, then the daemon died before its push.
     # Restart knows P and B, while the actual remote still carries forgotten A.
     assert (
         local.push_mirror(
-            str(remote.path), snapshot=desired, expected_remote=published, previous_attempt=desired
+            str(remote.path),
+            snapshot=desired,
+            expected_remote=published,
+            previous_attempt=desired,
+            retired_proposal=lambda ref, oid: ref == PROPOSAL and oid == attempted_oid,
         )
         is None
     )

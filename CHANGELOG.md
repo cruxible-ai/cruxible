@@ -123,16 +123,13 @@
   --mirror-url` -- and after every ledger write (a proposal submission and its
   evaluation note, an approval note, an activation, a withdrawal) the daemon
   pushes `refs/heads/main`, whichever of the three note refs exist, one branch
-  per OPEN proposal, and the settled archive. `main` is pushed without force,
+  per OPEN proposal. `main` is pushed without force,
   because accepted history only extends and a rejected fast-forward means the
   remote holds something this ledger does not; review refs use exact
   expected-old leases and known-ref pruning. The mirror's branch list tracks
-  the open inventory. Settlement archives the candidate under
-  `refs/settled/<proposal-digest>` in the same transaction, so a
-  link to a settled candidate still resolves instead of pointing at an
-  unreachable commit. A withdrawn proposal leaves that projection too, which it
-  always should have -- the projection's own contract is "exactly the open
-  proposal trees", and a withdrawal is the actor saying this tree will never
+  the open inventory. Closed review branches are removed without permanent
+  per-proposal archives; exact closed-candidate Git links are not retained.
+  Withdrawal removes a proposal from that projection because it cannot
   settle. The publication is never a condition of the write that preceded it: a
   failed push is the new `ledger_mirror_behind` WARNING row in `playbill next`,
   carrying the URL and Git's own reason, because the ledger on disk is the

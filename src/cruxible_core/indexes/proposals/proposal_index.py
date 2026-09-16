@@ -66,6 +66,10 @@ CREATE TABLE IF NOT EXISTS proposals (
        AND evaluated_at_us IS NOT NULL)),
  CHECK(evaluation_status!='candidate' OR evaluated_tree_oid IS NOT NULL)
 ) STRICT;
+CREATE INDEX IF NOT EXISTS proposals_by_open_parent
+ ON proposals(candidate_parent_semantic_root,proposal_id)
+ WHERE evaluation_status='candidate' AND withdrawal_path IS NULL;
+CREATE INDEX IF NOT EXISTS proposals_by_target ON proposals(target_ref,proposal_id);
 CREATE INDEX IF NOT EXISTS proposals_by_candidate ON proposals(candidate_digest,proposal_id)
  WHERE candidate_digest IS NOT NULL;
 CREATE INDEX IF NOT EXISTS proposals_by_submitted_commit

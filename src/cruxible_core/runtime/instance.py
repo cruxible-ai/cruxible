@@ -946,6 +946,34 @@ class PlaybillInstance:
                         self._mirror_thread = None
                 self._mirror_condition.notify_all()
 
+    def _retired_mirror_proposal(self, ref: str, oid: str) -> bool:
+        """Prove one remote-only proposal alias from retained evidence, without an archive."""
+        evidence = self.proposal_evidence()
+        pid = "sha256:" + ref.removeprefix("refs/heads/proposals/")
+        coordinate = AcceptedCoordinate.from_internal(self.accepted_coordinate())
+        with self.accepted_history_reader(at=coordinate) as history:
+            assert evidence.index is not None
+            with evidence.index.read(evidence, review_context=True) as connection:
+                row = connection.execute(
+                    "SELECT p.*, EXISTS(SELECT 1 FROM accepted_generations g "
+                    "WHERE g.candidate_digest=p.candidate_digest AND g.sequence<=?) AS accepted "
+                    "FROM proposals p WHERE proposal_id=?",
+                    (history.sequence, pid),
+                ).fetchone()
+            if row is None or row["review_commit_oid"] != oid:
+                return False
+            if row["candidate_parent_semantic_root"] is None:
+                return False
+            evidence.read_admission(pid)
+            evidence.read_evaluation(pid)
+            evidence.read_candidate(row["candidate_digest"])
+            evidence.read_withdrawal(pid)
+            return bool(
+                row["accepted"]
+                or row["withdrawal_path"] is not None
+                or row["candidate_parent_semantic_root"] != coordinate.semantic_root
+            )
+
     def _publish_ledger_mirror_once(self) -> LedgerMirrorStateV1 | None:
         """Serialize publication across handles/processes and acknowledge exact refs."""
 
@@ -985,6 +1013,7 @@ class PlaybillInstance:
                     snapshot=snapshot,
                     expected_remote=state.published_refs,
                     previous_attempt=state.attempted_refs,
+                    retired_proposal=self._retired_mirror_proposal,
                 )
             except Exception as exc:  # noqa: BLE001 - remote failure never refuses local work
                 detail = f"publication failed: {type(exc).__name__}"[:500]
@@ -1175,39 +1204,14 @@ class PlaybillInstance:
             self._reconcile_proposal_review_refs_locked()
 
     def _reconcile_proposal_review_refs_locked(self) -> None:
-        """Project exactly the open proposal trees into standard ledger branch refs.
-
-        The notes travel with the branch. They were attached only to
-        `admission.candidate_commit_oid` -- the tip of `refs/proposals/<actor>/<name>`,
-        which is neither mirrored nor fetched into a workspace -- while the
-        commit a reviewer actually receives is the one rebuilt here. The two are
-        different objects whenever evaluation derives cards or rebases, which is
-        the ordinary case, so `git notes --ref=refs/notes/playbill-eval show
-        <commit>` (the command `proposal review` prints and both docs pages
-        promise) found nothing for anyone but the daemon. Attaching the same
-        bytes to the projected commit is what makes the published note readable
-        by the reviewer it is published for.
-
-        Completed retained proposals rebuild both open and settled refs. One
-        evaluation index groups their original and advisory commit aliases;
-        existing notes are compared before a write. Approval rendering shares
-        the approval door's per-candidate lock from evidence read
-        through Git write. A delayed renderer cannot overwrite a newer approval
-        projection. All reconciliation callers also hold the review projection
-        lock, so an older workspace writer cannot resurrect settled branches.
-        """
-
-        recovered = self._recovered
-        coordinate = recovered.coordinate
-        accepted_candidates = {
-            generation.record.candidate_digest
-            for generation in recovered.history
-            if generation.record is not None
-        }
+        """Publish active review aliases without revisiting settled proposal history."""
+        coordinate = AcceptedCoordinate.from_internal(self.accepted_coordinate())
         evidence = self.proposal_evidence()
-        index = self.proposal_note_index(evidence=evidence)
+        with self.accepted_history_reader(at=coordinate):
+            index = proposal_note_snapshot(evidence, open_at=coordinate)
+        active_ids = index.active_proposal_ids or frozenset()
         dependencies: dict[str, str] = {}
-        for proposal_id in index.review_oids:
+        for proposal_id in active_ids:
             evaluation = index.evaluations[proposal_id]
             assert evaluation.evaluated_tree_oid is not None
             for oid, kind in (
@@ -1221,25 +1225,19 @@ class PlaybillInstance:
             tuple(index.proposal_ids_by_oid), dependencies=dependencies
         )
         refs: dict[str, str] = {}
-        settled_refs: dict[str, str] = {}
         published: dict[str, tuple[str, str | None]] = {}
         for oid, proposal_ids in index.proposal_ids_by_oid.items():
+            if not proposal_ids & active_ids:
+                continue
             first = min(proposal_ids)
             published[oid] = (first, index.evaluations[first].candidate_digest)
-        for admission in index.admissions.values():
-            evaluation = index.evaluations[admission.proposal_id]
+        for proposal_id in sorted(active_ids):
+            admission = index.admissions[proposal_id]
+            evaluation = index.evaluations[proposal_id]
             candidate_digest = evaluation.candidate_digest
             if candidate_digest is None or evaluation.evaluated_tree_oid is None:
                 continue
             candidate = index.candidates[candidate_digest]
-            is_settled = (
-                candidate_digest in accepted_candidates
-                or evidence.read_withdrawal(admission.proposal_id) is not None
-                or candidate.parent_semantic_root != coordinate.semantic_root
-            )
-            # A coalesced publisher may never observe this candidate while open.
-            # Rebuild its archive from evidence, not from the disposable branch
-            # inventory left by a previous advertisement.
             review_oid = index.review_oids[admission.proposal_id]
             if not object_presence[review_oid]:
                 review_oid = self._ledger.proposal_review_commit(
@@ -1252,9 +1250,8 @@ class PlaybillInstance:
             if review_oid != index.review_oids[admission.proposal_id]:
                 raise ProposalIntegrityError("materialized review alias differs from its index")
             object_presence[review_oid] = True
-            destination = settled_refs if is_settled else refs
-            destination[admission.proposal_id.removeprefix("sha256:")] = review_oid
-        self._ledger.replace_proposal_review_refs(refs, settled_refs=settled_refs)
+            refs[admission.proposal_id.removeprefix("sha256:")] = review_oid
+        self._ledger.replace_proposal_review_refs(refs)
         # After the refs, so every annotated commit is already reachable from
         # one: a note on an unreferenced object is a note a `gc` may collect.
         for review_oid, (proposal_id, candidate_digest) in published.items():

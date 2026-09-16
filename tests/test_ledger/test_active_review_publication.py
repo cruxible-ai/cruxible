@@ -1,4 +1,4 @@
-"""Settled review refs and notes reconstruct without a prior open advertisement."""
+"""Closed proposals never become a permanent mirror inventory."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import threading
 
 import pytest
 
-from cruxible_core.ledger.git import NOTE_REFS
 from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
@@ -41,53 +40,45 @@ def _settle(instance, owner, proposal, kind):
         )
 
 
-def _assert_archive(instance, remote, proposal):
+def _assert_closed_absent(instance, remote, proposal):
     key = proposal.admission.proposal_id.removeprefix("sha256:")
-    archived = "refs/settled/" + key
-    assert archived in _remote_refs(remote)
-    assert "refs/heads/proposals/" + key not in _remote_refs(remote)
-    oid = instance._ledger._git(["rev-parse", archived]).decode().strip()
-    evidence = instance.proposal_evidence()
-    assert instance.read_proposal_note("evaluation", oid) == evidence.evaluation_note(
-        proposal.admission.proposal_id
-    )
-    assert instance.read_proposal_note("approval", oid) == evidence.approval_note(
-        proposal.candidate.candidate_digest
-    )
-    return archived, oid
+    refs = _remote_refs(remote)
+    assert "refs/settled/" + key not in refs
+    assert "refs/heads/proposals/" + key not in refs
+    assert not any(ref.startswith("refs/settled/") for ref in instance._ledger.mirror_refs())
 
 
 @pytest.mark.parametrize("kind", ["withdrawal", "activation"])
-def test_late_mirror_binding_rebuilds_never_open_settlement_and_notes(tmp_path, kind):
-    instance, owner = initialize_local(tmp_path)
-    proposal = _submit(instance)
-    _settle(instance, owner, proposal, kind)
-    assert instance._ledger.settled_proposal_refs() == ()
-    remote = _bare_remote(tmp_path, object_format=instance.descriptor.git_object_format)
-    assert instance.set_ledger_mirror(str(remote)).status == "current"
-    _assert_archive(instance, remote, proposal)
-
-
-@pytest.mark.parametrize("kind", ["withdrawal", "activation"])
-def test_deleted_derived_archive_and_notes_rebuild_from_evidence(tmp_path, kind):
+def test_late_mirror_binding_omits_closed_proposals(tmp_path, kind):
     instance, owner = initialize_local(tmp_path)
     proposal = _submit(instance)
     _settle(instance, owner, proposal, kind)
     remote = _bare_remote(tmp_path, object_format=instance.descriptor.git_object_format)
     assert instance.set_ledger_mirror(str(remote)).status == "current"
-    archived, oid = _assert_archive(instance, remote, proposal)
-    instance._ledger._git(["update-ref", "-d", archived])
-    for kind in ("evaluation", "approval"):
-        instance._ledger._git(["update-ref", "-d", NOTE_REFS[kind]])
-    # The remote still has the previous archive. Rebuilding produces its exact
-    # OID rather than treating a missing disposable local ref as a deletion.
+    _assert_closed_absent(instance, remote, proposal)
+
+
+@pytest.mark.parametrize("kind", ["withdrawal", "activation"])
+def test_publication_does_not_revisit_closed_records(tmp_path, kind, monkeypatch):
+    instance, owner = initialize_local(tmp_path)
+    proposal = _submit(instance)
+    _settle(instance, owner, proposal, kind)
+    remote = _bare_remote(tmp_path, object_format=instance.descriptor.git_object_format)
+    assert instance.set_ledger_mirror(str(remote)).status == "current"
+    from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("publication reopened closed proposal evidence")
+
+    monkeypatch.setattr(ProposalEvidenceStore, "_read_located", forbidden)
+    monkeypatch.setattr(
+        ProposalEvidenceStore, "read_candidate_review_summary_if_present", forbidden
+    )
     assert instance.publish_ledger_mirror(timeout=20).status == "current"
-    assert _assert_archive(instance, remote, proposal) == (archived, oid)
+    _assert_closed_absent(instance, remote, proposal)
 
 
-def test_coalesced_submit_and_withdraw_rebuilds_archive_before_first_open_view(
-    tmp_path, monkeypatch
-):
+def test_coalesced_submit_and_withdraw_never_publishes_closed_branch(tmp_path, monkeypatch):
     instance, owner = initialize_local(tmp_path)
     remote = _bare_remote(tmp_path, object_format=instance.descriptor.git_object_format)
     assert instance.set_ledger_mirror(str(remote)).status == "current"
@@ -110,4 +101,4 @@ def test_coalesced_submit_and_withdraw_rebuilds_archive_before_first_open_view(
     finally:
         release.set()
     assert instance.publish_ledger_mirror(timeout=20).status == "current"
-    _assert_archive(instance, remote, proposal)
+    _assert_closed_absent(instance, remote, proposal)

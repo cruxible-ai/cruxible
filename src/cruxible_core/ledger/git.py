@@ -9,7 +9,7 @@ import re
 import signal
 import subprocess
 import tempfile
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -28,14 +28,13 @@ from cruxible_core.governance.keys import raw_public_key_hex_from_openssh
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _PROPOSAL_REF_RE = re.compile(r"^refs/proposals/[a-z][a-z0-9_.-]{0,127}/[a-z][a-z0-9_.-]{0,127}$")
 _PROPOSAL_REVIEW_REF_RE = re.compile(r"^refs/heads/proposals/[0-9a-f]{64}$")
-_SETTLED_REF_PREFIX: Final = "refs/settled/"
 
 # Exact snapshots and explicit leases protect both accepted and review history.
 MIRROR_PUSH_TIMEOUT_SECONDS: Final = 30.0
 _MIRROR_ARG_BYTES: Final = 64 * 1024
 _MIRROR_MAX_REFS: Final = 4096
 _MIRROR_MAIN: Final = "refs/heads/main"
-_MIRROR_PREFIXES: Final = ("refs/heads/proposals/", "refs/settled/")
+_MIRROR_PREFIXES: Final = ("refs/heads/proposals/",)
 
 # Every Playbill note ref, in one table. The generation descriptor was the
 # first; the proposal evaluation and the approval list are projections of the
@@ -508,25 +507,8 @@ class GitLedger:
         self._validate_oid(oid)
         return oid
 
-    def replace_proposal_review_refs(
-        self, refs: Mapping[str, str], *, settled_refs: Mapping[str, str] | None = None
-    ) -> None:
-        """Atomically replace the open-proposal branches, archiving what settled.
-
-        A branch leaves this projection for exactly one reason: the proposal it
-        showed is no longer open -- activated, withdrawn, or gone stale against a
-        moved head. Deleting it outright was fine while the only reader was a
-        local worktree that could still resolve the commit by OID; on a mirror it
-        is not, because the commit becomes unreachable there and a reviewer
-        following a link to a settled proposal gets nothing. So the departing ref
-        is MOVED, in the same transaction that removes it, to
-        `refs/settled/<digest>`: the branch list stays the open inventory, and
-        every settled candidate stays reachable under a namespace that says what
-        it is. Re-settlement restates the same archive rather than failing, so
-        the reconcile is idempotent. ``settled_refs`` also reconstructs archives
-        directly from evidence, including proposals never projected while open.
-        """
-
+    def replace_proposal_review_refs(self, refs: Mapping[str, str]) -> None:
+        """Atomically project only open proposals; closed candidates have no archive ref."""
         normalized: dict[str, str] = {}
         for proposal_id, oid in refs.items():
             ref = f"refs/heads/proposals/{proposal_id}"
@@ -534,51 +516,26 @@ class GitLedger:
                 raise PlaybillGitError("proposal review ref name is malformed")
             self._validate_oid(oid)
             normalized[ref] = oid
-        settled: dict[str, str] = {}
-        for proposal_id, oid in (settled_refs or {}).items():
-            if not _PROPOSAL_REVIEW_REF_RE.fullmatch(f"refs/heads/proposals/{proposal_id}"):
-                raise PlaybillGitError("settled proposal ref name is malformed")
-            if f"refs/heads/proposals/{proposal_id}" in normalized:
-                raise PlaybillGitError("one proposal cannot be both open and settled")
-            self._validate_oid(oid)
-            settled[_SETTLED_REF_PREFIX + proposal_id] = oid
-        current: dict[str, str] = {}
-        for line in (
-            self._git(["for-each-ref", "--format=%(objectname) %(refname)", "refs/heads/proposals"])
-            .decode("utf-8")
+        current = {
+            ref: oid
+            for line in self._git(
+                ["for-each-ref", "--format=%(objectname) %(refname)", "refs/heads/proposals"]
+            )
+            .decode()
             .splitlines()
-        ):
-            if not line:
-                continue
-            oid, _, ref = line.partition(" ")
-            self._validate_oid(oid)
-            current[ref] = oid
-        departing = sorted(set(current) - set(normalized), key=str.encode)
+            for oid, ref in (line.split(" ", 1),)
+        }
         commands = ["start"]
         commands.extend(
-            f"update {ref} {normalized[ref]}" for ref in sorted(normalized, key=str.encode)
+            f"update {ref} {oid} {current.get(ref, '0' * len(oid))}"
+            for ref, oid in sorted(normalized.items())
+            if current.get(ref) != oid
         )
-        for ref in departing:
-            archived = _SETTLED_REF_PREFIX + ref.removeprefix("refs/heads/proposals/")
-            # Explicit evidence-derived targets win over a disposable old ref.
-            settled.setdefault(archived, current[ref])
-            commands.append(f"delete {ref}")
-        commands.extend(f"update {ref} {settled[ref]}" for ref in sorted(settled, key=str.encode))
+        commands.extend(
+            f"delete {ref} {current[ref]}" for ref in sorted(set(current) - set(normalized))
+        )
         commands.extend(("prepare", "commit"))
         self._git(["update-ref", "--stdin"], input_bytes=("\n".join(commands) + "\n").encode())
-
-    def settled_proposal_refs(self) -> tuple[str, ...]:
-        """List the archived settled-proposal refs, for inspection and tests."""
-
-        return tuple(
-            line
-            for line in self._git(
-                ["for-each-ref", "--format=%(refname)", _SETTLED_REF_PREFIX.rstrip("/")]
-            )
-            .decode("utf-8")
-            .splitlines()
-            if line
-        )
 
     def mirror_refs(self) -> dict[str, str]:
         """Capture owned public refs, excluding private proposal/pinning refs."""
@@ -611,7 +568,6 @@ class GitLedger:
         for ref, oid in result.items():
             valid = ref == _MIRROR_MAIN or ref in NOTE_REFS.values()
             valid = valid or bool(_PROPOSAL_REVIEW_REF_RE.fullmatch(ref))
-            valid = valid or bool(re.fullmatch(r"refs/settled/[0-9a-f]{64}", ref))
             if not valid:
                 raise PlaybillGitError("mirror snapshot contains an unowned or malformed ref")
             self._validate_oid(oid)
@@ -652,6 +608,7 @@ class GitLedger:
         snapshot: Mapping[str, str] | None = None,
         expected_remote: Mapping[str, str] | None = None,
         previous_attempt: Mapping[str, str] | None = None,
+        retired_proposal: Callable[[str, str], bool] | None = None,
     ) -> str | None:
         """Atomically publish exact refs, returning None or an operational failure.
 
@@ -724,11 +681,14 @@ class GitLedger:
                     target = desired.get(ref)
                     if target is not None and self.is_ancestor(actual, target):
                         continue
-                    if ref.startswith("refs/heads/proposals/"):
-                        settled = _SETTLED_REF_PREFIX + ref.removeprefix("refs/heads/proposals/")
-                        if desired.get(settled) == actual:
-                            owned.add(ref)
-                            continue
+                    if (
+                        ref.startswith("refs/heads/proposals/")
+                        and ref not in desired
+                        and retired_proposal is not None
+                        and retired_proposal(ref, actual)
+                    ):
+                        owned.add(ref)
+                        continue
                     raise PlaybillGitError(f"remote mirror ref diverged: {ref}")
                 remote_main = remote.get(_MIRROR_MAIN)
                 if remote_main is not None and remote_main != desired[_MIRROR_MAIN]:
