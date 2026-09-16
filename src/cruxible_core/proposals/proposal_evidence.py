@@ -301,12 +301,15 @@ class ProposalEvidenceStore:
                 render=admission_bytes,
             )
         path = self.proposals / f"{proposal_id.removeprefix('sha256:')}.json"
-        return self._read_model(
+        record = self._read_model(
             path,
             ProposalAdmissionRecord,
             label="proposal admission",
             render=admission_bytes,
         )
+        if record.proposal_id != proposal_id:
+            raise ProposalIntegrityError("proposal admission lookup names another admission")
+        return record
 
     def list_admissions(self) -> tuple[ProposalAdmissionRecord, ...]:
         """List canonical admissions in stable evidence-filename order."""

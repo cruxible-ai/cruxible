@@ -581,3 +581,14 @@ def test_admission_identity_is_verified_by_every_evidence_reader(tmp_path, reade
         (evidence.root / ".proposal-source.json").unlink()
     with pytest.raises(ProposalIntegrityError):
         evidence.read_admission(record.proposal_id)
+
+
+def test_cold_admission_reader_rejects_valid_record_under_another_id(tmp_path):
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    second = _submit(instance, "two", timestamp="2026-08-11T12:30:01.000000Z")
+    store = ProposalEvidenceStore(instance.proposal_evidence().root)
+    path = store.proposals / (second.admission.proposal_id[7:] + ".json")
+    path.write_bytes(admission_bytes(first.admission))
+    with pytest.raises(ProposalIntegrityError, match="another admission"):
+        store.read_admission(second.admission.proposal_id)
