@@ -123,13 +123,8 @@ class ProposalNoteIndex:
                 else transport.object_exists(oid)
             )
             if not exists:
-                if any(
-                    self.admissions[item].candidate_commit_oid == oid
-                    for item in self.proposal_ids_by_oid.get(oid, ())
-                ):
-                    raise ProposalIntegrityError("original proposal commit is missing")
-                # An unmaterialized advisory alias has no reader yet. Normal
-                # reconciliation creates/retains it before publishing its notes.
+                # Notes are advisory. Closed candidate objects may have been
+                # collected; an active alias is materialized by reconciliation.
                 continue
             for kind, content in self.note_bytes(oid).items():
                 stored = (

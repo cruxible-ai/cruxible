@@ -1045,9 +1045,9 @@ def test_an_interrupted_publication_is_completed_on_the_same_ref(
     ((run_id, disposition),) = recovered.items()
     assert disposition == "delivered"
     (admission,) = _admissions_for(instance, target_ref)
-    # The completed publication extends the interrupted commit on the same ref.
+    # Repeating the same snapshot reproduces the interrupted commit; no chain is added.
     assert admission.candidate_commit_oid == instance.proposal_ref_target(target_ref)
-    assert admission.candidate_commit_oid != interrupted_oid
+    assert admission.candidate_commit_oid == interrupted_oid
     state = service_get_playbill_procedure_run(instance, run_id=run_id)
     assert state.status == "operational_failed"
     (egress,) = state.terminal_egress
@@ -1315,3 +1315,45 @@ def test_corrupt_evidence_under_one_operation_does_not_stop_recovery_of_another(
     assert len(_proposal_refs(instance)) == 2
     # A second sweep neither retries the corrupt run into a duplicate nor errors.
     assert service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(hours=3)) == {}
+
+
+@pytest.mark.parametrize("kind", ["accepted", "withdrawn"])
+def test_completed_proposal_retry_survives_closed_ref_cleanup_and_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """A lost egress response never becomes a second proposal after Git pruning."""
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    _crash_after(monkeypatch, after_submit=True)
+    with pytest.raises(_Crash):
+        run_line(instance, root, line)
+    monkeypatch.undo()
+    (target,) = _proposal_refs(instance)
+    (admission,) = _admissions_for(instance, target)
+    inspection = service_inspect_playbill_proposal(instance, proposal_id=admission.proposal_id)
+    if kind == "accepted":
+        from tests.test_ledger.test_active_review_publication import _settle
+
+        _settle(instance, owner, inspection.proposal, "activation")
+    else:
+        from cruxible_core.service.proposals.proposals import service_withdraw_playbill_proposal
+
+        service_withdraw_playbill_proposal(
+            instance,
+            proposal_id=admission.proposal_id,
+            actor_id=admission.actor_id,
+            reason="closed before egress acknowledgement",
+            withdrawn_at="2026-09-16T12:00:00Z",
+        )
+    assert instance.proposal_ref_target(target) is None
+    instance._ledger._git(["reflog", "expire", "--expire=now", "--all"])
+    instance._ledger._git(["gc", "--prune=now"])
+    assert not instance._ledger.object_exists(admission.candidate_commit_oid)
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    recovered = service_recover_proposal_egress(reopened, recorded_at=NOW + timedelta(minutes=2))
+    ((run_id, disposition),) = recovered.items()
+    assert disposition == "delivered"
+    state = service_get_playbill_procedure_run(reopened, run_id=run_id)
+    (egress,) = state.terminal_egress
+    assert egress.proposal_id == admission.proposal_id
+    assert len(_admissions_for(reopened, target)) == 1
+    assert reopened.proposal_ref_target(target) is None

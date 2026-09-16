@@ -15,6 +15,7 @@ from cruxible_client.contracts.documents import (
 )
 from cruxible_client.contracts.errors import (
     ProposalAdmissionError,
+    ProposalContentUnavailable,
     ProposalReadmitRequiresResubmission,
 )
 from cruxible_core.claims.claim_type_migrations import (
@@ -236,3 +237,35 @@ def test_readmit_refuses_stale_generated_claim_type_closure_before_admission(
         actor=AuthenticatedActor(actor_id="owner"),
     )
     assert rerun.proposal.proposal.candidate is not None  # type: ignore[union-attr]
+
+
+def test_readmit_collected_stale_candidate_requires_resubmission(tmp_path: Path) -> None:
+    """Outcome history survives even when stale proposal bytes have expired."""
+    from cruxible_core.runtime.instance import PlaybillInstance
+    from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
+
+    instance, owner = initialize_local(tmp_path)
+    proposals = []
+    for name in ("accepted", "stale"):
+        body = service_store_playbill_body(instance, content=name.encode()).digest
+        proposals.append(
+            service_propose_playbill_document(
+                instance,
+                shell=_shell(name, body, title=name),
+                actor_id="owner",
+                proposal_name=name,
+                timestamp=TIMESTAMP,
+            )
+        )
+    accepted, stale = proposals
+    _accept(instance, owner, accepted)
+    instance._ledger._git(["reflog", "expire", "--expire=now", "--all"])
+    instance._ledger._git(["gc", "--prune=now"])
+    assert not instance._ledger.object_exists(stale.proposal.admission.candidate_commit_oid)
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    before = service_list_playbill_proposals(reopened)
+    with pytest.raises(ProposalContentUnavailable, match="Resubmit"):
+        service_readmit_playbill_proposal(
+            reopened, proposal_id=stale.proposal.admission.proposal_id, actor_id="owner"
+        )
+    assert service_list_playbill_proposals(reopened) == before

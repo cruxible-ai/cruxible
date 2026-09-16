@@ -106,11 +106,14 @@ def test_stale_handle_reconciliation_cannot_resurrect_a_settled_proposal(tmp_pat
     assert receipt.status == "accepted"
     instance._reconcile_proposal_review_refs()
     assert review_ref not in instance._ledger.mirror_refs()
-    settled = instance._ledger.settled_proposal_refs()
-    assert any(ref.endswith(digest) for ref in settled)
+    assert not any(ref.startswith("refs/settled/") for ref in instance._ledger.mirror_refs())
+    instance._ledger._git(["reflog", "expire", "--expire=now", "--all"])
+    instance._ledger._git(["gc", "--prune=now"])
+    assert not instance._ledger.object_exists(proposed.admission.candidate_commit_oid)
     assert stale.accepted_coordinate() == old_coordinate
     assert old_coordinate != instance.accepted_coordinate()
     stale._reconcile_proposal_review_refs()
     assert stale.accepted_coordinate() == instance.accepted_coordinate()
     assert review_ref not in stale._ledger.mirror_refs()
-    assert stale._ledger.settled_proposal_refs() == settled
+    assert not any(ref.startswith("refs/settled/") for ref in stale._ledger.mirror_refs())
+    assert not stale._ledger.object_exists(proposed.admission.candidate_commit_oid)

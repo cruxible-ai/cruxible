@@ -361,7 +361,7 @@ def service_withdraw_playbill_proposal(
     record ceiling is the case this exists for -- is admitted, evaluated and
     permanently unactivatable, and nothing removed it from the open inventory.
     Withdrawal is the missing terminal transition: it touches no accepted state
-    and leaves every byte of the candidate readable, it moves the proposal out
+    and retains the outcome record while releasing candidate refs. It moves the proposal out
     of `proposal list --status open` where an actor reads their work, and every
     settlement door refuses a proposal that carries one.
 
@@ -426,8 +426,8 @@ def service_withdraw_playbill_proposal(
         withdrawn_at=withdrawn_at,
     )
     instance.proposal_evidence().write_withdrawal(record)
-    # A withdrawal settles the proposal, so the mirror loses its branch and
-    # gains the archived ref in the same publication.
+    # Release local closed-candidate roots even without a configured mirror.
+    instance.advertise_workspace()
     instance.request_ledger_mirror()
     return PlaybillProposalWithdrawResultV1(
         proposal_id=record.proposal_id,

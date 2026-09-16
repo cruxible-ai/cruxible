@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING
@@ -11,6 +12,7 @@ from cruxible_client.contracts.candidates import (
     CandidateMemberLawEvidenceV2,
     canonical_candidate_timestamp,
 )
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.procedure_mandates import ProcedureMandateV1
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
@@ -67,6 +69,25 @@ def _changed_paths(base: Mapping[str, bytes], candidate: Mapping[str, bytes]) ->
             key=lambda item: item.encode("utf-8"),
         )
     )
+
+
+def proposal_terminal_payload_digest(tree: Mapping[str, bytes], paths: tuple[str, ...]) -> str:
+    """Retain the exact authored payload binding after candidate Git objects expire."""
+    return typed_digest(
+        Sha256Value,
+        "playbill-procedure-proposal-payload-v1",
+        {
+            "members": [
+                {
+                    "path": path,
+                    "digest": None
+                    if path not in tree
+                    else "sha256:" + hashlib.sha256(tree[path]).hexdigest(),
+                }
+                for path in sorted(paths, key=str.encode)
+            ]
+        },
+    ).tagged
 
 
 def _candidate_member_digest(
@@ -154,6 +175,9 @@ class ProposalTerminalAdapter:
                     request=ProposalAdmissionRequest(
                         target_ref=proposal_terminal_ref(actor_id, request.operation_key),
                         proposed_base_oid=request.accepted_coordinate.git_oid,
+                        source_compilation_digest=proposal_terminal_payload_digest(
+                            candidate_tree, changed
+                        ),
                         rationale=rationale,
                     ),
                     candidate_tree=candidate_tree,

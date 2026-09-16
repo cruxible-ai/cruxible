@@ -393,16 +393,19 @@ completion; the publisher combines pending work into exact ref snapshots.
 
 What travels: `refs/heads/main`, whichever of `refs/notes/playbill-gen`,
 `refs/notes/playbill-eval` and `refs/notes/playbill-approval` exist, one branch
-per OPEN proposal under `refs/heads/proposals/`, and the settled archive under
-`refs/settled/`. The mirror's branch list is therefore the open inventory and
-nothing else. A settled proposal — activated, withdrawn, or stale — loses its
-branch and keeps its commit under `refs/settled/<proposal-digest>`, on the
-mirror and locally, so a link to a settled candidate still resolves.
+per OPEN proposal under `refs/heads/proposals/`. A settled proposal—activated,
+withdrawn, or stale—loses its review branch without a permanent archive ref.
+Accepted state and its signed change-set receipts remain in accepted history.
+Closed proposal outcomes and diagnostics remain readable, but exact candidate
+content and direct Git links are not guaranteed after cleanup. Historical review
+or readmission reports unavailable content explicitly; resubmit the authored
+change when a new candidate is needed.
+
 
 **The mirror branch is named by the PROPOSAL DIGEST, not by actor and name.**
 Two ref namespaces exist and they are keyed differently on purpose. The
 daemon's own transport ref is `refs/proposals/<actor>/<name>` — an actor writes
-to a ref they own, and resubmitting extends that ref's lineage. The branch a
+to a ref they own, and each evaluated snapshot is parented on its accepted base. The branch a
 reviewer sees, locally as `playbill/proposals/<proposal-digest>` and on the
 mirror as `refs/heads/proposals/<proposal-digest>`, is the projection of ONE
 evaluated candidate, which is what a digest names and what a name does not: the

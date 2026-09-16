@@ -283,13 +283,13 @@ def test_a_reviewer_cloning_the_mirror_can_read_the_evaluation_note(
     branch = f"origin/proposals/{digest}"
     note = _note_in_clone(clone, NOTE_REFS["evaluation"], branch)
     assert note == instance.proposal_evidence().evaluation_note(result.admission.proposal_id)
-    # The candidate commit the note used to hang on is not in the clone at all,
-    # which is why attaching it there alone made the published note unreadable.
-    absent = subprocess.run(
+    # New submissions are already standalone evaluated snapshots; the public
+    # review alias is that exact candidate, without an intermediate commit.
+    present = subprocess.run(
         ["git", "-C", str(clone), "cat-file", "-e", result.admission.candidate_commit_oid],
         capture_output=True,
     )
-    assert absent.returncode != 0
+    assert present.returncode == 0
 
 
 def test_a_reviewer_cloning_the_mirror_can_read_the_approval_note(tmp_path: Path) -> None:

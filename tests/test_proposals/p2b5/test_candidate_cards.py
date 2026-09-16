@@ -292,8 +292,8 @@ def test_forged_cards_never_reach_the_evaluated_or_accepted_tree(
     and forged bytes for the existing card, the new member's card, an invented card
     path, and a card that lies about the members' settlement. The evaluated tree the
     daemon commits and the accepted tree activation settles carry only the base
-    card and the re-rendered card; the forged bytes survive nowhere but the
-    admitted commit, which is never settled.
+    card and the re-rendered card. No intermediate commit retains the caller's
+    forged cards; the candidate points directly to the accepted base.
     """
 
     instance, _owner = initialize_local(tmp_path)
@@ -326,14 +326,13 @@ def test_forged_cards_never_reach_the_evaluated_or_accepted_tree(
         assert tree[other_card] == expected_other_card
         assert INVENTED_CARD_PATH not in tree
         assert not any(marker in value for marker in forged_markers for value in tree.values())
-    # The admitted commit keeps the caller's raw bytes and nothing settles it:
-    # activation settled the evaluated tree, so the parent tree is not authoritative.
     ledger = instance._ledger
-    admitted_oid = ledger.parent_of(result.admission.candidate_commit_oid)
-    assert admitted_oid is not None
-    admitted = ledger.read_tree(admitted_oid)
-    assert all(admitted[path] == content for path, content in forgery.items())
-    assert ledger.unreachable_commits() == ()
+    assert (
+        ledger.parent_of(result.admission.candidate_commit_oid)
+        == result.evaluation.evaluated_base_oid
+    )
+    assert ledger.read_tree(result.admission.candidate_commit_oid) == evaluated
+    assert result.admission.candidate_commit_oid in ledger.unreachable_commits()
 
 
 def test_odd_card_paths_are_refused_typed_before_any_commit(tmp_path: Path) -> None:

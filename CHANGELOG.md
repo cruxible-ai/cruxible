@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Mirror publication retains only open proposal refs, without permanent settled
+  bookmarks or candidate-to-candidate retention chains. Candidate snapshots
+  attach directly to their accepted base. Closed outcomes and diagnostics remain
+  readable; historical review/readmission reports when candidate content has
+  been collected. Procedure proposal retries use a retained exact-payload binding
+  and do not resubmit after ref cleanup. Native Git leases and atomic pushes
+  remain; the argument limit now depends on the active publication surface,
+  rather than the lifetime number of settled proposals.
+
 - **A Line's `propose_change_set` terminal produces a durable proposal.** On
   the served Line lane, each resolved candidate template must be one Claim
   proposal item (statement, rationale, optional lineage); the daemon attaches

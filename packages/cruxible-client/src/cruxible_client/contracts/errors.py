@@ -320,6 +320,19 @@ class ProposalSelectorAmbiguousError(PlaybillError):
         super().__init__(f"{rendered}; run `cruxible playbill proposal list`")
 
 
+class ProposalContentUnavailable(ProposalAdmissionError):
+    """Closed candidate bytes were released; the outcome record remains readable."""
+
+    error_code = "playbill.proposal_content_unavailable"
+
+    def __init__(self) -> None:
+        super().__init__(
+            f"{self.error_code}: exact proposal content is no longer retained; "
+            "its recorded outcome remains available. Resubmit the authored change "
+            "to create a new reviewable proposal."
+        )
+
+
 class ProposalReadmitRequiresResubmission(ProposalAdmissionError):
     """A generated closure must be rebuilt rather than byte-rebased."""
 
@@ -407,6 +420,7 @@ __all__ = [
     "ProposalActivationRequestInvalid",
     "ProposalAdmissionError",
     "ProposalReadmitRequiresResubmission",
+    "ProposalContentUnavailable",
     "ProposalNotFoundError",
     "ProposalSelectorAmbiguousError",
     "ProposalWithdrawnError",

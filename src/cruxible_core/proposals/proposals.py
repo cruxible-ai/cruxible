@@ -4269,43 +4269,39 @@ class ProposalService:
                     "at the current head"
                 )
             existing = self.transport.read_proposal_ref(request.target_ref)
+            # Finish retaining any complete prior active admission before reusing
+            # its author slot, including a crash after admission but before pinning.
+            if existing is not None:
+                prior = self._note_index(oids=(existing,))
+                for pid, admission in prior.admissions.items():
+                    evaluation = prior.evaluations[pid]
+                    summary = prior.candidates.get(evaluation.candidate_digest or "")
+                    if (
+                        summary is not None
+                        and summary.parent_semantic_root == current.semantic_root
+                        and evaluation.evaluated_tree_oid is not None
+                    ):
+                        review_oid = self.transport.proposal_review_commit(
+                            tree_oid=evaluation.evaluated_tree_oid,
+                            base_oid=evaluation.evaluated_base_oid,
+                            actor_id=admission.actor_id,
+                            timestamp=admission.admitted_at,
+                            message=summary.message(rationale=admission.rationale),
+                        )
+                        self.transport.retain_proposal_review(pid, review_oid)
+            # One evaluated snapshot, parented on its accepted base. Neither a
+            # previous submission nor an intermediate authored tree is an ancestor.
             commit_oid, tree_oid = self.transport.create_proposal_commit(
-                validated_tree,
-                # Resubmitting the same ref EXTENDS that ref's lineage, mirroring the
-                # evaluation law below: the new admitted commit is parented on the
-                # commit the ref already holds, so the previous admitted and evaluated
-                # commits stay reachable instead of becoming proposal garbage on every
-                # ref reuse. The coordinate the tree was PROPOSED against remains
-                # `request.proposed_base_oid`; it is the admission record's and the
-                # validation base tree's, never the commit's parent.
-                base_oid=request.proposed_base_oid if existing is None else existing,
+                outcome.tree if outcome.candidate is not None else validated_tree,
+                base_oid=current.git_oid,
                 target_ref=request.target_ref,
                 actor_id=actor.actor_id,
                 timestamp=timestamp,
                 expected_ref_oid=existing,
                 message=message,
             )
-
-            evaluated_tree_oid: str | None = tree_oid
-            if outcome.candidate is not None and (is_rebase or outcome.tree != validated_tree):
-                commit_oid, evaluated_tree_oid = self.transport.create_proposal_commit(
-                    outcome.tree,
-                    # The evaluated commit extends the admitted one on the same ref, so
-                    # the tree the actor submitted stays reachable instead of becoming an
-                    # unreachable object on every card-bearing proposal. The coordinate
-                    # the members were evaluated at is the evaluation record's, not the
-                    # commit's parent.
-                    base_oid=commit_oid,
-                    target_ref=request.target_ref,
-                    actor_id=actor.actor_id,
-                    timestamp=timestamp,
-                    expected_ref_oid=commit_oid,
-                    message=message,
-                )
-            # The admission names the commit the proposal ref actually holds. Evaluation
-            # re-commits whenever it derives cards or rebases, so the record is written
-            # once, here, against the final OID: written before, it named a commit the
-            # ref no longer points at and no selector could resolve the ref back to it.
+            evaluated_tree_oid = tree_oid if outcome.candidate is not None else None
+            # The immutable admission names exactly the published candidate.
             proposal_id = _proposal_id_payload(
                 actor_id=actor.actor_id,
                 request=request,
@@ -4370,6 +4366,8 @@ class ProposalService:
                     self.evidence.write_candidate(outcome.candidate)
                 self.evidence.write_evaluation(evaluation)
                 self.evidence.write_admission(admission)
+            if outcome.candidate is not None:
+                self.transport.retain_proposal_review(proposal_id, commit_oid)
             # Original and advisory aliases use the same complete group, so a
             # second admission sharing a commit cannot overwrite the first.
             after = self._note_index(

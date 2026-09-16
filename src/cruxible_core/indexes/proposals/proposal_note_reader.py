@@ -29,8 +29,9 @@ def proposal_note_snapshot(
 ) -> ProposalNoteIndex:
     """Read exact groups once; approvals remain fresh under their existing locks.
 
-    Passing no OIDs selects the full inventory for explicit review-ref export.
-    Ordinary note operations select aliases/candidates and read only those groups.
+    Publication selects open proposals at one accepted coordinate. Ordinary note
+    operations select aliases/candidates; neither scans closed proposal records.
+    Omitting both selectors requests the complete inventory explicitly.
     """
     assert evidence.index is not None
     with evidence.index.read(evidence, review_context=True) as connection:

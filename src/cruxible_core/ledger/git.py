@@ -507,6 +507,39 @@ class GitLedger:
         self._validate_oid(oid)
         return oid
 
+    def retain_proposal_review(self, proposal_id: str, oid: str) -> None:
+        """Protect a completed active admission independently of its reusable author ref."""
+        ref = "refs/heads/proposals/" + proposal_id.removeprefix("sha256:")
+        if not _PROPOSAL_REVIEW_REF_RE.fullmatch(ref):
+            raise PlaybillGitError("proposal review ref name is malformed")
+        self._validate_oid(oid)
+        self._git(["update-ref", ref, oid])
+
+    def proposal_refs(self) -> dict[str, str]:
+        """Snapshot the current author slots, including interrupted publications."""
+        return {
+            ref: oid
+            for line in self._git(
+                ["for-each-ref", "--format=%(objectname) %(refname)", "refs/proposals/"]
+            )
+            .decode()
+            .splitlines()
+            for oid, ref in (line.split(" ", 1),)
+        }
+
+    def delete_proposal_refs(self, refs: Mapping[str, str]) -> None:
+        """Release completed author slots; a changed or interrupted slot is never guessed."""
+        if not refs:
+            return
+        commands = ["start"]
+        for ref, oid in sorted(refs.items()):
+            if not _PROPOSAL_REF_RE.fullmatch(ref):
+                raise PlaybillGitError("proposal ref name is malformed")
+            self._validate_oid(oid)
+            commands.append(f"delete {ref} {oid}")
+        commands.extend(("prepare", "commit"))
+        self._git(["update-ref", "--stdin"], input_bytes=("\n".join(commands) + "\n").encode())
+
     def replace_proposal_review_refs(self, refs: Mapping[str, str]) -> None:
         """Atomically project only open proposals; closed candidates have no archive ref."""
         normalized: dict[str, str] = {}
@@ -872,19 +905,37 @@ class GitLedger:
         presence = {oid: oid in objects for oid in oids}
         note_oids: dict[tuple[str, str], str] = {}
         for kind in ("evaluation", "approval"):
-            listing = self._git(["notes", f"--ref={self._note_ref(kind)}", "list"])
-            try:
-                for row in listing.decode("ascii").splitlines():
-                    blob_oid, target_oid = row.split()
+            for target_oid, exists in presence.items():
+                if not exists:
+                    continue
+                # Listing the entire note ref scales with every closed proposal.
+                # Ask Git for only this active alias, including its fanout layout.
+                result = _command(
+                    [
+                        "git",
+                        f"--git-dir={self.path}",
+                        "notes",
+                        f"--ref={self._note_ref(kind)}",
+                        "list",
+                        target_oid,
+                    ],
+                    check=False,
+                )
+                if (
+                    result.returncode == 1
+                    and not result.stdout
+                    and result.stderr.strip()
+                    == f"error: no note found for object {target_oid}.".encode()
+                ):
+                    continue
+                if result.returncode != 0:
+                    raise PlaybillGitError("Git review note lookup failed")
+                try:
+                    blob_oid = result.stdout.decode("ascii").strip()
                     self._validate_oid(blob_oid)
-                    self._validate_oid(target_oid)
-                    if target_oid in presence:
-                        key = (kind, target_oid)
-                        if key in note_oids:
-                            raise PlaybillGitError("review notes repeat an annotated object")
-                        note_oids[key] = blob_oid
-            except (UnicodeDecodeError, ValueError) as exc:
-                raise PlaybillGitError("Git review note listing is malformed") from exc
+                except (UnicodeDecodeError, ValueError) as exc:
+                    raise PlaybillGitError("Git review note lookup is malformed") from exc
+                note_oids[kind, target_oid] = blob_oid
         blobs = self._read_review_objects({oid: "blob" for oid in note_oids.values()})
         if len(blobs) != len(set(note_oids.values())):
             raise PlaybillGitError("review note body is missing")

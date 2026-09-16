@@ -39,6 +39,7 @@ from cruxible_client.contracts.errors import (
     PlaybillKeyError,
     PrincipalIntegrityError,
     ProjectionIntegrityError,
+    ProposalContentUnavailable,
     ProposalIntegrityError,
     SettlementIntegrityError,
 )
@@ -1177,10 +1178,10 @@ class PlaybillInstance:
     def advertise_workspace(self) -> PlaybillWorkspaceAdvertisement:
         """Refresh advisory refs, or report that this instance has no attachment."""
 
-        if self._workspace_advertiser is None:
-            return NOT_ATTACHED_ADVERTISEMENT
         try:
             self._reconcile_proposal_review_refs()
+            if self._workspace_advertiser is None:
+                return NOT_ATTACHED_ADVERTISEMENT
             return self._workspace_advertiser()
         except BaseException:
             return PlaybillWorkspaceAdvertisement(
@@ -1252,6 +1253,34 @@ class PlaybillInstance:
             object_presence[review_oid] = True
             refs[admission.proposal_id.removeprefix("sha256:")] = review_oid
         self._ledger.replace_proposal_review_refs(refs)
+        # Author slots are retry anchors only until their admission completes.
+        # Open candidates have independent review refs; unrecorded interrupted
+        # slots remain intact for the delivery recovery path.
+        retired_targets = {}
+        assert evidence.index is not None
+        for target, oid in self._ledger.proposal_refs().items():
+            rows = evidence.index.rows(
+                evidence, "target_ref=? AND candidate_commit_oid=?", (target, oid)
+            )
+            if not rows or any(row["proposal_id"] in active_ids for row in rows):
+                continue
+            complete = [
+                row
+                for row in rows
+                if row["admission_path"] is not None
+                and row["evaluation_status"] != "missing"
+                and (
+                    row["evaluation_status"] == "refused"
+                    or row["candidate_parent_semantic_root"] is not None
+                )
+            ]
+            if len(complete) != len(rows):
+                continue
+            for row in complete:
+                evidence.read_admission(row["proposal_id"])
+                evidence.read_evaluation(row["proposal_id"])
+            retired_targets[target] = oid
+        self._ledger.delete_proposal_refs(retired_targets)
         # After the refs, so every annotated commit is already reachable from
         # one: a note on an unreferenced object is a note a `gc` may collect.
         for review_oid, (proposal_id, candidate_digest) in published.items():
@@ -1579,6 +1608,8 @@ class PlaybillInstance:
     def proposal_tree(self, oid: str, *, base_oid: str | None = None) -> dict[str, bytes]:
         """Read an exact proposal tree, optionally carrying a proven accepted base."""
 
+        if not self._ledger.object_exists(oid):
+            raise ProposalContentUnavailable()
         if base_oid is None:
             return self._ledger.read_tree(oid)
         parent = self.immutable_tree_at(base_oid)
@@ -1586,6 +1617,8 @@ class PlaybillInstance:
 
     def proposal_blobs(self, oid: str, paths: Sequence[str]) -> dict[str, bytes]:
         """Read selected retained proposal members without asserting acceptance."""
+        if not self._ledger.object_exists(oid):
+            raise ProposalContentUnavailable()
         return self._ledger.blobs_at(oid, paths)
 
     def resolve_accepted_coordinate(

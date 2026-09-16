@@ -102,3 +102,44 @@ def test_coalesced_submit_and_withdraw_never_publishes_closed_branch(tmp_path, m
         release.set()
     assert instance.publish_ledger_mirror(timeout=20).status == "current"
     _assert_closed_absent(instance, remote, proposal)
+
+
+def test_settled_history_does_not_grow_steady_publication(tmp_path, monkeypatch):
+    from cruxible_core.ledger import git as git_module
+    from tests.test_ledger.test_proposal_retention import submit
+
+    instance, _owner = initialize_local(tmp_path)
+    remote = _bare_remote(tmp_path, object_format=instance.descriptor.git_object_format)
+    active = submit(instance, "still open")
+    assert instance.set_ledger_mirror(str(remote)).status == "current"
+    command_sizes = []
+    original = git_module._command
+
+    def bounded_command(args, **kwargs):
+        if "notes" in args and "list" in args:
+            # A note listing must select one object, never the lifetime inventory.
+            assert args[-2] == "list"
+        if "push" in args:
+            command_sizes.append(sum(len(value.encode()) + 1 for value in args))
+        return original(args, **kwargs)
+
+    monkeypatch.setattr(git_module, "_command", bounded_command)
+    steady_sizes = []
+    for i in range(8):
+        closed = submit(instance, f"closed {i}")
+        service_withdraw_playbill_proposal(
+            instance,
+            proposal_id=closed.admission.proposal_id,
+            actor_id="owner",
+            reason="finished",
+            withdrawn_at=WITHDRAWN_AT,
+        )
+        assert instance.publish_ledger_mirror(timeout=20).status == "current"
+        command_sizes.clear()
+        assert instance.publish_ledger_mirror(timeout=20).status == "current"
+        assert len(command_sizes) == 1
+        steady_sizes.append(command_sizes[0])
+        proposals = [ref for ref in _remote_refs(remote) if ref.startswith("refs/heads/proposals/")]
+        assert proposals == ["refs/heads/proposals/" + active.admission.proposal_id[7:]]
+        assert len(instance._ledger.proposal_refs()) <= 1
+    assert len(set(steady_sizes)) == 1

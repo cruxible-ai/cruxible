@@ -93,7 +93,7 @@ def test_a_refused_proposal_projects_its_diagnostics_into_the_note(tmp_path: Pat
 def test_re_evaluating_one_ref_gives_each_submission_its_own_current_note(
     tmp_path: Path,
 ) -> None:
-    """A resubmission extends the ref, so both commits keep the note they earned."""
+    """Independent active snapshots each keep their own evaluation note."""
 
     instance, _owner = initialize_local(tmp_path)
     first = _submit(instance, body=b"# First\n")

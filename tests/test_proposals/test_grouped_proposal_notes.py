@@ -106,11 +106,10 @@ def test_subsecond_timestamps_share_git_oid_but_keep_distinct_signed_candidate_a
 def test_original_and_advisory_aliases_share_one_group(tmp_path):
     instance, _owner = initialize_local(tmp_path)
     first = _submit(instance, "first")
-    # Feeding back the evaluated tree can make a later original commit equal
-    # an earlier advisory commit, despite different original admission OIDs.
+    # Different admissions can share the same evaluated snapshot and note group.
     evaluated = instance.proposal_tree(first.evaluation.evaluated_tree_oid)
     second = _submit(instance, "second", tree=evaluated)
-    assert first.admission.candidate_commit_oid != second.admission.candidate_commit_oid
+    assert first.admission.candidate_commit_oid == second.admission.candidate_commit_oid
     index = build_proposal_note_oracle(instance.proposal_evidence(), instance._ledger)
     assert (
         index.review_oids[first.admission.proposal_id]
@@ -265,7 +264,7 @@ def test_crash_after_second_shared_candidate_approval_repairs_nonempty_subset(
 
 
 @pytest.mark.parametrize("kind", ["evaluation", "approval"])
-def test_strict_activation_checks_advisory_alias_as_well_as_original(tmp_path, kind):
+def test_strict_activation_checks_the_shared_candidate_note(tmp_path, kind):
     instance, owner = initialize_local(tmp_path)
     proposal = _submit(instance, "first")
     _approve(instance, owner, proposal)
@@ -274,10 +273,8 @@ def test_strict_activation_checks_advisory_alias_as_well_as_original(tmp_path, k
     original = proposal.admission.candidate_commit_oid
     index = build_proposal_note_oracle(instance.proposal_evidence(), instance._ledger)
     advisory = index.review_oids[proposal.admission.proposal_id]
-    assert original != advisory
-    original_note = instance.read_proposal_note(kind, original)
+    assert original == advisory
     instance.write_proposal_note(kind, advisory, b"edited advisory review note\n")
-    assert instance.read_proposal_note(kind, original) == original_note
     with pytest.raises(ProposalIntegrityError, match="note_disagrees_with_evidence"):
         service_activate_playbill_proposal(
             instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"

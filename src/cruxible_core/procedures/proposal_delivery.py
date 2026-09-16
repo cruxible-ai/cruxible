@@ -17,10 +17,9 @@ Three properties are load-bearing:
   minted from the admission binding and the item key, the intent is built in
   memory at the admitted base, and the changed member bytes are digested. A
   retry reproduces the same tree; recovery re-derives it from the journal.
-* **One operation, one proposal.** The proposal ref is keyed on the
-  operation key. If the ref already exists, the door compares the admitted
-  candidate's members with this lowering and returns the same receipt or
-  refuses `effectful_operation_payload_mismatch`; it never resubmits.
+* **One operation, one proposal.** The retained admission binds the operation
+  key to the exact authored payload. Recovery returns the same receipt or
+  refuses a changed payload even after the candidate Git objects are collected.
 """
 
 from __future__ import annotations
@@ -73,6 +72,7 @@ from cruxible_core.procedures.terminal_dependencies import (
 from cruxible_core.procedures.terminal_services import (
     ProposalDeliveryRefused,
     ProposalTerminalAdapter,
+    proposal_terminal_payload_digest,
     proposal_terminal_receipt,
     proposal_terminal_ref,
 )
@@ -511,46 +511,54 @@ class ProposalTerminalEgressSink:
         lowering_digest: str,
         item_paths: Mapping[str, str],
     ) -> TerminalEgressReceiptV1 | None:
-        """Return the receipt an earlier attempt of this exact operation already earned.
-
-        The proposal ref is the operation's identity. An existing ref whose
-        admitted candidate carries exactly this lowering's member bytes is the
-        same proposal, and the same receipt is published for it. An existing
-        ref carrying other bytes is another payload under the same key, which
-        is refused rather than replaced or relabelled.
-
-        The door moves the ref before it writes the admission that names the
-        commit. A ref no admission names is a publication the door did not
-        finish, not a competing payload: its commit is checked against this
-        lowering's bytes and, when they agree, `None` is returned so the door
-        completes the publication on the same ref (its lineage extends the
-        interrupted commit; nothing is discarded or re-keyed).
-        """
-
+        """Recover by immutable operation admission; refs only protect unfinished writes."""
         assert request.operation_key is not None
         actor_id = request.actor_context.actor_id
         ref = proposal_terminal_ref(actor_id, request.operation_key)
-        ref_oid = service.transport.read_proposal_ref(ref)
-        if ref_oid is None:
-            return None
         prepared = self._prepared.get((request.admission_binding_digest, request.node_id))
         if prepared is None:  # pragma: no cover - deliver() prepares before recovering
             return None
         evidence = self.instance.proposal_evidence()
-        admissions = [
-            record
-            for record in evidence.list_admissions()
-            if record.target_ref == ref and record.candidate_commit_oid == ref_oid
-        ]
-        if not admissions:
-            self._require_same_member_bytes(
-                prepared,
-                lowering_digest=lowering_digest,
-                tree=service.transport.read_tree(ref_oid),
-                details={"target_ref": ref, "ref_oid": ref_oid, "publication": "interrupted"},
+        assert evidence.index is not None
+        rows = evidence.index.rows(evidence, "target_ref=? AND admission_path IS NOT NULL", (ref,))
+        if len(rows) > 1:
+            raise ProposalDeliveryRefused(
+                "effectful_operation_payload_mismatch",
+                "The operation key names more than one durable proposal.",
             )
+        if not rows:
+            ref_oid = service.transport.read_proposal_ref(ref)
+            if ref_oid is not None:
+                self._require_same_member_bytes(
+                    prepared,
+                    lowering_digest=lowering_digest,
+                    tree=service.transport.read_tree(ref_oid),
+                    details={"target_ref": ref, "ref_oid": ref_oid, "publication": "interrupted"},
+                )
             return None
-        admission_record = max(admissions, key=lambda record: record.admitted_at)
+        admission_record = evidence.read_admission(rows[0]["proposal_id"])
+        # The retry binding is part of the admission's content-addressed identity,
+        # not merely an unchecked field recovered from operational JSON.
+        from cruxible_core.proposals.proposals import ProposalAdmissionRequest, _proposal_id_payload
+
+        if admission_record.proposal_id != _proposal_id_payload(
+            actor_id=admission_record.actor_id,
+            request=ProposalAdmissionRequest(
+                target_ref=admission_record.target_ref,
+                proposed_base_oid=admission_record.proposed_base_oid,
+                source_compilation_digest=admission_record.source_compilation_digest,
+                claim_type_expansions=admission_record.claim_type_expansions,
+                rationale=admission_record.rationale,
+            ),
+            candidate_commit_oid=admission_record.candidate_commit_oid,
+            candidate_tree_oid=admission_record.candidate_tree_oid,
+            admitted_at=admission_record.admitted_at,
+            limits=admission_record.limits,
+        ):
+            raise ProposalDeliveryRefused(
+                "proposal_receipt_incomplete",
+                "The retained operation admission does not reproduce its identity.",
+            )
         evaluation = evidence.read_evaluation(admission_record.proposal_id)
         candidate = (
             None
@@ -571,15 +579,18 @@ class ProposalTerminalEgressSink:
                     "admitted_base_oid": request.accepted_coordinate.git_oid,
                 },
             )
-        self._require_same_member_bytes(
-            prepared,
-            lowering_digest=lowering_digest,
-            tree=self.instance.proposal_tree(evaluation.evaluated_tree_oid),
-            details={
-                "proposal_id": admission_record.proposal_id,
-                "candidate_digest": candidate.candidate_digest,
-            },
-        )
+        if (
+            proposal_lowering_digest(prepared.changed_members) != lowering_digest
+            or admission_record.source_compilation_digest
+            != proposal_terminal_payload_digest(
+                prepared.candidate_tree, prepared.prepared.target_paths
+            )
+        ):
+            raise ProposalDeliveryRefused(
+                "effectful_operation_payload_mismatch",
+                "The operation key already names a proposal carrying another authored payload.",
+                details={"proposal_id": admission_record.proposal_id},
+            )
         return proposal_terminal_receipt(
             request,
             result=ProposalResult(
