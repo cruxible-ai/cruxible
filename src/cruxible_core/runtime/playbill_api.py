@@ -73,6 +73,7 @@ from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime, utc_now
 from cruxible_client.contracts.types import (
+    CompilerCoordinate,
     GitObjectFormat,
     OperatingProfile,
     PrincipalRecord,
@@ -669,6 +670,30 @@ def playbill_propose_document(
             timestamp=canonical_candidate_timestamp(utc_now()),
             source_compilation_digest=source_compilation_digest,
             base=base,
+        ),
+    )
+    return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_propose_compiler_upgrade(
+    instance_id: str,
+    *,
+    target: CompilerCoordinate,
+    base: AcceptedCoordinate,
+    proposal_name: str,
+) -> contracts.PlaybillProposalInspection:
+    check_permission("cruxible_playbill_compiler_upgrade", instance_id=instance_id)
+    from cruxible_core.service.authoring.documents import service_propose_compiler_upgrade
+
+    result = _proposal_validation_boundary(
+        "compiler_upgrade",
+        lambda: service_propose_compiler_upgrade(
+            get_playbill_manager().get(instance_id),
+            target=target,
+            base=base,
+            actor_id=_actor_id(),
+            proposal_name=proposal_name,
+            timestamp=canonical_candidate_timestamp(utc_now()),
         ),
     )
     return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))

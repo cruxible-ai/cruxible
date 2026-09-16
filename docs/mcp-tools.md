@@ -109,6 +109,7 @@ root aliases, not compilation wire.
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_playbill_list_principals` | List accepted public principals | `READ_ONLY` |
+| `cruxible_playbill_compiler_upgrade` | Propose an exact compiler transition; signed approval and activation use the ordinary proposal workflow. | `ADMIN` |
 | `cruxible_playbill_propose_principal_change` | Propose rotation, revocation, or recovery | `ADMIN` |
 
 ## Subjects, ClaimTypes, and Claims

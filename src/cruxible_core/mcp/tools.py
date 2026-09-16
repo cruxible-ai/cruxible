@@ -292,6 +292,21 @@ def register_tools(
         return handlers.handle_playbill_list_principals(instance_id)
 
     @_tool
+    def cruxible_playbill_compiler_upgrade(
+        instance_id: str,
+        target_compiler_digest: str,
+        base: dict[str, Any],
+        proposal_name: str,
+    ) -> contracts.PlaybillProposalInspection:
+        """Propose an admin-only compiler upgrade; review, approve and activate separately."""
+        return handlers.handle_playbill_compiler_upgrade(
+            instance_id,
+            target_compiler_digest,
+            base,
+            proposal_name,
+        )
+
+    @_tool
     def cruxible_playbill_propose_principal_change(
         instance_id: str,
         principal: dict[str, Any],

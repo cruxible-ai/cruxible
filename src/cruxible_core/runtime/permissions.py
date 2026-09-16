@@ -159,6 +159,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_playbill_dereference": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_submit_approval": PermissionMode.GRAPH_WRITE,
     "cruxible_playbill_activate": PermissionMode.GRAPH_WRITE,
+    "cruxible_playbill_compiler_upgrade": PermissionMode.ADMIN,
     "cruxible_playbill_host_create": PermissionMode.ADMIN,
     "cruxible_playbill_host_workspace_detach": PermissionMode.ADMIN,
     "cruxible_playbill_init": PermissionMode.ADMIN,

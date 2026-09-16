@@ -34,6 +34,7 @@ from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.types import (
     DECOMMISSION_REASON_MAX_LENGTH,
+    CompilerCoordinate,
     GitObjectFormat,
     OperatingProfile,
     PrincipalRecord,
@@ -128,6 +129,12 @@ class PlaybillProposeDocumentRequest(_StrictPlaybillRequest):
     proposal_name: str
     source_compilation_digest: str | None = None
     base: AcceptedCoordinate | None = None
+
+
+class PlaybillCompilerUpgradeRequest(_StrictPlaybillRequest):
+    target: CompilerCoordinate
+    base: AcceptedCoordinate
+    proposal_name: str
 
 
 class PlaybillProposePrincipalRequest(_StrictPlaybillRequest):

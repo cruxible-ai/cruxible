@@ -310,3 +310,27 @@ def test_noncanonical_source_and_resource_limit_are_refused(tmp_path: Path) -> N
     ).model_copy(update={"limits": TreeReadLimits(max_files=1, max_total_bytes=8)})
     with pytest.raises(ProjectionFormatError, match="byte limit"):
         limited.assemble(request)
+
+
+@pytest.mark.parametrize("proof", ["absent", "wrong_root", "no_head"])
+def test_historical_build_requires_exact_replayed_prefix(tmp_path, monkeypatch, proof):
+    from cruxible_client.contracts.projection import AcceptedCoordinate
+
+    repository = MemoryLedger(tmp_path / "repository", {})
+    assembler = _assembler(tmp_path, repository)
+    selected = AcceptedCoordinate.from_internal(assembler.accepted)
+    head = selected.model_copy(update={"git_oid": "ff" * 32})
+    monkeypatch.setattr(repository, "read_main", lambda: head.git_oid)
+    if proof == "wrong_root":
+        assembler.accepted_coordinates_by_sequence = {
+            0: selected.model_copy(update={"semantic_root": "sha256:" + "aa" * 32}),
+            1: head,
+        }
+    elif proof == "no_head":
+        assembler.accepted_coordinates_by_sequence = {0: selected}
+    request = assembler.request(
+        output_staging_directory=assembler.publication_directory / ".stage-history"
+    )
+    with pytest.raises(ProjectionCoordinateError, match="replay-verified"):
+        assembler.assemble(request)
+    assert repository.list_calls == 0

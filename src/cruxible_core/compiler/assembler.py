@@ -238,10 +238,17 @@ class ProjectionAssembler:
         if self._repository.object_format() != request.git_object_format:
             raise ProjectionCoordinateError("repository object format differs from request")
         if isinstance(self.accepted, AcceptedProjectionCoordinate):
-            if self._repository.read_main() != request.git_oid:
-                raise ProjectionCoordinateError(
-                    "accepted projection coordinate is not the repository main ref"
-                )
+            main = self._repository.read_main()
+            if main != request.git_oid:
+                # Historical builds require exact coordinates supplied by
+                # verified replay, including the currently accepted tip. Merely
+                # finding a signed Git commit is not acceptance evidence.
+                history = self.accepted_coordinates_by_sequence.values()
+                selected = AcceptedCoordinate.from_internal(self.accepted)
+                if selected not in history or not any(row.git_oid == main for row in history):
+                    raise ProjectionCoordinateError(
+                        "historical projection requires replay-verified coordinates through main"
+                    )
         else:
             if self._repository.read_main() != self.accepted.base_git_oid:
                 raise ProjectionCoordinateError(

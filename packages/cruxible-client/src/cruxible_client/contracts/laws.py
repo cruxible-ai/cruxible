@@ -489,8 +489,27 @@ RESOLUTION_CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_tag="playbill-resolution-contract-v1",
 )
 
+COMPILER_UPGRADE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=AcceptanceLawCoordinate(
+        identifier="playbill.compiler-upgrade.v1",
+        digest=typed_digest(
+            AcceptanceLawDigest,
+            "playbill-law-v1",
+            {
+                "identifier": "playbill.compiler-upgrade.v1",
+                "artifact_tag": "playbill-compiler-upgrade-v1",
+                "semantic_revision": 1,
+            },
+        ).tagged,
+    ),
+    artifact_kind="compiler-upgrade",
+    artifact_tag="playbill-compiler-upgrade-v1",
+)
+
+
 PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
     (
+        COMPILER_UPGRADE_ACCEPTANCE_LAW,
         APPROVAL_POLICY_ACCEPTANCE_LAW,
         PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
         CAPTURE_CONTRACT_ACCEPTANCE_LAW,

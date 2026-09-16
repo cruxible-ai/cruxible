@@ -8,6 +8,7 @@ from cruxible_client import contracts
 from cruxible_core.server.playbill_request_models import (  # noqa: F401
     PlaybillApprovalChallengeRequest,
     PlaybillApprovalRequest,
+    PlaybillCompilerUpgradeRequest,
     PlaybillExplainRequest,
     PlaybillInitRequest,
     PlaybillProposeDocumentRequest,

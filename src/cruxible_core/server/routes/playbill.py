@@ -43,6 +43,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillBlockDeclareRequest,
     PlaybillBlockDepublishRequest,
     PlaybillClaimExplainRequest,
+    PlaybillCompilerUpgradeRequest,
     PlaybillCurationAcceptFixedRequest,
     PlaybillCurationListRequest,
     PlaybillCurationOverruleRequest,
@@ -230,6 +231,22 @@ def propose_document(
         proposal_name=req.proposal_name,
         source_compilation_digest=req.source_compilation_digest,
         base=req.base,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/compiler/proposals",
+    response_model=contracts.PlaybillProposalInspection,
+)
+def propose_compiler_upgrade(
+    instance_id: str,
+    req: PlaybillCompilerUpgradeRequest,
+) -> contracts.PlaybillProposalInspection:
+    return playbill_api.playbill_propose_compiler_upgrade(
+        resolve_server_instance_id(instance_id),
+        target=req.target,
+        base=req.base,
+        proposal_name=req.proposal_name,
     )
 
 

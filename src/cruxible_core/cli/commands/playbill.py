@@ -3419,6 +3419,35 @@ def list_policies_in_force(output_json: bool) -> None:
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
 
 
+@playbill_group.group("compiler")
+def compiler_group() -> None:
+    """Explicit, reviewed changes to the instance's accepted compiler."""
+
+
+@compiler_group.command("upgrade")
+@click.option(
+    "--to", "target_digest", required=True, help="Exact installed target compiler digest."
+)
+@click.option("--name", "proposal_name", required=True)
+@json_option
+@handle_errors
+def propose_compiler_upgrade(target_digest: str, proposal_name: str, output_json: bool) -> None:
+    """Create an upgrade proposal at the selected accepted head; does not activate it."""
+    from cruxible_client.contracts.types import CompilerCoordinate
+
+    def call(client: CruxibleClient, instance_id: str) -> contracts.PlaybillProposalInspection:
+        inspection = client.list_playbill_principals(instance_id)
+        return client.propose_playbill_compiler_upgrade(
+            instance_id,
+            target=CompilerCoordinate(rule_digest=target_digest),
+            base=inspection.coordinate,
+            proposal_name=proposal_name,
+        )
+
+    result = _server_call(call, command_name="playbill compiler upgrade")
+    _emit_json(result.model_dump(mode="json"))
+
+
 @playbill_group.group("query")
 def query_group() -> None:
     """Propose, read, and execute governed named entrypoints."""

@@ -11,6 +11,7 @@ from typing import Final, Protocol
 from cruxible_client.contracts.errors import SettlementIntegrityError
 from cruxible_client.contracts.types import GenesisCoordinate
 from cruxible_core.compiler.assembler import ProjectionAssembler, ProjectionCrashHook
+from cruxible_core.compiler.upgrades import compiler_after_record
 from cruxible_core.indexes.projection import (
     AcceptedCoordinate,
     AcceptedProjectionCoordinate,
@@ -135,7 +136,7 @@ class ActivationPublisher:
 
         delta = (
             GenerationDelta(base, bundle, self.verified_change_sets)
-            if self.verified_change_sets is not None
+            if self.verified_change_sets is not None and coordinate.compiler == base.compiler
             else None
         )
         return assembler.assemble(
@@ -206,7 +207,7 @@ class ActivationPublisher:
             git_oid=bundle.oid,
             semantic_root=bundle.semantic_root.tagged,
             generation_root=bundle.generation_root.tagged,
-            compiler=base.compiler,
+            compiler=compiler_after_record(bundle.record),
         )
         with bind_projection(
             Path(projection.manifest_path),
@@ -275,7 +276,10 @@ class ActivationPublisher:
         if self.checkpoint_directory is None or self.genesis is None:
             return
         sequence = bundle.record.sequence
-        if sequence % self.checkpoint_interval != 0:
+        if (
+            sequence % self.checkpoint_interval != 0
+            and compiler_after_record(bundle.record) == base.compiler
+        ):
             return
         parent = self.accepted_coordinates_by_sequence.get(sequence - 1)
         if parent is None:
@@ -286,7 +290,7 @@ class ActivationPublisher:
         body = checkpoint_body(
             instance_id=base.instance_id,
             object_format=base.git_object_format,
-            compiler=base.compiler,
+            compiler=compiler_after_record(bundle.record),
             genesis=self.genesis,
             sequence=sequence,
             git_oid=bundle.oid,

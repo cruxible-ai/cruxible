@@ -322,9 +322,16 @@ class EvaluationRows:
         )
         blobs = {path: content for path, content in edits.items() if content is not None}
         insert_members(candidate.connection, blobs, self.reader.accepted.git_object_format)
+        # A transition is evaluated under its source compiler, whose frozen
+        # registry cannot yet recognize the target's control member. Its own
+        # acceptance law validates it; it introduces no typed owners or pins.
+        from cruxible_client.contracts.compiler_upgrade import COMPILER_UPGRADE_PATH
         from cruxible_core.indexes.typed_sqlite import parse_static_owners
 
-        parsed = parse_static_owners(blobs, accepted=self.reader.accepted)
+        parsed = parse_static_owners(
+            {path: body for path, body in blobs.items() if path != COMPILER_UPGRADE_PATH},
+            accepted=self.reader.accepted,
+        )
         for row in parsed.envelopes:
             old = candidate.connection.execute(
                 "SELECT path FROM main.artifact_lookup WHERE identity=?", (row.identity,)

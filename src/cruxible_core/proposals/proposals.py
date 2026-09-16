@@ -148,6 +148,7 @@ from cruxible_client.contracts.governance import (
 from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_ACCEPTANCE_LAW,
     CLAIM_LAW_V3_REVISION_8,
+    COMPILER_UPGRADE_ACCEPTANCE_LAW,
     PLAYBILL_ACCEPTANCE_LAWS,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
@@ -391,7 +392,11 @@ _SEMANTIC_MEMBER_PATTERNS: Final = (
 )
 """Every member kind that participates in dependency closure, in one place."""
 
-_AUTHORABLE_MEMBER_PATTERNS: Final = (_PRINCIPAL_PATH_RE, *_SEMANTIC_MEMBER_PATTERNS)
+_AUTHORABLE_MEMBER_PATTERNS: Final = (
+    re.compile(r"^compiler-upgrade\.json$"),
+    _PRINCIPAL_PATH_RE,
+    *_SEMANTIC_MEMBER_PATTERNS,
+)
 """Every path an authenticated proposal may add, change, or drop.
 
 Admission asks this in both directions -- may the proposal write this path, and
@@ -2789,6 +2794,44 @@ def _procedure_runtime_policy_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _compiler_upgrade_member(context: _MemberContext) -> _MemberVerdict:
+    from cruxible_client.contracts.compiler_upgrade import (
+        COMPILER_UPGRADE_PATH,
+        parse_compiler_upgrade,
+    )
+    from cruxible_core.compiler.upgrades import validate_upgrade
+
+    try:
+        if context.scope != (COMPILER_UPGRADE_PATH,):
+            raise ValueError("compiler upgrade must be the entire proposal")
+        value = parse_compiler_upgrade(context.content)
+        validate_upgrade(value, context.current)
+        if context.actor_id is None:
+            raise ValueError("compiler upgrade requires an authenticated principal")
+        if context.principals.require_active(context.actor_id).kind != "ordinary":
+            raise ValueError("compiler upgrade requires an ordinary client principal")
+    except ValueError as exc:
+        return _MemberVerdict(
+            diagnostics=(_diagnostic("playbill.compiler_upgrade.invalid", str(exc), context.path),)
+        )
+    return _accepted(
+        context,
+        COMPILER_UPGRADE_ACCEPTANCE_LAW,
+        predecessor_artifact_digest=(
+            None if context.parent_content is None else file_digest(context.parent_content).tagged
+        ),
+        candidate_artifact_digest=file_digest(context.content).tagged,
+        required_tier="admin",
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={
+            "target_compiler": value.target.model_dump(mode="json"),
+            "governance_operation": "compiler-upgrade",
+            "verdict": "accepted",
+        },
+    )
+
+
 def _principal_member(context: _MemberContext) -> _MemberVerdict:
     """Judge one control-plane principal transition as an ordinary scoped member.
 
@@ -2842,6 +2885,13 @@ def _principal_member(context: _MemberContext) -> _MemberVerdict:
 
 
 _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
+    _MemberKind(
+        name="compiler-upgrade",
+        pattern=re.compile(r"^compiler-upgrade\.json$"),
+        removal_code="playbill.compiler_upgrade.removal_unsupported",
+        removal_message="Compiler history cannot be removed.",
+        evaluate=_compiler_upgrade_member,
+    ),
     _MemberKind(
         name="resolution-contract",
         pattern=re.compile(r"^resolution-contracts/[a-z][a-z0-9_.-]{0,255}\.json$"),
@@ -2982,6 +3032,7 @@ _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
     ),
 )
 ROLE_DEMOTED_MEMBER_FAMILIES: Final[tuple[str, ...]] = (
+    "compiler-upgrade",
     "resolution-contract",
     "attestation",
     "approval-policy",

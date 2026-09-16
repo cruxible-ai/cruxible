@@ -32,7 +32,7 @@ from cruxible_client.contracts.errors import (
     SettlementIntegrityError,
 )
 from cruxible_client.contracts.principal_rendering import render_principal
-from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_client.contracts.types import CompilerCoordinate, PrincipalRecord
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
     PlaybillWorkspaceAdvertisement,
@@ -647,6 +647,58 @@ def service_playbill_document_history(
     return PlaybillDocumentHistory(identity=identity, entries=tuple(entries))
 
 
+def service_propose_compiler_upgrade(
+    instance: PlaybillInstance,
+    *,
+    target: CompilerCoordinate,
+    actor_id: str,
+    proposal_name: str,
+    timestamp: str,
+    base: PlaybillAcceptedCoordinate,
+) -> PlaybillProposalInspection:
+    """Propose an exact forward transition using the normal evidence and review path."""
+    instance.require_writable()
+    from cruxible_client.contracts.candidates import LawEvaluationCoordinateV1
+    from cruxible_client.contracts.compiler_upgrade import (
+        COMPILER_UPGRADE_PATH,
+        CompilerUpgradeV1,
+        render_compiler_upgrade,
+    )
+    from cruxible_core.compiler.upgrades import validate_upgrade
+
+    at = _resolve_coordinate(instance, base)
+    value = CompilerUpgradeV1(
+        instance_id=at.instance_id,
+        base=LawEvaluationCoordinateV1(
+            git_oid=at.git_oid,
+            semantic_root=at.semantic_root,
+            generation_root=at.generation_root,
+            compiler_digest=at.compiler.rule_digest,
+        ),
+        target=target,
+    )
+    validate_upgrade(value, instance.accepted_coordinate())
+    tree = instance.immutable_tree_at(at.git_oid).fork()
+    tree[COMPILER_UPGRADE_PATH] = render_compiler_upgrade(value)
+    name = canonical_playbill_proposal_name(proposal_name, family="compiler")
+    result = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id=actor_id),
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/{actor_id}/{name}",
+            proposed_base_oid=at.git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp=timestamp,
+    )
+    return PlaybillProposalInspection(
+        proposal=result,
+        workspace_advertisement=result.workspace_advertisement,
+        accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
+            instance.accepted_coordinate()
+        ),
+    )
+
+
 __all__ = [
     "PlaybillAcceptedCoordinate",
     "PlaybillActivationReceipt",
@@ -667,6 +719,7 @@ __all__ = [
     "service_list_playbill_documents",
     "service_list_playbill_principals",
     "service_playbill_document_history",
+    "service_propose_compiler_upgrade",
     "service_propose_playbill_document",
     "service_propose_playbill_principal_change",
     "service_store_playbill_body",
