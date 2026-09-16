@@ -589,7 +589,9 @@ def test_a_moved_statement_reaches_next_and_sync_without_either_rewriting_the_pa
         )
 
 
-def test_a_block_holding_three_claims_reports_one_ordinary_outcome(tmp_path: Path) -> None:
+def test_a_block_holding_three_claims_reports_one_ordinary_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The one-backing gate is gone: a held list of three is not unsyncable.
 
     While `block sync` converged a body, a block could only be synchronized if
@@ -667,6 +669,60 @@ def test_a_block_holding_three_claims_reports_one_ordinary_outcome(tmp_path: Pat
     assert item.detail["backing_count"] == 3
     assert result.has_refusals is False
     assert source.read_bytes() == page_before
+
+    from cruxible_client.contracts.authoring.models import (
+        PlaybillBlockSyncReadResultV1,
+        PlaybillBlockSyncSuccessorCandidateV1,
+    )
+    from cruxible_core.indexes.typed_state import TypedStateReader
+
+    real_envelope = TypedStateReader.envelope
+    missing = stamp.backing[0].identity.qualified
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            TypedStateReader,
+            "envelope",
+            lambda reader, identity: (
+                None if identity == missing else real_envelope(reader, identity)
+            ),
+        )
+        absent = service_read_playbill_block_sync_backing(
+            instance, request=PlaybillBlockSyncReadRequestV1(stamp=stamp)
+        )
+        assert absent.reason == "block_backing_missing"
+        assert absent.issues[0].identity.qualified == missing
+        assert absent.status == "unsyncable"
+
+    failures = {}
+    for index, backing in enumerate(stamp.backing):
+        origin = "sha256:" + str(index + 1) * 64
+        failures[backing.identity.qualified] = PlaybillBlockSyncReadResultV1(
+            status="unchecked",
+            reason="block_successor_ambiguous",
+            detail="ambiguous " + backing.identity.qualified,
+            original_artifact_digest=origin,
+            successor_candidates=tuple(
+                PlaybillBlockSyncSuccessorCandidateV1(
+                    identity=backing.identity,
+                    artifact_digest="sha256:" + digit * 64,
+                    coordinate=stamp.declared_coordinate,
+                    generation=stamp.declared_generation,
+                )
+                for digit in (str(index * 2 + 1), str(index * 2 + 2))
+            ),
+        )
+    monkeypatch.setattr(
+        playbill_projection_sync,
+        "_claim_backing_state",
+        lambda instance, *, backing, **kwargs: failures[backing.identity.qualified],
+    )
+    ambiguous = service_read_playbill_block_sync_backing(
+        instance, request=PlaybillBlockSyncReadRequestV1(stamp=stamp)
+    )
+    selected = failures[ambiguous.issues[0].identity.qualified]
+    assert ambiguous.detail == selected.detail
+    assert ambiguous.successor_candidates == selected.successor_candidates
+    assert ambiguous.original_artifact_digest == selected.original_artifact_digest
 
 
 def test_a_hand_edited_body_is_reported_without_mutating_it(tmp_path: Path) -> None:

@@ -692,8 +692,8 @@ run executes one accepted QueryDefinition and prints its
 parameter digest, and the result digest that replays it.
 
 Author named queries through `playbill authoring compile`, then submit the intent
-and review/accept its proposal. `query propose` is deprecated. The SDK equivalent
-is `pb.query_definition(definition=QueryDefinitionInput(...)).prepare()`, followed
+and review/accept its proposal. `cruxible playbill query propose` is deprecated.
+The SDK equivalent is `pb.query_definition(definition=QueryDefinitionInput(...)).prepare()`, followed
 by the normal intent submission and approval flow. `pb.changes().query_definition(...)`
 includes a query in a changeset. Omitted ClaimType pins resolve against the intent
 base or sibling definitions; explicit pins remain assertions. SDK `vocabulary=`
@@ -1000,9 +1000,12 @@ truncated query results are reported as unchecked, never current.
 `--currency-policy warn` (the default) makes drift advisory. `require_current`
 makes drift or an incomplete dependency check fail workspace checks and produces
 a blocking `playbill next` finding. Invalid markers and integrity failures always
-fail. This policy never blocks acceptance of underlying state. Cruxible does not
-serve Markdown or HTML, and reading or exporting a local package is not a
-freshness check.
+fail. A zero exit means the configured policy passed, not that every block is
+current: advisory stale, dirty, retired-backing, and unchecked findings remain
+in the result for the author to review. Repin follows that review, whether the
+prose was revised or reaffirmed. This policy never blocks acceptance of underlying
+state. Cruxible does not serve Markdown or HTML, and reading or exporting a local
+package is not a freshness check.
 
 Repin preserves omitted categories and policy. Supplying `--claim`, `--query`, or
 `--artifact` replaces only that category; `--clear-claims`, `--clear-queries`, and
@@ -1024,7 +1027,12 @@ repair.
 
 `block sync` and `playbill next` use the same currency evaluator. A sync checks
 all blocks at one accepted revision and evaluation time, sharing query facts and
-lineage reads. It reports `unchanged`, `stale`, `dirty`, or an incomplete/refused
+lineage reads. Claim-backed checks currently build accepted query facts once
+per invocation; each distinct query is evaluated once. Artifact-definition
+queries use their indexed reader without building Claim facts. Lineage reads
+still consult accepted history, with batched and cached source reads. The batch
+request currently supports at most 4096 stamps, without client chunking.
+It reports `unchanged`, `stale`, `dirty`, or an incomplete/refused
 check with diagnostic details. A dirty body does not suppress dependency checks,
 and one failed dependency does not hide the others. Repin acknowledges a reviewed
 body and refreshes its dependencies; there is no separate accept-local bypass.

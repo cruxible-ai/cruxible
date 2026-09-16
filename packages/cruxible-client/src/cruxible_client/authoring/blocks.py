@@ -548,6 +548,7 @@ def _sync_item_from_read_refusal(
         "block_workspace_instance_mismatch": "workspace_instance_mismatch",
         "block_backing_missing": "block_backing_missing",
         "block_backing_changed": "block_backing_changed",
+        "block_backing_overturned": "block_backing_overturned",
         "block_backing_retired": "block_backing_retired",
         "block_successor_ambiguous": "block_successor_ambiguous",
         "block_query_unchecked": "block_query_unchecked",

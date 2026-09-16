@@ -100,7 +100,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:aebbbc090b7611cbca1907f9a5a721b4f9c220f2c85809b9143c921440a60c58"
+    "sha256:d50895b9efe032aacd2d3785c1304ab7537f5cdbd1633fc49ae3fb0a5a2daa07"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -2630,6 +2630,7 @@ PlaybillBlockSyncReadReason: TypeAlias = Literal[
     "block_workspace_instance_mismatch",
     "block_backing_missing",
     "block_backing_changed",
+    "block_backing_overturned",
     "block_backing_retired",
     "block_successor_ambiguous",
     "block_query_unchecked",
@@ -2650,6 +2651,12 @@ class PlaybillBlockSyncSuccessorCandidateV1(_StrictAuthoringModel):
     )
 
 
+def _projection_evaluation_time(value: datetime | None) -> datetime | None:
+    if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+        raise ValueError("projection checks require an absolute evaluation time")
+    return None if value is None else ensure_utc(value)
+
+
 class PlaybillBlockSyncReadRequestV1(_StrictAuthoringModel):
     tag: Literal["playbill-block-sync-read-request-v1"] = "playbill-block-sync-read-request-v1"
     stamp: ProjectionBlockStamp
@@ -2660,7 +2667,7 @@ class PlaybillBlockSyncReadRequestV1(_StrictAuthoringModel):
     @field_validator("evaluation_time")
     @classmethod
     def _absolute_time(cls, value: datetime | None) -> datetime | None:
-        return None if value is None else ensure_utc(value)
+        return _projection_evaluation_time(value)
 
     @field_validator("preferred_successor_digest")
     @classmethod
@@ -2738,9 +2745,7 @@ class PlaybillProjectionCheckRequestV1(_StrictAuthoringModel):
     @field_validator("evaluation_time")
     @classmethod
     def _absolute_time(cls, value: datetime | None) -> datetime | None:
-        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
-            raise ValueError("projection checks require an absolute evaluation time")
-        return value
+        return _projection_evaluation_time(value)
 
 
 class PlaybillProjectionCheckResultV1(_StrictAuthoringModel):
@@ -2772,6 +2777,7 @@ PlaybillBlockSyncReason: TypeAlias = Literal[
     "block_locally_modified",
     "block_backing_missing",
     "block_backing_changed",
+    "block_backing_overturned",
     "block_backing_retired",
     "block_successor_ambiguous",
     "block_concurrent_edit",

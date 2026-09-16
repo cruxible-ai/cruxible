@@ -58,6 +58,12 @@ from cruxible_core.service.floor.projection_lineage import (
     read_claim_lineages,
 )
 
+PROJECTION_VISIBILITY_POLICY = QueryEvaluationPolicyV1(
+    visible_verdicts=("contradicted", "stale", "supported", "uncovered", "unresolved"),
+    visible_currency=("current", "not_applicable", "stale"),
+    conflict_behavior="surface_conflicts",
+)
+
 _LINEAGES: ContextVar[
     tuple[PlaybillInstance, dict[str, dict[str, _ClaimNode] | PlaybillError]] | None
 ] = ContextVar("block_sync_lineages", default=None)
@@ -332,6 +338,16 @@ class ProjectionCheckContext:
             for b in stamp.backing
             if isinstance(b, ProjectionClaimBackingV1)
         }
+        # History retains removed Claims; check present ownership separately,
+        # at the same coordinate, without reopening each Claim body.
+        self.present_claim_ids: set[str] = set()
+        if self.claim_ids:
+            with instance.bind_accepted_projection(coordinate) as projection:
+                self.present_claim_ids = {
+                    identity
+                    for identity in self.claim_ids
+                    if projection.typed.envelope(identity) is not None
+                }
         paths = tuple(
             sorted(
                 {
@@ -365,11 +381,6 @@ class ProjectionCheckContext:
         if self.visible_claim_ids is None:
             subjects = {s.path: s for s in facts.subjects}
             providers = {p.identity.qualified: p for p in facts.providers}
-            policy = QueryEvaluationPolicyV1(
-                visible_verdicts=("contradicted", "stale", "supported", "uncovered", "unresolved"),
-                visible_currency=("current", "not_applicable", "stale"),
-                conflict_behavior="surface_conflicts",
-            )
             self.visible_claim_ids = frozenset(
                 row.accepted.claim.identity.qualified
                 for row in facts.claims
@@ -378,7 +389,7 @@ class ProjectionCheckContext:
                     row,
                     subject=subjects.get(row.subject_path),
                     providers=providers,
-                    policy=policy,
+                    policy=PROJECTION_VISIBILITY_POLICY,
                     evaluation_time=self.evaluation_time,
                 )
                 is not None
@@ -448,7 +459,7 @@ class ProjectionCheckContext:
         issues: list[ProjectionDependencyIssueV1] = []
         moved: list[ProjectionBackingV1] = []
         current: list[ProjectionBackingV1] = []
-        candidates: tuple[PlaybillBlockSyncSuccessorCandidateV1, ...] = ()
+        failures_by_identity: dict[str, PlaybillBlockSyncReadResultV1] = {}
         original_digest = None
         current_digest = None
         for backing in stamp.backing:
@@ -508,12 +519,7 @@ class ProjectionCheckContext:
                     else:
                         updated_claim, terminal, original_digest = state_claim
                         # A lineage terminal may have disappeared at the selected revision.
-                        if (
-                            self.instance.blob_at(
-                                self.accepted.git_oid, claim_path(backing.identity.name)
-                            )
-                            is None
-                        ):
+                        if backing.identity.qualified not in self.present_claim_ids:
                             failure = _refusal(
                                 status="unsyncable",
                                 reason="block_backing_missing",
@@ -525,7 +531,7 @@ class ProjectionCheckContext:
                                     ProjectionDependencyIssueV1(
                                         identity=backing.identity,
                                         status="stale",
-                                        reason="block_backing_changed",
+                                        reason="block_backing_overturned",
                                         detail="Claim has been overturned",
                                     )
                                 )
@@ -551,8 +557,7 @@ class ProjectionCheckContext:
                             detail=failure.detail or failure.reason,
                         )
                     )
-                    candidates = failure.successor_candidates or candidates
-                    original_digest = failure.original_artifact_digest or original_digest
+                    failures_by_identity[backing.identity.qualified] = failure
             except (PlaybillError, ValueError) as exc:
                 issues.append(
                     ProjectionDependencyIssueV1(
@@ -569,6 +574,7 @@ class ProjectionCheckContext:
         # Do not discard successful sibling checks when one dependency fails.
         if issues:
             issue = min(issues, key=lambda i: {"invalid": 0, "unchecked": 1, "stale": 2}[i.status])
+            failure = failures_by_identity.get(issue.identity.qualified)
             return PlaybillBlockSyncReadResultV1(
                 status="refused"
                 if issue.status == "invalid"
@@ -580,10 +586,10 @@ class ProjectionCheckContext:
                 issues=tuple(issues),
                 moved_backings=tuple(moved),
                 current_backings=tuple(current),
-                original_artifact_digest=original_digest,
-                successor_candidates=candidates
-                if issue.reason == "block_successor_ambiguous"
-                else (),
+                original_artifact_digest=(
+                    None if failure is None else failure.original_artifact_digest
+                ),
+                successor_candidates=(() if failure is None else failure.successor_candidates),
             )
         return PlaybillBlockSyncReadResultV1(
             status="successor" if moved else "current",

@@ -73,7 +73,6 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.documents import document_path, parse_document
 from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
-from cruxible_client.contracts.query.definitions import QueryEvaluationPolicyV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.temporal import ensure_utc
@@ -101,7 +100,10 @@ from cruxible_core.query.impact import (
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
-from cruxible_core.service.authoring.projection_sync import ProjectionCheckContext
+from cruxible_core.service.authoring.projection_sync import (
+    PROJECTION_VISIBILITY_POLICY,
+    ProjectionCheckContext,
+)
 from cruxible_core.service.claims.claims import (
     CaptureAdmissionAccountV1,
     _claim_admission_accounts,
@@ -196,11 +198,6 @@ _ALL_DOMAINS: tuple[NextDomain, ...] = (
     "workspace_floor",
     "workspace_sources",
     "workspace_projections",
-)
-_PROJECTION_VISIBILITY_POLICY = QueryEvaluationPolicyV1(
-    visible_verdicts=("contradicted", "stale", "supported", "uncovered", "unresolved"),
-    visible_currency=("current", "not_applicable", "stale"),
-    conflict_behavior="surface_conflicts",
 )
 
 
@@ -1396,7 +1393,7 @@ def _citation_commitments(
             row,
             subject=subjects.get(row.subject_path),
             providers=providers,
-            policy=_PROJECTION_VISIBILITY_POLICY,
+            policy=PROJECTION_VISIBILITY_POLICY,
             evaluation_time=evaluation_time,
         )
         is not None
@@ -2156,7 +2153,7 @@ def _claim_dependency_items(
             row,
             subject=subjects.get(row.subject_path),
             providers=providers,
-            policy=_PROJECTION_VISIBILITY_POLICY,
+            policy=PROJECTION_VISIBILITY_POLICY,
             evaluation_time=evaluation_time,
         )
         is not None
@@ -3032,7 +3029,7 @@ def _projection_items(
             overturned = [
                 i.identity.qualified
                 for i in assessment.issues
-                if i.detail == "Claim has been overturned"
+                if i.reason == "block_backing_overturned"
             ]
             target = f"{source.source_id}#{marker.stamp.block_id}"
             identities = tuple(

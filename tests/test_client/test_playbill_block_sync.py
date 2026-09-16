@@ -1194,3 +1194,19 @@ def test_mixed_retirement_repair_keeps_surviving_artifact_category():
         "block_id": stamp.block_id,
         "clear_claims": True,
     }
+
+
+@pytest.mark.parametrize("batch", [False, True])
+@pytest.mark.parametrize("value", ["2026-09-16T12:00:00", datetime(2026, 9, 16, 12)])
+def test_projection_checks_reject_naive_time_on_both_read_surfaces(batch, value):
+    from pydantic import ValidationError
+
+    from cruxible_client.contracts.authoring.models import PlaybillProjectionCheckRequestV1
+
+    model = PlaybillProjectionCheckRequestV1 if batch else PlaybillBlockSyncReadRequestV1
+    payload = {"stamps": (_stamp(),)} if batch else {"stamp": _stamp()}
+    with pytest.raises(ValidationError, match="absolute evaluation time"):
+        model.model_validate({**payload, "evaluation_time": value})
+    absolute = model.model_validate({**payload, "evaluation_time": "2026-09-16T08:00:00-04:00"})
+    assert absolute.evaluation_time == datetime(2026, 9, 16, 12, tzinfo=UTC)
+    assert absolute.evaluation_time.tzinfo == UTC

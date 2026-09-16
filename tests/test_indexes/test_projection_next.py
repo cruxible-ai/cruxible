@@ -928,7 +928,9 @@ def test_one_retired_member_of_a_held_list_is_repinned_onto_what_survives(
     assert _projection_rows(instance, repinned) == ()
 
 
-def test_overturned_claim_backing_requires_depublication(tmp_path: Path) -> None:
+def test_overturned_claim_backing_requires_depublication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # A single-valued slot whose contest was refused: the Claim did not take the
     # slot and no other Claim holds it either, which is what "overturned" names.
     # The many-cardinality case is the opposite and is asserted below.
@@ -970,6 +972,23 @@ def test_overturned_claim_backing_requires_depublication(tmp_path: Path) -> None
         statement_digest=proposed.statement_digest,
     )
 
+    from cruxible_core.service.authoring import projection_sync
+
+    original_read = projection_sync.ProjectionCheckContext.read
+
+    def different_prose(context, request):
+        result = original_read(context, request)
+        assert result.issues[0].reason == "block_backing_overturned"
+        return result.model_copy(
+            update={
+                "issues": tuple(
+                    issue.model_copy(update={"detail": "Different human explanation"})
+                    for issue in result.issues
+                )
+            }
+        )
+
+    monkeypatch.setattr(projection_sync.ProjectionCheckContext, "read", different_prose)
     (row,) = _projection_rows(instance, _request(instance, backing=(backing,)))
     assert row.reason == "projection_backing_stale"
     assert row.related_identities == (backing.identity.qualified,)

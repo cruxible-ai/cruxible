@@ -146,6 +146,9 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperationV1] = {
     "block_backing_changed": RepairOperationV1(
         operation="playbill.block.sync", arguments={"all": True}
     ),
+    "block_backing_overturned": RepairOperationV1(
+        operation="playbill.block.sync", arguments={"all": True}
+    ),
     "block_backing_missing": RepairOperationV1(
         operation="playbill.block.sync", arguments={"all": True}
     ),

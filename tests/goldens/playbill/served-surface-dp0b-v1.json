@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-16:ontology-queries-v2",
-    "surface_digest": "sha256:07205c9fb6ea0ea885c0fb916748fde5f2cd2bb425fe2f585c49a22de356d5ef"
+    "register_entry": "2026-09-16:projection-review-corrections",
+    "surface_digest": "sha256:bdd95ab6c1f81d3343fdde350ef4ef9801d169baf38d1aa63bc105a4400c43cf"
   },
   "surface": {
     "cli_leaves": [
@@ -1583,7 +1583,7 @@
         "request_model": "cruxible_client.contracts.authoring.models.PlaybillProjectionCheckRequestV1",
         "request_schema_digest": "sha256:13e80e73f09d7e248a415179706eb13e43450fbbd0dd50bce4647e19281bf7bb",
         "response_model": "cruxible_client.contracts.authoring.models.PlaybillProjectionCheckResultV1",
-        "response_schema_digest": "sha256:2b967112d630e56e7e22fed66e007eff4908caea246dea71c5fdefb732b3a567"
+        "response_schema_digest": "sha256:179ce56a08db1a23b2899428fe7af920bb48acd5b6ecdbeb6fd06bc71e05d90e"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.read_block_sync_backing",
@@ -1595,7 +1595,7 @@
         "request_model": "cruxible_client.contracts.authoring.models.PlaybillBlockSyncReadRequestV1",
         "request_schema_digest": "sha256:de6bfd13b322153e4ed4ba7dd498550cec335a0de60bda3c33c2d3b9b64a93ce",
         "response_model": "cruxible_client.contracts.authoring.models.PlaybillBlockSyncReadResultV1",
-        "response_schema_digest": "sha256:1ea923af4465629d8eab895d68d3b3b0baf1371fef765c1f20c285ec3e1dfe6e"
+        "response_schema_digest": "sha256:73ec148fdda9c5533d50f32c6652c0a8bc38ee94874542e30e6960ee1825781c"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.resolve_proposal_selector",
@@ -2001,7 +2001,7 @@
         ],
         "input_schema_digest": "sha256:4ccba42723cf94a3b9c18d17ddbdd278c37322723223bcd3f8df9c7f1838f223",
         "name": "cruxible_playbill_activate",
-        "output_schema_digest": "sha256:1b27bea6393af192f3c86a52d3e73e011dfc0a7416f29fa6a83cbf71061661a8",
+        "output_schema_digest": "sha256:5d1b34919b2a8e8eb1047fe005b97ed25c1c66d57c257a3a44845021e34af6c5",
         "permission": "GRAPH_WRITE"
       },
       {
