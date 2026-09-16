@@ -584,10 +584,12 @@ def test_dirty_and_stale_rows_have_exact_frozen_repairs_and_deterministic_ids(
         "verify_alignment_then_repin_or_edit"
     )
     assert by_reason["projection_backing_stale"].repair.required_change == (
-        "review_block_supersede_prose_then_repin"
+        "restore_dependency_check_then_review_and_repin"
     )
     for item in first:
-        assert item.severity == "repair"
+        assert item.severity == (
+            "blocking" if item.reason == "projection_backing_stale" else "warning"
+        )
         assert item.subject_identity == "corpus.runbook#status"
         assert item.repair.operation == "playbill.block.repin"
         assert item.repair.arguments == {"source_id": "corpus.runbook", "block_id": "status"}
@@ -670,7 +672,7 @@ def test_presentation_offsets_do_not_enter_projection_queue_identity(
     assert first.item_id == moved.item_id
 
 
-def test_missing_hidden_or_incomplete_backing_omits_the_entire_block_without_disclosure(
+def test_missing_backing_does_not_hide_dirty_body(
     accepted_world: PlaybillInstance,
 ) -> None:
     visible = _claim_backing(accepted_world)
@@ -681,7 +683,11 @@ def test_missing_hidden_or_incomplete_backing_omits_the_entire_block_without_dis
 
     request = _request(accepted_world, backing=(visible, hidden), dirty=True)
 
-    assert _projection_rows(accepted_world, request) == ()
+    rows = _projection_rows(accepted_world, request)
+    assert {r.reason for r in rows} == {"projection_backing_stale", "projection_dirty"}
+    assert next(r for r in rows if r.reason == "projection_backing_stale").detail[
+        "backing_state"
+    ] in {"invalid", "unchecked"}
 
 
 def test_incomplete_citation_scan_retains_marker_derived_repairs(
@@ -790,7 +796,7 @@ def test_invalid_projection_marker_recovers_registered_block_identity(
     assert row.repair.command == "cruxible playbill block repin corpus.runbook pub-status"
 
 
-def test_subject_gated_claim_backing_omits_its_marker_under_instance_access(
+def test_invisible_claim_reports_unchecked_without_hiding_dirty_body(
     accepted_world: PlaybillInstance,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -810,7 +816,11 @@ def test_subject_gated_claim_backing_omits_its_marker_under_instance_access(
         without_visible_subjects,
     )
 
-    assert _projection_rows(accepted_world, request) == ()
+    rows = _projection_rows(accepted_world, request)
+    assert {r.reason for r in rows} == {"projection_backing_stale", "projection_dirty"}
+    assert next(r for r in rows if r.reason == "projection_backing_stale").detail[
+        "backing_state"
+    ] in {"invalid", "unchecked"}
 
 
 def test_retired_claim_backing_requires_depublication_without_access_disclosure(
@@ -906,7 +916,8 @@ def test_one_retired_member_of_a_held_list_is_repinned_onto_what_survives(
     assert row.detail["surviving_backings"] == [survivor.identity.qualified]
     assert row.repair.operation == "playbill.block.repin"
     assert row.repair.required_change == "drop_the_retired_backing_then_repin"
-    assert row.repair.arguments["claim"] == [survivor.identity.qualified]
+    assert row.repair.arguments["claim"] == []
+    assert row.repair.arguments["clear_claims"] is True  # omitted artifact category is preserved
 
     # Repinning onto what survives clears it; the block stays registered.
     repinned = retired.model_copy(
@@ -1013,26 +1024,20 @@ def test_unselected_many_cardinality_backing_is_not_overturned(tmp_path: Path) -
     assert _projection_rows(instance, _request(instance, backing=(backing,))) == ()
 
 
-def test_query_backing_surfaces_candidates_only_when_its_semantic_result_changes(
+def test_query_backing_reports_stale_when_its_semantic_result_changes(
     accepted_world: PlaybillInstance,
 ) -> None:
-    """A watched query moving is a candidate signal, not the block going stale.
-
-    The block is accountable for the list it HOLDS; a query beside that list
-    says what could belong in it. Reporting a moved query as a stale backing
-    told an author their prose had fallen out of date with something it never
-    committed to, and left them no way to say no to a candidate on the record.
-    """
+    """Query-selected dependencies drift when their semantic answer changes."""
 
     (result,) = _projection_rows(
         accepted_world,
         _request(accepted_world, backing=(_query_backing(accepted_world, stale=True),)),
     )
 
-    assert result.reason == "projection_candidates_changed"
+    assert result.reason == "projection_backing_stale"
     assert result.severity == "warning"
-    assert result.detail["watched_query"] == f"QueryDefinition:{QUERY_NAME}"
-    assert result.repair.required_change == "hold_or_decline_the_entered_candidates"
+    assert result.detail["stale_backings"] == [f"QueryDefinition:{QUERY_NAME}"]
+    assert result.repair.required_change == "review_block_supersede_prose_then_repin"
 
 
 def test_query_backing_replays_actual_resolved_parameter_values(tmp_path: Path) -> None:
@@ -1073,7 +1078,12 @@ def test_query_backing_replays_actual_resolved_parameter_values(tmp_path: Path) 
     mismatched = mismatched.model_copy(
         update={"canonical_param_digest": projection_parameter_digest(invalid_bindings)}
     )
-    assert _projection_rows(instance, _request(instance, backing=(mismatched,), dirty=True)) == ()
+    rows = _projection_rows(instance, _request(instance, backing=(mismatched,), dirty=True))
+    assert {r.reason for r in rows} == {"projection_backing_stale", "projection_dirty"}
+    assert (
+        next(r for r in rows if r.reason == "projection_backing_stale").detail["backing_state"]
+        == "unchecked"
+    )
 
 
 def test_query_backing_reacts_to_real_time_dependent_visibility(tmp_path: Path) -> None:
@@ -1100,7 +1110,7 @@ def test_query_backing_reacts_to_real_time_dependent_visibility(tmp_path: Path) 
         instance,
         _request(instance, backing=(backing,), evaluation_time=later),
     )
-    assert changed.reason == "projection_candidates_changed"
+    assert changed.reason == "projection_backing_stale"
 
 
 def test_claim_backing_statement_digest_ignores_artifact_only_revision(
@@ -1151,3 +1161,132 @@ def test_claim_backing_statement_digest_ignores_artifact_only_revision(
         update={"at": AcceptedCoordinate.from_internal(instance.accepted_coordinate())}
     )
     assert _projection_rows(instance, at_successor) == ()
+
+
+def test_shared_check_query_definition_drift_batch_reuse_and_unchecked_siblings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.contracts.authoring.models import PlaybillProjectionCheckRequestV1
+    from cruxible_client.contracts.declared_blocks import ProjectionBlockStampV2
+    from cruxible_core.service.authoring import projection_sync
+
+    instance, owner = _instance_with_query(tmp_path)
+    original_backing = _query_backing(instance)
+    request = _request(instance, backing=(original_backing,), dirty=True)
+    observation = request.workspace_observation
+    source = observation.source_observations[0]
+    marker = source.marker_summaries[0]
+    stamp = ProjectionBlockStampV2.model_validate(
+        {
+            **marker.stamp.model_dump(mode="json"),
+            "tag": "playbill-projection-stamp-v2",
+            "currency_policy": "require_current",
+        }
+    )
+    definition = accepted_query_definition(
+        instance, name=QUERY_NAME, coordinate=instance.accepted_coordinate()
+    )
+    revised = definition.query.model_copy(
+        update={
+            "description": "Same result with a revised governed query definition",
+            "lifecycle": ArtifactLifecycle(predecessor_digest=definition.artifact_digest),
+        }
+    )
+    proposal = submit_query_definition_candidate(
+        instance,
+        query=revised,
+        actor_id="owner",
+        proposal_name="revise-projection-query",
+        timestamp=TIMESTAMP,
+    )
+    accept_proposal(instance, owner, proposal)
+    current_backing = _query_backing(instance)
+    assert original_backing.semantic_result_digest == current_backing.semantic_result_digest
+    assert original_backing.definition_digest != current_backing.definition_digest
+
+    counted = mock.Mock(wraps=projection_sync.evaluate_claim_query)
+    monkeypatch.setattr(projection_sync, "evaluate_claim_query", counted)
+    at = ClientAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    result = projection_sync.service_check_projection_blocks(
+        instance,
+        request=PlaybillProjectionCheckRequestV1(
+            stamps=(stamp, stamp.model_copy(update={"block_id": "other"})),
+            at=at,
+            evaluation_time=NOW,
+        ),
+    )
+    assert counted.call_count == 1
+    assert all(r.status == "successor" and r.coordinate == at for r in result.results)
+    assert all(
+        r.moved_backings[0].definition_digest == current_backing.definition_digest
+        for r in result.results
+    )
+
+    def observed(current_stamp):
+        return request.model_copy(
+            update={
+                "at": at,
+                "workspace_observation": observation.model_copy(
+                    update={
+                        "source_observations": (
+                            source.model_copy(
+                                update={
+                                    "marker_summaries": (
+                                        marker.model_copy(update={"stamp": current_stamp}),
+                                    )
+                                }
+                            ),
+                        )
+                    }
+                ),
+            }
+        )
+
+    rows = _projection_rows(instance, observed(stamp))
+    assert {r.reason for r in rows} == {"projection_backing_stale", "projection_dirty"}
+    assert all(r.severity == "blocking" for r in rows)
+    # A refused query remains unchecked; it cannot suppress a dirty body or
+    # the independent invalid Claim dependency in the same block.
+    invalid_claim = _claim_backing(instance, stale=True)
+    mixed = stamp.model_copy(update={"backing": (invalid_claim, original_backing)})
+    monkeypatch.setattr(
+        projection_sync,
+        "evaluate_claim_query",
+        mock.Mock(side_effect=ValueError("query unavailable")),
+    )
+    unchecked = projection_sync.service_check_projection_blocks(
+        instance,
+        request=PlaybillProjectionCheckRequestV1(stamps=(mixed,), at=at, evaluation_time=NOW),
+    )
+    assert {i.status for i in unchecked.results[0].issues} == {"invalid", "unchecked"}
+    rows = _projection_rows(instance, observed(stamp))
+    assert {r.reason for r in rows} == {"projection_backing_stale", "projection_dirty"}
+    assert (
+        next(r for r in rows if r.reason == "projection_backing_stale").detail["backing_state"]
+        == "unchecked"
+    )
+
+    monkeypatch.setattr(
+        projection_sync,
+        "evaluate_claim_query",
+        mock.Mock(
+            return_value=SimpleNamespace(
+                verdict="completed", truncation=SimpleNamespace(clipped_budgets=("max_results",))
+            )
+        ),
+    )
+    clipped = projection_sync.service_check_projection_blocks(
+        instance,
+        request=PlaybillProjectionCheckRequestV1(stamps=(stamp,), at=at, evaluation_time=NOW),
+    )
+    assert clipped.results[0].status == "unchecked"
+    assert "truncated" in clipped.results[0].detail
+
+    monkeypatch.setattr(projection_sync, "evaluate_claim_query", counted)
+    repaired = stamp.model_copy(update={"declared_coordinate": at, "backing": (current_backing,)})
+    clean = projection_sync.service_check_projection_blocks(
+        instance,
+        request=PlaybillProjectionCheckRequestV1(stamps=(repaired,), at=at, evaluation_time=NOW),
+    )
+    assert clean.results[0].status == "current"

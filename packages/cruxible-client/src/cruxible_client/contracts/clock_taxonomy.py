@@ -333,7 +333,10 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ProcedureRunRequestV1", "evaluation_time"): "EVALUATION INSTANT",
     ("ProcedureRunRequestV2", "evaluation_time"): "EVALUATION INSTANT",
     ("ProcedureRunStateV2", "evaluation_time"): "EVALUATION INSTANT",
-    ("ProjectionBlockStampV1", "declared_generation"): "SETTLEMENT ORDER",
+    ("_ProjectionBlockStamp", "declared_generation"): "SETTLEMENT ORDER",
+    ("PlaybillBlockSyncReadRequestV1", "evaluation_time"): "EVALUATION INSTANT",
+    ("PlaybillProjectionCheckRequestV1", "evaluation_time"): "EVALUATION INSTANT",
+    ("PlaybillProjectionCheckResultV1", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillBlockDeclareResultV1", "declared_generation"): "SETTLEMENT ORDER",
     ("DeclaredBlockRegistration", "declared_generation"): "SETTLEMENT ORDER",
     # The instant the daemon recorded a workspace's declaration. It is

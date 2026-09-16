@@ -25,6 +25,12 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.authoring.models import (
     PlaybillBlockSyncSuccessorCandidateV1 as PlaybillBlockSyncSuccessorCandidateV1,
 )
+from cruxible_client.contracts.authoring.models import (
+    PlaybillProjectionCheckRequestV1 as PlaybillProjectionCheckRequestV1,
+)
+from cruxible_client.contracts.authoring.models import (
+    PlaybillProjectionCheckResultV1 as PlaybillProjectionCheckResultV1,
+)
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.claims import ClaimStatementCardV1 as ClaimStatementCardV1
 from cruxible_client.contracts.predictions import (
@@ -182,7 +188,6 @@ PlaybillNextReason: TypeAlias = Literal[
     "floor_invalid",
     "projection_dirty",
     "projection_backing_stale",
-    "projection_candidates_changed",
     "claim_dependency_stale",
     "claim_attestation_threshold_met",
     "claim_contradicting_evidence_available",

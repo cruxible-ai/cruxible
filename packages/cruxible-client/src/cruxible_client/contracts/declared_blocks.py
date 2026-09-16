@@ -12,7 +12,15 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Any, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import (
@@ -312,8 +320,7 @@ ProjectionBackingV1: TypeAlias = Annotated[
 ]
 
 
-class ProjectionBlockStampV1(_StrictDeclaredBlockModel):
-    tag: Literal["playbill-projection-stamp-v1"] = "playbill-projection-stamp-v1"
+class _ProjectionBlockStamp(_StrictDeclaredBlockModel):
     source_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
     block_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,63}$")
     declared_generation: int = Field(ge=0)
@@ -337,19 +344,39 @@ class ProjectionBlockStampV1(_StrictDeclaredBlockModel):
         identities = tuple(item.identity.qualified for item in value)
         if identities != tuple(sorted(set(identities), key=lambda item: item.encode("utf-8"))):
             raise ValueError("projection block backings must be sorted and unique by identity")
-        # A block is a held list, optionally WATCHING one query. The held list
-        # is what the block is accountable for -- every Claim and artifact in
-        # it is drift-checked -- and the query surfaces candidates for it. Two
-        # queries would be two answers to "what should be here?" with no rule
-        # for reconciling them, so one is the ceiling.
+        # Explicit and query-selected dependencies share one currency policy.
         queries = sum(1 for item in value if isinstance(item, ProjectionQueryBackingV1))
         if queries > 1:
-            raise ValueError("a projection block watches at most one query")
+            raise ValueError("a projection block binds at most one query")
         return value
 
 
+ProjectionCurrencyPolicy: TypeAlias = Literal["warn", "require_current"]
+
+
+class ProjectionBlockStampV1(_ProjectionBlockStamp):
+    """Frozen encoding for retained declarations; newly authored stamps use V2."""
+
+    tag: Literal["playbill-projection-stamp-v1"] = "playbill-projection-stamp-v1"
+
+    @property
+    def currency_policy(self) -> ProjectionCurrencyPolicy:
+        return "warn"
+
+
+class ProjectionBlockStampV2(_ProjectionBlockStamp):
+    tag: Literal["playbill-projection-stamp-v2"] = "playbill-projection-stamp-v2"
+    currency_policy: ProjectionCurrencyPolicy = "warn"
+
+
+ProjectionBlockStamp: TypeAlias = Annotated[
+    ProjectionBlockStampV1 | ProjectionBlockStampV2, Field(discriminator="tag")
+]
+PROJECTION_STAMP_ADAPTER: TypeAdapter[ProjectionBlockStamp] = TypeAdapter(ProjectionBlockStamp)
+
+
 class ProjectionMarkerSummaryV1(_StrictDeclaredBlockModel):
-    stamp: ProjectionBlockStampV1
+    stamp: ProjectionBlockStamp
     observed_body_digest: str
     start_byte: int = Field(ge=0)
     end_byte: int = Field(ge=0)
@@ -382,7 +409,7 @@ class ProjectionBootstrapUnstampedError(ProjectionMarkerError):
 class ParsedProjectionBlock:
     source_id: str
     block_id: str
-    stamp: ProjectionBlockStampV1 | None
+    stamp: ProjectionBlockStamp | None
     opening_start: int
     opening_end: int
     body_start: int
@@ -412,7 +439,7 @@ def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _parse_projection_stamp(encoded: bytes) -> ProjectionBlockStampV1:
+def _parse_projection_stamp(encoded: bytes) -> ProjectionBlockStamp:
     if len(encoded) > (MAX_PROJECTION_STAMP_BYTES * 4 + 2) // 3:
         raise ProjectionMarkerError("projection stamp exceeds its decoded byte ceiling")
     try:
@@ -428,13 +455,13 @@ def _parse_projection_stamp(encoded: bytes) -> ProjectionBlockStampV1:
         value = json.loads(content.decode("utf-8"), object_pairs_hook=_unique_json_object)
         if canonical_bytes(value) != content:
             raise ValueError("projection stamp does not reproduce canonical JSON bytes")
-        stamp = ProjectionBlockStampV1.model_validate(value)
+        stamp = PROJECTION_STAMP_ADAPTER.validate_python(value)
     except (UnicodeError, ValueError, ValidationError, PlaybillError) as exc:
         raise ProjectionMarkerError(f"projection stamp is malformed: {exc}") from exc
     return stamp
 
 
-def render_projection_opening(stamp: ProjectionBlockStampV1) -> bytes:
+def render_projection_opening(stamp: ProjectionBlockStamp) -> bytes:
     content = canonical_bytes(stamp.model_dump(mode="json"))
     if len(content) > MAX_PROJECTION_STAMP_BYTES:
         raise ProjectionMarkerError("projection stamp exceeds its decoded byte ceiling")
@@ -442,7 +469,7 @@ def render_projection_opening(stamp: ProjectionBlockStampV1) -> bytes:
     return b"<!-- playbill:block:" + stamp.block_id.encode("ascii") + b":" + encoded + b" -->\n"
 
 
-def projection_manifest(stamp: ProjectionBlockStampV1) -> tuple[str, bytes]:
+def projection_manifest(stamp: ProjectionBlockStamp) -> tuple[str, bytes]:
     """The exact authored declaration, addressed by full SHA-256."""
     content = canonical_bytes(stamp.model_dump(mode="json"))
     if len(content) > MAX_PROJECTION_STAMP_BYTES:
@@ -450,7 +477,7 @@ def projection_manifest(stamp: ProjectionBlockStampV1) -> tuple[str, bytes]:
     return "sha256:" + hashlib.sha256(content).hexdigest(), content
 
 
-def render_compact_projection_opening(stamp: ProjectionBlockStampV1) -> bytes:
+def render_compact_projection_opening(stamp: ProjectionBlockStamp) -> bytes:
     digest, _ = projection_manifest(stamp)
     return (
         b"<!-- playbill:block:"
@@ -477,7 +504,7 @@ def projection_manifest_refs(content: bytes) -> tuple[str, ...]:
 
 def _resolve_projection_manifest(
     digest: str, manifests: Mapping[str, bytes] | None
-) -> ProjectionBlockStampV1:
+) -> ProjectionBlockStamp:
     if manifests is None or digest not in manifests:
         raise ProjectionMarkerError(f"projection manifest is unavailable: {digest}")
     content = manifests[digest]
@@ -680,7 +707,7 @@ def _parse_projection_blocks(
         or sum(len(value) for value in manifests.values()) > MAX_PROJECTION_SOURCE_BYTES
     ):
         raise ProjectionMarkerError("projection manifest package exceeds its byte/count ceiling")
-    active: tuple[str, ProjectionBlockStampV1 | None, int, int] | None = None
+    active: tuple[str, ProjectionBlockStamp | None, int, int] | None = None
     seen: set[str] = set()
     blocks: list[ParsedProjectionBlock] = []
     for line, line_start, offset in _marker_candidate_lines(content):
@@ -784,7 +811,7 @@ def discover_projection_blocks(
 
 
 def frame_projection_block(
-    *, stamp: ProjectionBlockStampV1, body: bytes, compact: bool = False
+    *, stamp: ProjectionBlockStamp, body: bytes, compact: bool = False
 ) -> bytes:
     """Mechanically frame accepted bytes and prove the one frozen marker grammar."""
 
@@ -812,7 +839,7 @@ def assert_projection_block_frame(
     *,
     source_id: str,
     block_id: str,
-    stamp: ProjectionBlockStampV1,
+    stamp: ProjectionBlockStamp,
     body_digest: str,
     start_byte: int | None = None,
     end_byte: int | None = None,
@@ -887,7 +914,10 @@ __all__ = [
     "ParsedProjectionBlock",
     "ProjectionBackingV1",
     "ProjectionArtifactBackingV1",
+    "ProjectionBlockStamp",
     "ProjectionBlockStampV1",
+    "ProjectionBlockStampV2",
+    "ProjectionCurrencyPolicy",
     "ProjectionBootstrapUnstampedError",
     "ProjectionClaimBackingV1",
     "ProjectionMarkerSummaryV1",

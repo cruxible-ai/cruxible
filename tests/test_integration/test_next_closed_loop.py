@@ -171,7 +171,6 @@ EXPECTED_OPERATIONS = {
     # exception is a held list with nothing left in it -- every member retired
     # or overturned -- where the registration itself is what has to go.
     "projection_backing_stale": frozenset({"playbill.block.repin", "playbill.block.depublish"}),
-    "projection_candidates_changed": "playbill.block.repin",
     # A marker the page has lost is repaired by releasing the registration that
     # demands it; a marker the page has mangled is repaired by restoring it.
     "projection_marker_invalid": frozenset({"playbill.block.repin", "playbill.block.depublish"}),
@@ -989,7 +988,7 @@ def _projection_dirty(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
 def _projection_backing_stale_revised(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     key: ClosedLoopKey = ("projection_backing_stale", "revised")
     instance, _owner = _instance_with_query(root)
-    before = _projection_request(instance, backing=(_claim_backing(instance, stale=True),))
+    before = _projection_request(instance, backing=(_query_backing(instance, stale=True),))
     row = _row_by_key(instance, key, before)
     assert row.repair.operation == _expected_operation(key)
 
@@ -1012,7 +1011,8 @@ def _projection_backing_stale_retired(root: Path, _monkeypatch: pytest.MonkeyPat
     row = _row_by_key(instance, key, before)
     assert row.repair.operation == _expected_operation(key)
     assert row.repair.required_change == "drop_the_retired_backing_then_repin"
-    assert row.repair.arguments["claim"] == [survivor.identity.qualified]
+    assert row.repair.arguments["claim"] == []
+    assert row.repair.arguments["clear_claims"] is True
 
     _assert_key_gone(instance, key, _projection_request(instance, backing=(survivor,)))
 
@@ -1046,29 +1046,6 @@ def _projection_backing_stale_exhausted(root: Path, _monkeypatch: pytest.MonkeyP
                 )
             }
         ),
-    )
-
-
-def _projection_candidates_changed(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
-    """A watched query whose result moved names the rows and the repin that answers them."""
-
-    instance, _owner = _instance_with_query(root)
-    backing = (_claim_backing(instance), _query_backing(instance, stale=True))
-    row = _row(
-        instance,
-        "projection_candidates_changed",
-        _projection_request(instance, backing=backing),
-    )
-    assert row.severity == "warning"
-    assert row.repair.operation == EXPECTED_OPERATIONS["projection_candidates_changed"]
-    assert row.repair.required_change == "hold_or_decline_the_entered_candidates"
-
-    # Re-stamping the block on the query's current result is the agent's
-    # explicit "no", and it clears the row without holding anything.
-    _assert_gone(
-        instance,
-        "projection_candidates_changed",
-        _projection_request(instance, backing=(_claim_backing(instance), _query_backing(instance))),
     )
 
 
@@ -1466,7 +1443,6 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("projection_backing_stale", "revised"): _projection_backing_stale_revised,
     ("projection_backing_stale", "retired"): _projection_backing_stale_retired,
     ("projection_backing_stale", "exhausted"): _projection_backing_stale_exhausted,
-    ("projection_candidates_changed", None): _projection_candidates_changed,
     ("projection_marker_invalid", "registered_marker_missing"): _projection_marker_missing,
     ("projection_marker_invalid", None): _projection_marker_invalid,
     ("claim_dependency_stale", None): _claim_dependency_stale,
@@ -1502,7 +1478,9 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
 }
 
 
-@pytest.mark.parametrize("key", tuple(CLOSED_LOOP_CASES))
+@pytest.mark.parametrize(
+    "key", tuple(CLOSED_LOOP_CASES), ids=lambda key: "-".join(x for x in key if x)
+)
 def test_every_next_reason_has_an_effective_named_repair(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -54,6 +54,7 @@ from cruxible_client.authoring.workspace import (
     write_playbill_workspace_config,
 )
 from cruxible_client.authoring.world_stub import render_world_stub_for
+from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_attestations import (
@@ -130,7 +131,6 @@ from cruxible_core.curation.curation_calibration import (
     AUDIT_BUDGET_MIN_MAX_ROWS,
 )
 from cruxible_core.deprecation import (
-    BLOCK_SYNC_DISCARD_LOCAL_FLAG,
     REVIEW_CLOSE_WORKTREE,
     REVIEW_OPEN_WORKTREE,
     DeprecationNotice,
@@ -3233,6 +3233,13 @@ def depublish_projection(source_id: str, block_id: str, output_json: bool) -> No
 @click.option("--claim", "claims", multiple=True, help="Accepted Claim backing identity.")
 @click.option("--query", "queries", multiple=True, help="Accepted QueryDefinition identity.")
 @click.option(
+    "--artifact", "artifacts", multiple=True, help="Subject or ClaimType qualified identity."
+)
+@click.option("--clear-claims", is_flag=True)
+@click.option("--clear-queries", is_flag=True)
+@click.option("--clear-artifacts", is_flag=True)
+@click.option("--currency-policy", type=click.Choice(["warn", "require_current"]), default=None)
+@click.option(
     "--backing",
     "backing_digest",
     default=None,
@@ -3253,6 +3260,11 @@ def repin_projection(
     block_id: str,
     claims: tuple[str, ...],
     queries: tuple[str, ...],
+    artifacts: tuple[str, ...],
+    clear_claims: bool,
+    clear_queries: bool,
+    clear_artifacts: bool,
+    currency_policy: Literal["warn", "require_current"] | None,
     backing_digest: str | None,
     parameters: tuple[str, ...],
     workspace_root: str,
@@ -3261,7 +3273,17 @@ def repin_projection(
 ) -> None:
     """Refresh one declaration marker without writing its body or closing line."""
 
-    if backing_digest is not None and (claims or queries or parameters):
+    if (clear_claims and claims) or (clear_queries and queries) or (clear_artifacts and artifacts):
+        raise click.ClickException("a backing category cannot be cleared and replaced together")
+    if backing_digest is not None and (
+        claims
+        or queries
+        or parameters
+        or artifacts
+        or clear_claims
+        or clear_queries
+        or clear_artifacts
+    ):
         raise click.ClickException(
             "--backing cannot be combined with --claim, --query, or --params"
         )
@@ -3301,8 +3323,12 @@ def repin_projection(
             workspace=workspace_root,
             source_id=source_id,
             block_id=block_id,
-            claims=claims,
-            queries=resolved,
+            claims=claims if claims or clear_claims else None,
+            queries=resolved if queries or clear_queries else None,
+            artifacts=tuple(parse_artifact_identity(x) for x in artifacts)
+            if artifacts or clear_artifacts
+            else None,
+            currency_policy=currency_policy,
             backing_digest=backing_digest,
             evaluation_time=instant,
         ),
@@ -3320,7 +3346,7 @@ def repin_projection(
 @click.option(
     "--check",
     is_flag=True,
-    help="Accepted for compatibility; this command reports and never converges a body.",
+    help="Check without applying requested detach edits.",
 )
 @click.option(
     "--detach",
@@ -3328,20 +3354,6 @@ def repin_projection(
     multiple=True,
     type=click.Path(dir_okay=False),
     help="Strip markers from retired blocks while preserving their current body.",
-)
-@click.option(
-    "--accept-local",
-    "accept_local_paths",
-    multiple=True,
-    type=click.Path(dir_okay=False),
-    help="Accept the block body written in this path and re-stamp the block on it.",
-)
-@click.option(
-    "--discard-local",
-    "discard_local_paths",
-    multiple=True,
-    type=click.Path(dir_okay=False),
-    help="Deprecated spelling of --accept-local; removed in 0.6.0.",
 )
 @click.option("--workspace-root", default=".", show_default=True, type=click.Path(file_okay=False))
 @json_option
@@ -3351,26 +3363,11 @@ def sync_projection(
     all_sources: bool,
     check: bool,
     detach_paths: tuple[str, ...],
-    accept_local_paths: tuple[str, ...],
-    discard_local_paths: tuple[str, ...],
     workspace_root: str,
     output_json: bool,
 ) -> None:
-    """Report whether each declared block still reads as its stamp says.
+    """Check dependencies and report drift under each block's currency policy."""
 
-    Nothing renders a block, so nothing is converged: each block is reported
-    `unchanged`, `stale` when a held backing moved under it, or `dirty` when
-    its prose moved away from the stamp, and the repair for both is a repin.
-    Two edits remain. `--detach` strips the marker pair of a block whose
-    backing is retired or whose host this worktree has left, keeping the prose
-    between the markers. `--accept-local` says the prose in the page IS the
-    block and re-stamps the block on it -- the stamp is the alignment record,
-    so a flag that only silenced the row would leave `next` reporting the same
-    page dirty. `--discard-local` is its deprecated spelling.
-    """
-
-    if discard_local_paths:
-        emit_cli_deprecation(BLOCK_SYNC_DISCARD_LOCAL_FLAG)
     result = _server_call(
         lambda client, instance_id: sync_projection_blocks(
             client,
@@ -3380,7 +3377,6 @@ def sync_projection(
             all_sources=all_sources,
             check=check,
             detach_paths=(*detach_paths,),
-            accept_local_paths=(*accept_local_paths, *discard_local_paths),
         ),
         command_name="playbill block sync",
     )
@@ -3395,9 +3391,7 @@ def sync_projection(
             click.echo(f"{target}: {item.outcome}{suffix}")
             if item.repair is not None:
                 click.echo(f"  repair: {render_served_repair(item.repair)}")
-    # `would_change` is now only ever a pending detach. A stale or dirty block
-    # is a finding this command cannot repair, and it counts as a refusal, so
-    # an activation's closing sweep does not exit clean over a drifted page.
+    # Warn findings stay advisory; explicit strict blocks gate this check.
     if (check and result.would_change) or result.has_refusals:
         raise click.exceptions.Exit(1)
 

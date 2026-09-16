@@ -22,7 +22,7 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.declared_blocks import (
     PlaybillReviewWorkspaceObservationV1,
-    ProjectionBlockStampV1,
+    ProjectionBlockStamp,
 )
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_client.contracts.documents import DocumentShell
@@ -231,7 +231,7 @@ PlaybillInsertionConfirmRequest = InsertionConfirmRequestV2
 class PlaybillBlockDeclareRequest(_StrictPlaybillRequest):
     """The stamp a workspace just wrote, offered to the instance for registration."""
 
-    stamp: ProjectionBlockStampV1
+    stamp: ProjectionBlockStamp
 
 
 class PlaybillBlockDepublishRequest(_StrictPlaybillRequest):

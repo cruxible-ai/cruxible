@@ -473,12 +473,12 @@ class _FloorClient(Protocol):
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
     ) -> contracts.PlaybillFloorExport: ...
 
-    def read_playbill_block_sync_backing(
+    def check_playbill_projection_blocks(
         self,
         instance_id: str,
         *,
-        request: contracts.PlaybillBlockSyncReadRequestV1,
-    ) -> contracts.PlaybillBlockSyncReadResultV1: ...
+        request: contracts.PlaybillProjectionCheckRequestV1,
+    ) -> contracts.PlaybillProjectionCheckResultV1: ...
 
 
 class _CoverageClient(Protocol):

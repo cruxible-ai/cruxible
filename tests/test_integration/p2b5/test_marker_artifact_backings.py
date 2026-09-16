@@ -47,7 +47,7 @@ def test_artifact_backing_accepts_only_governed_vocabulary_and_entity_kinds() ->
         )
 
 
-def test_claim_type_block_sync_renders_current_artifact_with_compiler_pin(
+def test_claim_type_block_sync_checks_current_artifact_without_rendering(
     tmp_path: Path,
 ) -> None:
     instance, owner = _instance_with_query(tmp_path)
@@ -116,8 +116,6 @@ def test_claim_type_block_sync_renders_current_artifact_with_compiler_pin(
     # would be rewritten to; a projection block is prose an agent wrote, so the
     # only thing accepted state can say about a governed vocabulary the block
     # holds is that it moved, and the current spelling to re-stamp it with.
-    assert result.body is None
-    assert result.body_digest is None
     assert isinstance(result.backing, ProjectionArtifactBackingV1)
     assert result.backing.artifact_digest == result.artifact_digest
     assert result.moved_backings == (result.backing,)

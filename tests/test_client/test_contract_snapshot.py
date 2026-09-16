@@ -126,6 +126,8 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillBlockSyncItemV1",
         "PlaybillBlockSyncReadRequestV1",
         "PlaybillBlockSyncReadResultV1",
+        "PlaybillProjectionCheckRequestV1",
+        "PlaybillProjectionCheckResultV1",
         "PlaybillBlockSyncResultV1",
         "PlaybillBlockSyncSuccessorCandidateV1",
         "PlaybillBodyRead",

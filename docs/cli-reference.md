@@ -908,9 +908,10 @@ remain disabled in the public Procedure runner.
 ~~~text
 cruxible playbill block repin SOURCE_ID BLOCK_ID [--claim ID]... [--query ID]...
   [--backing SHA256] [--params CANONICAL_JSON]... [--workspace-root DIR]
-  [--evaluation-time TS]
+  [--evaluation-time TS] [--artifact ID]... [--currency-policy warn|require_current]
+  [--clear-claims] [--clear-queries] [--clear-artifacts]
 cruxible playbill block sync [PATH]... [--all] [--check]
-  [--detach PATH]... [--accept-local PATH]... [--workspace-root DIR]
+  [--detach PATH]... [--workspace-root DIR]
 cruxible playbill block depublish SOURCE_ID BLOCK_ID [--json]
 ~~~
 
@@ -952,22 +953,27 @@ would need more refuses rather than truncating. **`repin` mints no Claim.** It
 declares that this passage reflects Claims that already exist, which is exactly
 what a projection block is.
 
-A stamp may carry a **held list** and a **watched query** together: any number
-of Claim and artifact backings, plus at most one `--query`. The held list is
-what the block is accountable for -- a revision, retirement or overturn of any
-member is `projection_backing_stale`. The watched query surfaces CANDIDATES for
-that list: when its semantic result digest moves, `playbill next` emits
-`projection_candidates_changed` (a warning) naming the rows that entered and
-left, with one repair spelled two ways. `block repin --claim <entered>` holds
-the new rows; `block repin` alone re-stamps the new digest, which is the agent
-saying no to them on the record.
+A block binds explicit Claims, Subject/ClaimType artifacts, and optionally one
+query. All are dependencies: Claim statement changes, retirement or overturn;
+artifact digest changes; and query definition or semantic result changes require
+review. A query keeps selecting current membership, including additions and
+removals. It is not converted to a static Claim list. Missing, refused, or
+truncated query results are reported as unchecked, never current.
 
-The first declaration of a block requires explicit `--claim`/`--query` backings.
-Omitting them on an already-stamped block preserves its existing backing
-identities and resolved query parameters. The client validates accepted state
-and atomically replaces the marker only when the complete local source still
-matches its observed bytes. It never renders prose, edits the body, or mutates
-governed state.
+`--currency-policy warn` (the default) makes drift advisory. `require_current`
+makes drift or an incomplete dependency check fail workspace checks and produces
+a blocking `playbill next` finding. Invalid markers and integrity failures always
+fail. This policy never blocks acceptance of underlying state. Cruxible does not
+serve Markdown or HTML, and reading or exporting a local package is not a
+freshness check.
+
+Repin preserves omitted categories and policy. Supplying `--claim`, `--query`, or
+`--artifact` replaces only that category; `--clear-claims`, `--clear-queries`, and
+`--clear-artifacts` remove it explicitly. At least one dependency must remain.
+SDK callers use `None` for omission and an empty sequence for removal. Repin is
+the author's declaration after reviewing the prose, not proof that arbitrary
+prose follows logically from its backings. Ordinary repin preserves the body;
+the SDK can install explicitly supplied reviewed body bytes.
 
 There is no SDK option that publishes a Claim as its own page text. `publish_to`
 was that road and it is gone: it minted a block whose one backing was the
@@ -979,71 +985,22 @@ repair.
 
 ### Checking and detaching
 
-`block sync` **reports and never converges.** Nothing renders a block, so there
-is no accepted body to write back; each declared block is reported as:
+`block sync` and `playbill next` use the same currency evaluator. A sync checks
+all blocks at one accepted revision and evaluation time, sharing query facts and
+lineage reads. It reports `unchanged`, `stale`, `dirty`, or an incomplete/refused
+check with diagnostic details. A dirty body does not suppress dependency checks,
+and one failed dependency does not hide the others. Repin acknowledges a reviewed
+body and refreshes its dependencies; there is no separate accept-local bypass.
 
-| outcome | meaning | repair |
-|---|---|---|
-| `unchanged` | every held backing still reads as the stamp says | -- |
-| `stale` | a held backing moved under the block | `block repin` |
-| `dirty` | the prose moved away from the body digest the stamp committed | `block repin` |
+`--check` suppresses explicit detach edits. Advisory findings remain visible
+without a nonzero exit; `require_current` findings and integrity errors fail the
+check. An unreadable or ambiguous lineage remains an incomplete check, with
+exact successor candidates where available. `repin --backing DIGEST` selects a
+live successor explicitly.
 
-| `synced` | `--accept-local` re-stamped the block on the body in the page | -- |
-| `would_sync` | the same, previewed under `--check` | -- |
-
-`--check` is therefore the behaviour by default for the reporting path, and the
-flag suppresses the two writes left, `--detach` and `--accept-local`. A `stale`
-or `dirty` block counts as a refusal for the exit code, so the sync an
-activation runs as its closing step does not answer clean over a page that has
-drifted from the state it declares.
-
-`--detach PATH` strips markers while preserving the current body, and is the
-only edit this command makes. It covers two cases: a block whose backing is
-retired with no live successor, and a block this instance does not own --
-markers left behind by the host a worktree was previously attached to.
-Detaching a foreign block reads nothing from that host and asserts nothing about
-it; the row names the coordinate the marker was published at. The write is one
-whole-file compare-and-swap and proves the bytes outside every marker by digest
-before and after.
-
-`--accept-local PATH` says the prose now in that path IS the block, and records
-that by re-stamping the block on it: the opening marker is rewritten with the
-observed body digest, the held list and declared coordinate untouched, and the
-declaration is re-recorded with the instance. It writes, and it has to. Under
-this model the stamp is the alignment proof, so a flag that only silenced the
-`dirty` row would assert an alignment nobody checked -- and `playbill next`
-would go on reporting the same page dirty from the same bytes. The prose itself
-is never touched; only the marker line moves.
-
-`--discard-local PATH` is the deprecated spelling of `--accept-local`. It never
-discarded anything under this model. It is accepted for one release, emits the
-structured deprecation warning on stderr, and is removed in 0.6.0.
-
-### Where an unreadable backing lineage is refused
-
-`next` reads each held backing's CURRENT state -- retired, overturned, revised
--- and does not walk its succession chain. It used to, through the one-backing
-gate that made a block syncable, and the walk surfaced two faults as a blocking
-`projection_marker_invalid` row carrying
-`playbill.projection.backing_lineage_unreadable`: a backing whose lineage could
-not be read, and one with more than one live successor. A block now holds up to 512
-backings, so that walk is 512 lineage traversals on every queue read, which is
-not a cost a read-only advisory can carry.
-
-Neither fault is unrefused; they are refused where they can be answered.
-
-* **A cycle is infeasible by construction.** A successor names its predecessor
-  by `predecessor_digest`, and a cycle in that chain would be a cycle in
-  SHA-256. Nothing has to detect it because nothing can build it.
-* **Ambiguity -- more than one live successor to a held backing -- is refused by
-  `block sync` and by `block repin --backing`.** The sync read walks the chain
-  and answers `block_successor_ambiguous`, listing every live candidate; repin
-  takes the exact digest of the one the author means. Both are the commands an
-  author runs when they are about to act on the block, which is the moment the
-  answer is needed.
-
-So the queue tells you a held member moved; the sync tells you which successor
-it moved to, or that it cannot say.
+`--detach PATH` removes markers from a retired block or a declaration belonging
+to a different instance, preserving its prose and all bytes outside the block.
+It uses a whole-file compare-and-swap. It does not rewrite or approve prose.
 
 ### Depublishing
 

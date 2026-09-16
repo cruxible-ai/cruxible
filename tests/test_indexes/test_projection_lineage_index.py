@@ -135,7 +135,7 @@ def test_failed_parse_does_not_publish_partial_index():
 
 
 @pytest.mark.parametrize("read_failure", [False, True])
-def test_batch_errors_preserve_first_marker_refusal(read_failure):
+def test_batch_errors_preserve_all_marker_findings(read_failure, monkeypatch):
     from cruxible_client.contracts.authoring.models import PlaybillBlockSyncReadRequestV1
     from cruxible_client.contracts.claims import claim_statement_digest
     from cruxible_client.contracts.declared_blocks import (
@@ -147,6 +147,16 @@ def test_batch_errors_preserve_first_marker_refusal(read_failure):
     )
 
     instance, claims, paths, generations, trees, at = _fixture()
+    from contextlib import nullcontext
+
+    instance.accepted_history_reader.return_value = nullcontext(
+        SimpleNamespace(generation_for_oid=lambda oid: next(g for g in generations if g.oid == oid))
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.authoring.projection_sync.ProjectionCheckContext._claim_status",
+        lambda *a: "accepted",
+    )
+
     at = at.model_copy(
         update={"semantic_root": "sha256:" + at.git_oid, "generation_root": "sha256:" + at.git_oid}
     )
@@ -195,7 +205,9 @@ def test_batch_errors_preserve_first_marker_refusal(read_failure):
     # Once the first backing is valid, the historical failure on the second
     # remains observable. It is not dropped, cached as absence, or swallowed.
     valid = stamp.model_copy(update={"backing": backings})
-    with pytest.raises(PlaybillError):
-        service_read_playbill_block_sync_backing(
-            instance, request=PlaybillBlockSyncReadRequestV1(stamp=valid)
-        )
+    checked = service_read_playbill_block_sync_backing(
+        instance, request=PlaybillBlockSyncReadRequestV1(stamp=valid)
+    )
+    assert checked.status == "unchecked"
+    assert checked.issues[-1].identity == backings[1].identity
+    assert checked.issues[-1].status == "unchecked"

@@ -1037,6 +1037,18 @@ async def get_claim(
 
 
 @router.post(
+    "/{instance_id}/playbill/projections/check",
+    response_model=contracts.PlaybillProjectionCheckResultV1,
+)
+async def check_projection_blocks(
+    instance_id: str, req: contracts.PlaybillProjectionCheckRequestV1
+) -> contracts.PlaybillProjectionCheckResultV1:
+    return playbill_api.playbill_check_projection_blocks(
+        resolve_server_instance_id(instance_id), request=req
+    )
+
+
+@router.post(
     "/{instance_id}/playbill/projections/sync-backing",
     response_model=contracts.PlaybillBlockSyncReadResultV1,
 )

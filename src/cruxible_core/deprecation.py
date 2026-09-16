@@ -44,11 +44,6 @@ SUBJECT_HISTORY_TWO_ARGUMENT_FORM = DeprecationNotice(
     replacement="one `kind/name` Subject address argument",
 )
 
-BLOCK_SYNC_DISCARD_LOCAL_FLAG = DeprecationNotice(
-    surface="playbill block sync --discard-local",
-    replacement="`--accept-local`, which re-stamps the block on the body the author wrote",
-)
-
 REVIEW_WORKTREE_REPLACEMENT = (
     "diff the ledger in the attached workspace: "
     "`git diff playbill/accepted...playbill/proposals/<proposal-id>`"
@@ -72,7 +67,6 @@ REVIEW_CLOSE_WORKTREE = DeprecationNotice(
 )
 
 DEPRECATION_REGISTRY: tuple[DeprecationNotice, ...] = (
-    BLOCK_SYNC_DISCARD_LOCAL_FLAG,
     SUBJECT_GET_TWO_ARGUMENT_FORM,
     SUBJECT_HISTORY_TWO_ARGUMENT_FORM,
     REVIEW_OPEN_WORKTREE,

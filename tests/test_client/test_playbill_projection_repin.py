@@ -167,8 +167,8 @@ def _repin(
     client: _RepinClient,
     root: Path,
     *,
-    claims: tuple[str, ...] = (),
-    queries: tuple[tuple[str, dict[str, object]], ...] = (),
+    claims: tuple[str, ...] | None = None,
+    queries: tuple[tuple[str, dict[str, object]], ...] | None = None,
 ):  # type: ignore[no-untyped-def]
     return repin_projection_block(
         client,  # type: ignore[arg-type]
@@ -329,3 +329,105 @@ def test_sdk_block_facade_bootstraps_at_its_active_coordinate(tmp_path: Path) ->
 
     assert stamp.declared_generation == 7
     assert stamp.backing[0].identity.qualified == "Claim:CLM-first"
+
+
+def test_repin_preserves_omitted_categories_and_policy_and_removes_only_explicit_ones(
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.contracts.declared_blocks import ProjectionArtifactBackingV1
+
+    source = _workspace(tmp_path)
+    client = _RepinClient()
+    client.get_playbill_subject = lambda *a, **k: SimpleNamespace(  # type: ignore[attr-defined]
+        envelope={"artifact_digest": "sha256:" + "5" * 64}
+    )
+    client.get_playbill_claim_type = lambda *a, **k: SimpleNamespace(  # type: ignore[attr-defined]
+        artifact_digest="sha256:" + "6" * 64
+    )
+
+    def repin(**kwargs: Any):  # type: ignore[no-untyped-def]
+        return repin_projection_block(
+            client,
+            "inst_projection",
+            workspace=tmp_path,
+            source_id="corpus.runbook",
+            block_id="summary",
+            evaluation_time=NOW,
+            **kwargs,
+        )
+
+    subject = ArtifactIdentity(kind="Subject", name="project.work_item/wi-42")
+    predicate = ArtifactIdentity(kind="ClaimType", name="project.work_item.status")
+    first = repin(
+        claims=("CLM-first",),
+        queries=(("items", {"status": "ready"}),),
+        artifacts=(subject, predicate),
+        currency_policy="require_current",
+        compact=True,
+    )
+    second = repin(claims=("CLM-second",))
+    assert second.currency_policy == "require_current"
+    assert {b.identity.qualified for b in second.backing} == {
+        "Claim:CLM-second",
+        "QueryDefinition:items",
+        subject.qualified,
+        predicate.qualified,
+    }
+    assert next(b for b in second.backing if isinstance(b, ProjectionQueryBackingV1)) == next(
+        b for b in first.backing if isinstance(b, ProjectionQueryBackingV1)
+    )
+    assert repin().backing == second.backing
+    third = repin(claims=(), queries=())
+    assert all(isinstance(b, ProjectionArtifactBackingV1) for b in third.backing)
+    assert repin().backing == third.backing  # artifact-only repin
+    before = source.read_bytes()
+    with pytest.raises(ProjectionRepinError, match="at least one"):
+        repin(artifacts=())
+    assert source.read_bytes() == before
+
+
+def test_old_manifest_bytes_remain_verifiable_after_repin_adds_policy(tmp_path: Path) -> None:
+    from cruxible_client.authoring.projection_package import load_projection_manifests
+    from cruxible_client.contracts.declared_blocks import (
+        ProjectionBlockStampV1,
+        frame_projection_block,
+        projection_manifest,
+    )
+
+    source = _workspace(tmp_path)
+    client = _RepinClient()
+    current = _repin(client, tmp_path, claims=("CLM-first",))
+    old = ProjectionBlockStampV1.model_validate(
+        {
+            k: v
+            for k, v in {
+                **current.model_dump(mode="json"),
+                "tag": "playbill-projection-stamp-v1",
+            }.items()
+            if k != "currency_policy"
+        }
+    )
+    old_digest, old_bytes = projection_manifest(old)
+    assert b"currency_policy" not in old_bytes
+    source.write_bytes(frame_projection_block(stamp=old, body=BODY))
+    repin_projection_block(
+        client,
+        "inst_projection",
+        workspace=tmp_path,
+        source_id="corpus.runbook",
+        block_id="summary",
+        evaluation_time=NOW,
+        currency_policy="require_current",
+        compact=True,
+    )
+    (parsed,) = parse_projection_blocks(
+        source.read_bytes(),
+        source_id="corpus.runbook",
+        manifests=load_projection_manifests(tmp_path, source.read_bytes()),
+    )
+    assert parsed.stamp.tag == "playbill-projection-stamp-v2"
+    assert projection_manifest(old) == (old_digest, old_bytes)
+    (historical,) = parse_projection_blocks(
+        frame_projection_block(stamp=old, body=BODY), source_id="corpus.runbook"
+    )
+    assert projection_manifest(historical.stamp) == (old_digest, old_bytes)

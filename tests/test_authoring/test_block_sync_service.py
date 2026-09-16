@@ -1,18 +1,4 @@
-"""Currency verdicts over a declared block's held backings; nothing converges.
-
-`playbill block sync` used to resolve one Claim backing to the accepted body a
-block had been published from and write that body back into the page. Nothing
-renders a projection block any more -- it is prose an agent wrote, held to an
-explicit list of accepted Claims and artifacts -- so the only question accepted
-state can answer about one is whether every member of that list is still there,
-still live, and still saying what it said. These tests hold the daemon read to
-that verdict, the client to reporting it, and both to leaving every byte of the
-page exactly where the author put it.
-
-The lineage-unreadable row `next` used to raise out of this read has no test
-here, because it has no producer: `_projection_items` no longer consults the
-block-sync read at all, so no failure of that read can reach the repair queue.
-"""
+"""Shared projection currency, integrity, and read-only workspace checks."""
 
 from __future__ import annotations
 
@@ -91,6 +77,11 @@ EVALUATION_TIME = datetime(2026, 8, 21, 13, tzinfo=UTC)
 class _ServiceClient:
     def __init__(self, instance) -> None:  # type: ignore[no-untyped-def]
         self.instance = instance
+
+    def check_playbill_projection_blocks(self, instance_id, *, request):
+        from cruxible_core.service.authoring.projection_sync import service_check_projection_blocks
+
+        return service_check_projection_blocks(self.instance, request=request)
 
     def read_playbill_block_sync_backing(self, instance_id, *, request):  # type: ignore[no-untyped-def]
         assert instance_id == self.instance.descriptor.instance_id
@@ -300,7 +291,7 @@ def _claim_backing(instance: PlaybillInstance, name: str) -> ProjectionClaimBack
     )
 
 
-def test_a_body_only_successor_is_reported_stale_and_no_byte_is_written(
+def test_body_only_successor_is_current_in_both_sync_and_next(
     tmp_path: Path,
 ) -> None:
     """The currency check sees a re-authored Claim the statement check cannot.
@@ -344,8 +335,6 @@ def test_a_body_only_successor_is_reported_stale_and_no_byte_is_written(
     # nothing moved, because `block repin --backing DIGEST` asks this read to
     # name the one artifact it should re-stamp.
     assert settled.backing == stamp.backing[0]
-    assert settled.body_content_base64 is None
-    assert settled.body_digest is None
 
     original = coordinator.store.get(intent_id, actor_id=actor.actor_id)
     _accept_successor(
@@ -362,12 +351,8 @@ def test_a_body_only_successor_is_reported_stale_and_no_byte_is_written(
         instance,
         request=PlaybillBlockSyncReadRequestV1(stamp=stamp),
     )
-    assert moved.status == "successor"
-    assert tuple(item.identity.qualified for item in moved.moved_backings) == (
-        stamp.backing[0].identity.qualified,
-    )
-    assert moved.body_content_base64 is None
-    assert moved.body_digest is None
+    assert moved.status == "current"
+    assert moved.moved_backings == ()
 
     observation, _coordinate = _observe(instance, workspace_root)
     assert not [
@@ -389,17 +374,9 @@ def test_a_body_only_successor_is_reported_stale_and_no_byte_is_written(
     )
 
     (item,) = result.items
-    assert item.outcome == "stale"
-    assert item.reason == "block_backing_changed"
-    assert item.repair == RepairOperationV1(
-        operation="playbill.block.repin",
-        arguments={"source_id": "repo.work-items", "block_id": stamp.block_id},
-    )
-    assert item.detail["moved_backings"] == [stamp.backing[0].identity.qualified]
-    assert item.detail["backing_count"] == 1
-    # A finding this verb cannot repair still has to fail the exit code of the
-    # sync an activation runs as its last step.
-    assert result.has_refusals is True
+    assert item.outcome == "unchanged"
+    assert item.reason is None
+    assert result.has_refusals is False
     assert result.would_change is False
     assert result.changed_file_count == 0
     assert source.read_bytes() == page_before
@@ -450,7 +427,6 @@ def test_a_moved_statement_reaches_next_and_sync_without_either_rewriting_the_pa
         request=PlaybillBlockSyncReadRequestV1(stamp=original_stamp),
     )
     assert current.status == "current"
-    assert current.body_content_base64 is None and current.body_digest is None
 
     original = coordinator.store.get(intent_id, actor_id=actor.actor_id)
     _accept_successor(
@@ -515,7 +491,7 @@ def test_a_moved_statement_reaches_next_and_sync_without_either_rewriting_the_pa
     assert result.items[0].repair == served_repair_for_refusal("block_unstamped")
     assert "explicit --claim or --query" in result.items[0].detail["message"]
     assert result.items[1].reason == "block_backing_changed"
-    assert result.has_refusals is True
+    assert result.has_refusals is False
     assert source.read_bytes() == page_before
 
     content = source.read_bytes()
@@ -565,7 +541,7 @@ def test_a_moved_statement_reaches_next_and_sync_without_either_rewriting_the_pa
         instance,
         request=PlaybillBlockSyncReadRequestV1(stamp=original_stamp),
     )
-    assert ambiguous_read.status == "refused"
+    assert ambiguous_read.status == "unchecked"
     assert ambiguous_read.reason == "block_successor_ambiguous"
     assert len(ambiguous_read.successor_candidates) == 2
     assert [candidate.artifact_digest for candidate in ambiguous_read.successor_candidates] == (
@@ -581,7 +557,7 @@ def test_a_moved_statement_reaches_next_and_sync_without_either_rewriting_the_pa
         workspace=workspace_root,
         paths=(source,),
     )
-    assert ambiguous_sync.items[0].outcome == "refused"
+    assert ambiguous_sync.items[0].outcome == "unchecked"
     assert ambiguous_sync.items[0].reason == "block_successor_ambiguous"
     assert ambiguous_sync.items[0].repair == RepairOperationV1(
         operation="playbill.block.repin",
@@ -693,7 +669,7 @@ def test_a_block_holding_three_claims_reports_one_ordinary_outcome(tmp_path: Pat
     assert source.read_bytes() == page_before
 
 
-def test_a_hand_edited_body_is_dirty_until_accept_local_restamps_it(tmp_path: Path) -> None:
+def test_a_hand_edited_body_is_reported_without_mutating_it(tmp_path: Path) -> None:
     """A body that moved away from its stamp is a finding, never an overwrite.
 
     `--discard-local` used to name the losing side of a convergence: the local
@@ -742,52 +718,9 @@ def test_a_hand_edited_body_is_dirty_until_accept_local_restamps_it(tmp_path: Pa
         arguments={"source_id": "repo.work-items", "block_id": stamp.block_id},
     )
     assert dirty_item.detail["last_synced_body_digest"] == stamp.body_digest
-    assert dirty.has_refusals is True
+    assert dirty.has_refusals is False
     assert source.read_bytes() == edited
     dirty_observation, _dirty_coordinate = _observe(instance, workspace_root)
     assert any(
         item.reason == "projection_dirty" for item in _next(instance, dirty_observation).items
     )
-
-    accepted = sync_projection_blocks(
-        _ServiceClient(instance),  # type: ignore[arg-type]
-        instance.descriptor.instance_id,
-        workspace=workspace_root,
-        paths=(source,),
-        accept_local_paths=(source,),
-    )
-
-    (accepted_item,) = accepted.items
-    assert accepted_item.outcome == "synced"
-    assert accepted_item.reason is None
-    assert accepted_item.detail["local_body_accepted"] is True
-    assert accepted_item.detail["stamped_body_digest"] == stamp.body_digest
-    assert accepted.has_refusals is False
-
-    # The prose is untouched; the stamp moved onto it, and the instance holds
-    # the declaration that records the alignment.
-    restamped = source.read_bytes()
-    (block,) = parse_projection_blocks(restamped, source_id="repo.work-items", allow_bootstrap=True)
-    assert block.stamp is not None
-    assert block.stamp.body_digest == block.body_digest
-    assert block.stamp.backing == stamp.backing
-    assert (
-        b"A maintainer rewrote this paragraph by hand."
-        in (restamped[block.body_start : block.body_end])
-    )
-
-    # A second pass reports it clean, and nothing is left dirty.
-    settled = sync_projection_blocks(
-        _ServiceClient(instance),  # type: ignore[arg-type]
-        instance.descriptor.instance_id,
-        workspace=workspace_root,
-        paths=(source,),
-    )
-    (settled_item,) = settled.items
-    assert settled_item.outcome == "unchanged"
-    assert settled.has_refusals is False
-
-    # The two surfaces agree, which is the point: `next` stopped reporting the
-    # page dirty because the alignment was recorded, not because a flag hid it.
-    observation, _coordinate = _observe(instance, workspace_root)
-    assert all(item.reason != "projection_dirty" for item in _next(instance, observation).items)

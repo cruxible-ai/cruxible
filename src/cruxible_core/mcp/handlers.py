@@ -38,7 +38,7 @@ from cruxible_client.contracts.claim_attestations import (
     PreparedClaimAttestationRequestV1,
 )
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
-from cruxible_client.contracts.declared_blocks import ProjectionBlockStampV1
+from cruxible_client.contracts.declared_blocks import PROJECTION_STAMP_ADAPTER
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
@@ -137,6 +137,11 @@ class _LocalFloorClient:
         if at is not None:  # pragma: no cover - shared refresh always asks for current
             raise DataValidationError("local floor adapter accepts only the current coordinate")
         return playbill_api.playbill_export_floor(instance_id)
+
+    def check_playbill_projection_blocks(
+        self, instance_id: str, *, request: contracts.PlaybillProjectionCheckRequestV1
+    ) -> contracts.PlaybillProjectionCheckResultV1:
+        return playbill_api.playbill_check_projection_blocks(instance_id, request=request)
 
     def read_playbill_block_sync_backing(
         self,
@@ -1129,7 +1134,7 @@ def handle_playbill_block_declare(
     instance_id: str,
     stamp: Mapping[str, Any],
 ) -> contracts.PlaybillBlockDeclareResultV1:
-    parsed = ProjectionBlockStampV1.model_validate(dict(stamp))
+    parsed = PROJECTION_STAMP_ADAPTER.validate_python(dict(stamp))
     return _dispatch_remote_or_local(
         lambda client: client.declare_playbill_block(instance_id, parsed.model_dump(mode="json")),
         lambda: playbill_api.playbill_block_declare(instance_id, parsed),

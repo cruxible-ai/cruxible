@@ -24,6 +24,7 @@ from cruxible_client.contracts.authoring.models import (
     PlaybillBlockSyncItemV1,
     PlaybillBlockSyncReadRequestV1,
     PlaybillBlockSyncResultV1,
+    PlaybillProjectionCheckRequestV1,
 )
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.claims import ClaimStatement, claim_statement_digest
@@ -31,9 +32,12 @@ from cruxible_client.contracts.declared_blocks import (
     MAX_PROJECTION_SCAN_BYTES,
     MAX_PROJECTION_SOURCE_BYTES,
     ParsedProjectionBlock,
+    ProjectionArtifactBackingV1,
     ProjectionBackingV1,
-    ProjectionBlockStampV1,
+    ProjectionBlockStamp,
+    ProjectionBlockStampV2,
     ProjectionClaimBackingV1,
+    ProjectionCurrencyPolicy,
     ProjectionMarkerError,
     ProjectionQueryBackingV1,
     ProjectionResolvedParameterBindingV1,
@@ -284,19 +288,9 @@ def _result(items: Sequence[PlaybillBlockSyncItemV1]) -> PlaybillBlockSyncResult
     )
     return PlaybillBlockSyncResultV1(
         items=ordered,
-        changed_file_count=len(
-            {item.path for item in ordered if item.outcome in {"synced", "detached"}}
-        ),
-        would_change=any(
-            item.outcome in {"synced", "would_sync", "detached", "would_detach"} for item in ordered
-        ),
-        # A stale held list and a hand-edited body are findings this verb
-        # reports and cannot repair, so they count here: the sweep an
-        # activation runs must not answer clean over a page that has drifted
-        # from the state it declares.
-        has_refusals=any(
-            item.outcome in {"refused", "unsyncable", "stale", "dirty"} for item in ordered
-        ),
+        changed_file_count=len({item.path for item in ordered if item.outcome == "detached"}),
+        would_change=any(item.outcome in {"detached", "would_detach"} for item in ordered),
+        has_refusals=any(item.blocking for item in ordered),
     )
 
 
@@ -499,17 +493,42 @@ def _sync_item_from_read_refusal(
     path: str,
     source_id: str,
     block_id: str,
+    stamp: ProjectionBlockStamp,
     read: object,
 ) -> PlaybillBlockSyncItemV1:
     reason = getattr(read, "reason", None)
     detail = getattr(read, "detail", None)
-    values: dict[str, object] = {"message": detail or "block sync read refused"}
+    values: dict[str, object] = {
+        "message": detail or "block sync read refused",
+        "issues": [i.model_dump(mode="json") for i in getattr(read, "issues", ())],
+        "moved_backings": [b.identity.qualified for b in getattr(read, "moved_backings", ())],
+        "assessment_status": getattr(read, "status", None),
+    }
     repair: ServedRepairV1 | None
     if reason == "block_backing_retired":
-        repair = RepairOperationV1(
-            operation="playbill.block.sync",
-            arguments={"paths": [path], "detach": True},
-        )
+        retired = {
+            i.identity.qualified
+            for i in getattr(read, "issues", ())
+            if i.reason == "block_backing_retired"
+        }
+        if retired and len(retired) < len(stamp.backing):
+            surviving_claims = [
+                b.identity.name
+                for b in stamp.backing
+                if isinstance(b, ProjectionClaimBackingV1) and b.identity.qualified not in retired
+            ]
+            repair = RepairOperationV1(
+                operation="playbill.block.repin",
+                arguments={
+                    "source_id": source_id,
+                    "block_id": block_id,
+                    **({"claim": surviving_claims} if surviving_claims else {"clear_claims": True}),
+                },
+            )
+        else:
+            repair = RepairOperationV1(
+                operation="playbill.block.sync", arguments={"paths": [path], "detach": True}
+            )
     elif reason == "block_successor_ambiguous":
         candidates = getattr(read, "successor_candidates", ())
         values["successor_candidates"] = [
@@ -531,6 +550,7 @@ def _sync_item_from_read_refusal(
         "block_backing_changed": "block_backing_changed",
         "block_backing_retired": "block_backing_retired",
         "block_successor_ambiguous": "block_successor_ambiguous",
+        "block_query_unchecked": "block_query_unchecked",
     }
     reason_key = reason if isinstance(reason, str) else ""
     local_reason = mapped.get(reason_key, "block_backing_changed")
@@ -539,94 +559,14 @@ def _sync_item_from_read_refusal(
             "path": path,
             "source_id": source_id,
             "block_id": block_id,
-            "outcome": "refused" if getattr(read, "status", None) == "refused" else "unsyncable",
+            "outcome": {"refused": "refused", "unchecked": "unchecked"}.get(
+                str(getattr(read, "status", "")), "stale"
+            ),
             "reason": local_reason,
             "repair": None if repair is None else repair.model_dump(mode="python"),
             "detail": values,
         }
     )
-
-
-def _apply_projection_restamps(
-    client: CruxibleClient,
-    instance_id: str,
-    *,
-    items: list[PlaybillBlockSyncItemV1],
-    root: Path,
-    path: Path,
-    relative: str,
-    source_id: str,
-    content: bytes,
-    restamps: Sequence[tuple["ParsedProjectionBlock", ProjectionBlockStampV1, int]],
-    check: bool,
-) -> None:
-    """Re-stamp accepted blocks in one page, replacing opening lines and nothing else.
-
-    Every byte outside the opening markers is proved untouched, exactly as the
-    detach path proves it, and each stamp is declared to the instance after the
-    write -- a registration for a marker that never landed would be a lie in
-    the other direction.
-    """
-
-    manifests = load_projection_manifests(root, content)
-    replacement = content
-    for block, stamp, _index in sorted(
-        restamps, key=lambda item: item[0].opening_start, reverse=True
-    ):
-        compact = b":ref:sha256:" in content[block.opening_start : block.opening_end]
-        if compact:
-            digest, manifest = projection_manifest(stamp)
-            manifests[digest] = manifest
-        replacement = (
-            replacement[: block.opening_start]
-            + (
-                render_compact_projection_opening(stamp)
-                if compact
-                else render_projection_opening(stamp)
-            )
-            + replacement[block.opening_end :]
-        )
-    manifests = {key: manifests[key] for key in projection_manifest_refs(replacement)}
-    try:
-        for _block, stamp, _index in restamps:
-            assert_projection_block_frame(
-                replacement,
-                source_id=source_id,
-                block_id=stamp.block_id,
-                stamp=stamp,
-                body_digest=stamp.body_digest,
-                allow_bootstrap=True,
-                manifests=manifests,
-            )
-    except ProjectionMarkerError as exc:
-        for _block, _stamp, index in restamps:
-            items[index] = PlaybillBlockSyncItemV1(
-                path=relative,
-                source_id=source_id,
-                block_id=items[index].block_id,
-                outcome="refused",
-                reason="block_frame_invalid",
-                detail={"message": str(exc)},
-            )
-        return
-    if check:
-        return
-    retain_local_manifests(root, manifests)
-    try:
-        replace_publication_file(path, expected=content, replacement=replacement)
-    except PlaybillInsertionApplyError as exc:
-        for _block, _stamp, index in restamps:
-            items[index] = PlaybillBlockSyncItemV1(
-                path=relative,
-                source_id=source_id,
-                block_id=items[index].block_id,
-                outcome="refused",
-                reason="block_concurrent_edit",
-                detail={"message": str(exc)},
-            )
-        return
-    for _block, stamp, _index in restamps:
-        client.declare_playbill_block(instance_id, stamp.model_dump(mode="json"))
 
 
 def sync_projection_blocks(
@@ -638,27 +578,8 @@ def sync_projection_blocks(
     all_sources: bool = False,
     check: bool = False,
     detach_paths: Sequence[str | Path] = (),
-    accept_local_paths: Sequence[str | Path] = (),
 ) -> PlaybillBlockSyncResultV1:
-    """Report whether each declared block still reads as its stamp says.
-
-    This verb used to converge a single-Claim block to the accepted body it was
-    published from. Nothing renders now, so it converges nothing: every block is
-    reported `unchanged`, `stale` (a held backing moved) or `dirty` (the prose
-    moved away from the stamp), and refusals are unchanged. `--check` is
-    therefore the behaviour by default and the flag changes only the two edits
-    left -- `--detach`, which strips the marker pair of a block whose backing is
-    retired or whose host this worktree has left, and `--accept-local`, which
-    says the prose in the page is the block and re-stamps the block on it.
-
-    `--accept-local` writes, and has to: under this model the stamp is the
-    alignment proof, so silencing a `dirty` row without re-stamping would assert
-    an alignment nobody recorded -- and `next` would go on reporting
-    `projection_dirty` over the same state. The re-stamp keeps the held list and
-    the declared coordinate exactly as they were and moves only the body digest,
-    then records the declaration, because the only thing being accepted is the
-    prose.
-    """
+    """Check all dependencies without authoring prose. Only explicit detach edits files."""
 
     root = Path(workspace).expanduser().resolve()
     try:
@@ -771,11 +692,8 @@ def sync_projection_blocks(
                     )
                     continue
                 selected[source.path] = source.source_id
-    accept_local = {
-        (Path(path) if Path(path).is_absolute() else root / path).expanduser().resolve()
-        for path in accept_local_paths
-    }
     detach = bool(detach_paths)
+    prepared: list[tuple[Path, str, bytes, tuple[ParsedProjectionBlock, ...]]] = []
     for path, source_id in sorted(selected.items(), key=lambda item: item[1].encode("utf-8")):
         relative = _relative_path(root, path)
         content = b""
@@ -818,10 +736,26 @@ def sync_projection_blocks(
                 continue
             items.append(_marker_error_item(root=root, path=path, content=content, error=exc))
             continue
+        prepared.append((path, source_id, content, tuple(blocks)))
+    stamps = tuple(
+        block.stamp for _, _, _, blocks in prepared for block in blocks if block.stamp is not None
+    )
+    checked = (
+        client.check_playbill_projection_blocks(
+            instance_id, request=PlaybillProjectionCheckRequestV1(stamps=stamps)
+        )
+        if stamps
+        else None
+    )
+    if checked is not None and len(checked.results) != len(stamps):
+        raise ProjectionSyncError("projection check returned an incomplete batch")
+    results = iter(() if checked is None else checked.results)
+    for path, source_id, content, blocks in prepared:
+        file_item_start = len(items)
+        relative = _relative_path(root, path)
         replacements: dict[str, bytes] = {}
         changed_item_indexes: list[int] = []
         original_spans: list[tuple[int, int]] = []
-        restamps: list[tuple[ParsedProjectionBlock, ProjectionBlockStampV1, int]] = []
         for block in blocks:
             stamp = block.stamp
             if stamp is None:
@@ -842,37 +776,6 @@ def sync_projection_blocks(
                 )
                 continue
             if not detach and block.body_digest != stamp.body_digest:
-                # The prose moved away from what the stamp committed. Nothing
-                # renders a block, so there is no accepted body to put back:
-                # this is a finding about the page, and the repair is to read
-                # the block against its backings and re-stamp what it now says.
-                # `--accept-local` discards nothing -- it says the local body
-                # IS the block, and records that by re-stamping the block on it.
-                # Reporting `unchanged` without writing would claim an
-                # alignment nothing proved, while `next` went on reporting the
-                # same page dirty.
-                if path in accept_local:
-                    restamps.append(
-                        (
-                            block,
-                            stamp.model_copy(update={"body_digest": block.body_digest}),
-                            len(items),
-                        )
-                    )
-                    items.append(
-                        PlaybillBlockSyncItemV1(
-                            path=relative,
-                            source_id=source_id,
-                            block_id=block.block_id,
-                            outcome="would_sync" if check else "synced",
-                            detail={
-                                "local_body_accepted": True,
-                                "stamped_body_digest": stamp.body_digest,
-                                "observed_body_digest": block.body_digest,
-                            },
-                        )
-                    )
-                    continue
                 items.append(
                     PlaybillBlockSyncItemV1(
                         path=relative,
@@ -890,11 +793,7 @@ def sync_projection_blocks(
                         },
                     )
                 )
-                continue
-            read = client.read_playbill_block_sync_backing(
-                instance_id,
-                request=PlaybillBlockSyncReadRequestV1(stamp=stamp),
-            )
+            read = next(results)
             if read.status not in {"current", "successor"}:
                 # A foreign block is the case --detach exists for. Stripping a
                 # marker pair and keeping the body between them is a purely
@@ -906,10 +805,19 @@ def sync_projection_blocks(
                 # to the host that published the markers -- which is the exact
                 # opposite of what they were doing, and one hand-written
                 # stripper as the only way through.
-                detachable = detach and read.reason in {
-                    "block_backing_retired",
-                    "block_workspace_instance_mismatch",
-                }
+                detachable = detach and (
+                    read.reason == "block_workspace_instance_mismatch"
+                    or (
+                        read.reason == "block_backing_retired"
+                        and (
+                            not read.issues
+                            or (
+                                len(read.issues) == len(stamp.backing)
+                                and all(i.reason == "block_backing_retired" for i in read.issues)
+                            )
+                        )
+                    )
+                )
                 if detachable:
                     replacement = content[block.body_start : block.body_end]
                     replacements[block.block_id] = replacement
@@ -942,6 +850,7 @@ def sync_projection_blocks(
                             source_id=source_id,
                             block_id=block.block_id,
                             read=read,
+                            stamp=stamp,
                         )
                     )
                 continue
@@ -955,6 +864,8 @@ def sync_projection_blocks(
                         detail={"message": "live blocks are not detached"},
                     )
                 )
+                continue
+            if read.status == "current" and block.body_digest != stamp.body_digest:
                 continue
             if read.status == "current":
                 items.append(
@@ -994,23 +905,13 @@ def sync_projection_blocks(
                     },
                 )
             )
-        # The two writes cannot meet on one file: a `--detach` run never takes
-        # the accept-local branch (it is gated on `not detach`), and detachment
-        # is the only thing that fills `replacements`. So each pass reads the
-        # bytes it parsed, and neither shifts the other's offsets.
-        if restamps:
-            _apply_projection_restamps(
-                client,
-                instance_id,
-                items=items,
-                root=root,
-                path=path,
-                relative=relative,
-                source_id=source_id,
-                content=content,
-                restamps=restamps,
-                check=check,
-            )
+        policies = {b.block_id: b.stamp.currency_policy for b in blocks if b.stamp is not None}
+        items[file_item_start:] = [
+            item.model_copy(update={"currency_policy": policies[item.block_id]})
+            if item.path == relative and item.block_id in policies
+            else item
+            for item in items[file_item_start:]
+        ]
         if not replacements:
             continue
         replacement = content
@@ -1094,14 +995,16 @@ def repin_projection_block(
     workspace: str | Path,
     source_id: str,
     block_id: str,
-    claims: Sequence[str] = (),
-    queries: Sequence[tuple[str, Mapping[str, object]]] = (),
+    claims: Sequence[str] | None = None,
+    queries: Sequence[tuple[str, Mapping[str, object]]] | None = None,
+    artifacts: Sequence[ArtifactIdentity] | None = None,
+    currency_policy: ProjectionCurrencyPolicy | None = None,
     backing_digest: str | None = None,
     evaluation_time: datetime,
     coordinate: AcceptedCoordinate | None = None,
     body: bytes | None = None,
     compact: bool = False,
-) -> ProjectionBlockStampV1:
+) -> ProjectionBlockStampV2:
     """Repin one block, optionally installing explicitly supplied agent-authored body bytes.
 
     Omitted body preserves prose. Compact references are retained locally before
@@ -1127,26 +1030,30 @@ def repin_projection_block(
     if block is None:
         raise ProjectionRepinError(f"source {source_id!r} has no block {block_id!r}")
 
-    claim_refs = tuple(claims)
-    query_refs = tuple(queries)
-    if backing_digest is not None and (claim_refs or query_refs):
-        raise ProjectionRepinError("--backing cannot be combined with Claim or Query refs")
-    if not claim_refs and not query_refs:
-        if block.stamp is None:
-            raise ProjectionRepinError("the first block declaration requires explicit backing refs")
-        claim_refs = tuple(
-            item.identity.name
-            for item in block.stamp.backing
-            if isinstance(item, ProjectionClaimBackingV1)
+    previous = () if block.stamp is None else block.stamp.backing
+    claim_refs = (
+        tuple(claims)
+        if claims is not None
+        else tuple(b.identity.name for b in previous if isinstance(b, ProjectionClaimBackingV1))
+    )
+    query_refs = (
+        tuple(queries)
+        if queries is not None
+        else tuple(
+            (b.identity.name, {p.name: p.value for p in b.resolved_parameter_bindings})
+            for b in previous
+            if isinstance(b, ProjectionQueryBackingV1)
         )
-        query_refs = tuple(
-            (
-                item.identity.name,
-                {binding.name: binding.value for binding in item.resolved_parameter_bindings},
-            )
-            for item in block.stamp.backing
-            if isinstance(item, ProjectionQueryBackingV1)
-        )
+    )
+    artifact_refs = (
+        tuple(artifacts)
+        if artifacts is not None
+        else tuple(b.identity for b in previous if isinstance(b, ProjectionArtifactBackingV1))
+    )
+    if backing_digest is not None and any(x is not None for x in (claims, queries, artifacts)):
+        raise ProjectionRepinError("--backing cannot be combined with replacement backing refs")
+    if not claim_refs and not query_refs and not artifact_refs:
+        raise ProjectionRepinError("a block declaration requires at least one explicit backing")
 
     if backing_digest is not None:
         if block.stamp is None:
@@ -1156,9 +1063,11 @@ def repin_projection_block(
             request=PlaybillBlockSyncReadRequestV1(
                 stamp=block.stamp,
                 preferred_successor_digest=backing_digest,
+                at=coordinate,
+                evaluation_time=instant,
             ),
         )
-        if selected.status not in {"current", "successor"} or selected.backing is None:
+        if selected.status not in {"current", "successor"} or not selected.current_backings:
             raise ProjectionRepinError(
                 selected.detail or "the requested backing digest is not a live successor"
             )
@@ -1166,7 +1075,7 @@ def repin_projection_block(
         assert selected.generation is not None
         active = selected.coordinate
         generation = selected.generation
-        backing: list[ProjectionBackingV1] = [selected.backing]
+        backing: list[ProjectionBackingV1] = list(selected.current_backings)
     else:
         orientation = client.search_playbill(
             instance_id,
@@ -1208,16 +1117,34 @@ def repin_projection_block(
             )
             for name, parameters in query_refs
         )
+        for identity in artifact_refs:
+            if identity.kind == "ClaimType":
+                type_view = client.get_playbill_claim_type(
+                    instance_id, identity.name, at=active.model_dump(mode="json")
+                )
+                artifact_digest = type_view.artifact_digest
+            elif identity.kind == "Subject" and "/" in identity.name:
+                kind, name = identity.name.split("/", 1)
+                subject_view = client.get_playbill_subject(
+                    instance_id, kind, name, at=active.model_dump(mode="json")
+                )
+                artifact_digest = str(subject_view.envelope["artifact_digest"])
+            else:
+                raise ProjectionRepinError("artifact backing must be a Subject or ClaimType")
+            backing.append(
+                ProjectionArtifactBackingV1(identity=identity, artifact_digest=artifact_digest)
+            )
     body_content = content[block.body_start : block.body_end] if body is None else body
     if not body_content.endswith(b"\n"):
         raise ProjectionRepinError("projection body must end with LF")
-    stamp = ProjectionBlockStampV1(
+    stamp = ProjectionBlockStampV2(
         source_id=source_id,
         block_id=block_id,
         declared_generation=generation,
         declared_coordinate=active,
         backing=tuple(sorted(backing, key=lambda item: item.identity.qualified.encode("utf-8"))),
         body_digest=_digest(body_content),
+        currency_policy=currency_policy or (block.stamp.currency_policy if block.stamp else "warn"),
     )
     compact = compact or b":ref:sha256:" in content[block.opening_start : block.opening_end]
     manifests = load_projection_manifests(root, content)

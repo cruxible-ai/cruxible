@@ -19,6 +19,7 @@ from cruxible_client.contracts import (
 )
 from cruxible_client.contracts.accepted_attestations import AcceptedClaimAttestationEvidenceV1
 from cruxible_client.contracts.artifacts import parse_artifact_identity
+from cruxible_client.contracts.authoring.models import PlaybillBlockSyncReadRequestV1
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
     Sha256Value,
@@ -67,11 +68,7 @@ from cruxible_client.contracts.declared_blocks import (
     PlaybillPresentationPolicyNoteV1,
     PlaybillPresentationPolicyV1,
     PlaybillProjectionCoverageObservationV1,
-    ProjectionArtifactBackingV1,
-    ProjectionClaimBackingV1,
     ProjectionMarkerSummaryV1,
-    ProjectionQueryBackingV1,
-    projection_query_semantic_result_digest,
     upgrade_playbill_presentation_policy,
 )
 from cruxible_client.contracts.documents import document_path, parse_document
@@ -79,7 +76,6 @@ from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityErr
 from cruxible_client.contracts.query.definitions import QueryEvaluationPolicyV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
-from cruxible_client.contracts.subjects import parse_subject, subject_digest, subject_path
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.claims.claim_slots import classify_claim_slot
 from cruxible_core.coverage.contracts import (
@@ -97,7 +93,6 @@ from cruxible_core.evidence.citation_relations import (
 from cruxible_core.indexes.evidence.citation_sql import CitationSourceUse
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.query.backends import claim_row_visibility
-from cruxible_core.query.engine import evaluate_claim_query
 from cruxible_core.query.impact import (
     SOURCE_CONTRADICTED,
     SOURCE_SUPERSEDED,
@@ -106,6 +101,7 @@ from cruxible_core.query.impact import (
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.authoring.projection_sync import ProjectionCheckContext
 from cruxible_core.service.claims.claims import (
     CaptureAdmissionAccountV1,
     _claim_admission_accounts,
@@ -119,7 +115,6 @@ from cruxible_core.service.discovery.query import (
     _AcceptedQueryFactsRead,
     build_accepted_query_facts,
 )
-from cruxible_core.service.discovery.query_definitions import accepted_query_definition
 from cruxible_core.service.discovery.search import claim_resolution_statuses
 from cruxible_core.service.evidence.evidence import (
     ClaimVerdictReadContext,
@@ -2869,31 +2864,6 @@ def _registrations_released_by_retirement(
     return frozenset(released)
 
 
-def _query_row_claim_identities(result: object) -> frozenset[str]:
-    """Every Claim a query result was read through, as qualified identities.
-
-    A watched query's rows are candidates for a block's held list, and the only
-    identity a held list can carry is an artifact's. A row names the Claims it
-    was read through, so those are the rows a repin could hold.
-    """
-
-    identities: set[str] = set()
-    for row in getattr(result, "rows", ()):
-        visibilities = list(getattr(row, "read_claims", ()))
-        relation = getattr(row, "relation_claim", None)
-        if relation is not None:
-            visibilities.append(relation)
-        visibilities.extend(getattr(row, "path", ()))
-        for visibility in visibilities:
-            path = getattr(visibility, "claim_path", None)
-            if not isinstance(path, str):
-                continue
-            name = path.rsplit("/", 1)[-1].removesuffix(".json")
-            if name:
-                identities.add(f"Claim:{name}")
-    return frozenset(identities)
-
-
 def _projection_marker_invalid_item(
     *,
     source_id: str,
@@ -2947,8 +2917,9 @@ def _projection_items(
     observation: PlaybillNextWorkspaceObservationV1 | None,
     verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
     facts_reader: _AcceptedQueryFactsRead | None = None,
+    resolution_statuses: Mapping[str, str] | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
-    """Evaluate locally declared blocks only after every backing is visible."""
+    """Report shared currency assessments without suppressing sibling findings."""
 
     if (
         observation is None
@@ -3009,20 +2980,14 @@ def _projection_items(
     if not sources:
         return tuple(items)
 
-    facts = (
-        build_accepted_query_facts(instance, coordinate=coordinate)
-        if facts_reader is None
-        else facts_reader.build()
-    )
-    subjects = {subject.path: subject for subject in facts.subjects}
-    providers = {provider.identity.qualified: provider for provider in facts.providers}
-    claims = {row.accepted.claim.identity.qualified: row for row in facts.claims}
-    resolution_statuses = claim_resolution_statuses(
+    checks = ProjectionCheckContext(
         instance,
-        claims=tuple(row.accepted.claim for row in facts.claims),
-        at=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        coordinate=coordinate,
         evaluation_time=evaluation_time,
+        stamps=tuple(marker.stamp for source in sources for marker in source.marker_summaries),
+        facts_reader=facts_reader,
         verdicts_by_identity=verdicts_by_identity,
+        resolution_statuses=resolution_statuses,
     )
     for source in sources:
         for marker in source.marker_summaries:
@@ -3054,106 +3019,21 @@ def _projection_items(
                         ),
                     )
                 )
-            visible = True
-            stale: list[str] = []
-            retired: list[str] = []
-            overturned: list[str] = []
-            watched: str | None = None
-            candidates: frozenset[str] | None = None
-            for backing in marker.stamp.backing:
-                if isinstance(backing, ProjectionClaimBackingV1):
-                    claim = claims.get(backing.identity.qualified)
-                    if claim is None:
-                        path = claim_path(backing.identity.name)
-                        raw = tree.get(path)
-                        if (
-                            raw is not None
-                            and parse_claim(raw, path=path).lifecycle.state == "retired"
-                        ):
-                            retired.append(backing.identity.qualified)
-                            continue
-                        visible = False
-                        break
-                    if (
-                        claim_row_visibility(
-                            claim,
-                            subject=subjects.get(claim.subject_path),
-                            providers=providers,
-                            policy=_PROJECTION_VISIBILITY_POLICY,
-                            evaluation_time=evaluation_time,
-                        )
-                        is None
-                    ):
-                        visible = False
-                        break
-                    if resolution_statuses[claim.accepted.claim.identity.name] == "overturned":
-                        overturned.append(backing.identity.qualified)
-                        continue
-                    if claim.accepted.statement_digest != backing.statement_digest:
-                        stale.append(backing.identity.qualified)
-                elif isinstance(backing, ProjectionQueryBackingV1):
-                    try:
-                        definition = accepted_query_definition(
-                            instance,
-                            name=backing.identity.name,
-                            coordinate=coordinate,
-                        )
-                        result = evaluate_claim_query(
-                            definition,
-                            facts=facts,
-                            coordinate=coordinate,
-                            evaluation_time=evaluation_time,
-                            parameters={
-                                item.name: item.value
-                                for item in backing.resolved_parameter_bindings
-                            },
-                        )
-                    except (PlaybillError, ValueError):
-                        visible = False
-                        break
-                    if result.verdict != "completed" or result.truncation.clipped_budgets:
-                        visible = False
-                        break
-                    if projection_query_semantic_result_digest(result) != (
-                        backing.semantic_result_digest
-                    ):
-                        # A watched query is not a member of the held list: it
-                        # SURFACES candidates for it. Its result moving is not
-                        # the block falling out of date with what it holds, so
-                        # it is reported as candidates that changed and never
-                        # as a stale backing.
-                        watched = backing.identity.qualified
-                        candidates = _query_row_claim_identities(result)
-                elif isinstance(backing, ProjectionArtifactBackingV1):
-                    try:
-                        if backing.identity.kind == "ClaimType":
-                            path = claim_type_path(backing.identity.name)
-                            raw = tree[path]
-                            claim_type = parse_claim_type(raw, path=path)
-                            artifact_identity = claim_type.identity
-                            digest = claim_type_digest(claim_type).tagged
-                        else:
-                            subject_kind, separator, subject_id = backing.identity.name.partition(
-                                "/"
-                            )
-                            if not separator:
-                                raise ValueError("Subject identity has no kind separator")
-                            path = subject_path(subject_kind, subject_id)
-                            raw = tree[path]
-                            subject = parse_subject(raw, path=path)
-                            artifact_identity = subject.identity
-                            digest = subject_digest(subject).tagged
-                    except (KeyError, PlaybillError, ValueError):
-                        visible = False
-                        break
-                    if artifact_identity != backing.identity:
-                        visible = False
-                        break
-                    if digest != backing.artifact_digest:
-                        stale.append(backing.identity.qualified)
-
-            if not visible:
-                continue
+            assessment = checks.read(PlaybillBlockSyncReadRequestV1(stamp=marker.stamp))
+            severity: NextSeverity = (
+                "blocking" if marker.stamp.currency_policy == "require_current" else "warning"
+            )
+            stale = [b.identity.qualified for b in assessment.moved_backings]
+            retired = [
+                i.identity.qualified
+                for i in assessment.issues
+                if i.reason == "block_backing_retired"
+            ]
+            overturned = [
+                i.identity.qualified
+                for i in assessment.issues
+                if i.detail == "Claim has been overturned"
+            ]
             target = f"{source.source_id}#{marker.stamp.block_id}"
             identities = tuple(
                 sorted(
@@ -3162,58 +3042,40 @@ def _projection_items(
                 )
             )
             arguments = {"source_id": source.source_id, "block_id": marker.stamp.block_id}
-            if watched is not None and candidates is not None:
-                # The stamp commits the query's result DIGEST, not its rows, so
-                # the delta is named against the list the block actually holds:
-                # what the query now returns and the block does not hold, and
-                # what the block holds and the query no longer returns. Those
-                # are the two things an agent can act on.
-                held_claims = frozenset(
-                    backing.identity.qualified
-                    for backing in marker.stamp.backing
-                    if isinstance(backing, ProjectionClaimBackingV1)
-                )
-                entered = tuple(
-                    sorted(candidates - held_claims, key=lambda value: value.encode("utf-8"))
-                )
-                left = tuple(
-                    sorted(held_claims - candidates, key=lambda value: value.encode("utf-8"))
-                )
+            unresolved = tuple(
+                i for i in assessment.issues if i.identity.qualified not in retired + overturned
+            )
+            if unresolved or (assessment.status == "refused" and not assessment.issues):
                 items.append(
                     _item(
-                        severity="warning",
-                        reason="projection_candidates_changed",
+                        severity="blocking" if assessment.status == "refused" else severity,
+                        reason="projection_backing_stale",
                         subject_identity=target,
-                        related_identities=tuple(
-                            sorted(
-                                set(entered) | set(left),
-                                key=lambda value: value.encode("utf-8"),
-                            )
-                        ),
+                        related_identities=tuple(i.identity.qualified for i in unresolved),
                         detail={
                             "source_id": source.source_id,
                             "block_id": marker.stamp.block_id,
-                            "watched_query": watched,
-                            "entered": list(entered),
-                            "left": list(left),
-                            # Two spellings of one verb. Repinning WITH the
-                            # entered rows holds them; repinning without them
-                            # re-stamps the new result digest, which is the
-                            # agent saying no to them on the record.
-                            "decline_by": "playbill block repin without --claim",
+                            "backing_state": "unchecked"
+                            if assessment.status == "unchecked"
+                            else "invalid"
+                            if assessment.status == "refused"
+                            else "missing",
+                            "issues": [i.model_dump(mode="json") for i in unresolved],
+                            "message": assessment.detail,
+                            "currency_policy": marker.stamp.currency_policy,
                         },
                         repair=PlaybillNextRepairV1(
                             operation="playbill.block.repin",
                             target=target,
-                            required_change="hold_or_decline_the_entered_candidates",
-                            arguments={**arguments, "claim": list(entered)},
+                            required_change="restore_dependency_check_then_review_and_repin",
+                            arguments=arguments,
                         ),
                     )
                 )
             if marker.observed_body_digest != marker.stamp.body_digest:
                 items.append(
                     _item(
-                        severity="repair",
+                        severity=severity,
                         reason="projection_dirty",
                         subject_identity=target,
                         related_identities=identities,
@@ -3236,11 +3098,7 @@ def _projection_items(
             # that member and re-authors the prose around the rest. Releasing
             # the whole registration is right only when there is nothing left
             # to hold -- when every held member has retired or been overturned.
-            held_members = frozenset(
-                backing.identity.qualified
-                for backing in marker.stamp.backing
-                if not isinstance(backing, ProjectionQueryBackingV1)
-            )
+            held_members = frozenset(backing.identity.qualified for backing in marker.stamp.backing)
             gone = frozenset(retired) | frozenset(overturned)
             surviving = tuple(sorted(held_members - gone, key=lambda value: value.encode("utf-8")))
             exhausted = bool(held_members) and not surviving
@@ -3253,7 +3111,7 @@ def _projection_items(
                 related = tuple(sorted(moved, key=lambda value: value.encode("utf-8")))
                 items.append(
                     _item(
-                        severity="repair",
+                        severity=severity,
                         reason="projection_backing_stale",
                         subject_identity=target,
                         related_identities=related,
@@ -3283,7 +3141,17 @@ def _projection_items(
                                 operation="playbill.block.repin",
                                 target=target,
                                 required_change=f"drop_the_{change}_backing_then_repin",
-                                arguments={**arguments, "claim": list(surviving)},
+                                arguments={
+                                    **arguments,
+                                    "claim": [
+                                        x.removeprefix("Claim:")
+                                        for x in surviving
+                                        if x.startswith("Claim:")
+                                    ],
+                                    "clear_claims": not any(
+                                        x.startswith("Claim:") for x in surviving
+                                    ),
+                                },
                             )
                         ),
                     )
@@ -3292,7 +3160,7 @@ def _projection_items(
                 related = tuple(sorted(stale, key=lambda value: value.encode("utf-8")))
                 items.append(
                     _item(
-                        severity="repair",
+                        severity=severity,
                         reason="projection_backing_stale",
                         subject_identity=target,
                         related_identities=related,
@@ -3347,6 +3215,7 @@ def service_playbill_next(
     # fresh reader so body availability and other mutable evidence are observed.
     facts_reader = _AcceptedQueryFactsRead(instance, coordinate=coordinate)
     parsed_claims: tuple[ClaimArtifactAny, ...] | None = None
+    resolution_statuses: Mapping[str, str] | None = None
     try:
         parsed_claims = tuple(
             _claim_from_view(view)
@@ -3354,7 +3223,7 @@ def service_playbill_next(
                 instance, at=public_coordinate, include_retired=True
             ).claims
         )
-        claim_resolution_statuses(
+        resolution_statuses = claim_resolution_statuses(
             instance,
             claims=parsed_claims,
             at=public_coordinate,
@@ -3412,6 +3281,7 @@ def service_playbill_next(
                     observation=request.workspace_observation,
                     verdicts_by_identity=verdicts_by_identity,
                     facts_reader=facts_reader,
+                    resolution_statuses=resolution_statuses,
                 ),
                 *_procedure_projection_items(
                     instance,

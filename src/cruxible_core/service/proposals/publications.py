@@ -23,7 +23,7 @@ from cruxible_client.contracts import (
     PlaybillBlockDepublishResultV1,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.declared_blocks import ProjectionBlockStampV1
+from cruxible_client.contracts.declared_blocks import ProjectionBlockStamp
 from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
 from cruxible_core.authoring.registrations import (
     BoundPublicationRegistration,
@@ -50,7 +50,7 @@ def service_declare_playbill_block(
     instance: PlaybillInstance,
     *,
     actor_id: str,
-    stamp: ProjectionBlockStampV1,
+    stamp: ProjectionBlockStamp,
     declared_at: str,
 ) -> PlaybillBlockDeclareResultV1:
     """Register one projection block the workspace just stamped.
@@ -100,7 +100,7 @@ def service_declare_playbill_block(
     )
 
 
-def projection_block_stamp_digest(stamp: ProjectionBlockStampV1) -> str:
+def projection_block_stamp_digest(stamp: ProjectionBlockStamp) -> str:
     """The declaration's fingerprint of the marker it was taken from."""
 
     return "sha256:" + hashlib.sha256(canonical_bytes(stamp.model_dump(mode="json"))).hexdigest()

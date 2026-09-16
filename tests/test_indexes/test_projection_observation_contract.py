@@ -105,7 +105,6 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         # A watched query surfaces CANDIDATES for a block's held list; its
         # result moving is not the block falling out of date with what it
         # holds, so it is its own row rather than a stale backing.
-        "projection_candidates_changed",
         "projection_marker_invalid",
         "claim_dependency_stale",
         "claim_attestation_threshold_met",

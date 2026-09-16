@@ -90,7 +90,6 @@ from cruxible_core.service.proposals.publications import (
 )
 from tests.core_support._claim_authoring_support import service_propose_playbill_claim
 from tests.core_support._knowledge_loop_support import (
-    QUERY_NAME,
     TIMESTAMP,
     activate,
     authoring,
@@ -304,7 +303,7 @@ def _synthetic_query_backing(name: str) -> ProjectionQueryBackingV1:
 
 
 # --------------------------------------------------------------------------
-# A block holds a list and watches at most one query.
+# A block holds a list and binds at most one query.
 # --------------------------------------------------------------------------
 
 
@@ -352,7 +351,7 @@ def test_a_block_holds_a_list_and_watches_one_query_through_a_render_and_a_read(
         reason="projection_backing_stale",
     )
     assert row.related_identities == (moved.identity.qualified,)
-    assert row.detail["stale_backings"] == [moved.identity.qualified]  # type: ignore[index]
+    assert row.detail["backing_state"] == "invalid"  # type: ignore[index]
 
 
 def test_a_block_refuses_a_second_watched_query_at_the_model(
@@ -372,7 +371,7 @@ def test_a_block_refuses_a_second_watched_query_at_the_model(
     one = _synthetic_query_backing("project.first_items")
     other = _synthetic_query_backing("project.second_items")
 
-    with pytest.raises(ValidationError, match="watches at most one query"):
+    with pytest.raises(ValidationError, match="binds at most one query"):
         ProjectionBlockStampV1(
             source_id="corpus.runbook",
             block_id="held-rows",
@@ -442,104 +441,6 @@ def test_a_held_list_is_sized_for_a_real_table_and_still_bounded(
 
     with pytest.raises(ValidationError, match="at most 512 items"):
         stamp(MAX_PROJECTION_BACKINGS_PER_BLOCK + 1)
-
-
-# --------------------------------------------------------------------------
-# A moved watched query is a candidate delta, never a stale member.
-# --------------------------------------------------------------------------
-
-
-def test_a_row_entering_a_watched_query_is_reported_as_a_candidate_not_a_stale_backing(
-    watched_world: WatchedWorld,
-) -> None:
-    """A query result that moved is news about the world, not damage to the block.
-
-    A watched query is not a member of the held list: it surfaces candidates for
-    it. Reporting its movement as a stale backing said the block had fallen out
-    of date with something it holds, and named a repair -- re-read the prose
-    against the new state and re-stamp -- for prose that may be exactly right.
-    What actually happened is that a governed row the author has never ruled on
-    now qualifies, so the row has to name that Claim and ask for a decision:
-    hold it, or decline it on the record. The delta is computed against the list
-    the block HOLDS, because that is the only thing an author can act on.
-    """
-
-    instance = watched_world.instance
-    request = _request(
-        instance,
-        backing=(*watched_world.held, watched_world.stamped_query),
-    )
-
-    (row,) = _rows(instance, request, reason="projection_candidates_changed")
-    assert row.severity == "warning"
-    assert row.subject_identity == "corpus.runbook#status"
-    assert row.related_identities == (watched_world.entered,)
-    assert row.detail["watched_query"] == f"QueryDefinition:{QUERY_NAME}"  # type: ignore[index]
-    assert row.detail["entered"] == [watched_world.entered]  # type: ignore[index]
-    assert row.detail["left"] == []  # type: ignore[index]
-    assert row.repair.operation == "playbill.block.repin"
-    assert row.repair.required_change == "hold_or_decline_the_entered_candidates"
-    assert row.repair.arguments == {
-        "source_id": "corpus.runbook",
-        "block_id": "status",
-        "claim": [watched_world.entered],
-    }
-
-    # The query is not a member of the held list, so nothing about it is stale.
-    assert _rows(instance, request, reason="projection_backing_stale") == ()
-
-
-def test_restamping_the_watched_query_clears_the_row_without_holding_the_candidate(
-    watched_world: WatchedWorld,
-) -> None:
-    """Declining a candidate is a decision the stamp records, not an item to ignore.
-
-    The row is a function of the digest the stamp COMMITS, never of the list the
-    block holds, and that is what makes "no" expressible. An author who reads the
-    entered row and judges it out of scope re-stamps the block without holding
-    it: the marker then carries the query's current answer, the row is gone, and
-    the record says this author saw that candidate and declined it. Were the row
-    instead a function of the held list, the only way to silence it would be to
-    hold every row the query ever returns, and a considered "no" would be
-    indistinguishable from an unread queue.
-    """
-
-    instance = watched_world.instance
-    declined = _request(
-        instance,
-        # The same held list as before -- the entered candidate is NOT held --
-        # with the watched query re-stamped at its current answer.
-        backing=(*watched_world.held, _query_backing(instance)),
-    )
-
-    assert _rows(instance, declined, reason="projection_candidates_changed") == ()
-    assert _rows(instance, declined, reason="projection_backing_stale") == ()
-
-
-def test_a_held_backing_that_moved_is_still_a_stale_backing(
-    watched_world: WatchedWorld,
-) -> None:
-    """The two reasons answer two different questions and must not collapse into one.
-
-    A member of the held list whose statement moved IS damage to the block: the
-    prose was written against a statement the world no longer makes, so it has to
-    be re-read and re-stamped. That is a different fact from a candidate arriving
-    at the door, and it earns a different repair. Had the candidate delta
-    swallowed the stale-member row -- or the reverse -- an author would be told to
-    rule on new rows when the rows already in the block had silently changed
-    underneath the prose.
-    """
-
-    instance = watched_world.instance
-    moved = _claim_backing(instance, stale=True)
-    request = _request(instance, backing=(moved, _query_backing(instance)))
-
-    (row,) = _rows(instance, request, reason="projection_backing_stale")
-    assert row.severity == "repair"
-    assert row.related_identities == (moved.identity.qualified,)
-    assert row.repair.operation == "playbill.block.repin"
-    assert row.repair.required_change == "review_block_supersede_prose_then_repin"
-    assert _rows(instance, request, reason="projection_candidates_changed") == ()
 
 
 # --------------------------------------------------------------------------

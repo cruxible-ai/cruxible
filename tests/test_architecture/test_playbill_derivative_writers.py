@@ -16,7 +16,6 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.authoring.blocks import (
-    _apply_projection_restamps,
     repin_projection_block,
 )
 from cruxible_core.proposals.candidate_cards import derive_candidate_cards
@@ -42,12 +41,7 @@ SANCTIONED_CARD_CALLERS = {
 _BLOCKS = "packages/cruxible-client/src/cruxible_client/authoring/blocks.py"
 SANCTIONED_CALLERS = {
     "projection_repin": {f"{_BLOCKS}::repin_projection_block"},
-    # `block sync --accept-local` writes the same one line the repin writes, for
-    # the same reason: the stamp is the alignment record, and accepting the
-    # prose an author wrote means moving the body digest onto it. It frames
-    # nothing new -- the block, its held list and its coordinate are the ones
-    # already in the page -- and it proves its output the way the repin does.
-    "projection_accept_local": {f"{_BLOCKS}::_apply_projection_restamps"},
+
 }
 SANCTIONED_WRITERS: dict[str, tuple[Callable[..., object], str, tuple[str, ...]]] = {
     f"{_BLOCKS}::repin_projection_block": (
@@ -55,11 +49,7 @@ SANCTIONED_WRITERS: dict[str, tuple[Callable[..., object], str, tuple[str, ...]]
         "assert_projection_block_frame",
         ("replace one declared block marker and explicitly supplied authored body",),
     ),
-    f"{_BLOCKS}::_apply_projection_restamps": (
-        _apply_projection_restamps,
-        "assert_projection_block_frame",
-        ("replace each accepted block's opening marker with the observed body digest",),
-    ),
+
 }
 CARD_DERIVATIVE_WRITERS: dict[str, tuple[Callable[..., object], tuple[str, ...]]] = {
     "src/cruxible_core/proposals/candidate_cards.py::derive_candidate_cards": (
@@ -179,16 +169,9 @@ def test_sanctioned_writer_inventory_matches_primitive_callers() -> None:
 
 
 def test_one_writer_frames_derivative_text_and_the_scan_proves_it() -> None:
-    """Two framing writers, neither inventing prose, and a scan of every caller.
+    """Repin alone frames reviewed authored content; detach only removes markers."""
 
-    Repin can install explicitly supplied agent-authored body bytes; accept-local
-    only updates the opening marker on existing prose. Both prove their output
-    with assert_projection_block_frame. Detachment strips markers and verifies
-    outside bytes. Portable package installation restores already verified bytes;
-    it does not call a framing or prose-generation primitive.
-    """
-
-    assert set(SANCTIONED_CALLERS) == {"projection_repin", "projection_accept_local"}
+    assert set(SANCTIONED_CALLERS) == {"projection_repin"}
     _assert_only_sanctioned_callers(_projection_primitive_callers())
 
 

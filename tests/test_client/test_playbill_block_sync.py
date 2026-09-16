@@ -201,6 +201,18 @@ class _SyncClient:
             outcome="declared",
         )
 
+    def check_playbill_projection_blocks(self, instance_id, *, request):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            results=tuple(
+                self.read_playbill_block_sync_backing(
+                    instance_id, request=PlaybillBlockSyncReadRequestV1(stamp=s)
+                )
+                for s in request.stamps
+            )
+        )
+
     def read_playbill_block_sync_backing(
         self,
         instance_id: str,
@@ -247,6 +259,7 @@ class _SyncClient:
                 coordinate=NEW_COORDINATE,
                 generation=2,
                 backing=single,
+                current_backings=held,
             )
         return PlaybillBlockSyncReadResultV1(
             status="successor",
@@ -255,6 +268,7 @@ class _SyncClient:
             coordinate=NEW_COORDINATE,
             generation=2,
             backing=None if single is None else _moved(single),
+            current_backings=tuple(_moved(b) for b in held),
             moved_backings=tuple(_moved(item) for item in held[: self.moved]),
         )
 
@@ -299,7 +313,7 @@ def test_a_moved_backing_is_reported_stale_and_the_page_is_never_touched(
     # closing sweep must not exit clean over.
     assert result.would_change is False
     assert result.changed_file_count == 0
-    assert result.has_refusals is True
+    assert result.has_refusals is False
     assert source.read_bytes() == before
     assert source.stat().st_mode & 0o777 == 0o640
 
@@ -541,86 +555,15 @@ def test_source_catalog_is_optional_for_stamped_marker_discovery(
     assert source.read_bytes() == before
 
 
-def test_a_local_edit_is_dirty_and_accept_local_restamps_the_block_on_it(
-    tmp_path: Path,
-) -> None:
-    """Converted: `--discard-local` used to overwrite the hand-edited body.
-
-    A body that no longer matches its stamp is decided from the page alone --
-    the daemon is never asked, because no answer it could give would change the
-    finding -- and it is reported `dirty`, with the repin that re-stamps what
-    the block now says. There is no accepted body to put back, so the flag is
-    renamed to what it now means: `--accept-local` says the local prose IS the
-    block, and records that by moving the stamp onto it and declaring it. The
-    prose is left exactly where the author left it.
-    """
-
+def test_dirty_body_does_not_hide_stale_backings(tmp_path: Path) -> None:
     source = _workspace(tmp_path)
     edited = source.read_bytes().replace(OLD_BODY, EDITED_BODY)
     source.write_bytes(edited)
     client = _SyncClient(status="successor")
-
-    reported = sync_projection_blocks(
-        client,  # type: ignore[arg-type]
-        INSTANCE_ID,
-        workspace=tmp_path,
-        paths=(source,),
-    )
-
-    assert client.requests == []
-    (item,) = reported.items
-    assert item.outcome == "dirty"
-    assert item.reason == "block_locally_modified"
-    assert item.repair == RepairOperationV1(
-        operation="playbill.block.repin",
-        arguments={"source_id": "corpus.runbook", "block_id": "pub-example"},
-    )
-    assert item.detail["last_synced_body_digest"] == _digest(OLD_BODY)
-    assert item.detail["observed_body_digest"] == _digest(EDITED_BODY)
-    assert reported.has_refusals is True
-    assert reported.would_change is False
-    assert source.read_bytes() == edited
-
-    accepted = sync_projection_blocks(
-        client,  # type: ignore[arg-type]
-        INSTANCE_ID,
-        workspace=tmp_path,
-        paths=(source,),
-        accept_local_paths=(source,),
-    )
-
-    (row,) = accepted.items
-    assert row.outcome == "synced"
-    assert row.reason is None
-    assert row.detail["local_body_accepted"] is True
-    assert row.detail["stamped_body_digest"] == _digest(OLD_BODY)
-    assert row.detail["observed_body_digest"] == _digest(EDITED_BODY)
-    assert accepted.has_refusals is False
-    assert client.requests == []
-
-    # The stamp moved onto the prose, the prose did not move, and the instance
-    # holds the declaration that records the alignment.
-    restamped = source.read_bytes()
-    (block,) = parse_projection_blocks(restamped, source_id="corpus.runbook")
-    assert block.stamp is not None
-    assert block.stamp.body_digest == _digest(EDITED_BODY)
-    assert restamped[block.body_start : block.body_end] == EDITED_BODY
-    assert [item["body_digest"] for item in client.declared] == [_digest(EDITED_BODY)]
-
-    # `--check` proves the same alignment without writing.
-    source.write_bytes(edited)
-    client.declared.clear()
-    previewed = sync_projection_blocks(
-        client,  # type: ignore[arg-type]
-        INSTANCE_ID,
-        workspace=tmp_path,
-        paths=(source,),
-        accept_local_paths=(source,),
-        check=True,
-    )
-    (preview,) = previewed.items
-    assert preview.outcome == "would_sync"
-    assert client.declared == []
+    result = sync_projection_blocks(client, INSTANCE_ID, workspace=tmp_path, paths=(source,))
+    assert len(client.requests) == 1
+    assert {i.outcome for i in result.items} == {"dirty", "stale"}
+    assert not result.has_refusals  # V1 manifests get the default advisory policy.
     assert source.read_bytes() == edited
 
 
@@ -1144,3 +1087,110 @@ def test_repin_with_an_exact_backing_digest_reads_the_single_held_member(
     assert content[len(b"PREFIX\n") + block.body_start : len(b"PREFIX\n") + block.body_end] == (
         OLD_BODY
     )
+
+
+@pytest.mark.parametrize("policy,blocking", [("warn", False), ("require_current", True)])
+def test_block_policy_gates_drift_without_changing_findings(tmp_path, policy, blocking):
+    from cruxible_client.contracts.declared_blocks import ProjectionBlockStampV2
+
+    stamp = ProjectionBlockStampV2.model_validate(
+        {
+            **_stamp().model_dump(mode="json"),
+            "tag": "playbill-projection-stamp-v2",
+            "currency_policy": policy,
+        }
+    )
+    source = _workspace(tmp_path, stamp=stamp)
+    source.write_bytes(source.read_bytes().replace(OLD_BODY, EDITED_BODY))
+    before = source.read_bytes()
+    result = sync_projection_blocks(
+        _SyncClient(status="successor"), INSTANCE_ID, workspace=tmp_path, paths=(source,)
+    )
+    assert {i.outcome for i in result.items} == {"dirty", "stale"}
+    assert result.has_refusals is blocking
+    assert all(i.currency_policy == policy for i in result.items)
+    assert source.read_bytes() == before
+
+
+def test_batch_check_http_preserves_policy_and_one_evaluation_binding():
+    from datetime import UTC, datetime
+
+    import httpx
+
+    from cruxible_client import contracts
+    from cruxible_client.contracts.declared_blocks import ProjectionBlockStampV2
+    from cruxible_client.transport.http import CruxibleClient
+
+    instant = datetime(2026, 9, 16, tzinfo=UTC)
+    stamp = ProjectionBlockStampV2.model_validate(
+        {
+            **_stamp().model_dump(mode="json"),
+            "tag": "playbill-projection-stamp-v2",
+            "currency_policy": "require_current",
+        }
+    )
+    request = contracts.PlaybillProjectionCheckRequestV1(
+        stamps=(stamp,), at=NEW_COORDINATE, evaluation_time=instant
+    )
+    response = contracts.PlaybillProjectionCheckResultV1(
+        coordinate=NEW_COORDINATE,
+        evaluation_time=instant,
+        results=(
+            PlaybillBlockSyncReadResultV1(
+                status="current", coordinate=NEW_COORDINATE, generation=2
+            ),
+        ),
+    )
+
+    def handler(wire: httpx.Request) -> httpx.Response:
+        assert wire.url.path == f"/api/v1/{INSTANCE_ID}/playbill/projections/check"
+        assert (
+            contracts.PlaybillProjectionCheckRequestV1.model_validate_json(wire.content) == request
+        )
+        return httpx.Response(200, json=response.model_dump(mode="json"))
+
+    client = CruxibleClient(base_url="http://projection.test")
+    client._client.close()
+    client._client = httpx.Client(
+        base_url="http://projection.test", transport=httpx.MockTransport(handler)
+    )
+    try:
+        assert client.check_playbill_projection_blocks(INSTANCE_ID, request=request) == response
+    finally:
+        client._client.close()
+
+
+def test_mixed_retirement_repair_keeps_surviving_artifact_category():
+    from cruxible_client.authoring.blocks import _sync_item_from_read_refusal
+    from cruxible_client.contracts.authoring.models import ProjectionDependencyIssueV1
+
+    claim = _stamp().backing[0]
+    artifact = ProjectionArtifactBackingV1(
+        identity=ArtifactIdentity(kind="ClaimType", name="status"),
+        artifact_digest="sha256:" + "d" * 64,
+    )
+    stamp = _stamp().model_copy(update={"backing": (claim, artifact)})
+    read = PlaybillBlockSyncReadResultV1(
+        status="unsyncable",
+        reason="block_backing_retired",
+        detail="Claim retired",
+        current_backings=(artifact,),
+        issues=(
+            ProjectionDependencyIssueV1(
+                identity=claim.identity,
+                status="stale",
+                reason="block_backing_retired",
+                detail="Claim retired",
+            ),
+        ),
+    )
+    item = _sync_item_from_read_refusal(
+        path="report.md", source_id=stamp.source_id, block_id=stamp.block_id, stamp=stamp, read=read
+    )
+    assert item.outcome == "stale"
+    assert item.repair.operation == "playbill.block.repin"
+    assert item.repair.arguments == {
+        "source_id": stamp.source_id,
+        "block_id": stamp.block_id,
+        "clear_claims": True,
+    }

@@ -43,7 +43,7 @@ from cruxible_client.contracts.claim_reads import (
 )
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
-from cruxible_client.contracts.declared_blocks import ProjectionBlockStampV1
+from cruxible_client.contracts.declared_blocks import ProjectionBlockStamp
 from cruxible_client.contracts.discovery import (
     DiscoveryBudgetV1,
     ExpandRequestV1,
@@ -1462,7 +1462,7 @@ def playbill_authoring_abandon_insertion(
 
 def playbill_block_declare(
     instance_id: str,
-    stamp: ProjectionBlockStampV1,
+    stamp: ProjectionBlockStamp,
 ) -> contracts.PlaybillBlockDeclareResultV1:
     """Register one projection block a workspace just stamped into its page."""
 
@@ -1559,6 +1559,17 @@ def playbill_get_claim(
             paths=(path,),
         )
     return contracts.PlaybillClaimViewV2.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_check_projection_blocks(
+    instance_id: str,
+    *,
+    request: contracts.PlaybillProjectionCheckRequestV1,
+) -> contracts.PlaybillProjectionCheckResultV1:
+    from cruxible_core.service.authoring.projection_sync import service_check_projection_blocks
+
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    return service_check_projection_blocks(get_playbill_manager().get(instance_id), request=request)
 
 
 def playbill_read_block_sync_backing(

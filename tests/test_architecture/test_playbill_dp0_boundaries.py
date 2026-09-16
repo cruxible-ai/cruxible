@@ -422,6 +422,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "export_playbill_floor",
         "resolve_playbill_coverage",
         "read_playbill_block_sync_backing",
+        "check_playbill_projection_blocks",
         "list_playbill_proposals",
         "resolve_playbill_proposal_selector",
         "playbill_whoami",

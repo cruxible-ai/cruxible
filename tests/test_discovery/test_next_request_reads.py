@@ -74,7 +74,7 @@ def test_next_shares_population_and_facts_without_changing_complete_result(
     optimized = playbill_next.service_playbill_next(instance, request=request)
     assert counts == {"population": 1, "fact_row": 2}
     assert {item.reason for item in optimized.items}.issuperset(
-        {"projection_dirty", "projection_backing_stale", "projection_candidates_changed"}
+        {"projection_dirty", "projection_backing_stale"}
     )
 
     counts.clear()

@@ -7,7 +7,6 @@ import json
 import os
 import re
 import time
-import warnings
 from collections import OrderedDict
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -160,7 +159,10 @@ from cruxible_client.contracts.claims import (
     LiteralClaimObject,
     SubjectClaimObject,
 )
-from cruxible_client.contracts.declared_blocks import ProjectionBlockStampV1
+from cruxible_client.contracts.declared_blocks import (
+    ProjectionBlockStampV2,
+    ProjectionCurrencyPolicy,
+)
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV1,
@@ -210,19 +212,6 @@ _PREDICTION_RULE_ADAPTER: TypeAdapter[PredictionRuleV1] = TypeAdapter(Prediction
 _RETIRE_CLOSURE_MISMATCH_CODE = "playbill.claim.retire_closure_mismatch"
 _CLAIM_RETIRE_OPERATION_DOMAIN = "playbill-claim-retire-operation-v1"
 _RETIREMENT_SUBMISSION_CACHE_LIMIT = 128
-# The one deprecation notice this package emits, in the shape
-# `cruxible_core.deprecation` serializes -- {surface, replacement,
-# removal_version}, compact and key-sorted. The client cannot import the core
-# registry, so a guardrail pins the two spellings equal.
-_BLOCK_SYNC_DISCARD_LOCAL_DEPRECATION = json.dumps(
-    {
-        "removal_version": "0.6.0",
-        "replacement": "`--accept-local`, which re-stamps the block on the body the author wrote",
-        "surface": "playbill block sync --discard-local",
-    },
-    separators=(",", ":"),
-    sort_keys=True,
-)
 
 
 def _coordinate(value: api.PlaybillAcceptedCoordinate | Mapping[str, object]) -> AcceptedCoordinate:
@@ -3111,15 +3100,16 @@ class ProjectionBlocks:
         source: str | SourceRef,
         block_id: str,
         *,
-        claims: Sequence[str | ClaimRef] = (),
-        queries: Sequence[
-            str | QueryRef | tuple[str | QueryRef, Mapping[str, CanonicalValue]]
-        ] = (),
+        claims: Sequence[str | ClaimRef] | None = None,
+        queries: Sequence[str | QueryRef | tuple[str | QueryRef, Mapping[str, CanonicalValue]]]
+        | None = None,
+        artifacts: Sequence[ArtifactIdentity] | None = None,
+        currency_policy: ProjectionCurrencyPolicy | None = None,
         backing_digest: str | None = None,
         evaluation_time: datetime,
         body: str | bytes | None = None,
         compact: bool = False,
-    ) -> ProjectionBlockStampV1:
+    ) -> ProjectionBlockStampV2:
         """Refresh backing pins and optionally replace this block's authored body.
 
         ``compact=True`` writes digest references with local manifests. Subsequent
@@ -3130,12 +3120,12 @@ class ProjectionBlocks:
         if isinstance(source, SourceRef):
             self._playbill._assert_coordinate(source.coordinate)
         claim_refs: list[str] = []
-        for claim in claims:
+        for claim in claims or ():
             if isinstance(claim, ClaimRef):
                 self._playbill._assert_coordinate(claim.coordinate)
             claim_refs.append(_address(claim, RefKind.CLAIM))
         query_refs: list[tuple[str, Mapping[str, object]]] = []
-        for entry in queries:
+        for entry in queries or ():
             if isinstance(entry, tuple):
                 query, parameters = entry
             else:
@@ -3149,8 +3139,10 @@ class ProjectionBlocks:
             workspace=self._playbill._workspace,
             source_id=source_id,
             block_id=block_id,
-            claims=claim_refs,
-            queries=query_refs,
+            claims=claim_refs if claims is not None else None,
+            queries=query_refs if queries is not None else None,
+            artifacts=artifacts,
+            currency_policy=currency_policy,
             backing_digest=backing_digest,
             evaluation_time=evaluation_time,
             coordinate=self._playbill.coordinate,
@@ -3174,23 +3166,9 @@ class ProjectionBlocks:
         all: bool = False,
         check: bool = False,
         detach: Sequence[str | Path] = (),
-        accept_local: Sequence[str | Path] = (),
-        discard_local: Sequence[str | Path] | None = None,
     ) -> api.PlaybillBlockSyncResultV1:
-        """Report every declared block; `accept_local` re-stamps one on its local prose.
+        """Check every block; policy controls whether drift fails the check."""
 
-        `discard_local` is the deprecated spelling of `accept_local`. It never
-        discarded anything under the held-list model, and it is accepted for one
-        release behind a `DeprecationWarning`.
-        """
-
-        if discard_local is not None:
-            warnings.warn(
-                _BLOCK_SYNC_DISCARD_LOCAL_DEPRECATION,
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            accept_local = tuple(accept_local) + tuple(discard_local)
         return sync_projection_blocks(
             self._playbill._client,
             self._playbill._instance_id,
@@ -3199,7 +3177,6 @@ class ProjectionBlocks:
             all_sources=all,
             check=check,
             detach_paths=detach,
-            accept_local_paths=accept_local,
         )
 
 

@@ -246,6 +246,18 @@ class CruxibleClient:
         snapshot_digest = payload.get("sdk_contract_snapshot_digest")
         return version, snapshot_digest if isinstance(snapshot_digest, str) else None
 
+    def check_playbill_projection_blocks(
+        self,
+        instance_id: str,
+        *,
+        request: contracts.PlaybillProjectionCheckRequestV1,
+    ) -> contracts.PlaybillProjectionCheckResultV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/projections/check",
+            json=request.model_dump(mode="json"),
+        )
+        return self._parse_model(response, contracts.PlaybillProjectionCheckResultV1)
+
     def read_playbill_block_sync_backing(
         self,
         instance_id: str,

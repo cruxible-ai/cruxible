@@ -74,7 +74,6 @@
         "floor_invalid",
         "projection_dirty",
         "projection_backing_stale",
-        "projection_candidates_changed",
         "claim_dependency_stale",
         "claim_attestation_threshold_met",
         "claim_contradicting_evidence_available",
@@ -8669,6 +8668,23 @@
             "title": "Block Id"
           }
         },
+        "currency_policy": {
+          "default": "warn",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "currency_policy",
+          "required": false,
+          "schema": {
+            "default": "warn",
+            "enum": [
+              "warn",
+              "require_current"
+            ],
+            "title": "Currency Policy",
+            "type": "string"
+          }
+        },
         "detail": {
           "has_default": false,
           "has_default_factory": true,
@@ -8690,13 +8706,11 @@
               "unchanged",
               "stale",
               "dirty",
-              "synced",
-              "would_sync",
               "detached",
               "would_detach",
               "skipped",
               "refused",
-              "unsyncable"
+              "unchecked"
             ],
             "title": "Outcome",
             "type": "string"
@@ -8727,21 +8741,19 @@
                   "workspace_binding_invalid",
                   "workspace_instance_mismatch",
                   "workspace_source_catalog_invalid",
-                  "workspace_source_catalog_missing",
                   "source_path_invalid",
                   "source_not_projection_target",
                   "block_marker_malformed",
                   "block_unstamped",
                   "block_locally_modified",
-                  "block_multi_backing",
-                  "block_query_backing",
                   "block_backing_missing",
                   "block_backing_changed",
                   "block_backing_retired",
                   "block_successor_ambiguous",
                   "block_concurrent_edit",
                   "block_frame_invalid",
-                  "block_sync_failed"
+                  "block_sync_failed",
+                  "block_query_unchecked"
                 ],
                 "type": "string"
               },
@@ -8882,6 +8894,15 @@
             "default": null,
             "title": "Block Id"
           },
+          "currency_policy": {
+            "default": "warn",
+            "enum": [
+              "warn",
+              "require_current"
+            ],
+            "title": "Currency Policy",
+            "type": "string"
+          },
           "detail": {
             "additionalProperties": true,
             "title": "Detail",
@@ -8892,13 +8913,11 @@
               "unchanged",
               "stale",
               "dirty",
-              "synced",
-              "would_sync",
               "detached",
               "would_detach",
               "skipped",
               "refused",
-              "unsyncable"
+              "unchecked"
             ],
             "title": "Outcome",
             "type": "string"
@@ -8915,21 +8934,19 @@
                   "workspace_binding_invalid",
                   "workspace_instance_mismatch",
                   "workspace_source_catalog_invalid",
-                  "workspace_source_catalog_missing",
                   "source_path_invalid",
                   "source_not_projection_target",
                   "block_marker_malformed",
                   "block_unstamped",
                   "block_locally_modified",
-                  "block_multi_backing",
-                  "block_query_backing",
                   "block_backing_missing",
                   "block_backing_changed",
                   "block_backing_retired",
                   "block_successor_ambiguous",
                   "block_concurrent_edit",
                   "block_frame_invalid",
-                  "block_sync_failed"
+                  "block_sync_failed",
+                  "block_query_unchecked"
                 ],
                 "type": "string"
               },
@@ -8988,6 +9005,46 @@
     },
     "PlaybillBlockSyncReadRequestV1": {
       "fields": {
+        "at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "evaluation_time": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "evaluation_time",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Evaluation Time"
+          }
+        },
         "preferred_successor_digest": {
           "default": null,
           "default_json_serializable": true,
@@ -9014,7 +9071,22 @@
           "json_name": "stamp",
           "required": true,
           "schema": {
-            "$ref": "#/$defs/ProjectionBlockStampV1"
+            "discriminator": {
+              "mapping": {
+                "playbill-projection-stamp-v1": "#/$defs/ProjectionBlockStampV1",
+                "playbill-projection-stamp-v2": "#/$defs/ProjectionBlockStampV2"
+              },
+              "propertyName": "tag"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/ProjectionBlockStampV1"
+              },
+              {
+                "$ref": "#/$defs/ProjectionBlockStampV2"
+              }
+            ],
+            "title": "Stamp"
           }
         },
         "tag": {
@@ -9117,6 +9189,7 @@
           },
           "ProjectionBlockStampV1": {
             "additionalProperties": false,
+            "description": "Frozen encoding for retained declarations; newly authored stamps use V2.",
             "properties": {
               "backing": {
                 "items": {
@@ -9189,6 +9262,91 @@
               "body_digest"
             ],
             "title": "ProjectionBlockStampV1",
+            "type": "object"
+          },
+          "ProjectionBlockStampV2": {
+            "additionalProperties": false,
+            "properties": {
+              "backing": {
+                "items": {
+                  "discriminator": {
+                    "mapping": {
+                      "playbill-projection-artifact-backing-v1": "#/$defs/ProjectionArtifactBackingV1",
+                      "playbill-projection-claim-backing-v1": "#/$defs/ProjectionClaimBackingV1",
+                      "playbill-projection-query-backing-v1": "#/$defs/ProjectionQueryBackingV1"
+                    },
+                    "propertyName": "tag"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/ProjectionArtifactBackingV1"
+                    },
+                    {
+                      "$ref": "#/$defs/ProjectionClaimBackingV1"
+                    },
+                    {
+                      "$ref": "#/$defs/ProjectionQueryBackingV1"
+                    }
+                  ]
+                },
+                "maxItems": 512,
+                "minItems": 1,
+                "title": "Backing",
+                "type": "array"
+              },
+              "block_id": {
+                "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+                "title": "Block Id",
+                "type": "string"
+              },
+              "body_digest": {
+                "title": "Body Digest",
+                "type": "string"
+              },
+              "currency_policy": {
+                "default": "warn",
+                "enum": [
+                  "warn",
+                  "require_current"
+                ],
+                "title": "Currency Policy",
+                "type": "string"
+              },
+              "declared_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "declared_generation": {
+                "minimum": 0,
+                "title": "Declared Generation",
+                "type": "integer"
+              },
+              "grammar_version": {
+                "const": "playbill-projection-marker-grammar-v1",
+                "default": "playbill-projection-marker-grammar-v1",
+                "title": "Grammar Version",
+                "type": "string"
+              },
+              "source_id": {
+                "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                "title": "Source Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-projection-stamp-v2",
+                "default": "playbill-projection-stamp-v2",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source_id",
+              "block_id",
+              "declared_generation",
+              "declared_coordinate",
+              "backing",
+              "body_digest"
+            ],
+            "title": "ProjectionBlockStampV2",
             "type": "object"
           },
           "ProjectionClaimBackingV1": {
@@ -9305,6 +9463,30 @@
         },
         "additionalProperties": false,
         "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "evaluation_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Evaluation Time"
+          },
           "preferred_successor_digest": {
             "anyOf": [
               {
@@ -9318,7 +9500,22 @@
             "title": "Preferred Successor Digest"
           },
           "stamp": {
-            "$ref": "#/$defs/ProjectionBlockStampV1"
+            "discriminator": {
+              "mapping": {
+                "playbill-projection-stamp-v1": "#/$defs/ProjectionBlockStampV1",
+                "playbill-projection-stamp-v2": "#/$defs/ProjectionBlockStampV2"
+              },
+              "propertyName": "tag"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/ProjectionBlockStampV1"
+              },
+              {
+                "$ref": "#/$defs/ProjectionBlockStampV2"
+              }
+            ],
+            "title": "Stamp"
           },
           "tag": {
             "const": "playbill-block-sync-read-request-v1",
@@ -9397,46 +9594,6 @@
             "title": "Backing"
           }
         },
-        "body_content_base64": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "body_content_base64",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Body Content Base64"
-          }
-        },
-        "body_digest": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "body_digest",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Body Digest"
-          }
-        },
         "coordinate": {
           "default": null,
           "default_json_serializable": true,
@@ -9454,6 +9611,40 @@
               }
             ],
             "default": null
+          }
+        },
+        "current_backings": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "current_backings",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "playbill-projection-artifact-backing-v1": "#/$defs/ProjectionArtifactBackingV1",
+                  "playbill-projection-claim-backing-v1": "#/$defs/ProjectionClaimBackingV1",
+                  "playbill-projection-query-backing-v1": "#/$defs/ProjectionQueryBackingV1"
+                },
+                "propertyName": "tag"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/ProjectionArtifactBackingV1"
+                },
+                {
+                  "$ref": "#/$defs/ProjectionClaimBackingV1"
+                },
+                {
+                  "$ref": "#/$defs/ProjectionQueryBackingV1"
+                }
+              ]
+            },
+            "title": "Current Backings",
+            "type": "array"
           }
         },
         "detail": {
@@ -9495,6 +9686,22 @@
             ],
             "default": null,
             "title": "Generation"
+          }
+        },
+        "issues": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "issues",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProjectionDependencyIssueV1"
+            },
+            "title": "Issues",
+            "type": "array"
           }
         },
         "moved_backings": {
@@ -9566,7 +9773,8 @@
                   "block_backing_missing",
                   "block_backing_changed",
                   "block_backing_retired",
-                  "block_successor_ambiguous"
+                  "block_successor_ambiguous",
+                  "block_query_unchecked"
                 ],
                 "type": "string"
               },
@@ -9588,7 +9796,8 @@
               "current",
               "successor",
               "refused",
-              "unsyncable"
+              "unsyncable",
+              "unchecked"
             ],
             "title": "Status",
             "type": "string"
@@ -9766,6 +9975,47 @@
             "title": "ProjectionClaimBackingV1",
             "type": "object"
           },
+          "ProjectionDependencyIssueV1": {
+            "additionalProperties": false,
+            "properties": {
+              "detail": {
+                "title": "Detail",
+                "type": "string"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "reason": {
+                "enum": [
+                  "block_workspace_instance_mismatch",
+                  "block_backing_missing",
+                  "block_backing_changed",
+                  "block_backing_retired",
+                  "block_successor_ambiguous",
+                  "block_query_unchecked"
+                ],
+                "title": "Reason",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "stale",
+                  "unchecked",
+                  "invalid"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "status",
+              "reason",
+              "detail"
+            ],
+            "title": "ProjectionDependencyIssueV1",
+            "type": "object"
+          },
           "ProjectionQueryBackingV1": {
             "additionalProperties": false,
             "properties": {
@@ -9855,7 +10105,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "What the daemon can say about one declared block, without rendering it.\n\nThis read used to return the accepted BODY a single-Claim block would be\nrewritten to. Nothing renders any more: a projection block is prose the\nagent wrote, held to an explicit backing list, and the only question worth\nasking of accepted state is whether that list still reads as it did. So the\nbody fields stay in the shape and are never populated -- an older client\nthat asks for them gets nothing rather than a rewrite it did not expect --\nand the answer is a currency verdict over EVERY held backing instead of one.\n\nUnpopulated, not forbidden. Turning a field that was REQUIRED on success\ninto one the model refuses would invert the shape rather than narrow it: a\npayload minted before this batch would stop parsing against the model that\ndescribes it. A body carried in is still bound to its digest, exactly as it\nalways was; the daemon simply never sends one.",
+        "description": "A currency assessment; body rendering is owned by the author.",
         "properties": {
           "artifact_digest": {
             "anyOf": [
@@ -9899,30 +10149,6 @@
             "default": null,
             "title": "Backing"
           },
-          "body_content_base64": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Body Content Base64"
-          },
-          "body_digest": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Body Digest"
-          },
           "coordinate": {
             "anyOf": [
               {
@@ -9933,6 +10159,32 @@
               }
             ],
             "default": null
+          },
+          "current_backings": {
+            "default": [],
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "playbill-projection-artifact-backing-v1": "#/$defs/ProjectionArtifactBackingV1",
+                  "playbill-projection-claim-backing-v1": "#/$defs/ProjectionClaimBackingV1",
+                  "playbill-projection-query-backing-v1": "#/$defs/ProjectionQueryBackingV1"
+                },
+                "propertyName": "tag"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/ProjectionArtifactBackingV1"
+                },
+                {
+                  "$ref": "#/$defs/ProjectionClaimBackingV1"
+                },
+                {
+                  "$ref": "#/$defs/ProjectionQueryBackingV1"
+                }
+              ]
+            },
+            "title": "Current Backings",
+            "type": "array"
           },
           "detail": {
             "anyOf": [
@@ -9958,6 +10210,14 @@
             ],
             "default": null,
             "title": "Generation"
+          },
+          "issues": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProjectionDependencyIssueV1"
+            },
+            "title": "Issues",
+            "type": "array"
           },
           "moved_backings": {
             "default": [],
@@ -10005,7 +10265,8 @@
                   "block_backing_missing",
                   "block_backing_changed",
                   "block_backing_retired",
-                  "block_successor_ambiguous"
+                  "block_successor_ambiguous",
+                  "block_query_unchecked"
                 ],
                 "type": "string"
               },
@@ -10021,7 +10282,8 @@
               "current",
               "successor",
               "refused",
-              "unsyncable"
+              "unsyncable",
+              "unchecked"
             ],
             "title": "Status",
             "type": "string"
@@ -10163,6 +10425,15 @@
                 "default": null,
                 "title": "Block Id"
               },
+              "currency_policy": {
+                "default": "warn",
+                "enum": [
+                  "warn",
+                  "require_current"
+                ],
+                "title": "Currency Policy",
+                "type": "string"
+              },
               "detail": {
                 "additionalProperties": true,
                 "title": "Detail",
@@ -10173,13 +10444,11 @@
                   "unchanged",
                   "stale",
                   "dirty",
-                  "synced",
-                  "would_sync",
                   "detached",
                   "would_detach",
                   "skipped",
                   "refused",
-                  "unsyncable"
+                  "unchecked"
                 ],
                 "title": "Outcome",
                 "type": "string"
@@ -10196,21 +10465,19 @@
                       "workspace_binding_invalid",
                       "workspace_instance_mismatch",
                       "workspace_source_catalog_invalid",
-                      "workspace_source_catalog_missing",
                       "source_path_invalid",
                       "source_not_projection_target",
                       "block_marker_malformed",
                       "block_unstamped",
                       "block_locally_modified",
-                      "block_multi_backing",
-                      "block_query_backing",
                       "block_backing_missing",
                       "block_backing_changed",
                       "block_backing_retired",
                       "block_successor_ambiguous",
                       "block_concurrent_edit",
                       "block_frame_invalid",
-                      "block_sync_failed"
+                      "block_sync_failed",
+                      "block_query_unchecked"
                     ],
                     "type": "string"
                   },
@@ -29264,6 +29531,1077 @@
         "unprojected_count"
       ]
     },
+    "PlaybillProjectionCheckRequestV1": {
+      "fields": {
+        "at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "evaluation_time": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "evaluation_time",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Evaluation Time"
+          }
+        },
+        "stamps": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "stamps",
+          "required": true,
+          "schema": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "playbill-projection-stamp-v1": "#/$defs/ProjectionBlockStampV1",
+                  "playbill-projection-stamp-v2": "#/$defs/ProjectionBlockStampV2"
+                },
+                "propertyName": "tag"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/ProjectionBlockStampV1"
+                },
+                {
+                  "$ref": "#/$defs/ProjectionBlockStampV2"
+                }
+              ]
+            },
+            "maxItems": 4096,
+            "title": "Stamps",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "default": "playbill-projection-check-request-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-projection-check-request-v1",
+            "default": "playbill-projection-check-request-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "ProjectionArtifactBackingV1": {
+            "additionalProperties": false,
+            "description": "A governed vocabulary or entity artifact pinned by exact digest.",
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "tag": {
+                "const": "playbill-projection-artifact-backing-v1",
+                "default": "playbill-projection-artifact-backing-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "artifact_digest"
+            ],
+            "title": "ProjectionArtifactBackingV1",
+            "type": "object"
+          },
+          "ProjectionBlockStampV1": {
+            "additionalProperties": false,
+            "description": "Frozen encoding for retained declarations; newly authored stamps use V2.",
+            "properties": {
+              "backing": {
+                "items": {
+                  "discriminator": {
+                    "mapping": {
+                      "playbill-projection-artifact-backing-v1": "#/$defs/ProjectionArtifactBackingV1",
+                      "playbill-projection-claim-backing-v1": "#/$defs/ProjectionClaimBackingV1",
+                      "playbill-projection-query-backing-v1": "#/$defs/ProjectionQueryBackingV1"
+                    },
+                    "propertyName": "tag"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/ProjectionArtifactBackingV1"
+                    },
+                    {
+                      "$ref": "#/$defs/ProjectionClaimBackingV1"
+                    },
+                    {
+                      "$ref": "#/$defs/ProjectionQueryBackingV1"
+                    }
+                  ]
+                },
+                "maxItems": 512,
+                "minItems": 1,
+                "title": "Backing",
+                "type": "array"
+              },
+              "block_id": {
+                "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+                "title": "Block Id",
+                "type": "string"
+              },
+              "body_digest": {
+                "title": "Body Digest",
+                "type": "string"
+              },
+              "declared_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "declared_generation": {
+                "minimum": 0,
+                "title": "Declared Generation",
+                "type": "integer"
+              },
+              "grammar_version": {
+                "const": "playbill-projection-marker-grammar-v1",
+                "default": "playbill-projection-marker-grammar-v1",
+                "title": "Grammar Version",
+                "type": "string"
+              },
+              "source_id": {
+                "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                "title": "Source Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-projection-stamp-v1",
+                "default": "playbill-projection-stamp-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source_id",
+              "block_id",
+              "declared_generation",
+              "declared_coordinate",
+              "backing",
+              "body_digest"
+            ],
+            "title": "ProjectionBlockStampV1",
+            "type": "object"
+          },
+          "ProjectionBlockStampV2": {
+            "additionalProperties": false,
+            "properties": {
+              "backing": {
+                "items": {
+                  "discriminator": {
+                    "mapping": {
+                      "playbill-projection-artifact-backing-v1": "#/$defs/ProjectionArtifactBackingV1",
+                      "playbill-projection-claim-backing-v1": "#/$defs/ProjectionClaimBackingV1",
+                      "playbill-projection-query-backing-v1": "#/$defs/ProjectionQueryBackingV1"
+                    },
+                    "propertyName": "tag"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/ProjectionArtifactBackingV1"
+                    },
+                    {
+                      "$ref": "#/$defs/ProjectionClaimBackingV1"
+                    },
+                    {
+                      "$ref": "#/$defs/ProjectionQueryBackingV1"
+                    }
+                  ]
+                },
+                "maxItems": 512,
+                "minItems": 1,
+                "title": "Backing",
+                "type": "array"
+              },
+              "block_id": {
+                "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+                "title": "Block Id",
+                "type": "string"
+              },
+              "body_digest": {
+                "title": "Body Digest",
+                "type": "string"
+              },
+              "currency_policy": {
+                "default": "warn",
+                "enum": [
+                  "warn",
+                  "require_current"
+                ],
+                "title": "Currency Policy",
+                "type": "string"
+              },
+              "declared_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "declared_generation": {
+                "minimum": 0,
+                "title": "Declared Generation",
+                "type": "integer"
+              },
+              "grammar_version": {
+                "const": "playbill-projection-marker-grammar-v1",
+                "default": "playbill-projection-marker-grammar-v1",
+                "title": "Grammar Version",
+                "type": "string"
+              },
+              "source_id": {
+                "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                "title": "Source Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-projection-stamp-v2",
+                "default": "playbill-projection-stamp-v2",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source_id",
+              "block_id",
+              "declared_generation",
+              "declared_coordinate",
+              "backing",
+              "body_digest"
+            ],
+            "title": "ProjectionBlockStampV2",
+            "type": "object"
+          },
+          "ProjectionClaimBackingV1": {
+            "additionalProperties": false,
+            "properties": {
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "statement_digest": {
+                "title": "Statement Digest",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-projection-claim-backing-v1",
+                "default": "playbill-projection-claim-backing-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "statement_digest"
+            ],
+            "title": "ProjectionClaimBackingV1",
+            "type": "object"
+          },
+          "ProjectionQueryBackingV1": {
+            "additionalProperties": false,
+            "properties": {
+              "canonical_param_digest": {
+                "title": "Canonical Param Digest",
+                "type": "string"
+              },
+              "declared_evaluation_time": {
+                "format": "date-time",
+                "title": "Declared Evaluation Time",
+                "type": "string"
+              },
+              "definition_digest": {
+                "title": "Definition Digest",
+                "type": "string"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "resolved_parameter_bindings": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ProjectionResolvedParameterBindingV1"
+                },
+                "title": "Resolved Parameter Bindings",
+                "type": "array"
+              },
+              "semantic_result_digest": {
+                "title": "Semantic Result Digest",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-projection-query-backing-v1",
+                "default": "playbill-projection-query-backing-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "definition_digest",
+              "canonical_param_digest",
+              "declared_evaluation_time",
+              "semantic_result_digest"
+            ],
+            "title": "ProjectionQueryBackingV1",
+            "type": "object"
+          },
+          "ProjectionResolvedParameterBindingV1": {
+            "additionalProperties": false,
+            "description": "The exact existing query-parameter-binding wire spelling, shared by both sides.",
+            "properties": {
+              "name": {
+                "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                "title": "Name",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-parameter-binding-v1",
+                "default": "playbill-query-parameter-binding-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "value": {
+                "default": null,
+                "title": "Value"
+              },
+              "value_type": {
+                "enum": [
+                  "string",
+                  "integer",
+                  "boolean",
+                  "decimal",
+                  "timestamp",
+                  "subject_reference"
+                ],
+                "title": "Value Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "value_type"
+            ],
+            "title": "ProjectionResolvedParameterBindingV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "evaluation_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Evaluation Time"
+          },
+          "stamps": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "playbill-projection-stamp-v1": "#/$defs/ProjectionBlockStampV1",
+                  "playbill-projection-stamp-v2": "#/$defs/ProjectionBlockStampV2"
+                },
+                "propertyName": "tag"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/ProjectionBlockStampV1"
+                },
+                {
+                  "$ref": "#/$defs/ProjectionBlockStampV2"
+                }
+              ]
+            },
+            "maxItems": 4096,
+            "title": "Stamps",
+            "type": "array"
+          },
+          "tag": {
+            "const": "playbill-projection-check-request-v1",
+            "default": "playbill-projection-check-request-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stamps"
+        ],
+        "title": "PlaybillProjectionCheckRequestV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "stamps"
+      ]
+    },
+    "PlaybillProjectionCheckResultV1": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "evaluation_time": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "evaluation_time",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Evaluation Time",
+            "type": "string"
+          }
+        },
+        "results": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "results",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillBlockSyncReadResultV1"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "default": "playbill-projection-check-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-projection-check-result-v1",
+            "default": "playbill-projection-check-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "PlaybillBlockSyncReadResultV1": {
+            "additionalProperties": false,
+            "description": "A currency assessment; body rendering is owned by the author.",
+            "properties": {
+              "artifact_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact Digest"
+              },
+              "backing": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "playbill-projection-artifact-backing-v1": "#/$defs/ProjectionArtifactBackingV1",
+                        "playbill-projection-claim-backing-v1": "#/$defs/ProjectionClaimBackingV1",
+                        "playbill-projection-query-backing-v1": "#/$defs/ProjectionQueryBackingV1"
+                      },
+                      "propertyName": "tag"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/ProjectionArtifactBackingV1"
+                      },
+                      {
+                        "$ref": "#/$defs/ProjectionClaimBackingV1"
+                      },
+                      {
+                        "$ref": "#/$defs/ProjectionQueryBackingV1"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Backing"
+              },
+              "coordinate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/AcceptedCoordinate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "current_backings": {
+                "default": [],
+                "items": {
+                  "discriminator": {
+                    "mapping": {
+                      "playbill-projection-artifact-backing-v1": "#/$defs/ProjectionArtifactBackingV1",
+                      "playbill-projection-claim-backing-v1": "#/$defs/ProjectionClaimBackingV1",
+                      "playbill-projection-query-backing-v1": "#/$defs/ProjectionQueryBackingV1"
+                    },
+                    "propertyName": "tag"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/ProjectionArtifactBackingV1"
+                    },
+                    {
+                      "$ref": "#/$defs/ProjectionClaimBackingV1"
+                    },
+                    {
+                      "$ref": "#/$defs/ProjectionQueryBackingV1"
+                    }
+                  ]
+                },
+                "title": "Current Backings",
+                "type": "array"
+              },
+              "detail": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Detail"
+              },
+              "generation": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Generation"
+              },
+              "issues": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ProjectionDependencyIssueV1"
+                },
+                "title": "Issues",
+                "type": "array"
+              },
+              "moved_backings": {
+                "default": [],
+                "items": {
+                  "discriminator": {
+                    "mapping": {
+                      "playbill-projection-artifact-backing-v1": "#/$defs/ProjectionArtifactBackingV1",
+                      "playbill-projection-claim-backing-v1": "#/$defs/ProjectionClaimBackingV1",
+                      "playbill-projection-query-backing-v1": "#/$defs/ProjectionQueryBackingV1"
+                    },
+                    "propertyName": "tag"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/ProjectionArtifactBackingV1"
+                    },
+                    {
+                      "$ref": "#/$defs/ProjectionClaimBackingV1"
+                    },
+                    {
+                      "$ref": "#/$defs/ProjectionQueryBackingV1"
+                    }
+                  ]
+                },
+                "title": "Moved Backings",
+                "type": "array"
+              },
+              "original_artifact_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Original Artifact Digest"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "block_workspace_instance_mismatch",
+                      "block_backing_missing",
+                      "block_backing_changed",
+                      "block_backing_retired",
+                      "block_successor_ambiguous",
+                      "block_query_unchecked"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "status": {
+                "enum": [
+                  "current",
+                  "successor",
+                  "refused",
+                  "unsyncable",
+                  "unchecked"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "successor_candidates": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/PlaybillBlockSyncSuccessorCandidateV1"
+                },
+                "title": "Successor Candidates",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-block-sync-read-result-v1",
+                "default": "playbill-block-sync-read-result-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "title": "PlaybillBlockSyncReadResultV1",
+            "type": "object"
+          },
+          "PlaybillBlockSyncSuccessorCandidateV1": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "generation": {
+                "minimum": 0,
+                "title": "Generation",
+                "type": "integer"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "tag": {
+                "const": "playbill-block-sync-successor-candidate-v1",
+                "default": "playbill-block-sync-successor-candidate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "artifact_digest",
+              "coordinate",
+              "generation"
+            ],
+            "title": "PlaybillBlockSyncSuccessorCandidateV1",
+            "type": "object"
+          },
+          "ProjectionArtifactBackingV1": {
+            "additionalProperties": false,
+            "description": "A governed vocabulary or entity artifact pinned by exact digest.",
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "tag": {
+                "const": "playbill-projection-artifact-backing-v1",
+                "default": "playbill-projection-artifact-backing-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "artifact_digest"
+            ],
+            "title": "ProjectionArtifactBackingV1",
+            "type": "object"
+          },
+          "ProjectionClaimBackingV1": {
+            "additionalProperties": false,
+            "properties": {
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "statement_digest": {
+                "title": "Statement Digest",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-projection-claim-backing-v1",
+                "default": "playbill-projection-claim-backing-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "statement_digest"
+            ],
+            "title": "ProjectionClaimBackingV1",
+            "type": "object"
+          },
+          "ProjectionDependencyIssueV1": {
+            "additionalProperties": false,
+            "properties": {
+              "detail": {
+                "title": "Detail",
+                "type": "string"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "reason": {
+                "enum": [
+                  "block_workspace_instance_mismatch",
+                  "block_backing_missing",
+                  "block_backing_changed",
+                  "block_backing_retired",
+                  "block_successor_ambiguous",
+                  "block_query_unchecked"
+                ],
+                "title": "Reason",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "stale",
+                  "unchecked",
+                  "invalid"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "status",
+              "reason",
+              "detail"
+            ],
+            "title": "ProjectionDependencyIssueV1",
+            "type": "object"
+          },
+          "ProjectionQueryBackingV1": {
+            "additionalProperties": false,
+            "properties": {
+              "canonical_param_digest": {
+                "title": "Canonical Param Digest",
+                "type": "string"
+              },
+              "declared_evaluation_time": {
+                "format": "date-time",
+                "title": "Declared Evaluation Time",
+                "type": "string"
+              },
+              "definition_digest": {
+                "title": "Definition Digest",
+                "type": "string"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "resolved_parameter_bindings": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ProjectionResolvedParameterBindingV1"
+                },
+                "title": "Resolved Parameter Bindings",
+                "type": "array"
+              },
+              "semantic_result_digest": {
+                "title": "Semantic Result Digest",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-projection-query-backing-v1",
+                "default": "playbill-projection-query-backing-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "definition_digest",
+              "canonical_param_digest",
+              "declared_evaluation_time",
+              "semantic_result_digest"
+            ],
+            "title": "ProjectionQueryBackingV1",
+            "type": "object"
+          },
+          "ProjectionResolvedParameterBindingV1": {
+            "additionalProperties": false,
+            "description": "The exact existing query-parameter-binding wire spelling, shared by both sides.",
+            "properties": {
+              "name": {
+                "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                "title": "Name",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-parameter-binding-v1",
+                "default": "playbill-query-parameter-binding-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "value": {
+                "default": null,
+                "title": "Value"
+              },
+              "value_type": {
+                "enum": [
+                  "string",
+                  "integer",
+                  "boolean",
+                  "decimal",
+                  "timestamp",
+                  "subject_reference"
+                ],
+                "title": "Value Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "value_type"
+            ],
+            "title": "ProjectionResolvedParameterBindingV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "evaluation_time": {
+            "format": "date-time",
+            "title": "Evaluation Time",
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/$defs/PlaybillBlockSyncReadResultV1"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "tag": {
+            "const": "playbill-projection-check-result-v1",
+            "default": "playbill-projection-check-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coordinate",
+          "evaluation_time",
+          "results"
+        ],
+        "title": "PlaybillProjectionCheckResultV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "evaluation_time",
+        "results"
+      ]
+    },
     "PlaybillProjectionEvidence": {
       "fields": {
         "coordinate": {
@@ -36453,6 +37791,15 @@
                 "default": null,
                 "title": "Block Id"
               },
+              "currency_policy": {
+                "default": "warn",
+                "enum": [
+                  "warn",
+                  "require_current"
+                ],
+                "title": "Currency Policy",
+                "type": "string"
+              },
               "detail": {
                 "additionalProperties": true,
                 "title": "Detail",
@@ -36463,13 +37810,11 @@
                   "unchanged",
                   "stale",
                   "dirty",
-                  "synced",
-                  "would_sync",
                   "detached",
                   "would_detach",
                   "skipped",
                   "refused",
-                  "unsyncable"
+                  "unchecked"
                 ],
                 "title": "Outcome",
                 "type": "string"
@@ -36486,21 +37831,19 @@
                       "workspace_binding_invalid",
                       "workspace_instance_mismatch",
                       "workspace_source_catalog_invalid",
-                      "workspace_source_catalog_missing",
                       "source_path_invalid",
                       "source_not_projection_target",
                       "block_marker_malformed",
                       "block_unstamped",
                       "block_locally_modified",
-                      "block_multi_backing",
-                      "block_query_backing",
                       "block_backing_missing",
                       "block_backing_changed",
                       "block_backing_retired",
                       "block_successor_ambiguous",
                       "block_concurrent_edit",
                       "block_frame_invalid",
-                      "block_sync_failed"
+                      "block_sync_failed",
+                      "block_query_unchecked"
                     ],
                     "type": "string"
                   },
