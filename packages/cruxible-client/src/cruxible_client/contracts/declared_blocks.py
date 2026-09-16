@@ -7,7 +7,7 @@ import binascii
 import hashlib
 import json
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Any, Literal, TypeAlias
@@ -58,7 +58,7 @@ MAX_PROJECTION_COVERAGE_BINDINGS = 1024
 _BLOCK_ID = rb"[a-z][a-z0-9_.-]{0,63}"
 _STAMPED_OPEN = re.compile(rb"<!-- playbill:block:(" + _BLOCK_ID + rb"):([A-Za-z0-9_-]+) -->\n")
 _COMPACT_OPEN = re.compile(
-    rb"<!-- playbill:block:(" + _BLOCK_ID + rb"):ref:(sha256:[0-9a-f]{64}) -->\n"
+    rb"<!-- playbill:block:(" + _BLOCK_ID + rb"):ref:([0-9a-f]{12}|sha256:[0-9a-f]{64}) -->\n"
 )
 _BOOTSTRAP_OPEN = re.compile(rb"<!-- playbill:block:(" + _BLOCK_ID + rb") -->\n")
 _CLOSE = re.compile(rb"<!-- /playbill:block:(" + _BLOCK_ID + rb") -->\n")
@@ -483,13 +483,13 @@ def render_compact_projection_opening(stamp: ProjectionBlockStamp) -> bytes:
         b"<!-- playbill:block:"
         + stamp.block_id.encode("ascii")
         + b":ref:"
-        + digest.encode("ascii")
+        + digest.removeprefix("sha256:")[:12].encode("ascii")
         + b" -->\n"
     )
 
 
 def projection_manifest_refs(content: bytes) -> tuple[str, ...]:
-    """Discover only exact compact references, without resolving their authority."""
+    """Discover compact references, without resolving their full digest."""
     if len(content) > MAX_PROJECTION_SOURCE_BYTES:
         raise ProjectionMarkerError("projection source exceeds its byte ceiling")
     refs = set()
@@ -502,11 +502,27 @@ def projection_manifest_refs(content: bytes) -> tuple[str, ...]:
     return tuple(sorted(refs))
 
 
+def resolve_projection_manifest_digest(ref: str, digests: Iterable[str]) -> str:
+    """Resolve a short reference uniquely; authority remains the full digest."""
+    if re.fullmatch(r"(?:[0-9a-f]{12}|sha256:[0-9a-f]{64})", ref) is None:
+        raise ProjectionMarkerError("projection manifest reference is malformed")
+    prefix = ref if ref.startswith("sha256:") else "sha256:" + ref
+    match = None
+    for digest in digests:
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", digest) and digest.startswith(prefix):
+            if match is not None:
+                raise ProjectionMarkerError(f"projection manifest reference is ambiguous: {ref}")
+            match = digest
+    if match is None:
+        raise ProjectionMarkerError(f"projection manifest is unavailable: {ref}")
+    return match
+
+
 def _resolve_projection_manifest(
-    digest: str, manifests: Mapping[str, bytes] | None
+    ref: str, manifests: Mapping[str, bytes] | None
 ) -> ProjectionBlockStamp:
-    if manifests is None or digest not in manifests:
-        raise ProjectionMarkerError(f"projection manifest is unavailable: {digest}")
+    digest = resolve_projection_manifest_digest(ref, manifests or ())
+    assert manifests is not None
     content = manifests[digest]
     if len(content) > MAX_PROJECTION_STAMP_BYTES:
         raise ProjectionMarkerError("projection manifest exceeds its byte ceiling")
@@ -937,6 +953,7 @@ __all__ = [
     "render_compact_projection_opening",
     "projection_manifest",
     "projection_manifest_refs",
+    "resolve_projection_manifest_digest",
     "stamped_projection_windows",
     "upgrade_playbill_presentation_policy",
 ]

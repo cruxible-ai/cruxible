@@ -444,13 +444,13 @@ def test_binding_includes_compiler_and_read_handle_expires(tmp_path, seeded):
             reader.sequence = 100
     with pytest.raises(sqlite3.ProgrammingError):
         reader.artifact("old")
+    compiler = state.coordinate.compiler.model_copy(update={"schema_version": 999})
+    generation = replace(state.head, compiler=compiler)
     changed = replace(
         state,
-        coordinate=state.coordinate.model_copy(
-            update={
-                "compiler": state.coordinate.compiler.model_copy(update={"schema_version": 999})
-            }
-        ),
+        head=generation,
+        history=(generation,),
+        coordinate=state.coordinate.model_copy(update={"compiler": compiler}),
     )
     with index.read(changed, lambda n: [envelope()]) as reader:
         assert reader.generation(0).schema_version == 999

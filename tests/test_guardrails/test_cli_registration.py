@@ -95,8 +95,8 @@ def test_every_command_registered_on_a_group_is_in_the_lazy_cli_map() -> None:
     group_claims, _ = _walk_lazy_map(CLI_COMMANDS)
     defined = _defined_click_objects()
     groups = [(obj, origin) for obj, origin in defined.values() if isinstance(obj, click.Group)]
-    # 30, up from 29: `playbill ledger` carries the mirror verbs.
-    assert len(groups) == 30, f"expected 30 Playbill/host groups, found {len(groups)}"
+    # 31 includes the explicit governed compiler-upgrade group.
+    assert len(groups) == 31, f"expected 31 Playbill/host groups, found {len(groups)}"
 
     problems: list[str] = []
     for group, origin in groups:
@@ -120,8 +120,8 @@ def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     """A command defined but never registered is dead or invisible, never fine."""
     group_claims, leaf_claims = _walk_lazy_map(CLI_COMMANDS)
     # Includes the explicit `ledger publish` acknowledgment barrier.
-    assert len(leaf_claims) == 113, (
-        f"expected 113 Playbill/host leaf commands, found {len(leaf_claims)}"
+    assert len(leaf_claims) == 114, (
+        f"expected 114 Playbill/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)

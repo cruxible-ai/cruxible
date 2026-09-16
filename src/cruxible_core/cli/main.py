@@ -69,6 +69,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "proposal", "readmit"): "active",
     ("playbill", "proposal", "withdraw"): "active",
     ("playbill", "sources", "propose"): "active",
+    ("playbill", "compiler", "upgrade"): "active",
     ("playbill", "principal", "add"): "active",
     ("playbill", "principal", "rotate"): "active",
     ("playbill", "principal", "recover"): "active",
@@ -653,6 +654,16 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 },
                 module="playbill",
                 attr="authoring_group",
+            ),
+            "compiler": _group(
+                "Propose a governed compiler upgrade.",
+                {
+                    "upgrade": _command(
+                        "playbill", "propose_compiler_upgrade", "Propose a compiler upgrade."
+                    )
+                },
+                module="playbill",
+                attr="compiler_group",
             ),
             "query": _group(
                 "Propose, read, and execute governed named entrypoints.",

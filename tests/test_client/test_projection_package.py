@@ -25,7 +25,9 @@ def test_compact_package_roundtrip_and_refusals(tmp_path: Path) -> None:
     stamp = _stamp()
     digest, manifest = projection_manifest(stamp)
     page = frame_projection_block(stamp=stamp, body=OLD_BODY, compact=True)
-    assert len(page.splitlines()[0]) < 130
+    assert page.splitlines()[0] == (
+        f"<!-- playbill:block:{stamp.block_id}:ref:{digest[7:19]} -->".encode()
+    )
     assert stamped_projection_windows(page)
     with pytest.raises(ProjectionMarkerError, match="unavailable"):
         parse_projection_blocks(page, source_id=stamp.source_id, allow_bootstrap=True)
@@ -45,6 +47,35 @@ def test_compact_package_roundtrip_and_refusals(tmp_path: Path) -> None:
     assert stamped_projection_windows((tmp_path / "view.md").read_bytes())
     restored.install(tmp_path, "view.md")
     assert ProjectionPackage.read(tmp_path, "view.md").content == page
+
+
+def test_full_manifest_references_still_verify_and_install(tmp_path: Path) -> None:
+    stamp = _stamp()
+    digest, manifest = projection_manifest(stamp)
+    page = frame_projection_block(stamp=stamp, body=OLD_BODY, compact=True)
+    page = page.replace(f":ref:{digest[7:19]}".encode(), f":ref:{digest}".encode())
+    package = ProjectionPackage(page, {digest: manifest})
+    package.install(tmp_path, "view.md")
+    assert ProjectionPackage.read(tmp_path, "view.md").to_bytes() == package.to_bytes()
+
+
+def test_short_reference_refuses_ambiguity_before_installing_page(tmp_path: Path) -> None:
+    stamp = _stamp()
+    digest, manifest = projection_manifest(stamp)
+    page = frame_projection_block(stamp=stamp, body=OLD_BODY, compact=True)
+    # Simulate a second full address with the same prefix without requiring a
+    # real SHA-256 collision. Refuse ambiguity before trusting either payload.
+    other = digest[:-1] + ("0" if digest[-1] != "0" else "1")
+    with pytest.raises(ProjectionMarkerError, match="ambiguous"):
+        parse_projection_blocks(
+            page, source_id=stamp.source_id, manifests={digest: manifest, other: manifest}
+        )
+    directory = tmp_path / ".playbill/manifests"
+    directory.mkdir(parents=True)
+    (directory / (other[7:] + ".json")).write_bytes(manifest)
+    with pytest.raises(ProjectionMarkerError, match="ambiguous"):
+        ProjectionPackage(page, {digest: manifest}).install(tmp_path, "view.md")
+    assert not (tmp_path / "view.md").exists()
 
 
 def test_manifest_limits_and_server_observation() -> None:
@@ -90,7 +121,7 @@ def test_sdk_body_refresh_compact_package_and_failed_cas(tmp_path: Path) -> None
     )
     package = pb.block.package("corpus.runbook")
     assert package.content.startswith(b"prefix\n") and package.content.endswith(b"suffix\n")
-    assert b":ref:sha256:" in package.content
+    assert b":ref:" in package.content
     second = pb.block.repin(
         "corpus.runbook", "summary", body="Updated view.\n", evaluation_time=NOW
     )

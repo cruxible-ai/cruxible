@@ -359,6 +359,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "publish_playbill_ledger",
         "store_playbill_body",
         "propose_playbill_document",
+        "propose_playbill_compiler_upgrade",
         "propose_playbill_principal_change",
         "list_playbill_principals",
         "inspect_playbill_proposal",

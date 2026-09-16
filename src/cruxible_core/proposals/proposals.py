@@ -389,7 +389,11 @@ _SEMANTIC_MEMBER_PATTERNS: Final = (
 )
 """Every member kind that participates in dependency closure, in one place."""
 
-_AUTHORABLE_MEMBER_PATTERNS: Final = (_PRINCIPAL_PATH_RE, *_SEMANTIC_MEMBER_PATTERNS)
+_AUTHORABLE_MEMBER_PATTERNS: Final = (
+    re.compile(r"^compiler-upgrade\.json$"),
+    _PRINCIPAL_PATH_RE,
+    *_SEMANTIC_MEMBER_PATTERNS,
+)
 """Every path an authenticated proposal may add, change, or drop.
 
 Admission asks this in both directions -- may the proposal write this path, and
@@ -1728,6 +1732,18 @@ def _accepted(
 
 def _procedure_member(context: _MemberContext) -> _MemberVerdict:
     procedure = parse_procedure(context.content, path=context.path)
+    from cruxible_client.contracts.laws import PROVIDER_CONTRACT_PROCEDURE_LAW
+
+    installed = _installed(context, procedure.artifact_format)
+    if int(procedure.definition.graph_format) == 5:
+        if procedure.artifact_format != "playbill-procedure-v2":
+            raise ValueError("graph-v5 requires the owner-carried Contract envelope")
+        if (
+            context.historical_law_coordinate is not None
+            and installed != PROVIDER_CONTRACT_PROCEDURE_LAW
+        ):
+            raise ProposalIntegrityError("graph-v5 requires its exact operation-contract law")
+        installed = PROVIDER_CONTRACT_PROCEDURE_LAW
     predecessor: AcceptedProcedureV1 | None = None
     if context.parent_content is not None:
         previous = parse_procedure(context.parent_content, path=context.path)
@@ -1755,7 +1771,7 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
     annotations = procedure.definition.annotations
     return _accepted(
         context,
-        _installed(context, procedure.artifact_format),
+        installed,
         predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
         candidate_artifact_digest=law.artifact_digest,
         required_tier=law.required_tier,
@@ -2787,6 +2803,44 @@ def _procedure_runtime_policy_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _compiler_upgrade_member(context: _MemberContext) -> _MemberVerdict:
+    from cruxible_client.contracts.compiler_upgrade import (
+        COMPILER_UPGRADE_PATH,
+        parse_compiler_upgrade,
+    )
+    from cruxible_core.compiler.upgrades import upgrade_law, validate_upgrade
+
+    try:
+        if context.scope != (COMPILER_UPGRADE_PATH,):
+            raise ValueError("compiler upgrade must be the entire proposal")
+        value = parse_compiler_upgrade(context.content)
+        validate_upgrade(value, context.current)
+        if context.actor_id is None:
+            raise ValueError("compiler upgrade requires an authenticated principal")
+        if context.principals.require_active(context.actor_id).kind != "ordinary":
+            raise ValueError("compiler upgrade requires an ordinary client principal")
+    except ValueError as exc:
+        return _MemberVerdict(
+            diagnostics=(_diagnostic("playbill.compiler_upgrade.invalid", str(exc), context.path),)
+        )
+    return _accepted(
+        context,
+        upgrade_law(context.current.compiler, value.target),
+        predecessor_artifact_digest=(
+            None if context.parent_content is None else file_digest(context.parent_content).tagged
+        ),
+        candidate_artifact_digest=file_digest(context.content).tagged,
+        required_tier="admin",
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={
+            "target_compiler": value.target.model_dump(mode="json"),
+            "governance_operation": "compiler-upgrade",
+            "verdict": "accepted",
+        },
+    )
+
+
 def _principal_member(context: _MemberContext) -> _MemberVerdict:
     """Judge one control-plane principal transition as an ordinary scoped member.
 
@@ -2840,6 +2894,13 @@ def _principal_member(context: _MemberContext) -> _MemberVerdict:
 
 
 _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
+    _MemberKind(
+        name="compiler-upgrade",
+        pattern=re.compile(r"^compiler-upgrade\.json$"),
+        removal_code="playbill.compiler_upgrade.removal_unsupported",
+        removal_message="Compiler history cannot be removed.",
+        evaluate=_compiler_upgrade_member,
+    ),
     _MemberKind(
         name="resolution-contract",
         pattern=re.compile(r"^resolution-contracts/[a-z][a-z0-9_.-]{0,255}\.json$"),
@@ -2980,6 +3041,7 @@ _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
     ),
 )
 ROLE_DEMOTED_MEMBER_FAMILIES: Final[tuple[str, ...]] = (
+    "compiler-upgrade",
     "resolution-contract",
     "attestation",
     "approval-policy",

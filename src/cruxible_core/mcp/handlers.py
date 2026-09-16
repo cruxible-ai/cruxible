@@ -84,6 +84,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillAuthoringSubmitRequest,
     PlaybillBlockDeclareRequest,
     PlaybillBlockDepublishRequest,
+    PlaybillCompilerUpgradeRequest,
     PlaybillCurationAcceptFixedRequest,
     PlaybillCurationOverruleRequest,
     PlaybillCurationSuppressRequest,
@@ -290,6 +291,7 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_playbill_proposal_withdraw": TypeAdapter(PlaybillProposalWithdrawRequest),
     "cruxible_playbill_propose_claim_type": TypeAdapter(PlaybillProposeClaimTypeInputRequest),
     "cruxible_playbill_propose_document": TypeAdapter(PlaybillProposeDocumentRequest),
+    "cruxible_playbill_compiler_upgrade": TypeAdapter(PlaybillCompilerUpgradeRequest),
     "cruxible_playbill_propose_principal_change": TypeAdapter(PlaybillProposePrincipalRequest),
     "cruxible_playbill_propose_query_definition": TypeAdapter(
         PlaybillProposeQueryDefinitionRequest
@@ -738,6 +740,37 @@ def handle_playbill_list_principals(instance_id: str) -> contracts.PlaybillPrinc
         lambda client: client.list_playbill_principals(instance_id),
         lambda: playbill_api.playbill_list_principals(instance_id),
         operation_name="cruxible_playbill_list_principals",
+    )
+
+
+def handle_playbill_compiler_upgrade(
+    instance_id: str,
+    target_compiler_digest: str,
+    base: dict[str, Any],
+    proposal_name: str,
+) -> contracts.PlaybillProposalInspection:
+    request = PlaybillCompilerUpgradeRequest.model_validate(
+        {
+            "target": {"rule_digest": target_compiler_digest},
+            "base": base,
+            "proposal_name": proposal_name,
+        }
+    )
+    return _dispatch_remote_or_local(
+        lambda client: client.propose_playbill_compiler_upgrade(
+            instance_id,
+            target=request.target,
+            base=request.base,
+            proposal_name=proposal_name,
+        ),
+        lambda: playbill_api.playbill_propose_compiler_upgrade(
+            instance_id,
+            target=request.target,
+            base=request.base,
+            proposal_name=proposal_name,
+        ),
+        operation_name="cruxible_playbill_compiler_upgrade",
+        local_payload=request.model_dump(mode="json"),
     )
 
 

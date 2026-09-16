@@ -35,6 +35,8 @@ from cruxible_client.contracts.errors import (
     PlaybillDeprecatedWriteError,
     PlaybillSinceRequestInvalid,
 )
+from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_client.errors import (
     ConfigError,
     CoreError,
@@ -489,6 +491,24 @@ class CruxibleClient:
             )
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/documents/proposals", json=payload
+        )
+        return self._parse_model(response, contracts.PlaybillProposalInspection)
+
+    def propose_playbill_compiler_upgrade(
+        self,
+        instance_id: str,
+        *,
+        target: CompilerCoordinate,
+        base: AcceptedCoordinate | contracts.PlaybillAcceptedCoordinate,
+        proposal_name: str,
+    ) -> contracts.PlaybillProposalInspection:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/compiler/proposals",
+            json={
+                "target": target.model_dump(mode="json"),
+                "base": base.model_dump(mode="json"),
+                "proposal_name": proposal_name,
+            },
         )
         return self._parse_model(response, contracts.PlaybillProposalInspection)
 

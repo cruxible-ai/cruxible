@@ -691,10 +691,11 @@ def _canonical_successor_bytes(
             }
         if current.artifact_kind == "procedure":
             raw_definition = payload.get("definition")
-            if isinstance(raw_definition, dict) and raw_definition.get("graph_format") == 4:
+            if isinstance(raw_definition, dict) and raw_definition.get("graph_format") in {4, 5}:
                 raise ClaimTypeMigrationDependentInvalid(
                     f"{ClaimTypeMigrationDependentInvalid.code}: automatic migration of "
-                    f"graph-v4 Procedure dependent {current.identity.qualified} is not "
+                    f"graph-v{raw_definition['graph_format']} Procedure dependent "
+                    f"{current.identity.qualified} is not "
                     "supported; supply an explicit successor"
                 )
             try:

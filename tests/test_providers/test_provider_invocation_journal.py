@@ -231,6 +231,7 @@ def _prepared_v5(
     provider: AcceptedProviderV1 | None = None,
     interface: AcceptedProviderInterfaceRegistrationV1 | None = None,
     local_binding: VerifiedProviderBindingV1 | None = None,
+    operation_contract=None,
 ) -> tuple[PreparedProcedureRunV5, object]:
     fixture = _fixture(tmp_path)
     v3 = _line_admission(accepted, fixture)
@@ -318,12 +319,13 @@ def _prepared_v5(
         result_bytes_cap=1024,
     )
     occurrence = ProviderExternalOccurrencePlanV1(
+        operation_contract=operation_contract,
         occurrence_path=(
             f"repeat/{repeat_node_id}/{node.node_id}"
             if repeat_node_id is not None
             else "provider/direct"
         ),
-        occurrence_kind="provider",
+        occurrence_kind="call" if accepted.procedure.definition.graph_format == 5 else "provider",
         node_id=node.node_id,
         repeat_node_id=repeat_node_id,
         provider_artifact_digest=provider.artifact_digest,

@@ -91,6 +91,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_list_principals": (
         "Use when you need accepted public principal records and their coordinate."
     ),
+    "cruxible_playbill_compiler_upgrade": (
+        "Use to propose an explicit compiler upgrade bound to the exact accepted base. "
+        "Requires admin permission; approve and activate through the normal proposal workflow."
+    ),
     "cruxible_playbill_propose_principal_change": (
         "Use when you need a governed principal registration, rotation, revocation, or recovery."
     ),

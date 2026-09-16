@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import Sha256Value, normalize_canonical, typed_digest
+from cruxible_client.contracts.provider_contracts import ProviderOperationContractV1
 
 
 class _StrictProviderExecutionModel(BaseModel):
@@ -286,7 +287,7 @@ class ProviderExternalOccurrencePlanV1(_StrictProviderExecutionModel):
         "playbill-provider-external-occurrence-plan-v1"
     )
     occurrence_path: str
-    occurrence_kind: Literal["provider", "source"]
+    occurrence_kind: Literal["provider", "source", "call"]
     node_id: str
     repeat_node_id: str | None = None
     input_name: str | None = None
@@ -306,6 +307,9 @@ class ProviderExternalOccurrencePlanV1(_StrictProviderExecutionModel):
     secret_plan: ProviderSecretResolutionPlanV1
     budget_translation: ProviderBudgetTranslationV1
     source_runtime_plan_digest: str | None = None
+    operation_contract: ProviderOperationContractV1 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     _digests = field_validator(
         "provider_artifact_digest",

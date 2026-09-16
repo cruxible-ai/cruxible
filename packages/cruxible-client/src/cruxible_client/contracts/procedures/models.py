@@ -363,6 +363,12 @@ class ProviderNodeV4(_StrictProcedureModel):
         return self
 
 
+class CallNodeV5(ProviderNodeV4):
+    """A contracted call; Provider names its implementation, not a node category."""
+
+    kind: Literal["call"] = "call"  # type: ignore[assignment]
+
+
 TransformKindV1 = Literal[
     "shape_items",
     "join_items",
@@ -597,7 +603,7 @@ class RepeatBodyNodeV4(_StrictProcedureModel):
 
     @model_validator(mode="after")
     def _operation_shape(self) -> "RepeatBodyNodeV4":
-        if self.operation == "provider":
+        if self.operation in {"provider", "call"}:
             if self.provider is None or self.interface is None or self.interface_digest is None:
                 raise ValueError(
                     "repeat provider operations require provider and interface pin/digest"
@@ -641,6 +647,14 @@ class RepeatNodeV4(_StrictProcedureModel):
         if not value or len(set(ids)) != len(ids) or len(set(aliases)) != len(aliases):
             raise ValueError("repeat body requires nonempty, unique node ids and aliases")
         return value
+
+
+class RepeatBodyNodeV5(RepeatBodyNodeV4):
+    operation: Literal["call", "transform"]  # type: ignore[assignment]
+
+
+class RepeatNodeV5(RepeatNodeV4):
+    body: tuple[RepeatBodyNodeV5, ...]
 
 
 class CaptureEgressNodeV3(_StrictProcedureModel):
@@ -728,6 +742,23 @@ ProcedureNodeV4 = Annotated[
     | GuardNodeV3
     | ProjectNodeV3
     | RepeatNodeV4
+    | CaptureEgressNodeV3
+    | InboxEgressNodeV3
+    | ProposeChangeSetNodeV3
+    | MandateSettlementNodeV3
+    | HaltNodeV3,
+    Field(discriminator="kind"),
+]
+
+ProcedureNodeV5 = Annotated[
+    StateTapNodeV3
+    | SourceNodeV4
+    | ExhaustTapNodeV3
+    | CallNodeV5
+    | TransformNodeV3
+    | GuardNodeV3
+    | ProjectNodeV3
+    | RepeatNodeV5
     | CaptureEgressNodeV3
     | InboxEgressNodeV3
     | ProposeChangeSetNodeV3
@@ -981,8 +1012,18 @@ class ProcedureDefinitionV4(_StrictProcedureModel):
         return self
 
 
+class ProcedureDefinitionV5(ProcedureDefinitionV4):
+    """Current graph grammar with call nodes and checked interface contracts.
+
+    V3/V4 remain frozen parsers for retained artifacts and receipts.
+    """
+
+    graph_format: Literal[5] = 5  # type: ignore[assignment]
+    nodes: tuple[ProcedureNodeV5, ...]
+
+
 ProcedureDefinitionAny: TypeAlias = Annotated[
-    ProcedureDefinitionV3 | ProcedureDefinitionV4,
+    ProcedureDefinitionV3 | ProcedureDefinitionV4 | ProcedureDefinitionV5,
     Field(discriminator="graph_format"),
 ]
 
@@ -1013,6 +1054,11 @@ def iter_pin_bindings(value: object) -> tuple[ProcedurePinBindingV1, ...]:
 
 
 __all__ = [
+    "CallNodeV5",
+    "ProcedureDefinitionV5",
+    "ProcedureNodeV5",
+    "RepeatBodyNodeV5",
+    "RepeatNodeV5",
     "CaptureEgressNodeV3",
     "ExhaustTapNodeV3",
     "GuardNodeV3",

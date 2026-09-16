@@ -80,7 +80,7 @@ def render_candidate_card(
         raise ProposalIntegrityError(
             f"candidate card source is not a registered artifact: {path}"
         ) from exc
-    if kind in {"changeset", "presentation"} or not isinstance(payload, dict):
+    if kind in {"changeset", "presentation", "compiler-upgrade"} or not isinstance(payload, dict):
         raise ProposalIntegrityError(f"candidate card source has no floor card: {path}")
     body = json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True)
     return (
@@ -146,7 +146,7 @@ def derive_candidate_cards(
             kind = artifact_kinds.resolve_path(path)
         except ProjectionFormatError:
             continue
-        if kind in {"changeset", "presentation"} or not path.endswith(".json"):
+        if kind in {"changeset", "presentation", "compiler-upgrade"} or not path.endswith(".json"):
             continue
         card_path = candidate_card_path(path)
         content = candidate_tree.get(path)

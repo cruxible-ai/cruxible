@@ -151,6 +151,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinitionAny,
     ProcedureDefinitionV3,
     ProcedureDefinitionV4,
+    ProcedureDefinitionV5,
     ProcedurePinSlotRefV1,
     iter_pin_bindings,
 )
@@ -1633,9 +1634,13 @@ def _lower_procedure(
     # definition digest already dispatches on the declared graph_format, so a
     # graph-v4 definition lowers into the SAME accepted artifact shape a v3 one
     # does. Only the parse generation differs; historical v3 bytes are untouched.
-    graph_generation = 4 if graph_format == 4 else 3
+    graph_generation = graph_format if graph_format in {4, 5} else 3
     definition_model: type[ProcedureDefinitionV3] | type[ProcedureDefinitionV4] = (
-        ProcedureDefinitionV4 if graph_generation == 4 else ProcedureDefinitionV3
+        ProcedureDefinitionV5
+        if graph_generation == 5
+        else ProcedureDefinitionV4
+        if graph_generation == 4
+        else ProcedureDefinitionV3
     )
     definition: ProcedureDefinitionAny
     try:
@@ -1942,7 +1947,7 @@ def _render_line_member(
     the staged tree -- accepted at the base or authored earlier in the same
     set -- and lowering pins their exact digests. A Procedure that pins every
     Provider it names fills no slot, so the Line's slot bindings and Provider
-    closures are empty; graph-v4 Procedures lower to the v2 Line wire.
+    closures are empty; graph-v4/v5 Procedures lower to the v2 Line wire.
     """
 
     procedure_target = procedure_path(payload.procedure_name)
@@ -1969,13 +1974,13 @@ def _render_line_member(
             ),
         )
     policy = parse_acquisition_policy(policy_content, path=policy_target)
-    if procedure.definition.graph_format != 4:
+    if procedure.definition.graph_format not in {4, 5}:
         _refuse(
             "playbill.authoring.line_graph_format_unsupported",
             "procedure_name",
-            "Line authoring lowers graph-v4 Procedures only.",
+            "Line authoring lowers graph-v4/v5 Procedures only.",
             repair_kind="replace_procedure_name",
-            repair_description="Name a graph-v4 Procedure, or author the Line as raw bytes.",
+            repair_description="Name a graph-v4/v5 Procedure, or author the Line as raw bytes.",
         )
     if _required_slot_names(procedure):
         _refuse(

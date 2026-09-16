@@ -110,6 +110,7 @@ from cruxible_client.contracts.types import (
     GitObjectFormat,
 )
 from cruxible_core.claims.closure import build_dependency_index
+from cruxible_core.compiler.upgrades import compiler_after_record
 from cruxible_core.indexes.claims.claim_subject_index import build_claim_subject_index
 from cruxible_core.ledger.bootstrap import VerifiedGenesis, generation_root
 from cruxible_core.ledger.git import GitLedger
@@ -244,6 +245,7 @@ class CheckpointGeneration:
     generation_root: GenerationRoot
     principals: PrincipalRegistrySnapshot
     record: ChangeSetRecordAnyVersion | None
+    compiler: CompilerCoordinate
 
 
 @dataclass(frozen=True)
@@ -481,6 +483,7 @@ def _rederive_prefix(
     history: tuple[str, ...],
     records: tuple[ChangeSetRecordAnyVersion, ...],
     head_tree: Mapping[str, bytes],
+    compiler: CompilerCoordinate,
 ) -> tuple[CheckpointGeneration, ...]:
     """Rebuild the whole prefix coordinate chain from the verified genesis forward."""
 
@@ -497,11 +500,14 @@ def _rederive_prefix(
             generation_root=genesis.generation_root,
             principals=genesis_principals,
             record=None,
+            compiler=compiler,
         )
     ]
     principals = genesis_principals.principals
     for index, record in enumerate(records, start=1):
         parent = prefix[-1]
+        if record.compiler_digest != parent.compiler.rule_digest:
+            raise ReplayCheckpointError("checkpoint prefix compiler boundary differs")
         oid = history[index]
         # Spelled as replay spells it, list and not set: a duplicated approval
         # digest must raise here exactly as it would there, never fold away.
@@ -540,6 +546,7 @@ def _rederive_prefix(
                 generation_root=generation_root(descriptor),
                 principals=snapshot,
                 record=record,
+                compiler=compiler_after_record(record),
             )
         )
     head = prefix[-1]
@@ -571,8 +578,6 @@ def verify_checkpoint(
         raise ReplayCheckpointError("checkpoint instance identity differs from this instance")
     if body.git_object_format != object_format:
         raise ReplayCheckpointError("checkpoint Git object format differs from this ledger")
-    if body.compiler != compiler:
-        raise ReplayCheckpointError("checkpoint compiler coordinate differs from this instance")
     if body.genesis != genesis_coordinate:
         raise ReplayCheckpointError("checkpoint genesis coordinate differs from this instance")
 
@@ -621,8 +626,11 @@ def verify_checkpoint(
         history=history,
         records=records,
         head_tree=tree,
+        compiler=compiler,
     )
     head = prefix[-1]
+    if body.compiler != head.compiler:
+        raise ReplayCheckpointError("checkpoint compiler coordinate differs from accepted history")
     if head.semantic_root.tagged != body.semantic_root:
         raise ReplayCheckpointError("re-derived semantic root differs from the checkpoint")
     if head.generation_root.tagged != body.generation_root:

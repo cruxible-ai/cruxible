@@ -25,6 +25,7 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionMarkerError,
     discover_projection_blocks,
     projection_manifest_refs,
+    resolve_projection_manifest_digest,
 )
 
 
@@ -32,8 +33,15 @@ def load_projection_manifests(workspace: Path, content: bytes) -> dict[str, byte
     root = workspace.resolve()
     result = {}
     total = 0
-    for digest in projection_manifest_refs(content):
-        path = root / ".playbill/manifests" / (digest.removeprefix("sha256:") + ".json")
+    directory = root / ".playbill/manifests"
+    for ref in projection_manifest_refs(content):
+        if ref.startswith("sha256:"):
+            digest = ref
+        else:
+            digest = resolve_projection_manifest_digest(
+                ref, ("sha256:" + path.stem for path in directory.glob(ref + "*.json"))
+            )
+        path = directory / (digest.removeprefix("sha256:") + ".json")
         try:
             if not path.resolve(strict=True).is_relative_to(root) or path.is_symlink():
                 raise ProjectionMarkerError("projection manifest path escapes its workspace")
@@ -90,7 +98,11 @@ class ProjectionPackage:
             block.stamp is None or block.stamp.body_digest != block.body_digest for block in blocks
         ):
             raise ProjectionMarkerError("projection package body differs from its declaration")
-        if set(self.manifests) != set(projection_manifest_refs(self.content)):
+        referenced = {
+            resolve_projection_manifest_digest(ref, self.manifests)
+            for ref in projection_manifest_refs(self.content)
+        }
+        if set(self.manifests) != referenced:
             raise ProjectionMarkerError("projection package contains unrelated manifests")
         object.__setattr__(self, "manifests", MappingProxyType(dict(self.manifests)))
 
@@ -156,6 +168,8 @@ class ProjectionPackage:
             raise ProjectionMarkerError("projection page escapes its workspace")
         discover_projection_blocks(self.content, manifests=self.manifests)
         retain_local_manifests(root, self.manifests)
+        # A workspace may already retain another manifest with this short prefix.
+        load_projection_manifests(root, self.content)
         target.parent.mkdir(parents=True, exist_ok=True)
         if not target.exists():
             # Exclusive creation preserves an independently authored page.

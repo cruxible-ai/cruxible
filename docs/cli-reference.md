@@ -1493,3 +1493,15 @@ unsupported-detail result.
 
 Use --json on operation commands for machine-readable output. Run any command
 with --help for its exact options.
+
+### Compiler upgrade
+
+`cruxible playbill compiler upgrade --to DIGEST --name NAME` creates an admin-only
+proposal bound to the exact accepted head and target compiler. Review it, sign
+through `cruxible playbill proposal approve`, then use
+`cruxible playbill proposal activate`. Activation validates the full target
+projection before advancing the signed ledger. Installing or restarting a daemon
+does not upgrade an instance. Historical generations keep their original compiler.
+The instance descriptor retains its genesis compiler; inspection reports the
+active compiler from accepted history. Unsupported transitions and downgrades are
+refused. Artifact format migrations are separate work.

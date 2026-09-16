@@ -30,6 +30,7 @@ from cruxible_client.contracts.candidates import (
 from cruxible_client.contracts.errors import PlaybillFormatError, ProjectionIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow
+from cruxible_core.compiler.upgrades import compiler_after_record
 from cruxible_core.derived.derived_runtime import BoundedCache
 from cruxible_core.indexes.acquisition import open_working_snapshot
 from cruxible_core.ledger.recovery import RecoveredInstanceState
@@ -185,7 +186,7 @@ class RetainedRecordReader:
             record.sequence != generation.sequence
             or record.changeset_digest != generation.source_record_digest
             or record.candidate_digest != generation.candidate_digest
-            or record.compiler_digest != generation.compiler_digest
+            or compiler_after_record(record).rule_digest != generation.compiler_digest
         ):
             raise ProjectionIntegrityError("accepted member source record binding differs")
         self._records[generation] = record
@@ -859,8 +860,8 @@ class AcceptedHistoryIndex:
                 generation.oid,
                 generation.semantic_root.tagged,
                 generation.generation_root.tagged,
-                recovered.coordinate.compiler.rule_digest,
-                recovered.coordinate.compiler.schema_version,
+                generation.compiler.rule_digest,
+                generation.compiler.schema_version,
                 position - 1 if position else None,
                 record.candidate_digest if record else None,
                 record.actor_binding.actor_id if record else None,

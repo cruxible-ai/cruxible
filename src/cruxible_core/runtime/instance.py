@@ -609,7 +609,7 @@ class PlaybillInstance:
             bootstrap_root=self._verified_genesis.bootstrap_root.tagged,
             semantic_root=self._recovered.head.semantic_root.tagged,
             generation_root=self._recovered.head.generation_root.tagged,
-            compiler=self.descriptor.compiler,
+            compiler=self.accepted_coordinate().compiler,
             authority=self.descriptor.authority,
             operating_profile=self.descriptor.operating_profile,
             recovery_posture=self.descriptor.recovery_posture,
@@ -628,13 +628,12 @@ class PlaybillInstance:
     def _accepted_coordinates_by_sequence(self) -> dict[int, AcceptedCoordinate]:
         """Return replay-proven historical coordinates for stable derived activations."""
 
-        compiler_digest = self.descriptor.compiler.rule_digest
         return {
             generation.sequence: AcceptedCoordinate(
                 git_oid=generation.oid,
                 semantic_root=generation.semantic_root.tagged,
                 generation_root=generation.generation_root.tagged,
-                compiler_digest=compiler_digest,
+                compiler_digest=generation.compiler.rule_digest,
             )
             for generation in self._recovered.history
         }
@@ -1426,6 +1425,7 @@ class PlaybillInstance:
                     "git_oid": generation.oid,
                     "semantic_root": generation.semantic_root.tagged,
                     "generation_root": generation.generation_root.tagged,
+                    "compiler": generation.compiler,
                 }
             )
             assembler = ProjectionAssembler(
@@ -1491,7 +1491,7 @@ class PlaybillInstance:
             or generation.oid != location.git_oid
             or generation.semantic_root.tagged != location.semantic_root
             or generation.generation_root.tagged != location.generation_root
-            or recovered.coordinate.compiler.rule_digest != location.compiler_digest
+            or generation.compiler.rule_digest != location.compiler_digest
         ):
             raise ProjectionIntegrityError("indexed generation differs from captured replay")
         return generation
@@ -1528,7 +1528,7 @@ class PlaybillInstance:
             git_oid=generation.oid,
             semantic_root=generation.semantic_root.tagged,
             generation_root=generation.generation_root.tagged,
-            compiler=self.descriptor.compiler,
+            compiler=generation.compiler,
         )
 
     def generation_for_semantic_root(self, semantic_root: str) -> RecoveredGeneration:
@@ -1707,9 +1707,15 @@ class PlaybillInstance:
             accepted_coordinates_by_sequence=self._accepted_coordinates_by_sequence(),
         )
         request = assembler.request(
-            output_staging_directory=paths["projections"] / ".historical-bind"
+            output_staging_directory=paths["projections"]
+            / f".stage-historical-bind-{secrets.token_hex(12)}"
         )
         manifest_path = paths["projections"] / projection_manifest_name(request)
+        if not manifest_path.exists():
+            # Only replay-proven coordinates reach this point. Rebuild a missing
+            # historical projection under its own compiler, without changing
+            # serving or rewriting the accepted record/receipt.
+            assembler.assemble(request)
         return self._projection_sources(bind_projection(manifest_path, expected=verified))
 
     def refresh(self, *, witness: WitnessSink | None = None) -> AcceptedProjectionCoordinate:
@@ -1783,6 +1789,12 @@ class PlaybillInstance:
         """Construct one verified generation without exposing the Git ledger to surfaces."""
 
         self.require_writable()
+        if any(member.artifact_kind == "compiler-upgrade" for member in candidate.members):
+            from cruxible_core.runtime.permissions import check_permission
+
+            check_permission(
+                "cruxible_playbill_compiler_upgrade", instance_id=self.descriptor.instance_id
+            )
         return prepare_generation(
             self._ledger,
             base=base,
@@ -1865,7 +1877,7 @@ class PlaybillInstance:
                     git_oid=bundle.oid,
                     semantic_root=bundle.semantic_root.tagged,
                     generation_root=bundle.generation_root.tagged,
-                    compiler=base.compiler,
+                    compiler=successor.compiler,
                 )
                 if result.accepted != expected:
                     raise SettlementIntegrityError(

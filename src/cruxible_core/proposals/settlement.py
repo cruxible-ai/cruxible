@@ -63,6 +63,7 @@ from cruxible_client.contracts.principals import (
     principal_registry_from_tree,
 )
 from cruxible_client.contracts.types import GenerationDescriptor
+from cruxible_core.compiler.upgrades import compiler_after_record
 from cruxible_core.derived.derived_runtime import BoundedCache
 from cruxible_core.indexes.projection import (
     AcceptedProjectionCoordinate,
@@ -711,7 +712,7 @@ class VerifiedGenerationBundle:
             git_oid=self.oid,
             semantic_root=self.semantic_root.tagged,
             generation_root=self.generation_root.tagged,
-            compiler=base.compiler,
+            compiler=compiler_after_record(self.record),
             base_git_oid=base.git_oid,
         )
 
@@ -819,6 +820,12 @@ def prepare_generation(
         creator_principal_id=actor_binding.actor_id,
         purpose="principal-lifecycle" if principal_lifecycle else "ordinary-artifact",
     )
+    if (
+        any(member.artifact_kind == "compiler-upgrade" for member in candidate.members)
+        and not verified_approvals
+    ):
+        raise SettlementIntegrityError("compiler upgrade requires a signed client approval")
+
     if principal_lifecycle and actor_binding.actor_id not in {
         approval.signer_id for approval in verified_approvals
     }:

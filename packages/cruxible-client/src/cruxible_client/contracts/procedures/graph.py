@@ -421,7 +421,7 @@ def compute_procedure_node_digests_v4(
         node = nodes[node_id]
         local = typed_digest(
             ArtifactDigest,
-            "playbill-procedure-node-local-v4",
+            f"playbill-procedure-node-local-v{definition.graph_format}",
             _node_local_payload(node),
         ).tagged
         successor_digests = {
@@ -430,7 +430,7 @@ def compute_procedure_node_digests_v4(
         }
         subtree = typed_digest(
             ArtifactDigest,
-            "playbill-procedure-node-subtree-v4",
+            f"playbill-procedure-node-subtree-v{definition.graph_format}",
             {"local_digest": local, "successors": successor_digests},
         ).tagged
         result[node_id] = ProcedureNodeDigestsV4(
@@ -448,7 +448,7 @@ def compute_procedure_definition_digest_v4(definition: ProcedureDefinitionV4) ->
     payload.pop("nodes")
     return typed_digest(
         ArtifactDigest,
-        "playbill-procedure-definition-v4",
+        f"playbill-procedure-definition-v{definition.graph_format}",
         {
             "definition": payload,
             "entry_node_id": definition.nodes[0].node_id,

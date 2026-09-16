@@ -20,6 +20,11 @@ from cruxible_core.governance.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_INTERFACE_DIGEST,
     WorkspaceFileBucketClassifier,
 )
+from cruxible_core.providers.web_fetch import (
+    WEB_FETCH_FIXTURES,
+    WEB_FETCH_INTERFACE_DIGEST,
+    WebFetchBucketClassifier,
+)
 
 
 class ProviderBucketClassifierProtocol(Protocol):
@@ -57,7 +62,7 @@ _CORE_DEMO_SIZE_FIXTURE_V1 = ProviderBucketConformanceFixtureV1(
 # by the daemon operator and are never shipped as product-domain demo machinery.
 CORE_PROVIDER_BUCKET_CONFORMANCE_FIXTURES_V1: Mapping[str, ProviderBucketConformanceFixtureV1] = {
     fixture.fixture_id: fixture
-    for fixture in (_CORE_DEMO_SIZE_FIXTURE_V1, *WORKSPACE_FILE_FIXTURES)
+    for fixture in (_CORE_DEMO_SIZE_FIXTURE_V1, *WORKSPACE_FILE_FIXTURES, *WEB_FETCH_FIXTURES)
 }
 
 
@@ -177,6 +182,8 @@ def install_compiler_owned_provider_classifier(
 ) -> ProviderBucketClassifierInstallationV1 | None:
     """Install the compiler-owned double for an interface that has one."""
 
+    if accepted.registration.interface_digest == WEB_FETCH_INTERFACE_DIGEST:
+        return PROVIDER_BUCKET_CLASSIFIER_REGISTRY.install(accepted, WebFetchBucketClassifier())
     if accepted.registration.interface_digest != WORKSPACE_FILE_INTERFACE_DIGEST:
         return None
     return PROVIDER_BUCKET_CLASSIFIER_REGISTRY.install(

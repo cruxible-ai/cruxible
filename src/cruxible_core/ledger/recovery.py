@@ -45,6 +45,7 @@ from cruxible_client.contracts.types import (
 )
 from cruxible_core.compiler.assembler import ProjectionAssembler
 from cruxible_core.compiler.compiler import PC_HR_ARTIFACT_CODEC_COMPILERS
+from cruxible_core.compiler.upgrades import compiler_after_record
 from cruxible_core.indexes.projection import (
     AcceptedCoordinate,
     AcceptedProjectionCoordinate,
@@ -115,6 +116,7 @@ class RecoveredGeneration:
     generation_root: GenerationRoot
     principals: PrincipalRegistrySnapshot
     record: ChangeSetRecordAnyVersion | None
+    compiler: CompilerCoordinate
 
 
 @dataclass(frozen=True)
@@ -419,6 +421,7 @@ def prepared_generation_for_handoff(
             bundle.tree, semantic_root=bundle.semantic_root.tagged
         ),
         record=record,
+        compiler=compiler_after_record(record),
     )
 
 
@@ -430,7 +433,6 @@ def _verify_successor(
     repository_path: str,
     object_format: GitObjectFormat,
     instance_id: str,
-    compiler: CompilerCoordinate,
     bodies: BodyProjectionProtocol,
     laws: AcceptanceLawRegistry,
     promotion_verifier: ExhaustPromotionVerifierProtocol | None,
@@ -440,6 +442,7 @@ def _verify_successor(
     """Verify one successor against its parent window and return the next window."""
 
     parent = window.generation
+    compiler = parent.compiler
     parent_tree = window.tree
     if ledger.parent_of(oid) != parent.oid:
         raise SettlementIntegrityError("generation parent differs from accepted predecessor")
@@ -546,6 +549,12 @@ def _verify_successor(
         creator_principal_id=record.actor_binding.actor_id,
         purpose="principal-lifecycle" if principal_lifecycle else "ordinary-artifact",
     )
+    if (
+        any(member.artifact_kind == "compiler-upgrade" for member in candidate.members)
+        and not verified_approvals
+    ):
+        raise SettlementIntegrityError("compiler upgrade requires a signed client approval")
+
     if principal_lifecycle and record.actor_binding.actor_id not in {
         approval.signer_id for approval in verified_approvals
     }:
@@ -578,6 +587,7 @@ def _verify_successor(
             generation_root=computed_generation_root,
             principals=principals,
             record=record,
+            compiler=compiler_after_record(record),
         ),
         tree=tree,
         state=state,
@@ -602,7 +612,7 @@ def _projection_for_head(
                 git_oid=generation.oid,
                 semantic_root=generation.semantic_root.tagged,
                 generation_root=generation.generation_root.tagged,
-                compiler_digest=coordinate.compiler.rule_digest,
+                compiler_digest=generation.compiler.rule_digest,
             )
             for generation in history
         },
@@ -647,7 +657,6 @@ def _clean_unaccepted_publications(
     history: tuple[RecoveredGeneration, ...],
     instance_id: str,
     object_format: GitObjectFormat,
-    compiler: CompilerCoordinate,
     publication_directory: Path,
 ) -> None:
     """Retire only projection builds proven outside accepted main history."""
@@ -673,7 +682,7 @@ def _clean_unaccepted_publications(
             git_oid=manifest.git_oid,
             semantic_root=manifest.semantic_root,
             generation_root=manifest.generation_root,
-            compiler=compiler,
+            compiler=CompilerCoordinate(rule_digest=manifest.compiler_digest),
         )
         with bind_projection(path, expected=expected):
             pass
@@ -692,7 +701,6 @@ def _clean_unaccepted_generations(
     repository_path: str,
     object_format: GitObjectFormat,
     instance_id: str,
-    compiler: CompilerCoordinate,
     bodies: BodyProjectionProtocol,
     laws: AcceptanceLawRegistry,
     promotion_verifier: ExhaustPromotionVerifierProtocol | None,
@@ -741,7 +749,6 @@ def _clean_unaccepted_generations(
                 repository_path=repository_path,
                 object_format=object_format,
                 instance_id=instance_id,
-                compiler=compiler,
                 bodies=bodies,
                 laws=laws,
                 promotion_verifier=promotion_verifier,
@@ -882,6 +889,7 @@ def recover_instance(
         generation_root=genesis.generation_root,
         principals=genesis_principals,
         record=None,
+        compiler=compiler,
     )
     repository_path = str(ledger.path.resolve(strict=True))
     seed = load_verified_checkpoint(
@@ -914,6 +922,7 @@ def recover_instance(
                 generation_root=generation.generation_root,
                 principals=generation.principals,
                 record=generation.record,
+                compiler=generation.compiler,
             )
             for generation in seed.prefix
         ]
@@ -936,7 +945,6 @@ def recover_instance(
             repository_path=repository_path,
             object_format=object_format,
             instance_id=instance_id,
-            compiler=compiler,
             bodies=bodies,
             laws=laws,
             promotion_verifier=promotion_verifier,
@@ -949,6 +957,7 @@ def recover_instance(
         )
         history.append(window.generation)
     head = history[-1]
+    compiler = head.compiler
     checkpoint: ReplayCheckpointBodyV2 | None = None
     if checkpoint_directory is not None and head.sequence > 0:
         checkpoint = checkpoint_body(
@@ -973,7 +982,6 @@ def recover_instance(
         repository_path=repository_path,
         object_format=object_format,
         instance_id=instance_id,
-        compiler=compiler,
         bodies=bodies,
         laws=laws,
         promotion_verifier=promotion_verifier,
@@ -985,7 +993,6 @@ def recover_instance(
         history=recovered_history,
         instance_id=instance_id,
         object_format=object_format,
-        compiler=compiler,
         publication_directory=publication_directory,
     )
     _clean_torn_projection_files(publication_directory)

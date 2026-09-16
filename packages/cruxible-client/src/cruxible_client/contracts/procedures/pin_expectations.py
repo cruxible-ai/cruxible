@@ -188,7 +188,7 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinitionAny) -> N
                 check(body.contract_out, CONTRACT_OUT, f"{body_prefix} contract_out")
                 if isinstance(body, RepeatBodyNodeV3):
                     check(body.environment, ENVIRONMENT, f"{body_prefix} environment")
-                elif isinstance(body, RepeatBodyNodeV4) and body.operation == "provider":
+                elif isinstance(body, RepeatBodyNodeV4) and body.operation in {"provider", "call"}:
                     if body.interface is None or body.interface_digest is None:
                         raise ValueError(f"{body_prefix} lacks its Provider interface")
                     validate_exact_pin_expectation(

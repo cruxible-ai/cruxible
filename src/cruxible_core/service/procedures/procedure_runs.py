@@ -45,10 +45,12 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_IDENTITY,
     PROCEDURE_RUNTIME_POLICY_PATH,
     ProcedureRuntimePolicyV1,
+    procedure_runtime_policy_digest,
 )
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedureV1,
     ProcedureArtifactAny,
+    check_provider_node_contract,
     procedure_artifact_digest,
     procedure_path,
     render_procedure,
@@ -274,6 +276,8 @@ GRAPH_V3_UNSERVED_NODE_KINDS = frozenset({"source"})
 def served_node_kinds(graph_format: int) -> frozenset[str]:
     """Return the node kinds one graph generation serves on the run lanes."""
 
+    if graph_format == 5:
+        return (SERVED_NODE_KINDS - {"provider"}) | {"call"}
     if graph_format == 4:
         return SERVED_NODE_KINDS
     return SERVED_NODE_KINDS - GRAPH_V3_UNSERVED_NODE_KINDS
@@ -933,7 +937,7 @@ def _provider_nodes(
             result.extend(
                 (body, node.node_id)
                 for body in node.body
-                if isinstance(body, RepeatBodyNodeV4) and body.operation == "provider"
+                if isinstance(body, RepeatBodyNodeV4) and body.operation in {"provider", "call"}
             )
     return tuple(result)
 
@@ -1020,6 +1024,14 @@ def _plan_external_occurrences(
                 )
             )
         )
+        operation_contract = None
+        if int(definition.graph_format) == 5:
+            try:
+                operation_contract = check_provider_node_contract(
+                    node, interface, accepted_procedure.procedure, slot_pins=slot_pins
+                )
+            except (ValueError, KeyError) as exc:
+                raise ProcedureBindingInterfaceMismatch(str(exc)) from exc
         if provider_runtime_operator is None:
             raise ProviderLocalRuntimeRefused(
                 "provider_unavailable", "No daemon Provider runtime operator is installed."
@@ -1045,6 +1057,7 @@ def _plan_external_occurrences(
             ),
         )
         produces_capture = isinstance(node, SourceNodeV4)
+        call_kind = "call" if int(definition.graph_format) == 5 else "provider"
         translation = translate_provider_budget(
             budget=budget,
             hard_caps=definition.hard_caps,
@@ -1057,9 +1070,10 @@ def _plan_external_occurrences(
             "occurrence_path": (
                 f"repeat/{repeat_node_id}/{node.node_id}"
                 if repeat_node_id is not None
-                else f"{'source' if produces_capture else 'provider'}/{node.node_id}"
+                else f"{'source' if produces_capture else call_kind}/{node.node_id}"
             ),
-            "occurrence_kind": "source" if produces_capture else "provider",
+            "occurrence_kind": "source" if produces_capture else call_kind,
+            "operation_contract": operation_contract,
             "node_id": node.node_id,
             "repeat_node_id": repeat_node_id,
             "provider_artifact_digest": provider.artifact_digest,
@@ -1447,7 +1461,7 @@ def _readiness(
                 if body.operation != "transform"
             )
     slots = _required_slots(accepted.procedure)
-    if slots and accepted.procedure.definition.graph_format == 4:
+    if slots and accepted.procedure.definition.graph_format in {4, 5}:
         unsupported_rows.append(
             ProcedureUnsupportedNodeV1(
                 node_id="procedure",
@@ -1489,7 +1503,7 @@ def _graph_v3_external_occurrences(accepted: AcceptedProcedureV1) -> tuple[str, 
             rows.extend(
                 f"{node.node_id}.{body.node_id}"
                 for body in node.body
-                if body.operation == "provider"
+                if body.operation in {"provider", "call"}
             )
     return tuple(rows)
 
@@ -1578,7 +1592,7 @@ def service_bind_playbill_procedure(
     instance.require_writable()
     coordinate = instance.accepted_coordinate()
     accepted = _accepted_procedure(instance, name=name, coordinate=coordinate)
-    if accepted.procedure.definition.graph_format == 4:
+    if accepted.procedure.definition.graph_format in {4, 5}:
         raise ProcedureBindingGraphV4LineClosureRequired(
             f"{ProcedureBindingGraphV4LineClosureRequired.code}: graph-v4 Provider slots "
             "are resolved only by accepted Line closure"
@@ -2645,7 +2659,7 @@ def _direct_refusal_state(
     )
 
 
-def _prepare_direct_source_run(
+def _prepare_direct_external_run(
     instance: PlaybillInstance,
     accepted: AcceptedProcedureV1,
     *,
@@ -2659,14 +2673,14 @@ def _prepare_direct_source_run(
     lane: Literal["current", "replay"],
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
 ) -> (
-    tuple[PreparedProcedureRunV5, SourceAcquisitionPolicyV1, Mapping[str, CaptureContractV1]]
+    tuple[PreparedProcedureRunV5, SourceAcquisitionPolicyV1 | None, Mapping[str, CaptureContractV1]]
     | ProcedureRunStateV2
 ):
-    """Admit one direct run of a graph-v4 Procedure that reads external sources.
+    """Admit a direct run with Source or graph-v5 Call occurrences.
 
-    The direct lane gets a REAL acquisition plan, never defaults: the accepted
-    policy, the same planner the Line lane runs, per-input selection decisions,
-    and a governed output-bytes cap. What it does not get is a Line: no
+    Bind the same external plan used by Lines, including accepted interface
+    contracts and the runtime output cap. Source nodes additionally bind an
+    accepted acquisition policy and per-input selection decisions. There is no Line:
     occurrence, no mandate coordinate, no calibration coordinate, and no
     effective rung, so no terminal can fire from here.
     """
@@ -2685,40 +2699,51 @@ def _prepare_direct_source_run(
     except ProcedureRuntimePolicyAbsent as exc:
         return refuse(
             code="procedure_runtime_policy_absent",
-            message="Served Source execution requires an accepted ProcedureRuntimePolicy.",
+            message="Served external execution requires an accepted ProcedureRuntimePolicy.",
             details={"reason": str(exc), "repair": "Seed the instance ProcedureRuntimePolicy."},
         )
-    try:
-        policy_digest, policy = _direct_acquisition_policy(
-            instance,
-            coordinate=coordinate,
-            procedure=accepted.procedure,
-            input_names=_source_input_names(accepted),
-        )
-    except PinnedAcquisitionPolicyUnresolved as exc:
-        return refuse(
-            code="artifact_binding_mismatch",
-            message="The Procedure's pinned acquisition policy is not accepted at this coordinate.",
-            details={
-                **cast(dict[str, object], exc.details),
-                "repair": "Accept the pinned SourceAcquisitionPolicy or succeed the Procedure.",
-            },
-        )
-    except SourceAcquisitionPolicyRequired as exc:
-        return refuse(
-            code="source_acquisition_policy_required",
-            message=(
-                "A direct Source run requires an accepted SourceAcquisitionPolicy declaring "
-                "this Procedure's Source inputs."
-            ),
-            details={
-                **cast(dict[str, object], exc.details),
-                "repair": (
-                    "Pin a SourceAcquisitionPolicy on the Procedure, or accept exactly one "
-                    "whose inputs are this Procedure's Source aliases."
+    policy: SourceAcquisitionPolicyV1 | None = None
+    source_names = _source_input_names(accepted)
+    # Calls bind the accepted runtime output cap, with no
+    # evidence-selection policy. Source occurrences additionally bind their
+    # accepted acquisition policy through the same external plan.
+    policy_digest = procedure_runtime_policy_digest(runtime_policy).tagged
+    policy_format: str = runtime_policy.tag
+    if source_names:
+        try:
+            policy_digest, policy = _direct_acquisition_policy(
+                instance,
+                coordinate=coordinate,
+                procedure=accepted.procedure,
+                input_names=_source_input_names(accepted),
+            )
+        except PinnedAcquisitionPolicyUnresolved as exc:
+            return refuse(
+                code="artifact_binding_mismatch",
+                message=(
+                    "The Procedure's pinned acquisition policy is not accepted at this coordinate."
                 ),
-            },
-        )
+                details={
+                    **cast(dict[str, object], exc.details),
+                    "repair": "Accept the pinned SourceAcquisitionPolicy or succeed the Procedure.",
+                },
+            )
+        except SourceAcquisitionPolicyRequired as exc:
+            return refuse(
+                code="source_acquisition_policy_required",
+                message=(
+                    "A direct Source run requires an accepted SourceAcquisitionPolicy declaring "
+                    "this Procedure's Source inputs."
+                ),
+                details={
+                    **cast(dict[str, object], exc.details),
+                    "repair": (
+                        "Pin a SourceAcquisitionPolicy on the Procedure, or accept exactly one "
+                        "whose inputs are this Procedure's Source aliases."
+                    ),
+                },
+            )
+        policy_format = policy.artifact_format
     providers, interfaces = _line_catalogs(instance, coordinate, accepted.procedure.pins)
     capture_contracts = _accepted_capture_contracts(instance, coordinate, accepted.procedure.pins)
     try:
@@ -2759,11 +2784,15 @@ def _prepare_direct_source_run(
             message="The accepted Provider closure for this Procedure is incomplete.",
             details={"reason": str(exc), "repair": "Accept the Provider closure this graph pins."},
         )
-    selection = _plan_selection_decision(
-        policy,
-        policy_digest=policy_digest,
-        occurrences=external_occurrences,
-        capture_contracts=capture_contracts,
+    selection = (
+        ProcedureSelectionDecisionV1(policy_digest=policy_digest, verdict="selected", decisions=())
+        if policy is None
+        else _plan_selection_decision(
+            policy,
+            policy_digest=policy_digest,
+            occurrences=external_occurrences,
+            capture_contracts=capture_contracts,
+        )
     )
     if selection.verdict == "refused":
         return refuse(
@@ -2787,7 +2816,7 @@ def _prepare_direct_source_run(
     plan = ProcedureAcquisitionPlanV2(
         accepted_coordinate=accepted_coordinate,
         occurrence_evaluation_time=evaluation_time,
-        acquisition_policy_format="playbill-source-acquisition-policy-v1",
+        acquisition_policy_format=policy_format,
         acquisition_policy_digest=policy_digest,
         selection_decision=selection,
         selection_decision_digest=selection_digest,
@@ -3013,8 +3042,12 @@ def service_run_playbill_procedure(
     prepared: PreparedProcedureRunV2 | PreparedProcedureRunV5
     acquisition_policy: SourceAcquisitionPolicyV1 | None = None
     capture_contracts: Mapping[str, CaptureContractV1] = {}
-    if _source_input_names(accepted):
-        planned = _prepare_direct_source_run(
+    if _source_input_names(accepted) or (
+        isinstance(accepted.procedure.definition, ProcedureDefinitionV4)
+        and int(accepted.procedure.definition.graph_format) == 5
+        and _provider_nodes(accepted.procedure.definition)
+    ):
+        planned = _prepare_direct_external_run(
             instance,
             accepted,
             coordinate=coordinate,

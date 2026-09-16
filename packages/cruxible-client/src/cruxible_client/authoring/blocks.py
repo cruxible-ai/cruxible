@@ -53,6 +53,7 @@ from cruxible_client.contracts.declared_blocks import (
     projection_window_intersecting,
     render_compact_projection_opening,
     render_projection_opening,
+    resolve_projection_manifest_digest,
 )
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -1004,12 +1005,13 @@ def repin_projection_block(
     evaluation_time: datetime,
     coordinate: AcceptedCoordinate | None = None,
     body: bytes | None = None,
-    compact: bool = False,
+    compact: bool = True,
 ) -> ProjectionBlockStampV2:
     """Repin one block, optionally installing explicitly supplied agent-authored body bytes.
 
-    Omitted body preserves prose. Compact references are retained locally before
-    the page write; use a reviewed exact-content package Claim for ledger recovery.
+    Omitted body preserves prose. Compact markers are the default; their manifests
+    are retained before the page write. Use a reviewed exact-content package Claim
+    for ledger recovery.
     The whole-file compare-and-swap preserves concurrent author edits.
     """
 
@@ -1147,7 +1149,7 @@ def repin_projection_block(
         body_digest=_digest(body_content),
         currency_policy=currency_policy or (block.stamp.currency_policy if block.stamp else "warn"),
     )
-    compact = compact or b":ref:sha256:" in content[block.opening_start : block.opening_end]
+    compact = compact or b":ref:" in content[block.opening_start : block.opening_end]
     manifests = load_projection_manifests(root, content)
     if compact:
         digest, manifest = projection_manifest(stamp)
@@ -1162,7 +1164,11 @@ def repin_projection_block(
         + body_content
         + content[block.body_end :]
     )
-    manifests = {key: manifests[key] for key in projection_manifest_refs(replacement)}
+    referenced = {
+        resolve_projection_manifest_digest(ref, manifests)
+        for ref in projection_manifest_refs(replacement)
+    }
+    manifests = {key: manifests[key] for key in referenced}
     try:
         assert_projection_block_frame(
             replacement,
@@ -1176,6 +1182,7 @@ def repin_projection_block(
     except ProjectionMarkerError as exc:
         raise ProjectionRepinError("replacement does not reproduce the declared block") from exc
     retain_local_manifests(root, manifests)
+    load_projection_manifests(root, replacement)
     try:
         replace_publication_file(path, expected=content, replacement=replacement)
     except PlaybillInsertionApplyError as exc:
