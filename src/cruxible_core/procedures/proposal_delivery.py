@@ -537,28 +537,6 @@ class ProposalTerminalEgressSink:
                 )
             return None
         admission_record = evidence.read_admission(rows[0]["proposal_id"])
-        # The retry binding is part of the admission's content-addressed identity,
-        # not merely an unchecked field recovered from operational JSON.
-        from cruxible_core.proposals.proposals import ProposalAdmissionRequest, _proposal_id_payload
-
-        if admission_record.proposal_id != _proposal_id_payload(
-            actor_id=admission_record.actor_id,
-            request=ProposalAdmissionRequest(
-                target_ref=admission_record.target_ref,
-                proposed_base_oid=admission_record.proposed_base_oid,
-                source_compilation_digest=admission_record.source_compilation_digest,
-                claim_type_expansions=admission_record.claim_type_expansions,
-                rationale=admission_record.rationale,
-            ),
-            candidate_commit_oid=admission_record.candidate_commit_oid,
-            candidate_tree_oid=admission_record.candidate_tree_oid,
-            admitted_at=admission_record.admitted_at,
-            limits=admission_record.limits,
-        ):
-            raise ProposalDeliveryRefused(
-                "proposal_receipt_incomplete",
-                "The retained operation admission does not reproduce its identity.",
-            )
         evaluation = evidence.read_evaluation(admission_record.proposal_id)
         candidate = (
             None

@@ -11,12 +11,57 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from cruxible_client.contracts.attestations import ApprovalSubmission
-from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.canonical import ProposalDigest, canonical_bytes, canonical_digest
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.proposal_models import (
     ProposalAdmissionRecord,
+    ProposalAdmissionRequest,
     ProposalEvaluationRecord,
+    ProposalReceiveLimits,
 )
+
+
+def proposal_admission_id(
+    *,
+    actor_id: str,
+    request: ProposalAdmissionRequest,
+    candidate_commit_oid: str,
+    candidate_tree_oid: str,
+    admitted_at: str,
+    limits: ProposalReceiveLimits,
+) -> str:
+    return ProposalDigest(
+        canonical_digest(
+            "playbill-proposal-admission-v1",
+            {
+                "actor_id": actor_id,
+                "target_ref": request.target_ref,
+                "proposed_base_oid": request.proposed_base_oid,
+                "candidate_commit_oid": candidate_commit_oid,
+                "candidate_tree_oid": candidate_tree_oid,
+                "source_compilation_digest": request.source_compilation_digest,
+                # `rationale` is deliberately not a field of its own here. It
+                # still reaches this digest, through `candidate_commit_oid`,
+                # because the message is part of the commit object -- two
+                # submissions of one tree under different prose ARE two
+                # commits, and an admission that claimed otherwise would name a
+                # commit no selector could resolve back. What naming it
+                # separately would add is a second path by which the same fact
+                # enters one identity.
+                "claim_type_expansions": [
+                    item.model_dump(mode="json") for item in request.claim_type_expansions
+                ],
+                # The RECEIVE bounds only. An admission's identity is what
+                # receive enforced on it, so the advertised change-set record
+                # ceiling -- a preflight bound, enforced before lowering and
+                # never at receive -- is deliberately outside this preimage:
+                # advertising a new number must not restate the identity of
+                # every proposal admitted since.
+                "limits": limits.receive_bound_payload(),
+                "admitted_at": admitted_at,
+            },
+        )
+    ).tagged
 
 
 def admission_bytes(record: ProposalAdmissionRecord) -> bytes:

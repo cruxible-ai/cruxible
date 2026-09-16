@@ -56,11 +56,9 @@ from cruxible_client.contracts.candidates import (
     validate_candidate_timestamp,
 )
 from cruxible_client.contracts.canonical import (
-    ProposalDigest,
     SemanticDiffDigest,
     Sha256Value,
     canonical_bytes,
-    canonical_digest,
     file_digest,
     manifest_for_tree,
     manifest_for_tree_carrying,
@@ -200,7 +198,6 @@ from cruxible_client.contracts.procedures.line_specs import (
     parse_line_spec,
 )
 from cruxible_client.contracts.proposal_models import (
-    PROPOSAL_RECEIVE_BOUND_KEYS,
     AuthenticatedActor,
     ProposalAdmissionRecord,
     ProposalAdmissionRequest,
@@ -307,6 +304,7 @@ from cruxible_core.proposals.prepared_evaluation import (
     PreparedEvaluationScope,
 )
 from cruxible_core.proposals.proposal_message import proposal_commit_message
+from cruxible_core.proposals.proposal_notes import proposal_admission_id
 from cruxible_core.providers.provider_classifiers import (
     core_provider_bucket_conformance_fixtures,
 )
@@ -4001,61 +3999,6 @@ def evaluate_proposal_tree(
         )
 
 
-#: The receive bounds that name an admission. Frozen: adding an advertised
-#: ceiling to `ProposalReceiveLimits` must not move a single proposal id. ONE
-#: set, shared with the preflight certificate's preimage and the admission
-#: record's own persisted bytes, so the three stored identities cannot disagree
-#: about which bounds they were written under.
-_PROPOSAL_ID_LIMIT_KEYS = PROPOSAL_RECEIVE_BOUND_KEYS
-
-
-def _proposal_id_payload(
-    *,
-    actor_id: str,
-    request: ProposalAdmissionRequest,
-    candidate_commit_oid: str,
-    candidate_tree_oid: str,
-    admitted_at: str,
-    limits: ProposalReceiveLimits,
-) -> str:
-    return ProposalDigest(
-        canonical_digest(
-            "playbill-proposal-admission-v1",
-            {
-                "actor_id": actor_id,
-                "target_ref": request.target_ref,
-                "proposed_base_oid": request.proposed_base_oid,
-                "candidate_commit_oid": candidate_commit_oid,
-                "candidate_tree_oid": candidate_tree_oid,
-                "source_compilation_digest": request.source_compilation_digest,
-                # `rationale` is deliberately not a field of its own here. It
-                # still reaches this digest, through `candidate_commit_oid`,
-                # because the message is part of the commit object -- two
-                # submissions of one tree under different prose ARE two
-                # commits, and an admission that claimed otherwise would name a
-                # commit no selector could resolve back. What naming it
-                # separately would add is a second path by which the same fact
-                # enters one identity.
-                "claim_type_expansions": [
-                    item.model_dump(mode="json") for item in request.claim_type_expansions
-                ],
-                # The RECEIVE bounds only. An admission's identity is what
-                # receive enforced on it, so the advertised change-set record
-                # ceiling -- a preflight bound, enforced before lowering and
-                # never at receive -- is deliberately outside this preimage:
-                # advertising a new number must not restate the identity of
-                # every proposal admitted since.
-                "limits": {
-                    key: value
-                    for key, value in limits.model_dump(mode="json").items()
-                    if key in _PROPOSAL_ID_LIMIT_KEYS
-                },
-                "admitted_at": admitted_at,
-            },
-        )
-    ).tagged
-
-
 class ProposalHeadMovedError(ProposalAdmissionError):
     """Accepted main moved between the coordinate a submission evaluated at and its publication.
 
@@ -4302,7 +4245,7 @@ class ProposalService:
             )
             evaluated_tree_oid = tree_oid if outcome.candidate is not None else None
             # The immutable admission names exactly the published candidate.
-            proposal_id = _proposal_id_payload(
+            proposal_id = proposal_admission_id(
                 actor_id=actor.actor_id,
                 request=request,
                 candidate_commit_oid=commit_oid,

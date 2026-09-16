@@ -43,11 +43,13 @@ from cruxible_core.proposals.candidate_review_summary import (
 from cruxible_core.proposals.proposal_notes import (
     admission_bytes,
     evaluation_bytes,
+    proposal_admission_id,
     proposal_approval_note,
     proposal_evaluation_note,
 )
 from cruxible_core.proposals.proposals import (
     ProposalAdmissionRecord,
+    ProposalAdmissionRequest,
     ProposalEvaluationRecord,
     ProposalWithdrawalRecordV1,
 )
@@ -537,6 +539,23 @@ class ProposalEvidenceStore:
         )
         if expected != raw:
             raise ProposalIntegrityError(f"{label} evidence is not canonical")
+        if isinstance(value, ProposalAdmissionRecord):
+            expected_id = proposal_admission_id(
+                actor_id=value.actor_id,
+                request=ProposalAdmissionRequest(
+                    target_ref=value.target_ref,
+                    proposed_base_oid=value.proposed_base_oid,
+                    source_compilation_digest=value.source_compilation_digest,
+                    claim_type_expansions=value.claim_type_expansions,
+                    rationale=value.rationale,
+                ),
+                candidate_commit_oid=value.candidate_commit_oid,
+                candidate_tree_oid=value.candidate_tree_oid,
+                admitted_at=value.admitted_at,
+                limits=value.limits,
+            )
+            if value.proposal_id != expected_id:
+                raise ProposalIntegrityError("proposal admission does not reproduce its identity")
         return value
 
 

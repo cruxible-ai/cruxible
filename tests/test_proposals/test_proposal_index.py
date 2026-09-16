@@ -563,3 +563,21 @@ def test_existing_evidence_retry_refuses_symlink_even_with_identical_bytes(tmp_p
     path.symlink_to(target)
     with pytest.raises(ProposalIntegrityError):
         _exclusive_canonical_write(path, b"{}\n")
+
+
+@pytest.mark.parametrize("reader", ["cold", "indexed", "rebuild"])
+def test_admission_identity_is_verified_by_every_evidence_reader(tmp_path, reader):
+    instance, _ = initialize_local(tmp_path)
+    proposal = _submit(instance, "one")
+    evidence = instance.proposal_evidence()
+    record = proposal.admission.model_copy(
+        update={"source_compilation_digest": "sha256:" + "42" * 32}
+    )
+    path = evidence.proposals / (record.proposal_id.removeprefix("sha256:") + ".json")
+    path.write_bytes(admission_bytes(record))
+    if reader == "cold":
+        evidence = ProposalEvidenceStore(evidence.root)
+    elif reader == "rebuild":
+        (evidence.root / ".proposal-source.json").unlink()
+    with pytest.raises(ProposalIntegrityError):
+        evidence.read_admission(record.proposal_id)
