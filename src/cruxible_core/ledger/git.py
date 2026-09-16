@@ -34,6 +34,8 @@ MIRROR_PUSH_TIMEOUT_SECONDS: Final = 30.0
 _MIRROR_ARG_BYTES: Final = 64 * 1024
 _MIRROR_MAX_REFS: Final = 4096
 _MIRROR_MAIN: Final = "refs/heads/main"
+PROPOSAL_ARCHIVE_REF: Final = "refs/settled/archive"
+_LEGACY_SETTLED_RE = re.compile(r"^refs/settled/[0-9a-f]{64}$")
 _MIRROR_PREFIXES: Final = ("refs/heads/proposals/",)
 
 # Every Playbill note ref, in one table. The generation descriptor was the
@@ -527,22 +529,60 @@ class GitLedger:
             for oid, ref in (line.split(" ", 1),)
         }
 
-    def delete_proposal_refs(self, refs: Mapping[str, str]) -> None:
-        """Release completed author slots; a changed or interrupted slot is never guessed."""
-        if not refs:
-            return
-        commands = ["start"]
-        for ref, oid in sorted(refs.items()):
-            if not _PROPOSAL_REF_RE.fullmatch(ref):
-                raise PlaybillGitError("proposal ref name is malformed")
+    def _archive_update(self, oids: Sequence[str]) -> list[str]:
+        """Build a fixed-tree retention chain; callers CAS its head with ref removal."""
+        previous = (
+            self._git(["for-each-ref", "--format=%(objectname)", PROPOSAL_ARCHIVE_REF])
+            .decode()
+            .strip()
+        )
+        tip = previous
+        empty_tree = None
+        for oid in sorted(set(oids)):
             self._validate_oid(oid)
-            commands.append(f"delete {ref} {oid}")
-        commands.extend(("prepare", "commit"))
-        self._git(["update-ref", "--stdin"], input_bytes=("\n".join(commands) + "\n").encode())
+            if tip and self.is_ancestor(oid, tip):
+                continue
+            if (
+                not self.object_exists(oid)
+                or self._git(["cat-file", "-t", oid]).strip() != b"commit"
+            ):
+                raise PlaybillGitError("proposal archive target is not a retained commit")
+            if empty_tree is None:
+                empty_tree = self._git(["mktree"], input_bytes=b"").decode().strip()
+            parents = ([tip] if tip else []) + [oid]
+            # No growing manifest/tree and no authoring ancestry. The archive is
+            # unsigned retention metadata, outside accepted-state authority.
+            raw = (
+                f"tree {empty_tree}\n"
+                + "".join(f"parent {parent}\n" for parent in parents)
+                + "author playbill-daemon <daemon@playbill.invalid> 0 +0000\n"
+                + "committer playbill-daemon <daemon@playbill.invalid> 0 +0000\n\n"
+                + "Retain closed proposal\n"
+            ).encode()
+            tip = (
+                self._git(["hash-object", "-t", "commit", "-w", "--stdin"], input_bytes=raw)
+                .decode()
+                .strip()
+            )
+        if tip == previous:
+            # Deleting a duplicate root still relies on this exact archive head.
+            return [f"verify {PROPOSAL_ARCHIVE_REF} {previous}"] if oids and previous else []
+        return [f"update {PROPOSAL_ARCHIVE_REF} {tip} {previous or '0' * len(tip)}"]
 
-    def replace_proposal_review_refs(self, refs: Mapping[str, str]) -> None:
-        """Atomically project only open proposals; closed candidates have no archive ref."""
-        normalized: dict[str, str] = {}
+    def archive_proposal_commits(self, oids: Sequence[str]) -> None:
+        """Retain a completed refusal before its author slot can be reused."""
+        commands = self._archive_update(oids)
+        if commands:
+            self._git(
+                ["update-ref", "--stdin"],
+                input_bytes=("\n".join(["start", *commands, "prepare", "commit"]) + "\n").encode(),
+            )
+
+    def replace_proposal_review_refs(
+        self, refs: Mapping[str, str], *, retired_targets: Mapping[str, str] | None = None
+    ) -> None:
+        """Archive closed candidates atomically with releasing their public/private refs."""
+        normalized = {}
         for proposal_id, oid in refs.items():
             ref = f"refs/heads/proposals/{proposal_id}"
             if not _PROPOSAL_REVIEW_REF_RE.fullmatch(ref):
@@ -552,23 +592,43 @@ class GitLedger:
         current = {
             ref: oid
             for line in self._git(
-                ["for-each-ref", "--format=%(objectname) %(refname)", "refs/heads/proposals"]
+                ["for-each-ref", "--format=%(objectname) %(refname)", "refs/heads/proposals/"]
             )
             .decode()
             .splitlines()
             for oid, ref in (line.split(" ", 1),)
         }
-        commands = ["start"]
+        retired = {ref: oid for ref, oid in current.items() if ref not in normalized}
+        for ref, oid in (retired_targets or {}).items():
+            if not _PROPOSAL_REF_RE.fullmatch(ref):
+                raise PlaybillGitError("proposal ref name is malformed")
+            self._validate_oid(oid)
+            retired[ref] = oid
+        # One local conversion only: fold old per-proposal pins into the same
+        # chain before deleting them. Unrelated refs in this namespace refuse.
+        for line in (
+            self._git(["for-each-ref", "--format=%(objectname) %(refname)", "refs/settled/"])
+            .decode()
+            .splitlines()
+        ):
+            oid, ref = line.split(" ", 1)
+            if ref == PROPOSAL_ARCHIVE_REF:
+                continue
+            if not _LEGACY_SETTLED_RE.fullmatch(ref):
+                raise PlaybillGitError("unrecognized local proposal archive ref")
+            retired[ref] = oid
+        commands = self._archive_update(tuple(retired.values()))
         commands.extend(
             f"update {ref} {oid} {current.get(ref, '0' * len(oid))}"
             for ref, oid in sorted(normalized.items())
             if current.get(ref) != oid
         )
-        commands.extend(
-            f"delete {ref} {current[ref]}" for ref in sorted(set(current) - set(normalized))
-        )
-        commands.extend(("prepare", "commit"))
-        self._git(["update-ref", "--stdin"], input_bytes=("\n".join(commands) + "\n").encode())
+        commands.extend(f"delete {ref} {oid}" for ref, oid in sorted(retired.items()))
+        if commands:
+            self._git(
+                ["update-ref", "--stdin"],
+                input_bytes=("\n".join(["start", *commands, "prepare", "commit"]) + "\n").encode(),
+            )
 
     def mirror_refs(self) -> dict[str, str]:
         """Capture owned public refs, excluding private proposal/pinning refs."""
@@ -578,6 +638,7 @@ class GitLedger:
                 "--format=%(objectname) %(refname)",
                 _MIRROR_MAIN,
                 *NOTE_REFS.values(),
+                PROPOSAL_ARCHIVE_REF,
                 *_MIRROR_PREFIXES,
             ]
         )
@@ -590,7 +651,11 @@ class GitLedger:
 
     @staticmethod
     def _mirror_owned_ref(ref: str) -> bool:
-        return ref == _MIRROR_MAIN or ref in NOTE_REFS.values() or ref.startswith(_MIRROR_PREFIXES)
+        return (
+            ref in (_MIRROR_MAIN, PROPOSAL_ARCHIVE_REF)
+            or ref in NOTE_REFS.values()
+            or ref.startswith(_MIRROR_PREFIXES)
+        )
 
     def _validate_mirror_snapshot(
         self, refs: Mapping[str, str], *, require_main: bool = True
@@ -599,7 +664,12 @@ class GitLedger:
             raise PlaybillGitError("mirror snapshot exceeds the ref count limit")
         result = dict(refs)
         for ref, oid in result.items():
-            valid = ref == _MIRROR_MAIN or ref in NOTE_REFS.values()
+            if _LEGACY_SETTLED_RE.fullmatch(ref):
+                raise PlaybillGitError(
+                    "mirror state uses retired per-proposal archive refs; "
+                    "bind a new mirror URL to start a fresh publication snapshot"
+                )
+            valid = ref in (_MIRROR_MAIN, PROPOSAL_ARCHIVE_REF) or ref in NOTE_REFS.values()
             valid = valid or bool(_PROPOSAL_REVIEW_REF_RE.fullmatch(ref))
             if not valid:
                 raise PlaybillGitError("mirror snapshot contains an unowned or malformed ref")
@@ -664,6 +734,12 @@ class GitLedger:
             attempted = self._validate_mirror_snapshot(
                 {} if previous_attempt is None else previous_attempt, require_main=False
             )
+            if PROPOSAL_ARCHIVE_REF not in desired and (
+                PROPOSAL_ARCHIVE_REF in expected or PROPOSAL_ARCHIVE_REF in attempted
+            ):
+                raise PlaybillGitError(
+                    "local proposal archive is missing; restore it before publication"
+                )
             owned = set(desired) | set(expected) | set(attempted)
             # Refuse rather than split the atomic update across commands.
             planned = [f"{desired.get(ref, '')}:{ref}" for ref in owned]
@@ -684,6 +760,7 @@ class GitLedger:
                         url,
                         _MIRROR_MAIN,
                         *NOTE_REFS.values(),
+                        "refs/settled/*",
                         *(prefix + "*" for prefix in _MIRROR_PREFIXES),
                     ],
                     environment=environment,
@@ -695,6 +772,11 @@ class GitLedger:
                 remote: dict[str, str] = {}
                 for line in result.stdout.decode("utf-8").splitlines():
                     oid, separator, ref = line.partition("\t")
+                    if _LEGACY_SETTLED_RE.fullmatch(ref):
+                        raise PlaybillGitError(
+                            "remote mirror still has per-proposal archive refs; "
+                            "bind a new mirror URL or explicitly migrate/reset this remote"
+                        )
                     if not separator or not self._mirror_owned_ref(ref) or ref in remote:
                         raise PlaybillGitError("remote mirror advertisement is malformed")
                     remote[ref] = oid
@@ -719,10 +801,21 @@ class GitLedger:
                         and ref not in desired
                         and retired_proposal is not None
                         and retired_proposal(ref, actual)
+                        and PROPOSAL_ARCHIVE_REF in desired
+                        and self.is_ancestor(actual, desired[PROPOSAL_ARCHIVE_REF])
                     ):
                         owned.add(ref)
                         continue
                     raise PlaybillGitError(f"remote mirror ref diverged: {ref}")
+                remote_archive = remote.get(PROPOSAL_ARCHIVE_REF)
+                if remote_archive is not None and (
+                    PROPOSAL_ARCHIVE_REF not in desired
+                    or not self.is_ancestor(remote_archive, desired[PROPOSAL_ARCHIVE_REF])
+                ):
+                    raise PlaybillGitError(
+                        "proposal archive cannot be deleted or rewound; "
+                        "restore its retained history"
+                    )
                 remote_main = remote.get(_MIRROR_MAIN)
                 if remote_main is not None and remote_main != desired[_MIRROR_MAIN]:
                     if not self.is_ancestor(remote_main, desired[_MIRROR_MAIN]):
@@ -903,39 +996,7 @@ class GitLedger:
         if any(oid not in objects for oid in dependencies):
             raise PlaybillGitError("review commit tree or parent is missing")
         presence = {oid: oid in objects for oid in oids}
-        note_oids: dict[tuple[str, str], str] = {}
-        for kind in ("evaluation", "approval"):
-            for target_oid, exists in presence.items():
-                if not exists:
-                    continue
-                # Listing the entire note ref scales with every closed proposal.
-                # Ask Git for only this active alias, including its fanout layout.
-                result = _command(
-                    [
-                        "git",
-                        f"--git-dir={self.path}",
-                        "notes",
-                        f"--ref={self._note_ref(kind)}",
-                        "list",
-                        target_oid,
-                    ],
-                    check=False,
-                )
-                if (
-                    result.returncode == 1
-                    and not result.stdout
-                    and result.stderr.strip()
-                    == f"error: no note found for object {target_oid}.".encode()
-                ):
-                    continue
-                if result.returncode != 0:
-                    raise PlaybillGitError("Git review note lookup failed")
-                try:
-                    blob_oid = result.stdout.decode("ascii").strip()
-                    self._validate_oid(blob_oid)
-                except (UnicodeDecodeError, ValueError) as exc:
-                    raise PlaybillGitError("Git review note lookup is malformed") from exc
-                note_oids[kind, target_oid] = blob_oid
+        note_oids = self._review_note_oids(tuple(oid for oid, exists in presence.items() if exists))
         blobs = self._read_review_objects({oid: "blob" for oid in note_oids.values()})
         if len(blobs) != len(set(note_oids.values())):
             raise PlaybillGitError("review note body is missing")
@@ -945,6 +1006,62 @@ class GitLedger:
             for oid in presence
         }
         return presence, notes
+
+    def _batch_paths(self, expressions: Sequence[str], kind: str) -> dict[str, str]:
+        """Resolve selected tree paths using Git's structured stdin protocol."""
+        found = {}
+        for start in range(0, len(expressions), 256):
+            batch = expressions[start : start + 256]
+            rows = self._git(
+                ["--no-replace-objects", "cat-file", "--batch-check"],
+                input_bytes=("\n".join(batch) + "\n").encode("ascii"),
+            ).splitlines()
+            if len(rows) != len(batch):
+                raise PlaybillGitError("Git note lookup returned an incomplete batch")
+            for expression, row in zip(batch, rows):
+                if row == (expression + " missing").encode("ascii"):
+                    continue
+                try:
+                    oid, actual_kind, size = row.decode("ascii").split()
+                    self._validate_oid(oid)
+                    valid = actual_kind == kind and int(size) >= 0
+                except (UnicodeError, ValueError) as exc:
+                    raise PlaybillGitError("Git note lookup returned malformed metadata") from exc
+                if not valid:
+                    raise PlaybillGitError("Git note lookup returned the wrong object type")
+                found[expression] = oid
+        return found
+
+    def _review_note_oids(self, targets: Sequence[str]) -> dict[tuple[str, str], str]:
+        if not targets:
+            return {}
+        roots = self._batch_paths(
+            [self._note_ref(kind) + "^{tree}" for kind in ("evaluation", "approval")], "tree"
+        )
+        self._read_review_objects({oid: "tree" for oid in roots.values()})
+        paths: dict[str, set[tuple[str, str]]] = {}
+        for kind in ("evaluation", "approval"):
+            root = roots.get(self._note_ref(kind) + "^{tree}")
+            if root is None:
+                if self._ref_exists(self._note_ref(kind)):
+                    raise PlaybillGitError("review notes ref has no retained tree")
+                continue
+            for target in targets:
+                # Git notes uses zero or more two-hex-digit fanout directories
+                # (git/git notes.c construct_path_with_fanout). Probe only the
+                # possible paths of selected OIDs, never the historical inventory.
+                for split in range(0, len(target), 2):
+                    path = "/".join(
+                        [target[i : i + 2] for i in range(0, split, 2)] + [target[split:]]
+                    )
+                    paths.setdefault(f"{root}:{path}", set()).add((kind, target))
+        found = {}
+        for expression, oid in self._batch_paths(tuple(paths), "blob").items():
+            for key in paths[expression]:
+                if key in found:
+                    raise PlaybillGitError("review notes repeat an annotated object")
+                found[key] = oid
+        return found
 
     def _read_review_objects(self, expected: Mapping[str, str]) -> dict[str, bytes]:
         """Batch exact object bytes with positional, type, and Git-hash proofs."""

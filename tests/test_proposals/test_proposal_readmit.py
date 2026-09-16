@@ -15,7 +15,6 @@ from cruxible_client.contracts.documents import (
 )
 from cruxible_client.contracts.errors import (
     ProposalAdmissionError,
-    ProposalContentUnavailable,
     ProposalReadmitRequiresResubmission,
 )
 from cruxible_core.claims.claim_type_migrations import (
@@ -239,8 +238,8 @@ def test_readmit_refuses_stale_generated_claim_type_closure_before_admission(
     assert rerun.proposal.proposal.candidate is not None  # type: ignore[union-attr]
 
 
-def test_readmit_collected_stale_candidate_requires_resubmission(tmp_path: Path) -> None:
-    """Outcome history survives even when stale proposal bytes have expired."""
+def test_readmit_archived_stale_candidate_survives_gc(tmp_path: Path) -> None:
+    """A moved head does not destroy the bytes needed for ordinary readmission."""
     from cruxible_core.runtime.instance import PlaybillInstance
     from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
 
@@ -261,11 +260,12 @@ def test_readmit_collected_stale_candidate_requires_resubmission(tmp_path: Path)
     _accept(instance, owner, accepted)
     instance._ledger._git(["reflog", "expire", "--expire=now", "--all"])
     instance._ledger._git(["gc", "--prune=now"])
-    assert not instance._ledger.object_exists(stale.proposal.admission.candidate_commit_oid)
+    assert instance._ledger.object_exists(stale.proposal.admission.candidate_commit_oid)
     reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     before = service_list_playbill_proposals(reopened)
-    with pytest.raises(ProposalContentUnavailable, match="Resubmit"):
-        service_readmit_playbill_proposal(
-            reopened, proposal_id=stale.proposal.admission.proposal_id, actor_id="owner"
-        )
-    assert service_list_playbill_proposals(reopened) == before
+    result = service_readmit_playbill_proposal(
+        reopened, proposal_id=stale.proposal.admission.proposal_id, actor_id="owner"
+    )
+    assert result.proposal.proposal.evaluation.verdict == "candidate"
+    assert result.proposal.proposal.evaluation.rebased
+    assert len(service_list_playbill_proposals(reopened).entries) == len(before.entries) + 1

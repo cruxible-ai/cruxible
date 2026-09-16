@@ -332,7 +332,7 @@ def test_forged_cards_never_reach_the_evaluated_or_accepted_tree(
         == result.evaluation.evaluated_base_oid
     )
     assert ledger.read_tree(result.admission.candidate_commit_oid) == evaluated
-    assert result.admission.candidate_commit_oid in ledger.unreachable_commits()
+    assert result.admission.candidate_commit_oid not in ledger.unreachable_commits()
 
 
 def test_odd_card_paths_are_refused_typed_before_any_commit(tmp_path: Path) -> None:

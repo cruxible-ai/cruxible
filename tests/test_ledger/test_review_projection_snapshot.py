@@ -195,3 +195,79 @@ def test_partial_note_snapshot_falls_back_to_fresh_read_and_refuses_tamper(tmp_p
                 stored_notes={("approval", oid): None},
             )
     assert instance.read_proposal_note("evaluation", oid) == b"edited\n"
+
+
+@pytest.mark.parametrize("depth", [0, 1, 2])
+def test_selected_notes_support_fanout_and_shared_note_roots(ledger, depth, monkeypatch):
+    from cruxible_core.ledger import git as git_module
+
+    target = ledger.read_main()
+    blob = (
+        ledger._git(["hash-object", "-w", "--stdin"], input_bytes=b"retained note\n")
+        .decode()
+        .strip()
+    )
+    tree = (
+        ledger._git(["mktree"], input_bytes=f"100644 blob {blob}\t{target[depth * 2 :]}\n".encode())
+        .decode()
+        .strip()
+    )
+    for i in reversed(range(depth)):
+        tree = (
+            ledger._git(
+                ["mktree"],
+                input_bytes=f"040000 tree {tree}\t{target[i * 2 : i * 2 + 2]}\n".encode(),
+            )
+            .decode()
+            .strip()
+        )
+    commit = ledger._git(["commit-tree", tree, "-m", "notes"]).decode().strip()
+    for kind in ("evaluation", "approval"):
+        ledger._git(["update-ref", NOTE_REFS[kind], commit])
+        assert ledger.read_proposal_note(kind, target) == b"retained note\n"
+    commands = []
+    original = git_module._command
+
+    def capture(args, **kwargs):
+        assert "notes" not in args, "selected lookup must not list the historical notes"
+        if "--batch-check" in args:
+            commands.append(args)
+        return original(args, **kwargs)
+
+    monkeypatch.setattr(git_module, "_command", capture)
+    _, notes = ledger.read_review_projection((target,), dependencies={})
+    assert notes == {(kind, target): b"retained note\n" for kind in ("evaluation", "approval")}
+    assert len(commands) == 2
+
+
+def test_selected_notes_batch_many_targets_without_historical_listing(ledger, monkeypatch):
+    from cruxible_core.ledger import git as git_module
+
+    base = ledger.read_main()
+    blob = ledger._git(["hash-object", "-w", "--stdin"], input_bytes=b"note\n").decode().strip()
+    targets = [f"{i:0{len(base)}x}" for i in range(300)]
+    # A flat historical tree, mostly unrelated to the selected 40 targets.
+    tree = (
+        ledger._git(
+            ["mktree"],
+            input_bytes="".join(f"100644 blob {blob}\t{target}\n" for target in targets).encode(),
+        )
+        .decode()
+        .strip()
+    )
+    commit = ledger._git(["commit-tree", tree, "-m", "many notes"]).decode().strip()
+    ledger._git(["update-ref", NOTE_REFS["evaluation"], commit])
+    original = git_module._command
+    batches = []
+
+    def capture(args, **kwargs):
+        assert "notes" not in args
+        if "--batch-check" in args:
+            batches.append(len(kwargs["input_bytes"].splitlines()))
+        return original(args, **kwargs)
+
+    monkeypatch.setattr(git_module, "_command", capture)
+    found = ledger._review_note_oids(targets[:40])
+    assert found == {("evaluation", target): blob for target in targets[:40]}
+    assert max(batches) <= 256
+    assert len(batches) <= 6  # Bounded stdin batches, not forty note processes.

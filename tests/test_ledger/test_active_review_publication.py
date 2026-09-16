@@ -45,7 +45,13 @@ def _assert_closed_absent(instance, remote, proposal):
     refs = _remote_refs(remote)
     assert "refs/settled/" + key not in refs
     assert "refs/heads/proposals/" + key not in refs
-    assert not any(ref.startswith("refs/settled/") for ref in instance._ledger.mirror_refs())
+    assert {ref for ref in instance._ledger.mirror_refs() if ref.startswith("refs/settled/")} == {
+        "refs/settled/archive"
+    }
+    assert instance._ledger.is_ancestor(
+        proposal.admission.candidate_commit_oid,
+        instance._ledger.mirror_refs()["refs/settled/archive"],
+    )
 
 
 @pytest.mark.parametrize("kind", ["withdrawal", "activation"])
@@ -143,3 +149,67 @@ def test_settled_history_does_not_grow_steady_publication(tmp_path, monkeypatch)
         assert proposals == ["refs/heads/proposals/" + active.admission.proposal_id[7:]]
         assert len(instance._ledger.proposal_refs()) <= 1
     assert len(set(steady_sizes)) == 1
+
+
+def test_archive_transition_uses_index_without_reopening_closed_evidence(tmp_path, monkeypatch):
+    from cruxible_client.contracts.workspace_advertisement import NOT_ATTACHED_ADVERTISEMENT
+    from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
+
+    instance, _owner = initialize_local(tmp_path)
+    proposal = _submit(instance)
+    with monkeypatch.context() as patch:
+        patch.setattr(instance, "advertise_workspace", lambda: NOT_ATTACHED_ADVERTISEMENT)
+        service_withdraw_playbill_proposal(
+            instance,
+            proposal_id=proposal.admission.proposal_id,
+            actor_id="owner",
+            reason="close before reconciliation",
+            withdrawn_at=WITHDRAWN_AT,
+        )
+    assert "refs/settled/archive" not in instance._ledger.mirror_refs()
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("archive transition reopened closed evidence")
+
+    monkeypatch.setattr(ProposalEvidenceStore, "_read_located", forbidden)
+    monkeypatch.setattr(
+        ProposalEvidenceStore, "read_candidate_review_summary_if_present", forbidden
+    )
+    instance._reconcile_proposal_review_refs()
+    assert instance._ledger.is_ancestor(
+        proposal.admission.candidate_commit_oid,
+        instance._ledger.mirror_refs()["refs/settled/archive"],
+    )
+
+
+def test_remote_closed_branch_recovery_uses_index_and_archive_without_evidence_reads(
+    tmp_path, monkeypatch
+):
+    from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
+
+    instance, _owner = initialize_local(tmp_path)
+    proposal = _submit(instance)
+    remote = _bare_remote(tmp_path, object_format=instance.descriptor.git_object_format)
+    assert instance._ledger.push_mirror(str(remote)) is None
+    service_withdraw_playbill_proposal(
+        instance,
+        proposal_id=proposal.admission.proposal_id,
+        actor_id="owner",
+        reason="closed after lost mirror acknowledgement",
+        withdrawn_at=WITHDRAWN_AT,
+    )
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("mirror recovery reopened closed evidence")
+
+    monkeypatch.setattr(ProposalEvidenceStore, "_read_located", forbidden)
+    monkeypatch.setattr(
+        ProposalEvidenceStore, "read_candidate_review_summary_if_present", forbidden
+    )
+    assert (
+        instance._ledger.push_mirror(
+            str(remote), retired_proposal=instance._retired_mirror_proposal
+        )
+        is None
+    )
+    _assert_closed_absent(instance, remote, proposal)

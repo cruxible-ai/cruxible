@@ -112,6 +112,7 @@ def test_state_loss_requires_exact_retired_proposal_proof(repos):
     refs(local, **{MAIN: later, NOTE: later})
     local._git(["update-ref", "-d", PROPOSAL])
     assert "diverged" in local.push_mirror(str(remote.path))
+    local.archive_proposal_commits((first,))
     assert (
         local.push_mirror(
             str(remote.path), retired_proposal=lambda ref, oid: ref == PROPOSAL and oid == first
@@ -241,6 +242,7 @@ def test_lost_uncertain_attempt_recovers_from_ancestry_and_exact_settlement(repo
     desired_oid = commit(local, "recorded B", attempted_oid)
     refs(local, **{MAIN: desired_oid, NOTE: desired_oid})
     local._git(["update-ref", "-d", PROPOSAL])
+    local.archive_proposal_commits((attempted_oid,))
     desired = local.mirror_refs()
     # B replaced attempted_refs on disk, then the daemon died before its push.
     # Restart knows P and B, while the actual remote still carries forgotten A.

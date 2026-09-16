@@ -2,14 +2,14 @@
 
 ## Unreleased
 
-- Mirror publication retains only open proposal refs, without permanent settled
-  bookmarks or candidate-to-candidate retention chains. Candidate snapshots
-  attach directly to their accepted base. Closed outcomes and diagnostics remain
-  readable; historical review/readmission reports when candidate content has
-  been collected. Procedure proposal retries use a retained exact-payload binding
-  and do not resubmit after ref cleanup. Native Git leases and atomic pushes
-  remain; the argument limit now depends on the active publication surface,
-  rather than the lifetime number of settled proposals.
+- Closed review branches are removed, while accepted, withdrawn, stale and refused
+  proposal commits remain reachable through the single `refs/settled/archive`
+  ref. Historical review, readmission and curation retain their exact candidate
+  bytes after Git collection; old `refs/settled/<digest>` links no longer resolve.
+  Candidate submissions remain independent snapshots of their accepted base.
+  Native Git leases and atomic pushes protect the archive alongside the active
+  refs. Ref/snapshot size no longer grows with settled-proposal count; retained
+  object storage and archive ancestry still grow with history.
 
 - **A Line's `propose_change_set` terminal produces a durable proposal.** On
   the served Line lane, each resolved candidate template must be one Claim
@@ -137,7 +137,7 @@
   remote holds something this ledger does not; review refs use exact
   expected-old leases and known-ref pruning. The mirror's branch list tracks
   the open inventory. Closed review branches are removed without permanent
-  per-proposal archives; exact closed-candidate Git links are not retained.
+  per-proposal archives; the single archive ref retains their commit OIDs.
   Withdrawal removes a proposal from that projection because it cannot
   settle. The publication is never a condition of the write that preceded it: a
   failed push is the new `ledger_mirror_behind` WARNING row in `playbill next`,

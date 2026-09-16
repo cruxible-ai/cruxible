@@ -393,14 +393,24 @@ completion; the publisher combines pending work into exact ref snapshots.
 
 What travels: `refs/heads/main`, whichever of `refs/notes/playbill-gen`,
 `refs/notes/playbill-eval` and `refs/notes/playbill-approval` exist, one branch
-per OPEN proposal under `refs/heads/proposals/`. A settled proposal—activated,
-withdrawn, or stale—loses its review branch without a permanent archive ref.
-Accepted state and its signed change-set receipts remain in accepted history.
-Closed proposal outcomes and diagnostics remain readable, but exact candidate
-content and direct Git links are not guaranteed after cleanup. Historical review
-or readmission reports unavailable content explicitly; resubmit the authored
-change when a new candidate is needed.
+per OPEN proposal under `refs/heads/proposals/`, and `refs/settled/archive` once
+there is retained closed work. Activated, withdrawn and stale review branches
+are removed; their commits and refused admission commits stay reachable through
+that single archive ref. Historical review, readmission and curation keep the
+candidate bytes after Git collection. Old `refs/settled/<digest>` links no longer
+resolve; retained commits can be opened by their exact OID. To retain this history
+in a reviewer clone, fetch the custom archive ref explicitly:
 
+~~~bash
+git fetch origin refs/settled/archive:refs/settled/archive
+~~~
+
+Local legacy archive refs are folded into the single ref before deletion.
+An old mirror or saved mirror state with per-proposal archive refs is refused.
+Bind a freshly created mirror at a new URL to start a clean publication snapshot;
+this batch does not migrate remote state.
+The archive has fixed-size publication metadata, while its retained objects and
+ancestry grow with history. It is retention metadata, not accepted-state authority.
 
 **The mirror branch is named by the PROPOSAL DIGEST, not by actor and name.**
 Two ref namespaces exist and they are keyed differently on purpose. The

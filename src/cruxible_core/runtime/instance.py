@@ -948,7 +948,7 @@ class PlaybillInstance:
                 self._mirror_condition.notify_all()
 
     def _retired_mirror_proposal(self, ref: str, oid: str) -> bool:
-        """Prove one remote-only proposal alias from retained evidence, without an archive."""
+        """Bind a remote-only alias to its indexed closed proposal; Git proves retention."""
         evidence = self.proposal_evidence()
         pid = "sha256:" + ref.removeprefix("refs/heads/proposals/")
         coordinate = AcceptedCoordinate.from_internal(self.accepted_coordinate())
@@ -957,7 +957,8 @@ class PlaybillInstance:
             with evidence.index.read(evidence, review_context=True) as connection:
                 row = connection.execute(
                     "SELECT p.*, EXISTS(SELECT 1 FROM accepted_generations g "
-                    "WHERE g.candidate_digest=p.candidate_digest AND g.sequence<=?) AS accepted "
+                    "WHERE g.candidate_digest=p.candidate_digest "
+                    "AND g.sequence<=?) AS accepted "
                     "FROM proposals p WHERE proposal_id=?",
                     (history.sequence, pid),
                 ).fetchone()
@@ -965,10 +966,6 @@ class PlaybillInstance:
                 return False
             if row["candidate_parent_semantic_root"] is None:
                 return False
-            evidence.read_admission(pid)
-            evidence.read_evaluation(pid)
-            evidence.read_candidate(row["candidate_digest"])
-            evidence.read_withdrawal(pid)
             return bool(
                 row["accepted"]
                 or row["withdrawal_path"] is not None
@@ -1252,7 +1249,6 @@ class PlaybillInstance:
                 raise ProposalIntegrityError("materialized review alias differs from its index")
             object_presence[review_oid] = True
             refs[admission.proposal_id.removeprefix("sha256:")] = review_oid
-        self._ledger.replace_proposal_review_refs(refs)
         # Author slots are retry anchors only until their admission completes.
         # Open candidates have independent review refs; unrecorded interrupted
         # slots remain intact for the delivery recovery path.
@@ -1276,11 +1272,8 @@ class PlaybillInstance:
             ]
             if len(complete) != len(rows):
                 continue
-            for row in complete:
-                evidence.read_admission(row["proposal_id"])
-                evidence.read_evaluation(row["proposal_id"])
             retired_targets[target] = oid
-        self._ledger.delete_proposal_refs(retired_targets)
+        self._ledger.replace_proposal_review_refs(refs, retired_targets=retired_targets)
         # After the refs, so every annotated commit is already reachable from
         # one: a note on an unreferenced object is a note a `gc` may collect.
         for review_oid, (proposal_id, candidate_digest) in published.items():
@@ -1605,20 +1598,54 @@ class PlaybillInstance:
         self.coordinate_for_oid(oid)
         return self._ledger.blobs_at(oid, paths)
 
-    def proposal_tree(self, oid: str, *, base_oid: str | None = None) -> dict[str, bytes]:
+    def _require_proposal_object(self, oid: str, proposal_id: str | None) -> None:
+        if self._ledger.object_exists(oid):
+            return
+        if proposal_id is not None:
+            coordinate = AcceptedCoordinate.from_internal(self.accepted_coordinate())
+            evidence = self.proposal_evidence()
+            with self.accepted_history_reader(at=coordinate) as history:
+                assert evidence.index is not None
+                with evidence.index.read(evidence) as connection:
+                    row = connection.execute(
+                        "SELECT p.*, EXISTS(SELECT 1 FROM accepted_generations g "
+                        "WHERE g.candidate_digest=p.candidate_digest "
+                        "AND g.sequence<=?) AS accepted "
+                        "FROM proposals p WHERE proposal_id=?",
+                        (history.sequence, proposal_id),
+                    ).fetchone()
+            if (
+                row is not None
+                and row["evaluation_status"] != "missing"
+                and (
+                    row["withdrawal_path"] is not None
+                    or row["accepted"]
+                    or row["evaluation_status"] == "refused"
+                    or (
+                        row["candidate_parent_semantic_root"] is not None
+                        and row["candidate_parent_semantic_root"] != coordinate.semantic_root
+                    )
+                )
+            ):
+                raise ProposalContentUnavailable()
+        raise ProposalIntegrityError("active proposal content is missing or unavailable")
+
+    def proposal_tree(
+        self, oid: str, *, base_oid: str | None = None, proposal_id: str | None = None
+    ) -> dict[str, bytes]:
         """Read an exact proposal tree, optionally carrying a proven accepted base."""
 
-        if not self._ledger.object_exists(oid):
-            raise ProposalContentUnavailable()
+        self._require_proposal_object(oid, proposal_id)
         if base_oid is None:
             return self._ledger.read_tree(oid)
         parent = self.immutable_tree_at(base_oid)
         return self._ledger.read_tree_delta(base_oid, oid, parent_tree=parent)
 
-    def proposal_blobs(self, oid: str, paths: Sequence[str]) -> dict[str, bytes]:
+    def proposal_blobs(
+        self, oid: str, paths: Sequence[str], *, proposal_id: str | None = None
+    ) -> dict[str, bytes]:
         """Read selected retained proposal members without asserting acceptance."""
-        if not self._ledger.object_exists(oid):
-            raise ProposalContentUnavailable()
+        self._require_proposal_object(oid, proposal_id)
         return self._ledger.blobs_at(oid, paths)
 
     def resolve_accepted_coordinate(

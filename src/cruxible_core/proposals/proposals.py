@@ -4219,6 +4219,8 @@ class ProposalService:
                 for pid, admission in prior.admissions.items():
                     evaluation = prior.evaluations[pid]
                     summary = prior.candidates.get(evaluation.candidate_digest or "")
+                    if evaluation.verdict == "refused":
+                        self.transport.archive_proposal_commits((admission.candidate_commit_oid,))
                     if (
                         summary is not None
                         and summary.parent_semantic_root == current.semantic_root
@@ -4311,6 +4313,8 @@ class ProposalService:
                 self.evidence.write_admission(admission)
             if outcome.candidate is not None:
                 self.transport.retain_proposal_review(proposal_id, commit_oid)
+            else:
+                self.transport.archive_proposal_commits((commit_oid,))
             # Original and advisory aliases use the same complete group, so a
             # second admission sharing a commit cannot overwrite the first.
             after = self._note_index(

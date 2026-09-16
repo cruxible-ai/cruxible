@@ -111,6 +111,12 @@ def test_two_distinct_refused_proposals_cluster_by_claim_type_and_code(
             )
         )
     assert all(item.evaluation.verdict == "refused" for item in refused)
+    instance._reconcile_proposal_review_refs()
+    instance._ledger._git(["reflog", "expire", "--expire=now", "--all"])
+    instance._ledger._git(["gc", "--prune=now"])
+    assert all(
+        instance._ledger.object_exists(item.admission.candidate_commit_oid) for item in refused
+    )
 
     result = service_list_playbill_curation(
         instance,
@@ -132,6 +138,11 @@ def test_two_distinct_refused_proposals_cluster_by_claim_type_and_code(
         for item in result.items
         if item.pattern_kind == "playbill.curation.admission_failure_cluster.v1"
     ]
+    assert all(
+        omission.reason != "admission_tree_unavailable"
+        for coverage in result.detector_coverage
+        for omission in coverage.omissions
+    )
     assert len(clusters) == 1
     assert clusters[0].subject.qualified == "ClaimType:project.work_item.status"
     assert clusters[0].detail == {

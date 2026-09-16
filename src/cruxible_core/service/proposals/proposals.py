@@ -332,7 +332,9 @@ def service_readmit_playbill_proposal(
                 source_compilation_digest=operation_digest,
                 claim_type_expansions=source.admission.claim_type_expansions,
             ),
-            candidate_tree=instance.proposal_tree(source.admission.candidate_tree_oid),
+            candidate_tree=instance.proposal_tree(
+                source.admission.candidate_tree_oid, proposal_id=proposal_id
+            ),
             timestamp=generation.record.candidate.timestamp,
         )
     return PlaybillProposalReadmitResultV1(

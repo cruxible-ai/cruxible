@@ -1347,7 +1347,7 @@ def test_completed_proposal_retry_survives_closed_ref_cleanup_and_restart(
     assert instance.proposal_ref_target(target) is None
     instance._ledger._git(["reflog", "expire", "--expire=now", "--all"])
     instance._ledger._git(["gc", "--prune=now"])
-    assert not instance._ledger.object_exists(admission.candidate_commit_oid)
+    assert instance._ledger.object_exists(admission.candidate_commit_oid)
     reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     recovered = service_recover_proposal_egress(reopened, recorded_at=NOW + timedelta(minutes=2))
     ((run_id, disposition),) = recovered.items()

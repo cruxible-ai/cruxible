@@ -476,7 +476,9 @@ def service_activate_playbill_proposal(
     _reconcile_proposal_notes(instance, proposal=proposal, candidate=candidate)
     activation = instance.settle_and_activate(
         base=base,
-        candidate_tree=instance.proposal_tree(evaluation.evaluated_tree_oid, base_oid=base.git_oid),
+        candidate_tree=instance.proposal_tree(
+            evaluation.evaluated_tree_oid, base_oid=base.git_oid, proposal_id=proposal_id
+        ),
         candidate=candidate,
         approvals=approvals,
         actor_binding=ChangeActorBinding(

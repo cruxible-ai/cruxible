@@ -489,7 +489,9 @@ def service_review_playbill_proposal(
     base_public = AcceptedCoordinate.from_internal(base)
     paths = tuple(member.path for member in candidate.members)
     base_tree = instance.blobs_at(base.git_oid, paths)
-    candidate_tree = instance.proposal_blobs(proposal.evaluation.evaluated_tree_oid, paths)
+    candidate_tree = instance.proposal_blobs(
+        proposal.evaluation.evaluated_tree_oid, paths, proposal_id=proposal_id
+    )
     documents = tuple(
         _review_document(
             instance,

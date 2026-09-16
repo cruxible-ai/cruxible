@@ -769,7 +769,9 @@ def _admission_failures(
                 for diagnostic in evaluation.diagnostics
                 if diagnostic.subject is not None
             )
-            candidate_tree = instance.proposal_blobs(admission.candidate_tree_oid, paths)
+            candidate_tree = instance.proposal_blobs(
+                admission.candidate_tree_oid, paths, proposal_id=admission.proposal_id
+            )
             base_tree = instance.blobs_at(admission.proposed_base_oid, paths)
         except (OSError, PlaybillError, ValueError):
             coverage.omit("admission_tree_unavailable")
