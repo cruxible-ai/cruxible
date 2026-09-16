@@ -57,7 +57,6 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
 )
-from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.projection import AcceptedCoordinate as ClientAcceptedCoordinate
 from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
@@ -80,7 +79,7 @@ from cruxible_core.coverage.indexes import WorkingOccurrenceV1
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.proposals.settlement import ChangeActorBinding
-from cruxible_core.runtime.instance import DESCRIPTOR_FILE, PlaybillInstance
+from cruxible_core.runtime.instance import DESCRIPTOR_FILE
 from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
     service_propose_playbill_document,
@@ -1353,14 +1352,16 @@ def _procedure_projection_missing(root: Path, monkeypatch: pytest.MonkeyPatch) -
     instance, _owner = initialize_local(root)
     coordinate = instance.accepted_coordinate()
     procedure = _accepted_procedure()
-    real_tree_at = PlaybillInstance.tree_at
+    from cruxible_core.indexes.typed_state import ProcedureInventoryRow, TypedStateReader
 
-    def with_procedure(self, oid):  # type: ignore[no-untyped-def]
-        tree = dict(real_tree_at(self, oid))
-        tree[procedure.path] = render_procedure(procedure.procedure)
-        return tree
+    def with_procedure(self):
+        return (
+            ProcedureInventoryRow(
+                procedure.procedure.identity.qualified, procedure.path, "live", False
+            ),
+        )
 
-    monkeypatch.setattr(PlaybillInstance, "tree_at", with_procedure)
+    monkeypatch.setattr(TypedStateReader, "procedure_inventory", with_procedure)
     public = ClientAcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
     )
