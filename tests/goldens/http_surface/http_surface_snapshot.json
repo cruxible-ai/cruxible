@@ -187,6 +187,9 @@
   "/api/v1/{instance_id}/playbill/procedures/{name}/runs": {
     "POST": "PlaybillProcedureRunState"
   },
+  "/api/v1/{instance_id}/playbill/projections/check": {
+    "POST": "PlaybillProjectionCheckResultV1"
+  },
   "/api/v1/{instance_id}/playbill/projections/sync-backing": {
     "POST": "PlaybillBlockSyncReadResultV1"
   },
