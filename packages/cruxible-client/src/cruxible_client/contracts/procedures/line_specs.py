@@ -605,7 +605,7 @@ def _provider_occurrences(
             occurrences.extend(
                 (f"{node.node_id}.{body.node_id}", body)
                 for body in node.body
-                if body.operation == "provider"
+                if body.operation in {"provider", "call"}
             )
     return tuple(sorted(occurrences, key=lambda item: item[0].encode("utf-8")))
 

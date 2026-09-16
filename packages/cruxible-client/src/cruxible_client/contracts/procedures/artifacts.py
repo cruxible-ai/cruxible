@@ -45,6 +45,7 @@ from cruxible_client.contracts.procedures.models import (
     SourceNodeV4,
     iter_pin_bindings,
 )
+from cruxible_client.contracts.provider_contracts import ProviderOperationContractV1
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistrationV1,
 )
@@ -441,6 +442,7 @@ def evaluate_procedure_law(
     if isinstance(procedure.definition, ProcedureDefinitionV4):
         provider_refusal = _evaluate_graph_v4_provider_pins(
             procedure.definition,
+            procedure=procedure,
             providers={} if providers is None else providers,
             provider_interfaces=({} if provider_interfaces is None else provider_interfaces),
         )
@@ -458,6 +460,7 @@ def evaluate_procedure_law(
 def _evaluate_graph_v4_provider_pins(
     definition: ProcedureDefinitionV4,
     *,
+    procedure: ProcedureArtifactAny,
     providers: Mapping[str, AcceptedProviderV1],
     provider_interfaces: Mapping[str, AcceptedProviderInterfaceRegistrationV1],
 ) -> tuple[str, str] | None:
@@ -469,7 +472,7 @@ def _evaluate_graph_v4_provider_pins(
             occurrences.extend(
                 (f"{node.node_id}.{body.node_id}", body)
                 for body in node.body
-                if body.operation == "provider"
+                if body.operation in {"provider", "call"}
             )
     for occurrence_id, occurrence in occurrences:
         interface_pin = getattr(occurrence, "interface")
@@ -483,6 +486,11 @@ def _evaluate_graph_v4_provider_pins(
                 "playbill.procedure.provider_interface_pin_mismatch",
                 f"Provider occurrence {occurrence_id!r} does not bind its exact interface.",
             )
+        if int(definition.graph_format) == 5:
+            try:
+                check_provider_node_contract(occurrence, accepted_interface, procedure)
+            except (ValueError, KeyError) as exc:
+                return ("playbill.procedure.provider_interface_pin_mismatch", str(exc))
         provider_binding = getattr(occurrence, "provider")
         if isinstance(provider_binding, ProcedurePinSlotRefV1):
             continue
@@ -514,6 +522,56 @@ def _evaluate_graph_v4_provider_pins(
                 f"Provider occurrence {occurrence_id!r} implementation is ambiguous.",
             )
     return None
+
+
+def check_provider_node_contract(
+    node: object,
+    interface: AcceptedProviderInterfaceRegistrationV1,
+    procedure: ProcedureArtifactAny,
+    *,
+    slot_pins: Mapping[str, ArtifactPin] | None = None,
+) -> ProviderOperationContractV1:
+    """Check specialization and exact operation schemas before materialization."""
+    from cruxible_client.contracts.provider_contracts import (
+        ACQUISITION_RESULT,
+        operation_schema_shape,
+        read_provider_operation_contract,
+    )
+
+    contract = read_provider_operation_contract(interface.registration.interface_bytes_hex)
+    declared_effect = json.loads(bytes.fromhex(interface.registration.interface_bytes_hex)).get(
+        "effect_class"
+    )
+    if declared_effect != interface.registration.effect_class:
+        raise ValueError("ProviderInterface effect class differs from its operation declaration")
+    if isinstance(node, SourceNodeV4):
+        if contract.output != ACQUISITION_RESULT:
+            raise ValueError("Source requires the shared external acquisition result contract")
+        if interface.registration.effect_class == "external_mutation":
+            raise ValueError("Source cannot invoke an external mutation")
+        return contract
+    if not isinstance(procedure, ProcedureArtifactV2):
+        raise ValueError("Call requires owner-carried input and output Contracts")
+    owned = {
+        procedure_owned_contract_digest(item).tagged: item for item in procedure.owned_contracts
+    }
+    for field, expected in (("contract_in", contract.input), ("contract_out", contract.output)):
+        binding = getattr(node, field)
+        if isinstance(binding, ProcedurePinSlotRefV1):
+            if slot_pins is None:
+                continue  # Closed and checked again at run admission.
+            binding = slot_pins[binding.slot_name]
+        carried = owned.get(binding.artifact_digest)
+        if (
+            carried is None
+            or carried.identity != binding.target
+            or isinstance(expected, str)
+            or operation_schema_shape(carried.contract_schema) != operation_schema_shape(expected)
+        ):
+            raise ValueError(
+                f"Call {field} does not match the ProviderInterface operation contract"
+            )
+    return contract
 
 
 __all__ = [

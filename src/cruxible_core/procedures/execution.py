@@ -108,6 +108,7 @@ from cruxible_client.contracts.procedures.results import (
     procedure_selection_decision_digest,
 )
 from cruxible_client.contracts.procedures.windows import LineTriggerBindingV1
+from cruxible_client.contracts.provider_contracts import validate_provider_value
 from cruxible_client.contracts.provider_execution import (
     ProviderEgressObservationV1,
     ProviderExternalOccurrencePlanV1,
@@ -4263,7 +4264,11 @@ class ProcedureExecutor:
         matches = tuple(
             item
             for item in plan.external_occurrences
-            if item.occurrence_kind == occurrence_kind
+            if (
+                item.occurrence_kind == occurrence_kind
+                or occurrence_kind == "provider"
+                and item.occurrence_kind == "call"
+            )
             and item.node_id == node_id
             and item.repeat_node_id == repeat_node_id
         )
@@ -4294,6 +4299,15 @@ class ProcedureExecutor:
             repeat_node_id=repeat_node_id,
             occurrence_kind="provider",
         )
+        if occurrence.operation_contract is not None:
+            try:
+                payload = normalize_canonical(
+                    validate_provider_value(
+                        occurrence.operation_contract, payload, direction="input"
+                    )
+                )
+            except ValueError as exc:
+                raise _RunRefusal("contract_input_refused", str(exc), node_id=node_id) from exc
         if (
             self.provider_runtime_invoker is None
             and self.provider_runtime_invoker_factory is not None
@@ -4599,6 +4613,15 @@ class ProcedureExecutor:
                 outcome.code or "provider_protocol_violation", details=outcome.detail
             )
         assert output is not None
+        if occurrence.operation_contract is not None:
+            try:
+                output = normalize_canonical(
+                    validate_provider_value(
+                        occurrence.operation_contract, output, direction="output"
+                    )
+                )
+            except ValueError as exc:
+                raise _RunRefusal("contract_output_refused", str(exc), node_id=node_id) from exc
         validated = (
             _validate_node_contract(
                 self.contract_validator,

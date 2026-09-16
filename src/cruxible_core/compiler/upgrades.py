@@ -10,7 +10,11 @@ from cruxible_client.contracts.candidates import (
 )
 from cruxible_client.contracts.compiler_upgrade import COMPILER_UPGRADE_PATH, CompilerUpgradeV1
 from cruxible_client.contracts.errors import SettlementIntegrityError
-from cruxible_client.contracts.laws import COMPILER_UPGRADE_ACCEPTANCE_LAW
+from cruxible_client.contracts.laws import (
+    COMPILER_UPGRADE_ACCEPTANCE_LAW,
+    PROVIDER_CONTRACT_UPGRADE_LAW,
+    InstalledAcceptanceLaw,
+)
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_core.compiler.compiler import (
     ATTESTATION_COMPILER,
@@ -23,6 +27,7 @@ from cruxible_core.compiler.compiler import (
     P2_C_COMPILER,
     PC_DF2_COMPILER,
     PC_HR_COMPILER,
+    PROVIDER_CONTRACT_COMPILER,
     RESOLUTION_COMPILER,
     UPGRADE_COMPILER,
 )
@@ -54,6 +59,14 @@ class CompilerBoundRecord(Protocol):
     def members(self) -> Sequence[CandidateMemberEvidence | CandidateMemberLawEvidenceV2]: ...
 
 
+def upgrade_law(source: CompilerCoordinate, target: CompilerCoordinate) -> InstalledAcceptanceLaw:
+    if source in UPGRADE_V1_SOURCES and target == UPGRADE_COMPILER:
+        return COMPILER_UPGRADE_ACCEPTANCE_LAW
+    if source in {*UPGRADE_V1_SOURCES, UPGRADE_COMPILER} and target == PROVIDER_CONTRACT_COMPILER:
+        return PROVIDER_CONTRACT_UPGRADE_LAW
+    raise ValueError("unsupported compiler transition; only explicit forward edges are allowed")
+
+
 def validate_upgrade(value: CompilerUpgradeV1, base: AcceptedProjectionCoordinate) -> None:
     """Explicit supported edges; installing another compiler never implies permission to use it."""
     if (
@@ -64,8 +77,7 @@ def validate_upgrade(value: CompilerUpgradeV1, base: AcceptedProjectionCoordinat
         or value.base.compiler_digest != base.compiler.rule_digest
     ):
         raise ValueError("compiler upgrade is bound to a different accepted base")
-    if base.compiler not in UPGRADE_V1_SOURCES or value.target != UPGRADE_COMPILER:
-        raise ValueError("unsupported compiler transition; only explicit forward edges are allowed")
+    upgrade_law(base.compiler, value.target)
 
 
 def compiler_after_record(record: CompilerBoundRecord) -> CompilerCoordinate:
@@ -78,14 +90,13 @@ def compiler_after_record(record: CompilerBoundRecord) -> CompilerCoordinate:
     if len(members) != 1 or upgrades[0].path != COMPILER_UPGRADE_PATH:
         raise SettlementIntegrityError("compiler upgrade must be a sole-purpose generation")
     evidence = cast(tuple[MemberLawEvaluationV2, ...], getattr(record, "law_evidence", ()))
-    law = COMPILER_UPGRADE_ACCEPTANCE_LAW.coordinate
-    if (
-        len(evidence) != 1
-        or evidence[0].law_identifier != law.identifier
-        or evidence[0].law_digest != law.digest
-    ):
+    if len(evidence) != 1:
         raise SettlementIntegrityError("compiler upgrade law evidence is missing")
     target = CompilerCoordinate.model_validate(evidence[0].result["target_compiler"])
-    if source not in UPGRADE_V1_SOURCES or target != UPGRADE_COMPILER:
-        raise SettlementIntegrityError("unsupported compiler transition in accepted record")
+    try:
+        law = upgrade_law(source, target).coordinate
+    except ValueError as exc:
+        raise SettlementIntegrityError(str(exc)) from exc
+    if evidence[0].law_identifier != law.identifier or evidence[0].law_digest != law.digest:
+        raise SettlementIntegrityError("compiler upgrade law evidence is missing")
     return target

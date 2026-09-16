@@ -867,7 +867,7 @@ class ChangeSetDraft:
         manual unless another trigger policy is given, and inherits the
         Procedure's hard caps as its budget unless one is given.
 
-        Lowering refuses a Procedure that is not graph-v4 and one whose Source
+        Lowering refuses a Procedure that is not graph-v4/v5 and one whose Source
         nodes leave a Provider slot open: the Line pins exactly what the
         Procedure names, and an open slot is nothing to pin. A rung-2 Line
         also needs a live ProcedureMandate over its target namespace before it
@@ -2670,16 +2670,18 @@ class Playbill:
             raise TypeError("procedure definition must be a ProcedureInput, not an accepted graph")
         payload = lower_authoring_input(definition)
         assert isinstance(payload, (ProcedureAuthoringPayloadV1, ProcedureAuthoringPayloadV2))
-        # `source` is served only by the graph-v4 observation path: a v3 Source
+        # `source` is served by the graph-v4/v5 observation path: a v3 Source
         # node names no interface or implementation, so nothing can plan its
         # Provider occurrence. Keep it out of the v3 allow-list rather than
         # letting authoring succeed on a graph no run lane can admit.
         allowed = {"state_tap", "transform", "project", "guard", "repeat", "halt"}
-        if definition.definition.get("graph_format") == 4:
+        if definition.definition.get("graph_format") in {4, 5}:
             # `propose_change_set` is served on the Line lane only: a direct
             # run has no requested rung or mandate coordinate and refuses it
             # at admission, so the SDK admits the node where a Line can run it.
             allowed = allowed | {"source", "propose_change_set"}
+        if definition.definition.get("graph_format") == 5:
+            allowed = allowed | {"call"}
         nodes = definition.definition.get("nodes")
         if not isinstance(nodes, list | tuple):
             raise ValueError("Procedure input must declare its nodes")
@@ -2695,7 +2697,7 @@ class Playbill:
                 repair=(
                     "Use only state_tap, transform, project, guard, repeat, and halt nodes "
                     "on the served SDK lane, plus source and propose_change_set on a "
-                    "graph-v4 definition."
+                    "graph-v4/v5 definition, and call on a graph-v5 definition."
                 ),
             )
         return ProcedureDraft(

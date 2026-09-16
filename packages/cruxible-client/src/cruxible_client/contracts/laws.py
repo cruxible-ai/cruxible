@@ -507,8 +507,27 @@ COMPILER_UPGRADE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
 )
 
 
+PROVIDER_CONTRACT_PROCEDURE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        PROCEDURE_LAW_V2_IDENTIFIER, "playbill-procedure-v2", semantic_revision=7
+    ),
+    artifact_kind="procedure",
+    artifact_tag="playbill-procedure-v2",
+    current=False,  # Selected only for graph-v5; retained graphs keep their law.
+)
+PROVIDER_CONTRACT_UPGRADE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=2
+    ),
+    artifact_kind="compiler-upgrade",
+    artifact_tag="playbill-compiler-upgrade-v1",
+    current=False,
+)
+
 PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
     (
+        PROVIDER_CONTRACT_PROCEDURE_LAW,
+        PROVIDER_CONTRACT_UPGRADE_LAW,
         COMPILER_UPGRADE_ACCEPTANCE_LAW,
         APPROVAL_POLICY_ACCEPTANCE_LAW,
         PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,

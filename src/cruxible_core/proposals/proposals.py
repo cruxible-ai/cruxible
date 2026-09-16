@@ -148,7 +148,6 @@ from cruxible_client.contracts.governance import (
 from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_ACCEPTANCE_LAW,
     CLAIM_LAW_V3_REVISION_8,
-    COMPILER_UPGRADE_ACCEPTANCE_LAW,
     PLAYBILL_ACCEPTANCE_LAWS,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
@@ -1735,6 +1734,18 @@ def _accepted(
 
 def _procedure_member(context: _MemberContext) -> _MemberVerdict:
     procedure = parse_procedure(context.content, path=context.path)
+    from cruxible_client.contracts.laws import PROVIDER_CONTRACT_PROCEDURE_LAW
+
+    installed = _installed(context, procedure.artifact_format)
+    if int(procedure.definition.graph_format) == 5:
+        if procedure.artifact_format != "playbill-procedure-v2":
+            raise ValueError("graph-v5 requires the owner-carried Contract envelope")
+        if (
+            context.historical_law_coordinate is not None
+            and installed != PROVIDER_CONTRACT_PROCEDURE_LAW
+        ):
+            raise ProposalIntegrityError("graph-v5 requires its exact operation-contract law")
+        installed = PROVIDER_CONTRACT_PROCEDURE_LAW
     predecessor: AcceptedProcedureV1 | None = None
     if context.parent_content is not None:
         previous = parse_procedure(context.parent_content, path=context.path)
@@ -1762,7 +1773,7 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
     annotations = procedure.definition.annotations
     return _accepted(
         context,
-        _installed(context, procedure.artifact_format),
+        installed,
         predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
         candidate_artifact_digest=law.artifact_digest,
         required_tier=law.required_tier,
@@ -2799,7 +2810,7 @@ def _compiler_upgrade_member(context: _MemberContext) -> _MemberVerdict:
         COMPILER_UPGRADE_PATH,
         parse_compiler_upgrade,
     )
-    from cruxible_core.compiler.upgrades import validate_upgrade
+    from cruxible_core.compiler.upgrades import upgrade_law, validate_upgrade
 
     try:
         if context.scope != (COMPILER_UPGRADE_PATH,):
@@ -2816,7 +2827,7 @@ def _compiler_upgrade_member(context: _MemberContext) -> _MemberVerdict:
         )
     return _accepted(
         context,
-        COMPILER_UPGRADE_ACCEPTANCE_LAW,
+        upgrade_law(context.current.compiler, value.target),
         predecessor_artifact_digest=(
             None if context.parent_content is None else file_digest(context.parent_content).tagged
         ),

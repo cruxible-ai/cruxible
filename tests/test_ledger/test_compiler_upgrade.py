@@ -8,6 +8,7 @@ from cruxible_core.compiler.compiler import (
     ATTESTATION_COMPILER,
     ONTOLOGY_COMPILER,
     PC_HR_COMPILER,
+    PROVIDER_CONTRACT_COMPILER,
     RESOLUTION_COMPILER,
     UPGRADE_COMPILER,
 )
@@ -56,12 +57,22 @@ def approve(instance, proposal, reviewer):
 
 
 @pytest.mark.parametrize(
-    "source", [PC_HR_COMPILER, ATTESTATION_COMPILER, RESOLUTION_COMPILER, ONTOLOGY_COMPILER]
+    "source,target",
+    [
+        (source, UPGRADE_COMPILER)
+        for source in [PC_HR_COMPILER, ATTESTATION_COMPILER, RESOLUTION_COMPILER, ONTOLOGY_COMPILER]
+    ]
+    + [
+        (UPGRADE_COMPILER, PROVIDER_CONTRACT_COMPILER),
+        (RESOLUTION_COMPILER, PROVIDER_CONTRACT_COMPILER),
+    ],
 )
-def test_upgrade_preserves_historical_coordinates_and_reopens(tmp_path, monkeypatch, source):
+def test_upgrade_preserves_historical_coordinates_and_reopens(
+    tmp_path, monkeypatch, source, target
+):
     instance, owner, reviewer = old_instance(tmp_path, monkeypatch, source)
     before = instance.accepted_coordinate()
-    proposal = propose(instance)
+    proposal = propose(instance, target)
     approve(instance, proposal, reviewer)
     receipt = service_activate_playbill_proposal(
         instance,
@@ -69,13 +80,13 @@ def test_upgrade_preserves_historical_coordinates_and_reopens(tmp_path, monkeypa
         activated_by="owner",
     )
     assert receipt.status == "accepted"
-    assert instance.accepted_coordinate().compiler == UPGRADE_COMPILER
+    assert instance.accepted_coordinate().compiler == target
     assert instance.coordinate_for_oid(before.git_oid) == before
     assert instance.descriptor.compiler == source
     reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     assert reopened.accepted_coordinate() == instance.accepted_coordinate()
     assert reopened.coordinate_for_oid(before.git_oid) == before
-    assert reopened.inspect().compiler == UPGRADE_COMPILER
+    assert reopened.inspect().compiler == target
     with reopened._history_reader_for_epoch(reopened._recovered) as reader:
         assert (
             reader.resolve(PlaybillAcceptedCoordinate.from_internal(before)).compiler_digest

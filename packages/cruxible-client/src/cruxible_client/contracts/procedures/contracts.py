@@ -16,7 +16,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     ProcedureOwnedContractV1,
     procedure_owned_contract_digest,
 )
-from cruxible_client.contracts.procedures.contract_schema import PropertySchema
+from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 
 
@@ -224,10 +224,14 @@ def _validate_payload(
     contract: ProcedureOwnedContractV1,
     payload: CanonicalValue,
 ) -> CanonicalValue:
+    return validate_contract_schema(contract.contract_schema, payload)
+
+
+def validate_contract_schema(schema: ContractSchema, payload: object) -> CanonicalValue:
+    """Validate an operation boundary using the existing Contract field semantics."""
     if not isinstance(payload, Mapping):
         raise ProcedureContractValidationError("Contract payload must be an object")
     source = dict(payload)
-    schema = contract.contract_schema
     normalized = _normalize_fields(
         source,
         fields=schema.fields,

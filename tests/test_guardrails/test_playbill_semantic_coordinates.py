@@ -41,6 +41,8 @@ from cruxible_client.contracts.laws import (
     PROCEDURE_V2_ACCEPTANCE_LAW,
     PROCEDURE_V2_REVISION_5_ACCEPTANCE_LAW,
     PROVIDER_ACCEPTANCE_LAW,
+    PROVIDER_CONTRACT_PROCEDURE_LAW,
+    PROVIDER_CONTRACT_UPGRADE_LAW,
     PROVIDER_INTERFACE_ACCEPTANCE_LAW,
     PROVIDER_V2_ACCEPTANCE_LAW,
     QUERY_DEFINITION_ACCEPTANCE_LAW,
@@ -64,6 +66,7 @@ from cruxible_core.compiler.compiler import (
     PC_DF2_COMPILER,
     PC_E1_COMPILER,
     PC_HR_COMPILER,
+    PROVIDER_CONTRACT_COMPILER,
     RESOLUTION_COMPILER,
     SUPPORTED_COMPILERS,
     UPGRADE_COMPILER,
@@ -279,6 +282,20 @@ HISTORICAL_LAW_COORDINATES: tuple[
     ...,
 ] = (
     (
+        PROVIDER_CONTRACT_PROCEDURE_LAW,
+        "playbill.procedure.v2",
+        "playbill-procedure-v2",
+        7,
+        "sha256:6fc311efd106597cdb568555fa6a88410bf68bde374209187df0e9918824a7b1",
+    ),
+    (
+        PROVIDER_CONTRACT_UPGRADE_LAW,
+        "playbill.compiler-upgrade.v1",
+        "playbill-compiler-upgrade-v1",
+        2,
+        "sha256:77b041b26612382c05b35c2eacdc48dad90d1e3de4783398f2ca268fb36768df",
+    ),
+    (
         CLAIM_V3_REVISION_7_ACCEPTANCE_LAW,
         "playbill.claim.v3",
         "playbill-claim-v3",
@@ -486,7 +503,11 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
         UPGRADE_COMPILER.rule_digest
         == "sha256:2ae1626324c9bb33ac1d802cd1e0e79546ff3019333a9723062eda271ae89a7e"
     )
-    assert current_compiler_coordinate() == UPGRADE_COMPILER
+    assert (
+        PROVIDER_CONTRACT_COMPILER.rule_digest
+        == "sha256:a9f867686aa9ed6c39261a473ae09efcfa34f9efcdbd1ae1ba3e8281ae6cc1a8"
+    )
+    assert current_compiler_coordinate() == PROVIDER_CONTRACT_COMPILER
     assert P2_B4_COMPILER in SUPPORTED_COMPILERS
     assert P2_B4_UNIT2_COMPILER in SUPPORTED_COMPILERS
     # The renderer resolves from the current coordinate itself, so cards derive
@@ -508,7 +529,7 @@ def test_succeeding_the_semantic_revision_keeps_candidate_cards_deriving(
     """
 
     source = Path(compiler_module.__file__).read_text(encoding="utf-8")
-    current_revision = 23
+    current_revision = 24
     anchor = "\n    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,\n"
     bumped = source.replace(
         f"    semantic_revision={current_revision},{anchor}",
@@ -596,13 +617,16 @@ def test_installed_compiler_revision_labels_are_exact_and_complete() -> None:
         "independent-resolution-contracts-v1",
         "ontology-queries-v2",
         "governed-compiler-upgrade-v1",
+        "provider-operation-contracts-v1",
     )
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "governed-compiler-upgrade-v1"
+    assert (
+        COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "provider-operation-contracts-v1"
+    )
 
 
 def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
-    """The September 16 compiler-upgrade ruling admits an explicit governed
-    transition member as compiler revision 23. Older pins stay exact.
+    """The September 16 provider alignment ruling admits graph-v5 call nodes
+    and explicit interface contracts as revision 24. Older pins stay exact.
     """
 
     from cruxible_core.compiler.compiler import (
@@ -610,5 +634,7 @@ def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
         current_compiler_coordinate,
     )
 
-    assert len(COMPILER_REVISION_LABELS) == 22
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "governed-compiler-upgrade-v1"
+    assert len(COMPILER_REVISION_LABELS) == 23
+    assert (
+        COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "provider-operation-contracts-v1"
+    )

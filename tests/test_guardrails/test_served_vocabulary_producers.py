@@ -30,6 +30,7 @@ _DECLARATION_ONLY = {
     "service/refusals.py",
     "providers/provider_runtime_contract.py",
     "providers/provider_outcomes.py",
+    "providers/web_fetch.py",  # Interface vocabulary/classifier, not a refusal producer.
 }
 
 

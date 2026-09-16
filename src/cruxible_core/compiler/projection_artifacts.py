@@ -207,6 +207,8 @@ UPGRADE_ARTIFACT_KINDS = ArtifactKindRegistry(
     )
 )
 
+PROVIDER_CONTRACT_ARTIFACT_KINDS = ArtifactKindRegistry(UPGRADE_ARTIFACT_KINDS.entries())
+
 PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
     tuple(
         ArtifactFormatTag(
@@ -1589,6 +1591,11 @@ def parse_projection_tree(
                 )
 
                 procedure = parse_procedure(content, path=path, codec=artifact_codec)
+                if (
+                    int(procedure.definition.graph_format) == 5
+                    and artifact_kinds is not PROVIDER_CONTRACT_ARTIFACT_KINDS
+                ):
+                    raise ProjectionFormatError("graph-v5 requires the provider-contract compiler")
                 identity = procedure.identity.qualified
                 if identity in identities:
                     raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
@@ -1624,7 +1631,7 @@ def parse_projection_tree(
                 if isinstance(procedure.definition, ProcedureDefinitionV4):
                     graph = analyze_procedure_v4(procedure.definition)
                     node_digests = compute_procedure_node_digests_v4(procedure.definition)
-                    graph_fact_key = "graph_v4"
+                    graph_fact_key = f"graph_v{procedure.definition.graph_format}"
                 else:
                     graph = analyze_procedure_v3(procedure.definition)
                     node_digests = compute_procedure_node_digests_v3(procedure.definition)
@@ -1811,6 +1818,7 @@ def parse_projection_tree(
                     RESOLUTION_ARTIFACT_KINDS,
                     ONTOLOGY_ARTIFACT_KINDS,
                     UPGRADE_ARTIFACT_KINDS,
+                    PROVIDER_CONTRACT_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError(
                         "Line v3 requires the independent-resolution compiler"
@@ -1901,7 +1909,12 @@ def parse_projection_tree(
                 query = parse_query_definition(content, path=path, codec=artifact_codec)
                 if (
                     query.artifact_format == "playbill-query-definition-v2"
-                    and artifact_kinds not in (ONTOLOGY_ARTIFACT_KINDS, UPGRADE_ARTIFACT_KINDS)
+                    and artifact_kinds
+                    not in (
+                        ONTOLOGY_ARTIFACT_KINDS,
+                        UPGRADE_ARTIFACT_KINDS,
+                        PROVIDER_CONTRACT_ARTIFACT_KINDS,
+                    )
                 ):
                     raise ProjectionFormatError(
                         "artifact queries require the ontology-query compiler"

@@ -70,6 +70,20 @@ loading implementation details:
 - pinned dependencies;
 - governance metadata and track record.
 
+Graph-v5 names a provider invocation `call`. Its pinned ProviderInterface declares
+`contracts.input` and `contracts.output` using the same schemas as owner-carried
+Procedure Contracts, plus its `effect_class`. Admission checks those schemas
+against the call's Contracts; execution validates input before invocation and
+output before downstream nodes use it. The provider runtime protocol is shared
+by calls and acquisition.
+
+A `source` node uses the shared `playbill-provider-result-to-external-capture-v1`
+output contract. The provider returns observation material; Core verifies it and
+constructs the Capture under the pinned CaptureContract and acquisition policy.
+Source refuses mutation interfaces. Graph-v3/v4 artifacts retain their original
+grammar and digests. Existing instances adopt graph-v5 through a governed compiler
+upgrade, not a restart or an automatic rewrite of Procedures.
+
 ## Defaults and policy
 
 Authoring must be progressive. Common ClaimTypes and Procedures should inherit
