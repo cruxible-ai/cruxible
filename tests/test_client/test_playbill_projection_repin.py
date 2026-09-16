@@ -17,6 +17,7 @@ from cruxible_client.authoring.blocks import (
     parse_projection_blocks,
     repin_projection_block,
 )
+from cruxible_client.authoring.projection_package import load_projection_manifests
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claims import ClaimStatement, LiteralClaimObject
 from cruxible_client.contracts.declared_blocks import ProjectionQueryBackingV1
@@ -194,7 +195,12 @@ def test_bootstrap_repin_changes_only_opening_then_preserves_or_replaces_backing
     assert source.read_bytes() == original
 
     first = _repin(client, tmp_path, claims=("CLM-first",))
-    (parsed,) = parse_projection_blocks(source.read_bytes(), source_id="corpus.runbook")
+    assert b"<!-- playbill:block:summary:ref:" in source.read_bytes()
+    (parsed,) = parse_projection_blocks(
+        source.read_bytes(),
+        source_id="corpus.runbook",
+        manifests=load_projection_manifests(tmp_path, source.read_bytes()),
+    )
     assert parsed.stamp == first
     assert (
         source.read_bytes()[parsed.opening_end :]
@@ -230,7 +236,11 @@ def test_a_repin_registers_the_marker_it_just_wrote(tmp_path: Path) -> None:
 
     assert [item["block_id"] for item in client.declared] == ["summary"]
     assert client.declared[0] == stamp.model_dump(mode="json")
-    (block,) = parse_projection_blocks(source.read_bytes(), source_id="corpus.runbook")
+    (block,) = parse_projection_blocks(
+        source.read_bytes(),
+        source_id="corpus.runbook",
+        manifests=load_projection_manifests(tmp_path, source.read_bytes()),
+    )
     assert block.stamp == stamp
 
 
@@ -244,7 +254,11 @@ def test_body_edit_is_preserved_and_repin_updates_only_its_commitment(tmp_path: 
     refreshed = _repin(client, tmp_path)
 
     assert refreshed.body_digest != first.body_digest
-    (parsed,) = parse_projection_blocks(source.read_bytes(), source_id="corpus.runbook")
+    (parsed,) = parse_projection_blocks(
+        source.read_bytes(),
+        source_id="corpus.runbook",
+        manifests=load_projection_manifests(tmp_path, source.read_bytes()),
+    )
     assert source.read_bytes()[parsed.body_start : parsed.body_end] == BODY.replace(
         b"status: ready", b"status: blocked"
     )
@@ -264,7 +278,10 @@ def test_repin_of_a_stamped_block_preserves_an_adjacent_unstamped_draft(
     assert refreshed.backing[0].identity.name == "CLM-first"
     assert source.read_bytes().endswith(draft)
     blocks = parse_projection_blocks(
-        source.read_bytes(), source_id="corpus.runbook", allow_bootstrap=True
+        source.read_bytes(),
+        source_id="corpus.runbook",
+        allow_bootstrap=True,
+        manifests=load_projection_manifests(tmp_path, source.read_bytes()),
     )
     assert [block.block_id for block in blocks] == ["summary", "draft"]
     assert blocks[1].stamp is None
@@ -329,6 +346,12 @@ def test_sdk_block_facade_bootstraps_at_its_active_coordinate(tmp_path: Path) ->
 
     assert stamp.declared_generation == 7
     assert stamp.backing[0].identity.qualified == "Claim:CLM-first"
+    content = (tmp_path / "runbook.md").read_bytes()
+    assert b"<!-- playbill:block:summary:ref:" in content
+    (block,) = parse_projection_blocks(
+        content, source_id="corpus.runbook", manifests=load_projection_manifests(tmp_path, content)
+    )
+    assert block.stamp == stamp
 
 
 def test_repin_preserves_omitted_categories_and_policy_and_removes_only_explicit_ones(

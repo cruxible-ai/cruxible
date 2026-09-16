@@ -3203,11 +3203,11 @@ class ProjectionBlocks:
         backing_digest: str | None = None,
         evaluation_time: datetime,
         body: str | bytes | None = None,
-        compact: bool = False,
+        compact: bool = True,
     ) -> ProjectionBlockStampV2:
         """Refresh backing pins and optionally replace this block's authored body.
 
-        ``compact=True`` writes digest references with local manifests. Subsequent
+        Compact markers are the default: digest references with local manifests. Subsequent
         repins preserve that format. ``package()`` exports the complete view for
         transfer or an explicit governed archival Claim.
         """
