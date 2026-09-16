@@ -8,7 +8,7 @@ queried Claim and an explained Claim can never disagree about their verdict.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Literal
 
@@ -29,8 +29,14 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
     parse_claim,
 )
-from cruxible_client.contracts.errors import ClaimNotFoundError, ProposalIntegrityError
-from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+from cruxible_client.contracts.errors import (
+    ClaimNotFoundError,
+    ProjectionIntegrityError,
+    ProposalIntegrityError,
+)
+from cruxible_client.contracts.query.definitions import AcceptedQueryDefinitionV1
+from cruxible_client.contracts.query.grammar import QueryArtifactsEntryV2, QueryBudgetsV1
+from cruxible_client.contracts.query.results import QueryArtifactDefinitionV2
 from cruxible_client.contracts.subjects import AcceptedSubject, parse_subject, subject_digest
 from cruxible_core.errors import DataValidationError
 from cruxible_core.evidence.source_readers import ExternalSourceReaderProtocol
@@ -47,6 +53,7 @@ from cruxible_core.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
 from cruxible_core.query.engine import (
     ClaimQueryResultV1,
     QueryExecutionReceiptV1,
+    evaluate_artifact_query,
     evaluate_claim_query,
     query_execution_receipt,
 )
@@ -427,6 +434,70 @@ class PlaybillQueryReceiptJournal:
         )
 
 
+def evaluate_accepted_query(
+    instance: PlaybillInstance,
+    definition: AcceptedQueryDefinitionV1,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    parameters: Mapping[str, object] | None = None,
+    budgets: QueryBudgetsV1 | None = None,
+    facts: Callable[[], ClaimQueryFactsV1] | None = None,
+    external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
+) -> ClaimQueryResultV1:
+    """One dispatch for public reads and projection currency, with lazy Claim facts."""
+    if isinstance(definition.query.entry, QueryArtifactsEntryV2):
+
+        def read(
+            entry: QueryArtifactsEntryV2, limit: int
+        ) -> tuple[int, tuple[QueryArtifactDefinitionV2, ...]]:
+            with instance.bind_accepted_projection(coordinate) as projection:
+                count, rows = projection.typed.query_artifact_definitions(
+                    kind=entry.artifact_kind,
+                    namespaces=entry.namespaces,
+                    name_prefixes=entry.name_prefixes,
+                    limit=limit,
+                )
+                definitions = []
+                for row in rows:
+                    source = projection.typed.source(row.identity)
+                    if source is None:
+                        raise ProjectionIntegrityError("selected definition source is absent")
+                    definitions.append(
+                        QueryArtifactDefinitionV2(
+                            identity=row.identity,
+                            path=row.path,
+                            artifact_digest=row.artifact_digest,
+                            definition=source,
+                        )
+                    )
+                return count, tuple(definitions)
+
+        return evaluate_artifact_query(
+            definition,
+            read=read,
+            coordinate=coordinate,
+            evaluation_time=evaluation_time,
+            parameters=parameters,
+            budgets=budgets,
+        )
+    return evaluate_claim_query(
+        definition,
+        facts=facts()
+        if facts
+        else build_accepted_query_facts(
+            instance,
+            coordinate=coordinate,
+            external_readers=external_readers,
+            predicates=definition.query.referenced_predicates,
+        ),
+        coordinate=coordinate,
+        evaluation_time=evaluation_time,
+        parameters=parameters,
+        budgets=budgets,
+    )
+
+
 def service_run_playbill_query(
     instance: PlaybillInstance,
     *,
@@ -450,19 +521,14 @@ def service_run_playbill_query(
         raise DataValidationError("query evaluation_time must be timezone-aware")
     coordinate = _resolve_coordinate(instance, at)
     definition = accepted_query_definition(instance, name=name, coordinate=coordinate)
-    facts = build_accepted_query_facts(
+    result = evaluate_accepted_query(
         instance,
-        coordinate=coordinate,
-        external_readers=external_readers,
-        predicates=definition.query.referenced_predicates,
-    )
-    result = evaluate_claim_query(
         definition,
-        facts=facts,
         coordinate=coordinate,
         evaluation_time=evaluation_time,
         parameters=parameters,
         budgets=budgets,
+        external_readers=external_readers,
     )
     receipt = query_execution_receipt(result)
     accepted = PlaybillAcceptedCoordinate.from_internal(coordinate)

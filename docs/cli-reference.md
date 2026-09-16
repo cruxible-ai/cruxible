@@ -682,7 +682,6 @@ Lists the live standalone and embedded governed policies at the accepted coordin
 ## playbill query
 
 ~~~text
-cruxible playbill query propose --envelope FILE --name NAME
 cruxible playbill query list
 cruxible playbill query get NAME
 cruxible playbill query run NAME [--parameters FILE] [--evaluation-time TS]
@@ -691,6 +690,44 @@ cruxible playbill query run NAME [--parameters FILE] [--evaluation-time TS]
 run executes one accepted QueryDefinition and prints its
 `playbill-query-execution-receipt-v1`: the definition digest, the resolved
 parameter digest, and the result digest that replays it.
+
+Author named queries through `playbill authoring compile`, then submit the intent
+and review/accept its proposal. `query propose` is deprecated. The SDK equivalent
+is `pb.query_definition(definition=QueryDefinitionInput(...)).prepare()`, followed
+by the normal intent submission and approval flow. `pb.changes().query_definition(...)`
+includes a query in a changeset. Omitted ClaimType pins resolve against the intent
+base or sibling definitions; explicit pins remain assertions. SDK `vocabulary=`
+accepts World ClaimType references and retains their stale-reference checks.
+Use `pb.run_query(name)` to read the accepted result and receipt.
+
+`authoring create --example query-claims-by-type` provides a Claim query without
+placeholder digests. `--example query-ontology` and `--example query-procedures`
+provide artifact queries; MCP's authoring-example and authoring-compile tools use
+these same typed inputs. Both are `query_definition` inputs.
+
+Artifact queries use `playbill-query-definition-v2` and
+`playbill-query-artifacts-entry-v2`. Select `ClaimType` or `Procedure`:
+
+- `selection: all` selects all live definitions of that kind.
+- ClaimTypes support `selection: namespaces` with a sorted, nonempty `namespaces`
+  list. Membership is exact: `security.asset.owner` is in `security.asset`,
+  while `security.asset.deep.value` is in `security.asset.deep`.
+- Procedures support `selection: name_prefixes` with sorted prefixes ending in
+  `.`. `security.` selects `security.observe`, but not `security_other.observe`.
+  This is an explicit naming convention, not inferred domain membership.
+
+The result shape is `artifact_definition`, cardinality `many`, and dedupe
+`artifact`. Results are ordered by identity and include the typed definition,
+path, and artifact digest at the requested accepted coordinate. They do not
+traverse Claim edges. Only result budgets apply; traversal depth must be zero.
+An initially empty result still tracks future membership. Out-of-scope changes
+do not alter the semantic result. Truncation remains explicit; the SDK's
+`result.artifact_definitions` accessor refuses truncated or refused listings.
+
+Query-backed blocks detect selected definitions being added, retired, removed,
+or changed. Their backing proves currency, not that handwritten prose lists
+every result. Generate a complete list from an untruncated result and keep that
+separate from freeform prose; sync does not render Markdown or HTML.
 
 ## playbill procedure
 

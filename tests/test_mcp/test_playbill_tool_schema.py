@@ -129,6 +129,8 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
         "claim-cite-supporting-evidence",
         "claim-adjudicate-unreviewed-evidence",
         "query-claims-by-type",
+        "query-ontology",
+        "query-procedures",
         "subject",
         "approval-policy",
         "procedure-runtime-policy",

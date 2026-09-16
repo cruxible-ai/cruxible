@@ -407,6 +407,57 @@ class QueryEntryV1(_StrictQueryModel):
         return self.subject_id.references
 
 
+class QueryArtifactsEntryV2(_StrictQueryModel):
+    """Select live definitions independently of Claim connectivity.
+
+    A predicate ``security.asset.owner`` belongs to ``security.asset`` only.
+    ``all`` includes every namespace; ``namespaces`` requires a nonempty,
+    sorted, unique list. Descendants are never implicitly included.
+    Procedures use explicit lexical name prefixes ending in a dot, not namespaces.
+    """
+
+    tag: Literal["playbill-query-artifacts-entry-v2"] = "playbill-query-artifacts-entry-v2"
+    binding: str = "definition"
+    artifact_kind: Literal["ClaimType", "Procedure"]
+    selection: Literal["all", "namespaces", "name_prefixes"]
+    namespaces: tuple[str, ...] = ()
+    name_prefixes: tuple[str, ...] = ()
+
+    @field_validator("binding")
+    @classmethod
+    def _binding(cls, value: str) -> str:
+        return binding_name(value)
+
+    @model_validator(mode="after")
+    def _selection(self) -> "QueryArtifactsEntryV2":
+        if (self.selection == "namespaces") != bool(self.namespaces):
+            raise ValueError("namespaces selection requires names; all selection forbids them")
+        if (self.selection == "name_prefixes") != bool(self.name_prefixes):
+            raise ValueError(
+                "name_prefixes selection requires prefixes and forbids other selectors"
+            )
+        if self.namespaces and self.artifact_kind != "ClaimType":
+            raise ValueError("only ClaimTypes have predicate namespaces")
+        if self.name_prefixes and self.artifact_kind != "Procedure":
+            raise ValueError("name_prefixes select Procedure names")
+        for prefix in self.name_prefixes:
+            if not re.fullmatch(r"[a-z][a-z0-9_.-]{0,254}\.", prefix):
+                raise ValueError("Procedure name prefixes must end at an explicit dot boundary")
+        sorted_unique(self.name_prefixes, label="Procedure name prefixes")
+        for name in self.namespaces:
+            subject_kind_name(name, label="ClaimType namespace")
+        sorted_unique(self.namespaces, label="ClaimType namespaces")
+        return self
+
+    @property
+    def subject_kinds(self) -> tuple[str, ...]:
+        return ()
+
+    @property
+    def references(self) -> QueryReferenceInventoryV1:
+        return QueryReferenceInventoryV1()
+
+
 class QueryTraversalStepV1(_StrictQueryModel):
     """One relation-Claim hop from an earlier binding to a new bound Subject."""
 
@@ -608,6 +659,8 @@ __all__ = [
     "QueryConjunctionFilterV1",
     "QueryDisjunctionFilterV1",
     "QueryEntryV1",
+    "QueryArtifactsEntryV2",
+    "QueryArtifactsEntryV2",
     "QueryEvaluationTimeRefV1",
     "QueryFilterV1",
     "QueryIncludeV1",

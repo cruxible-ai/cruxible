@@ -18,6 +18,8 @@
         "claim-cite-supporting-evidence",
         "claim-adjudicate-unreviewed-evidence",
         "query-claims-by-type",
+        "query-ontology",
+        "query-procedures",
         "subject",
         "approval-policy",
         "procedure-runtime-policy",
@@ -4340,6 +4342,8 @@
               "claim-cite-supporting-evidence",
               "claim-adjudicate-unreviewed-evidence",
               "query-claims-by-type",
+              "query-ontology",
+              "query-procedures",
               "subject",
               "approval-policy",
               "procedure-runtime-policy",
@@ -6050,6 +6054,62 @@
             "title": "PropertySchema",
             "type": "object"
           },
+          "QueryArtifactsEntryV2": {
+            "additionalProperties": false,
+            "description": "Select live definitions independently of Claim connectivity.\n\nA predicate ``security.asset.owner`` belongs to ``security.asset`` only.\n``all`` includes every namespace; ``namespaces`` requires a nonempty,\nsorted, unique list. Descendants are never implicitly included.\nProcedures use explicit lexical name prefixes ending in a dot, not namespaces.",
+            "properties": {
+              "artifact_kind": {
+                "enum": [
+                  "ClaimType",
+                  "Procedure"
+                ],
+                "title": "Artifact Kind",
+                "type": "string"
+              },
+              "binding": {
+                "default": "definition",
+                "title": "Binding",
+                "type": "string"
+              },
+              "name_prefixes": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Name Prefixes",
+                "type": "array"
+              },
+              "namespaces": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Namespaces",
+                "type": "array"
+              },
+              "selection": {
+                "enum": [
+                  "all",
+                  "namespaces",
+                  "name_prefixes"
+                ],
+                "title": "Selection",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-artifacts-entry-v2",
+                "default": "playbill-query-artifacts-entry-v2",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifact_kind",
+              "selection"
+            ],
+            "title": "QueryArtifactsEntryV2",
+            "type": "object"
+          },
           "QueryBudgetsV1": {
             "additionalProperties": false,
             "description": "Explicit result, depth, and path budgets; an unbounded read is never declarable.",
@@ -6352,7 +6412,15 @@
                 "type": "string"
               },
               "query_definition": {
-                "$ref": "#/$defs/QueryDefinitionV1"
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryDefinitionSpecV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryDefinitionV1"
+                  }
+                ],
+                "title": "Query Definition"
               }
             },
             "required": [
@@ -6362,13 +6430,16 @@
             "title": "QueryDefinitionInput",
             "type": "object"
           },
-          "QueryDefinitionV1": {
+          "QueryDefinitionSpecV1": {
             "additionalProperties": false,
-            "description": "One governed, digest-pinned, Claim-native canonical query declaration.",
+            "description": "Authoring grammar: omitted ClaimType pins resolve at the intent base.\n\nExplicit pins remain assertions, never silently rebound. Accepted artifacts\nalways pass the stricter QueryDefinitionV1 validation after lowering.",
             "properties": {
               "artifact_format": {
-                "const": "playbill-query-definition-v1",
                 "default": "playbill-query-definition-v1",
+                "enum": [
+                  "playbill-query-definition-v1",
+                  "playbill-query-definition-v2"
+                ],
                 "title": "Artifact Format",
                 "type": "string"
               },
@@ -6376,7 +6447,8 @@
                 "enum": [
                   "subject",
                   "path",
-                  "none"
+                  "none",
+                  "artifact"
                 ],
                 "title": "Dedupe",
                 "type": "string"
@@ -6397,7 +6469,15 @@
                 "title": "Description"
               },
               "entry": {
-                "$ref": "#/$defs/QueryEntryV1"
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryEntryV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryArtifactsEntryV2"
+                  }
+                ],
+                "title": "Entry"
               },
               "evaluation_policy": {
                 "$ref": "#/$defs/QueryEvaluationPolicyV1"
@@ -6474,7 +6554,203 @@
                 "enum": [
                   "subject",
                   "relation_claim",
-                  "path"
+                  "path",
+                  "artifact_definition"
+                ],
+                "title": "Result Shape",
+                "type": "string"
+              },
+              "traversal": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryTraversalStepV1"
+                },
+                "title": "Traversal",
+                "type": "array"
+              },
+              "where": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "all_of": "#/$defs/QueryConjunctionFilterV1",
+                        "any_of": "#/$defs/QueryDisjunctionFilterV1",
+                        "claim_presence": "#/$defs/QueryClaimPresenceFilterV1",
+                        "comparison": "#/$defs/QueryComparisonFilterV1",
+                        "membership": "#/$defs/QueryMembershipFilterV1",
+                        "not": "#/$defs/QueryNegationFilterV1"
+                      },
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/QueryComparisonFilterV1"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryMembershipFilterV1"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryClaimPresenceFilterV1"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryConjunctionFilterV1"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryDisjunctionFilterV1"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryNegationFilterV1"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Where"
+              }
+            },
+            "required": [
+              "identity",
+              "entry",
+              "result_binding",
+              "result_shape",
+              "result_cardinality",
+              "dedupe",
+              "evaluation_policy",
+              "default_budgets",
+              "maximum_budgets"
+            ],
+            "title": "QueryDefinitionSpecV1",
+            "type": "object"
+          },
+          "QueryDefinitionV1": {
+            "additionalProperties": false,
+            "description": "One governed, digest-pinned, Claim-native canonical query declaration.",
+            "properties": {
+              "artifact_format": {
+                "default": "playbill-query-definition-v1",
+                "enum": [
+                  "playbill-query-definition-v1",
+                  "playbill-query-definition-v2"
+                ],
+                "title": "Artifact Format",
+                "type": "string"
+              },
+              "dedupe": {
+                "enum": [
+                  "subject",
+                  "path",
+                  "none",
+                  "artifact"
+                ],
+                "title": "Dedupe",
+                "type": "string"
+              },
+              "default_budgets": {
+                "$ref": "#/$defs/QueryBudgetsV1"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "entry": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryEntryV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryArtifactsEntryV2"
+                  }
+                ],
+                "title": "Entry"
+              },
+              "evaluation_policy": {
+                "$ref": "#/$defs/QueryEvaluationPolicyV1"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "includes": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryIncludeV1"
+                },
+                "title": "Includes",
+                "type": "array"
+              },
+              "lifecycle": {
+                "$ref": "#/$defs/ArtifactLifecycle",
+                "default": {
+                  "predecessor_digest": null,
+                  "state": "live"
+                }
+              },
+              "maximum_budgets": {
+                "$ref": "#/$defs/QueryBudgetsV1"
+              },
+              "orderings": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryOrderingV1"
+                },
+                "title": "Orderings",
+                "type": "array"
+              },
+              "parameters": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryParameterDeclarationV1"
+                },
+                "title": "Parameters",
+                "type": "array"
+              },
+              "pins": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ArtifactPin"
+                },
+                "title": "Pins",
+                "type": "array"
+              },
+              "projection": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryProjectionV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "result_binding": {
+                "title": "Result Binding",
+                "type": "string"
+              },
+              "result_cardinality": {
+                "enum": [
+                  "one",
+                  "many"
+                ],
+                "title": "Result Cardinality",
+                "type": "string"
+              },
+              "result_shape": {
+                "enum": [
+                  "subject",
+                  "relation_claim",
+                  "path",
+                  "artifact_definition"
                 ],
                 "title": "Result Shape",
                 "type": "string"
@@ -7518,6 +7794,8 @@
               "claim-cite-supporting-evidence",
               "claim-adjudicate-unreviewed-evidence",
               "query-claims-by-type",
+              "query-ontology",
+              "query-procedures",
               "subject",
               "approval-policy",
               "procedure-runtime-policy",

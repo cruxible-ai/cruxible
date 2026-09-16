@@ -57,7 +57,7 @@ from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RATIONALE_MAX_LENGTH,
     validate_change_set_rationale,
 )
-from cruxible_client.contracts.query.definitions import QueryDefinitionV1
+from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1, QueryDefinitionV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, subject_path
 
@@ -206,7 +206,7 @@ class SubjectInput(_StrictInputModel):
 
 class QueryDefinitionInput(_StrictInputModel):
     kind: Literal["query_definition"]
-    query_definition: QueryDefinitionV1
+    query_definition: QueryDefinitionSpecV1 | QueryDefinitionV1
 
 
 class ApprovalPolicyInput(_StrictInputModel):

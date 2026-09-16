@@ -38,6 +38,7 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import CanonicalEncodingError, PlaybillFormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.query.grammar import (
+    QueryArtifactsEntryV2,
     QueryBudgetsV1,
     QueryEntryV1,
     QueryFilterV1,
@@ -60,9 +61,9 @@ PARAMETER_CONTRACT_PIN_ROLE = "parameter-contract"
 RESULT_CONTRACT_PIN_ROLE = "result-contract"
 _CONTRACT_PIN_ROLES = frozenset({PARAMETER_CONTRACT_PIN_ROLE, RESULT_CONTRACT_PIN_ROLE})
 
-QueryResultShapeV1 = Literal["subject", "relation_claim", "path"]
+QueryResultShapeV1 = Literal["subject", "relation_claim", "path", "artifact_definition"]
 QueryResultCardinalityV1 = Literal["one", "many"]
-QueryDedupeV1 = Literal["subject", "path", "none"]
+QueryDedupeV1 = Literal["subject", "path", "none", "artifact"]
 QueryConflictBehaviorV1 = Literal["surface_conflicts", "refuse_on_conflict"]
 
 
@@ -115,10 +116,12 @@ def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
 class QueryDefinitionV1(_StrictQueryDefinitionModel):
     """One governed, digest-pinned, Claim-native canonical query declaration."""
 
-    artifact_format: Literal["playbill-query-definition-v1"] = "playbill-query-definition-v1"
+    artifact_format: Literal["playbill-query-definition-v1", "playbill-query-definition-v2"] = (
+        "playbill-query-definition-v1"
+    )
     identity: ArtifactIdentity
     description: str | None = None
-    entry: QueryEntryV1
+    entry: QueryEntryV1 | QueryArtifactsEntryV2
     traversal: tuple[QueryTraversalStepV1, ...] = ()
     where: QueryFilterV1 | None = None
     result_binding: str
@@ -180,6 +183,39 @@ class QueryDefinitionV1(_StrictQueryDefinitionModel):
             raise ValueError(
                 "QueryDefinition identity must be kind QueryDefinition and path-addressable"
             )
+        if isinstance(self.entry, QueryArtifactsEntryV2):
+            if self.artifact_format != "playbill-query-definition-v2":
+                raise ValueError("Artifact selection requires query definition v2")
+            if (self.result_shape, self.result_cardinality, self.dedupe) != (
+                "artifact_definition",
+                "many",
+                "artifact",
+            ) or self.result_binding != self.entry.binding:
+                raise ValueError("Artifact queries return many artifact-deduplicated definitions")
+            if (
+                self.traversal
+                or self.where
+                or self.projection
+                or self.orderings
+                or self.includes
+                or self.parameters
+                or self.pins
+            ):
+                raise ValueError(
+                    "Artifact queries only admit definition selectors and result budgets"
+                )
+            if any(
+                b.max_paths is not None or b.max_traversal_depth != 0
+                for b in (self.default_budgets, self.maximum_budgets)
+            ):
+                raise ValueError("Artifact queries do not traverse paths")
+            if not self.default_budgets.within(self.maximum_budgets):
+                raise ValueError("default budgets exceed maximum budgets")
+            return self
+        if self.artifact_format != "playbill-query-definition-v1" or (
+            self.result_shape == "artifact_definition" or self.dedupe == "artifact"
+        ):
+            raise ValueError("Claim traversal requires the frozen v1 query grammar")
         self._validate_bindings()
         self._validate_reference_scopes()
         self._validate_shape_rules()
@@ -333,6 +369,24 @@ class QueryDefinitionV1(_StrictQueryDefinitionModel):
                 raise ValueError("QueryDefinition contract pins must target Contract identities")
 
 
+class QueryDefinitionSpecV1(QueryDefinitionV1):
+    """Authoring grammar: omitted ClaimType pins resolve at the intent base.
+
+    Explicit pins remain assertions, never silently rebound. Accepted artifacts
+    always pass the stricter QueryDefinitionV1 validation after lowering.
+    """
+
+    def _validate_pins(self) -> None:
+        referenced = set(self.referenced_predicates)
+        for pin in self.pins:
+            if pin.role == CLAIM_TYPE_PIN_ROLE and (
+                pin.target.kind != "ClaimType" or pin.target.name not in referenced
+            ):
+                raise ValueError("query ClaimType pins must reference a used predicate")
+            if pin.role in _CONTRACT_PIN_ROLES and pin.target.kind != "Contract":
+                raise ValueError("QueryDefinition contract pins must target Contract identities")
+
+
 def query_definition_path(name: str) -> str:
     """Return the one canonical ledger path for a QueryDefinition identity name."""
 
@@ -376,10 +430,10 @@ def parse_query_definition(
         payload = json.loads(content)
     except (UnicodeDecodeError, ValueError) as exc:
         raise QueryDefinitionFormatError("QueryDefinition is not strict JSON") from exc
-    if (
-        not isinstance(payload, dict)
-        or payload.get("artifact_format") != "playbill-query-definition-v1"
-    ):
+    if not isinstance(payload, dict) or payload.get("artifact_format") not in {
+        "playbill-query-definition-v1",
+        "playbill-query-definition-v2",
+    }:
         declared = payload.get("artifact_format") if isinstance(payload, dict) else None
         raise QueryDefinitionFormatError(
             f"unsupported QueryDefinition artifact format: {declared!r}"
@@ -523,6 +577,7 @@ __all__ = [
     "QueryDefinitionFormatError",
     "QueryDefinitionLawResultV1",
     "QueryDefinitionV1",
+    "QueryDefinitionSpecV1",
     "QueryEvaluationPolicyV1",
     "QueryResultCardinalityV1",
     "QueryResultShapeV1",

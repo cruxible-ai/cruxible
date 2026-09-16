@@ -106,6 +106,9 @@ from cruxible_client.contracts.procedures.windows import (
 from cruxible_client.contracts.procedures.windows import (
     TriggerEventReferenceV1 as TriggerEventReferenceV1,
 )
+from cruxible_client.contracts.query.results import (
+    QueryArtifactDefinitionV2 as _QueryArtifactDefinitionV2,
+)
 from cruxible_client.contracts.resolution_contracts import (
     ClaimVersionReferenceV1 as ClaimVersionReferenceV1,
 )
@@ -154,6 +157,8 @@ PlaybillAuthoringExampleName = Literal[
     "claim-cite-supporting-evidence",
     "claim-adjudicate-unreviewed-evidence",
     "query-claims-by-type",
+    "query-ontology",
+    "query-procedures",
     "subject",
     "approval-policy",
     "procedure-runtime-policy",
@@ -1425,6 +1430,20 @@ class PlaybillQueryRun(BaseModel):
     result: dict[str, Any]
     receipt: dict[str, Any]
     journal_record_digest: str | None = None
+
+    @property
+    def artifact_definitions(self) -> tuple[_QueryArtifactDefinitionV2, ...]:
+        """Typed definitions; refuse to present a partial read as a complete listing."""
+        if self.result.get("result_shape") != "artifact_definition":
+            raise ValueError("this is a Claim query, not an artifact definition query")
+        if self.result.get("verdict") != "completed" or self.result.get("truncation", {}).get(
+            "clipped_budgets"
+        ):
+            raise ValueError("definition listing is refused or truncated")
+        return tuple(
+            _QueryArtifactDefinitionV2.model_validate(row["artifact"])
+            for row in self.result["rows"]
+        )
 
 
 class PlaybillProcedureReadiness(BaseModel):

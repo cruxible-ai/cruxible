@@ -157,6 +157,8 @@ from cruxible_client.contracts.procedures.models import (
 from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
 from cruxible_client.contracts.providers import parse_provider, provider_digest, provider_path
 from cruxible_client.contracts.query.definitions import (
+    CLAIM_TYPE_PIN_ROLE,
+    QueryDefinitionV1,
     query_definition_digest,
     query_definition_path,
     render_query_definition,
@@ -1806,6 +1808,8 @@ def _render_non_procedure_member(
     | ProcedureRuntimePolicyAuthoringPayloadV1
     | CaptureContractAuthoringPayloadV1
     | SourceAcquisitionPolicyAuthoringPayloadV1,
+    *,
+    tree: Mapping[str, bytes] | None = None,
 ) -> tuple[str, bytes, str]:
     if isinstance(payload, ResolutionContractAuthoringPayloadV1):
         from cruxible_client.contracts.resolution_contracts import (
@@ -1863,7 +1867,52 @@ def _render_non_procedure_member(
             subject_digest(shell).tagged,
         )
     if isinstance(payload, QueryDefinitionAuthoringPayloadV1):
-        query = payload.query_definition
+        query: QueryDefinitionV1 = payload.query_definition
+        if tree is not None:
+            pins = {(pin.role, pin.target.qualified): pin for pin in query.pins}
+            for predicate in query.referenced_predicates:
+                target_path = claim_type_path(predicate)
+                content = tree.get(target_path)
+                if content is None:
+                    _refuse(
+                        "playbill.authoring.claim_type_missing",
+                        "query_definition",
+                        f"Query predicate {predicate!r} is absent from the candidate vocabulary.",
+                        repair_kind="replace_input",
+                        repair_description="Add the ClaimType or correct the predicate.",
+                    )
+                target = parse_claim_type(content, path=target_path)
+                pin = ArtifactPin(
+                    role=CLAIM_TYPE_PIN_ROLE,
+                    target=target.identity,
+                    artifact_digest=claim_type_digest(target).tagged,
+                )
+                key = (pin.role, pin.target.qualified)
+                if key in pins and pins[key] != pin:
+                    _refuse(
+                        "playbill.authoring.query_pin_mismatch",
+                        "query_definition.pins",
+                        "Explicit query pin differs from the resolved definition.",
+                        repair_kind="replace_input",
+                        repair_description="Use the accepted pin or omit it for base resolution.",
+                    )
+                if target.lifecycle.state != "live":
+                    _refuse(
+                        "playbill.authoring.claim_type_missing",
+                        "query_definition",
+                        "Query predicates must reference live ClaimTypes.",
+                        repair_kind="replace_input",
+                        repair_description="Choose a live ClaimType.",
+                    )
+                pins[key] = pin
+            body = query.model_dump(mode="json")
+            body["pins"] = [
+                p.model_dump(mode="json")
+                for p in sorted(
+                    pins.values(), key=lambda p: (p.role, p.target.qualified, p.artifact_digest)
+                )
+            ]
+            query = QueryDefinitionV1.model_validate(body)
         return (
             query_definition_path(query.identity.name),
             render_query_definition(query),
@@ -2089,7 +2138,7 @@ def _lower_non_procedure(
     | SourceAcquisitionPolicyAuthoringPayloadV1,
     base_tree: Mapping[str, bytes],
 ) -> LoweredAuthoring:
-    path, content, digest = _render_non_procedure_member(payload)
+    path, content, digest = _render_non_procedure_member(payload, tree=base_tree)
     candidate_tree = fork_tree(base_tree)
     candidate_tree[path] = content
     changed = () if base_tree.get(path) == content else ((path, content),)
@@ -2107,6 +2156,7 @@ def _lower_non_procedure(
 MEMBER_STAGING_ORDER = (
     "definition",
     "claim_type_succession",
+    "query",
     "claim",
     "procedure",
     "procedure_mandate",
@@ -2133,6 +2183,8 @@ def _member_stage(member: AuthoringChangeSetMemberV1) -> str:
     member-path ownership refuses the set before any of these passes run.
     """
 
+    if isinstance(member, QueryDefinitionAuthoringPayloadV1):
+        return "query"
     if isinstance(member, ClaimAuthoringPayloadV1):
         return "claim"
     if isinstance(member, ClaimTypeSuccessionMemberV1):
@@ -2167,6 +2219,8 @@ def _member_primary_path(
         return procedure_mandate_path(member.name)
     if isinstance(member, LineAuthoringPayloadV1):
         return line_spec_path(member.name)
+    if isinstance(member, QueryDefinitionAuthoringPayloadV1):
+        return query_definition_path(member.query_definition.identity.name)
     path, _content, _digest = _render_non_procedure_member(member)
     return path
 
@@ -2494,7 +2548,7 @@ def _stage_change_set_member(
         candidate_tree = fork_tree(staged_tree)
         candidate_tree[line_path] = content
         return candidate_tree, {"artifact_digest": digest}, set(), {}
-    _path, content, digest = _render_non_procedure_member(member)
+    _path, content, digest = _render_non_procedure_member(member, tree=staged_tree)
     candidate_tree = fork_tree(staged_tree)
     candidate_tree[path] = content
     return candidate_tree, {"artifact_digest": digest}, set(), {}

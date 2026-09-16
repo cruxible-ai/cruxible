@@ -451,6 +451,13 @@ QUERY_DEFINITION_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="query-definition",
     artifact_tag="playbill-query-definition-v1",
 )
+QUERY_DEFINITION_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "playbill.query-definition.v2", "playbill-query-definition-v2", semantic_revision=1
+    ),
+    artifact_kind="query-definition",
+    artifact_tag="playbill-query-definition-v2",
+)
 EXHAUST_PROMOTION_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=EXHAUST_PROMOTION_LAW,
     artifact_kind="exhaust-promotion",
@@ -509,6 +516,7 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         PROVIDER_V2_ACCEPTANCE_LAW,
         PROVIDER_INTERFACE_ACCEPTANCE_LAW,
         QUERY_DEFINITION_ACCEPTANCE_LAW,
+        QUERY_DEFINITION_V2_ACCEPTANCE_LAW,
         SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW,
         STANDING_MANDATE_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_ACCEPTANCE_LAW,

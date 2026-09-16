@@ -199,6 +199,8 @@ RESOLUTION_ARTIFACT_KINDS = ArtifactKindRegistry(
     )
 )
 
+ONTOLOGY_ARTIFACT_KINDS = ArtifactKindRegistry(RESOLUTION_ARTIFACT_KINDS.entries())
+
 PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
     tuple(
         ArtifactFormatTag(
@@ -268,6 +270,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
                 "playbill-provider-extras-environment-pin-map-v1",
                 "playbill-provider-implementation-closure-v1",
                 "playbill-query-definition-v1",
+                "playbill-query-definition-v2",
                 "playbill-source-acquisition-policy-v1",
                 "playbill-standing-mandate-v1",
                 "playbill-procedure-mandate-v1",
@@ -366,6 +369,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             "playbill-provider-extras-environment-pin-map-v1",
             "playbill-provider-implementation-closure-v1",
             "playbill-query-definition-v1",
+            "playbill-query-definition-v2",
             "playbill-source-acquisition-policy-v1",
             "playbill-standing-mandate-v1",
             "playbill-procedure-mandate-v1",
@@ -1789,7 +1793,10 @@ def parse_projection_tree(
                 )
 
                 line = parse_line_spec(content, path=path, codec=artifact_codec)
-                if isinstance(line, LineSpecV3) and artifact_kinds is not RESOLUTION_ARTIFACT_KINDS:
+                if isinstance(line, LineSpecV3) and artifact_kinds not in (
+                    RESOLUTION_ARTIFACT_KINDS,
+                    ONTOLOGY_ARTIFACT_KINDS,
+                ):
                     raise ProjectionFormatError(
                         "Line v3 requires the independent-resolution compiler"
                     )
@@ -1877,6 +1884,13 @@ def parse_projection_tree(
                 )
 
                 query = parse_query_definition(content, path=path, codec=artifact_codec)
+                if (
+                    query.artifact_format == "playbill-query-definition-v2"
+                    and artifact_kinds is not ONTOLOGY_ARTIFACT_KINDS
+                ):
+                    raise ProjectionFormatError(
+                        "artifact queries require the ontology-query compiler"
+                    )
                 identity = query.identity.qualified
                 if identity in identities:
                     raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")

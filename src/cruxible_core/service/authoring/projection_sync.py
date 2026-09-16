@@ -44,9 +44,8 @@ from cruxible_client.contracts.subjects import parse_subject, subject_digest, su
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.query.backends import claim_row_visibility
-from cruxible_core.query.engine import evaluate_claim_query
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.discovery.query import _AcceptedQueryFactsRead
+from cruxible_core.service.discovery.query import _AcceptedQueryFactsRead, evaluate_accepted_query
 from cruxible_core.service.discovery.query_definitions import (
     _resolve_coordinate,
     accepted_query_definition,
@@ -401,9 +400,10 @@ class ProjectionCheckContext:
                 definition = accepted_query_definition(
                     self.instance, name=backing.identity.name, coordinate=self.coordinate
                 )
-                result = evaluate_claim_query(
+                result = evaluate_accepted_query(
+                    self.instance,
                     definition,
-                    facts=self.facts.build(),
+                    facts=self.facts.build,
                     coordinate=self.coordinate,
                     evaluation_time=self.evaluation_time,
                     parameters={x.name: x.value for x in backing.resolved_parameter_bindings},

@@ -30,10 +30,7 @@ def test_query_coordinator_example_is_local_and_directly_creatable(
     assert definition["entry"]["subject_kinds"] == ["project.work_item"]
     assert definition["evaluation_policy"]["visible_verdicts"] == ["supported"]
     assert definition["evaluation_policy"]["visible_currency"] == ["current"]
-    assert definition["pins"][0]["target"] == {
-        "kind": "ClaimType",
-        "name": "project.work_item.status",
-    }
+    assert definition["pins"] == []  # resolved by the coordinator, not a fake digest
 
 
 def test_query_propose_is_a_typed_deprecation_shim() -> None:

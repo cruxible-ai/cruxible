@@ -23,14 +23,21 @@ verdict computation reproduces these results byte for byte.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from functools import cmp_to_key
 from typing import Any, Literal, NamedTuple, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from cruxible_client.contracts.canonical import (
     Sha256Value,
@@ -50,11 +57,13 @@ from cruxible_client.contracts.query.definitions import (
     QueryResultShapeV1,
 )
 from cruxible_client.contracts.query.grammar import (
+    QueryArtifactsEntryV2,
     QueryBudgetsV1,
     QueryClaimPresenceFilterV1,
     QueryComparisonFilterV1,
     QueryConjunctionFilterV1,
     QueryDisjunctionFilterV1,
+    QueryEntryV1,
     QueryEvaluationTimeRefV1,
     QueryFilterV1,
     QueryIncludeV1,
@@ -69,6 +78,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryValueTypeV1,
     byte_sorted,
 )
+from cruxible_client.contracts.query.results import QueryArtifactDefinitionV2
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.query.backends import (
     ClaimFactRowV1,
@@ -90,7 +100,6 @@ QueryValueStateV1 = Literal["absent", "conflict", "present"]
 
 PARAMETER_DIGEST_DOMAIN = "playbill-query-parameters-v1"
 ATTEMPTED_PARAMETER_DIGEST_DOMAIN = "playbill-query-attempted-parameters-v1"
-RESULT_DIGEST_DOMAIN = "playbill-query-result-v1"
 
 BUDGET_BELOW_DECLARED_DEPTH = "playbill.query.budget_below_declared_depth"
 BUDGET_EXCEEDS_MAXIMUM = "playbill.query.budget_exceeds_maximum"
@@ -233,8 +242,11 @@ class QueryIncludeResultV1(_StrictQueryEngineModel):
 class QueryResultRowV1(_StrictQueryEngineModel):
     """One result row together with every Claim it was read through."""
 
-    tag: Literal["playbill-query-result-row-v1"] = "playbill-query-result-row-v1"
+    tag: Literal["playbill-query-result-row-v1", "playbill-query-result-row-v2"] = (
+        "playbill-query-result-row-v1"
+    )
     bindings: tuple[QueryRowBindingV1, ...]
+    artifact: QueryArtifactDefinitionV2 | None = None
     result_subject_identity: str | None = None
     path: tuple[QueryClaimVisibilityV1, ...] = ()
     relation_claim: QueryClaimVisibilityV1 | None = None
@@ -242,6 +254,19 @@ class QueryResultRowV1(_StrictQueryEngineModel):
     read_claims: tuple[QueryClaimVisibilityV1, ...] = ()
     includes: tuple[QueryIncludeResultV1, ...] = ()
     conflicts: tuple[QueryConflictV1, ...] = ()
+
+    @model_serializer(mode="wrap")
+    def _wire(self, handler: Any) -> dict[str, Any]:
+        payload = handler(self)
+        if self.tag == "playbill-query-result-row-v1":
+            payload.pop("artifact", None)
+        return cast(dict[str, Any], payload)
+
+    @model_validator(mode="after")
+    def _artifact_shape(self) -> "QueryResultRowV1":
+        if (self.tag == "playbill-query-result-row-v2") != (self.artifact is not None):
+            raise ValueError("only v2 definition rows carry an artifact")
+        return self
 
 
 class QueryTruncationV1(_StrictQueryEngineModel):
@@ -342,7 +367,9 @@ class QueryParameterBindingV1(_StrictQueryEngineModel):
 class ClaimQueryResultV1(_StrictQueryEngineModel):
     """One replayable canonical read of accepted Claim state."""
 
-    tag: Literal["playbill-query-result-v1"] = "playbill-query-result-v1"
+    tag: Literal["playbill-query-result-v1", "playbill-query-result-v2"] = (
+        "playbill-query-result-v1"
+    )
     verdict: Literal["completed", "refused"]
     definition_path: str
     definition_digest: str
@@ -380,6 +407,11 @@ class ClaimQueryResultV1(_StrictQueryEngineModel):
 
     @model_validator(mode="after")
     def _shape(self) -> "ClaimQueryResultV1":
+        artifact_query = self.result_shape == "artifact_definition"
+        if (self.tag == "playbill-query-result-v2") != artifact_query:
+            raise ValueError("artifact results use v2; Claim results retain v1")
+        if any((row.artifact is not None) != artifact_query for row in self.rows):
+            raise ValueError("result rows disagree with the declared shape")
         if (self.verdict == "refused") != (self.refusal is not None):
             raise ValueError("a query result is refused exactly when it carries a refusal")
         if self.verdict == "refused" and (self.rows or self.conflicts):
@@ -470,7 +502,7 @@ def claim_query_result_digest(result: ClaimQueryResultV1) -> str:
     payload = result.model_dump(mode="json")
     payload.pop("tag")
     payload.pop("verdict_visibility")
-    return typed_digest(Sha256Value, RESULT_DIGEST_DOMAIN, payload).tagged
+    return typed_digest(Sha256Value, result.tag, payload).tagged
 
 
 def query_execution_receipt(result: ClaimQueryResultV1) -> QueryExecutionReceiptV1:
@@ -984,6 +1016,8 @@ def evaluate_claim_query(
     """
 
     query = definition.query
+    if isinstance(query.entry, QueryArtifactsEntryV2):
+        raise ValueError("artifact definition queries require the indexed artifact reader")
     if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
         raise ClaimQueryError(
             EVALUATION_TIME_NOT_ABSOLUTE,
@@ -1031,11 +1065,69 @@ def evaluate_claim_query(
         )
 
 
+def evaluate_artifact_query(
+    definition: AcceptedQueryDefinitionV1,
+    *,
+    read: Callable[[QueryArtifactsEntryV2, int], tuple[int, tuple[QueryArtifactDefinitionV2, ...]]],
+    coordinate: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    parameters: Mapping[str, object] | None = None,
+    budgets: QueryBudgetsV1 | None = None,
+) -> ClaimQueryResultV1:
+    """Evaluate definition membership using the coordinate-bound indexed reader."""
+    query = definition.query
+    assert isinstance(query.entry, QueryArtifactsEntryV2)
+    if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
+        raise ClaimQueryError(EVALUATION_TIME_NOT_ABSOLUTE, "query time must be absolute")
+    bindings = None
+    refusal = None
+    rows: tuple[QueryResultRowV1, ...] = ()
+    truncation = QueryTruncationV1()
+    effective = budgets or query.default_budgets
+    try:
+        bindings = resolve_query_parameters(query, parameters)
+        effective = _effective_budgets(query, budgets)
+        count, definitions = read(query.entry, effective.max_results)
+        rows = tuple(
+            QueryResultRowV1(tag="playbill-query-result-row-v2", bindings=(), artifact=item)
+            for item in definitions
+        )
+        truncation = QueryTruncationV1(
+            clipped_budgets=("max_results",) if count > len(rows) else (),
+            candidate_result_count=count,
+            returned_result_count=len(rows),
+        )
+    except _RefusalSignal as signal:
+        refusal = signal.refusal
+    return ClaimQueryResultV1(
+        tag="playbill-query-result-v2",
+        verdict="refused" if refusal else "completed",
+        definition_path=definition.path,
+        definition_digest=definition.artifact_digest,
+        parameters=bindings or (),
+        parameter_digest=query_attempted_parameter_digest(parameters)
+        if bindings is None
+        else query_parameter_digest(bindings),
+        coordinate=coordinate,
+        evaluated_at=evaluation_time,
+        expires_at=_expiry(query, evaluation_time),
+        budgets=effective,
+        result_shape=query.result_shape,
+        result_cardinality=query.result_cardinality,
+        result_binding=query.result_binding,
+        dedupe=query.dedupe,
+        rows=rows,
+        truncation=truncation,
+        refusal=refusal,
+    )
+
+
 def _entry_rows(
     query: QueryDefinitionV1,
     backend: ClaimQueryBackendV1,
     parameters: Mapping[str, object],
 ) -> list[_Row]:
+    assert isinstance(query.entry, QueryEntryV1)
     subject_id: str | None = None
     if query.entry.subject_id is not None:
         supplied = parameters.get(query.entry.subject_id.parameter)

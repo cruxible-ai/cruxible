@@ -791,6 +791,46 @@ class TypedStateReader:
         self.work["owners_selected"] += len(rows)
         return tuple(sorted(rows, key=lambda row: row.identity.encode("utf-8")))
 
+    def query_artifact_definitions(
+        self,
+        *,
+        kind: str,
+        namespaces: tuple[str, ...] = (),
+        name_prefixes: tuple[str, ...] = (),
+        limit: int,
+    ) -> tuple[int, tuple[ArtifactEnvelopeRow, ...]]:
+        """Select owners through primary-key ranges, reading only retained result bodies.
+
+        Namespace matches the predicate before its final dot, not descendants.
+        Procedure scope is explicitly lexical, never inferred domain membership.
+        """
+        if kind not in {"ClaimType", "Procedure"}:
+            raise ValueError("unsupported artifact query kind")
+        table, owner_kind = (
+            ("claim_types", "claim-type") if kind == "ClaimType" else ("procedures", "procedure")
+        )
+        clauses: list[str] = []
+        params: list[str | int] = []
+        for name in namespaces or name_prefixes:
+            prefix = kind + ":" + name + ("." if namespaces else "")
+            clause = "(identity >= ? AND identity < ?"
+            params.extend((prefix, prefix[:-1] + "/"))
+            if namespaces:
+                clause += " AND instr(substr(identity, ?), '.') = 0"
+                params.append(len(prefix) + 1)
+            clauses.append(clause + ")")
+        where = "lifecycle='live'" + (" AND (" + " OR ".join(clauses) + ")" if clauses else "")
+        count = self.connection.execute(
+            f"SELECT count(*) FROM {table} WHERE {where}", params
+        ).fetchone()[0]
+        rows = self.connection.execute(
+            f"SELECT identity,'{owner_kind}',format_tag,path,artifact_digest,predecessor_digest,revision FROM {table} WHERE {where} ORDER BY identity LIMIT ?",
+            [*params, limit],
+        )
+        result = tuple(ArtifactEnvelopeRow(*row) for row in rows)
+        self.work["owners_selected"] += len(result)
+        return count, result
+
     def source(self, identity: str) -> Any | None:
         row = self.envelope(identity)
         if row is None:

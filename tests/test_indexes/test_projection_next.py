@@ -1205,8 +1205,8 @@ def test_shared_check_query_definition_drift_batch_reuse_and_unchecked_siblings(
     assert original_backing.semantic_result_digest == current_backing.semantic_result_digest
     assert original_backing.definition_digest != current_backing.definition_digest
 
-    counted = mock.Mock(wraps=projection_sync.evaluate_claim_query)
-    monkeypatch.setattr(projection_sync, "evaluate_claim_query", counted)
+    counted = mock.Mock(wraps=projection_sync.evaluate_accepted_query)
+    monkeypatch.setattr(projection_sync, "evaluate_accepted_query", counted)
     at = ClientAcceptedCoordinate.from_internal(instance.accepted_coordinate())
     result = projection_sync.service_check_projection_blocks(
         instance,
@@ -1252,7 +1252,7 @@ def test_shared_check_query_definition_drift_batch_reuse_and_unchecked_siblings(
     mixed = stamp.model_copy(update={"backing": (invalid_claim, original_backing)})
     monkeypatch.setattr(
         projection_sync,
-        "evaluate_claim_query",
+        "evaluate_accepted_query",
         mock.Mock(side_effect=ValueError("query unavailable")),
     )
     unchecked = projection_sync.service_check_projection_blocks(
@@ -1269,7 +1269,7 @@ def test_shared_check_query_definition_drift_batch_reuse_and_unchecked_siblings(
 
     monkeypatch.setattr(
         projection_sync,
-        "evaluate_claim_query",
+        "evaluate_accepted_query",
         mock.Mock(
             return_value=SimpleNamespace(
                 verdict="completed", truncation=SimpleNamespace(clipped_budgets=("max_results",))
@@ -1283,7 +1283,7 @@ def test_shared_check_query_definition_drift_batch_reuse_and_unchecked_siblings(
     assert clipped.results[0].status == "unchecked"
     assert "truncated" in clipped.results[0].detail
 
-    monkeypatch.setattr(projection_sync, "evaluate_claim_query", counted)
+    monkeypatch.setattr(projection_sync, "evaluate_accepted_query", counted)
     repaired = stamp.model_copy(update={"declared_coordinate": at, "backing": (current_backing,)})
     clean = projection_sync.service_check_projection_blocks(
         instance,

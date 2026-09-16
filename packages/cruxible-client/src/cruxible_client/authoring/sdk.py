@@ -90,7 +90,11 @@ from cruxible_client.contracts.artifacts import (
     ArtifactLifecycle,
     ArtifactPin,
 )
-from cruxible_client.contracts.authoring.inputs import ProcedureInput, lower_authoring_input
+from cruxible_client.contracts.authoring.inputs import (
+    ProcedureInput,
+    QueryDefinitionInput,
+    lower_authoring_input,
+)
 from cruxible_client.contracts.authoring.models import (
     AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
     AUTHORING_SDK_VERSION,
@@ -117,6 +121,7 @@ from cruxible_client.contracts.authoring.models import (
     LineAuthoringPayloadV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
+    QueryDefinitionAuthoringPayloadV1,
     ResolutionContractAuthoringPayloadV1,
     SelfSourceBodyV1,
     SourceAcquisitionPolicyAuthoringPayloadV1,
@@ -183,6 +188,7 @@ from cruxible_client.contracts.procedures.windows import (
     TriggerEventReferenceV1,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.resolution_contracts import (
     ClaimVersionReferenceV1,
     ResolutionContractReferenceV1,
@@ -505,6 +511,7 @@ class _IntentDraft:
         | ProcedureAuthoringPayloadV2
         | SubjectAuthoringPayloadV1
         | ChangeSetAuthoringPayloadV1
+        | QueryDefinitionAuthoringPayloadV1
     )
     reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
     program_stamp: AuthoringProgramStampV1
@@ -557,6 +564,11 @@ class PredictionSettlement:
 
 @dataclass(frozen=True)
 class ProcedureDraft(_IntentDraft):
+    pass
+
+
+@dataclass(frozen=True)
+class QueryDraft(_IntentDraft):
     pass
 
 
@@ -878,6 +890,25 @@ class ChangeSetDraft:
                 expectations=(),
                 source_map=DiagnosticSourceMap(()),
                 decisions={"kind": "line", "name": name, "procedure": procedure},
+            )
+        )
+        return self
+
+    def query_definition(
+        self,
+        definition: QueryDefinitionInput,
+        *,
+        vocabulary: Sequence[ClaimTypeRef] = (),
+    ) -> ChangeSetDraft:
+        """Add a named query after its vocabulary definitions in this changeset."""
+        draft = self._playbill.query_definition(definition=definition, vocabulary=vocabulary)
+        assert isinstance(draft.payload, QueryDefinitionAuthoringPayloadV1)
+        self._members.append(
+            _ChangeSetMember(
+                payload=draft.payload,
+                expectations=draft.reference_expectations,
+                source_map=draft.source_map,
+                decisions=definition.model_dump(mode="json"),
             )
         )
         return self
@@ -2573,6 +2604,49 @@ class Playbill:
             raise ValueError("retirement request differs from accepted operation")
         return request.model_copy(update={"expected_coordinate": coordinate}), operation_digest
 
+    def query_definition(
+        self,
+        *,
+        definition: QueryDefinitionInput,
+        vocabulary: Sequence[ClaimTypeRef] = (),
+    ) -> QueryDraft:
+        """Draft a named read through the shared authoring coordinator.
+
+        No exact pins are needed. Optional World/vocabulary references assert
+        that their versions still match the intent base; same-set refs resolve
+        after sibling definitions. Both ontology and relationship queries use
+        this path, including declarative CLI/MCP inputs.
+        """
+        payload = lower_authoring_input(definition)
+        assert isinstance(payload, QueryDefinitionAuthoringPayloadV1)
+        expectations = []
+
+        def visit(value: object, path: str, ref: ClaimTypeRef) -> None:
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    next_path = f"{path}.{key}"
+                    if key == "predicate" and child == ref.address:
+                        expectations.append(
+                            _expectation(ref, expected=RefKind.CLAIM_TYPE, payload_path=next_path)
+                        )
+                    else:
+                        visit(child, next_path, ref)
+            elif isinstance(value, list):
+                for index, child in enumerate(value):
+                    visit(child, f"{path}[{index}]", ref)
+
+        for ref in vocabulary:
+            if ref.address not in definition.query_definition.referenced_predicates:
+                raise ValueError("vocabulary reference is not used by this query")
+            visit(definition.query_definition.model_dump(mode="json"), "query_definition", ref)
+        return QueryDraft(
+            self,
+            payload,
+            _sorted_expectations(expectations),
+            _program_stamp("query_definition", definition.model_dump(mode="json")),
+            DiagnosticSourceMap(()),
+        )
+
     def procedure(
         self,
         *,
@@ -2647,6 +2721,25 @@ class Playbill:
                     sites=sites,
                 )
             ),
+        )
+
+    def run_query(
+        self,
+        query: str | QueryRef,
+        *,
+        parameters: Mapping[str, object] | None = None,
+        budgets: QueryBudgetsV1 | None = None,
+    ) -> api.PlaybillQueryRun:
+        """Run a named query at this SDK view's coordinate with a replay receipt."""
+        name = _address(query, RefKind.QUERY)
+        requested = self._read_at(query.coordinate if isinstance(query, QueryRef) else None)
+        return self._client.run_playbill_query(
+            self._instance_id,
+            name,
+            evaluation_time=self._evaluation_time(),
+            parameters=None if parameters is None else dict(parameters),
+            at=requested,
+            budgets=None if budgets is None else budgets.model_dump(mode="json"),
         )
 
     def accepted_procedure(self, procedure: str | ProcedureRef) -> Procedure:
@@ -3465,6 +3558,7 @@ __all__ = [
     "ProcedureDraft",
     "ProcedureRun",
     "Proposal",
+    "QueryDraft",
     "Publication",
     "SDK_CONTRACT_SNAPSHOT_DIGEST",
     "SearchPage",

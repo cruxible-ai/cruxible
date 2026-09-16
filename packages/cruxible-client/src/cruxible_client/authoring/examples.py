@@ -27,7 +27,7 @@ from cruxible_client.authoring.inputs import (
     WorkingSelectionInput,
 )
 from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.artifacts import ArtifactLifecycle as _ArtifactLifecycle
 from cruxible_client.contracts.authoring.models import ClaimTypeSuccessionDependentV1
 from cruxible_client.contracts.captures import CanonicalDurationV1
@@ -42,10 +42,11 @@ from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimeP
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.models import ProcedureHardCapsV3
 from cruxible_client.contracts.query.definitions import (
-    QueryDefinitionV1,
+    QueryDefinitionSpecV1,
     QueryEvaluationPolicyV1,
 )
 from cruxible_client.contracts.query.grammar import (
+    QueryArtifactsEntryV2,
     QueryBudgetsV1,
     QueryClaimValueRefV1,
     QueryEntryV1,
@@ -66,6 +67,8 @@ AuthoringExampleName = Literal[
     "claim-cite-supporting-evidence",
     "claim-adjudicate-unreviewed-evidence",
     "query-claims-by-type",
+    "query-ontology",
+    "query-procedures",
     "subject",
     "approval-policy",
     "procedure-runtime-policy",
@@ -535,7 +538,7 @@ def query_claims_by_type_example() -> QueryDefinitionInput:
 
     return QueryDefinitionInput(
         kind="query_definition",
-        query_definition=QueryDefinitionV1(
+        query_definition=QueryDefinitionSpecV1(
             identity=ArtifactIdentity(
                 kind="QueryDefinition",
                 name="project.work_items_by_status",
@@ -568,17 +571,41 @@ def query_claims_by_type_example() -> QueryDefinitionInput:
             ),
             default_budgets=QueryBudgetsV1(max_results=100, max_traversal_depth=0),
             maximum_budgets=QueryBudgetsV1(max_results=1000, max_traversal_depth=0),
-            pins=(
-                ArtifactPin(
-                    role="claim-type",
-                    target=ArtifactIdentity(
-                        kind="ClaimType",
-                        name="project.work_item.status",
-                    ),
-                    artifact_digest="sha256:" + "0" * 64,
-                ),
-            ),
         ),
+    )
+
+
+def query_ontology_example() -> QueryDefinitionInput:
+    """An exact namespace selector retains future additions, including from empty state."""
+    return QueryDefinitionInput(
+        kind="query_definition",
+        query_definition=QueryDefinitionSpecV1(
+            artifact_format="playbill-query-definition-v2",
+            identity=ArtifactIdentity(kind="QueryDefinition", name="security.ontology"),
+            entry=QueryArtifactsEntryV2(
+                artifact_kind="ClaimType",
+                selection="namespaces",
+                namespaces=("security.asset", "security.service"),
+            ),
+            result_binding="definition",
+            result_shape="artifact_definition",
+            result_cardinality="many",
+            dedupe="artifact",
+            evaluation_policy=query_claims_by_type_example().query_definition.evaluation_policy,
+            default_budgets=QueryBudgetsV1(max_results=100, max_traversal_depth=0),
+            maximum_budgets=QueryBudgetsV1(max_results=1000, max_traversal_depth=0),
+        ),
+    )
+
+
+def query_procedures_example() -> QueryDefinitionInput:
+    query = query_ontology_example().query_definition.model_dump(mode="json")
+    query["identity"] = {"kind": "QueryDefinition", "name": "security.procedures"}
+    query["entry"] = QueryArtifactsEntryV2(
+        artifact_kind="Procedure", selection="name_prefixes", name_prefixes=("security.",)
+    ).model_dump(mode="json")
+    return QueryDefinitionInput(
+        kind="query_definition", query_definition=QueryDefinitionSpecV1.model_validate(query)
     )
 
 
@@ -592,6 +619,8 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
     "claim-exact-content": claim_exact_content_example,
     "procedure": procedure_example,
     "query-claims-by-type": query_claims_by_type_example,
+    "query-ontology": query_ontology_example,
+    "query-procedures": query_procedures_example,
     "subject": subject_example,
     "approval-policy": approval_policy_example,
     "procedure-runtime-policy": procedure_runtime_policy_example,
@@ -616,6 +645,8 @@ AUTHORING_EXAMPLE_NAMES: Final[tuple[AuthoringExampleName, ...]] = (
     "claim-cite-supporting-evidence",
     "claim-adjudicate-unreviewed-evidence",
     "query-claims-by-type",
+    "query-ontology",
+    "query-procedures",
     "subject",
     "approval-policy",
     "procedure-runtime-policy",

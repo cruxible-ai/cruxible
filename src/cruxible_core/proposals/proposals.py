@@ -990,6 +990,8 @@ def _corroboration_parameters(
     subject: AcceptedSubject,
     predicate: str,
 ) -> tuple[dict[str, object] | None, tuple[str, str, str] | None]:
+    if definition.query.result_shape == "artifact_definition":
+        return None, ("result_shape", "Claim query", "artifact_definition")
     values: dict[str, object] = {
         "claim_predicate": predicate,
         "claim_subject_id": subject.shell.subject_id,
