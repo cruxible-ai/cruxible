@@ -282,6 +282,22 @@ class ProviderRuntimeManifestV1(_StrictProviderModel):
         return value
 
 
+class ProviderImplementationManifestV2(ProviderImplementationManifestV1):
+    """Current endpoint vocabulary; the V1 reader remains frozen."""
+
+    @field_validator("declared_endpoints")
+    @classmethod
+    def _endpoints(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        ProviderImplementationManifestV1._endpoints(
+            tuple(item for item in value if item != "dynamic:target-from-configuration")
+        )
+        return value
+
+
+class ProviderRuntimeManifestV2(ProviderRuntimeManifestV1):
+    implementations: tuple[ProviderImplementationManifestV2, ...]
+
+
 def provider_manifest_digest(manifest: ProviderRuntimeManifestV1) -> str:
     return _external_domain_digest(
         "cruxible.provider.manifest.v1",
@@ -398,6 +414,13 @@ class ProviderRuntimeArtifactPayloadV1(_StrictProviderModel):
         return value
 
 
+class ProviderRuntimeArtifactPayloadV2(ProviderRuntimeArtifactPayloadV1):
+    """Advertised manifest with pins only for prepared execution backends."""
+
+    schema_version: Literal[2] = 2  # type: ignore[assignment]
+    manifest: ProviderRuntimeManifestV2
+
+
 def provider_runtime_artifact_digest(payload: ProviderRuntimeArtifactPayloadV1) -> str:
     document = payload.model_dump(mode="json")
     document.pop("status", None)
@@ -406,7 +429,12 @@ def provider_runtime_artifact_digest(payload: ProviderRuntimeArtifactPayloadV1) 
         provenance = container.get("provenance")
         if isinstance(provenance, dict):
             provenance.pop("provider_artifact_digest", None)
-    return _external_domain_digest("cruxible.provider.artifact.v1", document)
+    return _external_domain_digest(
+        "cruxible.provider.artifact.v2"
+        if isinstance(payload, ProviderRuntimeArtifactPayloadV2)
+        else "cruxible.provider.artifact.v1",
+        document,
+    )
 
 
 def provider_implementation_digest(
@@ -549,11 +577,14 @@ def provider_expected_implementation_records(
             distribution_sha256=payload.distribution.sha256,
         )
         references: list[ProviderMaterializationReferenceV1] = []
-        if "local_env" in manifest.backends:
+        available_only = isinstance(payload, ProviderRuntimeArtifactPayloadV2)
+        if "local_env" in manifest.backends and (
+            payload.local_env is not None or not available_only
+        ):
             if payload.local_env is None:
                 raise ValueError("backend_pin_missing: local_env")
             pin_keys = _eligible_local_pin_keys(payload.local_env, extras=manifest.requires_extras)
-            if not pin_keys:
+            if not pin_keys and not available_only:
                 raise ValueError("materialization_reference_missing: local_env")
             references.extend(
                 ProviderLocalMaterializationReferenceV1(
@@ -562,7 +593,9 @@ def provider_expected_implementation_records(
                 )
                 for pin_key in pin_keys
             )
-        if "container" in manifest.backends:
+        if "container" in manifest.backends and (
+            payload.container is not None or not available_only
+        ):
             if payload.container is None:
                 raise ValueError("backend_pin_missing: container")
             references.append(
@@ -572,13 +605,20 @@ def provider_expected_implementation_records(
                     materialization_digest=payload.container.image_digest,
                 )
             )
+        if available_only and not references:
+            continue
         records.append(
             ProviderImplementationRecordV1(
                 interface_id=manifest.interface_id,
                 interface_digest=manifest.interface_digest,
                 entrypoint=manifest.entrypoint,
                 implementation_digest=implementation_digest,
-                backend_kinds=tuple(sorted(manifest.backends, key=_backend_key)),
+                backend_kinds=tuple(
+                    sorted(
+                        {ref.kind for ref in references} if available_only else manifest.backends,
+                        key=_backend_key,
+                    )
+                ),
                 materialization_references=tuple(sorted(references, key=_materialization_key)),
             )
         )
@@ -653,8 +693,15 @@ class ProviderV2(ProviderV1):
         return self
 
 
+class ProviderV3(ProviderV2):
+    """Package registration separates advertised capabilities from prepared ones."""
+
+    artifact_format: Literal["playbill-provider-v3"] = "playbill-provider-v3"  # type: ignore[assignment]
+    runtime_artifact: ProviderRuntimeArtifactPayloadV2
+
+
 ProviderAny: TypeAlias = Annotated[
-    ProviderV1 | ProviderV2,
+    ProviderV1 | ProviderV2 | ProviderV3,
     Field(discriminator="artifact_format"),
 ]
 _PROVIDER_ADAPTER: TypeAdapter[ProviderAny] = TypeAdapter(ProviderAny)
@@ -691,7 +738,7 @@ def provider_digest(provider: ProviderAny) -> ArtifactDigest:
     if isinstance(provider, ProviderV2):
         return typed_digest(
             ArtifactDigest,
-            "playbill-provider-v2",
+            provider.artifact_format,
             provider.model_dump(mode="json"),
         )
     return typed_digest(
@@ -870,6 +917,10 @@ __all__ = [
     "ProviderSigningKeyV1",
     "ProviderV1",
     "ProviderV2",
+    "ProviderV3",
+    "ProviderRuntimeArtifactPayloadV2",
+    "ProviderRuntimeManifestV2",
+    "ProviderImplementationManifestV2",
     "ProviderLawResultV1",
     "evaluate_provider_law",
     "parse_provider",

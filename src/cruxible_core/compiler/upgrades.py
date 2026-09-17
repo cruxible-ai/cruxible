@@ -13,6 +13,7 @@ from cruxible_client.contracts.errors import SettlementIntegrityError
 from cruxible_client.contracts.laws import (
     COMPILER_UPGRADE_ACCEPTANCE_LAW,
     PROVIDER_CONTRACT_UPGRADE_LAW,
+    PROVIDER_PACKAGE_UPGRADE_LAW,
     InstalledAcceptanceLaw,
 )
 from cruxible_client.contracts.types import CompilerCoordinate
@@ -28,6 +29,7 @@ from cruxible_core.compiler.compiler import (
     PC_DF2_COMPILER,
     PC_HR_COMPILER,
     PROVIDER_CONTRACT_COMPILER,
+    PROVIDER_PACKAGE_COMPILER,
     RESOLUTION_COMPILER,
     UPGRADE_COMPILER,
 )
@@ -64,6 +66,11 @@ def upgrade_law(source: CompilerCoordinate, target: CompilerCoordinate) -> Insta
         return COMPILER_UPGRADE_ACCEPTANCE_LAW
     if source in {*UPGRADE_V1_SOURCES, UPGRADE_COMPILER} and target == PROVIDER_CONTRACT_COMPILER:
         return PROVIDER_CONTRACT_UPGRADE_LAW
+    if (
+        source in {*UPGRADE_V1_SOURCES, UPGRADE_COMPILER, PROVIDER_CONTRACT_COMPILER}
+        and target == PROVIDER_PACKAGE_COMPILER
+    ):
+        return PROVIDER_PACKAGE_UPGRADE_LAW
     raise ValueError("unsupported compiler transition; only explicit forward edges are allowed")
 
 

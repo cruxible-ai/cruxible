@@ -44,7 +44,10 @@ from cruxible_client.contracts.laws import (
     PROVIDER_CONTRACT_PROCEDURE_LAW,
     PROVIDER_CONTRACT_UPGRADE_LAW,
     PROVIDER_INTERFACE_ACCEPTANCE_LAW,
+    PROVIDER_INTERFACE_V2_ACCEPTANCE_LAW,
+    PROVIDER_PACKAGE_UPGRADE_LAW,
     PROVIDER_V2_ACCEPTANCE_LAW,
+    PROVIDER_V3_ACCEPTANCE_LAW,
     QUERY_DEFINITION_ACCEPTANCE_LAW,
     QUERY_DEFINITION_V2_ACCEPTANCE_LAW,
     RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
@@ -67,6 +70,7 @@ from cruxible_core.compiler.compiler import (
     PC_E1_COMPILER,
     PC_HR_COMPILER,
     PROVIDER_CONTRACT_COMPILER,
+    PROVIDER_PACKAGE_COMPILER,
     RESOLUTION_COMPILER,
     SUPPORTED_COMPILERS,
     UPGRADE_COMPILER,
@@ -79,6 +83,20 @@ LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],
     ...,
 ] = (
+    (
+        PROVIDER_INTERFACE_V2_ACCEPTANCE_LAW,
+        "playbill.provider-interface.v2",
+        "playbill-provider-interface-v2",
+        1,
+        "sha256:5834fbca61556cd3d86544f9de9c6cc0c6cfc5015e03decac233ed851af903dc",
+    ),
+    (
+        PROVIDER_V3_ACCEPTANCE_LAW,
+        "playbill.provider.v3",
+        "playbill-provider-v3",
+        1,
+        "sha256:dd33e1374ee6427ca41698f405fdf580f3887e68edc37c2269fa7b7fba819f49",
+    ),
     (
         COMPILER_UPGRADE_ACCEPTANCE_LAW,
         "playbill.compiler-upgrade.v1",
@@ -281,6 +299,13 @@ HISTORICAL_LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],
     ...,
 ] = (
+    (
+        PROVIDER_PACKAGE_UPGRADE_LAW,
+        "playbill.compiler-upgrade.v1",
+        "playbill-compiler-upgrade-v1",
+        3,
+        "sha256:b28e53191afe744e13ff9584a43fce6509f81e82668542db5c7926d8fa008b20",
+    ),
     (
         PROVIDER_CONTRACT_PROCEDURE_LAW,
         "playbill.procedure.v2",
@@ -507,7 +532,11 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
         PROVIDER_CONTRACT_COMPILER.rule_digest
         == "sha256:a9f867686aa9ed6c39261a473ae09efcfa34f9efcdbd1ae1ba3e8281ae6cc1a8"
     )
-    assert current_compiler_coordinate() == PROVIDER_CONTRACT_COMPILER
+    assert (
+        PROVIDER_PACKAGE_COMPILER.rule_digest
+        == "sha256:f20251ccf9d3545882683c2d9693745b2cecf6e119c7b471f8c14414f1aa7628"
+    )
+    assert current_compiler_coordinate() == PROVIDER_PACKAGE_COMPILER
     assert P2_B4_COMPILER in SUPPORTED_COMPILERS
     assert P2_B4_UNIT2_COMPILER in SUPPORTED_COMPILERS
     # The renderer resolves from the current coordinate itself, so cards derive
@@ -529,7 +558,7 @@ def test_succeeding_the_semantic_revision_keeps_candidate_cards_deriving(
     """
 
     source = Path(compiler_module.__file__).read_text(encoding="utf-8")
-    current_revision = 24
+    current_revision = 25
     anchor = "\n    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,\n"
     bumped = source.replace(
         f"    semantic_revision={current_revision},{anchor}",
@@ -618,15 +647,17 @@ def test_installed_compiler_revision_labels_are_exact_and_complete() -> None:
         "ontology-queries-v2",
         "governed-compiler-upgrade-v1",
         "provider-operation-contracts-v1",
+        "provider-package-registration-v1",
     )
     assert (
-        COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "provider-operation-contracts-v1"
+        COMPILER_REVISION_LABELS[current_compiler_coordinate()]
+        == "provider-package-registration-v1"
     )
 
 
 def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
-    """The September 16 provider alignment ruling admits graph-v5 call nodes
-    and explicit interface contracts as revision 24. Older pins stay exact.
+    """The September 17 generic provider installation ruling admits package-owned
+    registrations and prepared-backend pins as revision 25. Older pins stay exact.
     """
 
     from cruxible_core.compiler.compiler import (
@@ -634,7 +665,8 @@ def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
         current_compiler_coordinate,
     )
 
-    assert len(COMPILER_REVISION_LABELS) == 23
+    assert len(COMPILER_REVISION_LABELS) == 24
     assert (
-        COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "provider-operation-contracts-v1"
+        COMPILER_REVISION_LABELS[current_compiler_coordinate()]
+        == "provider-package-registration-v1"
     )

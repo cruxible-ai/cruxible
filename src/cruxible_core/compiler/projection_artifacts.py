@@ -208,6 +208,7 @@ UPGRADE_ARTIFACT_KINDS = ArtifactKindRegistry(
 )
 
 PROVIDER_CONTRACT_ARTIFACT_KINDS = ArtifactKindRegistry(UPGRADE_ARTIFACT_KINDS.entries())
+PROVIDER_PACKAGE_ARTIFACT_KINDS = ArtifactKindRegistry(PROVIDER_CONTRACT_ARTIFACT_KINDS.entries())
 
 PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
     tuple(
@@ -240,7 +241,9 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
                 "playbill-procedure-v2",
                 "playbill-provider-v1",
                 "playbill-provider-v2",
+                "playbill-provider-v3",
                 "playbill-provider-interface-v1",
+                "playbill-provider-interface-v2",
                 "playbill-line-v2",
                 "playbill-provider-implementation-v1",
                 "playbill-provider-local-materialization-reference-v1",
@@ -339,7 +342,9 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             "playbill-procedure-v2",
             "playbill-provider-v1",
             "playbill-provider-v2",
+            "playbill-provider-v3",
             "playbill-provider-interface-v1",
+            "playbill-provider-interface-v2",
             "playbill-line-v2",
             "playbill-provider-implementation-v1",
             "playbill-provider-local-materialization-reference-v1",
@@ -1228,12 +1233,20 @@ def parse_projection_tree(
             if kind == "provider":
                 from cruxible_client.contracts.providers import (
                     ProviderV2,
+                    ProviderV3,
                     parse_provider,
                     provider_digest,
                     provider_runtime_artifact_digest,
                 )
 
                 provider = parse_provider(content, path=path, codec=artifact_codec)
+                if (
+                    isinstance(provider, ProviderV3)
+                    and artifact_kinds is not PROVIDER_PACKAGE_ARTIFACT_KINDS
+                ):
+                    raise ProjectionFormatError(
+                        "Provider v3 requires the provider-package compiler"
+                    )
                 identity = provider.identity.qualified
                 previous = identities.get(identity)
                 if previous is not None:
@@ -1354,6 +1367,13 @@ def parse_projection_tree(
                     path=path,
                     codec=artifact_codec,
                 )
+                if (
+                    registration.artifact_format == "playbill-provider-interface-v2"
+                    and artifact_kinds is not PROVIDER_PACKAGE_ARTIFACT_KINDS
+                ):
+                    raise ProjectionFormatError(
+                        "ProviderInterface v2 requires the provider-package compiler"
+                    )
                 identity = registration.identity.qualified
                 if identity in identities:
                     raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
@@ -1591,9 +1611,9 @@ def parse_projection_tree(
                 )
 
                 procedure = parse_procedure(content, path=path, codec=artifact_codec)
-                if (
-                    int(procedure.definition.graph_format) == 5
-                    and artifact_kinds is not PROVIDER_CONTRACT_ARTIFACT_KINDS
+                if int(procedure.definition.graph_format) == 5 and artifact_kinds not in (
+                    PROVIDER_CONTRACT_ARTIFACT_KINDS,
+                    PROVIDER_PACKAGE_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError("graph-v5 requires the provider-contract compiler")
                 identity = procedure.identity.qualified
@@ -1819,6 +1839,7 @@ def parse_projection_tree(
                     ONTOLOGY_ARTIFACT_KINDS,
                     UPGRADE_ARTIFACT_KINDS,
                     PROVIDER_CONTRACT_ARTIFACT_KINDS,
+                    PROVIDER_PACKAGE_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError(
                         "Line v3 requires the independent-resolution compiler"
@@ -1914,6 +1935,7 @@ def parse_projection_tree(
                         ONTOLOGY_ARTIFACT_KINDS,
                         UPGRADE_ARTIFACT_KINDS,
                         PROVIDER_CONTRACT_ARTIFACT_KINDS,
+                        PROVIDER_PACKAGE_ARTIFACT_KINDS,
                     )
                 ):
                     raise ProjectionFormatError(

@@ -6,9 +6,9 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
-from typing import Literal, TypeAlias
+from typing import Annotated, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import (
@@ -394,19 +394,103 @@ class ProviderInterfaceRegistrationV1(_StrictInterfaceModel):
             self.conformance_proofs
         ):
             raise ValueError("Provider conformance fixture-set digest does not reproduce")
-        if self.classifier_digest != provider_bucket_classifier_digest(
+        if self.classifier_digest != self.expected_classifier_digest:
+            raise ValueError("Provider classifier digest does not reproduce")
+        return self
+
+    @property
+    def expected_classifier_digest(self) -> str:
+        return provider_bucket_classifier_digest(
             classifier_identity=self.classifier_identity,
             classifier_version=self.classifier_version,
             conformance_fixture_set_digest=self.conformance_fixture_set_digest,
-        ):
-            raise ValueError("Provider classifier digest does not reproduce")
-        return self
+        )
 
     @property
     def vocabulary(self) -> ProviderBucketVocabularyV1:
         return ProviderBucketVocabularyV1.model_validate(
             json.loads(bytes.fromhex(self.vocabulary_bytes_hex))
         )
+
+
+class ProviderClassifierCodeV1(_StrictInterfaceModel):
+    """Package-owned classifier entry point, verified inside the pinned environment."""
+
+    entrypoint: str
+    source_digest: str
+
+    _source_digest = field_validator("source_digest")(_digest)
+
+    @field_validator("entrypoint")
+    @classmethod
+    def _entrypoint(cls, value: str) -> str:
+        module, separator, member = value.partition(":")
+        if (
+            not separator
+            or not member.isidentifier()
+            or not all(part.isidentifier() for part in module.split("."))
+        ):
+            raise ValueError("classifier entrypoint must be module:callable")
+        return value
+
+
+def provider_package_classifier_digest(
+    *,
+    classifier_identity: str,
+    classifier_version: int,
+    conformance_fixture_set_digest: str,
+    code: ProviderClassifierCodeV1,
+) -> str:
+    return typed_digest(
+        ArtifactDigest,
+        "playbill-provider-bucket-classifier-v2",
+        {
+            "classifier_identity": classifier_identity,
+            "classifier_version": classifier_version,
+            "conformance_fixture_set_digest": conformance_fixture_set_digest,
+            "code": code.model_dump(mode="json"),
+        },
+    ).tagged
+
+
+class ProviderInterfaceRegistrationV2(ProviderInterfaceRegistrationV1):
+    artifact_format: Literal["playbill-provider-interface-v2"] = "playbill-provider-interface-v2"  # type: ignore[assignment]
+    classifier_code: ProviderClassifierCodeV1
+    conformance_fixtures: tuple[ProviderBucketConformanceFixtureV1, ...]
+
+    @property
+    def expected_classifier_digest(self) -> str:
+        return provider_package_classifier_digest(
+            classifier_identity=self.classifier_identity,
+            classifier_version=self.classifier_version,
+            conformance_fixture_set_digest=self.conformance_fixture_set_digest,
+            code=self.classifier_code,
+        )
+
+    @model_validator(mode="after")
+    def _fixture_bytes(self) -> "ProviderInterfaceRegistrationV2":
+        ids = tuple(item.fixture_id for item in self.conformance_fixtures)
+        if ids != tuple(sorted(set(ids), key=str.encode)):
+            raise ValueError("package fixtures must be sorted and unique")
+        fixtures = {item.fixture_id: item for item in self.conformance_fixtures}
+        if set(fixtures) != {proof.fixture_id for proof in self.conformance_proofs}:
+            raise ValueError("package fixture coverage differs from conformance proofs")
+        for proof in self.conformance_proofs:
+            fixture = fixtures[proof.fixture_id]
+            if provider_bucket_fixture_digest(fixture) != proof.fixture_digest or (
+                fixture.measured_bucket_id != proof.measured_bucket_id
+            ):
+                raise ValueError("package fixture bytes differ from conformance proof")
+        return self
+
+
+ProviderInterfaceRegistration: TypeAlias = Annotated[
+    ProviderInterfaceRegistrationV1 | ProviderInterfaceRegistrationV2,
+    Field(discriminator="artifact_format"),
+]
+_INTERFACE_ADAPTER: TypeAdapter[ProviderInterfaceRegistration] = TypeAdapter(
+    ProviderInterfaceRegistration
+)
 
 
 def provider_interface_path(interface_id: str) -> str:
@@ -424,12 +508,12 @@ def parse_provider_interface(
     *,
     path: str,
     codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
-) -> ProviderInterfaceRegistrationV1:
+) -> ProviderInterfaceRegistration:
     try:
-        registration = ProviderInterfaceRegistrationV1.model_validate(json.loads(content))
+        registration = _INTERFACE_ADAPTER.validate_python(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
         raise ProviderInterfaceFormatError(
-            "Provider interface failed strict v1 validation"
+            "Provider interface failed strict versioned validation"
         ) from exc
     if not artifact_path_matches(
         provider_interface_path(registration.interface_id),
@@ -450,14 +534,14 @@ def parse_provider_interface(
 def provider_interface_digest(registration: ProviderInterfaceRegistrationV1) -> ArtifactDigest:
     return typed_digest(
         ArtifactDigest,
-        "playbill-provider-interface-v1",
+        registration.artifact_format,
         registration.model_dump(mode="json"),
     )
 
 
 class AcceptedProviderInterfaceRegistrationV1(_StrictInterfaceModel):
     path: str
-    registration: ProviderInterfaceRegistrationV1
+    registration: ProviderInterfaceRegistration
     artifact_digest: str
 
     @model_validator(mode="after")
@@ -524,6 +608,8 @@ def evaluate_provider_interface_law(
                 "Provider interface successor does not pin its exact predecessor.",
                 path=path,
             )
+    if isinstance(registration, ProviderInterfaceRegistrationV2):
+        conformance_fixtures = {item.fixture_id: item for item in registration.conformance_fixtures}
     for proof in registration.conformance_proofs:
         fixture = conformance_fixtures.get(proof.fixture_id)
         if fixture is None:
@@ -596,6 +682,10 @@ __all__ = [
     "ProviderInterfaceFormatError",
     "ProviderInterfaceLawResultV1",
     "ProviderInterfaceRegistrationV1",
+    "ProviderInterfaceRegistrationV2",
+    "ProviderInterfaceRegistration",
+    "ProviderClassifierCodeV1",
+    "provider_package_classifier_digest",
     "evaluate_provider_interface_law",
     "parse_provider_interface",
     "provider_bucket_classifier_digest",
