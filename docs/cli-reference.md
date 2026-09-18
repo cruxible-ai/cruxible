@@ -162,14 +162,15 @@ has tag `cruxible-provider-runtime-operational-config-v1` and these entries:
 | `descendant_tracker_poll_interval_seconds` | `0.1` | Cross-session descendant observation interval while a child is alive; each poll reads the host process table, so shorter intervals trade CPU and process-spawn cost for a smaller best-effort observation window. Transient failures appear as bounded observation diagnostics in Provider-lane detail. |
 | `process_group_termination_timeout_seconds` | `5.0` | Child group termination and verification deadline. |
 | `deployments` | `[]` | Digest-keyed local Provider deployment records. |
-| `seed_materializations` | `[]` | Provider-sorted local checkout, commit, environment key, and measured materialization records used to verify a configured seed source; checkout paths remain operational and never enter governed bytes. |
+| `provider_repository` | `null` | Operator-configured provider repository used by `provider list` and name-based installs. |
+| `provider_index_urls` | `[]` | Explicit allowed dependency indexes/download origins. Without these, supply locked dependency wheels. |
 | `workspace_allowed_roots` | `[]` | Canonical absolute roots that widen `workspace.file` beyond an attached workspace; these are daemon-local authority and never come from an environment variable. The daemon state root, its trust, custody, Provider-secret, and instance substrate stay refused inside any allowed root. |
 
 Unknown entries, non-positive timing values, malformed JSON, unsafe deployment
 paths, and an unreadable file degrade only the Provider lane with a typed cause.
-Because the compiler-owned `workspace.file` seed is a local materialization,
-initialization and explicit re-seeding require its `seed_materializations`
-entry and refuse rather than trusting an unchecked checkout.
+Provider installation requires the first-party `cruxible-provider-runtime` toolchain
+and `uv` in the daemon environment. The 0.2.0 runtime may be installed from a locally
+built wheel before publication. No provider-specific Python is imported into Core.
 An exhausted aggregate recovery scan reports untouched records as
 `not_attempted`; a later lazy re-arm resumes from the retained records after the
 configured backoff. A lazy re-arm also retries exactly the construction stages
@@ -285,7 +286,6 @@ cruxible playbill init --key-dir DIR
   [--recovery-principal-id ID]
   [--profile local|cloud]
   [--workspace DIR] [--replace]
-  [--no-seed]
   [--object-format sha1|sha256]
   [--mirror-url URL]
 ~~~
@@ -330,25 +330,13 @@ already initialized keep their pinned format forever. The
 equivalent request field is `git_object_format` on the HTTP/SDK init body and on
 MCP `cruxible_playbill_init`.
 
-`--mirror-url` binds the ledger mirror during bootstrap, validated before any
-state is written and bound before the seed proposal, so the seed's own
-publication carries it. It is optional for the reason `--no-seed` is: an
-instance that publishes nowhere is a complete instance, and `playbill ledger
-set-mirror` binds one later without rebuilding anything. See
-[playbill ledger](#playbill-ledger) for the URL grammar and the credential.
+`--mirror-url` binds the ledger mirror during bootstrap, before subsequent
+proposals. An instance can publish nowhere initially; `playbill ledger set-mirror`
+adds a destination later. See [playbill ledger](#playbill-ledger) for URL syntax.
 
-Initialization seeds the compiler-owned `workspace.file` Provider by default and
-refuses when its `seed_materializations` entry is absent, so a host is never
-seeded from an unchecked checkout. `--no-seed` is the explicit opt-out, never a
-silent default: the instance is created, the seed step is skipped, and the
-result carries a typed `provider_seed` row with status `unseeded` whose `repair`
-names the one way to finish — configure `seed_materializations`, then run
-`cruxible playbill provider seed`. Self-approval and independent-approval
-instances honour the flag identically, and an exact init retry carrying it stays
-idempotent. The equivalent request field is `seed` on the HTTP/SDK init body and
-on MCP `cruxible_playbill_init`; all four surfaces carry the same default and the
-same typed `unseeded` row, so an MCP-first client can initialize a daemon whose
-`seed_materializations` are not configured yet.
+Initialization creates governed state only. Install provider packages separately
+with `playbill provider install`; initialization needs no provider checkout or
+executable environment.
 
 ## playbill body
 
@@ -486,14 +474,34 @@ the init body.
 ## playbill provider
 
 ~~~text
-cruxible playbill provider seed
+cruxible playbill provider list [--json]
+cruxible playbill provider install PACKAGE_OR_WHEEL [--lock FILE]
+  [--dependency WHEEL]... [--extra NAME]... [--reverify] [--json]
 ~~~
 
-Submits the compiler-owned `workspace.file` interface and Provider as an
-ordinary governed proposal. Self-approval instances activate it immediately;
-independent-approval instances return the proposal ID for the usual review,
-approval, and activation ceremony. This write is available through CLI, SDK,
-and HTTP; the Provider write family does not yet have MCP parity.
+Installation requires **ADMIN**. A package name resolves through the daemon's
+configured repository. A local wheel requires `--lock`; `--dependency` supplies
+local or offline locked dependency wheels. Local paths are read by the client
+and transferred through CAS, so this also works against a remote daemon.
+
+The shared installer prepares an exact Python environment, verifies it once,
+checks package classifiers in supervised children, and proposes the package's
+node-type interfaces and Provider definition through ordinary acceptance.
+It returns `ready`, `awaiting_approval`, or `blocked`, with per-operation missing
+requirements. Missing browser resources remain explicit; Python extras do not
+install browsers. Credentials, grants, and invocation remain separate.
+
+Retries reuse the prepared installation and an open registration proposal.
+Package updates create a new environment and preserve earlier deployments.
+Runs reuse the retained verification record without hashing the environment.
+Treat installed environments as immutable; `--reverify` detects manual changes
+and refuses drift instead of silently resealing or repairing it.
+
+SDK: `install_provider_package(client, instance_id, wheel=..., lock=...,
+dependency_wheels=(...))`, or `client.install_playbill_provider` with a typed
+request. MCP: `cruxible_playbill_provider_catalog` and
+`cruxible_playbill_provider_install`. HTTP: `GET /{instance}/playbill/providers`
+and `POST /{instance}/playbill/providers/install`.
 
 ## playbill document
 

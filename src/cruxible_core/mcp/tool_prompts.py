@@ -10,6 +10,13 @@ TOOL_PROMPT_STYLE_RULE = (
 )
 
 TOOL_DESCRIPTIONS: dict[str, str] = {
+    "cruxible_playbill_provider_catalog": (
+        "Use when you need to discover available provider packages and their node types."
+    ),
+    "cruxible_playbill_provider_install": (
+        "Use when you want to install a provider package and register its definitions. "
+        "Requires admin permission; installation grants no execution permissions."
+    ),
     "cruxible_version": "Use when you need to confirm which cruxible build is running.",
     "cruxible_server_info": (
         "Use when you need live daemon version, state-directory, authentication, "

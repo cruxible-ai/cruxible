@@ -14,6 +14,7 @@ from cruxible_core.errors import (
     IsolatedExecutorDiscoveryError,
 )
 from cruxible_core.providers import provider_local_runtime as runtime_module
+from cruxible_core.providers.package_materialization import prepare_provider_package
 from cruxible_core.runtime import execution_policy as policy_module
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.execution_policy import (
@@ -24,7 +25,6 @@ from cruxible_core.runtime.execution_policy import (
     register_isolated_executor,
     registered_isolated_executors,
 )
-from cruxible_core.service.procedures import provider_seed as seed_module
 
 PROFILE = "CRUXIBLE_HOSTED_SERVER_PROFILE"
 BACKEND = "CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND"
@@ -38,7 +38,7 @@ def no_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
         raise AssertionError("a child process was spawned under the shared hosted profile")
 
     monkeypatch.setattr(runtime_module.subprocess, "Popen", _forbidden)
-    monkeypatch.setattr(seed_module.subprocess, "run", _forbidden)
+    monkeypatch.setattr(runtime_module.subprocess, "run", _forbidden)
 
 
 def _shared_without_backend(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -154,7 +154,7 @@ def test_the_provider_child_chokepoint_refuses_before_popen(
         )
 
 
-def test_the_seed_materialization_refuses_before_building_the_checkout(
+def test_package_materialization_refuses_before_loading_the_toolchain(
     monkeypatch: pytest.MonkeyPatch,
     no_spawn: None,
     tmp_path: Path,
@@ -162,7 +162,15 @@ def test_the_seed_materialization_refuses_before_building_the_checkout(
     _shared_without_backend(monkeypatch)
 
     with pytest.raises(CustomerCodeExecutionUnsupportedError):
-        seed_module._derive_local_seed_pins(str(tmp_path), "0" * 40)
+        prepare_provider_package(
+            wheel=tmp_path,
+            lock_path=tmp_path,
+            dependency_wheels=(),
+            cache_root=tmp_path,
+            extras=(),
+            control_domain="test",
+            index_urls=(),
+        )
 
 
 @pytest.mark.parametrize(
@@ -170,7 +178,7 @@ def test_the_seed_materialization_refuses_before_building_the_checkout(
     (
         ("playbill_procedure_run", ("inst_policy", "demo.procedure")),
         ("playbill_line_run", ("inst_policy", "sha256:" + "a" * 64)),
-        ("playbill_provider_seed", ("inst_policy",)),
+        ("playbill_provider_install", ("inst_policy",)),
     ),
 )
 def test_the_served_run_verbs_refuse_before_touching_any_instance(
@@ -191,10 +199,7 @@ def test_the_served_run_verbs_refuse_before_touching_any_instance(
     callable_verb = getattr(playbill_api, verb)
 
     with pytest.raises(CustomerCodeExecutionUnsupportedError):
-        if verb == "playbill_provider_seed":
-            callable_verb(*arguments)
-        else:
-            callable_verb(*arguments, request=None)  # type: ignore[arg-type]
+        callable_verb(*arguments, request=None)  # type: ignore[arg-type]
 
 
 def test_the_refusal_maps_to_a_typed_403_and_a_typed_client_error() -> None:

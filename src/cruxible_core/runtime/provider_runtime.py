@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
-import re
+import os
+import tempfile
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -16,6 +18,8 @@ from cruxible_client.contracts import ProviderLaneUnavailableCodeV1
 from cruxible_client.contracts.provider_execution import VerifiedProviderBindingV1
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistrationV1,
+    ProviderBucketClassifierInstallationV1,
+    ProviderInterfaceRegistrationV2,
     parse_provider_interface,
     provider_interface_digest,
 )
@@ -24,7 +28,9 @@ from cruxible_client.contracts.providers import (
     parse_provider,
     provider_digest,
 )
+from cruxible_core.providers.package_classifier import PackageBucketClassifier
 from cruxible_core.providers.provider_classifiers import (
+    PROVIDER_BUCKET_CLASSIFIER_REGISTRY,
     install_compiler_owned_provider_classifier,
 )
 from cruxible_core.providers.provider_local_runtime import (
@@ -98,6 +104,7 @@ class ProviderDeploymentConfigV1(_StrictOperationalModel):
     interpreter_path: str
     provider_runtime_version: str
     installation_verification: ProviderInstallationVerificationV1 | None = None
+    classifier_installations: tuple[ProviderBucketClassifierInstallationV1, ...] = ()
 
     @field_validator(
         "distribution_path",
@@ -111,41 +118,6 @@ class ProviderDeploymentConfigV1(_StrictOperationalModel):
         path = Path(value)
         if path.is_absolute() or value in {"", ".", ".."} or ".." in path.parts:
             raise ValueError("Provider deployment paths must be state-root-relative")
-        return value
-
-
-class ProviderSeedMaterializationConfigV1(_StrictOperationalModel):
-    """Daemon-only location and measured identity for one local seed source."""
-
-    tag: Literal["cruxible-provider-seed-materialization-config-v1"] = (
-        "cruxible-provider-seed-materialization-config-v1"
-    )
-    provider_id: str
-    checkout_path: str
-    provider_commit: str
-    environment_pin_key: str
-    materialization_digest: str
-
-    @field_validator("checkout_path")
-    @classmethod
-    def _checkout_path(cls, value: str) -> str:
-        path = Path(value)
-        if not path.is_absolute() or value != str(path) or ".." in path.parts:
-            raise ValueError("Provider seed checkout must be a canonical absolute path")
-        return value
-
-    @field_validator("provider_commit")
-    @classmethod
-    def _provider_commit(cls, value: str) -> str:
-        if re.fullmatch(r"[0-9a-f]{40}", value) is None:
-            raise ValueError("Provider seed checkout commit must be a full Git SHA")
-        return value
-
-    @field_validator("materialization_digest")
-    @classmethod
-    def _materialization_digest(cls, value: str) -> str:
-        if re.fullmatch(r"sha256:[0-9a-f]{64}", value) is None:
-            raise ValueError("Provider seed materialization digest must be canonical")
         return value
 
 
@@ -194,8 +166,16 @@ class ProviderRuntimeOperationalConfigV1(_StrictOperationalModel):
         gt=0,
     )
     deployments: tuple[ProviderDeploymentConfigV1, ...] = ()
-    seed_materializations: tuple[ProviderSeedMaterializationConfigV1, ...] = ()
     workspace_allowed_roots: tuple[str, ...] = ()
+    provider_repository: str | None = None
+    provider_index_urls: tuple[str, ...] = ()
+
+    @field_validator("provider_repository")
+    @classmethod
+    def _provider_repository(cls, value: str | None) -> str | None:
+        if value is not None and (not Path(value).is_absolute() or ".." in Path(value).parts):
+            raise ValueError("provider repository must be an operator-configured absolute path")
+        return value
 
     @field_validator("workspace_allowed_roots")
     @classmethod
@@ -217,17 +197,6 @@ class ProviderRuntimeOperationalConfigV1(_StrictOperationalModel):
         digests = tuple(item.deployment_digest for item in value)
         if value != expected or len(digests) != len(set(digests)):
             raise ValueError("Provider deployments must be digest-sorted and unique")
-        return value
-
-    @field_validator("seed_materializations")
-    @classmethod
-    def _seed_materializations(
-        cls, value: tuple[ProviderSeedMaterializationConfigV1, ...]
-    ) -> tuple[ProviderSeedMaterializationConfigV1, ...]:
-        expected = tuple(sorted(value, key=lambda item: item.provider_id.encode("utf-8")))
-        provider_ids = tuple(item.provider_id for item in value)
-        if value != expected or len(provider_ids) != len(set(provider_ids)):
-            raise ValueError("Provider seed materializations must be provider-sorted and unique")
         return value
 
 
@@ -730,7 +699,8 @@ class ProviderRuntimeOperator:
                     artifact_digest=digest,
                 )
                 try:
-                    install_compiler_owned_provider_classifier(accepted_interface)
+                    if not isinstance(registration, ProviderInterfaceRegistrationV2):
+                        install_compiler_owned_provider_classifier(accepted_interface)
                 except Exception as exc:
                     detail = f"Provider classifier installation failed: {type(exc).__name__}: {exc}"
                     self.mark_unavailable("provider_runtime_recovery_failed", detail)
@@ -740,6 +710,28 @@ class ProviderRuntimeOperator:
                         detail=lane_detail or detail,
                     )
                 interfaces[digest] = accepted_interface
+        for accepted_interface in interfaces.values():
+            registration = accepted_interface.registration
+            if not isinstance(registration, ProviderInterfaceRegistrationV2):
+                continue
+            for configured in self.config.deployments:
+                installation = next(
+                    (
+                        item
+                        for item in configured.classifier_installations
+                        if item.classifier_digest == registration.classifier_digest
+                    ),
+                    None,
+                )
+                if installation is None or configured.installation_verification is None:
+                    continue
+                deployment = self.deployments[configured.deployment_digest]
+                PROVIDER_BUCKET_CLASSIFIER_REGISTRY.restore(
+                    accepted_interface,
+                    PackageBucketClassifier(registration, deployment, self.process_leases),
+                    installation,
+                )
+                break
         invoker = ProviderLocalRuntimeInvoker(
             deployments_by_digest=self.deployments,
             accepted_providers_by_digest=providers,
@@ -831,6 +823,45 @@ class ProviderRuntimeOperator:
                 "provider_process_lease_invalid", "Provider runtime config is malformed"
             ) from exc
 
+    def register_deployment(self, deployment: ProviderDeploymentConfigV1) -> None:
+        """Publish prepared custody without replacing any older admitted deployment."""
+        path = self.state_root / PROVIDER_RUNTIME_CONFIG_PATH
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with self._lock, (path.parent / "provider-runtime.lock").open("a+b") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                current = self._load_config()
+                deployments = {item.deployment_digest: item for item in current.deployments}
+                prior = deployments.get(deployment.deployment_digest)
+                if prior is not None and prior != deployment:
+                    raise ProviderLocalRuntimeRefused(
+                        "environment_divergence",
+                        "installed deployment identity cannot be overwritten",
+                    )
+                deployments[deployment.deployment_digest] = deployment
+                updated = current.model_copy(
+                    update={"deployments": tuple(deployments[key] for key in sorted(deployments))}
+                )
+                fd, temporary = tempfile.mkstemp(prefix=".provider-runtime-", dir=path.parent)
+                try:
+                    with os.fdopen(fd, "wb") as handle:
+                        handle.write(updated.model_dump_json().encode())
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    os.replace(temporary, path)
+                    directory = os.open(path.parent, os.O_RDONLY)
+                    try:
+                        os.fsync(directory)
+                    finally:
+                        os.close(directory)
+                finally:
+                    if os.path.exists(temporary):
+                        os.unlink(temporary)
+                self.config = updated
+                self.deployments[deployment.deployment_digest] = self._deployment(deployment)
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
     def _deployment(self, item: ProviderDeploymentConfigV1) -> LocalProviderDeploymentV1:
         def resolve(value: str) -> Path:
             path = (self.state_root / value).resolve(strict=False)
@@ -898,7 +929,6 @@ class _UnavailableProviderRuntimeInvoker:
 __all__ = [
     "PROVIDER_RUNTIME_CONFIG_PATH",
     "ProviderDeploymentConfigV1",
-    "ProviderSeedMaterializationConfigV1",
     "ProviderRuntimeOperationalConfigV1",
     "ProviderRuntimeOperator",
     "ProviderRecoveryFoldDisposition",

@@ -1358,6 +1358,7 @@ def parse_projection_tree(
                 continue
             if kind == "provider-interface":
                 from cruxible_client.contracts.provider_interfaces import (
+                    ProviderInterfaceRegistrationV2,
                     parse_provider_interface,
                     provider_interface_digest,
                 )
@@ -1368,7 +1369,7 @@ def parse_projection_tree(
                     codec=artifact_codec,
                 )
                 if (
-                    registration.artifact_format == "playbill-provider-interface-v2"
+                    isinstance(registration, ProviderInterfaceRegistrationV2)
                     and artifact_kinds is not PROVIDER_PACKAGE_ARTIFACT_KINDS
                 ):
                     raise ProjectionFormatError(

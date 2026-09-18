@@ -216,7 +216,6 @@ def test_playbill_write_logs_credential_actor_and_operation(
                 owner.principal.model_dump(mode="json"),
                 reviewer.principal.model_dump(mode="json"),
             ],
-            "seed": False,
         },
         headers=headers,
     )
@@ -260,7 +259,6 @@ def test_activation_receipt_and_request_log_name_the_credential_actor(
                 owner.principal.model_dump(mode="json"),
                 reviewer.principal.model_dump(mode="json"),
             ],
-            "seed": False,
         },
         headers=headers,
     )

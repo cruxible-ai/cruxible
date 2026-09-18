@@ -66,6 +66,11 @@ from cruxible_client.contracts.predictions import (
 )
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.procedures.artifacts import procedure_path
+from cruxible_client.contracts.provider_installation import (
+    PlaybillProviderCatalogV1,
+    PlaybillProviderInstallRequestV1,
+    PlaybillProviderInstallResultV1,
+)
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -103,10 +108,6 @@ from cruxible_core.exhaust.consumption import (
 )
 from cruxible_core.floor.workspace_advertisement import workspace_git_object_format
 from cruxible_core.governance.actor_context import GovernedActorContext
-from cruxible_core.governance.seed_artifacts.workspace_file import (
-    WORKSPACE_FILE_PROVIDER_ID,
-    WORKSPACE_FILE_SEED_MANIFEST,
-)
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.ledger.ledger_mirror import LedgerMirrorStateV1
 from cruxible_core.proposals.proposals import AuthenticatedActor
@@ -243,7 +244,10 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_run_playbill_line,
     service_run_playbill_procedure,
 )
-from cruxible_core.service.procedures.provider_seed import service_seed_workspace_file_provider
+from cruxible_core.service.procedures.provider_installation import (
+    service_install_provider,
+    service_provider_catalog,
+)
 from cruxible_core.service.proposals.proposals import (
     ProposalInventoryStatus,
     service_list_playbill_proposals,
@@ -384,7 +388,6 @@ def playbill_init(
     require_independent_approval: bool = False,
     workspace_root: str | None = None,
     workspace_attachment_authorized: bool = False,
-    seed: bool = True,
     git_object_format: GitObjectFormat | None = None,
     mirror_url: str | None = None,
 ) -> contracts.PlaybillInitResult:
@@ -425,7 +428,7 @@ def playbill_init(
             raise ConfigError(
                 f"Playbill host {instance_id!r} is already initialized without workspace "
                 "attachment; archive/rebuild an attached host, record attachment before init, "
-                "then re-seed"
+                "then install the provider"
             )
         attached_for_init = record.workspace_root is None
         registry.attach_governed_workspace(instance_id, workspace_root)
@@ -445,60 +448,8 @@ def playbill_init(
             )
         raise
     if mirror_url is not None:
-        # After bootstrap and before the seed: the seed is a governed write, and
-        # binding the mirror first means its own publication carries it.
+        # Bind the mirror before subsequent governed proposals.
         instance.set_ledger_mirror(mirror_url)
-    if seed:
-        operator = get_playbill_manager().provider_runtime_operator()
-        configured_seed = next(
-            (
-                item
-                for item in operator.config.seed_materializations
-                if item.provider_id == WORKSPACE_FILE_PROVIDER_ID
-            ),
-            None,
-        )
-        provider_seed = _proposal_validation_boundary(
-            "provider seed",
-            lambda: service_seed_workspace_file_provider(
-                instance,
-                actor_id=actor_id,
-                timestamp=canonical_candidate_timestamp(utc_now()),
-                configured_materialization=configured_seed,
-            ),
-        )
-        if provider_seed.status == "activated":
-            # Init itself remains exactly retry-idempotent. The dedicated seed verb
-            # exposes proposal/activation details; init reports the settled state
-            # reached by that operation on both the first call and exact retries.
-            provider_seed = contracts.PlaybillProviderSeedResultV1(
-                provider_id=provider_seed.provider_id,
-                materialization_source=provider_seed.materialization_source,
-                status="already_current",
-                changed_paths=(),
-                approval_required=False,
-                accepted_coordinate=provider_seed.accepted_coordinate,
-            )
-        elif provider_seed.status == "proposed":
-            # Independent-approval init exposes one stable pending candidate on
-            # both its first response and exact retries.
-            provider_seed = provider_seed.model_copy(update={"status": "pending"})
-    else:
-        # Opting out is explicit and never silent: the instance exists, the seed
-        # step did not run, and the row names the one repair that completes it.
-        provider_seed = contracts.PlaybillProviderSeedResultV1(
-            provider_id=WORKSPACE_FILE_PROVIDER_ID,
-            materialization_source=WORKSPACE_FILE_SEED_MANIFEST.materialization_source,
-            status="unseeded",
-            changed_paths=(),
-            approval_required=False,
-            repair="configure_seed_materializations_then_playbill_provider_seed",
-            accepted_coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
-                AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump(
-                    mode="json"
-                )
-            ),
-        )
     return contracts.PlaybillInitResult(
         instance_id=instance_id,
         coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
@@ -508,7 +459,6 @@ def playbill_init(
         recovery_posture=instance.descriptor.recovery_posture,
         approval_policy_mode=instance.inspect().approval_policy_mode,
         workspace_advertisement=instance.advertise_workspace(),
-        provider_seed=provider_seed,
     )
 
 
@@ -613,28 +563,30 @@ def playbill_ledger_clone_url(instance_id: str) -> contracts.PlaybillLedgerMirro
     return _mirror_receipt(instance_id, url=url, state=instance.ledger_mirror_state())
 
 
-def playbill_provider_seed(instance_id: str) -> contracts.PlaybillProviderSeedResultV1:
-    """Submit the compiler-owned workspace Provider as an ordinary proposal."""
+def playbill_provider_catalog(instance_id: str) -> PlaybillProviderCatalogV1:
+    check_permission("cruxible_playbill_provider_catalog", instance_id=instance_id)
+    manager = get_playbill_manager()
+    manager.get(instance_id)
+    return _proposal_validation_boundary(
+        "provider catalog", lambda: service_provider_catalog(manager.provider_runtime_operator())
+    )
 
-    check_permission("cruxible_playbill_provider_seed", instance_id=instance_id)
+
+def playbill_provider_install(
+    instance_id: str,
+    request: PlaybillProviderInstallRequestV1,
+) -> PlaybillProviderInstallResultV1:
+    check_permission("cruxible_playbill_provider_install", instance_id=instance_id)
     enforce_customer_code_execution_supported()
     manager = get_playbill_manager()
-    operator = manager.provider_runtime_operator()
-    configured_seed = next(
-        (
-            item
-            for item in operator.config.seed_materializations
-            if item.provider_id == WORKSPACE_FILE_PROVIDER_ID
-        ),
-        None,
-    )
     return _proposal_validation_boundary(
-        "provider seed",
-        lambda: service_seed_workspace_file_provider(
+        "provider installation",
+        lambda: service_install_provider(
             manager.get(instance_id),
+            operator=manager.provider_runtime_operator(),
+            request=request,
             actor_id=_actor_id(),
             timestamp=canonical_candidate_timestamp(utc_now()),
-            configured_materialization=configured_seed,
         ),
     )
 

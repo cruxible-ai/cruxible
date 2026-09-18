@@ -130,13 +130,11 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_run_playbill_line,
     service_run_playbill_procedure,
 )
-from cruxible_core.service.procedures.provider_seed import service_seed_workspace_file_provider
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._candidate_support import submit_member_candidate
 from tests.core_support._knowledge_loop_support import accept_proposal
 from tests.core_support._pc_c_support import capture_contract
 from tests.core_support._support import initialize_local
-from tests.support.provider_seed import workspace_seed_materialization
 
 NOW = datetime(2026, 9, 12, 12, 0, tzinfo=UTC)
 SEED_STAMP = "2026-09-12T11:00:00.000000Z"
@@ -414,12 +412,31 @@ def _world(  # noqa: PLR0913
     pin_policy: bool = False,
 ):  # type: ignore[no-untyped-def]
     instance, owner = initialize_local(tmp_path)
-    service_seed_workspace_file_provider(
-        instance,
-        actor_id="owner",
-        timestamp=SEED_STAMP,
-        configured_materialization=workspace_seed_materialization(),
+    # Frozen definitions remain useful unit fixtures; public installation has a
+    # separate real-wheel integration test and no checkout-dependent seed path.
+    from cruxible_client.contracts.provider_interfaces import render_provider_interface
+    from cruxible_client.contracts.providers import render_provider
+    from cruxible_core.governance.seed_artifacts.workspace_file import (
+        workspace_file_interface_registration,
+        workspace_file_provider,
     )
+
+    interface = workspace_file_interface_registration()
+    provider = workspace_file_provider(
+        interface_artifact_digest=provider_interface_digest(interface).tagged
+    )
+    initial = submit_member_candidate(
+        instance,
+        members={
+            provider_interface_path(interface.interface_id): render_provider_interface(interface),
+            provider_path(provider.identity.name): render_provider(provider),
+        },
+        actor_id="owner",
+        proposal_name="source-fixture-provider",
+        proposal_family="procedure",
+        timestamp=SEED_STAMP,
+    )
+    accept_proposal(instance, owner, initial)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     registration = parse_provider_interface(
         tree[provider_interface_path(WORKSPACE_FILE_INTERFACE_ID)],

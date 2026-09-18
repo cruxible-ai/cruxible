@@ -199,3 +199,24 @@ def test_new_registration_formats_require_the_explicit_compiler_succession(kind:
     )
     with pytest.raises(ValueError, match="unsupported compiler transition"):
         upgrade_law(PROVIDER_PACKAGE_COMPILER, PROVIDER_CONTRACT_COMPILER)
+
+
+def test_prepared_environment_can_supply_a_superset_of_operation_extras() -> None:
+    provider = package_provider()
+    payload = provider.runtime_artifact.model_copy(
+        update={
+            "local_env": provider.runtime_artifact.local_env.model_copy(
+                update={
+                    "materialization_digests": {"linux-cp311+engine+other": "sha256:" + "b" * 64}
+                }
+            )
+        }
+    )
+    records = provider_expected_implementation_records(payload)
+    assert (
+        records[0].materialization_references[0].environment_pin_key == "linux-cp311+engine+other"
+    )
+    old = provider_v2().runtime_artifact
+    old = old.model_copy(update={"local_env": payload.local_env})
+    with pytest.raises(ValueError, match="materialization_reference_missing"):
+        provider_expected_implementation_records(old)

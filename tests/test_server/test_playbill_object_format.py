@@ -72,7 +72,6 @@ def test_an_unattached_init_writes_a_sha1_ledger(daemon: TestClient, tmp_path: P
     playbill_api.playbill_init(
         "inst_default",
         principals=(_owner(tmp_path, "default"),),  # type: ignore[arg-type]
-        seed=False,
     )
 
     descriptor = get_playbill_manager().get("inst_default").descriptor
@@ -86,7 +85,6 @@ def test_an_explicit_sha256_request_is_honoured(daemon: TestClient, tmp_path: Pa
     playbill_api.playbill_init(
         "inst_sha256",
         principals=(_owner(tmp_path, "sha256"),),  # type: ignore[arg-type]
-        seed=False,
         git_object_format="sha256",
     )
 
@@ -122,7 +120,6 @@ def test_an_attached_workspace_still_wins_over_the_default(
         "inst_inherit",
         principals=(_owner(tmp_path, "inherit"),),  # type: ignore[arg-type]
         workspace_attachment_authorized=True,
-        seed=False,
     )
 
     assert get_playbill_manager().get("inst_inherit").descriptor.git_object_format == "sha256"
@@ -147,7 +144,6 @@ def test_a_format_contradicting_the_workspace_refuses_before_writing_state(
             "inst_conflict",
             principals=(_owner(tmp_path, "conflict"),),  # type: ignore[arg-type]
             workspace_attachment_authorized=True,
-            seed=False,
             git_object_format="sha1",
         )
 

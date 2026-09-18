@@ -422,11 +422,12 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "provider": _group(
                 "Manage governed Provider artifacts.",
                 {
-                    "seed": _command(
-                        "playbill",
-                        "seed_provider",
-                        "Propose the compiler-owned workspace.file Provider bundle.",
-                    )
+                    "list": _command(
+                        "playbill", "list_provider_packages", "List available provider packages."
+                    ),
+                    "install": _command(
+                        "playbill", "install_provider", "Install and register a provider package."
+                    ),
                 },
                 module="playbill",
                 attr="provider_group",

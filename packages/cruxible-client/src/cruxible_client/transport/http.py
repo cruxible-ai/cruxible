@@ -36,6 +36,11 @@ from cruxible_client.contracts.errors import (
     PlaybillSinceRequestInvalid,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.provider_installation import (
+    PlaybillProviderCatalogV1,
+    PlaybillProviderInstallRequestV1,
+    PlaybillProviderInstallResultV1,
+)
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_client.errors import (
     ConfigError,
@@ -398,7 +403,6 @@ class CruxibleClient:
         operating_profile: Literal["local", "cloud"] = "local",
         require_independent_approval: bool = False,
         workspace_root: str | None = None,
-        seed: bool = True,
         git_object_format: Literal["sha1", "sha256"] | None = None,
         mirror_url: str | None = None,
     ) -> contracts.PlaybillInitResult:
@@ -406,7 +410,6 @@ class CruxibleClient:
             "principals": [dict(item) for item in principals],
             "operating_profile": operating_profile,
             "require_independent_approval": require_independent_approval,
-            "seed": seed,
         }
         if workspace_root is not None:
             payload["workspace_root"] = workspace_root
@@ -464,12 +467,21 @@ class CruxibleClient:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/ledger/mirror")
         return self._parse_model(response, contracts.PlaybillLedgerMirrorV1)
 
-    def seed_playbill_provider(self, instance_id: str) -> contracts.PlaybillProviderSeedResultV1:
+    def list_playbill_provider_packages(self, instance_id: str) -> PlaybillProviderCatalogV1:
+        response = self._client.get(f"/api/v1/{instance_id}/playbill/providers")
+        return self._parse_model(response, PlaybillProviderCatalogV1)
+
+    def install_playbill_provider(
+        self,
+        instance_id: str,
+        request: PlaybillProviderInstallRequestV1,
+    ) -> PlaybillProviderInstallResultV1:
         response = self._client.post(
-            f"/api/v1/{instance_id}/playbill/providers/seed",
-            json={},
+            f"/api/v1/{instance_id}/playbill/providers/install",
+            json=request.model_dump(mode="json"),
+            timeout=600,
         )
-        return self._parse_model(response, contracts.PlaybillProviderSeedResultV1)
+        return self._parse_model(response, PlaybillProviderInstallResultV1)
 
     def propose_playbill_document(
         self,

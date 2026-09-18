@@ -67,6 +67,9 @@ DECLARED_ROLL_FORWARD_DOORS = frozenset(
 
 # module path -> the qualified names that refuse a decommissioned instance.
 DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
+    "cruxible_core/service/procedures/provider_installation.py": frozenset(
+        {"service_install_provider"}
+    ),
     "cruxible_core/runtime/instance.py": frozenset(
         {
             "PlaybillInstance.decommission",

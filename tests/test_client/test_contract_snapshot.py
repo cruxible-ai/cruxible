@@ -194,9 +194,14 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillProposalReview",
         "PlaybillProposalSelectorResultV1",
         "PlaybillProposalWithdrawResult",
+        "PlaybillProviderCatalogV1",
+        "PlaybillProviderInstallRequestV1",
+        "PlaybillProviderInstallResultV1",
+        "ProviderOperationReadinessV1",
+        "ProviderPackageSummaryV1",
+        "ProviderWheelObjectV1",
         "PlaybillProviderInterfaceEntry",
         "PlaybillProviderInterfaceImplementation",
-        "PlaybillProviderSeedResultV1",
         "PlaybillPublicationPrepareWarning",
         "PlaybillQueryDefinitionList",
         "PlaybillQueryDefinitionView",
@@ -273,7 +278,6 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillPolicyKind",
         "RuntimeCredentialPermissionMode",
         "ProviderLaneUnavailableCodeV1",
-        "ProviderSeedRepairV1",
     }
 
 

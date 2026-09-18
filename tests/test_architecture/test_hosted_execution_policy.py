@@ -22,7 +22,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "src/cruxible_core/providers/provider_local_runtime.py"
-SEED = ROOT / "src/cruxible_core/service/procedures/provider_seed.py"
+INSTALLER = ROOT / "src/cruxible_core/service/procedures/provider_installation.py"
 LEASES = ROOT / "src/cruxible_core/providers/provider_process_leases.py"
 FACADE = ROOT / "src/cruxible_core/runtime/playbill_api.py"
 ENFORCER = "enforce_customer_code_execution_supported"
@@ -79,7 +79,6 @@ NON_SPAWN_ATTRIBUTES = frozenset({("platform", "system")})
 EXEMPT_LEASE_SPAWNS = {"_current_boot_id", "_process_start_time", "_process_rows"}
 # `_git` runs constant Git argv against the adapter checkout; `rev-parse` and
 # `status` execute no repository hooks and no checkout code.
-EXEMPT_SEED_SPAWNS = {"_git"}
 
 
 def _is_spawn(node: ast.AST) -> bool:
@@ -189,14 +188,10 @@ def test_every_provider_child_spawn_passes_the_hosted_execution_gate() -> None:
     assert _gate_dominates_the_spawn(spawning["_run_child"])
 
 
-def test_the_seed_materialization_spawns_are_gated_or_declared_core_owned() -> None:
-    spawning = _module_spawning_functions(SEED)
-
-    assert set(spawning) == EXEMPT_SEED_SPAWNS | {"_derive_local_seed_pins"}
-    assert _gate_dominates_the_spawn(spawning["_derive_local_seed_pins"])
-    for name in EXEMPT_SEED_SPAWNS:
-        docstring = ast.get_docstring(spawning[name])
-        assert docstring is not None and "core-owned" in docstring
+def test_installer_build_is_gated_before_checkout_code_can_execute() -> None:
+    spawning = _module_spawning_functions(INSTALLER)
+    assert set(spawning) == {"_source_files"}
+    assert _gate_dominates_the_spawn(spawning["_source_files"])
 
 
 def test_lease_probe_spawns_are_exempt_by_name_and_run_no_customer_code() -> None:
@@ -218,7 +213,7 @@ def test_the_served_run_verbs_gate_before_any_work() -> None:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
 
-    for name in ("playbill_procedure_run", "playbill_line_run", "playbill_provider_seed"):
+    for name in ("playbill_procedure_run", "playbill_line_run", "playbill_provider_install"):
         assert name in verbs, name
         assert _gates_before_any_work(verbs[name]), name  # type: ignore[arg-type]
 

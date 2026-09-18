@@ -78,19 +78,14 @@ class PlaybillInitRequest(_StrictPlaybillRequest):
     operating_profile: OperatingProfile = "local"
     require_independent_approval: bool = False
     workspace_root: str | None = None
-    seed: bool = True
     # None inherits an attached workspace's format, else the SHA-1 default. An
     # explicit value that contradicts the workspace refuses before any state is
     # written.
     git_object_format: GitObjectFormat | None = None
-    # Optional at bootstrap for exactly the reason `--no-seed` is: an instance
+    # Optional at bootstrap: an instance
     # that publishes nowhere is a complete instance, and `ledger set-mirror`
     # binds one later without rebuilding anything.
     mirror_url: str | None = Field(default=None, max_length=MIRROR_URL_MAX_LENGTH)
-
-
-class PlaybillProviderSeedRequest(_StrictPlaybillRequest):
-    pass
 
 
 class PlaybillLedgerMirrorRequest(_StrictPlaybillRequest):

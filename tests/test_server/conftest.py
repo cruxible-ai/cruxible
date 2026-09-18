@@ -14,19 +14,16 @@ from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
-from tests.support.provider_seed import write_workspace_seed_config
 
 
 def _playbill_http(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    seed: bool,
+    require_independent_approval: bool = False,
 ) -> Iterator[tuple[TestClient, str, Path]]:
     state = tmp_path / "server-state"
     monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state))
-    if seed:
-        write_workspace_seed_config(state)
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     reset_permissions()
@@ -52,11 +49,11 @@ def _playbill_http(
         initialized = client.post(
             f"/api/v1/{instance_id}/playbill/init",
             json={
+                "require_independent_approval": require_independent_approval,
                 "principals": [
                     owner.principal.model_dump(mode="json"),
                     reviewer.principal.model_dump(mode="json"),
                 ],
-                "seed": seed,
             },
         )
         assert initialized.status_code == 200, initialized.text
@@ -72,20 +69,6 @@ def playbill_http(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[tuple[TestClient, str, Path]]:
-    """A host initialized with the explicit seed opt-out.
+    """An initialized host. Provider packages are installed separately."""
 
-    Nothing here is about the Provider seed, so the daemon needs no configured
-    local materialization and no adapter checkout.
-    """
-
-    yield from _playbill_http(tmp_path, monkeypatch, seed=False)
-
-
-@pytest.fixture
-def seeded_playbill_http(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[tuple[TestClient, str, Path]]:
-    """A host seeded from the real adapter checkout, or a skip naming its card."""
-
-    yield from _playbill_http(tmp_path, monkeypatch, seed=True)
+    yield from _playbill_http(tmp_path, monkeypatch)

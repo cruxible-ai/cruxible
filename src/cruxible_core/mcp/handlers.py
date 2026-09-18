@@ -41,6 +41,11 @@ from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.declared_blocks import PROJECTION_STAMP_ADAPTER
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.provider_installation import (
+    PlaybillProviderCatalogV1,
+    PlaybillProviderInstallRequestV1,
+    PlaybillProviderInstallResultV1,
+)
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -264,6 +269,7 @@ def _get_client() -> CruxibleClient | None:
 #: `tests/test_architecture/test_mcp_validation_seam.py` requires every mutating
 #: operation to appear here and every entry with a model to be given a payload.
 MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
+    "cruxible_playbill_provider_install": TypeAdapter(PlaybillProviderInstallRequestV1),
     "cruxible_playbill_activate": None,  # path only
     "cruxible_playbill_authoring_abandon_insertion": TypeAdapter(PlaybillInsertionAbandonRequest),
     "cruxible_playbill_authoring_bind": TypeAdapter(PlaybillAuthoringInputCompileRequest),
@@ -389,7 +395,6 @@ def handle_playbill_init(
     operating_profile: str,
     require_independent_approval: bool = False,
     *,
-    seed: bool = True,
     git_object_format: str | None = None,
 ) -> contracts.PlaybillInitResult:
     records = tuple(PrincipalRecord.model_validate(item) for item in principals)
@@ -399,7 +404,6 @@ def handle_playbill_init(
             principals=[item.model_dump(mode="json") for item in records],
             operating_profile=cast(Any, operating_profile),
             require_independent_approval=require_independent_approval,
-            seed=seed,
             git_object_format=cast(Any, git_object_format),
         ),
         lambda: playbill_api.playbill_init(
@@ -407,7 +411,6 @@ def handle_playbill_init(
             principals=records,
             operating_profile=cast(Any, operating_profile),
             require_independent_approval=require_independent_approval,
-            seed=seed,
             git_object_format=cast(Any, git_object_format),
         ),
         operation_name="cruxible_playbill_init",
@@ -415,7 +418,6 @@ def handle_playbill_init(
             "principals": [item.model_dump(mode="json") for item in records],
             "operating_profile": operating_profile,
             "require_independent_approval": require_independent_approval,
-            "seed": seed,
             "git_object_format": git_object_format,
         },
     )
@@ -444,6 +446,26 @@ def handle_playbill_store_body(
         lambda: playbill_api.playbill_store_body(instance_id, content_base64=content_base64),
         operation_name="cruxible_playbill_store_body",
         local_payload={"content_base64": content_base64},
+    )
+
+
+def handle_playbill_provider_catalog(instance_id: str) -> PlaybillProviderCatalogV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.list_playbill_provider_packages(instance_id),
+        lambda: playbill_api.playbill_provider_catalog(instance_id),
+        operation_name="cruxible_playbill_provider_catalog",
+    )
+
+
+def handle_playbill_provider_install(
+    instance_id: str,
+    request: PlaybillProviderInstallRequestV1,
+) -> PlaybillProviderInstallResultV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.install_playbill_provider(instance_id, request),
+        lambda: playbill_api.playbill_provider_install(instance_id, request),
+        operation_name="cruxible_playbill_provider_install",
+        local_payload=request.model_dump(mode="json"),
     )
 
 

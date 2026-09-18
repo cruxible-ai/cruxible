@@ -84,7 +84,10 @@ if TYPE_CHECKING:
     )
     from cruxible_client.transport.http import CruxibleClient
 
+from .provider_installation import install_provider_package
+
 __all__ = [
+    "install_provider_package",
     "ApprovalReviewMismatch",
     "ReviewedProposal",
     "ApprovalSigner",

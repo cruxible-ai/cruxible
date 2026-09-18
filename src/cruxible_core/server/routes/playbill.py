@@ -20,6 +20,11 @@ from cruxible_client.contracts.claim_reads import (
 )
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.provider_installation import (
+    PlaybillProviderCatalogV1,
+    PlaybillProviderInstallRequestV1,
+    PlaybillProviderInstallResultV1,
+)
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -67,7 +72,6 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillProposePrincipalRequest,
     PlaybillProposeQueryDefinitionRequest,
     PlaybillProposeSubjectRequest,
-    PlaybillProviderSeedRequest,
     PlaybillResolveCoverageRequest,
     PlaybillReviewRequest,
     PlaybillRunQueryRequest,
@@ -138,7 +142,6 @@ def playbill_init(
             request.scope.get("client") is None
             and resolve_server_settings().server_socket is not None
         ),
-        seed=req.seed,
         git_object_format=req.git_object_format,
         mirror_url=req.mirror_url,
     )
@@ -193,15 +196,18 @@ async def ledger_clone_url(instance_id: str) -> contracts.PlaybillLedgerMirrorV1
     return playbill_api.playbill_ledger_clone_url(resolve_server_instance_id(instance_id))
 
 
+@router.get("/{instance_id}/playbill/providers", response_model=PlaybillProviderCatalogV1)
+def provider_catalog(instance_id: str) -> PlaybillProviderCatalogV1:
+    return playbill_api.playbill_provider_catalog(resolve_server_instance_id(instance_id))
+
+
 @router.post(
-    "/{instance_id}/playbill/providers/seed",
-    response_model=contracts.PlaybillProviderSeedResultV1,
+    "/{instance_id}/playbill/providers/install", response_model=PlaybillProviderInstallResultV1
 )
-def provider_seed(
-    instance_id: str,
-    _req: PlaybillProviderSeedRequest,
-) -> contracts.PlaybillProviderSeedResultV1:
-    return playbill_api.playbill_provider_seed(resolve_server_instance_id(instance_id))
+def provider_install(
+    instance_id: str, request: PlaybillProviderInstallRequestV1
+) -> PlaybillProviderInstallResultV1:
+    return playbill_api.playbill_provider_install(resolve_server_instance_id(instance_id), request)
 
 
 @router.post(

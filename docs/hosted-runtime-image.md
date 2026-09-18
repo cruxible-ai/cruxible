@@ -184,7 +184,7 @@ obtain a new one.
 
 Set `CRUXIBLE_HOSTED_SERVER_PROFILE=shared` for runtimes that may host
 untrusted or multi-tenant material. In this profile the daemon executes no
-Provider code at all: `procedure run`, `line run` and `provider seed` refuse
+Provider code at all: `procedure run`, `line run` and `provider install` refuse
 with the public-safe error code `customer_code_execution_unsupported` and the
 detail `isolation backend not implemented`, and the refusal happens before any
 tenant secret is resolved and before any child process exists.

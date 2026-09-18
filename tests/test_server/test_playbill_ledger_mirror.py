@@ -107,7 +107,6 @@ def test_init_binds_the_mirror_during_bootstrap(
         f"/api/v1/{second.record.instance_id}/playbill/init",
         json={
             "principals": [owner.principal.model_dump(mode="json")],
-            "seed": False,
             "mirror_url": str(remote),
         },
     )
@@ -149,7 +148,6 @@ def test_init_refuses_a_malformed_mirror_before_any_state_exists(
         f"/api/v1/{third.record.instance_id}/playbill/init",
         json={
             "principals": [owner.principal.model_dump(mode="json")],
-            "seed": False,
             "mirror_url": "ext::sh -c 'curl evil'",
         },
     )

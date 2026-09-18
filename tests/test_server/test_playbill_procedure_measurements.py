@@ -136,7 +136,6 @@ def owned_playbill_http(
             f"/api/v1/{instance_id}/playbill/init",
             json={
                 "principals": [item.principal.model_dump(mode="json") for item in principals],
-                "seed": False,
             },
         )
         assert initialized.status_code == 200, initialized.text

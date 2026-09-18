@@ -73,12 +73,14 @@ from cruxible_client.contracts.errors import (
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedures.windows import TriggerEventReferenceV1
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
+from cruxible_client.contracts.provider_installation import PlaybillProviderInstallRequestV1
 from cruxible_client.contracts.repairs import render_served_repair
 from cruxible_client.contracts.resolution_contracts import ResolutionContractReferenceV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
 from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
 from cruxible_client.errors import DataValidationError
+from cruxible_client.provider_installation import install_provider_package
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1, claim_type_input_template
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.cli.commands._common import (
@@ -937,15 +939,6 @@ def create_host(
 )
 @click.option("--replace", is_flag=True, help="Replace a differing workspace config.")
 @click.option(
-    "--no-seed",
-    "no_seed",
-    is_flag=True,
-    help=(
-        "Create the instance without the compiler-owned workspace.file Provider seed; "
-        "the result names the repair."
-    ),
-)
-@click.option(
     "--object-format",
     "object_format",
     type=click.Choice(["sha1", "sha256"]),
@@ -976,7 +969,6 @@ def init_playbill(
     profile: str,
     workspace_path: str | None,
     replace: bool,
-    no_seed: bool,
     object_format: str | None,
     mirror_url: str | None,
     output_json: bool,
@@ -1030,7 +1022,6 @@ def init_playbill(
             principals=[item.principal.model_dump(mode="json") for item in materials],
             operating_profile=cast(Any, profile),
             require_independent_approval=require_independent_approval,
-            seed=not no_seed,
             git_object_format=cast(Any, object_format),
             mirror_url=mirror_url,
             **(
@@ -1057,11 +1048,6 @@ def init_playbill(
         return
     click.echo(f"Playbill initialized at {result.coordinate.git_oid}")
     click.echo(f"Approval policy: {result.approval_policy_mode}")
-    if result.provider_seed is not None and result.provider_seed.status == "unseeded":
-        click.echo(
-            "Provider seed: unseeded; configure daemon seed_materializations, "
-            "then run 'cruxible playbill provider seed'"
-        )
     click.echo(f"Workspace refs: {result.workspace_advertisement.status}")
     if result.workspace_advertisement.failure_code is not None:
         click.echo(f"Workspace ref failure: {result.workspace_advertisement.failure_code}")
@@ -1220,23 +1206,82 @@ def provider_group() -> None:
     """Manage governed Provider artifacts."""
 
 
-@provider_group.command("seed")
+@provider_group.command("list")
 @json_option
 @handle_errors
-def seed_provider(output_json: bool) -> None:
-    """Propose the compiler-owned workspace.file Provider bundle."""
-
+def list_provider_packages(output_json: bool) -> None:
+    """List packages from the daemon's configured provider repository."""
     result = _server_call(
-        lambda client, instance_id: client.seed_playbill_provider(instance_id),
-        command_name="playbill provider seed",
+        lambda client, instance_id: client.list_playbill_provider_packages(instance_id),
+        command_name="playbill provider list",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
-        return
-    click.echo(f"Provider seed: {result.status}")
-    click.echo(f"Coordinate: {result.accepted_coordinate.git_oid}")
-    if result.proposal_id is not None:
-        click.echo(f"Proposal: {result.proposal_id}")
+    else:
+        for package in result.packages:
+            click.echo(f"{package.name} {package.version}: {', '.join(package.interfaces)}")
+        if result.detail:
+            click.echo(result.detail)
+
+
+@provider_group.command("install")
+@click.argument("package_or_wheel")
+@click.option("--lock", "lock_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--dependency",
+    "dependencies",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.option("--extra", "extras", multiple=True)
+@click.option("--reverify", is_flag=True, help="Recheck a retained installation explicitly.")
+@json_option
+@handle_errors
+def install_provider(
+    package_or_wheel: str,
+    lock_path: Path | None,
+    dependencies: tuple[Path, ...],
+    extras: tuple[str, ...],
+    reverify: bool,
+    output_json: bool,
+) -> None:
+    """Install a catalog package or transfer a local wheel with its lock."""
+    if package_or_wheel.endswith(".whl"):
+        if lock_path is None:
+            raise click.UsageError("a local wheel requires --lock")
+        result = _server_call(
+            lambda client, instance_id: install_provider_package(
+                client,
+                instance_id,
+                wheel=Path(package_or_wheel),
+                lock=lock_path,
+                dependency_wheels=dependencies,
+                extras=extras,
+                reverify=reverify,
+            ),
+            command_name="playbill provider install",
+        )
+    else:
+        if lock_path is not None or dependencies:
+            raise click.UsageError("--lock and --dependency apply to a local wheel")
+        request = PlaybillProviderInstallRequestV1(
+            package=package_or_wheel, extras=tuple(sorted(set(extras))), reverify=reverify
+        )
+        result = _server_call(
+            lambda client, instance_id: client.install_playbill_provider(instance_id, request),
+            command_name="playbill provider install",
+        )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        click.echo(f"{result.provider_id}: {result.status}")
+        if result.detail:
+            click.echo(result.detail)
+        if result.proposal_id:
+            click.echo(f"Proposal: {result.proposal_id}")
+        for operation in result.operations:
+            if operation.missing_requirements:
+                click.echo(f"{operation.interface_id}: {', '.join(operation.missing_requirements)}")
 
 
 @playbill_group.group("document")

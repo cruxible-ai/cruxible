@@ -13,6 +13,7 @@ from cruxible_client.contracts.provider_interfaces import (
     ProviderBucketClassifierInstallationV1,
     ProviderBucketConformanceFixtureV1,
     ProviderInterfaceRegistrationV1,
+    ProviderInterfaceRegistrationV2,
     provider_bucket_fixture_digest,
 )
 from cruxible_core.governance.seed_artifacts.workspace_file import (
@@ -111,8 +112,13 @@ class ProviderBucketClassifierRegistry:
             )
 
         results: list[ProviderBucketClassifierInstallationResultV1] = []
+        fixtures = (
+            {item.fixture_id: item for item in registration.conformance_fixtures}
+            if isinstance(registration, ProviderInterfaceRegistrationV2)
+            else self._fixtures
+        )
         for proof in registration.conformance_proofs:
-            fixture = self._fixtures.get(proof.fixture_id)
+            fixture = fixtures.get(proof.fixture_id)
             if fixture is None or provider_bucket_fixture_digest(fixture) != proof.fixture_digest:
                 raise ProviderClassifierInstallationRefused(
                     "classifier_not_installed",
@@ -144,11 +150,46 @@ class ProviderBucketClassifierRegistry:
             classifier_version=registration.classifier_version,
             classifier_digest=registration.classifier_digest,
             conformance_fixture_set_digest=registration.conformance_fixture_set_digest,
-            results=tuple(results),
+            results=tuple(sorted(results, key=lambda item: item.fixture_id.encode())),
         )
         self._classifiers[registration.classifier_digest] = classifier
         self._installations[registration.classifier_digest] = installation
         return installation
+
+    def restore(
+        self,
+        accepted: AcceptedProviderInterfaceRegistrationV1,
+        classifier: ProviderBucketClassifierProtocol,
+        installation: ProviderBucketClassifierInstallationV1,
+    ) -> None:
+        """Reload a daemon-owned installation proof without re-executing fixtures."""
+        registration = accepted.registration
+        if (
+            not isinstance(registration, ProviderInterfaceRegistrationV2)
+            or installation.classifier_digest != registration.classifier_digest
+            or installation.classifier_identity != registration.classifier_identity
+            or installation.classifier_version != registration.classifier_version
+            or installation.conformance_fixture_set_digest
+            != registration.conformance_fixture_set_digest
+            or classifier.classifier_digest != registration.classifier_digest
+            or classifier.classifier_identity != registration.classifier_identity
+            or classifier.classifier_version != registration.classifier_version
+            or tuple(
+                (item.fixture_id, item.fixture_digest, item.measured_bucket_id)
+                for item in installation.results
+            )
+            != tuple(
+                sorted(
+                    (item.fixture_id, item.fixture_digest, item.measured_bucket_id)
+                    for item in registration.conformance_proofs
+                )
+            )
+        ):
+            raise ProviderClassifierInstallationRefused(
+                "classifier_digest_mismatch", "retained installation differs from accepted fixtures"
+            )
+        self._classifiers[registration.classifier_digest] = classifier
+        self._installations[registration.classifier_digest] = installation
 
     def require(self, classifier_digest: str) -> ProviderBucketClassifierProtocol:
         try:

@@ -542,6 +542,15 @@ def check_provider_node_contract(
     declared_effect = json.loads(bytes.fromhex(interface.registration.interface_bytes_hex)).get(
         "effect_class"
     )
+    # Package registrations retain the provider contract bytes. Package metadata
+    # spells a no-effect operation "pure"; the governed effect class is "none".
+    from cruxible_client.contracts.provider_interfaces import ProviderInterfaceRegistrationV2
+
+    if (
+        isinstance(interface.registration, ProviderInterfaceRegistrationV2)
+        and declared_effect == "pure"
+    ):
+        declared_effect = "none"
     if declared_effect != interface.registration.effect_class:
         raise ValueError("ProviderInterface effect class differs from its operation declaration")
     if isinstance(node, SourceNodeV4):

@@ -208,7 +208,9 @@ class ProviderEgressObservationV1(_StrictProviderExecutionModel):
     )
     declared_endpoints: tuple[str, ...] = ()
     observed_endpoints: tuple[str, ...] = ()
-    dynamic_endpoint_forms: tuple[Literal["dynamic:target-from-run-input"], ...] = ()
+    dynamic_endpoint_forms: tuple[
+        Literal["dynamic:target-from-run-input", "dynamic:target-from-configuration"], ...
+    ] = ()
     # Deliberately not an enum. A proprietary egress observer is a real
     # observer, and OSS cannot enumerate the backends it does not ship; a
     # closed set here would have meant every cloud-owned observer either lying

@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-16:governed-compiler-upgrade",
-    "surface_digest": "sha256:96323095e5d4fe4dfee9078634ea1fee85a5331bc5dee9da6798bf88bf417f00"
+    "register_entry": "2026-09-17:provider-package-installation",
+    "surface_digest": "sha256:f58dfa38308bd47300edabc61d5439edcf03cd1c0fb3255346a46d6b3a3927c5"
   },
   "surface": {
     "cli_leaves": [
@@ -598,10 +598,17 @@
       },
       {
         "client_operations": [
-          "seed_playbill_provider"
+          "install_playbill_provider"
         ],
-        "command": "playbill provider seed",
-        "delegate": "cruxible_core.cli.commands.playbill.seed_provider"
+        "command": "playbill provider install",
+        "delegate": "cruxible_core.cli.commands.playbill.install_provider"
+      },
+      {
+        "client_operations": [
+          "list_playbill_provider_packages"
+        ],
+        "command": "playbill provider list",
+        "delegate": "cruxible_core.cli.commands.playbill.list_provider_packages"
       },
       {
         "client_operations": [
@@ -848,7 +855,8 @@
       "playbill_propose_query_definition",
       "playbill_propose_source_bundle",
       "playbill_propose_subject",
-      "playbill_provider_seed",
+      "playbill_provider_catalog",
+      "playbill_provider_install",
       "playbill_read_block_sync_backing",
       "playbill_read_claim_backings",
       "playbill_read_claim_batch",
@@ -1386,9 +1394,9 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/init",
         "request_model": "cruxible_core.server.playbill_request_models.PlaybillInitRequest",
-        "request_schema_digest": "sha256:81046c22d2fbe84faabd3e3a3aa3469c592f2f4af1eee7ed37c584cae0b58497",
+        "request_schema_digest": "sha256:eec2d031b441c764a22af8672ee72925e3a66b7090972633b81b662566680c62",
         "response_model": "cruxible_client.contracts.PlaybillInitResult",
-        "response_schema_digest": "sha256:b5362e77d535a0a53448a24ba79eb20b3336af93a10177fdfb1b204abae391ce"
+        "response_schema_digest": "sha256:923c76bbd2f55608aa369f55692a87297c1a36da49e8935d935b3b591807928d"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.instance_decommission",
@@ -1739,16 +1747,28 @@
         "response_schema_digest": "sha256:10b90afdc827b768afe46e339c81d346eb96176f57736e33f2170404c263765f"
       },
       {
-        "delegate": "cruxible_core.server.routes.playbill.provider_seed",
+        "delegate": "cruxible_core.server.routes.playbill.provider_catalog",
         "facade_operations": [
-          "playbill_provider_seed"
+          "playbill_provider_catalog"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/playbill/providers",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.provider_installation.PlaybillProviderCatalogV1",
+        "response_schema_digest": "sha256:a7fb16a3cf2c8b170576274d18da47c22a2677ec4c0463f6db7eb6b67b2c0974"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.provider_install",
+        "facade_operations": [
+          "playbill_provider_install"
         ],
         "method": "POST",
-        "path": "/api/v1/{instance_id}/playbill/providers/seed",
-        "request_model": "cruxible_core.server.playbill_request_models.PlaybillProviderSeedRequest",
-        "request_schema_digest": "sha256:00cbf427e47fd9b99434137a8c6a0ba4570cad7c7db5d0d549bb024554edc986",
-        "response_model": "cruxible_client.contracts.PlaybillProviderSeedResultV1",
-        "response_schema_digest": "sha256:58eb546a96a87da10bec06eb4e51f772fc783100d053c551c04311ee1af043b1"
+        "path": "/api/v1/{instance_id}/playbill/providers/install",
+        "request_model": "cruxible_client.contracts.provider_installation.PlaybillProviderInstallRequestV1",
+        "request_schema_digest": "sha256:15a08bd56d0b6ff4b2a6292e30bd65842bca59f795d73989fbbc03db36f5027a",
+        "response_model": "cruxible_client.contracts.provider_installation.PlaybillProviderInstallResultV1",
+        "response_schema_digest": "sha256:b47cfc400594746dd94f3e649ed448401f359a56ead393b958e2d393a9ec8495"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.list_query_definitions",
@@ -1995,6 +2015,8 @@
       "playbill_propose_query_definition",
       "playbill_propose_source_bundle",
       "playbill_propose_subject",
+      "playbill_provider_catalog",
+      "playbill_provider_install",
       "playbill_read_block_sync_backing",
       "playbill_readmit_proposal",
       "playbill_resolution_contracts",
@@ -2429,9 +2451,9 @@
         "facade_operations": [
           "playbill_init"
         ],
-        "input_schema_digest": "sha256:1a8db2a015e162c85447b3aa37a94b79d584a9fd32d4510b18fb5ee6b9d8ecb8",
+        "input_schema_digest": "sha256:1f9fcac11c412022d55cf6050117eb760f9854bfb5437aa741ffc941a986580b",
         "name": "cruxible_playbill_init",
-        "output_schema_digest": "sha256:d4ba854726675fc581467da61a395f4a394b114c19b80a2084ed4f1fb5673507",
+        "output_schema_digest": "sha256:06e25c0a63e723845626a0f9a4f7ea451503e635223d0da1b04826609f048905",
         "permission": "ADMIN"
       },
       {
@@ -2713,6 +2735,26 @@
         "name": "cruxible_playbill_propose_subject",
         "output_schema_digest": "sha256:79f4088d328e4c27904aa6ac1450364aab79b5b3adc35803286edd6c642ff083",
         "permission": "GOVERNED_WRITE"
+      },
+      {
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_provider_catalog",
+        "facade_operations": [
+          "playbill_provider_catalog"
+        ],
+        "input_schema_digest": "sha256:235a5fa6c65aa4559ed85002c98fd656509375333a9665a0f7fc4f1382a3b517",
+        "name": "cruxible_playbill_provider_catalog",
+        "output_schema_digest": "sha256:02f5b0e163422f38a8457912de4b1ef40935426068c7b11327d09bc44682c1a3",
+        "permission": "READ_ONLY"
+      },
+      {
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_provider_install",
+        "facade_operations": [
+          "playbill_provider_install"
+        ],
+        "input_schema_digest": "sha256:58af96ef1a34317c6d08337ed82331cb09dd3d4bab4a3c73ddf98330aa7ffa1a",
+        "name": "cruxible_playbill_provider_install",
+        "output_schema_digest": "sha256:74a212d754e38007a595bb20e1664c307c34fa736a62375e04c048f94a4364a8",
+        "permission": "ADMIN"
       },
       {
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_resolution_contracts",

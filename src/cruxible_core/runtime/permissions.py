@@ -75,6 +75,8 @@ PERMISSION_MODE_NAMES: tuple[str, ...] = tuple(_MODE_NAMES)
 # ---------------------------------------------------------------------------
 
 TOOL_PERMISSIONS: dict[str, PermissionMode] = {
+    "cruxible_playbill_provider_catalog": PermissionMode.READ_ONLY,
+    "cruxible_playbill_provider_install": PermissionMode.ADMIN,
     "cruxible_version": PermissionMode.READ_ONLY,
     "cruxible_server_info": PermissionMode.READ_ONLY,
     "cruxible_playbill_inspect_proposal": PermissionMode.READ_ONLY,
@@ -176,7 +178,6 @@ RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_playbill_read": PermissionMode.READ_ONLY,
     "cruxible_playbill_next": PermissionMode.READ_ONLY,
     "cruxible_playbill_propose": PermissionMode.GOVERNED_WRITE,
-    "cruxible_playbill_provider_seed": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_body_read": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_ledger_set_mirror": PermissionMode.ADMIN,
     "cruxible_playbill_ledger_publish": PermissionMode.GOVERNED_WRITE,

@@ -16,6 +16,11 @@ from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendResultV1,
     PreparedClaimAttestationRequestV1,
 )
+from cruxible_client.contracts.provider_installation import (
+    PlaybillProviderCatalogV1,
+    PlaybillProviderInstallRequestV1,
+    PlaybillProviderInstallResultV1,
+)
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_core import __version__
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1
@@ -62,6 +67,19 @@ def register_tools(
         return handlers.handle_server_info()
 
     @_tool
+    def cruxible_playbill_provider_catalog(instance_id: str) -> PlaybillProviderCatalogV1:
+        """Discover provider packages available from the configured repository."""
+        return handlers.handle_playbill_provider_catalog(instance_id)
+
+    @_tool
+    def cruxible_playbill_provider_install(
+        instance_id: str,
+        request: PlaybillProviderInstallRequestV1,
+    ) -> PlaybillProviderInstallResultV1:
+        """Install a provider package and propose its definitions; requires ADMIN."""
+        return handlers.handle_playbill_provider_install(instance_id, request)
+
+    @_tool
     def cruxible_playbill_host_create(
         instance_id: str | None = None,
     ) -> contracts.PlaybillHostResult:
@@ -81,22 +99,17 @@ def register_tools(
         principals: list[dict[str, Any]],
         operating_profile: Literal["local", "cloud"] = "local",
         require_independent_approval: bool = False,
-        seed: bool = True,
         git_object_format: Literal["sha1", "sha256"] | None = None,
     ) -> contracts.PlaybillInitResult:
         """Bootstrap Playbill from client-generated public principals.
 
-        `seed=False` is the explicit opt-out, matching CLI `--no-seed` and the
-        HTTP/SDK `seed` field: the instance is created, the seed step is skipped,
-        and the result carries a typed `provider_seed` row with status
-        `unseeded` naming the one repair that finishes it.
+        Provider installation is a separate administrative operation.
         """
         return handlers.handle_playbill_init(
             instance_id,
             principals,
             operating_profile,
             require_independent_approval,
-            seed=seed,
             git_object_format=git_object_format,
         )
 

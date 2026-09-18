@@ -130,11 +130,6 @@
         "provider_runtime_recovery_failed"
       ]
     },
-    "ProviderSeedRepairV1": {
-      "values": [
-        "configure_seed_materializations_then_playbill_provider_seed"
-      ]
-    },
     "RuntimeCredentialPermissionMode": {
       "values": [
         "read_only",
@@ -19910,25 +19905,6 @@
             "type": "string"
           }
         },
-        "provider_seed": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "provider_seed",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/PlaybillProviderSeedResultV1"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          }
-        },
         "recovery_posture": {
           "has_default": false,
           "has_default_factory": false,
@@ -20041,102 +20017,6 @@
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
           },
-          "PlaybillProviderSeedResultV1": {
-            "additionalProperties": false,
-            "properties": {
-              "accepted_coordinate": {
-                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
-              },
-              "approval_required": {
-                "title": "Approval Required",
-                "type": "boolean"
-              },
-              "candidate_digest": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Candidate Digest"
-              },
-              "changed_paths": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Changed Paths",
-                "type": "array"
-              },
-              "materialization_source": {
-                "enum": [
-                  "local",
-                  "registry"
-                ],
-                "title": "Materialization Source",
-                "type": "string"
-              },
-              "proposal_id": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Proposal Id"
-              },
-              "provider_id": {
-                "title": "Provider Id",
-                "type": "string"
-              },
-              "repair": {
-                "anyOf": [
-                  {
-                    "const": "configure_seed_materializations_then_playbill_provider_seed",
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Repair"
-              },
-              "status": {
-                "enum": [
-                  "already_current",
-                  "pending",
-                  "proposed",
-                  "activated",
-                  "lost_cas",
-                  "unseeded"
-                ],
-                "title": "Status",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-provider-seed-result-v1",
-                "default": "playbill-provider-seed-result-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "provider_id",
-              "materialization_source",
-              "status",
-              "changed_paths",
-              "approval_required",
-              "accepted_coordinate"
-            ],
-            "title": "PlaybillProviderSeedResultV1",
-            "type": "object"
-          },
           "PlaybillWorkspaceAdvertisement": {
             "additionalProperties": false,
             "properties": {
@@ -20238,17 +20118,6 @@
           "instance_id": {
             "title": "Instance Id",
             "type": "string"
-          },
-          "provider_seed": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/PlaybillProviderSeedResultV1"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
           },
           "recovery_posture": {
             "title": "Recovery Posture",
@@ -33048,6 +32917,608 @@
         "withdrawn_at"
       ]
     },
+    "PlaybillProviderCatalogV1": {
+      "fields": {
+        "detail": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "detail",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          }
+        },
+        "packages": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "packages",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProviderPackageSummaryV1"
+            },
+            "title": "Packages",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "default": "playbill-provider-catalog-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-provider-catalog-v1",
+            "default": "playbill-provider-catalog-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ProviderPackageSummaryV1": {
+            "additionalProperties": false,
+            "properties": {
+              "interfaces": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Interfaces",
+                "type": "array"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "version": {
+                "title": "Version",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "version",
+              "interfaces"
+            ],
+            "title": "ProviderPackageSummaryV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          },
+          "packages": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProviderPackageSummaryV1"
+            },
+            "title": "Packages",
+            "type": "array"
+          },
+          "tag": {
+            "const": "playbill-provider-catalog-v1",
+            "default": "playbill-provider-catalog-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "title": "PlaybillProviderCatalogV1",
+        "type": "object"
+      },
+      "required_fields": []
+    },
+    "PlaybillProviderInstallRequestV1": {
+      "fields": {
+        "control_domain": {
+          "default": "operator",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "control_domain",
+          "required": false,
+          "schema": {
+            "default": "operator",
+            "title": "Control Domain",
+            "type": "string"
+          }
+        },
+        "dependencies": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "dependencies",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProviderWheelObjectV1"
+            },
+            "title": "Dependencies",
+            "type": "array"
+          }
+        },
+        "extras": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "extras",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Extras",
+            "type": "array"
+          }
+        },
+        "lock_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "lock_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lock Digest"
+          }
+        },
+        "package": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "package",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Package"
+          }
+        },
+        "reverify": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "reverify",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Reverify",
+            "type": "boolean"
+          }
+        },
+        "wheel": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "wheel",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProviderWheelObjectV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ProviderWheelObjectV1": {
+            "additionalProperties": false,
+            "properties": {
+              "digest": {
+                "title": "Digest",
+                "type": "string"
+              },
+              "filename": {
+                "title": "Filename",
+                "type": "string"
+              }
+            },
+            "required": [
+              "filename",
+              "digest"
+            ],
+            "title": "ProviderWheelObjectV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "control_domain": {
+            "default": "operator",
+            "title": "Control Domain",
+            "type": "string"
+          },
+          "dependencies": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProviderWheelObjectV1"
+            },
+            "title": "Dependencies",
+            "type": "array"
+          },
+          "extras": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Extras",
+            "type": "array"
+          },
+          "lock_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lock Digest"
+          },
+          "package": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Package"
+          },
+          "reverify": {
+            "default": false,
+            "title": "Reverify",
+            "type": "boolean"
+          },
+          "wheel": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProviderWheelObjectV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "title": "PlaybillProviderInstallRequestV1",
+        "type": "object"
+      },
+      "required_fields": []
+    },
+    "PlaybillProviderInstallResultV1": {
+      "fields": {
+        "candidate_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "candidate_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Candidate Digest"
+          }
+        },
+        "detail": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "detail",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          }
+        },
+        "installation_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "installation_id",
+          "required": true,
+          "schema": {
+            "title": "Installation Id",
+            "type": "string"
+          }
+        },
+        "installed": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "installed",
+          "required": true,
+          "schema": {
+            "title": "Installed",
+            "type": "boolean"
+          }
+        },
+        "operations": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "operations",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProviderOperationReadinessV1"
+            },
+            "title": "Operations",
+            "type": "array"
+          }
+        },
+        "proposal_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          }
+        },
+        "provider_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "provider_id",
+          "required": true,
+          "schema": {
+            "title": "Provider Id",
+            "type": "string"
+          }
+        },
+        "registered": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "registered",
+          "required": true,
+          "schema": {
+            "title": "Registered",
+            "type": "boolean"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "ready",
+              "awaiting_approval",
+              "blocked"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-provider-install-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-provider-install-result-v1",
+            "default": "playbill-provider-install-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ProviderOperationReadinessV1": {
+            "additionalProperties": false,
+            "properties": {
+              "installed": {
+                "title": "Installed",
+                "type": "boolean"
+              },
+              "interface_id": {
+                "title": "Interface Id",
+                "type": "string"
+              },
+              "missing_requirements": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Missing Requirements",
+                "type": "array"
+              }
+            },
+            "required": [
+              "interface_id",
+              "installed"
+            ],
+            "title": "ProviderOperationReadinessV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "candidate_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Candidate Digest"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          },
+          "installation_id": {
+            "title": "Installation Id",
+            "type": "string"
+          },
+          "installed": {
+            "title": "Installed",
+            "type": "boolean"
+          },
+          "operations": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProviderOperationReadinessV1"
+            },
+            "title": "Operations",
+            "type": "array"
+          },
+          "proposal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          },
+          "provider_id": {
+            "title": "Provider Id",
+            "type": "string"
+          },
+          "registered": {
+            "title": "Registered",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "ready",
+              "awaiting_approval",
+              "blocked"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-provider-install-result-v1",
+            "default": "playbill-provider-install-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "installation_id",
+          "provider_id",
+          "status",
+          "installed",
+          "registered"
+        ],
+        "title": "PlaybillProviderInstallResultV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "installation_id",
+        "installed",
+        "provider_id",
+        "registered",
+        "status"
+      ]
+    },
     "PlaybillProviderInterfaceEntry": {
       "fields": {
         "artifact_digest": {
@@ -33398,304 +33869,6 @@
         "implementation_digest",
         "provider_artifact_digest",
         "provider_identity"
-      ]
-    },
-    "PlaybillProviderSeedResultV1": {
-      "fields": {
-        "accepted_coordinate": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "accepted_coordinate",
-          "required": true,
-          "schema": {
-            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
-          }
-        },
-        "approval_required": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "approval_required",
-          "required": true,
-          "schema": {
-            "title": "Approval Required",
-            "type": "boolean"
-          }
-        },
-        "candidate_digest": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "candidate_digest",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Candidate Digest"
-          }
-        },
-        "changed_paths": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "changed_paths",
-          "required": true,
-          "schema": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Changed Paths",
-            "type": "array"
-          }
-        },
-        "materialization_source": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "materialization_source",
-          "required": true,
-          "schema": {
-            "enum": [
-              "local",
-              "registry"
-            ],
-            "title": "Materialization Source",
-            "type": "string"
-          }
-        },
-        "proposal_id": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "proposal_id",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Proposal Id"
-          }
-        },
-        "provider_id": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "provider_id",
-          "required": true,
-          "schema": {
-            "title": "Provider Id",
-            "type": "string"
-          }
-        },
-        "repair": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "repair",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "const": "configure_seed_materializations_then_playbill_provider_seed",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Repair"
-          }
-        },
-        "status": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "status",
-          "required": true,
-          "schema": {
-            "enum": [
-              "already_current",
-              "pending",
-              "proposed",
-              "activated",
-              "lost_cas",
-              "unseeded"
-            ],
-            "title": "Status",
-            "type": "string"
-          }
-        },
-        "tag": {
-          "default": "playbill-provider-seed-result-v1",
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "tag",
-          "required": false,
-          "schema": {
-            "const": "playbill-provider-seed-result-v1",
-            "default": "playbill-provider-seed-result-v1",
-            "title": "Tag",
-            "type": "string"
-          }
-        }
-      },
-      "json_schema": {
-        "$defs": {
-          "PlaybillAcceptedCoordinate": {
-            "additionalProperties": false,
-            "properties": {
-              "compiler_digest": {
-                "pattern": "^sha256:[0-9a-f]{64}$",
-                "title": "Compiler Digest",
-                "type": "string"
-              },
-              "generation_root": {
-                "pattern": "^sha256:[0-9a-f]{64}$",
-                "title": "Generation Root",
-                "type": "string"
-              },
-              "git_oid": {
-                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
-                "title": "Git Oid",
-                "type": "string"
-              },
-              "semantic_root": {
-                "pattern": "^sha256:[0-9a-f]{64}$",
-                "title": "Semantic Root",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-accepted-coordinate-v1",
-                "default": "playbill-accepted-coordinate-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "git_oid",
-              "semantic_root",
-              "generation_root",
-              "compiler_digest"
-            ],
-            "title": "PlaybillAcceptedCoordinate",
-            "type": "object"
-          }
-        },
-        "additionalProperties": false,
-        "properties": {
-          "accepted_coordinate": {
-            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
-          },
-          "approval_required": {
-            "title": "Approval Required",
-            "type": "boolean"
-          },
-          "candidate_digest": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Candidate Digest"
-          },
-          "changed_paths": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Changed Paths",
-            "type": "array"
-          },
-          "materialization_source": {
-            "enum": [
-              "local",
-              "registry"
-            ],
-            "title": "Materialization Source",
-            "type": "string"
-          },
-          "proposal_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Proposal Id"
-          },
-          "provider_id": {
-            "title": "Provider Id",
-            "type": "string"
-          },
-          "repair": {
-            "anyOf": [
-              {
-                "const": "configure_seed_materializations_then_playbill_provider_seed",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Repair"
-          },
-          "status": {
-            "enum": [
-              "already_current",
-              "pending",
-              "proposed",
-              "activated",
-              "lost_cas",
-              "unseeded"
-            ],
-            "title": "Status",
-            "type": "string"
-          },
-          "tag": {
-            "const": "playbill-provider-seed-result-v1",
-            "default": "playbill-provider-seed-result-v1",
-            "title": "Tag",
-            "type": "string"
-          }
-        },
-        "required": [
-          "provider_id",
-          "materialization_source",
-          "status",
-          "changed_paths",
-          "approval_required",
-          "accepted_coordinate"
-        ],
-        "title": "PlaybillProviderSeedResultV1",
-        "type": "object"
-      },
-      "required_fields": [
-        "accepted_coordinate",
-        "approval_required",
-        "changed_paths",
-        "materialization_source",
-        "provider_id",
-        "status"
       ]
     },
     "PlaybillPublicationPrepareWarning": {
@@ -53188,6 +53361,193 @@
         "code",
         "detail",
         "state"
+      ]
+    },
+    "ProviderOperationReadinessV1": {
+      "fields": {
+        "installed": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "installed",
+          "required": true,
+          "schema": {
+            "title": "Installed",
+            "type": "boolean"
+          }
+        },
+        "interface_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "interface_id",
+          "required": true,
+          "schema": {
+            "title": "Interface Id",
+            "type": "string"
+          }
+        },
+        "missing_requirements": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "missing_requirements",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Requirements",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "installed": {
+            "title": "Installed",
+            "type": "boolean"
+          },
+          "interface_id": {
+            "title": "Interface Id",
+            "type": "string"
+          },
+          "missing_requirements": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Requirements",
+            "type": "array"
+          }
+        },
+        "required": [
+          "interface_id",
+          "installed"
+        ],
+        "title": "ProviderOperationReadinessV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "installed",
+        "interface_id"
+      ]
+    },
+    "ProviderPackageSummaryV1": {
+      "fields": {
+        "interfaces": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "interfaces",
+          "required": true,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Interfaces",
+            "type": "array"
+          }
+        },
+        "name": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "name",
+          "required": true,
+          "schema": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "version": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "version",
+          "required": true,
+          "schema": {
+            "title": "Version",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "interfaces": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Interfaces",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "interfaces"
+        ],
+        "title": "ProviderPackageSummaryV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "interfaces",
+        "name",
+        "version"
+      ]
+    },
+    "ProviderWheelObjectV1": {
+      "fields": {
+        "digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "digest",
+          "required": true,
+          "schema": {
+            "title": "Digest",
+            "type": "string"
+          }
+        },
+        "filename": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "filename",
+          "required": true,
+          "schema": {
+            "title": "Filename",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename",
+          "digest"
+        ],
+        "title": "ProviderWheelObjectV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "digest",
+        "filename"
       ]
     },
     "ResolutionContractReferenceV1": {

@@ -226,8 +226,11 @@
   "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/withdraw": {
     "POST": "PlaybillProposalWithdrawResult"
   },
-  "/api/v1/{instance_id}/playbill/providers/seed": {
-    "POST": "PlaybillProviderSeedResultV1"
+  "/api/v1/{instance_id}/playbill/providers": {
+    "GET": "PlaybillProviderCatalogV1"
+  },
+  "/api/v1/{instance_id}/playbill/providers/install": {
+    "POST": "PlaybillProviderInstallResultV1"
   },
   "/api/v1/{instance_id}/playbill/queries": {
     "GET": "PlaybillQueryDefinitionList"

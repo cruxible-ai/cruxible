@@ -814,7 +814,8 @@ class LocalProviderExecutionDriver:
             endpoint
             for endpoint in binding.binding.declared_endpoints
             if endpoint.startswith("dynamic:")
-            and endpoint not in PROVIDER_RUNTIME_DYNAMIC_ENDPOINT_FORMS
+            and endpoint
+            not in (*PROVIDER_RUNTIME_DYNAMIC_ENDPOINT_FORMS, "dynamic:target-from-configuration")
         )
         if unknown_dynamic:
             raise ProviderLocalRuntimeRefused(
@@ -863,11 +864,14 @@ class LocalProviderExecutionDriver:
                 "provider_protocol_violation", "provider envelope names another run"
             )
         dynamic = cast(
-            tuple[Literal["dynamic:target-from-run-input"], ...],
+            tuple[
+                Literal["dynamic:target-from-run-input", "dynamic:target-from-configuration"], ...
+            ],
             tuple(
                 value
                 for value in binding.binding.declared_endpoints
-                if value == "dynamic:target-from-run-input"
+                if value
+                in (*PROVIDER_RUNTIME_DYNAMIC_ENDPOINT_FORMS, "dynamic:target-from-configuration")
             ),
         )
         declared = tuple(

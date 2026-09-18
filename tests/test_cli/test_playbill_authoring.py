@@ -970,7 +970,6 @@ def test_cli_create_flow_a_stub_reports_bind_refusal_from_served_route(
                         owner.principal.model_dump(mode="json"),
                         reviewer.principal.model_dump(mode="json"),
                     ],
-                    "seed": False,
                 },
             )
             assert initialized.status_code == 200, initialized.text

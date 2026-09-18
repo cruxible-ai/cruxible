@@ -13,6 +13,7 @@ from cruxible_core.providers.provider_classifiers import (
     ProviderClassifierInstallationRefused,
     core_provider_bucket_conformance_fixtures,
 )
+from cruxible_core.providers.web_fetch import WEB_FETCH_FIXTURES
 from tests.core_support._p2b1_support import (
     accepted_interface,
     interface_fixture,
@@ -122,6 +123,7 @@ def test_production_catalog_carries_fixtures_but_no_demo_executable() -> None:
     assert set(core_provider_bucket_conformance_fixtures()) == {
         "demo.small",
         *(fixture.fixture_id for fixture in WORKSPACE_FILE_FIXTURES),
+        *(fixture.fixture_id for fixture in WEB_FETCH_FIXTURES),
     }
     with pytest.raises(ProviderClassifierInstallationRefused) as absent:
         registry.require_accepted(accepted)

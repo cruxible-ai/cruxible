@@ -103,7 +103,6 @@ class _Cli:
             str(recovery_custody),
             "--recovery-principal-id",
             RECOVERY_ID,
-            "--no-seed",
         )
         self.recovery_private_key = recovery_custody / f"{RECOVERY_ID}.ed25519"
         return initialized
@@ -196,7 +195,6 @@ def test_cli_init_key_dir_alone_bootstraps_a_solo_instance(
         str(custody),
         "--principal-id",
         CREATOR_ID,
-        "--no-seed",
     )
     assert initialized["instance_id"] == host["instance_id"]
     assert initialized["approval_policy_mode"] == "self_approval_allowed"
@@ -422,7 +420,6 @@ def test_cli_custody_uses_the_git_workspace_across_working_directories(
         CREATOR_ID,
         "--reviewer-key-dir",
         str(custody),
-        "--no-seed",
     )
     proposed = cruxible.json(
         "playbill",

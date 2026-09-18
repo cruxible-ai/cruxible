@@ -550,6 +550,7 @@ def _eligible_local_pin_keys(
     local_env: ProviderLocalEnvBackendPinV1,
     *,
     extras: tuple[str, ...],
+    allow_superset: bool = False,
 ) -> tuple[str, ...]:
     expected = tuple(sorted(extras, key=lambda item: item.encode("utf-8")))
     return tuple(
@@ -557,8 +558,14 @@ def _eligible_local_pin_keys(
             (
                 pin_key
                 for pin_key in local_env.materialization_digests
-                if tuple(sorted(pin_key.split("+")[1:], key=lambda item: item.encode("utf-8")))
-                == expected
+                if (
+                    set(expected) <= set(pin_key.split("+")[1:])
+                    if allow_superset
+                    else tuple(
+                        sorted(pin_key.split("+")[1:], key=lambda item: item.encode("utf-8"))
+                    )
+                    == expected
+                )
             ),
             key=lambda item: item.encode("utf-8"),
         )
@@ -583,7 +590,9 @@ def provider_expected_implementation_records(
         ):
             if payload.local_env is None:
                 raise ValueError("backend_pin_missing: local_env")
-            pin_keys = _eligible_local_pin_keys(payload.local_env, extras=manifest.requires_extras)
+            pin_keys = _eligible_local_pin_keys(
+                payload.local_env, extras=manifest.requires_extras, allow_superset=available_only
+            )
             if not pin_keys and not available_only:
                 raise ValueError("materialization_reference_missing: local_env")
             references.extend(
