@@ -53,7 +53,10 @@ from cruxible_core.providers.package_materialization import (
 )
 from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 from cruxible_core.providers.provider_classifiers import ProviderBucketClassifierRegistry
-from cruxible_core.providers.provider_local_runtime import verify_provider_installation
+from cruxible_core.providers.provider_local_runtime import (
+    verification_format_upgrade,
+    verify_provider_installation,
+)
 from cruxible_core.runtime.execution_policy import enforce_customer_code_execution_supported
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.provider_runtime import (
@@ -354,16 +357,41 @@ def _install_locked(
     source: str | None,
 ) -> PlaybillProviderInstallResultV1:
     prepared_path = directory / "prepared.json"
+    rewrite_prepared = False
     if prepared_path.exists():
         saved = json.loads(prepared_path.read_bytes())
         document = PackageRegistrationDocumentV1.model_validate(saved["document"])
         provider = ProviderV3.model_validate(saved["provider"])
         configured = ProviderDeploymentConfigV1.model_validate(saved["deployment"])
+        # If publication completed before a crash updating prepared.json, reuse
+        # the newer operational proof. Never downgrade it to the cached V1 proof.
+        published = next(
+            (
+                item
+                for item in operator.config.deployments
+                if item.deployment_digest == configured.deployment_digest
+            ),
+            None,
+        )
+        if (
+            published is not None
+            and published.model_dump(exclude={"installation_verification"})
+            == configured.model_dump(exclude={"installation_verification"})
+            and verification_format_upgrade(
+                configured.installation_verification, published.installation_verification
+            )
+        ):
+            configured = published
+            rewrite_prepared = True
         deployment = operator._deployment(configured)
         if request.reverify:
             verified = verify_provider_installation(provider, deployment)
             if verified != configured.installation_verification:
-                raise ConfigError("re-verification differs from retained installation")
+                if not verification_format_upgrade(configured.installation_verification, verified):
+                    raise ConfigError("re-verification differs from retained installation")
+                configured = configured.model_copy(update={"installation_verification": verified})
+                deployment = operator._deployment(configured)
+                rewrite_prepared = True
     else:
         custody = directory / "wheels"
         custody.mkdir(exist_ok=True, mode=0o700)
@@ -431,6 +459,17 @@ def _install_locked(
             ),
         )
     operator.register_deployment(configured)
+    if rewrite_prepared:
+        _write(
+            prepared_path,
+            canonical_bytes(
+                {
+                    "document": document.model_dump(mode="json"),
+                    "provider": provider.model_dump(mode="json"),
+                    "deployment": configured.model_dump(mode="json"),
+                }
+            ),
+        )
     base = instance.accepted_coordinate()
     candidate_tree, changed = _definition_changes(instance, document, provider, base.git_oid)
     proposal_id = candidate_digest = None

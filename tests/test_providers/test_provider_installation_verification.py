@@ -19,7 +19,10 @@ from cruxible_core.providers.provider_local_runtime import (
     LocalProviderDeploymentV1,
     LocalProviderExecutionDriver,
     ProviderInstallationVerificationV1,
+    ProviderInstallationVerificationV2,
     ProviderLocalRuntimeRefused,
+    _deployment_identity,
+    verification_format_upgrade,
     verify_provider_installation,
 )
 from tests.core_support._p2b1_support import accepted_interface
@@ -32,11 +35,12 @@ def digest(raw: bytes) -> str:
 
 @pytest.fixture
 def installation(tmp_path: Path):
-    wheel = tmp_path / "provider.whl"
-    wheel.write_bytes(b"retained wheel")
-    lock = tmp_path / "uv.lock"
-    lock.write_bytes(b"retained lock")
     root = tmp_path / "environment"
+    root.mkdir()
+    wheel = root / "provider.whl"
+    wheel.write_bytes(b"retained wheel")
+    lock = root / "uv.lock"
+    lock.write_bytes(b"retained lock")
     interpreter = root / ".venv/bin/python"
     interpreter.parent.mkdir(parents=True)
     interpreter.write_bytes(b"interpreter")
@@ -110,7 +114,7 @@ def test_repeated_binding_and_restart_read_no_installed_bytes(installation, monk
     verified = verify_provider_installation(provider, deployment)
     # A restart reloads retained operational evidence, rather than caching just
     # a Python object or recomputing the inventory at the first subsequent run.
-    reloaded = ProviderInstallationVerificationV1.model_validate_json(verified.model_dump_json())
+    reloaded = ProviderInstallationVerificationV2.model_validate_json(verified.model_dump_json())
     deployment = replace(deployment, installation_verification=reloaded)
 
     def no_read(path):
@@ -161,3 +165,64 @@ def test_verification_refuses_incomplete_or_mismatched_installation(installation
         return
     with pytest.raises(ProviderLocalRuntimeRefused):
         verify_provider_installation(provider, deployment)
+
+
+def test_relocated_environment_preserves_verification_and_binding(installation, tmp_path):
+    import shutil
+
+    provider, deployment = installation
+    verified = verify_provider_installation(provider, deployment)
+    original = bind(provider, replace(deployment, installation_verification=verified))
+    destination = tmp_path / "moved-state" / "environment"
+    shutil.copytree(deployment.environment_path, destination, symlinks=True)
+    moved = replace(
+        deployment,
+        environment_path=destination,
+        installation_verification=verified,
+        **{
+            name: destination / getattr(deployment, name).relative_to(deployment.environment_path)
+            for name in (
+                "distribution_path",
+                "lock_path",
+                "environment_manifest_path",
+                "interpreter_path",
+            )
+        },
+    )
+    assert bind(provider, moved).binding == original.binding
+    assert verify_provider_installation(provider, moved) == verified
+
+
+def test_old_verification_can_only_be_succeeded_with_identical_content(installation):
+    provider, deployment = installation
+    new = verify_provider_installation(provider, deployment)
+    old = ProviderInstallationVerificationV1.model_validate(
+        {
+            **new.model_dump(exclude={"tag", "deployment_identity_digest"}),
+            "deployment_identity_digest": _deployment_identity(deployment),
+        }
+    )
+    assert bind(provider, replace(deployment, installation_verification=old))
+    assert verification_format_upgrade(old, new)
+    for field in (
+        "distribution_digest",
+        "lock_digest",
+        "materialization_digest",
+        "environment_manifest_digest",
+    ):
+        assert not verification_format_upgrade(
+            old, new.model_copy(update={field: digest(b"different")})
+        )
+    assert not verification_format_upgrade(new, old)
+
+
+def test_portable_identity_refuses_paths_outside_installation(installation, tmp_path):
+    provider, deployment = installation
+    verified = verify_provider_installation(provider, deployment)
+    outside = tmp_path / "outside.whl"
+    outside.write_bytes(deployment.distribution_path.read_bytes())
+    with pytest.raises(ProviderLocalRuntimeRefused, match="escape"):
+        bind(
+            provider,
+            replace(deployment, installation_verification=verified, distribution_path=outside),
+        )

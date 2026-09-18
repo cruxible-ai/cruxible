@@ -155,7 +155,7 @@ def _run_call(
     _approve_and_activate(http, instance_id, reviewer, intent.proposal.proposal_id)
     run = pb.accepted_procedure("installed-package-call").run()
     state = client.get_playbill_procedure_run(instance_id, run.run_id)
-    assert run.status == "succeeded", state.model_dump(mode="json")
+    assert run.status == "succeeded", state.model_dump_json(indent=2)
     assert state.receipt_digest
     return run.result
 
@@ -206,6 +206,92 @@ def test_installed_workspace_operation_runs_in_real_child(installer_http, tmp_pa
         definition["contracts"]["output"]["fields"],
     )
     assert output["content"]["text"] == body.decode()
+
+
+@pytest.mark.parametrize("legacy_proof", [False, True])
+def test_relocated_installation_reverifies_and_runs_after_restart(
+    installer_http, tmp_path, monkeypatch, legacy_proof
+):
+    import shutil
+
+    from cruxible_core.providers.provider_local_runtime import _deployment_identity
+    from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
+    from cruxible_core.service.procedures import provider_installation as service
+    from tests.support.provider_installation import build_local_call
+
+    http, instance_id, reviewer = installer_http
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = http
+    repository = Path(os.environ["CRUXIBLE_TEST_PROVIDER_REPOSITORY"])
+    wheels = Path(os.environ["CRUXIBLE_TEST_PROVIDER_WHEELS"])
+    wheel, lock = build_local_call(tmp_path, repository)
+    arguments = dict(
+        wheel=wheel,
+        lock=lock,
+        dependency_wheels=(next(wheels.glob("cruxible_provider_runtime-*.whl")),),
+    )
+    installed = install_provider_package(client, instance_id, **arguments)
+    assert installed.status == "ready", installed
+    manager = get_playbill_manager()
+    original = manager.provider_runtime_operator()
+    (deployment,) = original.config.deployments
+    prepared = next(original.state_root.rglob("prepared.json"))
+    saved = json.loads(prepared.read_bytes())
+    if legacy_proof:
+        # Persist a historical absolute-path proof, as the prior installer did.
+        proof = deployment.installation_verification.model_dump(mode="json")
+        proof.update(
+            tag="cruxible-provider-installation-verification-v1",
+            deployment_identity_digest=_deployment_identity(original._deployment(deployment)),
+        )
+        config = original.config.model_dump(mode="json")
+        config["deployments"][0]["installation_verification"] = proof
+        (original.state_root / PROVIDER_RUNTIME_CONFIG_PATH).write_text(json.dumps(config))
+        saved["deployment"]["installation_verification"] = proof
+        prepared.write_text(json.dumps(saved))
+    old_prepared = prepared.read_bytes()
+    # Move the provider runtime independently of the ledger/instance registry.
+    # No environment file or persisted relative deployment path is rewritten.
+    relocated = tmp_path / "relocated-runtime"
+    relocated.mkdir()
+    shutil.move(str(original.state_root / "provider-environments"), relocated)
+    target_config = relocated / PROVIDER_RUNTIME_CONFIG_PATH
+    target_config.parent.mkdir(parents=True)
+    shutil.copyfile(original.state_root / PROVIDER_RUNTIME_CONFIG_PATH, target_config)
+    operator = ProviderRuntimeOperator(relocated)
+    monkeypatch.setattr(manager, "provider_runtime_operator", lambda operator=operator: operator)
+
+    def no_rebuild(*args, **kwargs):
+        raise AssertionError("relocation must reuse the installed environment")
+
+    monkeypatch.setattr(service, "prepare_provider_package", no_rebuild)
+    verified = install_provider_package(client, instance_id, **arguments, reverify=True)
+    assert verified.status == "ready", verified
+    assert verified.installation_id == installed.installation_id
+    (current,) = operator.config.deployments
+    assert current.installation_verification.tag.endswith("-v2")
+    if legacy_proof:
+        # Replay a crash between publishing the proof and updating the cache.
+        prepared.write_bytes(old_prepared)
+    operator = ProviderRuntimeOperator(relocated)
+    monkeypatch.setattr(manager, "provider_runtime_operator", lambda operator=operator: operator)
+    monkeypatch.setattr(service, "verify_provider_installation", no_rebuild)
+    again = install_provider_package(client, instance_id, **arguments)
+    assert again.status == "ready", again
+    assert json.loads(prepared.read_bytes())["deployment"]["installation_verification"] == (
+        current.installation_verification.model_dump(mode="json")
+    )
+    assert _run_call(
+        client,
+        http,
+        instance_id,
+        reviewer,
+        tmp_path,
+        "local.increment",
+        {"n": 2},
+        {"n": {"type": "int"}},
+        {"n": {"type": "int"}},
+    ) == {"n": 3}
 
 
 def test_unpublished_local_call_installs_runs_and_preserves_old_deployment(
@@ -405,7 +491,7 @@ def test_installed_web_source_fetches_local_http_and_retains_capture(installer_h
         _approve_and_activate(http, instance_id, reviewer, prepared.proposal.proposal_id)
         run = pb.accepted_procedure("installed-web-fetch").run()
         state = client.get_playbill_procedure_run(instance_id, run.run_id)
-        assert run.status == "succeeded", state.model_dump(mode="json")
+        assert run.status == "succeeded", state.model_dump_json(indent=2)
         assert run.result == {"text": '{"severity":"high"}'}
         assert state.source_observations[0].capture_digest
         assert state.receipt_digest
