@@ -1,5 +1,7 @@
 """Package-owned registrations preserve old authority and describe local readiness."""
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -15,10 +17,12 @@ from cruxible_client.contracts.provider_interfaces import (
     render_provider_interface,
 )
 from cruxible_client.contracts.providers import (
+    AcceptedProviderV1,
     ProviderRuntimeArtifactPayloadV2,
     ProviderRuntimeManifestV2,
     ProviderV2,
     ProviderV3,
+    provider_digest,
     provider_expected_implementation_records,
     provider_manifest_digest,
     provider_path,
@@ -32,6 +36,11 @@ from cruxible_core.compiler.compiler import (
 )
 from cruxible_core.compiler.projection_artifacts import parse_projection_tree
 from cruxible_core.compiler.upgrades import upgrade_law
+from cruxible_core.providers.provider_local_runtime import (
+    LocalProviderDeploymentV1,
+    LocalProviderExecutionDriver,
+    ProviderLocalRuntimeRefused,
+)
 from tests.core_support._p2b1_support import (
     interface_fixture,
     interface_registration,
@@ -124,6 +133,39 @@ def test_package_classifier_authority_retains_fixture_bytes_and_executable_ident
     data["classifier_code"]["source_digest"] = "sha256:" + "b" * 64
     with pytest.raises(ValidationError, match="classifier digest"):
         ProviderInterfaceRegistrationV2.model_validate(data)
+
+
+def test_advertised_but_unprepared_implementation_refuses_before_reading_environment(
+    tmp_path: Path,
+) -> None:
+    provider = package_provider(engine=False)
+    registration = package_interface()
+    accepted_provider = AcceptedProviderV1(
+        path=provider_path(provider.identity.name),
+        provider=provider,
+        artifact_digest=provider_digest(provider).tagged,
+    )
+    accepted_interface = AcceptedProviderInterfaceRegistrationV1(
+        path=provider_interface_path(registration.interface_id),
+        registration=registration,
+        artifact_digest=provider_interface_digest(registration).tagged,
+    )
+    missing = tmp_path / "not-installed"
+    deployment = LocalProviderDeploymentV1(
+        deployment_digest="sha256:" + "a" * 64,
+        distribution_path=missing,
+        lock_path=missing,
+        environment_path=missing,
+        environment_manifest_path=missing,
+        environment_pin_key="linux-cp311",
+        interpreter_path=missing,
+        provider_runtime_version="0.2.0",
+    )
+    with pytest.raises(ProviderLocalRuntimeRefused) as failure:
+        LocalProviderExecutionDriver().bind(
+            accepted_provider, accepted_interface, "sha256:" + "b" * 64, deployment
+        )
+    assert failure.value.code == "no_compatible_artifact"
 
 
 @pytest.mark.parametrize("kind", ["provider", "interface"])

@@ -45,8 +45,8 @@ from cruxible_client.contracts.provider_interfaces import (
 )
 from cruxible_client.contracts.providers import (
     AcceptedProviderV1,
-    ProviderImplementationManifestV1,
     ProviderV2,
+    ProviderV3,
 )
 from cruxible_core.providers.provider_process_leases import (
     ProviderDescendantProcessV1,
@@ -142,6 +142,177 @@ class LocalProviderDeploymentV1:
     environment_pin_key: str
     interpreter_path: Path
     provider_runtime_version: str
+    installation_verification: ProviderInstallationVerificationV1 | None = None
+
+
+class ProviderMaterializationLinkV3(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    path: str
+    target: str
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        return ProviderMaterializationSealFileV2._path(value)
+
+    @field_validator("target")
+    @classmethod
+    def _target(cls, value: str) -> str:
+        if not value or Path(value).is_absolute() or "\\" in value or "\x00" in value:
+            raise ValueError("installation links must be relative")
+        return value
+
+
+class ProviderMaterializationSealV3(ProviderMaterializationSealV2):
+    """Whole-installation inventory, checked at preparation rather than invocation."""
+
+    tag: Literal["cruxible.provider.seal.v3"]  # type: ignore[assignment]
+    links: tuple[ProviderMaterializationLinkV3, ...]
+
+    @model_validator(mode="after")
+    def _links(self) -> ProviderMaterializationSealV3:
+        paths = tuple(item.path for item in self.links)
+        if paths != tuple(sorted(set(paths), key=str.encode)) or set(paths).intersection(
+            item.path for item in self.files
+        ):
+            raise ValueError("installation links must be sorted, unique and separate from files")
+        return self
+
+
+class ProviderInstallationVerificationV1(BaseModel):
+    """Daemon-owned installation result; not evidence of per-call filesystem scanning.
+
+    Managed updates create new environments. Manual edits require explicit
+    re-verification. Keeping this record in operational configuration preserves
+    that contract across daemon restarts without rehashing installed files.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["cruxible-provider-installation-verification-v1"] = (
+        "cruxible-provider-installation-verification-v1"
+    )
+    deployment_identity_digest: str
+    distribution_digest: str
+    lock_digest: str
+    materialization_digest: str
+    environment_manifest_digest: str
+    provider_runtime_version: str
+    entrypoints: tuple[str, ...]
+
+    @field_validator(
+        "deployment_identity_digest",
+        "distribution_digest",
+        "lock_digest",
+        "materialization_digest",
+        "environment_manifest_digest",
+    )
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+
+def _deployment_identity(deployment: LocalProviderDeploymentV1) -> str:
+    return _sha256(
+        canonical_bytes(
+            {
+                "deployment_digest": deployment.deployment_digest,
+                "distribution_path": str(deployment.distribution_path),
+                "lock_path": str(deployment.lock_path),
+                "environment_path": str(deployment.environment_path),
+                "environment_manifest_path": str(deployment.environment_manifest_path),
+                "environment_pin_key": deployment.environment_pin_key,
+                "interpreter_path": str(deployment.interpreter_path),
+                "provider_runtime_version": deployment.provider_runtime_version,
+            }
+        )
+    )
+
+
+def verify_provider_installation(
+    provider: ProviderV3,
+    deployment: LocalProviderDeploymentV1,
+) -> ProviderInstallationVerificationV1:
+    """Explicit install/reverify operation. It is never invoked by the run binder."""
+    payload = provider.runtime_artifact
+    local = payload.local_env
+    if local is None or deployment.environment_pin_key not in local.materialization_digests:
+        raise ProviderLocalRuntimeRefused(
+            "no_compatible_artifact", "local installation is unpinned"
+        )
+    LocalProviderExecutionDriver._verify_file(
+        deployment.distribution_path, payload.distribution.sha256, "artifact_hash_mismatch"
+    )
+    LocalProviderExecutionDriver._verify_file(
+        deployment.lock_path, local.lock_sha256, "lock_bytes_mismatch"
+    )
+    try:
+        root = deployment.environment_path.resolve(strict=True)
+        seal_path = deployment.environment_manifest_path.resolve(strict=True)
+        interpreter = deployment.interpreter_path.resolve(strict=True)
+        if not seal_path.is_relative_to(root) or not interpreter.is_relative_to(root):
+            raise ValueError("installation paths escape the environment")
+        raw = seal_path.read_bytes()
+        parsed = json.loads(raw)
+        if canonical_bytes(parsed) != raw:
+            raise ValueError("installation inventory is not canonical")
+        seal = ProviderMaterializationSealV3.model_validate(parsed)
+        if (
+            seal.materialization_digest
+            != local.materialization_digests[deployment.environment_pin_key]
+            or seal.lock_sha256 != local.lock_sha256
+            or seal.installed_distributions.get("cruxible-provider-runtime")
+            != deployment.provider_runtime_version
+            or seal.installed_distributions.get(payload.distribution.name)
+            != payload.distribution.version
+        ):
+            raise ValueError("installation inventory differs from pinned artifacts")
+        observed_files: set[str] = set()
+        observed_links: dict[str, str] = {}
+        for path in root.rglob("*"):
+            if path == seal_path or path == root / ".cruxible-seal.json":
+                continue
+            relative = path.relative_to(root).as_posix()
+            if path.is_symlink():
+                if not path.resolve(strict=True).is_relative_to(root):
+                    raise ValueError("installation link escapes the environment")
+                observed_links[relative] = path.readlink().as_posix()
+            elif path.is_file():
+                if path.stat().st_nlink != 1:
+                    raise ValueError("installation files must not share mutable hard links")
+                observed_files.add(relative)
+            elif not path.is_dir():
+                raise ValueError("installation contains a special file")
+        if observed_files != {item.path for item in seal.files} or observed_links != {
+            item.path: item.target for item in seal.links
+        }:
+            raise ValueError("installation inventory coverage differs from environment")
+        for item in seal.files:
+            if _sha256((root / item.path).read_bytes()) != item.sha256:
+                raise ValueError("installation file digest does not reproduce")
+        if interpreter.relative_to(root).as_posix() not in observed_files:
+            raise ValueError("interpreter is absent from the file inventory")
+        entrypoints = tuple(sorted({item.entrypoint for item in provider.implementations}))
+        for entrypoint in (*entrypoints, "cruxible_provider_runtime.child:main"):
+            module = entrypoint.partition(":")[0].replace(".", "/")
+            if not any(
+                path.endswith(f"/{module}.py") or path.endswith(f"/{module}/__init__.py")
+                for path in observed_files
+            ):
+                raise ValueError("installation entrypoint module is absent")
+    except (OSError, ValueError) as exc:
+        raise ProviderLocalRuntimeRefused("environment_divergence", str(exc)) from exc
+    return ProviderInstallationVerificationV1(
+        deployment_identity_digest=_deployment_identity(deployment),
+        distribution_digest=payload.distribution.sha256,
+        lock_digest=local.lock_sha256,
+        materialization_digest=seal.materialization_digest,
+        environment_manifest_digest=_sha256(raw),
+        provider_runtime_version=deployment.provider_runtime_version,
+        entrypoints=entrypoints,
+    )
 
 
 @dataclass(frozen=True)
@@ -434,17 +605,21 @@ class LocalProviderExecutionDriver:
             ),
             None,
         )
+        if implementation_record is None:
+            raise ProviderLocalRuntimeRefused(
+                "no_compatible_artifact", "implementation has no prepared accepted backend"
+            )
         manifest = next(
             (
                 item
                 for item in provider.runtime_artifact.manifest.implementations
                 if item.interface_id == registration.interface_id
                 and item.interface_digest == registration.interface_digest
-                and self._implementation_digest(provider, item) == implementation_digest
+                and item.entrypoint == implementation_record.entrypoint
             ),
             None,
         )
-        if implementation_record is None or manifest is None:
+        if manifest is None:
             raise ProviderLocalRuntimeRefused(
                 "ambiguous_implementation", "implementation is absent from accepted closure"
             )
@@ -460,6 +635,36 @@ class LocalProviderExecutionDriver:
         if local_ref is None:
             raise ProviderLocalRuntimeRefused(
                 "no_compatible_artifact", "accepted Provider has no matching local environment"
+            )
+        if isinstance(provider, ProviderV3):
+            verification = deployment.installation_verification
+            if verification is None or provider.runtime_artifact.local_env is None:
+                raise ProviderLocalRuntimeRefused(
+                    "environment_divergence", "package installation has not been verified"
+                )
+            if (
+                verification.deployment_identity_digest != _deployment_identity(deployment)
+                or verification.distribution_digest != provider.runtime_artifact.distribution.sha256
+                or verification.lock_digest != provider.runtime_artifact.local_env.lock_sha256
+                or verification.materialization_digest != local_ref.materialization_digest
+                or verification.provider_runtime_version != deployment.provider_runtime_version
+                or manifest.entrypoint not in verification.entrypoints
+                or not deployment.environment_path.is_dir()
+                or not deployment.interpreter_path.is_file()
+            ):
+                raise ProviderLocalRuntimeRefused(
+                    "environment_divergence",
+                    "installation record does not match the admitted deployment",
+                )
+            return self._bound_result(
+                accepted_provider,
+                accepted_interface,
+                implementation_digest,
+                deployment,
+                entrypoint=manifest.entrypoint,
+                endpoints=manifest.declared_endpoints,
+                materialization_digest=local_ref.materialization_digest,
+                environment_manifest_digest=verification.environment_manifest_digest,
             )
         self._verify_file(
             deployment.distribution_path,
@@ -525,6 +730,31 @@ class LocalProviderExecutionDriver:
             entrypoint=manifest.entrypoint,
             runtime_version=deployment.provider_runtime_version,
         )
+        return self._bound_result(
+            accepted_provider,
+            accepted_interface,
+            implementation_digest,
+            deployment,
+            entrypoint=manifest.entrypoint,
+            endpoints=manifest.declared_endpoints,
+            materialization_digest=local_ref.materialization_digest,
+            environment_manifest_digest=_sha256(environment_manifest_bytes),
+        )
+
+    @staticmethod
+    def _bound_result(
+        accepted_provider: AcceptedProviderV1,
+        accepted_interface: AcceptedProviderInterfaceRegistrationV1,
+        implementation_digest: str,
+        deployment: LocalProviderDeploymentV1,
+        *,
+        entrypoint: str,
+        endpoints: tuple[str, ...],
+        materialization_digest: str,
+        environment_manifest_digest: str,
+    ) -> BoundLocalProviderV1:
+        provider = accepted_provider.provider
+        registration = accepted_interface.registration
         provider_artifact_digest = accepted_provider.artifact_digest
         interface_pin = next(
             (
@@ -550,12 +780,10 @@ class LocalProviderExecutionDriver:
                 interface_digest=registration.interface_digest,
                 implementation_digest=implementation_digest,
                 deployment_digest=deployment.deployment_digest,
-                materialization_digest=local_ref.materialization_digest,
-                environment_manifest_digest=_sha256(environment_manifest_bytes),
-                entrypoint=manifest.entrypoint,
-                declared_endpoints=tuple(
-                    sorted(set(manifest.declared_endpoints), key=lambda item: item.encode())
-                ),
+                materialization_digest=materialization_digest,
+                environment_manifest_digest=environment_manifest_digest,
+                entrypoint=entrypoint,
+                declared_endpoints=tuple(sorted(set(endpoints), key=lambda item: item.encode())),
             ),
             interpreter_path=deployment.interpreter_path,
         )
@@ -662,16 +890,6 @@ class LocalProviderExecutionDriver:
                 observer_grade="attribution",
             ),
             verified_binding=binding.binding,
-        )
-
-    @staticmethod
-    def _implementation_digest(
-        provider: ProviderV2, manifest: ProviderImplementationManifestV1
-    ) -> str:
-        return next(
-            item.implementation_digest
-            for item in provider.implementations
-            if item.interface_id == manifest.interface_id and item.entrypoint == manifest.entrypoint
         )
 
     @staticmethod

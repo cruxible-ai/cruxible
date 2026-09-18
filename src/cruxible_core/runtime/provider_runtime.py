@@ -32,6 +32,7 @@ from cruxible_core.providers.provider_local_runtime import (
     FileProviderSecretStore,
     LocalProviderDeploymentV1,
     LocalProviderExecutionDriver,
+    ProviderInstallationVerificationV1,
     ProviderLocalRuntimeInvoker,
     ProviderSecretResolverRegistry,
 )
@@ -96,6 +97,7 @@ class ProviderDeploymentConfigV1(_StrictOperationalModel):
     environment_pin_key: str
     interpreter_path: str
     provider_runtime_version: str
+    installation_verification: ProviderInstallationVerificationV1 | None = None
 
     @field_validator(
         "distribution_path",
@@ -847,6 +849,7 @@ class ProviderRuntimeOperator:
             environment_pin_key=item.environment_pin_key,
             interpreter_path=resolve(item.interpreter_path),
             provider_runtime_version=item.provider_runtime_version,
+            installation_verification=item.installation_verification,
         )
 
 
