@@ -71,7 +71,7 @@ from cruxible_client.contracts.source_references import (
     validate_source_commitment,
 )
 from cruxible_client.contracts.workspace_file import (
-    WORKSPACE_FILE_INTERFACE_DIGEST,
+    WORKSPACE_FILE_INTERFACE_DIGESTS,
     SourceReadReceiptV1,
     source_read_receipt_digest,
 )
@@ -956,7 +956,7 @@ class ProviderInvocationCaptureEvidenceV1(_StrictCaptureModel):
 
     @model_validator(mode="after")
     def _workspace_receipt(self) -> "ProviderInvocationCaptureEvidenceV1":
-        if (self.interface_digest == WORKSPACE_FILE_INTERFACE_DIGEST) != (
+        if (self.interface_digest in WORKSPACE_FILE_INTERFACE_DIGESTS) != (
             self.source_read_receipt_digest is not None
         ):
             raise ValueError(
@@ -2113,7 +2113,7 @@ def build_provider_external_capture_v2(
         raise CaptureFormatError("Provider Capture source schemas are not admitted")
     if result.byte_length > contract.selection_budget.max_bytes:
         raise CaptureFormatError("Provider Capture result exceeds its contract byte budget")
-    workspace_source = occurrence.interface_digest == WORKSPACE_FILE_INTERFACE_DIGEST
+    workspace_source = occurrence.interface_digest in WORKSPACE_FILE_INTERFACE_DIGESTS
     if workspace_source != (source_read_receipt is not None):
         raise CaptureFormatError("workspace.file Capture requires exactly one source-read receipt")
     if source_read_receipt is not None and (
@@ -2569,7 +2569,7 @@ def verify_capture(
             ):
                 raise CaptureFormatError("provider Capture resolved receipt is not admissible")
             source_read = resolved_receipt.source_read_receipt
-            if (evidence.interface_digest == WORKSPACE_FILE_INTERFACE_DIGEST) != (
+            if (evidence.interface_digest in WORKSPACE_FILE_INTERFACE_DIGESTS) != (
                 source_read is not None
             ):
                 raise CaptureFormatError("provider Capture source-read receipt is unavailable")
@@ -2654,7 +2654,7 @@ def verify_capture(
             if (
                 isinstance(envelope, CaptureEnvelopeV2)
                 and isinstance(material_evidence, ProviderInvocationCaptureEvidenceV1)
-                and material_evidence.interface_digest == WORKSPACE_FILE_INTERFACE_DIGEST
+                and material_evidence.interface_digest in WORKSPACE_FILE_INTERFACE_DIGESTS
             ):
                 if not isinstance(resolved_receipt, ProviderProducerReceiptResolution) or (
                     resolved_receipt.source_read_receipt is None

@@ -16,6 +16,15 @@ WORKSPACE_FILE_INTERFACE_DIGEST = (
     "sha256:372bc808d6bd77627bdda7bc67586300e2eb812bf0a4fb3769283a26cc021f88"
 )
 
+# Package-owned v2 operation schema. Both revisions use the same host-owned
+# file-read protocol: the provider structures supplied bytes, never opens paths.
+WORKSPACE_FILE_INTERFACE_V2_DIGEST = (
+    "sha256:faa92552bd6032d3280753881ce991501013b2eaa2005e0f974820f01248d866"
+)
+WORKSPACE_FILE_INTERFACE_DIGESTS = frozenset(
+    (WORKSPACE_FILE_INTERFACE_DIGEST, WORKSPACE_FILE_INTERFACE_V2_DIGEST)
+)
+
 
 class _StrictWorkspaceFileModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -142,6 +151,8 @@ def source_read_receipt_digest(receipt: SourceReadReceiptV1) -> str:
 __all__ = [
     "SourceReadReceiptV1",
     "WORKSPACE_FILE_INTERFACE_DIGEST",
+    "WORKSPACE_FILE_INTERFACE_V2_DIGEST",
+    "WORKSPACE_FILE_INTERFACE_DIGESTS",
     "WorkspaceFileSourceRequestV1",
     "source_read_receipt_digest",
 ]
