@@ -317,7 +317,7 @@ def service_install_provider(
 ) -> PlaybillProviderInstallResultV1:
     instance.require_writable()
     enforce_customer_code_execution_supported()
-    if instance.descriptor.compiler != PROVIDER_PACKAGE_COMPILER:
+    if instance.accepted_coordinate().compiler != PROVIDER_PACKAGE_COMPILER:
         raise ConfigError(
             "provider installation requires an explicit upgrade to the package compiler"
         )

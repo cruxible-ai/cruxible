@@ -435,3 +435,50 @@ def test_prebuilt_upgrade_loses_cas_to_an_ordinary_writer(tmp_path, monkeypatch)
     assert instance.accepted_coordinate().compiler == RESOLUTION_COMPILER
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
         assert projection.accepted == other.accepted_coordinate()
+
+
+def test_provider_installation_uses_accepted_compiler_after_upgrade_and_reopen(
+    tmp_path, monkeypatch
+):
+    from cruxible_client.contracts.provider_installation import (
+        PlaybillProviderInstallRequestV1,
+        ProviderWheelObjectV1,
+    )
+    from cruxible_core.compiler.compiler import PROVIDER_PACKAGE_COMPILER
+    from cruxible_core.errors import ConfigError
+    from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
+    from cruxible_core.service.procedures import provider_installation
+
+    instance, _, reviewer = old_instance(tmp_path, monkeypatch, UPGRADE_COMPILER)
+    operator = ProviderRuntimeOperator(tmp_path / "operator")
+    request = PlaybillProviderInstallRequestV1(
+        wheel=ProviderWheelObjectV1(
+            filename="demo-1-py3-none-any.whl", digest="sha256:" + "a" * 64
+        ),
+        lock_digest="sha256:" + "b" * 64,
+    )
+    reached = []
+
+    def preparation(current, *args):
+        reached.append(current.accepted_coordinate().compiler)
+
+    monkeypatch.setattr(provider_installation, "_install_locked", preparation)
+
+    def install(current):
+        provider_installation.service_install_provider(
+            current, operator=operator, request=request, actor_id="owner", timestamp=TIMESTAMP
+        )
+
+    with pytest.raises(ConfigError, match="explicit upgrade"):
+        install(instance)
+    assert not reached
+    proposal = propose(instance, PROVIDER_PACKAGE_COMPILER)
+    approve(instance, proposal, reviewer)
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted"
+    assert instance.descriptor.compiler == UPGRADE_COMPILER
+    install(instance)
+    install(PlaybillInstance.open(instance.root, trust_root=instance.trust_root))
+    assert reached == [PROVIDER_PACKAGE_COMPILER, PROVIDER_PACKAGE_COMPILER]
