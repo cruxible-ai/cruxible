@@ -212,7 +212,7 @@ def test_installed_wheel_carries_the_procedure_runtime_policy_seed(
             ),
         ]
     )
-    assert completed.stdout.strip() == "1048576"
+    assert completed.stdout.strip() == "67108864"
 
 
 @pytest.mark.parametrize("alias", _BASE_RUNNABLE_ALIASES)

@@ -1224,7 +1224,7 @@ def test_served_line_admission_binds_the_accepted_runtime_policy_or_refuses(
     )
 
     assert isinstance(bound, ProcedureRunAdmissionV3)
-    assert bound.provider_output_bytes_cap == 1_048_576
+    assert bound.provider_output_bytes_cap == 64 * 1024 * 1024
     assert bound.semantic_replay_key_digest != procedure_semantic_replay_key_digest(admission)
     assert bound.semantic_replay_key_digest == procedure_semantic_replay_key_digest(bound)
     assert bound.admission_binding_digest == procedure_admission_digest(bound)

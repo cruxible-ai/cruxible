@@ -121,7 +121,7 @@ def test_default_genesis_is_solo_capable_and_policy_is_governed(tmp_path: Path) 
         instance.tree_at(instance.accepted_coordinate().git_oid)[PROCEDURE_RUNTIME_POLICY_PATH],
         path=PROCEDURE_RUNTIME_POLICY_PATH,
     )
-    assert runtime_policy.provider_output_bytes_cap == 1_048_576
+    assert runtime_policy.provider_output_bytes_cap == 64 * 1024 * 1024
 
 
 def test_runtime_policy_changes_by_singleton_proposal_and_lists_in_force(
@@ -136,7 +136,7 @@ def test_runtime_policy_changes_by_singleton_proposal_and_lists_in_force(
             **tree,
             PROCEDURE_RUNTIME_POLICY_PATH: render_procedure_runtime_policy(successor),
         },
-        name="raise-procedure-runtime-cap",
+        name="change-procedure-runtime-cap",
     )
     assert proposal.candidate is not None
     assert _activate(instance, proposal, tmp_path=tmp_path).status == "accepted"
