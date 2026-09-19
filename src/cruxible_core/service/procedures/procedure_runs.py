@@ -70,6 +70,8 @@ from cruxible_client.contracts.procedures.line_specs import (
     WindowCloseTriggerPolicyV2,
     evaluate_line_spec_law,
     line_identity_digest,
+    line_spec_digest,
+    parse_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
     ExhaustTapNodeV3,
@@ -730,6 +732,30 @@ def _accepted_line_by_identity_digest(
         line = projection.typed.source(identity)
         assert line is not None
         return AcceptedLineSpecV1(path=path, line=line, artifact_digest=digest)
+
+
+def _accepted_line_predecessor(
+    instance: PlaybillInstance,
+    accepted_line: AcceptedLineSpecV1,
+    coordinate: AcceptedProjectionCoordinate,
+) -> AcceptedLineSpecV1 | None:
+    digest = accepted_line.line.lifecycle.predecessor_digest
+    if digest is None:
+        return None
+    with instance.accepted_history_reader(
+        at=AcceptedCoordinate.from_internal(coordinate)
+    ) as history:
+        location = history.artifact(digest, identity=accepted_line.line.identity.qualified)
+        if location is None:
+            raise ProjectionIntegrityError("accepted Line predecessor has no retained occurrence")
+        generation = history.generation(location.occurrence_sequence)
+    raw = instance.blob_at(generation.git_oid, location.path)
+    if raw is None:
+        raise ProjectionIntegrityError("accepted Line predecessor source is unavailable")
+    line = parse_line_spec(raw, path=location.path)
+    if line.identity != accepted_line.line.identity or line_spec_digest(line).tagged != digest:
+        raise ProjectionIntegrityError("accepted Line predecessor differs from its pinned version")
+    return AcceptedLineSpecV1(path=location.path, line=line, artifact_digest=digest)
 
 
 def _line_catalogs(
@@ -3326,7 +3352,7 @@ def service_run_playbill_line(
         path=accepted_line.path,
         procedure=accepted,
         interface_digests=interface_digests,
-        predecessor=None,
+        predecessor=_accepted_line_predecessor(instance, accepted_line, coordinate),
         providers=providers,
         provider_interfaces=interfaces,
     )

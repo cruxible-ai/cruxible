@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
@@ -16,7 +17,7 @@ from cruxible_client.contracts.acquisition_policies import (
     acquisition_policy_path,
     render_acquisition_policy,
 )
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedure_mandates import (
     PROCEDURE_MANDATE_CLOCK_SKEW,
@@ -521,3 +522,51 @@ def test_a_source_free_line_under_a_required_rule_still_runs(
     assert procedure_selection_decision_digest(selection) == (
         procedure_selection_decision_digest(pre_batch)
     )
+
+
+@pytest.mark.parametrize("successions", [1, 2])
+def test_accepted_line_successors_run_against_their_retained_predecessor(
+    playbill_http: tuple[TestClient, str, Path],
+    successions: int,
+) -> None:
+    client, instance_id, reviewer_key_path = playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    accepted = _slotless_procedure("successor-triage")
+    policy = _acquisition_policy("successor-inputs")
+    line = _served_line("successor-line", accepted=accepted, policy=policy)
+    mandate = _line_mandate(accepted)
+    _accept_members(
+        instance,
+        reviewer_key_path,
+        {
+            accepted.path: render_procedure(accepted.procedure),
+            acquisition_policy_path(policy.identity.name): render_acquisition_policy(policy),
+            line_spec_path(line.identity.name): render_line_spec(line),
+            procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
+        },
+        timestamp="2026-09-03T09:00:00.000000Z",
+    )
+    for revision in range(successions):
+        line = line.model_copy(
+            update={
+                "parameters": {"status": "closed" if revision == 0 else "open"},
+                "lifecycle": ArtifactLifecycle(predecessor_digest=line_spec_digest(line).tagged),
+            }
+        )
+        _accept_members(
+            instance,
+            reviewer_key_path,
+            {
+                line_spec_path(line.identity.name): render_line_spec(line),
+            },
+            timestamp=f"2026-09-03T09:0{revision + 1}:00.000000Z",
+        )
+    identity_digest = line_identity_digest(line.identity)
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/lines/{identity_digest}/runs",
+        json=_body(identity_digest),
+    )
+    assert response.status_code == 200, response.text
+    state = response.json()
+    assert state["status"] == "succeeded", state["terminal"]
+    assert state["receipt"]["line_spec_digest"] == line_spec_digest(line).tagged
