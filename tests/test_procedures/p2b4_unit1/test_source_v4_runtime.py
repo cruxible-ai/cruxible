@@ -90,7 +90,6 @@ from cruxible_core.procedures.execution import (
     PreparedProcedureRunV5,
     ProcedureExecutor,
     ProcedureRunAdmissionV5,
-    _ReservedCaptureStore,
     _source_capture_association_fields,
     procedure_admission_digest,
     procedure_line_run_id,
@@ -108,7 +107,10 @@ from cruxible_core.providers.provider_runtime_contract import (
     ProviderRuntimeResultEnvelopeV1,
 )
 from cruxible_core.storage.cas import BodyAccessContext
-from cruxible_core.storage.material_reservations import ProcedureMaterialReservationStore
+from cruxible_core.storage.material_reservations import (
+    ProcedureMaterialReservationStore,
+    ReservedCaptureStore,
+)
 from tests.core_support._p2b1_support import install_demo_classifier
 from tests.core_support._pc_c_support import (
     NOW,
@@ -191,6 +193,7 @@ def _source_fixture(
     *,
     rule: InputAcquisitionRuleV1 | None = None,
     include_terminal: bool = False,
+    capture_budget: int | None = None,
     accepted_bucket_selectors: tuple[str, ...] | None = None,
 ) -> tuple[
     AcceptedProcedureV1,
@@ -329,6 +332,10 @@ def _source_fixture(
             "run_id": "RUN-" + "0" * 64,
         }
     )
+    if capture_budget is not None:
+        fields["budget"] = old_admission.budget.model_copy(
+            update={"max_capture_bytes": capture_budget}
+        )
     provisional = ProcedureRunAdmissionV5.model_construct(**fields)
     provisional = provisional.model_copy(
         update={"semantic_replay_key_digest": procedure_semantic_replay_key_digest(provisional)}
@@ -769,7 +776,7 @@ def test_capture_reservation_precedes_the_first_body_write(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _accepted, prepared, fixture, _policy, _contract = _source_fixture(tmp_path)
-    reserved_store = _ReservedCaptureStore(  # noqa: SLF001
+    reserved_store = ReservedCaptureStore(
         bodies=fixture.bodies,
         reservations=ProcedureMaterialReservationStore(fixture.bodies.reservation_root),
         admission=prepared.admission,
@@ -1019,13 +1026,16 @@ def test_two_run_ids_under_one_semantic_key_keep_independent_source_results(
     assert second_replay.output == {"size": 4}
 
 
+@pytest.mark.parametrize("budget_refusal", [False, True])
 def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    budget_refusal: bool,
 ) -> None:
     accepted, prepared, fixture, policy, contract = _source_fixture(
         tmp_path,
         include_terminal=True,
+        capture_budget=10 if budget_refusal else None,
     )
     registry = ProviderBucketClassifierRegistry()
     install_demo_classifier(registry)
@@ -1066,9 +1076,16 @@ def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
         ),
     ).execute(prepared, accepted)
 
-    assert result.status == "succeeded"
     records, payloads = _payloads(prepared, fixture)
     kinds = [item.record.event_kind for item in records]
+    if budget_refusal:
+        assert result.status != "succeeded"
+        assert "terminal_egress" not in kinds
+        assert kinds.count("produced_capture") == 1  # Source succeeded; emission did not.
+        assert "max_capture_bytes" in str(payloads[-1])
+        return
+    assert result.status == "succeeded"
+    assert kinds.count("produced_capture") == 2
     terminal = payloads[kinds.index("terminal_egress")]
     assert isinstance(terminal, dict)
     receipt = TerminalEgressReceiptV2.model_validate(terminal["receipt"])

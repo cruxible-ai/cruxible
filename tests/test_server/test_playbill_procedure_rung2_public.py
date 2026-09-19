@@ -17,12 +17,14 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from cruxible_client import Playbill
 from cruxible_client.contracts.acquisition_policies import (
     IndependentCoherenceV1,
     InputAcquisitionRuleV1,
     SourceAcquisitionPolicyV1,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.capture_reads import CaptureReadRequestV1
 from cruxible_client.contracts.captures import CanonicalDurationV1, capture_contract_digest
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.policies import (
@@ -34,6 +36,7 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.procedures.artifacts import procedure_owned_contract_digest
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_client.contracts.procedures.models import (
+    CaptureEgressNodeV3,
     ProcedureBudgetV3,
     ProcedureDefinitionV5,
     ProcedureHardCapsV3,
@@ -230,6 +233,7 @@ def _procedure_definition(
     provider: dict[str, Any],
     contract_pin: ArtifactPin,
     workspace: Path,
+    terminal_kind: str = "propose_change_set",
 ) -> ProcedureDefinitionV5:
     input_contract, output_contract = _contracts()
     contract_in = ArtifactPin(
@@ -291,7 +295,13 @@ def _procedure_definition(
                 as_="result",
                 next="propose",
             ),
-            ProposeChangeSetNodeV3(node_id="propose", candidate_templates=(_item(),)),
+            (
+                CaptureEgressNodeV3(
+                    node_id="propose", capture_contract=contract_pin, input="$steps.result"
+                )
+                if terminal_kind == "emit_capture"
+                else ProposeChangeSetNodeV3(node_id="propose", candidate_templates=(_item(),))
+            ),
         ),
         returns="result",
         budget=ProcedureBudgetV3(
@@ -359,8 +369,10 @@ def _binding_digest(workspace: Path) -> str:
     )
 
 
+@pytest.mark.parametrize("terminal_kind", ["propose_change_set", "emit_capture"])
 def test_the_rung2_loop_runs_over_public_surfaces_only(
     installed_host: tuple[TestClient, str, Path, Path],
+    terminal_kind: str,
 ) -> None:
     http, instance_id, reviewer_key, workspace = installed_host
     transport = CruxibleClient(base_url="http://cruxible")
@@ -388,6 +400,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         provider=provider.model_dump(mode="json"),
         contract_pin=contract_pin,
         workspace=workspace,
+        terminal_kind=terminal_kind,
     )
     input_contract, output_contract = _contracts()
     members: list[dict[str, Any]] = [
@@ -473,6 +486,65 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     assert state.run_id is not None
     (egress,) = state.terminal_egress
     assert egress.verdict == "delivered"
+    if terminal_kind == "emit_capture":
+        assert egress.proposal_id is None
+        (emitted_event,) = tuple(
+            item
+            for item in state.outcomes
+            if item["event_kind"] == "produced_capture" and item["node_id"] == "propose"
+        )
+        assert emitted_event["capture_event"] is not None
+        assert emitted_event["capture_event"]["run_id"] == state.run_id
+        assert len(egress.children) == 1
+        capture_digest = egress.children[0].egress_digest
+        pb = Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
+        captured = pb.capture(capture_digest)
+        assert captured.result.status == "verified", captured.result
+        assert captured.json() == {"severity": "high"}
+        assert captured.result.envelope.run_coordinate.run_id == state.run_id
+        assert captured.result.envelope.producer.kind == "Procedure"
+        limited = pb.capture(capture_digest, max_bytes=1)
+        assert limited.result.material.status == "unavailable"
+        assert "resource_budget_exceeded" in limited.result.material.coverage.reason_codes
+        with pytest.raises(ValueError, match="content is unavailable"):
+            _ = limited.content
+        # The Source's retained evidence is independently readable; neither read refetches it.
+        source = pb.capture(state.source_observations[0].capture_digest)
+        assert source.result.envelope.producer.kind == "Provider"
+        assert source.json()["content"]["text"] == "high"
+        claim = pb.claim(
+            subject=f"{SUBJECT_KIND}/{SUBJECT_ID}",
+            predicate=PREDICATE,
+            value="high",
+            role="observation",
+            rationale="Read from the Procedure's retained output.",
+            supported_by=captured.ref,
+        ).prepare()
+        assert not claim.refused, claim.diagnostics
+        submitted_claim = claim.submit()
+        status = submitted_claim.status()
+        assert status.proposal_id is not None, status
+        _approve_and_activate(http, instance_id, reviewer_key, status.proposal_id)
+        inspection = transport.inspect_playbill_proposal(instance_id, status.proposal_id)
+        member = next(
+            item
+            for item in inspection.proposal["candidate"]["members"]
+            if item["path"].startswith("claims/")
+        )
+        claim_id = member["path"].rsplit("/", 1)[1].removesuffix(".json")
+        view = transport.get_playbill_claim(instance_id, claim_id)
+        assert view.admission_accounts[0].capture_digest == capture_digest
+        assert view.admission_accounts[0].status == "admitted"
+        missing = transport.read_playbill_capture(
+            instance_id, CaptureReadRequestV1(capture_digest="sha256:" + "f" * 64)
+        )
+        assert missing.status == "unavailable"
+        get_playbill_manager().clear()
+        assert pb.capture(capture_digest).json() == {"severity": "high"}
+        again = transport.get_playbill_procedure_run(instance_id, state.run_id)
+        assert again.outcomes == state.outcomes
+        assert again.terminal_egress == state.terminal_egress
+        return
     assert egress.proposal_id is not None and egress.candidate_digest is not None
     (child,) = egress.children
     assert child.path is not None and child.path.startswith("claims/")

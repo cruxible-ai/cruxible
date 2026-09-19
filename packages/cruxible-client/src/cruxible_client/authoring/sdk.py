@@ -39,6 +39,7 @@ from cruxible_client.authoring.sdk_types import (
     CallSite,
     CapabilityNotServed,
     CaptureRef,
+    CaptureView,
     Cardinality,
     ClaimObjectKind,
     ClaimRef,
@@ -135,6 +136,7 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
+from cruxible_client.contracts.capture_reads import CaptureReadRequestV1
 from cruxible_client.contracts.captures import (
     CaptureContractV1,
     capture_contract_digest,
@@ -1700,6 +1702,24 @@ class Playbill:
                 for account in view.admission_accounts
             ),
         )
+
+    def capture(
+        self, capture: str | CaptureRef, *, max_bytes: int = 4 * 1024 * 1024
+    ) -> CaptureView:
+        """Open retained evidence at this SDK coordinate, without refetching it."""
+        if isinstance(capture, CaptureRef):
+            self._assert_coordinate(capture.coordinate)
+        result = self._client.read_playbill_capture(
+            self._instance_id,
+            CaptureReadRequestV1(
+                capture_digest=capture.capture_digest
+                if isinstance(capture, CaptureRef)
+                else capture,
+                at=self.coordinate,
+                max_bytes=max_bytes,
+            ),
+        )
+        return CaptureView(result=result)
 
     def claim_views(self, claims: Sequence[str | ClaimRef]) -> tuple[ClaimView, ...]:
         """Read up to 256 identities at one current or explicitly pinned coordinate.

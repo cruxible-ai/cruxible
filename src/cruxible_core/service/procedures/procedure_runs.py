@@ -77,7 +77,6 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinitionV3,
     ProcedureDefinitionV4,
     ProcedurePinSlotRefV1,
-    ProposeChangeSetNodeV3,
     ProviderNodeV3,
     ProviderNodeV4,
     RepeatBodyNodeV4,
@@ -188,7 +187,13 @@ from cruxible_core.procedures.acquisition import (
     ACQUISITION_OVERSIZED,
     ACQUISITION_REFUSED,
 )
-from cruxible_core.procedures.egress import compute_effective_rung
+from cruxible_core.procedures.egress import (
+    CaptureTerminalEgressSink,
+    PreparedTerminalEgressV1,
+    TerminalEgressReceiptV1,
+    TerminalEgressRequestV1,
+    compute_effective_rung,
+)
 from cruxible_core.procedures.execution import (
     PROCEDURE_RUN_RECEIPT_V2_DOMAIN,
     PROCEDURE_RUN_RECEIPT_V3_DOMAIN,
@@ -202,6 +207,7 @@ from cruxible_core.procedures.execution import (
     ProcedureAdmissionBoundPayloadV5,
     ProcedureAdmissionBoundPayloadV7,
     ProcedureClockProtocol,
+    ProcedureRunAdmissionV1,
     ProcedureRunAdmissionV2,
     ProcedureRunAdmissionV3,
     ProcedureRunAdmissionV4,
@@ -234,6 +240,7 @@ from cruxible_core.procedures.input_planes import AcceptedStateRunInputV2
 from cruxible_core.procedures.proposal_delivery import (
     ProposalTerminalEgressSink,
 )
+from cruxible_core.procedures.terminal_dependencies import TerminalItemDependencyManifestV1
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.providers.provider_local_runtime import (
     ProviderLocalRuntimeRefused,
@@ -253,16 +260,19 @@ from cruxible_core.service.procedures.resolution_contracts import (
     require_current_investigation,
 )
 from cruxible_core.storage.cas import BodyAccessContext
-from cruxible_core.storage.material_reservations import ProcedureMaterialReservationStore
+from cruxible_core.storage.material_reservations import (
+    ProcedureMaterialReservationStore,
+    ReservedCaptureStore,
+)
 
 PROCEDURE_RUN_ID_DOMAIN = "playbill-procedure-run-id-v1"
 PROCEDURE_RUN_STREAM_ID = "procedures"
 PROCEDURE_RUN_FENCING_TOKEN = "playbill-procedure-direct-run-v1"
 DIRECT_RECEIPT_REDUCER_DOMAIN = "playbill-direct-procedure-receipt-reducer-v1"
-#: The node kinds the served run lanes admit. ``source`` is served only on the
+#: The node kinds the direct run lane admits. ``source`` is served only on the
 #: graph-v4 observation path: a graph-v3 Source names no interface or
 #: implementation, so `_graph_v3_external_occurrences` still refuses it before
-#: any journal exists. Effectful terminals stay dark.
+#: any journal exists. Lines separately serve capture and proposal terminals.
 SERVED_NODE_KINDS = frozenset(
     {"state_tap", "transform", "project", "guard", "repeat", "halt", "source"}
 )
@@ -2980,7 +2990,7 @@ def service_run_playbill_procedure(
             "unsupported_node",
             "provider_explicit_implementation_required",
         ] = "unsupported_node"
-        refusal_message = "Procedure contains node kinds unavailable on the served run lane."
+        refusal_message = "Procedure contains node kinds unavailable on the direct run lane."
         if legacy_external:
             refusal_code = "provider_explicit_implementation_required"
             refusal_message = (
@@ -2992,6 +3002,15 @@ def service_run_playbill_procedure(
         ):
             refusal_message = (
                 "Graph-v4 Provider slots require accepted Line closure before execution."
+            )
+        elif {item.kind for item in readiness.unsupported_nodes} <= {
+            "emit_capture",
+            "propose_change_set",
+        }:
+            refusal_message = (
+                "Capture and proposal terminals require an accepted Line and its authority "
+                "bindings; "
+                "invoke the Line through playbill line run."
             )
         return ProcedureRunStateV2(
             run_id=None,
@@ -3186,6 +3205,34 @@ def _accepted_line_mandates(
                 )
             result.append((digest, mandate))
         return tuple(result)
+
+
+class _LineTerminalEgressSink:
+    """Dispatch each served terminal to its existing authority-owning sink."""
+
+    def __init__(
+        self, *, capture: CaptureTerminalEgressSink, proposal: ProposalTerminalEgressSink
+    ) -> None:
+        self.capture = capture
+        self.proposal = proposal
+
+    def prepare_terminal_egress(
+        self,
+        *,
+        request: TerminalEgressRequestV1,
+        admission: ProcedureRunAdmissionV1,
+        manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
+    ) -> PreparedTerminalEgressV1:
+        return self.proposal.prepare_terminal_egress(
+            request=request, admission=admission, manifests=manifests
+        )
+
+    def deliver_terminal_egress(
+        self, *, request: TerminalEgressRequestV1, admission: ProcedureRunAdmissionV1 | None = None
+    ) -> TerminalEgressReceiptV1:
+        if request.kind == "emit_capture":
+            return self.capture.deliver_terminal_egress(request=request)
+        return self.proposal.deliver_terminal_egress(request=request, admission=admission)
 
 
 def service_run_playbill_line(
@@ -3722,17 +3769,25 @@ def service_run_playbill_line(
         procedure_mandate_rung=mandate_rung,
         caller_tier_rung=caller_rung,
     )
-    egress_sink = (
-        ProposalTerminalEgressSink(instance=instance, accepted_mandates=dict(mandates))
-        if any(
-            isinstance(node, ProposeChangeSetNodeV3) for node in accepted.procedure.definition.nodes
-        )
-        else None
-    )
     if investigation is not None or trigger_binding is not None:
         prepared = bind_prepared_investigation(
             prepared, investigation=investigation, trigger=trigger_binding
         )
+    capture_store = ReservedCaptureStore(
+        bodies=instance.body_store(),
+        reservations=ProcedureMaterialReservationStore(instance.body_store().reservation_root),
+        admission=prepared.admission,
+        event_kind="terminal_egress",
+    )
+    egress_sink = _LineTerminalEgressSink(
+        capture=CaptureTerminalEgressSink(
+            store=capture_store,
+            contracts=capture_contracts,
+            producer=accepted.procedure.identity,
+            producer_binding_digest=accepted.artifact_digest,
+        ),
+        proposal=ProposalTerminalEgressSink(instance=instance, accepted_mandates=dict(mandates)),
+    )
     journal, root = _journal_for_write(instance)
     _activate_writer(
         journal,
@@ -3767,6 +3822,9 @@ def service_run_playbill_line(
         egress_sink=egress_sink,
         clock=_DeterministicClock(evaluation_time),
     )
+    if result.status == "succeeded":
+        # The terminal and finalization are durable before staged bodies are released.
+        capture_store.release()
     return _state_from_records(
         instance,
         run_id=prepared.admission.run_id,

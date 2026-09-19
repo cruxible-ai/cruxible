@@ -6,6 +6,8 @@ types carry decisions and coordinate assertions, never authority of their own.
 
 from __future__ import annotations
 
+import base64
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -13,6 +15,7 @@ from typing import ClassVar, Literal, Protocol, runtime_checkable
 
 from cruxible_client._error_base import CoreError
 from cruxible_client.contracts.canonical import CanonicalValue
+from cruxible_client.contracts.capture_reads import CaptureReadV1
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import ensure_utc
 
@@ -112,6 +115,46 @@ class CaptureRef:
     contract_address: str
     coordinate: AcceptedCoordinate
     citation_role: Literal["evidence", "copy", "legacy"]
+
+
+@dataclass(frozen=True)
+class CaptureView:
+    """Verified evidence metadata and explicitly available retained material."""
+
+    result: CaptureReadV1
+
+    @property
+    def ref(self) -> CaptureRef:
+        if (
+            self.result.status != "verified"
+            or self.result.contract_address is None
+            or self.result.citation_role is None
+        ):
+            raise ValueError("Capture is unavailable; no verified reference can be issued")
+        return CaptureRef(
+            capture_digest=self.result.capture_digest,
+            contract_address=self.result.contract_address,
+            coordinate=self.result.coordinate,
+            citation_role=self.result.citation_role,
+        )
+
+    @property
+    def content(self) -> bytes:
+        material = self.result.material
+        if (
+            material is None
+            or material.status != "verified"
+            or material.body_access is None
+            or material.body_access.body_base64 is None
+        ):
+            raise ValueError("Capture content is unavailable; inspect result.material for details")
+        return base64.b64decode(material.body_access.body_base64, validate=True)
+
+    def text(self, encoding: str = "utf-8") -> str:
+        return self.content.decode(encoding)
+
+    def json(self) -> object:
+        return json.loads(self.content)
 
 
 @dataclass(frozen=True)
@@ -456,6 +499,7 @@ __all__ = [
     "QueryRef",
     "RefKind",
     "CaptureRef",
+    "CaptureView",
     "ReferenceKindError",
     "ReferentSensitivity",
     "SlotRef",

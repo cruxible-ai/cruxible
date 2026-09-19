@@ -1389,6 +1389,27 @@ def document_history(identity: str, output_json: bool) -> None:
     _emit_json(result.model_dump(mode="json"))
 
 
+@playbill_group.group("capture")
+def capture_group() -> None:
+    """Read retained evidence from completed observations and Procedures."""
+
+
+@capture_group.command("read")
+@click.argument("capture_digest")
+@click.option("--max-bytes", type=click.IntRange(min=0), default=4 * 1024 * 1024, show_default=True)
+@handle_errors
+def read_capture(capture_digest: str, max_bytes: int) -> None:
+    from cruxible_client.contracts.capture_reads import CaptureReadRequestV1
+
+    result = _server_call(
+        lambda client, instance_id: client.read_playbill_capture(
+            instance_id, CaptureReadRequestV1(capture_digest=capture_digest, max_bytes=max_bytes)
+        ),
+        command_name="playbill capture read",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
 @playbill_group.group("proposal")
 def proposal_group() -> None:
     """Inspect, review, approve, and activate candidates."""

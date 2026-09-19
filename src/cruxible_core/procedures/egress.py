@@ -1195,6 +1195,21 @@ class CaptureTerminalEgressSink:
         contract = self.contracts.get(pin.artifact_digest)
         if contract is None or capture_contract_digest(contract).tagged != pin.artifact_digest:
             raise TerminalEgressError("no accepted CaptureContract reproduces this egress pin")
+        if (
+            "cas" not in contract.allowed_source_kinds
+            or "cas" not in contract.allowed_materialization_modes
+        ):
+            raise TerminalEgressError("emit_capture requires a CaptureContract permitting CAS")
+        if len(request.items) > contract.selection_budget.max_items or any(
+            len(canonical_bytes(item.value)) > contract.selection_budget.max_bytes
+            for item in request.items
+        ):
+            raise TerminalEgressError("emit_capture output exceeds its CaptureContract budget")
+        if contract.epistemic_grade == "derived":
+            raise TerminalEgressError(
+                "emit_capture cannot satisfy a derived CaptureContract without reducer "
+                "and input receipt-set proof"
+            )
         request_v2 = request if isinstance(request, TerminalEgressRequestV2) else None
         if request_v2 is not None and (
             self.producer != request.procedure_identity

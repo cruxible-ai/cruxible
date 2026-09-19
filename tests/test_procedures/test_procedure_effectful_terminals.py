@@ -54,7 +54,7 @@ from tests.test_procedures.test_procedure_source_runs import _accept_more
 NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 
 
-def test_effectful_terminals_and_post_inbox_remain_dark_until_p2_b_runtime() -> None:
+def test_direct_lane_requires_line_authority_for_effectful_terminals() -> None:
     assert SERVED_NODE_KINDS.isdisjoint(
         {"emit_capture", "post_inbox", "propose_change_set", "mandate_settlement"}
     )

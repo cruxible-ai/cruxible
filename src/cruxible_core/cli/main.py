@@ -375,6 +375,12 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "whoami": _command(
                 "playbill", "whoami", "Explain the active writer identity and permissions."
             ),
+            "capture": _group(
+                "Read verified retained Capture evidence.",
+                {"read": _command("playbill", "read_capture", "Read one retained Capture.")},
+                module="playbill",
+                attr="capture_group",
+            ),
             "body": _group(
                 "Store inert Document body bytes.",
                 {

@@ -8,6 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, Request, Response
 
 from cruxible_client import contracts
+from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequestV1,
     ClaimAttestationAppendResultV1,
@@ -478,6 +479,11 @@ async def get_document(
         identity,
         at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
     )
+
+
+@router.post("/{instance_id}/playbill/captures/read", response_model=CaptureReadV1)
+async def read_capture(instance_id: str, request: CaptureReadRequestV1) -> CaptureReadV1:
+    return playbill_api.playbill_read_capture(resolve_server_instance_id(instance_id), request)
 
 
 @router.get(

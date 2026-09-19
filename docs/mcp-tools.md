@@ -88,6 +88,7 @@ outside the language server/MCP process.
 |---|---|---|
 | `cruxible_playbill_list_documents` | List accepted Documents and coordinate | `READ_ONLY` |
 | `cruxible_playbill_get_document` | Read an accepted Document envelope | `READ_ONLY` |
+| `cruxible_playbill_read_capture` | Verify retained Capture evidence and read bounded material | `GOVERNED_WRITE` |
 | `cruxible_playbill_dereference` | Read permission-gated body bytes | `GOVERNED_WRITE` |
 | `cruxible_playbill_history` | Read accepted history | `READ_ONLY` |
 | `cruxible_playbill_explain` | Explain governance, provenance, coverage, and history | `READ_ONLY` |

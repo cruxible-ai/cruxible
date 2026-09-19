@@ -20,6 +20,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentCreateRequestV2,
     AuthoringIntentCreateRequestV3,
 )
+from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequestV1,
     ClaimAttestationAppendResultV1,
@@ -714,6 +715,15 @@ class CruxibleClient:
             params=self._playbill_coordinate_params(at),
         )
         return self._parse_model(response, contracts.PlaybillDocumentView)
+
+    def read_playbill_capture(
+        self, instance_id: str, request: CaptureReadRequestV1
+    ) -> CaptureReadV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/captures/read",
+            json=request.model_dump(mode="json"),
+        )
+        return self._parse_model(response, CaptureReadV1)
 
     def dereference_playbill_document(
         self,

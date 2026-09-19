@@ -10,7 +10,7 @@ import tempfile
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -21,7 +21,14 @@ from cruxible_core.exhaust.records import (
     StoredProcedureJournalRecordV1,
     parse_journal_payload,
 )
-from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
+from cruxible_core.storage.cas import (
+    BodyAccessContext,
+    CasObjectMetadata,
+    ContentAddressedBodyStore,
+)
+
+if TYPE_CHECKING:
+    from cruxible_core.procedures.execution import ProcedureRunAdmissionV1
 
 PENDING_RESERVATION_DOMAIN = "playbill-pending-admission-material-reservation-v1"
 RUN_RESERVATION_DOMAIN = "playbill-run-material-reservation-v1"
@@ -571,6 +578,7 @@ __all__ = [
     "ProcedureMaterialReservationError",
     "ProcedureMaterialReservationStore",
     "RunMaterialReservationV1",
+    "ReservedCaptureStore",
     "make_pending_reservation",
     "make_run_reservation",
     "pending_reservation_id",
@@ -578,3 +586,52 @@ __all__ = [
     "run_reservation_id",
     "reserve_admission_material_body",
 ]
+
+
+class ReservedCaptureStore:
+    """Keep produced Capture objects GC-reachable until their event is durable."""
+
+    def __init__(
+        self,
+        *,
+        bodies: ContentAddressedBodyStore,
+        reservations: ProcedureMaterialReservationStore,
+        admission: ProcedureRunAdmissionV1,
+        event_kind: JournalEventKindV1 = "produced_capture",
+    ) -> None:
+        self._bodies = bodies
+        self._reservations = reservations
+        self._admission = admission
+        self._event_kind = event_kind
+        self.pending: list[RunMaterialReservationV1] = []
+
+    def store(self, content: bytes) -> CasObjectMetadata:
+        body_digest = self._bodies.digest_bytes(content).tagged
+        reservation = make_run_reservation(
+            instance_id=self._admission.instance_id,
+            partition_id=self._admission.journal_partition_id,
+            event_kind=self._event_kind,
+            run_id=self._admission.run_id,
+            admission_binding_digest=self._admission.admission_binding_digest,
+            body_digest=body_digest,
+        )
+        with self._reservations.locked():
+            self._reservations.reserve_locked(reservation)
+            metadata = self._bodies.store(content)
+        if metadata.digest != reservation.body_digest:
+            raise PlaybillExecutionError("reserved Capture material digest did not reproduce")
+        if all(item.reservation_id != reservation.reservation_id for item in self.pending):
+            self.pending.append(reservation)
+        return metadata
+
+    def verify(self, digest: str) -> bool:
+        return self._bodies.verify(digest)
+
+    def read(self, digest: str, *, access: BodyAccessContext) -> bytes:
+        return self._bodies.read(digest, access=access)
+
+    def release(self) -> None:
+        with self._reservations.locked():
+            for reservation in self.pending:
+                self._reservations.release_locked(reservation.reservation_id)
+        self.pending.clear()

@@ -31,6 +31,7 @@ from cruxible_client.contracts.authoring.models import (
     WorkingSelectionObservationV1,
 )
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
+from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequestV1,
     ClaimAttestationAppendResultV1,
@@ -218,6 +219,7 @@ from cruxible_core.service.discovery.since import (
     service_playbill_since,
     validate_playbill_since_request,
 )
+from cruxible_core.service.evidence.capture_reads import service_read_playbill_capture
 from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
 from cruxible_core.service.evidence.source_catalog import (
     service_check_playbill_source_bundle,
@@ -879,6 +881,15 @@ def playbill_list_principals(instance_id: str) -> contracts.PlaybillPrincipalLis
     check_permission("cruxible_playbill_read", instance_id=instance_id)
     result = service_list_playbill_principals(get_playbill_manager().get(instance_id))
     return contracts.PlaybillPrincipalList.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_read_capture(instance_id: str, request: CaptureReadRequestV1) -> CaptureReadV1:
+    check_permission("cruxible_playbill_body_read", instance_id=instance_id)
+    return service_read_playbill_capture(
+        get_playbill_manager().get(instance_id),
+        request=request,
+        access=_access(instance_id, include_body=True),
+    )
 
 
 def playbill_dereference_document(

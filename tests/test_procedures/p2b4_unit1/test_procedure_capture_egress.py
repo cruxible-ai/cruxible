@@ -135,3 +135,49 @@ def test_v2_capture_sink_refuses_a_configured_producer_mismatch(tmp_path: Path) 
 
     with pytest.raises(TerminalEgressError, match="producer differs"):
         sink.deliver_terminal_egress(request=request)
+
+
+@pytest.mark.parametrize("invalid", ["bytes", "source_kind", "derived"])
+def test_capture_terminal_checks_contract_before_writing(tmp_path: Path, invalid: str) -> None:
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_client.contracts.cas_contracts import digest_bytes
+
+    admission = _admission(tmp_path)
+    contract = capture_contract()
+    if invalid == "bytes":
+        contract = contract.model_copy(
+            update={
+                "selection_budget": contract.selection_budget.model_copy(update={"max_bytes": 1})
+            }
+        )
+    elif invalid == "derived":
+        contract = contract.model_copy(update={"epistemic_grade": "derived"})
+    else:
+        contract = contract.model_copy(update={"allowed_source_kinds": ("external",)})
+    digest = capture_contract_digest(contract).tagged
+    request = build_terminal_egress_request_v2(
+        _base_request(
+            "emit_capture",
+            admission=admission,
+            item=_item("result", value={"answer": 42}),
+            bound=ArtifactPin(
+                role="capture-contract", target=contract.identity, artifact_digest=digest
+            ),
+        ),
+        admission=admission,
+        procedure_mandate_digest=None,
+        calibration_reading_digests=(),
+        target_paths=(),
+    )
+    root = tmp_path / "refused-cas"
+    root.mkdir()
+    store = ContentAddressedBodyStore(root)
+    sink = CaptureTerminalEgressSink(
+        store=store,
+        contracts={digest: contract},
+        producer=admission.procedure_identity,
+        producer_binding_digest=admission.procedure_artifact_digest,
+    )
+    with pytest.raises(TerminalEgressError):
+        sink.deliver_terminal_egress(request=request)
+    assert not store.verify(digest_bytes(canonical_bytes({"answer": 42})).tagged)

@@ -338,6 +338,16 @@ Initialization creates governed state only. Install provider packages separately
 with `playbill provider install`; initialization needs no provider checkout or
 executable environment.
 
+## playbill capture
+
+```bash
+cruxible playbill capture read CAPTURE_DIGEST [--max-bytes BYTES]
+```
+
+Verify a retained Capture and return its evidence metadata and bounded material as JSON.
+Uses body-read permission and never refetches the external source. The SDK equivalent
+is `pb.capture(digest)`; its `.ref` can be passed to Claim authoring as `supported_by`.
+
 ## playbill body
 
 ~~~text

@@ -80,6 +80,11 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_dereference": (
         "Use when you need verified accepted body bytes and have body-read permission."
     ),
+    "cruxible_playbill_read_capture": (
+        "Use when you need verified retained Capture evidence for inspection or Claim authoring. "
+        "Requires body-read permission; max_bytes bounds returned material. "
+        "Never refetches sources."
+    ),
     "cruxible_playbill_history": (
         "Use when you need one Document's replay-verified accepted history."
     ),

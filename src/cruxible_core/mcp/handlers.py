@@ -31,6 +31,7 @@ from cruxible_client.authoring.sources import (
     mapped_root_aliases,
 )
 from cruxible_client.contracts.attestations import ApprovalAttestation
+from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequestV1,
     ClaimAttestationAppendResultV1,
@@ -658,6 +659,14 @@ def handle_playbill_get_document(instance_id: str, identity: str) -> contracts.P
         lambda client: client.get_playbill_document(instance_id, identity),
         lambda: playbill_api.playbill_get_document(instance_id, identity),
         operation_name="cruxible_playbill_get_document",
+    )
+
+
+def handle_playbill_read_capture(instance_id: str, request: CaptureReadRequestV1) -> CaptureReadV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.read_playbill_capture(instance_id, request),
+        lambda: playbill_api.playbill_read_capture(instance_id, request),
+        operation_name="cruxible_playbill_read_capture",
     )
 
 

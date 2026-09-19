@@ -37,7 +37,6 @@ from cruxible_client.contracts.captures import (
     build_provider_external_capture_v2,
     capture_contract_digest,
 )
-from cruxible_client.contracts.cas_contracts import CasObjectMetadata
 from cruxible_client.contracts.errors import (
     PlaybillCasError,
     PlaybillExecutionError,
@@ -167,6 +166,7 @@ from cruxible_core.procedures.egress import (
     TerminalEgressItemV1,
     TerminalEgressPreparerProtocol,
     TerminalEgressReceiptV1,
+    TerminalEgressReceiptV2,
     TerminalEgressRequestV1,
     TerminalEgressRequestV2,
     TerminalEgressSinkProtocol,
@@ -234,7 +234,7 @@ from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodySto
 from cruxible_core.storage.material_reservations import (
     PendingAdmissionMaterialReservationV1,
     ProcedureMaterialReservationStore,
-    RunMaterialReservationV1,
+    ReservedCaptureStore,
     make_run_reservation,
     run_material_invocation_id,
 )
@@ -2209,53 +2209,6 @@ class _RunState:
         return frozenset() if found is None else found.item(index)
 
 
-class _ReservedCaptureStore:
-    """Keep produced Capture objects GC-reachable until their event is durable."""
-
-    def __init__(
-        self,
-        *,
-        bodies: ContentAddressedBodyStore,
-        reservations: ProcedureMaterialReservationStore,
-        admission: ProcedureRunAdmissionV1,
-    ) -> None:
-        self._bodies = bodies
-        self._reservations = reservations
-        self._admission = admission
-        self.pending: list[RunMaterialReservationV1] = []
-
-    def store(self, content: bytes) -> CasObjectMetadata:
-        body_digest = self._bodies.digest_bytes(content).tagged
-        reservation = make_run_reservation(
-            instance_id=self._admission.instance_id,
-            partition_id=self._admission.journal_partition_id,
-            event_kind="produced_capture",
-            run_id=self._admission.run_id,
-            admission_binding_digest=self._admission.admission_binding_digest,
-            body_digest=body_digest,
-        )
-        with self._reservations.locked():
-            self._reservations.reserve_locked(reservation)
-            metadata = self._bodies.store(content)
-        if metadata.digest != reservation.body_digest:
-            raise PlaybillExecutionError("reserved Capture material digest did not reproduce")
-        if all(item.reservation_id != reservation.reservation_id for item in self.pending):
-            self.pending.append(reservation)
-        return metadata
-
-    def verify(self, digest: str) -> bool:
-        return self._bodies.verify(digest)
-
-    def read(self, digest: str, *, access: BodyAccessContext) -> bytes:
-        return self._bodies.read(digest, access=access)
-
-    def release(self) -> None:
-        with self._reservations.locked():
-            for reservation in self.pending:
-                self._reservations.release_locked(reservation.reservation_id)
-        self.pending.clear()
-
-
 def _effective_max_items(admission: ProcedureRunAdmissionV1) -> int:
     return (
         admission.hard_caps.max_items
@@ -3618,7 +3571,7 @@ class ProcedureExecutor:
                 "provider_protocol_violation",
                 details={"node_id": node.node_id, "reason": "Source result is not Capture wire"},
             ) from exc
-        reserved_store = _ReservedCaptureStore(
+        reserved_store = ReservedCaptureStore(
             bodies=self.bodies,
             reservations=self.material_reservations,
             admission=admission,
@@ -3965,6 +3918,16 @@ class ProcedureExecutor:
                     },
                 },
             )
+        if request.kind == "emit_capture":
+            emitted_bytes = sum(len(canonical_bytes(item.value)) for item in request.items)
+            if state.capture_bytes + emitted_bytes > admission.budget.max_capture_bytes:
+                raise _BudgetExceeded(
+                    "max_capture_bytes",
+                    limit=admission.budget.max_capture_bytes,
+                    observed=state.capture_bytes + emitted_bytes,
+                    node_id=node.node_id,
+                )
+            state.capture_bytes += emitted_bytes
         try:
             receipt = self._deliver_terminal_egress(request, admission=admission)
         except TerminalEgressError as exc:
@@ -4012,6 +3975,22 @@ class ProcedureExecutor:
                 "receipt": receipt.model_dump(mode="json"),
             },
         )
+        if isinstance(request, TerminalEgressRequestV2) and request.kind == "emit_capture":
+            assert isinstance(receipt, TerminalEgressReceiptV2)  # verified above
+            for child in receipt.children:
+                self._append_event(
+                    admission,
+                    records,
+                    "produced_capture",
+                    {
+                        "tag": "playbill-procedure-produced-capture-v1",
+                        "node_id": node.node_id,
+                        "capture_digest": child.egress_digest,
+                        "capture_contract_digest": receipt.bound_artifact_digest,
+                        "producer_receipt_digest": receipt.producer_receipt_digest,
+                        "observed_at": format_datetime(request.evaluation_time),
+                    },
+                )
 
     def _deliver_terminal_egress(
         self,

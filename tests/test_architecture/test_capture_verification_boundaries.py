@@ -74,6 +74,7 @@ def test_every_production_capture_verifier_injects_a_producer_receipt_resolver()
         "packages/cruxible-client/src/cruxible_client/contracts/claims.py",
         "src/cruxible_core/authoring/lowering.py",
         "src/cruxible_core/evidence/attestation_verification.py",
+        "src/cruxible_core/service/evidence/capture_reads.py",
     )
     assert all(
         "producer_receipt_resolver" in keywords and not literal_none
