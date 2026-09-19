@@ -38,9 +38,10 @@ from cruxible_core.providers.provider_local_runtime import (
     FileProviderSecretStore,
     LocalProviderDeploymentV1,
     LocalProviderExecutionDriver,
-    ProviderInstallationVerificationV1,
+    ProviderInstallationVerification,
     ProviderLocalRuntimeInvoker,
     ProviderSecretResolverRegistry,
+    verification_format_upgrade,
 )
 from cruxible_core.providers.provider_process_leases import (
     DEFAULT_PROVIDER_DESCENDANT_TRACKER_JOIN_TIMEOUT_SECONDS,
@@ -103,7 +104,7 @@ class ProviderDeploymentConfigV1(_StrictOperationalModel):
     environment_pin_key: str
     interpreter_path: str
     provider_runtime_version: str
-    installation_verification: ProviderInstallationVerificationV1 | None = None
+    installation_verification: ProviderInstallationVerification | None = None
     classifier_installations: tuple[ProviderBucketClassifierInstallationV1, ...] = ()
 
     @field_validator(
@@ -833,7 +834,14 @@ class ProviderRuntimeOperator:
                 current = self._load_config()
                 deployments = {item.deployment_digest: item for item in current.deployments}
                 prior = deployments.get(deployment.deployment_digest)
-                if prior is not None and prior != deployment:
+                upgrade = prior is not None and (
+                    prior.model_dump(exclude={"installation_verification"})
+                    == deployment.model_dump(exclude={"installation_verification"})
+                    and verification_format_upgrade(
+                        prior.installation_verification, deployment.installation_verification
+                    )
+                )
+                if prior is not None and prior != deployment and not upgrade:
                     raise ProviderLocalRuntimeRefused(
                         "environment_divergence",
                         "installed deployment identity cannot be overwritten",

@@ -396,3 +396,28 @@ def test_union_refuses_unknown_tags_and_noncanonical_wire(tmp_path: Path) -> Non
         parse_capture_envelope(json.dumps(payload, sort_keys=True).encode())
     with pytest.raises(CaptureFormatError, match="canonical"):
         parse_capture_envelope(render_capture_envelope(built.envelope) + b"\n")
+
+
+@pytest.mark.parametrize("revision", [1, 2])
+def test_each_workspace_interface_requires_the_host_read_receipt(tmp_path, revision):
+    from cruxible_client.contracts.workspace_file import (
+        WORKSPACE_FILE_INTERFACE_DIGEST,
+        WORKSPACE_FILE_INTERFACE_V2_DIGEST,
+    )
+
+    fixture = provider_capture_fixture(tmp_path)
+    built = build_provider_external_capture_v2(
+        store=fixture.store,
+        contract=fixture.contract,
+        result=fixture.result,
+        receipt=fixture.receipt,
+        occurrence=fixture.occurrence,
+        producer=fixture.producer,
+        bound_generation=fixture.bound_generation,
+    )
+    evidence = built.envelope.production_evidence.model_dump(mode="json")
+    evidence["interface_digest"] = (
+        WORKSPACE_FILE_INTERFACE_DIGEST if revision == 1 else WORKSPACE_FILE_INTERFACE_V2_DIGEST
+    )
+    with pytest.raises(ValidationError, match="source-read"):
+        ProviderInvocationCaptureEvidenceV1.model_validate(evidence)

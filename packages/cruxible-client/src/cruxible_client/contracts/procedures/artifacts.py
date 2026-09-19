@@ -554,7 +554,15 @@ def check_provider_node_contract(
     if declared_effect != interface.registration.effect_class:
         raise ValueError("ProviderInterface effect class differs from its operation declaration")
     if isinstance(node, SourceNodeV4):
-        if contract.output != ACQUISITION_RESULT:
+        from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_INTERFACE_V2_DIGEST
+
+        # The daemon owns workspace reads and wraps the structured byte result
+        # with its independently retained source-read receipt. Generic Sources
+        # must themselves return the external acquisition envelope.
+        workspace_read = (
+            interface.registration.interface_digest == WORKSPACE_FILE_INTERFACE_V2_DIGEST
+        )
+        if contract.output != ACQUISITION_RESULT and not workspace_read:
             raise ValueError("Source requires the shared external acquisition result contract")
         if interface.registration.effect_class == "external_mutation":
             raise ValueError("Source cannot invoke an external mutation")

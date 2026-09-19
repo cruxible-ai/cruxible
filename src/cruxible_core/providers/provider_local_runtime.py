@@ -19,9 +19,9 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol, cast
+from typing import Annotated, Literal, Protocol, cast
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import (
     Sha256Value,
@@ -142,7 +142,7 @@ class LocalProviderDeploymentV1:
     environment_pin_key: str
     interpreter_path: Path
     provider_runtime_version: str
-    installation_verification: ProviderInstallationVerificationV1 | None = None
+    installation_verification: ProviderInstallationVerification | None = None
 
 
 class ProviderMaterializationLinkV3(BaseModel):
@@ -214,6 +214,62 @@ class ProviderInstallationVerificationV1(BaseModel):
         return value
 
 
+class ProviderInstallationVerificationV2(ProviderInstallationVerificationV1):
+    """Portable verification: paths are relative to the installed environment."""
+
+    tag: Literal["cruxible-provider-installation-verification-v2"] = (
+        "cruxible-provider-installation-verification-v2"  # type: ignore[assignment]
+    )
+
+
+ProviderInstallationVerification = Annotated[
+    ProviderInstallationVerificationV1 | ProviderInstallationVerificationV2,
+    Field(discriminator="tag"),
+]
+
+
+def verification_format_upgrade(
+    before: ProviderInstallationVerification | None,
+    after: ProviderInstallationVerification | None,
+) -> bool:
+    """Only a full, content-identical re-verification can succeed a V1 record."""
+    return (
+        type(before) is ProviderInstallationVerificationV1
+        and isinstance(after, ProviderInstallationVerificationV2)
+        and before.model_dump(exclude={"tag", "deployment_identity_digest"})
+        == after.model_dump(exclude={"tag", "deployment_identity_digest"})
+    )
+
+
+def _portable_deployment_identity(deployment: LocalProviderDeploymentV1) -> str:
+    root = deployment.environment_path.resolve()
+    try:
+        paths = {
+            name: getattr(deployment, name).resolve().relative_to(root).as_posix()
+            for name in (
+                "distribution_path",
+                "lock_path",
+                "environment_manifest_path",
+                "interpreter_path",
+            )
+        }
+    except ValueError as exc:
+        raise ProviderLocalRuntimeRefused(
+            "environment_divergence", "installation paths escape the environment"
+        ) from exc
+    return _sha256(
+        canonical_bytes(
+            {
+                "tag": "cruxible-provider-deployment-identity-v2",
+                "deployment_digest": deployment.deployment_digest,
+                "paths": paths,
+                "environment_pin_key": deployment.environment_pin_key,
+                "provider_runtime_version": deployment.provider_runtime_version,
+            }
+        )
+    )
+
+
 def _deployment_identity(deployment: LocalProviderDeploymentV1) -> str:
     return _sha256(
         canonical_bytes(
@@ -234,7 +290,7 @@ def _deployment_identity(deployment: LocalProviderDeploymentV1) -> str:
 def verify_provider_installation(
     provider: ProviderV3,
     deployment: LocalProviderDeploymentV1,
-) -> ProviderInstallationVerificationV1:
+) -> ProviderInstallationVerificationV2:
     """Explicit install/reverify operation. It is never invoked by the run binder."""
     payload = provider.runtime_artifact
     local = payload.local_env
@@ -304,8 +360,8 @@ def verify_provider_installation(
                 raise ValueError("installation entrypoint module is absent")
     except (OSError, ValueError) as exc:
         raise ProviderLocalRuntimeRefused("environment_divergence", str(exc)) from exc
-    return ProviderInstallationVerificationV1(
-        deployment_identity_digest=_deployment_identity(deployment),
+    return ProviderInstallationVerificationV2(
+        deployment_identity_digest=_portable_deployment_identity(deployment),
         distribution_digest=payload.distribution.sha256,
         lock_digest=local.lock_sha256,
         materialization_digest=seal.materialization_digest,
@@ -642,8 +698,13 @@ class LocalProviderExecutionDriver:
                 raise ProviderLocalRuntimeRefused(
                     "environment_divergence", "package installation has not been verified"
                 )
+            identity = (
+                _portable_deployment_identity(deployment)
+                if isinstance(verification, ProviderInstallationVerificationV2)
+                else _deployment_identity(deployment)
+            )
             if (
-                verification.deployment_identity_digest != _deployment_identity(deployment)
+                verification.deployment_identity_digest != identity
                 or verification.distribution_digest != provider.runtime_artifact.distribution.sha256
                 or verification.lock_digest != provider.runtime_artifact.local_env.lock_sha256
                 or verification.materialization_digest != local_ref.materialization_digest

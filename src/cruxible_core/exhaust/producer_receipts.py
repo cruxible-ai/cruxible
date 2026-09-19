@@ -23,7 +23,7 @@ from cruxible_client.contracts.provider_execution import (
     ProviderInvocationCompletedV1,
 )
 from cruxible_client.contracts.workspace_file import (
-    WORKSPACE_FILE_INTERFACE_DIGEST,
+    WORKSPACE_FILE_INTERFACE_DIGESTS,
     SourceReadReceiptV1,
     WorkspaceFileSourceRequestV1,
     source_read_receipt_digest,
@@ -356,7 +356,7 @@ class JournalProducerReceiptResolver:
                             (provider_receipt.run_id, provider_receipt.occurrence_path)
                         )
                         if (
-                            provider_receipt.interface_digest == WORKSPACE_FILE_INTERFACE_DIGEST
+                            provider_receipt.interface_digest in WORKSPACE_FILE_INTERFACE_DIGESTS
                         ) != (source_read is not None):
                             raise ValueError(
                                 "Provider completion source-read receipt does not correspond"
