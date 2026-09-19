@@ -29,8 +29,6 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.claims import ClaimStatement, claim_statement_digest
 from cruxible_client.contracts.declared_blocks import (
-    MAX_PROJECTION_SCAN_BYTES,
-    MAX_PROJECTION_SOURCE_BYTES,
     ParsedProjectionBlock,
     ProjectionArtifactBackingV1,
     ProjectionBackingV1,
@@ -39,9 +37,11 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionClaimBackingV1,
     ProjectionCurrencyPolicy,
     ProjectionMarkerError,
+    ProjectionProcessingLimitExceeded,
     ProjectionQueryBackingV1,
     ProjectionResolvedParameterBindingV1,
     assert_projection_block_frame,
+    check_projection_processing_bytes,
     declares_projection_block,
     discover_projection_blocks,
     frame_projection_block,
@@ -49,8 +49,10 @@ from cruxible_client.contracts.declared_blocks import (
     projection_manifest,
     projection_manifest_refs,
     projection_parameter_digest,
+    projection_processing_policy,
     projection_query_semantic_result_digest,
     projection_window_intersecting,
+    read_projection_source,
     render_compact_projection_opening,
     render_projection_opening,
     resolve_projection_manifest_digest,
@@ -324,6 +326,18 @@ def _marker_error_item(
     error: Exception,
 ) -> PlaybillBlockSyncItemV1:
     relative = _relative_path(root, path)
+    if isinstance(error, ProjectionProcessingLimitExceeded):
+        return PlaybillBlockSyncItemV1(
+            path=relative,
+            outcome="refused",
+            reason="projection_processing_incomplete",
+            detail={
+                "status": "incomplete",
+                "observed_bytes": error.observed,
+                "max_bytes": error.limit,
+                "message": str(error),
+            },
+        )
     return PlaybillBlockSyncItemV1(
         path=relative,
         outcome="refused",
@@ -399,8 +413,8 @@ def _discover_source(
             detail={"message": str(exc)},
         )
     try:
-        content = resolved.read_bytes()
-    except OSError as exc:
+        content = read_projection_source(resolved)
+    except (OSError, ProjectionProcessingLimitExceeded) as exc:
         return None, _marker_error_item(
             root=root,
             path=resolved,
@@ -450,22 +464,27 @@ def _discover_workspace_sources(
             if path.is_symlink() or not path.is_file():
                 continue
             size = path.stat().st_size
-            budgeted_size = min(size, MAX_PROJECTION_SOURCE_BYTES + 1)
-            if scanned_bytes + budgeted_size > MAX_PROJECTION_SCAN_BYTES:
+            if scanned_bytes + size > projection_processing_policy().max_bytes:
                 items.append(
                     PlaybillBlockSyncItemV1(
                         path=".",
                         outcome="refused",
-                        reason="source_path_invalid",
+                        reason="projection_processing_incomplete",
                         detail={
-                            "message": "workspace marker scan exceeded its 32 MiB byte ceiling"
+                            "status": "incomplete",
+                            "max_bytes": projection_processing_policy().max_bytes,
+                            "message": "workspace marker scan exhausted its processing budget",
                         },
                     )
                 )
                 break
             with path.open("rb") as handle:
-                content = handle.read(MAX_PROJECTION_SOURCE_BYTES + 1)
+                content = handle.read(projection_processing_policy().max_bytes - scanned_bytes + 1)
             scanned_bytes += len(content)
+            check_projection_processing_bytes(scanned_bytes)
+        except ProjectionProcessingLimitExceeded as exc:
+            items.append(_marker_error_item(root=root, path=root, content=b"", error=exc))
+            break
         except OSError:
             continue
         if b"playbill:block:" not in content:
@@ -700,8 +719,8 @@ def sync_projection_blocks(
         relative = _relative_path(root, path)
         content = b""
         try:
-            content = path.read_bytes()
-        except OSError as exc:
+            content = read_projection_source(path)
+        except (OSError, ProjectionProcessingLimitExceeded) as exc:
             items.append(_marker_error_item(root=root, path=path, content=content, error=exc))
             continue
         try:
@@ -1022,7 +1041,7 @@ def repin_projection_block(
     root = Path(workspace).resolve()
     sources = WorkspaceSources(root)
     path = sources.path_for_source(source_id)
-    content = path.read_bytes()
+    content = read_projection_source(path)
     blocks = parse_projection_blocks(
         content,
         source_id=source_id,

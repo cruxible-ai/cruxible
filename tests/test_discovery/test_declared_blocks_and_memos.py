@@ -40,8 +40,6 @@ from pydantic import ValidationError
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.declared_blocks import (
-    MAX_PROJECTION_BACKINGS_PER_BLOCK,
-    MAX_PROJECTION_STAMP_BYTES,
     ProjectionBackingV1,
     ProjectionBlockStampV1,
     ProjectionClaimBackingV1,
@@ -400,17 +398,7 @@ def test_a_block_refuses_a_second_watched_query_at_the_model(
 def test_a_held_list_is_sized_for_a_real_table_and_still_bounded(
     watched_world: WatchedWorld,
 ) -> None:
-    """The ceiling must be reached by writing a page, not by counting Claims.
-
-    The old pair -- sixty-four backings inside sixteen kibibytes -- made the
-    limit a LAYOUT constraint: a governed table of sixty-six rows had to be split
-    at a row number that means nothing to a reader, and an author discovered the
-    ceiling by counting members rather than by writing prose. A block sized for a
-    real table has to hold five hundred and twelve rows AND still fit the stamp
-    ceiling, or the two limits would contradict each other and the larger one
-    would be a promise the marker cannot keep. It stays a ceiling: one more row
-    is refused, so no marker grows without bound.
-    """
+    """A backing list above the old count/marker cap remains a valid declaration."""
 
     coordinate = AcceptedCoordinate.from_internal(watched_world.instance.accepted_coordinate())
 
@@ -424,13 +412,13 @@ def test_a_held_list_is_sized_for_a_real_table_and_still_bounded(
             body_digest="sha256:" + "b" * 64,
         )
 
-    full = stamp(MAX_PROJECTION_BACKINGS_PER_BLOCK)
-    assert len(full.backing) == 512
+    full = stamp(1024)
+    assert len(full.backing) == 1024
     # The ceiling governs the stamp's own bytes, which is what the opening
     # carries base64-encoded; a full held list must fit inside it with room to
     # spare, or the two limits could not both be honoured.
     content = canonical_bytes(full.model_dump(mode="json"))
-    assert len(content) < MAX_PROJECTION_STAMP_BYTES
+    assert len(content) > 128 * 1024
     document = (
         render_projection_opening(full)
         + b"status: ready\n"
@@ -439,8 +427,7 @@ def test_a_held_list_is_sized_for_a_real_table_and_still_bounded(
     (parsed,) = parse_projection_blocks(document, source_id=full.source_id)
     assert parsed.stamp == full
 
-    with pytest.raises(ValidationError, match="at most 512 items"):
-        stamp(MAX_PROJECTION_BACKINGS_PER_BLOCK + 1)
+    assert len(stamp(1025).backing) == 1025
 
 
 # --------------------------------------------------------------------------

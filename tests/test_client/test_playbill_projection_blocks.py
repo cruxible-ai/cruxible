@@ -23,13 +23,14 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import WorkingSelectionObservationV1
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.declared_blocks import (
-    MAX_PROJECTION_BLOCKS_PER_SOURCE,
-    MAX_PROJECTION_SOURCE_BYTES,
     ProjectionBlockStampV1,
     ProjectionClaimBackingV1,
+    ProjectionProcessingLimitExceeded,
+    ProjectionProcessingPolicyV1,
     ProjectionQueryBackingV1,
     ProjectionResolvedParameterBindingV1,
     projection_parameter_digest,
+    projection_processing_budget,
     projection_query_semantic_result_digest,
     projection_window_intersecting,
     stamped_projection_windows,
@@ -154,15 +155,14 @@ def test_duplicate_nested_unclosed_and_excess_blocks_refuse() -> None:
     nested = render_projection_opening(_stamp()) + _block(block_id="inner")
     with pytest.raises(ProjectionMarkerError, match="nest or overlap"):
         parse_projection_blocks(nested, source_id="corpus.runbook")
-    many = b"".join(
-        _block(block_id=f"block{index}") for index in range(MAX_PROJECTION_BLOCKS_PER_SOURCE + 1)
-    )
-    with pytest.raises(ProjectionMarkerError, match="128-block"):
-        parse_projection_blocks(many, source_id="corpus.runbook")
-    with pytest.raises(ProjectionMarkerError, match="4 MiB"):
-        parse_projection_blocks(
-            b"x" * (MAX_PROJECTION_SOURCE_BYTES + 1), source_id="corpus.runbook"
-        )
+    many = b"".join(_block(block_id=f"block{index}") for index in range(129))
+    assert len(parse_projection_blocks(many, source_id="corpus.runbook")) == 129
+    large = b"x" * (4 * 1024 * 1024 + 1) + b"\n" + _block()
+    assert len(parse_projection_blocks(large, source_id="corpus.runbook")) == 1
+    with projection_processing_budget(ProjectionProcessingPolicyV1(max_bytes=1024)):
+        with pytest.raises(ProjectionProcessingLimitExceeded):
+            parse_projection_blocks(large, source_id="corpus.runbook")
+    assert len(parse_projection_blocks(large, source_id="corpus.runbook")) == 1
 
 
 def test_evidence_intersection_is_typed_but_ordinary_prose_is_allowed() -> None:
@@ -303,7 +303,7 @@ def test_a_page_with_no_stamped_block_sends_only_its_selection() -> None:
 def test_an_oversized_capture_with_no_marker_is_citable(tmp_path: object) -> None:
     """Card 100: a capture is evidence, not a page, so the page ceiling does not apply."""
 
-    content = b"x" * (MAX_PROJECTION_SOURCE_BYTES + 1)
+    content = b"x" * (4 * 1024 * 1024 + 1)
     assert_independent_projection_evidence(
         source_id="corpus.big",
         content=content,

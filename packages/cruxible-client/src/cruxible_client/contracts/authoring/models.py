@@ -116,7 +116,6 @@ INSERTION_PREPARE_OPERATION_V2_DOMAIN = "playbill-insertion-prepare-operation-v2
 _INSERTION_PREPARE_TERMINAL_OPERATION_V2_DOMAIN = "playbill-insertion-prepare-terminal-operation-v2"
 INSERTION_CONFIRM_OPERATION_V2_DOMAIN = "playbill-insertion-confirm-operation-v2"
 PUBLICATION_BLOCK_ID_DOMAIN = "playbill-publication-block-id-v1"
-MAX_PUBLICATION_SOURCE_BYTES = 4 * 1024 * 1024
 
 MAX_DIAGNOSTICS = 128
 MAX_BLOCKED_CHECKS = 128
@@ -599,7 +598,7 @@ class InsertionTargetV2(_StrictAuthoringModel):
     source_id: str
     coordinate: WorkingSelectionCoordinateV1
     initial_preimage_digest: str
-    initial_preimage_byte_length: int = Field(ge=0, le=MAX_PUBLICATION_SOURCE_BYTES)
+    initial_preimage_byte_length: int = Field(ge=0)
     selector: InsertionAnchorWindowV1
     operation: InsertionOperation
 
@@ -652,7 +651,7 @@ class PublicationSourceObservationV2(_StrictAuthoringModel):
     source_id: str
     content_base64: str
     content_digest: str
-    byte_length: int = Field(ge=0, le=MAX_PUBLICATION_SOURCE_BYTES)
+    byte_length: int = Field(ge=0)
 
     @field_validator("source_id")
     @classmethod
@@ -662,9 +661,7 @@ class PublicationSourceObservationV2(_StrictAuthoringModel):
     @field_validator("content_base64")
     @classmethod
     def _content(cls, value: str) -> str:
-        content = _canonical_base64(value, label="publication source content")
-        if len(content) > MAX_PUBLICATION_SOURCE_BYTES:
-            raise ValueError("publication source exceeds its 4 MiB byte ceiling")
+        _canonical_base64(value, label="publication source content")
         return value
 
     @field_validator("content_digest")
@@ -1654,11 +1651,11 @@ class PublicationPreparationV2(_StrictAuthoringModel):
     rebased_selector: InsertionAnchorWindowV1
     operation: InsertionOperation
     body_digest: str
-    body_byte_length: int = Field(ge=0, le=MAX_PUBLICATION_SOURCE_BYTES)
+    body_byte_length: int = Field(ge=0)
     block_id: str
     stamp: ProjectionBlockStamp
     inserted_block_digest: str
-    inserted_block_byte_length: int = Field(ge=0, le=MAX_PUBLICATION_SOURCE_BYTES)
+    inserted_block_byte_length: int = Field(ge=0)
     block_start_byte: int = Field(ge=0)
     block_end_byte: int = Field(ge=0)
     body_start_byte: int = Field(ge=0)
@@ -2783,6 +2780,7 @@ PlaybillBlockSyncReason: TypeAlias = Literal[
     "block_concurrent_edit",
     "block_frame_invalid",
     "block_sync_failed",
+    "projection_processing_incomplete",
     "block_query_unchecked",
 ]
 
@@ -2877,7 +2875,6 @@ __all__ = [
     "INSERTION_SOURCE_OBSERVATION_V2_DIGEST_DOMAIN",
     "INSERTION_TARGET_V2_DIGEST_DOMAIN",
     "INSERTION_TERMINAL_TOMBSTONE_V2_DIGEST_DOMAIN",
-    "MAX_PUBLICATION_SOURCE_BYTES",
     "PUBLICATION_BLOCK_ID_DOMAIN",
     "AcceptanceConditionV1",
     "AuthoringArtifactReferenceV1",

@@ -40,6 +40,7 @@ from cruxible_client.contracts.declared_blocks import (
     ParsedProjectionBlock,
     ProjectionClaimBackingV1,
     ProjectionMarkerError,
+    ProjectionProcessingLimitExceeded,
     parse_projection_blocks,
 )
 from cruxible_client.contracts.errors import PlaybillCasError, ProposalIntegrityError
@@ -529,6 +530,8 @@ def _bound_publication_observations(
                     source_id=preparation.source_id,
                     manifests=observed.manifest_bytes,
                 )
+            except ProjectionProcessingLimitExceeded:
+                raise
             except ProjectionMarkerError:
                 parsed_by_source[preparation.source_id] = ()
         matches = tuple(

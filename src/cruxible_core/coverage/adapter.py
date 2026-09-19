@@ -163,6 +163,7 @@ class WorkingSourceObservationV1(_StrictAdapterModel):
         if self.projection_manifests:
             from cruxible_client.contracts.declared_blocks import (
                 ProjectionMarkerError,
+                ProjectionProcessingLimitExceeded,
                 parse_projection_blocks,
             )
 
@@ -173,6 +174,8 @@ class WorkingSourceObservationV1(_StrictAdapterModel):
                     manifests=self.manifest_bytes,
                     allow_bootstrap=True,
                 )
+            except ProjectionProcessingLimitExceeded:
+                raise
             except ProjectionMarkerError as exc:
                 raise ValueError(str(exc)) from exc
         if len(content) != self.byte_length:

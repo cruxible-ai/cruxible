@@ -1213,3 +1213,24 @@ def test_projection_checks_reject_naive_time_on_both_read_surfaces(batch, value)
     absolute = model.model_validate({**payload, "evaluation_time": "2026-09-16T08:00:00-04:00"})
     assert absolute.evaluation_time == datetime(2026, 9, 16, 12, tzinfo=UTC)
     assert absolute.evaluation_time.tzinfo == UTC
+
+
+def test_processing_budget_is_incomplete_not_malformed_or_current(tmp_path):
+    from cruxible_client.contracts.declared_blocks import (
+        ProjectionProcessingPolicyV1,
+        projection_processing_budget,
+    )
+
+    source = _workspace(tmp_path)
+    before = source.read_bytes()
+    client = _SyncClient(status="successor")
+    with projection_processing_budget(ProjectionProcessingPolicyV1(max_bytes=32)):
+        result = sync_projection_blocks(
+            client, INSTANCE_ID, workspace=tmp_path, paths=("corpus/runbook.md",)
+        )
+    assert len(result.items) == 1
+    item = result.items[0]
+    assert item.blocking
+    assert item.reason == "projection_processing_incomplete"
+    assert item.detail["status"] == "incomplete"
+    assert source.read_bytes() == before

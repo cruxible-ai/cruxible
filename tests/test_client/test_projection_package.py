@@ -82,7 +82,7 @@ def test_manifest_limits_and_server_observation() -> None:
     stamp = _stamp()
     digest, manifest = projection_manifest(stamp)
     page = frame_projection_block(stamp=stamp, body=OLD_BODY, compact=True)
-    with pytest.raises(ProjectionMarkerError, match="ceiling"):
+    with pytest.raises(ProjectionMarkerError, match="unavailable"):
         parse_projection_blocks(
             page, source_id=stamp.source_id, manifests={str(i): b"x" for i in range(129)}
         )
@@ -238,3 +238,22 @@ def test_compact_observation_allows_adjacent_unstamped_draft() -> None:
     )
     assert blocks[0].stamp == stamp
     assert blocks[1].stamp is None
+
+
+def test_archive_processing_budget_is_configurable() -> None:
+    from cruxible_client.contracts.declared_blocks import (
+        ProjectionProcessingLimitExceeded,
+        ProjectionProcessingPolicyV1,
+        projection_processing_budget,
+    )
+
+    stamp = _stamp()
+    digest, manifest = projection_manifest(stamp)
+    page = frame_projection_block(stamp=stamp, body=OLD_BODY, compact=True)
+    package = ProjectionPackage(page + b"large plain page\n" * 600_000, {digest: manifest})
+    archive = package.to_bytes()
+    assert len(archive) > 12 * 1024 * 1024
+    with projection_processing_budget(ProjectionProcessingPolicyV1(max_bytes=1024)):
+        with pytest.raises(ProjectionProcessingLimitExceeded):
+            ProjectionPackage.from_bytes(archive)
+    assert ProjectionPackage.from_bytes(archive).content == package.content

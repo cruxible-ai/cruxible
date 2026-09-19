@@ -34,14 +34,14 @@ from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.declared_blocks import (
     MAX_PROJECTION_CARDS_PER_SOURCE,
     MAX_PROJECTION_COVERAGE_BINDINGS,
-    MAX_PROJECTION_SCAN_BYTES,
-    MAX_PROJECTION_SOURCE_BYTES,
     PlaybillPresentationPolicyAny,
     PlaybillPresentationPolicyNoteV1,
     PlaybillPresentationPolicyV1,
     PlaybillPresentationPolicyV2,
     PlaybillProjectionCoverageBindingV1,
     PlaybillProjectionCoverageObservationV1,
+    projection_processing_policy,
+    read_projection_source,
     upgrade_playbill_presentation_policy,
 )
 from cruxible_client.contracts.errors import PlaybillError
@@ -853,8 +853,8 @@ def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
     for entry in sources.document_entries:
         try:
             path = sources.path_for_source(entry.name)
-            content = path.read_bytes()
-        except (OSError, ValueError):
+            content = read_projection_source(path)
+        except (OSError, ValueError, PlaybillError):
             continue
         source_observations.append(
             {
@@ -972,12 +972,12 @@ def observe_playbill_projection_coverage(
     scanned_bytes = 0
     for document_entry in sources.document_entries:
         try:
-            content = sources.path_for_source(document_entry.name).read_bytes()
+            content = read_projection_source(sources.path_for_source(document_entry.name))
         except (OSError, ValueError, PlaybillError):
             claims_complete = False
             break
         scanned_bytes += len(content)
-        if len(content) > MAX_PROJECTION_SOURCE_BYTES or scanned_bytes > MAX_PROJECTION_SCAN_BYTES:
+        if scanned_bytes > projection_processing_policy().max_bytes:
             claims_complete = False
             break
         try:
@@ -1382,12 +1382,8 @@ def observe_playbill_next_workspace_with_coverage(
             continue
         source_id = entry["source_id"]
         try:
-            content = sources.path_for_source(source_id).read_bytes()
+            content = read_projection_source(sources.path_for_source(source_id))
         except (OSError, ValueError, PlaybillError):
-            continue
-        if len(content) > MAX_PROJECTION_SOURCE_BYTES:
-            # The nested contract refuses oversized sources; omission truthfully
-            # leaves every citation to this logical source explicitly unobserved.
             continue
         material[source_id] = content
         document_id = entry.get("document_id")
@@ -1423,7 +1419,7 @@ def observe_playbill_next_workspace_with_coverage(
         },
         scan_budget={
             "tag": "playbill-coverage-scan-budget-v1",
-            "max_scanned_bytes": MAX_PROJECTION_SCAN_BYTES,
+            "max_scanned_bytes": projection_processing_policy().max_bytes,
         },
     )
     returned_at = coverage.coordinate.model_dump(mode="json")

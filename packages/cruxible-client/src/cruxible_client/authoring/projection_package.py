@@ -20,11 +20,12 @@ from types import MappingProxyType
 from cruxible_client.authoring.sdk_types import ExactContent
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.declared_blocks import (
-    MAX_PROJECTION_SOURCE_BYTES,
-    MAX_PROJECTION_STAMP_BYTES,
     ProjectionMarkerError,
+    check_projection_processing_bytes,
     discover_projection_blocks,
     projection_manifest_refs,
+    projection_processing_policy,
+    read_projection_source,
     resolve_projection_manifest_digest,
 )
 
@@ -46,12 +47,11 @@ def load_projection_manifests(workspace: Path, content: bytes) -> dict[str, byte
             if not path.resolve(strict=True).is_relative_to(root) or path.is_symlink():
                 raise ProjectionMarkerError("projection manifest path escapes its workspace")
             with path.open("rb") as stream:
-                body = stream.read(MAX_PROJECTION_STAMP_BYTES + 1)
+                body = stream.read(projection_processing_policy().max_bytes - total + 1)
         except OSError as exc:
             raise ProjectionMarkerError(f"projection manifest is unavailable: {digest}") from exc
         total += len(body)
-        if len(body) > MAX_PROJECTION_STAMP_BYTES or total > MAX_PROJECTION_SOURCE_BYTES:
-            raise ProjectionMarkerError("projection manifest package exceeds its byte ceiling")
+        check_projection_processing_bytes(total + len(content))
         if "sha256:" + hashlib.sha256(body).hexdigest() != digest:
             raise ProjectionMarkerError("projection manifest digest does not reproduce")
         result[digest] = body
@@ -71,7 +71,7 @@ def retain_local_manifests(workspace: Path, manifests: Mapping[str, bytes]) -> N
             raise ProjectionMarkerError("projection manifest digest does not reproduce")
         path = directory / (digest.removeprefix("sha256:") + ".json")
         if path.exists() or path.is_symlink():
-            if path.is_symlink() or path.read_bytes() != content:
+            if path.is_symlink() or read_projection_source(path) != content:
                 raise ProjectionMarkerError("existing immutable projection manifest is corrupt")
             continue
         fd, temporary = tempfile.mkstemp(prefix=".manifest-", dir=directory)
@@ -112,8 +112,7 @@ class ProjectionPackage:
         source = (root / path).resolve(strict=True)
         if not source.is_relative_to(root):
             raise ProjectionMarkerError("projection page escapes its workspace")
-        with source.open("rb") as stream:
-            content = stream.read(MAX_PROJECTION_SOURCE_BYTES + 1)
+        content = read_projection_source(source)
         return cls(content, load_projection_manifests(root, content))
 
     def to_bytes(self) -> bytes:
@@ -132,8 +131,7 @@ class ProjectionPackage:
 
     @classmethod
     def from_bytes(cls, content: bytes) -> ProjectionPackage:
-        if len(content) > 12 * 1024 * 1024:
-            raise ProjectionMarkerError("projection package archive exceeds its byte ceiling")
+        check_projection_processing_bytes(len(content))
         try:
             value = json.loads(content)
             if (
@@ -176,5 +174,7 @@ class ProjectionPackage:
             with target.open("xb") as stream:
                 stream.write(self.content)
         else:
-            replace_publication_file(target, expected=target.read_bytes(), replacement=self.content)
+            replace_publication_file(
+                target, expected=read_projection_source(target), replacement=self.content
+            )
         return target

@@ -19,8 +19,7 @@ from cruxible_client.authoring.workspace import (
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.declared_blocks import (
     MAX_PROJECTION_CARDS_PER_SOURCE,
-    MAX_PROJECTION_SCAN_BYTES,
-    MAX_PROJECTION_SOURCE_BYTES,
+    projection_processing_policy,
 )
 from tests.test_client.test_playbill_projection_repin import (
     COORDINATE,
@@ -171,7 +170,10 @@ def test_one_coordinate_pinned_coverage_read_enriches_existing_v1_without_replac
     assert len(client.calls) == 1
     assert client.calls[0]["at"] == COORDINATE
     assert client.calls[0]["budget"]["max_cards_per_span"] == MAX_PROJECTION_CARDS_PER_SOURCE
-    assert client.calls[0]["scan_budget"]["max_scanned_bytes"] == MAX_PROJECTION_SCAN_BYTES
+    assert (
+        client.calls[0]["scan_budget"]["max_scanned_bytes"]
+        == projection_processing_policy().max_bytes
+    )
     assert old["source_observations"] == [
         {
             "source_id": "corpus.runbook",
@@ -354,7 +356,7 @@ def test_malformed_claim_markers_never_assert_claim_absence_but_leave_catalog_co
 
 def test_oversized_source_remains_unobserved_without_calling_coverage(tmp_path: Path) -> None:
     source = _workspace(tmp_path)
-    source.write_bytes(b"x" * (MAX_PROJECTION_SOURCE_BYTES + 1))
+    source.write_bytes(b"x" * (projection_processing_policy().max_bytes + 1))
     client = _CoverageClient()
 
     observation, coordinate = _observe(client, tmp_path)

@@ -6,10 +6,14 @@ import base64
 import binascii
 import hashlib
 import json
+import os
 import re
 from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import (
@@ -40,18 +44,6 @@ PROJECTION_MARKER_GRAMMAR: Literal["playbill-projection-marker-grammar-v1"] = (
 )
 PROJECTION_QUERY_SEMANTIC_RESULT_DOMAIN = "playbill-projection-query-semantic-result-v1"
 PROJECTION_QUERY_PARAMETER_DOMAIN = "playbill-query-parameters-v1"
-MAX_PROJECTION_SOURCE_BYTES = 4 * 1024 * 1024
-MAX_PROJECTION_BLOCKS_PER_SOURCE = 128
-# A stamp is a base64 comment line, so both ceilings are about what one marker
-# may carry rather than about correctness. The old pair -- 64 backings inside
-# 16 KiB -- made the ceiling a LAYOUT constraint: a table of 66 governed rows
-# had to be cut in two at a row number that means nothing to a reader, and the
-# author discovered the limit by counting Claims rather than by writing the
-# page. A held list is the whole point of a projection block, so it is sized
-# for a real table.
-MAX_PROJECTION_STAMP_BYTES = 128 * 1024
-MAX_PROJECTION_BACKINGS_PER_BLOCK = 512
-MAX_PROJECTION_SCAN_BYTES = 32 * 1024 * 1024
 MAX_PROJECTION_CARDS_PER_SOURCE = 256
 MAX_PROJECTION_COVERAGE_BINDINGS = 1024
 
@@ -325,10 +317,7 @@ class _ProjectionBlockStamp(_StrictDeclaredBlockModel):
     block_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,63}$")
     declared_generation: int = Field(ge=0)
     declared_coordinate: AcceptedCoordinate
-    backing: tuple[ProjectionBackingV1, ...] = Field(
-        min_length=1,
-        max_length=MAX_PROJECTION_BACKINGS_PER_BLOCK,
-    )
+    backing: tuple[ProjectionBackingV1, ...] = Field(min_length=1)
     body_digest: str
     grammar_version: Literal["playbill-projection-marker-grammar-v1"] = PROJECTION_MARKER_GRAMMAR
 
@@ -401,6 +390,67 @@ class ProjectionMarkerError(PlaybillError):
         super().__init__(f"{self.code}: {message}")
 
 
+class ProjectionProcessingPolicyV1(BaseModel):
+    """Local processing budget, independent of a document's validity or identity."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    max_bytes: int = Field(default=32 * 1024 * 1024, ge=1)
+
+
+_projection_processing_policy: ContextVar[ProjectionProcessingPolicyV1 | None] = ContextVar(
+    "projection_processing_policy", default=None
+)
+
+
+def projection_processing_policy() -> ProjectionProcessingPolicyV1:
+    configured = _projection_processing_policy.get()
+    if configured is not None:
+        return configured
+    value = os.environ.get("CRUXIBLE_PROJECTION_PROCESSING_MAX_BYTES")
+    return (
+        ProjectionProcessingPolicyV1()
+        if value is None
+        else ProjectionProcessingPolicyV1(max_bytes=int(value))
+    )
+
+
+@contextmanager
+def projection_processing_budget(policy: ProjectionProcessingPolicyV1) -> Iterator[None]:
+    """Apply an explicit SDK/embedded-service work budget to this operation only."""
+    token = _projection_processing_policy.set(policy)
+    try:
+        yield
+    finally:
+        _projection_processing_policy.reset(token)
+
+
+class ProjectionProcessingLimitExceeded(ProjectionMarkerError):
+    code = "projection_processing_incomplete"
+
+    def __init__(self, observed: int, limit: int):
+        self.observed = observed
+        self.limit = limit
+        super().__init__(
+            f"projection processing incomplete: {observed} bytes exceed "
+            f"the {limit}-byte work budget"
+        )
+
+
+def check_projection_processing_bytes(size: int) -> None:
+    limit = projection_processing_policy().max_bytes
+    if size > limit:
+        raise ProjectionProcessingLimitExceeded(size, limit)
+
+
+def read_projection_source(path: Path) -> bytes:
+    """Bound allocation even for an oversized or concurrently growing source."""
+    limit = projection_processing_policy().max_bytes
+    with path.open("rb") as stream:
+        content = stream.read(limit + 1)
+    check_projection_processing_bytes(len(content))
+    return content
+
+
 class ProjectionBootstrapUnstampedError(ProjectionMarkerError):
     code = "playbill.projection.bootstrap_unstamped"
 
@@ -440,15 +490,13 @@ def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def _parse_projection_stamp(encoded: bytes) -> ProjectionBlockStamp:
-    if len(encoded) > (MAX_PROJECTION_STAMP_BYTES * 4 + 2) // 3:
-        raise ProjectionMarkerError("projection stamp exceeds its decoded byte ceiling")
+    check_projection_processing_bytes((len(encoded) * 3) // 4)
     try:
         padding = b"=" * (-len(encoded) % 4)
         content = base64.b64decode(encoded + padding, altchars=b"-_", validate=True)
     except (ValueError, binascii.Error) as exc:
         raise ProjectionMarkerError("projection stamp is not canonical base64url") from exc
-    if len(content) > MAX_PROJECTION_STAMP_BYTES:
-        raise ProjectionMarkerError("projection stamp exceeds its decoded byte ceiling")
+    check_projection_processing_bytes(len(content))
     if base64.urlsafe_b64encode(content).rstrip(b"=") != encoded:
         raise ProjectionMarkerError("projection stamp base64url spelling is not minimal")
     try:
@@ -463,8 +511,7 @@ def _parse_projection_stamp(encoded: bytes) -> ProjectionBlockStamp:
 
 def render_projection_opening(stamp: ProjectionBlockStamp) -> bytes:
     content = canonical_bytes(stamp.model_dump(mode="json"))
-    if len(content) > MAX_PROJECTION_STAMP_BYTES:
-        raise ProjectionMarkerError("projection stamp exceeds its decoded byte ceiling")
+    check_projection_processing_bytes(len(content))
     encoded = base64.urlsafe_b64encode(content).rstrip(b"=")
     return b"<!-- playbill:block:" + stamp.block_id.encode("ascii") + b":" + encoded + b" -->\n"
 
@@ -472,8 +519,7 @@ def render_projection_opening(stamp: ProjectionBlockStamp) -> bytes:
 def projection_manifest(stamp: ProjectionBlockStamp) -> tuple[str, bytes]:
     """The exact authored declaration, addressed by full SHA-256."""
     content = canonical_bytes(stamp.model_dump(mode="json"))
-    if len(content) > MAX_PROJECTION_STAMP_BYTES:
-        raise ProjectionMarkerError("projection manifest exceeds its byte ceiling")
+    check_projection_processing_bytes(len(content))
     return "sha256:" + hashlib.sha256(content).hexdigest(), content
 
 
@@ -490,15 +536,12 @@ def render_compact_projection_opening(stamp: ProjectionBlockStamp) -> bytes:
 
 def projection_manifest_refs(content: bytes) -> tuple[str, ...]:
     """Discover compact references, without resolving their full digest."""
-    if len(content) > MAX_PROJECTION_SOURCE_BYTES:
-        raise ProjectionMarkerError("projection source exceeds its byte ceiling")
+    check_projection_processing_bytes(len(content))
     refs = set()
     for line, _, _ in _marker_candidate_lines(content):
         match = _COMPACT_OPEN.fullmatch(line)
         if match:
             refs.add(match.group(2).decode("ascii"))
-            if len(refs) > MAX_PROJECTION_BLOCKS_PER_SOURCE:
-                raise ProjectionMarkerError("projection manifest count exceeds its ceiling")
     return tuple(sorted(refs))
 
 
@@ -524,8 +567,7 @@ def _resolve_projection_manifest(
     digest = resolve_projection_manifest_digest(ref, manifests or ())
     assert manifests is not None
     content = manifests[digest]
-    if len(content) > MAX_PROJECTION_STAMP_BYTES:
-        raise ProjectionMarkerError("projection manifest exceeds its byte ceiling")
+    check_projection_processing_bytes(len(content))
     if "sha256:" + hashlib.sha256(content).hexdigest() != digest:
         raise ProjectionMarkerError("projection manifest digest does not reproduce")
     return _parse_projection_stamp(base64.urlsafe_b64encode(content).rstrip(b"="))
@@ -608,8 +650,6 @@ def declares_projection_block(content: bytes) -> bool:
     here and is refused by the parser on its own terms.
     """
 
-    if len(content) > MAX_PROJECTION_SOURCE_BYTES:
-        return False
     try:
         content.decode("utf-8")
     except UnicodeError:
@@ -711,18 +751,15 @@ def _parse_projection_blocks(
 ) -> tuple[ParsedProjectionBlock, ...]:
     """Parse one complete source, refusing every ambiguous declaration boundary."""
 
-    if len(content) > MAX_PROJECTION_SOURCE_BYTES:
-        raise ProjectionMarkerError("projection source exceeds its 4 MiB byte ceiling")
+    check_projection_processing_bytes(len(content))
     try:
         content.decode("utf-8")
     except UnicodeError as exc:
         raise ProjectionMarkerError("projection source is not valid UTF-8") from exc
 
-    if manifests is not None and (
-        len(manifests) > MAX_PROJECTION_BLOCKS_PER_SOURCE
-        or sum(len(value) for value in manifests.values()) > MAX_PROJECTION_SOURCE_BYTES
-    ):
-        raise ProjectionMarkerError("projection manifest package exceeds its byte/count ceiling")
+    check_projection_processing_bytes(
+        len(content) + sum(len(v) for v in (manifests or {}).values())
+    )
     active: tuple[str, ProjectionBlockStamp | None, int, int] | None = None
     seen: set[str] = set()
     blocks: list[ParsedProjectionBlock] = []
@@ -767,8 +804,6 @@ def _parse_projection_blocks(
         block_id = opening.group(1).decode("ascii")
         if block_id in seen:
             raise ProjectionMarkerError(f"projection source repeats block identity {block_id!r}")
-        if len(seen) >= MAX_PROJECTION_BLOCKS_PER_SOURCE:
-            raise ProjectionMarkerError("projection source exceeds its 128-block ceiling")
         seen.add(block_id)
         if stamped is not None or compact is not None:
             stamp = (
@@ -910,13 +945,8 @@ def projection_query_semantic_result_digest(result: object) -> str:
 
 
 __all__ = [
-    "MAX_PROJECTION_BACKINGS_PER_BLOCK",
-    "MAX_PROJECTION_BLOCKS_PER_SOURCE",
     "MAX_PROJECTION_CARDS_PER_SOURCE",
     "MAX_PROJECTION_COVERAGE_BINDINGS",
-    "MAX_PROJECTION_SCAN_BYTES",
-    "MAX_PROJECTION_SOURCE_BYTES",
-    "MAX_PROJECTION_STAMP_BYTES",
     "PROJECTION_MARKER_GRAMMAR",
     "PROJECTION_QUERY_PARAMETER_DOMAIN",
     "PROJECTION_QUERY_SEMANTIC_RESULT_DOMAIN",
@@ -938,6 +968,12 @@ __all__ = [
     "ProjectionClaimBackingV1",
     "ProjectionMarkerSummaryV1",
     "ProjectionMarkerError",
+    "ProjectionProcessingPolicyV1",
+    "ProjectionProcessingLimitExceeded",
+    "projection_processing_policy",
+    "projection_processing_budget",
+    "check_projection_processing_bytes",
+    "read_projection_source",
     "ProjectionQueryBackingV1",
     "ProjectionResolvedParameterBindingV1",
     "ProjectionWindow",

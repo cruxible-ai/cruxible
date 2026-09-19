@@ -61,9 +61,7 @@ from cruxible_client.contracts.claims import (
     parse_claim,
 )
 from cruxible_client.contracts.declared_blocks import (
-    MAX_PROJECTION_BLOCKS_PER_SOURCE,
     MAX_PROJECTION_CARDS_PER_SOURCE,
-    MAX_PROJECTION_SOURCE_BYTES,
     PlaybillPresentationPolicyAny,
     PlaybillPresentationPolicyNoteV1,
     PlaybillPresentationPolicyV1,
@@ -246,10 +244,8 @@ class PlaybillNextSourceObservationV3(_StrictNextModel):
     source_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
     document_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,255}$")
     observed_source_digest: str
-    byte_length: int = Field(ge=0, le=MAX_PROJECTION_SOURCE_BYTES)
-    marker_summaries: tuple[ProjectionMarkerSummaryV1, ...] = Field(
-        max_length=MAX_PROJECTION_BLOCKS_PER_SOURCE
-    )
+    byte_length: int = Field(ge=0)
+    marker_summaries: tuple[ProjectionMarkerSummaryV1, ...] = Field()
     occurrences: tuple[WorkingOccurrenceV1, ...] = Field(max_length=MAX_PROJECTION_CARDS_PER_SOURCE)
     scanned_commitment_digests: tuple[str, ...]
     scan_complete: bool
@@ -311,10 +307,8 @@ class PlaybillNextSourceObservationV4(_StrictNextModel):
     source_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
     document_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,255}$")
     observed_source_digest: str
-    byte_length: int = Field(ge=0, le=MAX_PROJECTION_SOURCE_BYTES)
-    marker_summaries: tuple[ProjectionMarkerSummaryV1, ...] = Field(
-        max_length=MAX_PROJECTION_BLOCKS_PER_SOURCE
-    )
+    byte_length: int = Field(ge=0)
+    marker_summaries: tuple[ProjectionMarkerSummaryV1, ...] = Field()
     occurrences: tuple[WorkingOccurrenceV1, ...] = Field(max_length=MAX_PROJECTION_CARDS_PER_SOURCE)
     commitment_scan_proofs: tuple[CoverageCommitmentScanProofV1, ...] = Field(
         max_length=MAX_PROJECTION_CARDS_PER_SOURCE

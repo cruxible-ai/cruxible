@@ -73,6 +73,9 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     # A first stamp names the backing the author chose, so no served command can
     # supply it: sync skips the block until the marker carries one.
     "block_unstamped": "stamp_the_block_with_an_explicit_claim_or_query_backing",
+    "projection_processing_incomplete": (
+        "increase_the_projection_processing_budget_or_check_a_smaller_scope"
+    ),
     "source_path_invalid": "name_a_workspace_source_path_the_catalog_resolves",
     # A workspace-wide sync infers its targets, and prose that QUOTES the marker
     # grammar looks exactly like a page that declares a block badly. Inference
