@@ -31,6 +31,9 @@ class ProcedureRuntimePolicyV1(BaseModel):
 
     tag: Literal["playbill-procedure-runtime-policy-v1"] = "playbill-procedure-runtime-policy-v1"
     provider_output_bytes_cap: int = Field(ge=1)
+    # Absent fields preserve the exact bytes and semantics of retained V1 policies.
+    result_bytes_cap: int | None = Field(default=None, ge=1, exclude_if=lambda v: v is None)
+    repeat_attempts_cap: int | None = Field(default=None, ge=1, exclude_if=lambda v: v is None)
 
 
 def render_procedure_runtime_policy(policy: ProcedureRuntimePolicyV1) -> bytes:

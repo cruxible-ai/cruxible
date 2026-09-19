@@ -14,6 +14,7 @@ from cruxible_client.contracts.laws import (
     COMPILER_UPGRADE_ACCEPTANCE_LAW,
     PROVIDER_CONTRACT_UPGRADE_LAW,
     PROVIDER_PACKAGE_UPGRADE_LAW,
+    RESOURCE_BUDGET_UPGRADE_LAW,
     InstalledAcceptanceLaw,
 )
 from cruxible_client.contracts.types import CompilerCoordinate
@@ -31,6 +32,7 @@ from cruxible_core.compiler.compiler import (
     PROVIDER_CONTRACT_COMPILER,
     PROVIDER_PACKAGE_COMPILER,
     RESOLUTION_COMPILER,
+    RESOURCE_BUDGET_COMPILER,
     UPGRADE_COMPILER,
 )
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
@@ -71,6 +73,17 @@ def upgrade_law(source: CompilerCoordinate, target: CompilerCoordinate) -> Insta
         and target == PROVIDER_PACKAGE_COMPILER
     ):
         return PROVIDER_PACKAGE_UPGRADE_LAW
+    if (
+        source
+        in {
+            *UPGRADE_V1_SOURCES,
+            UPGRADE_COMPILER,
+            PROVIDER_CONTRACT_COMPILER,
+            PROVIDER_PACKAGE_COMPILER,
+        }
+        and target == RESOURCE_BUDGET_COMPILER
+    ):
+        return RESOURCE_BUDGET_UPGRADE_LAW
     raise ValueError("unsupported compiler transition; only explicit forward edges are allowed")
 
 

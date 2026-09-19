@@ -41,7 +41,7 @@ from cruxible_client.contracts.providers import (
     provider_path,
     render_provider,
 )
-from cruxible_core.compiler.compiler import PROVIDER_PACKAGE_COMPILER
+from cruxible_core.compiler.compiler import PROVIDER_PACKAGE_COMPILER, RESOURCE_BUDGET_COMPILER
 from cruxible_core.derived.derived_state import fork_tree
 from cruxible_core.errors import ConfigError
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -320,7 +320,10 @@ def service_install_provider(
 ) -> PlaybillProviderInstallResultV1:
     instance.require_writable()
     enforce_customer_code_execution_supported()
-    if instance.accepted_coordinate().compiler != PROVIDER_PACKAGE_COMPILER:
+    if instance.accepted_coordinate().compiler not in (
+        PROVIDER_PACKAGE_COMPILER,
+        RESOURCE_BUDGET_COMPILER,
+    ):
         raise ConfigError(
             "provider installation requires an explicit upgrade to the package compiler"
         )

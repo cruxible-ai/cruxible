@@ -547,11 +547,21 @@ PROVIDER_PACKAGE_UPGRADE_LAW = InstalledAcceptanceLaw(
     current=False,
 )
 
+RESOURCE_BUDGET_UPGRADE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=4
+    ),
+    artifact_kind="compiler-upgrade",
+    artifact_tag="playbill-compiler-upgrade-v1",
+    current=False,
+)
+
 PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
     (
         PROVIDER_V3_ACCEPTANCE_LAW,
         PROVIDER_INTERFACE_V2_ACCEPTANCE_LAW,
         PROVIDER_PACKAGE_UPGRADE_LAW,
+        RESOURCE_BUDGET_UPGRADE_LAW,
         PROVIDER_CONTRACT_PROCEDURE_LAW,
         PROVIDER_CONTRACT_UPGRADE_LAW,
         COMPILER_UPGRADE_ACCEPTANCE_LAW,

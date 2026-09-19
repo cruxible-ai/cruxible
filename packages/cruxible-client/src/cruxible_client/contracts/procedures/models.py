@@ -89,6 +89,7 @@ class ProcedureBudgetV3(_StrictProcedureModel):
     wall_clock: CanonicalDurationV1
     max_provider_calls: int = Field(ge=0, le=1_000_000)
     max_capture_bytes: int = Field(ge=0, le=2**63 - 1)
+    max_result_bytes: int | None = Field(default=None, ge=1, exclude_if=lambda v: v is None)
     max_items: int | None = Field(
         default=None,
         ge=1,
@@ -108,8 +109,9 @@ class ProcedureHardCapsV3(_StrictProcedureModel):
     max_wall_clock: CanonicalDurationV1
     max_provider_calls: int = Field(ge=0, le=1_000_000)
     max_capture_bytes: int = Field(ge=0, le=2**63 - 1)
+    max_result_bytes: int | None = Field(default=None, ge=1, exclude_if=lambda v: v is None)
     max_items: int = Field(ge=1, le=2**31 - 1)
-    max_repeat_attempts: int = Field(ge=1, le=25)
+    max_repeat_attempts: int = Field(ge=1, le=2**31 - 1)
 
     @model_validator(mode="after")
     def _nonzero_wall_clock(self) -> "ProcedureHardCapsV3":
@@ -557,7 +559,7 @@ class RepeatBodyNodeV3(_StrictProcedureModel):
 class RepeatNodeV3(_StrictProcedureModel):
     kind: Literal["repeat"] = "repeat"
     node_id: str
-    max_attempts: int = Field(ge=1, le=25)
+    max_attempts: int = Field(ge=1, le=2**31 - 1)
     body: tuple[RepeatBodyNodeV3, ...]
     until: GuardPredicateV1
     as_: str = Field(alias="as")
@@ -633,7 +635,7 @@ class RepeatBodyNodeV4(_StrictProcedureModel):
 class RepeatNodeV4(_StrictProcedureModel):
     kind: Literal["repeat"] = "repeat"
     node_id: str
-    max_attempts: int = Field(ge=1, le=25)
+    max_attempts: int = Field(ge=1, le=2**31 - 1)
     body: tuple[RepeatBodyNodeV4, ...]
     until: GuardPredicateV1
     as_: str = Field(alias="as")
@@ -850,6 +852,12 @@ class ProcedureDefinitionV3(_StrictProcedureModel):
             raise ValueError("Procedure budget exceeds its wall-clock hard cap")
         if self.budget.max_provider_calls > self.hard_caps.max_provider_calls:
             raise ValueError("Procedure budget exceeds its provider-call hard cap")
+        if (
+            self.budget.max_result_bytes is not None
+            and self.hard_caps.max_result_bytes is not None
+            and self.budget.max_result_bytes > self.hard_caps.max_result_bytes
+        ):
+            raise ValueError("Procedure result budget exceeds hard caps")
         if self.budget.max_capture_bytes > self.hard_caps.max_capture_bytes:
             raise ValueError("Procedure budget exceeds its capture-byte hard cap")
         if self.budget.max_items is not None and self.budget.max_items > self.hard_caps.max_items:
@@ -969,6 +977,12 @@ class ProcedureDefinitionV4(_StrictProcedureModel):
             raise ValueError("Procedure budget exceeds its wall-clock hard cap")
         if self.budget.max_provider_calls > self.hard_caps.max_provider_calls:
             raise ValueError("Procedure budget exceeds its provider-call hard cap")
+        if (
+            self.budget.max_result_bytes is not None
+            and self.hard_caps.max_result_bytes is not None
+            and self.budget.max_result_bytes > self.hard_caps.max_result_bytes
+        ):
+            raise ValueError("Procedure result budget exceeds hard caps")
         if self.budget.max_capture_bytes > self.hard_caps.max_capture_bytes:
             raise ValueError("Procedure budget exceeds its capture-byte hard cap")
         if self.budget.max_items is not None and self.budget.max_items > self.hard_caps.max_items:

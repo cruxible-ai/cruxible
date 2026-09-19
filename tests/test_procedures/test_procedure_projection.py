@@ -28,6 +28,9 @@ from cruxible_core.compiler.compiler import (
     PC_D_COMPILER,
     PC_E1_COMPILER,
     PC_HR_COMPILER,
+    PROVIDER_PACKAGE_COMPILER,
+    RESOURCE_BUDGET_COMPILER,
+    artifact_kinds_for_compiler,
     current_compiler_coordinate,
     projection_registry_for_compiler,
 )
@@ -89,7 +92,7 @@ def test_procedure_semantic_identity_is_stable_across_exact_coordinates() -> Non
     assert P2_B2_COMPILER != P2_B4_COMPILER
     assert P2_B4_COMPILER != P2_B4_UNIT2_COMPILER
     assert P2_B4_UNIT2_COMPILER != P2_B5_COMPILER
-    assert current_compiler_coordinate() == P2_B5_COMPILER
+    assert current_compiler_coordinate() == RESOURCE_BUDGET_COMPILER
     assert (
         projection_registry_for_compiler(PC_HR_COMPILER).supports(
             "playbill.provider.runtime",
@@ -183,3 +186,27 @@ def test_replay_registry_copies_the_authoritative_runtime_registry(
     for classification in get_args(ProjectionFactClassification):
         assert replay.declarations(classification) == runtime.declarations(classification)
     assert replay.supports_artifact_kind("procedure-runtime-policy")
+
+
+def test_resource_policy_requires_explicit_compiler_succession():
+    tree = {
+        PROCEDURE_RUNTIME_POLICY_PATH: render_procedure_runtime_policy(
+            ProcedureRuntimePolicyV1(
+                provider_output_bytes_cap=64 * 1024 * 1024,
+                result_bytes_cap=16 * 1024 * 1024,
+                repeat_attempts_cap=100,
+            )
+        )
+    }
+    with pytest.raises(ProjectionFormatError, match="revision 26"):
+        parse_projection_tree(
+            tree,
+            registry=projection_registry_for_compiler(PROVIDER_PACKAGE_COMPILER),
+            artifact_kinds=artifact_kinds_for_compiler(PROVIDER_PACKAGE_COMPILER),
+        )
+    parsed = parse_projection_tree(
+        tree,
+        registry=projection_registry_for_compiler(RESOURCE_BUDGET_COMPILER),
+        artifact_kinds=artifact_kinds_for_compiler(RESOURCE_BUDGET_COMPILER),
+    )
+    assert parsed.envelopes[0].identity == "ProcedureRuntimePolicy:instance"

@@ -468,7 +468,7 @@ class ProcedureRunBudgetDeclaredV1(_StrictResultModel):
     )
     budget: ProcedureBudgetV3
     hard_caps: ProcedureHardCapsV3
-    result_bytes_cap: Literal[1_048_576] = 1_048_576
+    result_bytes_cap: int = Field(default=1_048_576, ge=1)
 
 
 class ProcedureRunBudgetObservedV1(_StrictResultModel):

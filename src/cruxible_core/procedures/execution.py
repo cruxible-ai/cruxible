@@ -348,6 +348,38 @@ class AcceptedStateRunMaterialV2(_StrictExecutionModel):
         return self
 
 
+class ProcedureResourceBudgetV1(_StrictExecutionModel):
+    """Effective instance/Procedure intersection retained before execution."""
+
+    result_bytes_cap: int = Field(ge=1)
+    repeat_attempts_cap: int = Field(ge=1)
+
+
+def resolve_procedure_resource_budget(
+    budget: ProcedureBudgetV3,
+    hard_caps: ProcedureHardCapsV3,
+    policy: ProcedureRuntimePolicyV1,
+) -> ProcedureResourceBudgetV1 | None:
+    if policy.result_bytes_cap is None and policy.repeat_attempts_cap is None:
+        if budget.max_result_bytes is not None or hard_caps.max_result_bytes is not None:
+            raise PlaybillExecutionError("explicit result budgets require a runtime result policy")
+        if hard_caps.max_repeat_attempts > 25:
+            raise PlaybillExecutionError("repeat attempts above 25 require a runtime repeat policy")
+        return None
+    return ProcedureResourceBudgetV1(
+        result_bytes_cap=min(
+            cap
+            for cap in (
+                policy.result_bytes_cap or 1_048_576,
+                budget.max_result_bytes,
+                hard_caps.max_result_bytes,
+            )
+            if cap is not None
+        ),
+        repeat_attempts_cap=min(policy.repeat_attempts_cap or 25, hard_caps.max_repeat_attempts),
+    )
+
+
 class ProcedureRunAdmissionV1(_StrictExecutionModel):
     """The complete run binding fixed before any result is visible.
 
@@ -357,6 +389,10 @@ class ProcedureRunAdmissionV1(_StrictExecutionModel):
     membership, and may bind the landed-Capture and exhaust planes.
     """
 
+    resource_budget: ProcedureResourceBudgetV1 | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     tag: Literal["playbill-procedure-run-admission-v1"] = "playbill-procedure-run-admission-v1"
     instance_id: str
     run_id: str
@@ -1581,6 +1617,9 @@ def bind_line_admission_runtime_policy(
         update={
             "run_id": "RUN-" + "0" * 64,
             "provider_output_bytes_cap": policy.provider_output_bytes_cap,
+            "resource_budget": resolve_procedure_resource_budget(
+                admission.budget, admission.hard_caps, policy
+            ),
             "semantic_replay_key_digest": "sha256:" + "0" * 64,
             "admission_binding_digest": "sha256:" + "0" * 64,
         }
@@ -1615,6 +1654,16 @@ def bind_line_admission_runtime_policy(
 
 
 def procedure_semantic_replay_key_digest(admission: ProcedureRunAdmissionV2) -> str:
+    if admission.resource_budget is not None:
+        legacy = admission.model_copy(update={"resource_budget": None})
+        return typed_digest(
+            Sha256Value,
+            "playbill-procedure-resource-replay-key-v1",
+            {
+                "execution": procedure_semantic_replay_key_digest(legacy),
+                "resource_budget": admission.resource_budget.model_dump(mode="json"),
+            },
+        ).tagged
     if isinstance(admission, (ProcedureRunAdmissionV6, ProcedureRunAdmissionV7)):
         base_type = (
             ProcedureRunAdmissionV5
@@ -1955,6 +2004,7 @@ def prepare_direct_procedure_run(
     lane: Literal["current", "replay"] = "current",
     admitted_at: datetime,
     attempt: int = 1,
+    runtime_policy: ProcedureRuntimePolicyV1 | None = None,
 ) -> PreparedProcedureRunV2:
     """Bind exact accepted state and all pins for an actor-authenticated direct run."""
 
@@ -1994,6 +2044,13 @@ def prepare_direct_procedure_run(
         pin_set_digest=pin_digest,
         invocation_input=invocation_input,
         accepted_state_inputs=tuple(item.input for item in materials),
+        resource_budget=(
+            resolve_procedure_resource_budget(
+                procedure.definition.budget, procedure.definition.hard_caps, runtime_policy
+            )
+            if runtime_policy is not None
+            else None
+        ),
         budget=procedure.definition.budget,
         hard_caps=procedure.definition.hard_caps,
         actor_context=actor_context,
@@ -2039,6 +2096,13 @@ def prepare_direct_procedure_run(
         pin_set_digest=pin_digest,
         invocation_input=invocation_input,
         accepted_state_inputs=tuple(item.input for item in materials),
+        resource_budget=(
+            resolve_procedure_resource_budget(
+                procedure.definition.budget, procedure.definition.hard_caps, runtime_policy
+            )
+            if runtime_policy is not None
+            else None
+        ),
         budget=procedure.definition.budget,
         hard_caps=procedure.definition.hard_caps,
         actor_context=actor_context,
@@ -2564,6 +2628,11 @@ class ProcedureExecutor:
                 declared=ProcedureRunBudgetDeclaredV1(
                     budget=admission.budget,
                     hard_caps=admission.hard_caps,
+                    result_bytes_cap=(
+                        admission.resource_budget.result_bytes_cap
+                        if admission.resource_budget is not None
+                        else 1_048_576
+                    ),
                 ),
                 observed=ProcedureRunBudgetObservedV1(
                     max_items=ProcedureBudgetBoundaryObservationV1(
@@ -2805,6 +2874,16 @@ class ProcedureExecutor:
                 "pin_binding_mismatch",
                 "Procedure node pins changed after admission.",
             )
+        if admission.resource_budget is not None:
+            for node in procedure.definition.nodes:
+                if (
+                    isinstance(node, (RepeatNodeV3, RepeatNodeV4))
+                    and node.max_attempts > admission.resource_budget.repeat_attempts_cap
+                ):
+                    raise ProcedureBoundaryRefused(
+                        "budget_max_repeat_attempts_exceeded",
+                        "Repeat exceeds admitted instance ceiling.",
+                    )
         self._verify_effective_rung(admission)
         self._verify_input_planes(admission, accepted)
         expected_state_inputs = {
@@ -3081,6 +3160,11 @@ class ProcedureExecutor:
                     result,
                     max_items=None,
                     node_id=node.node_id,
+                    result_bytes_cap=(
+                        admission.resource_budget.result_bytes_cap
+                        if admission.resource_budget is not None
+                        else 1_048_576
+                    ),
                     observe_result_bytes=state.observe_result_bytes,
                     boundary="procedure-return",
                     field_path=definition.returns,
@@ -5667,9 +5751,7 @@ def _apply_node_transform(
         ) from exc
 
 
-# STAGED-DEBT(P2-B0-actor-result-cap-succession): move the legacy actor-plane
-# result ceiling into a governed successor without changing V2 admission bytes.
-PROCEDURE_RESULT_MAX_BYTES = 1_048_576
+# Retained admissions without resource_budget use the original 1 MiB return semantics.
 
 
 def _item_count(value: CanonicalValue, *, extractable_only: bool = False) -> int | None:
@@ -5957,6 +6039,7 @@ def _check_return_budget(
     *,
     max_items: int | None,
     node_id: str,
+    result_bytes_cap: int = 1_048_576,
     observe_result_bytes: Callable[[int, str, str], None] | None = None,
     boundary: str = "procedure-return",
     field_path: str = "result",
@@ -5972,10 +6055,10 @@ def _check_return_budget(
     size = len(canonical_bytes(value))
     if observe_result_bytes is not None:
         observe_result_bytes(size, boundary, field_path)
-    if size > PROCEDURE_RESULT_MAX_BYTES:
+    if size > result_bytes_cap:
         raise _budget_refusal(
             budget_kind="result_bytes",
-            limit=PROCEDURE_RESULT_MAX_BYTES,
+            limit=result_bytes_cap,
             observed=size,
             node_id=node_id,
         )

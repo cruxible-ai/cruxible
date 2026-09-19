@@ -531,6 +531,8 @@ def evaluate_line_spec_law(
         "max_capture_bytes": caps.max_capture_bytes,
         "max_items": caps.max_items,
     }
+    if caps.max_result_bytes is not None:
+        limits["max_result_bytes"] = caps.max_result_bytes
     for key, hard_cap in limits.items():
         value = _budget_int(line.budgets, key)
         if value is None or value < 0 or value > hard_cap:

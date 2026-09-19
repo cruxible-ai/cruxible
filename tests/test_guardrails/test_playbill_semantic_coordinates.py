@@ -51,6 +51,7 @@ from cruxible_client.contracts.laws import (
     QUERY_DEFINITION_ACCEPTANCE_LAW,
     QUERY_DEFINITION_V2_ACCEPTANCE_LAW,
     RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
+    RESOURCE_BUDGET_UPGRADE_LAW,
     SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW,
     STANDING_MANDATE_ACCEPTANCE_LAW,
     SUBJECT_ACCEPTANCE_LAW,
@@ -72,6 +73,7 @@ from cruxible_core.compiler.compiler import (
     PROVIDER_CONTRACT_COMPILER,
     PROVIDER_PACKAGE_COMPILER,
     RESOLUTION_COMPILER,
+    RESOURCE_BUDGET_COMPILER,
     SUPPORTED_COMPILERS,
     UPGRADE_COMPILER,
     candidate_card_renderer_digest_for_compiler,
@@ -299,6 +301,13 @@ HISTORICAL_LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],
     ...,
 ] = (
+    (
+        RESOURCE_BUDGET_UPGRADE_LAW,
+        "playbill.compiler-upgrade.v1",
+        "playbill-compiler-upgrade-v1",
+        4,
+        "sha256:2012268c869252000a3518dcddd1b9e4f4c2d5c753f18f6532df01c6c7276042",
+    ),
     (
         PROVIDER_PACKAGE_UPGRADE_LAW,
         "playbill.compiler-upgrade.v1",
@@ -536,7 +545,11 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
         PROVIDER_PACKAGE_COMPILER.rule_digest
         == "sha256:f20251ccf9d3545882683c2d9693745b2cecf6e119c7b471f8c14414f1aa7628"
     )
-    assert current_compiler_coordinate() == PROVIDER_PACKAGE_COMPILER
+    assert (
+        RESOURCE_BUDGET_COMPILER.rule_digest
+        == "sha256:1498eb0f56d995753d3db504723d14eabdc6b4cdc66832c613b31a755645a098"
+    )
+    assert current_compiler_coordinate() == RESOURCE_BUDGET_COMPILER
     assert P2_B4_COMPILER in SUPPORTED_COMPILERS
     assert P2_B4_UNIT2_COMPILER in SUPPORTED_COMPILERS
     # The renderer resolves from the current coordinate itself, so cards derive
@@ -558,7 +571,7 @@ def test_succeeding_the_semantic_revision_keeps_candidate_cards_deriving(
     """
 
     source = Path(compiler_module.__file__).read_text(encoding="utf-8")
-    current_revision = 25
+    current_revision = 26
     anchor = "\n    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,\n"
     bumped = source.replace(
         f"    semantic_revision={current_revision},{anchor}",
@@ -648,16 +661,15 @@ def test_installed_compiler_revision_labels_are_exact_and_complete() -> None:
         "governed-compiler-upgrade-v1",
         "provider-operation-contracts-v1",
         "provider-package-registration-v1",
+        "bounded-resource-budgets-v1",
     )
-    assert (
-        COMPILER_REVISION_LABELS[current_compiler_coordinate()]
-        == "provider-package-registration-v1"
-    )
+    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "bounded-resource-budgets-v1"
 
 
 def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
-    """The September 17 generic provider installation ruling admits package-owned
-    registrations and prepared-backend pins as revision 25. Older pins stay exact.
+    """The September 19 bounded-limit ruling admits resource budgets as revision 26.
+
+    Historical admission bytes and compiler rules remain unchanged.
     """
 
     from cruxible_core.compiler.compiler import (
@@ -665,8 +677,5 @@ def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
         current_compiler_coordinate,
     )
 
-    assert len(COMPILER_REVISION_LABELS) == 24
-    assert (
-        COMPILER_REVISION_LABELS[current_compiler_coordinate()]
-        == "provider-package-registration-v1"
-    )
+    assert len(COMPILER_REVISION_LABELS) == 25
+    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "bounded-resource-budgets-v1"

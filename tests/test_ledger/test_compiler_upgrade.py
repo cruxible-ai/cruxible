@@ -9,7 +9,9 @@ from cruxible_core.compiler.compiler import (
     ONTOLOGY_COMPILER,
     PC_HR_COMPILER,
     PROVIDER_CONTRACT_COMPILER,
+    PROVIDER_PACKAGE_COMPILER,
     RESOLUTION_COMPILER,
+    RESOURCE_BUDGET_COMPILER,
     UPGRADE_COMPILER,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -63,6 +65,7 @@ def approve(instance, proposal, reviewer):
         for source in [PC_HR_COMPILER, ATTESTATION_COMPILER, RESOLUTION_COMPILER, ONTOLOGY_COMPILER]
     ]
     + [
+        (PROVIDER_PACKAGE_COMPILER, RESOURCE_BUDGET_COMPILER),
         (UPGRADE_COMPILER, PROVIDER_CONTRACT_COMPILER),
         (RESOLUTION_COMPILER, PROVIDER_CONTRACT_COMPILER),
     ],

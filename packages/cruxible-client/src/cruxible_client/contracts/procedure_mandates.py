@@ -183,6 +183,13 @@ def _ceiling_within(
         ceiling.max_wall_clock.microseconds <= hard_caps.max_wall_clock.microseconds
         and ceiling.max_provider_calls <= hard_caps.max_provider_calls
         and ceiling.max_capture_bytes <= hard_caps.max_capture_bytes
+        and (
+            hard_caps.max_result_bytes is None
+            or (
+                ceiling.max_result_bytes is not None
+                and ceiling.max_result_bytes <= hard_caps.max_result_bytes
+            )
+        )
         and ceiling.max_items <= hard_caps.max_items
         and ceiling.max_repeat_attempts <= hard_caps.max_repeat_attempts
     )

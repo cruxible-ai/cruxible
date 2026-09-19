@@ -98,7 +98,6 @@ from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.indexes.typed_state import TypedStateReader
 from cruxible_core.procedures.execution import (
-    PROCEDURE_RESULT_MAX_BYTES,
     ExhaustRunMaterialV1,
     PreparedProcedureRunV3,
     PreparedProcedureRunV4,
@@ -934,6 +933,7 @@ def _prepare(accepted: AcceptedProcedureV1, fixture: _Fixture, reader: _StateRea
         journal_stream=fixture.stream,
         journal_partition_id=kwargs.get("journal_partition_id", "runs"),
         admitted_at=NOW,
+        runtime_policy=kwargs.get("runtime_policy"),
     )
 
 
@@ -2823,7 +2823,7 @@ def test_return_seam_counts_extractable_values_and_caps_all_result_bytes() -> No
 
     with pytest.raises(_RunRefusal) as byte_refusal:
         _check_return_budget(
-            "x" * PROCEDURE_RESULT_MAX_BYTES,
+            "x" * 1_048_576,
             max_items=1,
             node_id="return",
         )
@@ -3437,3 +3437,108 @@ def test_unmatched_effect_intent_never_redispatches_on_retry(tmp_path) -> None:
             provider_executor=provider,
         ).execute(prepared, accepted)
     assert provider.calls == 1
+
+
+@pytest.mark.parametrize("cap,expected", [(1024, "refused"), (2 * 1024 * 1024, "succeeded")])
+def test_runtime_result_budget_survives_execution_and_reopen(tmp_path, cap, expected):
+    from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
+
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    policy = ProcedureRuntimePolicyV1(
+        provider_output_bytes_cap=4 * 1024 * 1024, result_bytes_cap=cap, repeat_attempts_cap=100
+    )
+    prepared = _prepare(
+        accepted, fixture, _StateReader({"items": [{"id": "x" * 1_100_000}]}), runtime_policy=policy
+    )
+    assert prepared.admission.resource_budget.result_bytes_cap == cap
+    executor = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    )
+    result = executor.execute(prepared, accepted)
+    assert result.status == expected
+    reopened = _Fixture(
+        journal=LocalJournalBackend(tmp_path / "journal"),
+        bodies=ContentAddressedBodyStore(tmp_path / "cas"),
+        stream=fixture.stream,
+        run_index=ProcedureRunIndex(tmp_path / "run-index.sqlite"),
+    )
+    replay = ProcedureExecutor(
+        journal=reopened.journal,
+        bodies=reopened.bodies,
+        run_index=reopened.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    ).execute(prepared, accepted)
+    assert replay.status == expected
+    assert replay.output == result.output
+
+
+def test_resource_budget_intersection_and_replay_identity(tmp_path):
+    from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
+    from cruxible_core.procedures.execution import resolve_procedure_resource_budget
+
+    policy = ProcedureRuntimePolicyV1(
+        provider_output_bytes_cap=1024, result_bytes_cap=10000, repeat_attempts_cap=100
+    )
+    budget = _budget().model_copy(update={"max_result_bytes": 8000})
+    caps = _hard_caps().model_copy(update={"max_result_bytes": 6000, "max_repeat_attempts": 200})
+    effective = resolve_procedure_resource_budget(budget, caps, policy)
+    assert effective.result_bytes_cap == 6000
+    assert effective.repeat_attempts_cap == 100
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    first = _prepare(accepted, fixture, _StateReader(), runtime_policy=policy)
+    second = _prepare(
+        accepted,
+        fixture,
+        _StateReader(),
+        runtime_policy=policy.model_copy(update={"result_bytes_cap": 20000}),
+    )
+    assert first.admission.run_id != second.admission.run_id
+    legacy = _prepare(accepted, fixture, _StateReader())
+    assert "resource_budget" not in legacy.admission.model_dump(mode="json")
+    assert "max_result_bytes" not in _budget().model_dump(mode="json")
+
+
+def test_repeat_above_legacy_ceiling_uses_admitted_policy(tmp_path):
+    from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
+    from cruxible_core.procedures.execution import ProcedureBoundaryRefused
+
+    fixture = _fixture(tmp_path)
+    original = _repeat_transform_procedure()
+    definition = original.procedure.definition
+    definition = definition.model_copy(
+        update={
+            "nodes": (definition.nodes[0].model_copy(update={"max_attempts": 30}),),
+            "hard_caps": definition.hard_caps.model_copy(update={"max_repeat_attempts": 30}),
+        }
+    )
+    accepted = _accepted(definition, pins=original.procedure.pins)
+    policy = ProcedureRuntimePolicyV1(
+        provider_output_bytes_cap=1024, result_bytes_cap=10000, repeat_attempts_cap=30
+    )
+    prepared = _prepare(accepted, fixture, _StateReader(), runtime_policy=policy)
+    executor = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    )
+    assert executor.execute(prepared, accepted).status == "succeeded"
+    smaller = _prepare(
+        accepted,
+        fixture,
+        _StateReader(),
+        runtime_policy=policy.model_copy(update={"repeat_attempts_cap": 25}),
+    )
+    with pytest.raises(ProcedureBoundaryRefused, match="Repeat exceeds"):
+        executor.execute(smaller, accepted)

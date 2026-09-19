@@ -393,3 +393,24 @@ def test_line_refuses_noncanonical_epsilon_and_rung_above_procedure_cap() -> Non
         predecessor=None,
     )
     assert result.diagnostics[0].code == "playbill.line.rung_exceeds_procedure_cap"
+
+
+def test_line_result_budget_is_interpreted_only_with_resource_semantics() -> None:
+    from cruxible_client.contracts.procedures.line_specs import LineSpecV2
+    from cruxible_core.service.procedures.procedure_runs import _line_budget
+
+    line, procedure, _ = _line()
+    value = line.model_dump(mode="json")
+    value["artifact_format"] = "playbill-line-v2"
+    value["provider_implementation_closures"] = []
+    value["budgets"]["max_result_bytes"] = 2 * 1024 * 1024
+    successor = LineSpecV2.model_validate(value)
+    accepted = AcceptedLineSpecV1(
+        path=line_spec_path(successor.identity.name),
+        line=successor,
+        artifact_digest=line_spec_digest(successor).tagged,
+    )
+    assert _line_budget(accepted, procedure).max_result_bytes is None
+    assert (
+        _line_budget(accepted, procedure, resource_budgets=True).max_result_bytes == 2 * 1024 * 1024
+    )

@@ -209,6 +209,7 @@ UPGRADE_ARTIFACT_KINDS = ArtifactKindRegistry(
 
 PROVIDER_CONTRACT_ARTIFACT_KINDS = ArtifactKindRegistry(UPGRADE_ARTIFACT_KINDS.entries())
 PROVIDER_PACKAGE_ARTIFACT_KINDS = ArtifactKindRegistry(PROVIDER_CONTRACT_ARTIFACT_KINDS.entries())
+RESOURCE_BUDGET_ARTIFACT_KINDS = ArtifactKindRegistry(PROVIDER_PACKAGE_ARTIFACT_KINDS.entries())
 
 PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
     tuple(
@@ -704,6 +705,23 @@ def _claim_static_facts(
     return tuple(facts)
 
 
+def _requires_resource_budgets(value: object) -> bool:
+    if isinstance(value, dict):
+        return any(
+            (key == "max_result_bytes" and item is not None)
+            or (
+                key in {"max_repeat_attempts", "max_attempts"}
+                and isinstance(item, int)
+                and item > 25
+            )
+            or _requires_resource_budgets(item)
+            for key, item in value.items()
+        )
+    return isinstance(value, (list, tuple)) and any(
+        _requires_resource_budgets(item) for item in value
+    )
+
+
 def parse_projection_tree(
     blobs: Mapping[str, bytes],
     *,
@@ -820,6 +838,13 @@ def parse_projection_tree(
                 runtime_policy = parse_procedure_runtime_policy(
                     content, path=path, codec=artifact_codec
                 )
+                if artifact_kinds is not RESOURCE_BUDGET_ARTIFACT_KINDS and (
+                    runtime_policy.result_bytes_cap is not None
+                    or runtime_policy.repeat_attempts_cap is not None
+                ):
+                    raise ProjectionFormatError(
+                        "resource policy budgets require compiler revision 26"
+                    )
                 digest = procedure_runtime_policy_digest(runtime_policy).tagged
                 identities[PROCEDURE_RUNTIME_POLICY_IDENTITY] = path
                 envelopes.append(
@@ -1240,9 +1265,9 @@ def parse_projection_tree(
                 )
 
                 provider = parse_provider(content, path=path, codec=artifact_codec)
-                if (
-                    isinstance(provider, ProviderV3)
-                    and artifact_kinds is not PROVIDER_PACKAGE_ARTIFACT_KINDS
+                if isinstance(provider, ProviderV3) and artifact_kinds not in (
+                    PROVIDER_PACKAGE_ARTIFACT_KINDS,
+                    RESOURCE_BUDGET_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError(
                         "Provider v3 requires the provider-package compiler"
@@ -1368,9 +1393,11 @@ def parse_projection_tree(
                     path=path,
                     codec=artifact_codec,
                 )
-                if (
-                    isinstance(registration, ProviderInterfaceRegistrationV2)
-                    and artifact_kinds is not PROVIDER_PACKAGE_ARTIFACT_KINDS
+                if isinstance(
+                    registration, ProviderInterfaceRegistrationV2
+                ) and artifact_kinds not in (
+                    PROVIDER_PACKAGE_ARTIFACT_KINDS,
+                    RESOURCE_BUDGET_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError(
                         "ProviderInterface v2 requires the provider-package compiler"
@@ -1557,6 +1584,15 @@ def parse_projection_tree(
                 procedure_mandate = parse_procedure_mandate(
                     content, path=path, codec=artifact_codec
                 )
+                if (
+                    artifact_kinds is not RESOURCE_BUDGET_ARTIFACT_KINDS
+                    and _requires_resource_budgets(
+                        procedure_mandate.authority_ceiling.model_dump(mode="json")
+                    )
+                ):
+                    raise ProjectionFormatError(
+                        "resource mandate budgets require compiler revision 26"
+                    )
                 identity = procedure_mandate.identity.qualified
                 if identity in identities:
                     raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
@@ -1612,9 +1648,18 @@ def parse_projection_tree(
                 )
 
                 procedure = parse_procedure(content, path=path, codec=artifact_codec)
+                if artifact_kinds is not RESOURCE_BUDGET_ARTIFACT_KINDS and (
+                    procedure.definition.budget.max_result_bytes is not None
+                    or procedure.definition.hard_caps.max_result_bytes is not None
+                    or procedure.definition.hard_caps.max_repeat_attempts > 25
+                ):
+                    raise ProjectionFormatError(
+                        "resource Procedure budgets require compiler revision 26"
+                    )
                 if int(procedure.definition.graph_format) == 5 and artifact_kinds not in (
                     PROVIDER_CONTRACT_ARTIFACT_KINDS,
                     PROVIDER_PACKAGE_ARTIFACT_KINDS,
+                    RESOURCE_BUDGET_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError("graph-v5 requires the provider-contract compiler")
                 identity = procedure.identity.qualified
@@ -1835,12 +1880,25 @@ def parse_projection_tree(
                 )
 
                 line = parse_line_spec(content, path=path, codec=artifact_codec)
+                # Older Lines allowed opaque budget keys. Interpret this key only
+                # in the successor compiler, preserving historical acceptance.
+                if artifact_kinds is RESOURCE_BUDGET_ARTIFACT_KINDS and isinstance(
+                    line.budgets, dict
+                ):
+                    result_budget = line.budgets.get("max_result_bytes")
+                    if "max_result_bytes" in line.budgets and (
+                        not isinstance(result_budget, int)
+                        or isinstance(result_budget, bool)
+                        or result_budget < 1
+                    ):
+                        raise ProjectionFormatError("Line result budget must be a positive integer")
                 if isinstance(line, LineSpecV3) and artifact_kinds not in (
                     RESOLUTION_ARTIFACT_KINDS,
                     ONTOLOGY_ARTIFACT_KINDS,
                     UPGRADE_ARTIFACT_KINDS,
                     PROVIDER_CONTRACT_ARTIFACT_KINDS,
                     PROVIDER_PACKAGE_ARTIFACT_KINDS,
+                    RESOURCE_BUDGET_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError(
                         "Line v3 requires the independent-resolution compiler"
@@ -1937,6 +1995,7 @@ def parse_projection_tree(
                         UPGRADE_ARTIFACT_KINDS,
                         PROVIDER_CONTRACT_ARTIFACT_KINDS,
                         PROVIDER_PACKAGE_ARTIFACT_KINDS,
+                        RESOURCE_BUDGET_ARTIFACT_KINDS,
                     )
                 ):
                     raise ProjectionFormatError(

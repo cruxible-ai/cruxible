@@ -173,6 +173,7 @@ from cruxible_client.contracts.workspace_file import (
     source_read_receipt_digest,
 )
 from cruxible_core.claims.closure import DEFERRED_PIN_TARGET_KINDS
+from cruxible_core.compiler.compiler import RESOURCE_BUDGET_COMPILER
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -235,6 +236,7 @@ from cruxible_core.procedures.execution import (
     procedure_replay_input_vector,
     procedure_semantic_replay_key_digest,
     procedure_semantic_run_id,
+    resolve_procedure_resource_budget,
     run_value_digest,
     verify_line_admission_spec,
 )
@@ -914,6 +916,8 @@ def _line_occurrence(
 def _line_budget(
     accepted_line: AcceptedLineSpecV1,
     accepted_procedure: AcceptedProcedureV1,
+    *,
+    resource_budgets: bool = False,
 ) -> ProcedureBudgetV3:
     budgets = accepted_line.line.budgets
     if not isinstance(accepted_line.line, LineSpecV2) or not isinstance(budgets, dict):
@@ -923,6 +927,13 @@ def _line_budget(
         max_provider_calls=budgets["max_provider_calls"],
         max_capture_bytes=budgets["max_capture_bytes"],
         max_items=budgets.get("max_items"),
+        max_result_bytes=(
+            budgets.get(
+                "max_result_bytes", accepted_procedure.procedure.definition.budget.max_result_bytes
+            )
+            if resource_budgets
+            else None
+        ),
     )
 
 
@@ -985,7 +996,7 @@ def _plan_external_occurrences(
     interfaces: Mapping[str, AcceptedProviderInterfaceRegistrationV1],
     slot_pins: Mapping[str, ArtifactPin],
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
-    runtime_policy: object,
+    runtime_policy: ProcedureRuntimePolicyV1,
     budget: ProcedureBudgetV3,
     implementation_closures: Sequence[Any] = (),
 ) -> tuple[ProviderExternalOccurrencePlanV1, ...]:
@@ -1097,9 +1108,18 @@ def _plan_external_occurrences(
         translation = translate_provider_budget(
             budget=budget,
             hard_caps=definition.hard_caps,
-            runtime_policy=runtime_policy,  # type: ignore[arg-type]
+            runtime_policy=runtime_policy,
             remaining_wall_clock_microseconds=budget.wall_clock.microseconds,
-            result_bytes_cap=max(1, definition.hard_caps.max_capture_bytes),
+            result_bytes_cap=(
+                resolved.result_bytes_cap
+                if (
+                    resolved := resolve_procedure_resource_budget(
+                        budget, definition.hard_caps, runtime_policy
+                    )
+                )
+                is not None
+                else max(1, definition.hard_caps.max_capture_bytes)
+            ),
             produces_capture=produces_capture,
         )
         common = {
@@ -1161,7 +1181,7 @@ def _line_external_occurrences(
     interfaces: Mapping[str, AcceptedProviderInterfaceRegistrationV1],
     slot_pins: Mapping[str, ArtifactPin],
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
-    runtime_policy: object,
+    runtime_policy: ProcedureRuntimePolicyV1,
     budget: ProcedureBudgetV3,
 ) -> tuple[ProviderExternalOccurrencePlanV1, ...]:
     """Plan a Line occurrence's Provider occurrences through the shared planner."""
@@ -2938,6 +2958,11 @@ def _prepare_direct_external_run(
         "selection_decision": selection,
         "selection_decision_digest": selection_digest,
         "provider_output_bytes_cap": runtime_policy.provider_output_bytes_cap,
+        "resource_budget": resolve_procedure_resource_budget(
+            accepted.procedure.definition.budget,
+            accepted.procedure.definition.hard_caps,
+            runtime_policy,
+        ),
         "acquisition_plan_digest": plan_digest,
         "exhaust_access_binding_digest": None,
     }
@@ -3109,8 +3134,13 @@ def service_run_playbill_procedure(
             return planned
         prepared, acquisition_policy, capture_contracts = planned
     else:
+        try:
+            direct_runtime_policy = _accepted_runtime_policy(instance, coordinate)
+        except ProcedureRuntimePolicyAbsent:
+            direct_runtime_policy = None  # Retained pre-runtime-policy coordinates.
         prepared = prepare_direct_procedure_run(
             accepted,
+            runtime_policy=direct_runtime_policy,
             instance_id=instance.descriptor.instance_id,
             run_id=None,
             accepted_coordinate=AcceptedCoordinate.from_internal(coordinate),
@@ -3527,7 +3557,9 @@ def service_run_playbill_line(
         )
     runtime_policy = _accepted_runtime_policy(instance, coordinate)
     slot_pins = _line_slot_pins(accepted_line)
-    budget = _line_budget(accepted_line, accepted)
+    budget = _line_budget(
+        accepted_line, accepted, resource_budgets=coordinate.compiler == RESOURCE_BUDGET_COMPILER
+    )
     try:
         external_occurrences = _line_external_occurrences(
             accepted_line,
@@ -3727,6 +3759,9 @@ def service_run_playbill_line(
         "selection_decision": selection,
         "selection_decision_digest": selection_digest,
         "provider_output_bytes_cap": runtime_policy.provider_output_bytes_cap,
+        "resource_budget": resolve_procedure_resource_budget(
+            budget, accepted.procedure.definition.hard_caps, runtime_policy
+        ),
         "acquisition_plan_digest": plan_digest,
         "exhaust_access_binding_digest": None,
     }
