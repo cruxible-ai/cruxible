@@ -133,7 +133,7 @@ NEXT_ITEM_ID_DOMAIN = "playbill-next-item-v1"
 NEXT_RESULT_DIGEST_DOMAIN = "playbill-next-result-v1"
 NEXT_RESULT_V2_DIGEST_DOMAIN = "playbill-next-result-v2"
 DEFAULT_EXPIRING_WITHIN_MICROSECONDS = 604_800_000_000
-MAX_DEPENDENCY_LINEAGE_GENERATIONS = 256
+MAX_DEPENDENCY_LINEAGE_NODES = 4096
 
 NextDomain = Literal[
     "accepted_state",
@@ -1375,10 +1375,6 @@ def _citation_commitments(
     store = instance.body_store()
     access = BodyAccessContext(principal_id="playbill-next", can_read_body=True)
     result: dict[str, _CitationCommitment] = {}
-    history = instance.accepted_history()
-    target_index = next(
-        index for index, generation in enumerate(history) if generation.oid == coordinate.git_oid
-    )
     facts = (
         build_accepted_query_facts(instance, coordinate=internal_coordinate)
         if facts_reader is None
@@ -1411,25 +1407,15 @@ def _citation_commitments(
             predecessor_digest = claim.lifecycle.predecessor_digest
             lineage_note: CitationLineageNote | None = None
             if predecessor_digest is not None:
-                path = claim_path(claim.identity.name)
-                first_scanned = max(0, target_index - MAX_DEPENDENCY_LINEAGE_GENERATIONS)
-                predecessor = next(
-                    (
-                        parsed
-                        for generation in reversed(history[first_scanned:target_index])
-                        for content in (instance.blob_at(generation.oid, path),)
-                        if content is not None
-                        for parsed in (parse_claim(content, path=path),)
-                        if claim_artifact_digest(parsed).tagged == predecessor_digest
-                    ),
-                    None,
+                historical = _historical_claim(
+                    instance,
+                    coordinate=internal_coordinate,
+                    identity=claim.identity.qualified,
+                    digest=predecessor_digest,
                 )
+                predecessor = None if historical is None else historical[0]
                 if predecessor is None:
-                    lineage_note = (
-                        "predecessor_lineage_limit_exceeded"
-                        if first_scanned > 0
-                        else "predecessor_unresolved"
-                    )
+                    lineage_note = "predecessor_unresolved"
                 elif claim_statement_digest(predecessor.statement) != claim_statement_digest(
                     claim.statement
                 ):
@@ -1838,53 +1824,60 @@ def _citation_relation_items(
     return tuple(items)
 
 
+def _historical_claim(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    identity: str,
+    digest: str,
+) -> tuple[ClaimArtifactAny, AcceptedProjectionCoordinate] | None:
+    """Read one exact retained version, regardless of unrelated generation count."""
+    with instance.accepted_history_reader(
+        at=AcceptedCoordinate.from_internal(coordinate)
+    ) as history:
+        location = history.artifact(digest, identity=identity)
+        if location is None:
+            return None
+        generation = history.generation(location.occurrence_sequence)
+    raw = instance.blob_at(generation.git_oid, location.path)
+    if raw is None:
+        return None
+    claim = parse_claim(raw, path=location.path)
+    if claim.identity.qualified != identity or claim_artifact_digest(claim).tagged != digest:
+        raise ProposalIntegrityError("historical Claim differs from its indexed identity or digest")
+    return claim, instance.coordinate_for_oid(generation.git_oid)
+
+
 def _bounded_claim_lineages(
     instance: PlaybillInstance,
     *,
     coordinate: AcceptedProjectionCoordinate,
     current_claims: Mapping[str, ClaimArtifactAny],
+    max_nodes: int = MAX_DEPENDENCY_LINEAGE_NODES,
 ) -> tuple[dict[str, tuple[str, ...]], frozenset[str]]:
-    """Resolve only authenticated accepted history, capped at 256 generations."""
-
-    history = instance.accepted_history()
-    target_index = next(
-        index for index, item in enumerate(history) if item.oid == coordinate.git_oid
-    )
-    lineages: dict[str, list[str]] = {
-        path: [claim_artifact_digest(claim).tagged] for path, claim in current_claims.items()
-    }
-    expected: dict[str, str] = {
-        path: claim.lifecycle.predecessor_digest
-        for path, claim in current_claims.items()
-        if claim.lifecycle.predecessor_digest is not None
-    }
-    scanned = history[max(0, target_index - MAX_DEPENDENCY_LINEAGE_GENERATIONS) : target_index]
-    for generation in reversed(scanned):
-        if not expected:
-            break
-        wanted = tuple(sorted(expected, key=lambda item: item.encode("utf-8")))
-        blobs = instance.blobs_at(generation.oid, wanted)
-        for path in wanted:
-            raw = blobs.get(path)
-            if raw is None:
-                continue
-            claim = parse_claim(raw, path=path)
-            digest = claim_artifact_digest(claim).tagged
-            if digest != expected[path]:
-                continue
-            lineages[path].append(digest)
-            predecessor = claim.lifecycle.predecessor_digest
-            if predecessor is None:
-                expected.pop(path)
-            else:
-                expected[path] = predecessor
-    return (
-        {
-            path: tuple(sorted(set(digests), key=lambda item: item.encode("ascii")))
-            for path, digests in lineages.items()
-        },
-        frozenset(expected),
-    )
+    """Follow indexed predecessors; unrelated generations consume no traversal budget."""
+    lineages: dict[str, tuple[str, ...]] = {}
+    incomplete: set[str] = set()
+    remaining = max_nodes
+    for path, current in sorted(current_claims.items()):
+        found = {claim_artifact_digest(current).tagged}
+        expected = current.lifecycle.predecessor_digest
+        while expected is not None and remaining > 0 and expected not in found:
+            remaining -= 1
+            historical = _historical_claim(
+                instance,
+                coordinate=coordinate,
+                identity=current.identity.qualified,
+                digest=expected,
+            )
+            if historical is None:
+                break
+            found.add(expected)
+            expected = historical[0].lifecycle.predecessor_digest
+        if expected is not None:
+            incomplete.add(path)
+        lineages[path] = tuple(sorted(found))
+    return lineages, frozenset(incomplete)
 
 
 @dataclass(frozen=True)
@@ -1903,10 +1896,6 @@ def _attestation_claim_lineage(
     """Recover one Claim lineage at the request coordinate, oldest first."""
 
     path = claim_path(claim_identity)
-    history = instance.accepted_history()
-    target_index = next(
-        index for index, item in enumerate(history) if item.oid == coordinate.git_oid
-    )
     current_tree = ClaimVerdictReadContext(instance, coordinate).tree
     raw = current_tree.get(path)
     if raw is None:
@@ -1920,26 +1909,24 @@ def _attestation_claim_lineage(
         )
     ]
     expected = current.lifecycle.predecessor_digest
-    scanned = history[max(0, target_index - MAX_DEPENDENCY_LINEAGE_GENERATIONS) : target_index]
-    for generation in reversed(scanned):
-        if expected is None:
+    seen = {found[0].artifact_digest}
+    while (
+        expected is not None and len(found) < MAX_DEPENDENCY_LINEAGE_NODES and expected not in seen
+    ):
+        historical = _historical_claim(
+            instance, coordinate=coordinate, identity=current.identity.qualified, digest=expected
+        )
+        if historical is None:
             break
-        predecessor_raw = instance.blob_at(generation.oid, path)
-        if predecessor_raw is None:
-            continue
-        predecessor = parse_claim(predecessor_raw, path=path)
-        digest = claim_artifact_digest(predecessor).tagged
-        if digest != expected:
-            continue
+        predecessor, predecessor_coordinate = historical
         found.append(
             _AttestationLineageArtifact(
                 claim=predecessor,
-                artifact_digest=digest,
-                tree=ClaimVerdictReadContext(
-                    instance, instance.coordinate_for_oid(generation.oid)
-                ).tree,
+                artifact_digest=expected,
+                tree=ClaimVerdictReadContext(instance, predecessor_coordinate).tree,
             )
         )
+        seen.add(expected)
         expected = predecessor.lifecycle.predecessor_digest
     return tuple(reversed(found)), expected is not None
 

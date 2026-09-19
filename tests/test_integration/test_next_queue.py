@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 from typing import get_args
 
 import pytest
@@ -232,18 +231,9 @@ def _accept_claim_successor(instance, owner, *, value: str, sequence: int):  # t
     return current
 
 
-@pytest.mark.parametrize(
-    ("synthetic_predecessor_count", "expected_note"),
-    [
-        (257, "predecessor_lineage_limit_exceeded"),
-        (0, "predecessor_unresolved"),
-    ],
-)
 def test_unresolved_citation_predecessor_degrades_to_a_row_with_a_typed_note(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    synthetic_predecessor_count: int,
-    expected_note: str,
 ) -> None:
     instance, owner = seed_claims(tmp_path)
     predecessor = _accept_claim_successor(instance, owner, value="blocked", sequence=3)
@@ -274,29 +264,9 @@ def test_unresolved_citation_predecessor_degrades_to_a_row_with_a_typed_note(
             _claim_from_view(view) for view in service_list_playbill_claims(instance).claims
         )
     }
-    current = instance.accepted_history()[-1]
-    synthetic = tuple(
-        SimpleNamespace(oid=f"{index + 1:064x}") for index in range(synthetic_predecessor_count)
-    )
-    original_tree_at = instance.tree_at
-    synthetic_oids = {item.oid for item in synthetic}
-    monkeypatch.setattr(instance, "accepted_history", lambda: (*synthetic, current))
-    original_blob_at = instance.blob_at
     monkeypatch.setattr(
-        instance,
-        "tree_at",
-        lambda oid: {} if oid in synthetic_oids else original_tree_at(oid),
-    )
-    original_blobs_at = instance.blobs_at
-    monkeypatch.setattr(
-        instance,
-        "blob_at",
-        lambda oid, path: None if oid in synthetic_oids else original_blob_at(oid, path),
-    )
-    monkeypatch.setattr(
-        instance,
-        "blobs_at",
-        lambda oid, paths: {} if oid in synthetic_oids else original_blobs_at(oid, paths),
+        "cruxible_core.service.discovery.next._historical_claim",
+        lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
         "cruxible_core.service.discovery.next._claim_law_evidence",
@@ -329,7 +299,7 @@ def test_unresolved_citation_predecessor_degrades_to_a_row_with_a_typed_note(
     )
 
     row = next(item for item in result.items if item.reason == "citation_drifted")
-    assert row.detail["lineage_note"] == expected_note  # type: ignore[index]
+    assert row.detail["lineage_note"] == "predecessor_unresolved"  # type: ignore[index]
 
 
 def test_resolvable_citation_predecessor_still_subtracts_dead_spans(tmp_path: Path) -> None:

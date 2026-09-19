@@ -13,6 +13,7 @@ instant, deterministic order, stated truncation, and a read that writes nothing.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -574,7 +575,8 @@ def test_next_coalesces_multiple_stale_inputs_into_one_derived_claim_row(
     assert walked_sources == [first_current.accepted.path, second_current.accepted.path]
 
 
-def test_bounded_claim_lineages_marks_an_unresolved_257th_predecessor_incomplete() -> None:
+@pytest.mark.parametrize("max_nodes", [32, 4096])
+def test_indexed_claim_lineages_cross_old_generation_boundary(max_nodes: int) -> None:
     rows: list[ClaimFactRowV1] = []
     predecessor: str | None = None
     for generation in range(258):
@@ -592,13 +594,27 @@ def test_bounded_claim_lineages_marks_an_unresolved_257th_predecessor_incomplete
         oid: {SOURCE_PATH: render_claim(row.accepted.claim)}
         for oid, row in zip(oids, rows, strict=True)
     }
+    lookups = []
+
+    def artifact(digest, *, identity):
+        lookups.append(digest)
+        for index, row in enumerate(rows):
+            if (
+                row.accepted.artifact_digest == digest
+                and row.accepted.claim.identity.qualified == identity
+            ):
+                return SimpleNamespace(occurrence_sequence=index, path=SOURCE_PATH)
+        return None
+
     instance = SimpleNamespace(
-        accepted_history=lambda: tuple(SimpleNamespace(oid=oid) for oid in oids),
-        tree_at=lambda oid: trees[oid],
+        accepted_history_reader=lambda **kwargs: nullcontext(
+            SimpleNamespace(
+                artifact=artifact,
+                generation=lambda sequence: SimpleNamespace(git_oid=oids[sequence]),
+            )
+        ),
         blob_at=lambda oid, path: trees[oid].get(path),
-        blobs_at=lambda oid, paths: {
-            path: trees[oid][path] for path in paths if path in trees[oid]
-        },
+        coordinate_for_oid=lambda oid: accepted,
     )
     current = rows[-1]
     accepted = _facts((current,), generation="77").coordinate.model_copy(
@@ -609,11 +625,13 @@ def test_bounded_claim_lineages_marks_an_unresolved_257th_predecessor_incomplete
         instance,  # type: ignore[arg-type]
         coordinate=accepted,
         current_claims={SOURCE_PATH: current.accepted.claim},
+        max_nodes=max_nodes,
     )
 
-    assert len(lineages[SOURCE_PATH]) == 257
-    assert rows[0].accepted.artifact_digest not in lineages[SOURCE_PATH]
-    assert incomplete == frozenset({SOURCE_PATH})
+    assert len(lookups) == min(max_nodes, 257)
+    assert len(lineages[SOURCE_PATH]) == min(max_nodes + 1, 258)
+    assert incomplete == (frozenset({SOURCE_PATH}) if max_nodes < 257 else frozenset())
+    assert (rows[0].accepted.artifact_digest in lineages[SOURCE_PATH]) == (max_nodes >= 257)
 
 
 def test_a_verdict_change_alone_makes_dependents_repair_candidates() -> None:
