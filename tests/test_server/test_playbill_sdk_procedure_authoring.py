@@ -14,6 +14,7 @@ from cruxible_client.contracts.procedures.artifacts import procedure_owned_contr
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1, QueryEvaluationPolicyV1
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1, QueryEntryV1
 from cruxible_client.transport.http import CruxibleClient
+from tests.core_support._pc_c_support import capture_contract
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
 
@@ -165,3 +166,53 @@ def test_sdk_never_reinterprets_exact_pins_as_authoring_references(
         item.code == "playbill.authoring.caller_artifact_digest_forbidden"
         for item in intent.diagnostics
     )
+
+
+@pytest.mark.parametrize("graph_format", [4, 5])
+@pytest.mark.parametrize("successor", [None, "explicit", "fallthrough"])
+def test_sdk_capture_terminal_prepares_but_cannot_continue(
+    playbill_http: tuple[TestClient, str, Path],
+    tmp_path: Path,
+    graph_format: int,
+    successor: str | None,
+) -> None:
+    http, instance_id, reviewer_key = playbill_http
+    transport = CruxibleClient(base_url="http://cruxible")
+    transport._client = http  # type: ignore[assignment]
+    pb = Playbill._from_client(transport, instance_id=instance_id, workspace=tmp_path)
+    contract = capture_contract()
+    prepared = pb.changes().capture_contract(contract).prepare()
+    assert not prepared.refused, prepared.diagnostics
+    submitted = prepared.submit().status()
+    assert submitted.proposal_id is not None
+    _approve_and_activate(http, instance_id, reviewer_key, submitted.proposal_id)
+    pb.refresh()
+
+    definition = procedure_example()
+    definition.definition["graph_format"] = graph_format
+    nodes = definition.definition["nodes"]
+    assert isinstance(nodes, list)
+    terminal = {
+        "kind": "emit_capture",
+        "node_id": "emit",
+        "capture_contract": {
+            "kind": "accepted",
+            "role": "capture-contract",
+            "target": contract.identity.qualified,
+        },
+        "input": "$steps." + str(definition.definition["returns"]),
+    }
+    nodes.append(terminal)
+    if successor is not None:
+        nodes.append({"kind": "halt", "node_id": "after"})
+        if successor == "explicit":
+            terminal["next"] = "after"
+    intent = pb.procedure(definition=definition).prepare()
+    if successor is None:
+        assert not intent.refused, intent.diagnostics
+    else:
+        assert intent.refused
+        assert any(
+            item.code == "playbill.authoring.procedure_definition_invalid"
+            for item in intent.diagnostics
+        ), intent.diagnostics

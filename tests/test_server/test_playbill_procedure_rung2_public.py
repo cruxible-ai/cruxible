@@ -18,6 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client import Playbill
+from cruxible_client.authoring.inputs import CarriedContractInput, ProcedureInput
 from cruxible_client.contracts.acquisition_policies import (
     IndependentCoherenceV1,
     InputAcquisitionRuleV1,
@@ -388,7 +389,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     assert interface.providers, interface
     provider = interface.providers[0]
 
-    # 2. Author the whole world as one change set over the authoring routes.
+    # 2. Author definitions through public surfaces, including the typed SDK for capture.
     contract = capture_contract()
     contract_pin = ArtifactPin(
         role="capture-contract",
@@ -465,19 +466,60 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     members.sort(
         key=lambda item: authoring_member_identity(adapter.validate_python(item)).encode("utf-8")
     )
-    compiled = transport.compile_playbill_authoring(
-        instance_id,
-        payload={
-            "tag": "playbill-change-set-authoring-payload-v1",
-            "members": members,
-            "rationale": "Stand up the advisory severity Line.",
-        },
-    )
-    assert compiled.verdict == "passed", compiled.frontier
-    intent_id = str(compiled.certificate["intent_id"])
-    submitted = transport.submit_playbill_authoring_intent(instance_id, intent_id)
-    assert submitted.status.proposal_id is not None, submitted
-    _approve_and_activate(http, instance_id, reviewer_key, submitted.status.proposal_id)
+
+    def accept_members(selected: list[dict[str, Any]]) -> None:
+        compiled = transport.compile_playbill_authoring(
+            instance_id,
+            payload={
+                "tag": "playbill-change-set-authoring-payload-v1",
+                "members": selected,
+                "rationale": "Stand up the advisory severity Line.",
+            },
+        )
+        assert compiled.verdict == "passed", compiled.frontier
+        intent_id = str(compiled.certificate["intent_id"])
+        submitted = transport.submit_playbill_authoring_intent(instance_id, intent_id)
+        assert submitted.status.proposal_id is not None, submitted
+        _approve_and_activate(http, instance_id, reviewer_key, submitted.status.proposal_id)
+
+    if terminal_kind == "emit_capture":
+        # Accept dependencies first, then exercise the SDK authoring door itself
+        # instead of bypassing its supported-node checks through raw payloads.
+        line_tags = {
+            "playbill-line-authoring-payload-v1",
+            "playbill-procedure-mandate-authoring-payload-v1",
+        }
+        accept_members(
+            [
+                member
+                for member in members
+                if member["tag"] not in line_tags | {"playbill-procedure-authoring-payload-v2"}
+            ]
+        )
+        pb = Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
+        authored = ProcedureInput(
+            kind="procedure",
+            definition=_authored(definition, same_set_kinds=set()),
+            activation_policy="drain",
+            acquisition_policy=POLICY_NAME,
+            contracts=tuple(
+                CarriedContractInput(
+                    name=contract.identity.name,
+                    description=contract.contract_schema.description,
+                    fields=contract.contract_schema.fields,
+                    allow_extra=contract.contract_schema.allow_extra,
+                )
+                for contract in (input_contract, output_contract)
+            ),
+        )
+        prepared = pb.procedure(definition=authored).prepare()
+        assert not prepared.refused, prepared.diagnostics
+        submitted_procedure = prepared.submit().status()
+        assert submitted_procedure.proposal_id is not None
+        _approve_and_activate(http, instance_id, reviewer_key, submitted_procedure.proposal_id)
+        accept_members([member for member in members if member["tag"] in line_tags])
+    else:
+        accept_members(members)
 
     # 3. Trigger the Line through its public route.
     identity_digest = line_identity_digest(ArtifactIdentity(kind="Line", name=LINE_NAME))

@@ -2696,10 +2696,10 @@ class Playbill:
         # letting authoring succeed on a graph no run lane can admit.
         allowed = {"state_tap", "transform", "project", "guard", "repeat", "halt"}
         if definition.definition.get("graph_format") in {4, 5}:
-            # `propose_change_set` is served on the Line lane only: a direct
-            # run has no requested rung or mandate coordinate and refuses it
-            # at admission, so the SDK admits the node where a Line can run it.
-            allowed = allowed | {"source", "propose_change_set"}
+            # Effectful terminals are served on the Line lane: direct runs
+            # refuse them at admission. The shared compiler enforces that each
+            # terminal ends its path; the SDK must allow authoring that path.
+            allowed = allowed | {"source", "emit_capture", "propose_change_set"}
         if definition.definition.get("graph_format") == 5:
             allowed = allowed | {"call"}
         nodes = definition.definition.get("nodes")
@@ -2716,8 +2716,8 @@ class Playbill:
                 capability=f"procedure nodes {unsupported}",
                 repair=(
                     "Use only state_tap, transform, project, guard, repeat, and halt nodes "
-                    "on the served SDK lane, plus source and propose_change_set on a "
-                    "graph-v4/v5 definition, and call on a graph-v5 definition."
+                    "on the served SDK lane, plus source, emit_capture, and propose_change_set "
+                    "on a graph-v4/v5 definition, and call on a graph-v5 definition."
                 ),
             )
         return ProcedureDraft(
