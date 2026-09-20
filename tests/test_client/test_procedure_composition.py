@@ -109,6 +109,36 @@ def test_unbound_provider_refuses_before_authoring():
         plan.bind(typo=PROVIDER)
 
 
+def test_existing_node_identities_survive_sequence_adoption():
+    plan = sequence(
+        Source("observation", node_id="fetch", next="retain", capture_contract="http"),
+        Project("result", node_id="retain", next="emit", fields={"count": 1}, contract_out=NUMBER),
+        EmitCapture("emit", capture_contract="evidence", input=Output("observation")),
+    ).bind(observation=PROVIDER)
+    preview = plan.preview()
+    assert preview.ready_for_prepare, preview.errors
+    assert preview.edges == {"fetch": {"next": "retain"}, "retain": {"next": "emit"}, "emit": {}}
+    assert preview.nodes[0]["as"] == "observation"
+    assert preview.nodes[1]["as"] == "result"
+    assert preview.nodes[2]["input"] == "$steps.observation"
+    assert preview.returns == "result"
+
+    # Existing whole-output wiring still follows aliases, not node identities.
+    calls = sequence(
+        Project("value", node_id="produce", fields={"count": 1}, contract_out=NUMBER),
+        Call(
+            "answer", node_id="consume", contract_in=NUMBER, contract_out=NUMBER, provider=PROVIDER
+        ),
+    )
+    assert calls.preview().ready_for_prepare
+    assert calls.preview().nodes[1]["input"] == "$steps.value"
+    assert (
+        not replace(calls, steps=(calls.steps[0], replace(calls.steps[1], node_id="produce")))
+        .preview()
+        .ready_for_prepare
+    )
+
+
 def test_auto_wiring_rejects_incompatible_carried_contracts():
     text = CarriedContractInput(name="text", fields={"count": PropertySchema(type="string")})
     plan = sequence(

@@ -8,6 +8,7 @@ shared graph validator check topology without pretending to resolve those refs.
 from __future__ import annotations
 
 from dataclasses import dataclass, fields, replace
+from dataclasses import field as dataclass_field
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
@@ -102,8 +103,15 @@ class ProviderBinding(BaseModel):
 
 @dataclass(frozen=True)
 class Step:
+    """Name is the output alias and binding key; edges target the node identity.
+
+    Preserve an existing graph's distinct node identity with ``node_id`` when
+    adopting the builder, without renaming outputs or changing its bindings.
+    """
+
     name: str
     next: str | None = None
+    node_id: str | None = dataclass_field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -326,9 +334,12 @@ class Sequence:
             kind = _KINDS.get(type(step))
             if kind is None:
                 raise TypeError(f"Unsupported sequence step: {type(step).__name__}")
-            node: dict[str, Any] = {"kind": kind, "node_id": step.name}
+            node: dict[str, Any] = {
+                "kind": kind,
+                "node_id": step.name if step.node_id is None else step.node_id,
+            }
             for field in fields(step):
-                if field.name in {"name", "next", "provider"}:
+                if field.name in {"name", "node_id", "next", "provider"}:
                     continue
                 value = getattr(step, field.name)
                 if field.name in {"contract_in", "contract_out"}:
