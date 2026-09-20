@@ -1437,3 +1437,178 @@ def test_coordinator_authored_halt_reason_reaches_terminal_and_receipt(
     assert result.terminal.reason == reason
     assert isinstance(result.receipt, ProcedureRunReceiptV3)
     assert result.receipt.terminal == result.terminal
+
+
+def _accepted_authoring_trio(tmp_path):
+    from cruxible_client.contracts.acquisition_policies import (
+        IndependentCoherenceV1,
+        InputAcquisitionRuleV1,
+        SourceAcquisitionPolicyV1,
+    )
+    from cruxible_client.contracts.authoring.models import (
+        LineAuthoringPayloadV1,
+        ProcedureMandateAuthoringPayloadV1,
+        SourceAcquisitionPolicyAuthoringPayloadV1,
+        authoring_member_identity,
+    )
+    from cruxible_client.contracts.procedures.line_specs import ManualTriggerPolicyV1
+
+    instance, owner = initialize_local(tmp_path)
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    procedure = _list_contract_payload()
+    procedure = procedure.model_copy(
+        update={"definition": {**procedure.definition, "graph_format": 5}}
+    )
+    name = procedure.definition["name"]
+    policy = SourceAcquisitionPolicyAuthoringPayloadV1(
+        acquisition_policy=SourceAcquisitionPolicyV1(
+            identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="demo"),
+            inputs=(
+                InputAcquisitionRuleV1(
+                    input_name="status",
+                    requirement="optional",
+                    permitted_replayability=("exact",),
+                    on_unavailable="omit_optional",
+                    on_stale="omit_optional",
+                    on_oversized="omit_optional",
+                    on_conflict="refuse",
+                ),
+            ),
+            coherence=IndependentCoherenceV1(),
+        )
+    )
+    line = LineAuthoringPayloadV1(
+        name=name,
+        procedure_name=name,
+        acquisition_policy_name="demo",
+        requested_terminal_rung=1,
+        trigger_policy=ManualTriggerPolicyV1(),
+    )
+    mandate = ProcedureMandateAuthoringPayloadV1(
+        name=name,
+        procedure_name=name,
+        rung=2,
+        authority_ceiling=ProcedureHardCapsV3.model_validate(procedure.definition["hard_caps"]),
+        namespace=("captures",),
+        valid_from=datetime(2026, 1, 1, tzinfo=UTC),
+        expires_at=datetime(2027, 1, 1, tzinfo=UTC),
+    )
+    payload = ChangeSetAuthoringPayloadV1(
+        members=tuple(sorted((policy, procedure, line, mandate), key=authoring_member_identity))
+    )
+    intent = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
+    lowered = lowering.lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
+    _accept_tree(
+        instance, owner, lowered.proposed_tree, timestamp=TIMESTAMP, proposal_name="authoring-trio"
+    )
+    return coordinator, actor, owner, payload, procedure, line, mandate
+
+
+def test_unchanged_procedure_line_mandate_submit_reuses_accepted_state(tmp_path):
+    coordinator, actor, _, payload, procedure, line, mandate = _accepted_authoring_trio(tmp_path)
+    instance = coordinator.instance
+    coordinate = instance.accepted_coordinate()
+    tree = instance.tree_at(coordinate.git_oid)
+    # Exercise individual doors, the combined changeset, and submit retry.
+    for member in (
+        procedure,
+        line,
+        mandate,
+        payload.model_copy(update={"rationale": "Reauthor accepted definitions"}),
+    ):
+        intent = coordinator.create(
+            actor=actor, payload=member, canonical_timestamp="2026-08-21T12:02:00.000000Z"
+        ).intent
+        computed = compute_preflight(instance, intent=intent, actor=actor)
+        assert computed.result.verdict == "passed", computed.result.frontier.model_dump_json(
+            indent=2
+        )
+        assert computed.lowered.idempotent
+        assert computed.lowered.changed_members == ()
+        assert dict(computed.lowered.proposed_tree) == dict(tree)
+        for _ in range(2):
+            result = coordinator.submit(intent.intent_id, actor=actor)
+            assert result.status.state == "accepted"
+            assert result.status.proposal_id is None
+            assert result.identity_stable
+            assert result.claim_revision is None
+            assert instance.accepted_coordinate() == coordinate
+
+
+def test_changed_procedure_rebinds_dependents_then_reauthoring_is_unchanged(tmp_path):
+    from cruxible_client.contracts.procedure_mandates import parse_procedure_mandate
+    from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
+    from cruxible_client.contracts.procedures.line_specs import parse_line_spec
+
+    coordinator, actor, owner, payload, procedure, _, _ = _accepted_authoring_trio(tmp_path)
+    instance = coordinator.instance
+    before = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = procedure_path(procedure.definition["name"])
+    old_digest = procedure_artifact_digest(parse_procedure(before[path], path=path)).tagged
+    changed = procedure.model_copy(
+        update={"definition": {**procedure.definition, "description": "Real change"}}
+    )
+    revised = payload.model_copy(
+        update={"members": tuple(changed if m == procedure else m for m in payload.members)}
+    )
+    intent = coordinator.create(
+        actor=actor, payload=revised, canonical_timestamp="2026-08-21T12:02:00.000000Z"
+    ).intent
+    computed = compute_preflight(instance, intent=intent, actor=actor)
+    assert computed.result.verdict == "passed", computed.result.frontier
+    lowered = computed.lowered
+    assert not lowered.idempotent and len(lowered.changed_members) == 3
+    new = parse_procedure(lowered.proposed_tree[path], path=path)
+    assert new.lifecycle.predecessor_digest == old_digest
+    new_digest = procedure_artifact_digest(new).tagged
+    for p, b in lowered.changed_members:
+        if p.startswith("lines/"):
+            assert parse_line_spec(b, path=p).procedure.artifact_digest == new_digest
+        if p.startswith("procedure-mandates/"):
+            assert parse_procedure_mandate(b, path=p).procedure.artifact_digest == new_digest
+    _accept_tree(
+        instance,
+        owner,
+        lowered.proposed_tree,
+        timestamp="2026-08-21T12:01:00.000000Z",
+        proposal_name="revised-trio",
+    )
+    again = coordinator.create(
+        actor=actor,
+        payload=revised.model_copy(update={"rationale": "Reauthor successor"}),
+        canonical_timestamp="2026-08-21T12:03:00.000000Z",
+    ).intent
+    unchanged = lowering.lower_authoring(instance, intent=again, actor_id=actor.actor_id)
+    assert unchanged.idempotent and unchanged.changed_members == ()
+    assert unchanged.proposed_tree[path] == lowered.proposed_tree[path]
+    # An old-base no-change intent must not claim the newer, different graph
+    # already satisfies its requested content.
+    stale = coordinator.create(
+        actor=actor,
+        payload=procedure,
+        canonical_timestamp=TIMESTAMP,
+        base_coordinate=intent.base_coordinate,
+    ).intent
+    stale_result = compute_preflight(instance, intent=stale, actor=actor)
+    assert stale_result.result.verdict == "refused"
+
+
+def test_authoring_no_change_comparison_keeps_lifecycle_and_policy_changes(tmp_path):
+    coordinator, actor, _, _, procedure, line, mandate = _accepted_authoring_trio(tmp_path)
+    instance = coordinator.instance
+    # These are material changes even with unchanged Procedure graph content.
+    variants = (
+        procedure.model_copy(update={"activation_policy": "drain"}),
+        procedure.model_copy(update={"retire": True}),
+        line.model_copy(update={"occurrence_epoch": 2}),
+        line.model_copy(update={"retire": True}),
+        mandate.model_copy(update={"expires_at": datetime(2027, 2, 1, tzinfo=UTC)}),
+        mandate.model_copy(update={"retire": True}),
+    )
+    for member in variants:
+        intent = coordinator.create(
+            actor=actor, payload=member, canonical_timestamp="2026-08-21T12:02:00.000000Z"
+        ).intent
+        changed = lowering.lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
+        assert not changed.idempotent and len(changed.changed_members) == 1

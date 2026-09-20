@@ -1582,6 +1582,18 @@ def _parse_reference_tree(
         )
 
 
+def _same_revision_content(candidate: BaseModel, previous: BaseModel) -> bool:
+    """Compare authored content before introducing a successor link.
+
+    Lifecycle state remains significant; only the link we generate while
+    lowering is excluded. Preserve the original bytes for unchanged artifacts.
+    """
+    exclude = {"lifecycle": {"predecessor_digest"}}
+    return candidate.model_dump(mode="json", exclude=exclude) == previous.model_dump(
+        mode="json", exclude=exclude
+    )
+
+
 def _lower_procedure(
     instance: PlaybillInstance,
     *,
@@ -1785,7 +1797,11 @@ def _lower_procedure(
             ),
         )
     candidate_tree = fork_tree(base_tree)
-    procedure_bytes = render_procedure(procedure)
+    if predecessor is not None and _same_revision_content(procedure, predecessor):
+        procedure = predecessor
+        procedure_bytes = base_tree[path]
+    else:
+        procedure_bytes = render_procedure(procedure)
     candidate_tree[path] = procedure_bytes
     changed = () if base_tree.get(path) == procedure_bytes else ((path, procedure_bytes),)
     return LoweredAuthoring(
@@ -1800,6 +1816,7 @@ def _lower_procedure(
             "predecessor_digest": procedure.lifecycle.predecessor_digest,
         },
         changed_members=changed,
+        idempotent=not changed and base.git_oid == instance.accepted_coordinate().git_oid,
     )
 
 
@@ -2077,6 +2094,8 @@ def _render_line_member(
             predecessor_digest=predecessor_digest,
         ),
     )
+    if previous_content is not None and _same_revision_content(line, previous):
+        return path, previous_content, line_spec_digest(previous).tagged
     return path, render_line_spec(line), line_spec_digest(line).tagged
 
 
@@ -2128,6 +2147,8 @@ def _render_procedure_mandate_member(
             predecessor_digest=predecessor_digest,
         ),
     )
+    if previous_content is not None and _same_revision_content(mandate, previous):
+        return path, previous_content, procedure_mandate_digest(previous).tagged
     return path, render_procedure_mandate(mandate), procedure_mandate_digest(mandate).tagged
 
 
@@ -2464,6 +2485,7 @@ def _lower_change_set(
         },
         changed_members=changed,
         member_by_path=member_by_path,
+        idempotent=not changed and base.git_oid == instance.accepted_coordinate().git_oid,
     )
 
 
@@ -3117,6 +3139,7 @@ def lower_authoring(
                 "identity": authoring_member_identity(intent.payload),
             },
             changed_members=changed,
+            idempotent=not changed and base.git_oid == instance.accepted_coordinate().git_oid,
         )
     if isinstance(intent.payload, ChangeSetAuthoringPayloadV1):
         return _lower_change_set(
@@ -3139,6 +3162,7 @@ def lower_authoring(
                 "identity": authoring_member_identity(intent.payload),
             },
             changed_members=changed,
+            idempotent=not changed and base.git_oid == instance.accepted_coordinate().git_oid,
         )
     return _lower_non_procedure(payload=intent.payload, base_tree=base_tree)
 

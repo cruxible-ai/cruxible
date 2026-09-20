@@ -725,13 +725,9 @@ class AuthoringIntentCoordinator:
             )
             reduced = current.candidate_status
             if reduced.state == "accepted":
-                idempotent_existing = (
-                    reduced.proposal_id is None
-                    and isinstance(current.payload, ClaimAuthoringPayloadV1)
-                    and isinstance(current.payload.source, ExistingCaptureCitationSourceV1)
-                )
+                idempotent_existing = reduced.proposal_id is None
                 revision: int | None = None
-                if idempotent_existing:
+                if idempotent_existing and isinstance(current.payload, ClaimAuthoringPayloadV1):
                     coordinate = self.instance.accepted_coordinate()
                     with self.instance.bind_accepted_projection(coordinate) as projection:
                         projected = projection.claim(f"Claim:{current.semantic_identity}")
@@ -794,11 +790,13 @@ class AuthoringIntentCoordinator:
                     operation_key=operation_key,
                     transform=accept_existing,
                 )
-                with self.instance.bind_accepted_projection(
-                    self.instance.accepted_coordinate()
-                ) as projection:
-                    projected = projection.claim(f"Claim:{preflighted.semantic_identity}")
-                claim_revision = None if projected is None else projected.envelope.revision
+                claim_revision = None
+                if isinstance(preflighted.payload, ClaimAuthoringPayloadV1):
+                    with self.instance.bind_accepted_projection(
+                        self.instance.accepted_coordinate()
+                    ) as projection:
+                        projected = projection.claim(f"Claim:{preflighted.semantic_identity}")
+                    claim_revision = None if projected is None else projected.envelope.revision
                 return AuthoringSubmitResultV1(
                     intent=accepted_intent,
                     status=accepted_intent.candidate_status,
