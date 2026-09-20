@@ -34,6 +34,8 @@ from cruxible_client.authoring.context import (
     PlaybillContextResolutionError,
     resolve_playbill_context,
 )
+from cruxible_client.authoring.procedures import ProviderBinding
+from cruxible_client.authoring.procedures import Sequence as ProcedureSequence
 from cruxible_client.authoring.sdk_types import (
     AccessProfile,
     CallSite,
@@ -93,6 +95,7 @@ from cruxible_client.contracts.artifacts import (
 )
 from cruxible_client.contracts.authoring.inputs import (
     ProcedureInput,
+    ProcedureMandateInputV1,
     QueryDefinitionInput,
     lower_authoring_input,
 )
@@ -122,6 +125,7 @@ from cruxible_client.contracts.authoring.models import (
     LineAuthoringPayloadV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
+    ProcedureMandateAuthoringPayloadV1,
     QueryDefinitionAuthoringPayloadV1,
     ResolutionContractAuthoringPayloadV1,
     SelfSourceBodyV1,
@@ -845,6 +849,34 @@ class ChangeSetDraft:
                 expectations=(),
                 source_map=DiagnosticSourceMap(()),
                 decisions={"kind": "acquisition_policy", "name": policy.identity.name},
+            )
+        )
+        return self
+
+    def procedure(self, *, definition: ProcedureInput | ProcedureSequence) -> ChangeSetDraft:
+        """Compose a Procedure with its Line and mandate in one existing changeset."""
+        draft = self._playbill.procedure(definition=definition)
+        assert isinstance(draft.payload, (ProcedureAuthoringPayloadV1, ProcedureAuthoringPayloadV2))
+        self._members.append(
+            _ChangeSetMember(
+                payload=draft.payload,
+                expectations=draft.reference_expectations,
+                source_map=draft.source_map,
+                decisions={"kind": "procedure", "payload": draft.payload.model_dump(mode="json")},
+            )
+        )
+        return self
+
+    def procedure_mandate(self, definition: ProcedureMandateInputV1) -> ChangeSetDraft:
+        """Stage a typed mandate through the shared authoring-input lowering."""
+        payload = lower_authoring_input(definition)
+        assert isinstance(payload, ProcedureMandateAuthoringPayloadV1)
+        self._members.append(
+            _ChangeSetMember(
+                payload=payload,
+                expectations=(),
+                source_map=DiagnosticSourceMap(()),
+                decisions=definition.model_dump(mode="json"),
             )
         )
         return self
@@ -2667,12 +2699,38 @@ class Playbill:
             DiagnosticSourceMap(()),
         )
 
+    def provider_binding(self, interface: str, *, provider: str | None = None) -> ProviderBinding:
+        """Select a registered interface through existing accepted-state discovery.
+
+        Discovery never installs a provider or authorizes its execution. Multiple
+        implementations require an explicit selection rather than an arbitrary default.
+        """
+        identity = (
+            interface
+            if interface.startswith("ProviderInterface:")
+            else "ProviderInterface:" + interface
+        )
+        inventory = self._client.discover_playbill(
+            self._instance_id,
+            profile="interfaces",
+            at=self._read_at(None),
+        )
+        if not isinstance(inventory, api.PlaybillInterfaceInventory):
+            raise ValueError("Provider interface discovery returned no inventory")
+        matches = [entry for entry in inventory.interfaces if entry.identity == identity]
+        if len(matches) != 1:
+            raise ValueError(f"No unique accepted provider interface {identity!r}")
+        return ProviderBinding.from_interface(matches[0], provider=provider)
+
     def procedure(
         self,
         *,
-        definition: ProcedureInput,
+        definition: ProcedureInput | ProcedureSequence,
     ) -> ProcedureDraft:
-        """Author a Procedure with the same typed input used by CLI and HTTP.
+        """Author a Procedure from a Sequence or the input shared by CLI and HTTP.
+
+        A Sequence first performs its local structural checks and builds that
+        same input. Its preview never runs providers or replaces daemon preflight.
 
         Declare owned input/output schemas in ``definition.contracts`` and use
         ``carried_contract`` references in its graph. ``accepted`` references
@@ -2686,8 +2744,10 @@ class Playbill:
         """
 
         sites = capture_keyword_sites("procedure", stacklevel=1)
+        if isinstance(definition, ProcedureSequence):
+            definition = definition.build()
         if not isinstance(definition, ProcedureInput):
-            raise TypeError("procedure definition must be a ProcedureInput, not an accepted graph")
+            raise TypeError("procedure definition must be a ProcedureInput or authoring Sequence")
         payload = lower_authoring_input(definition)
         assert isinstance(payload, (ProcedureAuthoringPayloadV1, ProcedureAuthoringPayloadV2))
         # `source` is served by the graph-v4/v5 observation path: a v3 Source
