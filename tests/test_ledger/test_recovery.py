@@ -16,7 +16,12 @@ from cruxible_client.contracts.documents import (
     parse_document,
 )
 from cruxible_core.compiler.assembler import PROJECTION_CRASH_POINTS
-from cruxible_core.indexes.serving import SERVING_MANIFEST_FILE, bind_current_projection
+from cruxible_core.indexes.serving import (
+    SERVING_MANIFEST_FILE,
+    bind_current_projection,
+    load_serving_manifest,
+    render_serving_manifest,
+)
 from cruxible_core.indexes.sqlite import detect_projection_orphans
 from cruxible_core.ledger.activation import (
     GENERATION_NOTE,
@@ -366,3 +371,33 @@ def test_replay_retains_no_generation_trees_and_serves_history_from_the_ledger(
     assert [entry.coordinate.git_oid for entry in served.entries] == [
         generation.oid for generation in history[1:]
     ]
+
+
+def test_reopen_replaces_retired_physical_projection_pointer(tmp_path: Path) -> None:
+    instance, base, bundle = _prepared(tmp_path)
+    publisher = instance.activation_publisher()
+    projection = publisher.prebuild(bundle, base=base)
+    assert publisher.activate(bundle, projection, base=base).status == "accepted"
+    publication = Path(projection.manifest_path).parent
+    serving = load_serving_manifest(publication)
+    # A prior storage schema used a different physical manifest name. Its
+    # obsolete manifest may already have been collected during recovery.
+    retired = serving.model_copy(
+        update={"projection_manifest_name": "projection-" + "00" * 32 + ".json"}
+    )
+    assert not (publication / retired.projection_manifest_name).exists()
+    (publication / SERVING_MANIFEST_FILE).unlink()
+    (publication / SERVING_MANIFEST_FILE).write_bytes(render_serving_manifest(retired))
+
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+
+    coordinate = reopened.accepted_coordinate()
+    assert coordinate.git_oid == bundle.oid
+    assert coordinate.semantic_root == bundle.semantic_root.tagged
+    assert coordinate.generation_root == bundle.generation_root.tagged
+    assert (
+        load_serving_manifest(publication).projection_manifest_name
+        == Path(projection.manifest_path).name
+    )
+    with bind_current_projection(publication, expected=coordinate) as handle:
+        assert handle.manifest.git_oid == bundle.oid

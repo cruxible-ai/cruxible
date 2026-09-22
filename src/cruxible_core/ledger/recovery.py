@@ -803,6 +803,10 @@ def _repair_serving(
             serving.git_oid == coordinate.git_oid
             and serving.semantic_root == coordinate.semantic_root
             and serving.generation_root == coordinate.generation_root
+            # A storage-schema rebuild can publish a different manifest for
+            # the same accepted coordinate. Rebind the verified replacement
+            # instead of reopening the retired physical projection.
+            and serving.projection_manifest_name == Path(projection.manifest_path).name
         ):
             with bind_current_projection(publication_directory, expected=coordinate):
                 return
