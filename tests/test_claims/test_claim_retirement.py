@@ -37,7 +37,6 @@ from cruxible_core.claims.claim_retirement import (
     ClaimRetireStale,
     service_retire_claim,
 )
-from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDispositionV3,
     ClaimTypeMigrationDependentInvalid,
@@ -65,6 +64,7 @@ from tests.core_support._claim_authoring_support import (
 from tests.core_support._support import client_material, initialize_local
 from tests.test_claims.test_claim_type_migrations import (
     _accepted_claim_world,
+    _decision_only_input,
     _decision_only_successor,
 )
 from tests.test_claims.test_claims import _claim_type
@@ -815,17 +815,9 @@ def test_live_target_successor_cannot_advance_a_retiring_dependent_pin(tmp_path:
     middle_before = parse_claim(tree[claim_path(middle_id)], path=claim_path(middle_id))
     type_path = claim_type_path(middle_before.statement.predicate)
     current_type = parse_claim_type(tree[type_path], path=type_path)
-    successor_values = current_type.model_dump(mode="json")
-    for mechanical in (
-        "artifact_format",
-        "identity",
-        "lifecycle",
-        "subject_scope",
-        "slot_policy",
-    ):
-        successor_values.pop(mechanical, None)
-    successor_values["literal_schema"] = {"type": "string", "minLength": 1}
-    successor = ClaimTypeInputV1.model_validate(successor_values)
+    successor = _decision_only_input(current_type).model_copy(
+        update={"literal_schema": {"type": "string", "minLength": 1}}
+    )
     dispositions = (
         ClaimTypeDependentDispositionV3(
             identity=middle_before.identity,

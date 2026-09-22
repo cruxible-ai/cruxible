@@ -24,6 +24,7 @@ from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequenceRuleV1,
     ClaimEvidenceFreshnessV1,
     ClaimFreshnessDurationV1,
+    ClaimType,
     claim_type_digest,
     claim_type_path,
     parse_claim_type,
@@ -45,6 +46,10 @@ from cruxible_client.contracts.laws import (
     CLAIM_LAW_V3_REVISION_7,
     PLAYBILL_ACCEPTANCE_LAWS,
     AcceptanceLawRegistry,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicyV2,
+    ClaimEvidenceAdmissionRuleV2,
 )
 from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.query.definitions import (
@@ -210,6 +215,29 @@ def _accepted_affects_package_world(tmp_path: Path):  # type: ignore[no-untyped-
     return instance, intent.semantic_identity, owner
 
 
+def _decision_only_input(current: ClaimType) -> ClaimTypeInputV1:
+    """Explicitly author the successor under current, producer-independent policy."""
+
+    values = current.model_dump(mode="json")
+    for mechanical in ("artifact_format", "identity", "lifecycle", "subject_scope", "slot_policy"):
+        values.pop(mechanical, None)
+    # These fixtures have no producer restrictions to translate. Do not silently
+    # erase a nonempty historical allowlist while preparing a new test decision.
+    assert all(
+        not getattr(rule, "allowed_reducer_digests", ())
+        for rule in current.evidence_admission_policy.rules
+    )
+    values["evidence_admission_policy"] = ClaimEvidenceAdmissionPolicyV2(
+        rules=tuple(
+            ClaimEvidenceAdmissionRuleV2.model_validate(
+                rule.model_dump(mode="json", exclude={"tag", "allowed_reducer_digests"})
+            )
+            for rule in current.evidence_admission_policy.rules
+        )
+    ).model_dump(mode="json")
+    return ClaimTypeInputV1.model_validate(values)
+
+
 def _subject_valued_affects_package_successor(instance):  # type: ignore[no-untyped-def]
     predicate = "sec.vuln.affects_package"
     path = claim_type_path(predicate)
@@ -217,9 +245,7 @@ def _subject_valued_affects_package_successor(instance):  # type: ignore[no-unty
         instance.tree_at(instance.accepted_coordinate().git_oid)[path],
         path=path,
     )
-    values = current.model_dump(mode="json")
-    for mechanical in ("artifact_format", "identity", "lifecycle", "subject_scope", "slot_policy"):
-        values.pop(mechanical, None)
+    values = _decision_only_input(current).model_dump(mode="json")
     values.update(
         {
             "object_kind": "subject",
@@ -743,11 +769,9 @@ def _decision_only_successor(instance, *, enum: list[str]):  # type: ignore[no-u
         instance.tree_at(instance.accepted_coordinate().git_oid)[path],
         path=path,
     )
-    values = current.model_dump(mode="json")
-    for mechanical in ("artifact_format", "identity", "lifecycle", "subject_scope", "slot_policy"):
-        values.pop(mechanical, None)
-    values["literal_schema"] = {"type": "string", "enum": enum}
-    return ClaimTypeInputV1.model_validate(values)
+    return _decision_only_input(current).model_copy(
+        update={"literal_schema": {"type": "string", "enum": enum}}
+    )
 
 
 def _activate_migration(instance, owner, successor, dependents):  # type: ignore[no-untyped-def]
@@ -1049,12 +1073,12 @@ def test_decision_only_successor_migrates_freshness_and_its_live_claim(
     assert tree_oid is not None
     path = claim_type_path(_claim_type().predicate)
     governed = parse_claim_type(instance.proposal_tree(tree_oid)[path], path=path)
-    assert governed.artifact_format == "playbill-claim-type-v3"
+    assert governed.artifact_format == "playbill-claim-type-v5"
     assert governed.evidence_freshness == freshness
     assert preflight.successor_artifact_digest == claim_type_digest(governed).tagged  # type: ignore[union-attr]
 
 
-def test_claim_type_v3_to_v4_migration_preserves_freshness_and_accepts_policy(
+def test_current_successions_preserve_freshness_and_accept_policy(
     tmp_path: Path,
 ) -> None:
     instance, owner = initialize_local(tmp_path)
@@ -1062,44 +1086,44 @@ def test_claim_type_v3_to_v4_migration_preserves_freshness_and_accepts_policy(
     actor = AuthenticatedActor(actor_id="owner")
     path = claim_type_path(_claim_type().predicate)
 
-    v3_input = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
+    freshness_input = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
         update={
             "evidence_freshness": ClaimEvidenceFreshnessV1(
                 stale_after=ClaimFreshnessDurationV1(microseconds=2_592_000_000_000)
             )
         }
     )
-    v3_result = service_migrate_claim_type(
+    freshness_result = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV2(mode="submit", successor=v3_input),
+        request=ClaimTypeMigrationRequestV2(mode="submit", successor=freshness_input),
         actor=actor,
     )
-    assert isinstance(v3_result, ClaimTypeMigrationResultV2)
-    v3_candidate = v3_result.proposal.proposal.candidate
-    assert v3_candidate is not None
-    v3_approval = _sign(
+    assert isinstance(freshness_result, ClaimTypeMigrationResultV2)
+    freshness_candidate = freshness_result.proposal.proposal.candidate
+    assert freshness_candidate is not None
+    freshness_approval = _sign(
         client_material(instance.root.parent, instance),
-        v3_candidate.candidate_digest,
+        freshness_candidate.candidate_digest,
         instance.accepted_coordinate().semantic_root,
     )
     service_submit_playbill_approval(
         instance,
-        proposal_id=v3_result.proposal.proposal.admission.proposal_id,
-        attestation=v3_approval.attestation,
+        proposal_id=freshness_result.proposal.proposal.admission.proposal_id,
+        attestation=freshness_approval.attestation,
         authenticated_submitter="owner",
     )
     assert (
         service_activate_playbill_proposal(
             instance,
-            proposal_id=v3_result.proposal.proposal.admission.proposal_id,
+            proposal_id=freshness_result.proposal.proposal.admission.proposal_id,
             activated_by="owner",
         ).status
         == "accepted"
     )
-    accepted_v3 = parse_claim_type(
+    accepted_freshness = parse_claim_type(
         instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path
     )
-    assert accepted_v3.artifact_format == "playbill-claim-type-v3"
+    assert accepted_freshness.artifact_format == "playbill-claim-type-v5"
 
     policy = ClaimAttestationConsequencePolicyV1(
         rules=(
@@ -1110,43 +1134,45 @@ def test_claim_type_v3_to_v4_migration_preserves_freshness_and_accepts_policy(
             ),
         )
     )
-    v4_input = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
+    policy_input = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
         update={"attestation_consequence_policy": policy}
     )
-    v4_result = service_migrate_claim_type(
+    policy_result = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV2(mode="submit", successor=v4_input),
+        request=ClaimTypeMigrationRequestV2(mode="submit", successor=policy_input),
         actor=actor,
     )
-    assert isinstance(v4_result, ClaimTypeMigrationResultV2)
-    v4_candidate = v4_result.proposal.proposal.candidate
-    assert v4_candidate is not None
-    v4_approval = _sign(
+    assert isinstance(policy_result, ClaimTypeMigrationResultV2)
+    policy_candidate = policy_result.proposal.proposal.candidate
+    assert policy_candidate is not None
+    policy_approval = _sign(
         client_material(instance.root.parent, instance),
-        v4_candidate.candidate_digest,
+        policy_candidate.candidate_digest,
         instance.accepted_coordinate().semantic_root,
     )
     service_submit_playbill_approval(
         instance,
-        proposal_id=v4_result.proposal.proposal.admission.proposal_id,
-        attestation=v4_approval.attestation,
+        proposal_id=policy_result.proposal.proposal.admission.proposal_id,
+        attestation=policy_approval.attestation,
         authenticated_submitter="owner",
     )
     assert (
         service_activate_playbill_proposal(
             instance,
-            proposal_id=v4_result.proposal.proposal.admission.proposal_id,
+            proposal_id=policy_result.proposal.proposal.admission.proposal_id,
             activated_by="owner",
         ).status
         == "accepted"
     )
-    accepted_v4 = parse_claim_type(
+    accepted_policy = parse_claim_type(
         instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path
     )
-    assert accepted_v4.artifact_format == "playbill-claim-type-v4"
-    assert accepted_v4.evidence_freshness == accepted_v3.evidence_freshness
-    assert accepted_v4.attestation_consequence_policy == policy
-    assert accepted_v4.lifecycle.predecessor_digest == claim_type_digest(accepted_v3).tagged
+    assert accepted_policy.artifact_format == "playbill-claim-type-v5"
+    assert accepted_policy.evidence_freshness == accepted_freshness.evidence_freshness
+    assert accepted_policy.attestation_consequence_policy == policy
+    assert (
+        accepted_policy.lifecycle.predecessor_digest == claim_type_digest(accepted_freshness).tagged
+    )
 
 
 def test_retired_dependent_is_rederived_byte_exactly_and_next_remains_live(
