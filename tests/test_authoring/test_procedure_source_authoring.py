@@ -131,3 +131,77 @@ def test_source_inspection_without_context_is_explicitly_unresolved():
         candidate.build()
     with pytest.raises(ValueError, match="Unknown"):
         candidate.bind(typo=object())
+
+
+def test_source_relocation_preserves_identity_and_local_diagnostics():
+    import pytest
+
+    from cruxible_client.contracts.procedures.source_compiler import (
+        SourceCompileError,
+        compile_source,
+        verify_source_graph,
+    )
+    from cruxible_core.authoring.procedure_source import resolve_source, verify_source_bindings
+    from tests.test_procedures.test_source_compiler import accepted
+
+    request = blueprint()._at(SimpleNamespace()).model_copy(update={"name": "example"})
+    relocated = request.model_copy(
+        update={"filename": "/other/machine/moved.py", "first_line": 800}
+    )
+
+    def lookup(identity):
+        return None
+
+    original = resolve_source(request, lookup=lookup, claim_types=())
+    moved = resolve_source(relocated, lookup=lookup, claim_types=())
+    assert original.definition == moved.definition
+    assert accepted(original).artifact_digest == accepted(moved).artifact_digest
+    assert original.source_map[0].span.filename == request.filename
+    assert moved.source_map[0].span.filename == relocated.filename
+    assert moved.source_map[0].span.line - original.source_map[0].span.line == (
+        relocated.first_line - request.first_line
+    )
+    verify_source_graph(accepted(moved).procedure)
+    verify_source_bindings(accepted(moved).procedure, lookup=lookup, claim_types=())
+
+    # Old envelopes still reproduce their original, location-bearing digest.
+    historical = compile_source(
+        original.definition.source.model_copy(
+            update={"filename": request.filename, "first_line": request.first_line}
+        ),
+        name=request.name,
+        input=request.input,
+        output=request.output,
+        budget=request.budget,
+        hard_caps=request.hard_caps,
+        terminal_capability=request.terminal_capability,
+        description=request.description,
+    )
+    old = accepted(historical)
+    assert old.artifact_digest != accepted(original).artifact_digest
+    verify_source_graph(old.procedure)
+    verify_source_bindings(old.procedure, lookup=lookup, claim_types=())
+    assert old.artifact_digest == accepted(historical).artifact_digest
+
+    changed = resolve_source(
+        request.model_copy(
+            update={
+                "text": request.text.replace("request.count > 0", "request.count > 1"),
+            }
+        ),
+        lookup=lookup,
+        claim_types=(),
+    )
+    assert accepted(changed).artifact_digest != accepted(original).artifact_digest
+    with pytest.raises(SourceCompileError) as error:
+        resolve_source(
+            relocated.model_copy(
+                update={
+                    "text": "def assess(request):\n    open('never', 'w')\n",
+                }
+            ),
+            lookup=lookup,
+            claim_types=(),
+        )
+    assert error.value.diagnostic.span.filename == relocated.filename
+    assert error.value.diagnostic.span.line == 801

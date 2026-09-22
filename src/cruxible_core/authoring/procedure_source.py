@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Callable, Iterable
+from dataclasses import replace
 from typing import Any, NoReturn, TypeVar
 
 from cruxible_client.contracts.artifacts import ArtifactPin
@@ -211,8 +212,10 @@ def resolve_source(
         kinds.update(claim_type.allowed_object_subject_kinds)
     program = ProcedureSourceV1(
         text=request.text,
-        filename=request.filename,
-        first_line=request.first_line,
+        # Retain a portable source coordinate. The caller's filesystem location
+        # belongs to diagnostics, not the accepted Procedure's content identity.
+        filename=f"{request.name.removeprefix('Procedure:')}.py",
+        first_line=1,
         function=request.function,
         contracts=request.contracts,
         bindings=bindings,
@@ -220,15 +223,42 @@ def resolve_source(
         subject_kinds=tuple(sorted(kinds)),
         capture_contracts=captures,
     )
-    return compile_source(
-        program,
-        name=request.name,
-        input=request.input,
-        output=request.output,
-        budget=request.budget,
-        hard_caps=request.hard_caps,
-        terminal_capability=request.terminal_capability,
-        description=request.description,
+
+    def local_span(span: SourceSpan) -> SourceSpan:
+        return span.model_copy(
+            update={
+                "filename": request.filename,
+                "line": span.line + request.first_line - 1,
+                "end_line": span.end_line + request.first_line - 1,
+            }
+        )
+
+    try:
+        compiled = compile_source(
+            program,
+            name=request.name,
+            input=request.input,
+            output=request.output,
+            budget=request.budget,
+            hard_caps=request.hard_caps,
+            terminal_capability=request.terminal_capability,
+            description=request.description,
+        )
+    except SourceCompileError as exc:
+        raise SourceCompileError(
+            exc.diagnostic.model_copy(
+                update={
+                    "span": local_span(exc.diagnostic.span),
+                    "related_spans": tuple(local_span(s) for s in exc.diagnostic.related_spans),
+                }
+            )
+        ) from exc
+    return replace(
+        compiled,
+        source_map=tuple(
+            entry.model_copy(update={"span": local_span(entry.span)})
+            for entry in compiled.source_map
+        ),
     )
 
 
@@ -283,5 +313,19 @@ def verify_source_bindings(
         description=definition.description,
     )
     compiled = resolve_source(request, lookup=lookup, claim_types=claim_types)
-    if compiled.definition != definition:
+    # Older retained source may carry an author's absolute source location.
+    # Verify its dependencies under the same portable coordinate without ever
+    # rewriting its stored bytes or recomputing its historical digest.
+    assert compiled.definition.source is not None
+    expected = definition.model_copy(
+        update={
+            "source": program.model_copy(
+                update={
+                    "filename": compiled.definition.source.filename,
+                    "first_line": compiled.definition.source.first_line,
+                }
+            )
+        }
+    )
+    if compiled.definition != expected:
         raise ValueError("Procedure source bindings differ from their accepted definitions")
