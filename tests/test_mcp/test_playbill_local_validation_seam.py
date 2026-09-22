@@ -11,8 +11,22 @@ from __future__ import annotations
 
 import pytest
 
+from cruxible_client.contracts.capture_reads import CaptureReadRequestV1
 from cruxible_core.errors import DataValidationError
 from cruxible_core.mcp import handlers
+
+
+@pytest.mark.parametrize("changes", [{"capture_digest": "/etc/passwd"}, {"max_bytes": -1}])
+def test_capture_read_revalidates_before_local_dispatch(monkeypatch, changes) -> None:
+    request = CaptureReadRequestV1(capture_digest="sha256:" + "f" * 64).model_copy(update=changes)
+    monkeypatch.setattr(handlers, "_get_client", lambda: None)
+    monkeypatch.setattr(
+        handlers.playbill_api,
+        "playbill_read_capture",
+        lambda *args: pytest.fail("Invalid capture request reached the local service"),
+    )
+    with pytest.raises(DataValidationError, match="cruxible_playbill_read_capture"):
+        handlers.handle_playbill_read_capture("inst_never_reached", request)
 
 
 def test_a_control_character_in_a_decommission_reason_is_a_typed_refusal() -> None:

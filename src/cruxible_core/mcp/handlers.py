@@ -288,6 +288,7 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_playbill_curation_overrule": TypeAdapter(PlaybillCurationOverruleRequest),
     "cruxible_playbill_curation_suppress": TypeAdapter(PlaybillCurationSuppressRequest),
     "cruxible_playbill_dereference": None,  # path and query only
+    "cruxible_playbill_read_capture": TypeAdapter(CaptureReadRequestV1),
     "cruxible_playbill_host_create": TypeAdapter(PlaybillHostCreateRequest),
     "cruxible_playbill_host_workspace_detach": None,  # path only
     "cruxible_playbill_init": TypeAdapter(PlaybillInitRequest),
@@ -667,6 +668,7 @@ def handle_playbill_read_capture(instance_id: str, request: CaptureReadRequestV1
         lambda client: client.read_playbill_capture(instance_id, request),
         lambda: playbill_api.playbill_read_capture(instance_id, request),
         operation_name="cruxible_playbill_read_capture",
+        local_payload=request.model_dump(mode="json"),
     )
 
 
