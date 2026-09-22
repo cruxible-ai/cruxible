@@ -26,7 +26,7 @@ from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_IDENTITY,
     ApprovalPolicyV1,
 )
-from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.candidates import validate_candidate_timestamp
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
@@ -821,10 +821,30 @@ class ClaimAuthoringPayloadV2(ClaimAuthoringPayloadV1):
     dependency_drafts: ClaimDependencyDraftsV1
 
 
+class ClaimDerivationBindingV1(_StrictAuthoringModel):
+    """Backend-bound reducer and exact admitted inputs, never author-supplied hashes."""
+
+    procedure: ArtifactPin
+    inputs: tuple[ArtifactPin, ...]
+
+    @model_validator(mode="after")
+    def _kinds(self) -> "ClaimDerivationBindingV1":
+        if self.procedure.target.kind != "Procedure" or not self.inputs:
+            raise ValueError("a derivation needs its Procedure and nonempty Claim inputs")
+        if any(pin.target.kind != "Claim" for pin in self.inputs):
+            raise ValueError("derivation inputs must name Claims")
+        if len({p.target.qualified for p in self.inputs}) != len(self.inputs):
+            raise ValueError("derivation inputs must be unique by identity")
+        return self
+
+
 class ClaimAuthoringPayloadV3(ClaimAuthoringPayloadV1):
     tag: Literal["playbill-claim-authoring-payload-v3"] = "playbill-claim-authoring-payload-v3"  # type: ignore[assignment]
     source: ClaimAuthoringSourceV3  # type: ignore[assignment]
     dependency_drafts: ClaimDependencyDraftsV1
+    derivation: ClaimDerivationBindingV1 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class AuthoringArtifactReferenceV1(_StrictAuthoringModel):

@@ -21,6 +21,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedurePinSlotRefV1,
     ProcedurePinSlotV1,
     ProjectNodeV3,
+    ProposeChangeSetNodeV6,
     ProviderNodeV3,
     ProviderNodeV4,
     RepeatBodyNodeV3,
@@ -139,6 +140,9 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinitionAny) -> N
                 PinExpectation((("claim-type", "ClaimType"),)),
                 f"{prefix} claim_type",
             )
+        elif isinstance(node, ProposeChangeSetNodeV6):
+            for pin in node.claim_types:
+                check(pin, PinExpectation((("claim-type", "ClaimType"),)), f"{prefix} claim_type")
         elif isinstance(node, StateTapNodeV3):
             check(node.query, QUERY, f"{prefix} query")
         elif isinstance(node, SourceNodeV3 | SourceNodeV4):

@@ -1097,6 +1097,7 @@ class CaptureEgressNodeV6(CaptureEgressNodeV3):
 
 
 class ProposeChangeSetNodeV6(ProposeChangeSetNodeV3):
+    claim_types: tuple[ArtifactPin, ...] = ()
     result: object
 
     _result = field_validator("result", mode="before")(normalize_canonical)

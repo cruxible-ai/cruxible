@@ -13,6 +13,7 @@ from typing import Any, Literal, NoReturn, cast
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.procedures.contract_schema import (
     ContractSchema,
     PropertySchema,
@@ -71,6 +72,11 @@ class ClaimValue(Value):
 
 
 @dataclass(frozen=True)
+class ClaimCandidate:
+    wire: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class Constructor:
     schema: ContractSchema
     query: SourceQueryBinding | None = None
@@ -83,6 +89,7 @@ class Namespace:
 
 Expression = (
     Subject
+    | ClaimCandidate
     | ClaimSelection
     | SourceClaimType
     | Value
@@ -550,6 +557,8 @@ class _Compiler:
                 )
             if isinstance(node.func, ast.Name) and node.func.id in {"call", "source", "query"}:
                 return self.operation(node)
+            if isinstance(node.func, ast.Name) and node.func.id == "claim_candidate":
+                return self.candidate(node)
             target = self.expr(node.func)
             if isinstance(target, Constructor):
                 return self.record(target, node)
@@ -733,6 +742,146 @@ class _Compiler:
             if cardinality == "one"
             else PropertySchema(type="list", item_fields=schema.fields),
             phase="state",
+        )
+
+    def candidate(self, node: ast.Call) -> ClaimCandidate:
+        fields = {k.arg: k.value for k in node.keywords}
+        required = {"subject", "predicate", "value", "role", "rationale"}
+        optional = {"supported_by", "copied_from", "self_source", "qualifier", "revises", "basis"}
+        if node.args or not required.issubset(fields) or set(fields) - required - optional:
+            self.fail(
+                node, "claim_candidate needs a typed statement, role, rationale and one source"
+            )
+        subject, predicate = self.expr(fields["subject"]), self.expr(fields["predicate"])
+        if not isinstance(subject, Subject) or not isinstance(predicate, SourceClaimType):
+            self.fail(node, "Use an accepted Subject and ClaimType", "contract_mismatch")
+        shape = predicate.structure
+        if subject.kind not in shape.allowed_subject_kinds:
+            self.fail(node, "ClaimType does not admit this Subject kind", "contract_mismatch")
+        if shape.object_kind != "literal":
+            self.fail(
+                node,
+                "This source form currently needs a literal-valued ClaimType",
+                "contract_mismatch",
+            )
+        expected = PropertySchema(type="json", json_schema=shape.literal_schema)
+        value = self.value(fields["value"], expected=expected)
+        if value.literal:
+            try:
+                RecordConstructor(ContractSchema(fields={"value": expected}))(value=value.wire)
+            except ValueError as exc:
+                self.fail(fields["value"], str(exc), "contract_value_invalid")
+        elif not _assignable(value.type, expected):
+            self.fail(
+                fields["value"],
+                "Value is outside the accepted ClaimType range",
+                "contract_mismatch",
+            )
+        role = self.value(fields["role"])
+        if not role.literal or role.wire not in shape.permitted_roles:
+            self.fail(fields["role"], "Role is not admitted by this ClaimType", "contract_mismatch")
+        rationale = self.value(fields["rationale"])
+        if _json_type(rationale.type).get("type") != "string":
+            self.fail(fields["rationale"], "Rationale must be text", "contract_mismatch")
+        sources = set(fields) & {"supported_by", "copied_from", "self_source"}
+        if len(sources) != 1:
+            self.fail(
+                node,
+                "Choose exactly one supported_by, copied_from or self_source",
+                "evidence_required",
+            )
+        source_kind = sources.pop()
+        source = self.expr(fields[source_kind])
+        if source_kind == "self_source":
+            if not isinstance(source, Value) or _json_type(source.type).get("type") != "string":
+                self.fail(node, "self_source must be text", "contract_mismatch")
+        elif not isinstance(source, Observation):
+            self.fail(
+                fields[source_kind],
+                "Cite a verified observation or child capture handle",
+                "evidence_required",
+            )
+        basis: list[Any] = []
+        if "basis" in fields:
+            supplied = fields["basis"]
+            if not isinstance(supplied, ast.Tuple | ast.List):
+                self.fail(supplied, "basis must list exact selected Claims")
+            for element in supplied.elts:
+                selected = self.expr(element)
+                if not isinstance(selected, ClaimValue) or not isinstance(
+                    selected.type, ContractSchema
+                ):
+                    self.fail(
+                        element,
+                        "basis needs an exact Claim selected with one()",
+                        "contract_mismatch",
+                    )
+                basis.append(self.wire(selected, element))
+        if bool(basis) != (role.wire == "derivation"):
+            self.fail(
+                node,
+                "Derivation Claims require basis; other roles cannot claim derivation inputs",
+                "contract_mismatch",
+            )
+        extras: dict[str, Any] = {}
+        for name in ("qualifier", "revises"):
+            if name in fields:
+                extra = self.value(fields[name])
+                if _json_type(extra.type).get("type") not in {"string", "null"}:
+                    self.fail(fields[name], f"{name} must be text or null", "contract_mismatch")
+                extras[name] = self.wire(extra, node)
+        return ClaimCandidate(
+            dict(
+                tag="playbill-source-claim-candidate-v1",
+                subject_kind=subject.kind,
+                subject_id=self.wire(subject.identity, node),
+                predicate=shape.predicate,
+                value=self.wire(value, node),
+                role=role.wire,
+                rationale=self.wire(rationale, node),
+                source_kind=source_kind,
+                source_value=self.wire(source, node),
+                source_alias=None
+                if source_kind == "self_source"
+                else source.wire.removeprefix("$steps."),
+                basis=basis,
+                **extras,
+            )
+        )
+
+    def proposal_terminal(self, call: ast.Call, stmt: ast.Return) -> None:
+        fields = {k.arg: k.value for k in call.keywords}
+        if call.args or set(fields) != {"candidates", "result"}:
+            self.fail(call, "propose_change_set needs candidates and a typed result")
+        candidates = fields["candidates"]
+        if not isinstance(candidates, ast.Tuple | ast.List) or not candidates.elts:
+            self.fail(candidates, "Provide a nonempty list of typed Claim candidates")
+        templates = []
+        for element in candidates.elts:
+            candidate = self.expr(element)
+            if not isinstance(candidate, ClaimCandidate):
+                self.fail(element, "Use claim_candidate to construct each proposal member")
+            templates.append(candidate.wire)
+        result = self.value(fields["result"])
+        if result.type != self.output.schema_:
+            self.fail(
+                fields["result"],
+                "Return the declared output contract's typed record",
+                "return_contract",
+            )
+        self.append(
+            "propose_change_set",
+            stmt,
+            candidate_templates=templates,
+            claim_types=[
+                ArtifactPin(
+                    role="claim-type",
+                    target=ArtifactIdentity(kind="ClaimType", name=name),
+                    artifact_digest=self.program.claim_types[name].version,
+                ).model_dump(mode="json")
+                for name in sorted({t["predicate"] for t in templates})
+            ],
+            result=self.wire(result, call),
         )
 
     def capture_pin(self, node: ast.AST) -> dict[str, Any]:
@@ -1018,6 +1167,12 @@ class _Compiler:
                     and stmt.value.func.id == "emit_capture"
                 ):
                     self.capture_terminal(stmt.value, stmt)
+                elif (
+                    isinstance(stmt.value, ast.Call)
+                    and isinstance(stmt.value.func, ast.Name)
+                    and stmt.value.func.id == "propose_change_set"
+                ):
+                    self.proposal_terminal(stmt.value, stmt)
                 else:
                     value = self.value(stmt.value)
                     if (
@@ -1167,7 +1322,7 @@ def compile_source(
         )
     except SourceCompileError:
         raise
-    except ValueError as exc:
+    except (ValueError, PlaybillFormatError) as exc:
         raise SourceCompileError(
             SourceDiagnostic(
                 code="playbill.source.contract_or_graph_invalid",

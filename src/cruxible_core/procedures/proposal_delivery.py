@@ -40,6 +40,7 @@ from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV3,
     ClaimDependencyDraftsV1,
     ExistingCaptureCitationSourceV1,
+    SelfSourceBodyV1,
     authoring_change_set_membership,
     authoring_create_fingerprint,
     authoring_member_identity,
@@ -56,6 +57,7 @@ from cruxible_client.contracts.procedure_mandates import (
 from cruxible_client.contracts.procedures.models import TERMINAL_REQUIRED_RUNGS
 from cruxible_client.contracts.procedures.proposal_items import (
     ProcedureClaimProposalItemV1,
+    ProcedureClaimProposalItemV2,
 )
 from cruxible_client.contracts.proposal_models import ProposalResult
 from cruxible_core.authoring import lowering as authoring_lowering
@@ -136,7 +138,13 @@ def proposal_items(
     items: list[ProcedureClaimProposalItemV1] = []
     for item in request.items:
         try:
-            items.append(ProcedureClaimProposalItemV1.model_validate(item.value))
+            model = (
+                ProcedureClaimProposalItemV2
+                if isinstance(item.value, dict)
+                and item.value.get("tag") == "playbill-procedure-claim-proposal-item-v2"
+                else ProcedureClaimProposalItemV1
+            )
+            items.append(model.model_validate(item.value))
         except ValidationError as exc:
             raise ProposalDeliveryRefused(
                 "proposal_item_invalid",
@@ -163,6 +171,22 @@ def evidence_by_item(
     for item in request.items:
         manifest = manifests.get(item.item_key)
         produced = () if manifest is None else manifest.produced_capture_digests
+        parsed = None
+        if (
+            isinstance(item.value, dict)
+            and item.value.get("tag") == "playbill-procedure-claim-proposal-item-v2"
+        ):
+            parsed = ProcedureClaimProposalItemV2.model_validate(item.value)
+            if isinstance(parsed.source, SelfSourceBodyV1):
+                continue
+            selected = parsed.source.capture_digest
+            if selected not in produced:
+                raise ProposalDeliveryRefused(
+                    "proposal_item_evidence_missing",
+                    "Selected evidence is outside the item's verified closure.",
+                )
+            evidence[item.item_key] = selected
+            continue
         if len(produced) == 0:
             raise ProposalDeliveryRefused(
                 "proposal_item_evidence_missing",
@@ -203,8 +227,15 @@ def _claim_members(
         member = ClaimAuthoringPayloadV3(
             statement=item.statement,
             rationale=item.rationale,
-            source=ExistingCaptureCitationSourceV1(capture_digest=evidence[egress_item.item_key]),
-            citation_role="evidence",
+            source=(
+                item.source
+                if isinstance(item, ProcedureClaimProposalItemV2)
+                else ExistingCaptureCitationSourceV1(capture_digest=evidence[egress_item.item_key])
+            ),
+            citation_role=item.citation_role
+            if isinstance(item, ProcedureClaimProposalItemV2)
+            else "evidence",
+            derivation=item.derivation if isinstance(item, ProcedureClaimProposalItemV2) else None,
             claim_ref=item.revises,
             dependency_drafts=ClaimDependencyDraftsV1(),
         )

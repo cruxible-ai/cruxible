@@ -18,7 +18,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from cruxible_client.contracts.authoring.models import AuthoringClaimStatementV1
+from cruxible_client.contracts.authoring.models import (
+    AuthoringClaimStatementV1,
+    ClaimDerivationBindingV1,
+    ExistingCaptureCitationSourceV1,
+    SelfSourceBodyV1,
+)
 from cruxible_client.contracts.claims import claim_path
 
 
@@ -52,3 +57,14 @@ class ProcedureClaimProposalItemV1(_StrictProposalItemModel):
 
 
 __all__ = ["ProcedureClaimProposalItemV1"]
+
+
+class ProcedureClaimProposalItemV2(ProcedureClaimProposalItemV1):
+    """Resolved source candidate; evidence and derivation are bound by the executor."""
+
+    tag: Literal["playbill-procedure-claim-proposal-item-v2"] = (  # type: ignore[assignment]
+        "playbill-procedure-claim-proposal-item-v2"
+    )
+    source: ExistingCaptureCitationSourceV1 | SelfSourceBodyV1
+    citation_role: Literal["evidence", "copy"] | None = None
+    derivation: ClaimDerivationBindingV1 | None = None

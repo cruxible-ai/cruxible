@@ -4389,6 +4389,23 @@ class ProcedureExecutor:
         declared = _terminal_item_templates(node)
         base = _node_policy_tokens(node) | state.control
         values, item_tokens = _terminal_items(declared, state=state)
+        if isinstance(node, ProposeChangeSetNodeV6):
+            from cruxible_core.procedures.source_candidates import bind_source_candidate
+
+            try:
+                values = [
+                    bind_source_candidate(
+                        value,
+                        procedure_identity=admission.procedure_identity,
+                        procedure_digest=admission.procedure_artifact_digest,
+                        outputs=state.outputs,
+                        provenance=state.provenance,
+                        item_tokens=base | item_tokens[index],
+                    )
+                    for index, value in enumerate(values)
+                ]
+            except (ValueError, KeyError) as exc:
+                raise _RunRefusal("proposal_item_invalid", str(exc), node_id=node.node_id) from exc
         outcomes = tuple(
             sorted(state.outcomes.values(), key=lambda item: item.input_name.encode("utf-8"))
         )

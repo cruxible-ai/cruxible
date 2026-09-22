@@ -1211,6 +1211,39 @@ def _lower_claim(
                 artifact_digest=object_referent[1],
             )
         )
+    derivation = payload.derivation if isinstance(payload, ClaimAuthoringPayloadV3) else None
+    if derivation is not None:
+        try:
+            if statement.role != "derivation":
+                raise ValueError("only derivation Claims may carry reducer bindings")
+            for pin in (derivation.procedure, *derivation.inputs):
+                pin_path = (
+                    procedure_path(pin.target.name)
+                    if pin.target.kind == "Procedure"
+                    else claim_path(pin.target.name)
+                )
+                content = base_tree.get(pin_path)
+                if content is None:
+                    raise ValueError("a derivation binding is absent from the accepted base")
+                if pin.target.kind == "Procedure":
+                    reducer = parse_procedure(content, path=pin_path)
+                    identity_matches = reducer.identity == pin.target
+                    digest = procedure_artifact_digest(reducer).tagged
+                else:
+                    basis_claim = parse_claim(content, path=pin_path)
+                    identity_matches = basis_claim.identity == pin.target
+                    digest = claim_artifact_digest(basis_claim).tagged
+                if not identity_matches or digest != pin.artifact_digest:
+                    raise ValueError("a derivation binding changed from its admitted version")
+                pins.append(pin)
+        except (ValueError, PlaybillError) as exc:
+            _refuse(
+                "playbill.authoring.derivation_unverified",
+                "derivation",
+                str(exc),
+                repair_kind="rebind_derivation",
+                repair_description="Read the basis again at the accepted base.",
+            )
     claim = ClaimArtifactV2(
         identity=identity,
         statement=statement,
@@ -1219,9 +1252,19 @@ def _lower_claim(
             capture_digests=capture_digests,
             citations=merge_claim_citations(predecessor_citations, (citation,)),
             input_claim_digests=(
-                () if predecessor is None else predecessor.backing.input_claim_digests
+                tuple(sorted(pin.artifact_digest for pin in derivation.inputs))
+                if derivation is not None
+                else ()
+                if predecessor is None
+                else predecessor.backing.input_claim_digests
             ),
-            reducer_digest=None if predecessor is None else predecessor.backing.reducer_digest,
+            reducer_digest=(
+                derivation.procedure.artifact_digest
+                if derivation is not None
+                else None
+                if predecessor is None
+                else predecessor.backing.reducer_digest
+            ),
             source_mappings=_merge_mappings(
                 () if predecessor is None else predecessor.backing.source_mappings,
                 (source_mapping,),
