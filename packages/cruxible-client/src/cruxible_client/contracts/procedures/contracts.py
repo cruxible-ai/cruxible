@@ -285,6 +285,17 @@ class OwnedProcedureContractValidator:
             assert isinstance(value, dict)
             validate_record_constraints(owned.contract_schema, value)
 
+    def _normalization_contract(
+        self, owned: ProcedureOwnedContractV1, payload: object
+    ) -> ProcedureOwnedContractV1:
+        if not self._structured:
+            return owned
+        from cruxible_client.contracts.records import record_normalization_schema
+
+        return owned.model_copy(
+            update={"contract_schema": record_normalization_schema(owned.contract_schema, payload)}
+        )
+
     def validate_contract(
         self,
         *,
@@ -301,7 +312,7 @@ class OwnedProcedureContractValidator:
             raise ProcedureContractValidationError(
                 f"{direction} contract pin is outside the Procedure owner closure"
             )
-        value = _validate_payload(owned, payload)
+        value = _validate_payload(self._normalization_contract(owned, payload), payload)
         self._validate_structured(owned, value)
         return value
 
@@ -323,7 +334,7 @@ class OwnedProcedureContractValidator:
                 f"{direction} contract pin is outside the Procedure owner closure"
             )
         result = _validate_payload_with_budget(
-            owned,
+            self._normalization_contract(owned, payload),
             payload,
             max_items=max_items,
         )

@@ -255,7 +255,7 @@ def test_short_circuit_routes_do_not_run_other_arm(tmp_path):
     [
         ("return Output.value(value=open('/etc/passwd').read())", "name_unavailable"),
         ("for x in range(10):\n    pass", "unsupported_construct"),
-        ("return Output.value(value=42)", "contract_mismatch"),
+        ("return Output.value(value=42)", "contract_value_invalid"),
         ('return Output.value(typo="x")', "record_field"),
         (
             'if request.choice:\n    value = "yes"\nreturn Output.value(value=value)',
@@ -445,3 +445,26 @@ def test_field_read_is_an_admitted_selection_not_a_whole_world_query(tmp_path):
     assert prepared.accepted_state_materials[0].input.kind == "accepted_claim"
     assert executor.execute(prepared, artifact).output == result.output
     assert len(calls) == 1
+
+
+def test_required_nullable_source_output_executes_without_weakening_old_contracts(tmp_path):
+    from cruxible_client.contracts.procedures.contracts import (
+        ProcedureContractValidationError,
+        validate_contract_schema,
+    )
+
+    output = SourceContract(
+        name="nullable",
+        schema=ContractSchema(
+            fields={"value": PropertySchema(type="json", json_schema={"type": ["string", "null"]})}
+        ),
+    )
+    compiled = compile(
+        "def example(request):\n    return Output.value(value=None)\n", output=output
+    )
+    result = execute(tmp_path, compiled, choice=True, count=0)
+    assert result.status == "succeeded", result
+    assert result.output == {"value": None}
+    # Historical Contract normalization has not changed its null rule.
+    with pytest.raises(ProcedureContractValidationError):
+        validate_contract_schema(output.schema_, {"value": None})

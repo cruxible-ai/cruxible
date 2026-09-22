@@ -161,7 +161,18 @@ def _assignable(actual: ValueType, expected: ValueType) -> bool:
     def admits(a: dict[str, Any], b: dict[str, Any]) -> bool:
         if not b:
             return True
-        if a.get("type") != b.get("type"):
+        if "anyOf" in a:
+            remaining = {k: v for k, v in a.items() if k != "anyOf"}
+            return all(admits({**remaining, **variant}, b) for variant in a["anyOf"])
+        if "anyOf" in b:
+            remaining = {k: v for k, v in b.items() if k != "anyOf"}
+            return any(admits(a, {**remaining, **variant}) for variant in b["anyOf"])
+        actual_kind, expected_kind = a.get("type"), b.get("type")
+        if isinstance(actual_kind, list):
+            return all(admits({**a, "type": kind}, b) for kind in actual_kind)
+        if isinstance(expected_kind, list):
+            return any(admits(a, {**b, "type": kind}) for kind in expected_kind)
+        if actual_kind != expected_kind:
             return False
         if "enum" in b:
             if "enum" not in a or not {canonical_bytes(v) for v in a["enum"]}.issubset(
@@ -317,9 +328,7 @@ class _Compiler:
                 )
             field = constructor.schema.fields[wire_name]
             value = self.value(keyword.value, expected=field)
-            if not _same_base_type(value.type, field) or (
-                not value.literal and not _assignable(value.type, field)
-            ):
+            if not value.literal and not _assignable(value.type, field):
                 self.fail(
                     keyword.value,
                     f"Field {wire_name!r} does not match its declared type",

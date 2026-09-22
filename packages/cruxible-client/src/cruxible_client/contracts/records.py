@@ -40,15 +40,35 @@ def _check_json_schema(schema: Mapping[str, object], path: str) -> None:
         "pattern",
         "description",
         "title",
+        "anyOf",
     }
     unknown = set(schema) - supported
     if unknown:
         raise RecordSchemaError(f"{path}: unsupported schema keywords: {sorted(unknown)}")
-    if schema.get("type") not in {None, "string", "integer", "boolean", "null", "object", "array"}:
+    kinds = schema.get("type")
+    kinds = kinds if isinstance(kinds, list) else [kinds]
+    if not kinds or any(
+        kind not in (None, "string", "integer", "boolean", "null", "object", "array")
+        for kind in kinds
+    ):
         raise RecordSchemaError(f"{path}: unsupported canonical schema type {schema.get('type')!r}")
     extra = schema.get("additionalProperties", True)
-    if not isinstance(extra, bool):
-        raise RecordSchemaError(f"{path}: schema-valued additionalProperties is unsupported")
+    if isinstance(extra, Mapping):
+        _check_json_schema(extra, f"{path}.*")
+    elif not isinstance(extra, bool):
+        raise RecordSchemaError(f"{path}: additionalProperties must be a boolean or schema")
+    variants = schema.get("anyOf")
+    if variants is not None:
+        if set(schema) - {"anyOf", "description", "title"}:
+            raise RecordSchemaError(f"{path}: anyOf with additional constraints is unsupported")
+        if (
+            not isinstance(variants, list)
+            or not variants
+            or any(not isinstance(v, Mapping) for v in variants)
+        ):
+            raise RecordSchemaError(f"{path}: anyOf must be a nonempty list of schemas")
+        for variant in variants:
+            _check_json_schema(variant, path)
     properties = schema.get("properties", {})
     if not isinstance(properties, Mapping):
         raise RecordSchemaError(f"{path}: properties must be an object")
@@ -80,7 +100,7 @@ def _json_record_schema(schema: Mapping[str, object], path: str) -> ContractSche
         # Retain the full JSON schema for nested/constraint-rich values. Runtime
         # validation below uses the same frozen literal-schema evaluator.
         simple = set(child) <= {"type", "enum", "description", "title"}
-        if kind in kinds and simple:
+        if isinstance(kind, str) and kind in kinds and simple:
             fields[name] = PropertySchema(
                 type=kinds[kind], optional=name not in required, enum=child.get("enum")
             )
@@ -101,10 +121,65 @@ def _check_schema(schema: ContractSchema) -> None:
             _check_json_schema(field.json_schema, name)
 
 
+def _matches_json_schema(value: object, schema: Mapping[str, object]) -> bool:
+    """The source schema subset, without changing frozen Claim law evaluation."""
+    from cruxible_client.contracts.claims import _validate_literal_schema
+
+    variants = schema.get("anyOf")
+    if isinstance(variants, list) and not any(_matches_json_schema(value, v) for v in variants):
+        return False
+    leaf = {
+        k: v
+        for k, v in schema.items()
+        if k not in {"anyOf", "properties", "items", "additionalProperties"}
+    }
+    kind = leaf.get("type")
+    if isinstance(kind, list):
+        if not any(_matches_json_schema(value, {**leaf, "type": t}) for t in kind):
+            return False
+        leaf.pop("type")
+    if not _validate_literal_schema(value, leaf):
+        return False
+    if isinstance(value, dict):
+        fields = cast(Mapping[str, Mapping[str, object]], schema.get("properties", {}))
+        extra = schema.get("additionalProperties", True)
+        for key, item in value.items():
+            child = fields.get(key)
+            if child is not None:
+                if not _matches_json_schema(item, child):
+                    return False
+            elif (
+                extra is False
+                or isinstance(extra, Mapping)
+                and not _matches_json_schema(item, extra)
+            ):
+                return False
+    item_schema = schema.get("items")
+    if isinstance(value, list) and isinstance(item_schema, Mapping):
+        return all(_matches_json_schema(item, item_schema) for item in value)
+    return True
+
+
+def record_normalization_schema(schema: ContractSchema, value: object) -> ContractSchema:
+    """Adapt explicit nullable JSON fields to the historical normalizer.
+
+    Only a present, valid null is adapted. Missing required fields remain required;
+    final validation still uses the original schema. Historical graphs never call
+    this adapter.
+    """
+    if not isinstance(value, Mapping):
+        return schema
+    adjusted = schema.model_copy(deep=True)
+    for name, field in adjusted.fields.items():
+        if name in value and value[name] is None and field.json_schema is not None:
+            if _matches_json_schema(None, field.json_schema):
+                field.optional = True
+    return adjusted
+
+
 def validate_record_constraints(
     schema: ContractSchema, value: Mapping[str, object], prefix: str = ""
 ) -> None:
-    from cruxible_client.contracts.claims import _validate_literal_schema
     from cruxible_client.contracts.procedures.contracts import ProcedureContractValidationError
 
     for name, field in schema.fields.items():
@@ -112,7 +187,7 @@ def validate_record_constraints(
             continue
         item = value[name]
         path = f"{prefix}.{name}" if prefix else name
-        if field.json_schema is not None and not _validate_literal_schema(item, field.json_schema):
+        if field.json_schema is not None and not _matches_json_schema(item, field.json_schema):
             raise ProcedureContractValidationError(
                 f"{path}: value does not satisfy its declared JSON schema", field_path=path
             )
@@ -168,7 +243,7 @@ class Record(Mapping[str, CanonicalValue]):
         from cruxible_client.contracts.procedures.contracts import ProcedureContractValidationError
 
         try:
-            parsed = validate_contract_schema(sealed_schema, raw)
+            parsed = validate_contract_schema(record_normalization_schema(sealed_schema, raw), raw)
         except ProcedureContractValidationError as exc:
             raise ProcedureContractValidationError(
                 f"{exc.field_path or 'record'}: {exc}",
@@ -195,7 +270,8 @@ class Record(Mapping[str, CanonicalValue]):
         return deepcopy(self._data[name])
 
     def __getattr__(self, name: str) -> Any:
-        wire = record_field_names(self._schema).get(name)
+        schema = object.__getattribute__(self, "_schema")
+        wire = record_field_names(schema).get(name)
         if wire is None:
             raise AttributeError(f"undeclared record field {name!r}")
         if wire not in self._data:

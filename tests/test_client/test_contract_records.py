@@ -144,3 +144,31 @@ def test_invalid_enum_and_canonical_float_are_refused():
         constructor(mode="xml")
     with pytest.raises(RecordSchemaError):
         RecordConstructor(ContractSchema(fields={"value": PropertySchema(type="number")}))
+
+
+def test_nullable_field_preserves_required_presence_and_nested_constraints():
+    from copy import deepcopy
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "text": {"type": ["string", "null"]},
+            "headers": {"type": "object", "additionalProperties": {"type": "string"}},
+            "choice": {"anyOf": [{"type": "null"}, {"type": "integer", "enum": [1, 2]}]},
+        },
+        "required": ["text", "headers", "choice"],
+        "additionalProperties": False,
+    }
+    constructor = RecordConstructor.from_json_schema(schema)
+    record = constructor(text=None, headers={"content-type": "application/json"}, choice=1)
+    assert record.text is None
+    assert deepcopy(record) == record
+    for bad in (
+        dict(headers={}, choice=None),  # null is permitted, absence is not
+        dict(text=4, headers={}, choice=None),
+        dict(text=None, headers={"content-type": 2}, choice=None),
+        dict(text=None, headers={}, choice=True),
+        dict(text=None, headers={}, choice=3),
+    ):
+        with pytest.raises(ProcedureContractValidationError):
+            constructor(**bad)
