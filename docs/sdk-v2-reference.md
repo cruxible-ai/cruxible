@@ -272,7 +272,9 @@ to `run_line`. The returned run resolves `O` from that exact admitted Procedure.
 | Run | Existing admission, permissions, effective budgets, provider deployments, and run-lane restrictions. | Existing run state/receipt with the declared outcome. |
 
 A successful preview proves neither runtime input validity nor permission nor
-provider availability. Definitions are resolved at the authoring base; execution
+provider availability. Definitions are resolved at the authoring base, including
+already staged non-Procedure definitions in the same change set. A child Procedure must already be accepted;
+a sibling Procedure is not an invocation target in that change set. Execution
 binds the admitted run context. These are different coordinates with different
 purposes. The accepted definition and its pins cannot drift to newer provider,
 query, or child Procedure definitions merely because they exist at run time.

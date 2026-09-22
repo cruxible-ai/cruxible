@@ -34,7 +34,7 @@ from cruxible_client.contracts.claim_attestations import (
     claim_attestation_v2_envelope_digest,
     claim_attestation_v2_statement_digest,
 )
-from cruxible_client.contracts.claim_types import parse_claim_type
+from cruxible_client.contracts.claim_types import ClaimType, parse_claim_type
 from cruxible_client.contracts.claims import claim_statement_digest, parse_claim
 from cruxible_client.contracts.documents import parse_document
 from cruxible_client.contracts.errors import PrincipalIntegrityError, ProjectionIntegrityError
@@ -408,6 +408,14 @@ def schema_sql() -> str:
             "CREATE UNIQUE INDEX pins_required_target_unique ON pins(source_identity,target_identity) WHERE edge_kind='required_pin'",
             "CREATE INDEX pins_by_target ON pins(target_identity,edge_kind,source_identity,ordinal) WHERE target_identity IS NOT NULL",
             "CREATE INDEX pins_by_target_digest ON pins(target_digest,edge_kind,source_identity,ordinal)",
+            """CREATE TABLE claim_type_names (
+            source_identity TEXT NOT NULL REFERENCES claim_types(identity),
+            kind TEXT NOT NULL CHECK(kind IN ('predicate','subject_kind')),
+            name TEXT NOT NULL, leaf TEXT NOT NULL,
+            PRIMARY KEY(source_identity,kind,name)
+        ) STRICT""",
+            "CREATE INDEX claim_type_names_by_name ON claim_type_names(name,kind,source_identity)",
+            "CREATE INDEX claim_type_names_by_leaf ON claim_type_names(leaf,kind,name,source_identity)",
             "CREATE INDEX claims_by_subject_predicate ON claims(subject_path,predicate,subject_selector_scheme,subject_selector_value,identity)",
             "CREATE INDEX resolution_contracts_by_hypothesis_version ON resolution_contracts(hypothesis_identity,hypothesis_artifact_digest,identity)",
             "CREATE INDEX attestations_by_claim_version ON attestations(claim_identity,claim_artifact_digest,attested_at_us,envelope_digest)",
@@ -536,6 +544,39 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
     return result
 
 
+def claim_type_names(source: ClaimType) -> tuple[tuple[str, str, str, str], ...]:
+    """Only live ontology names are discoverable; their definitions stay in Git."""
+    if source.lifecycle.state != "live":
+        return ()
+    names = {("predicate", source.predicate)} | {
+        ("subject_kind", name)
+        for name in (*source.allowed_subject_kinds, *source.allowed_object_subject_kinds)
+    }
+    return tuple(
+        (source.identity.qualified, kind, name, name.rsplit(".", 1)[-1])
+        for kind, name in sorted(names)
+    )
+
+
+def select_claim_type_names(
+    connection: sqlite3.Connection, names: Iterable[str], *, table: str = "main.claim_type_names"
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Keep every matching owner, including ambiguous suffixes, without body scans."""
+    owners: set[str] = set()
+    kinds: set[str] = set()
+    for name in sorted(set(names)):
+        for source, kind, full_name in connection.execute(
+            f"SELECT source_identity,kind,name FROM {table} WHERE name=? "
+            f"UNION SELECT source_identity,kind,name FROM {table} WHERE leaf=?",
+            (name, name),
+        ):
+            if kind == "predicate":
+                owners.add(source)
+            else:
+                kinds.add(full_name)
+    return tuple(sorted(owners)), tuple(sorted(kinds))
+
+
 def insert_owners(
     connection: sqlite3.Connection,
     *,
@@ -576,6 +617,10 @@ def insert_owners(
             f"INSERT INTO {owner.table} ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
             tuple(values.values()),
         )
+        if isinstance(source, ClaimType):
+            connection.executemany(
+                "INSERT INTO claim_type_names VALUES (?,?,?,?)", claim_type_names(source)
+            )
     for path, content in blobs.items():
         if path.startswith("principals/"):
             principal = PrincipalRecord.model_validate_json(content)

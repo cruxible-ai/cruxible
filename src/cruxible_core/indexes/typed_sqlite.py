@@ -209,7 +209,13 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
                 coordinates={},
             ),
         )
-        for table in ("members", "principals", "pins", *(owner.table for owner in OWNER_CODECS)):
+        for table in (
+            "members",
+            "principals",
+            "pins",
+            "claim_type_names",
+            *(owner.table for owner in OWNER_CODECS),
+        ):
             info = expected.execute(f"PRAGMA table_info({table})").fetchall()
             keys = [row[1] for row in sorted(info, key=lambda row: row[5]) if row[5]]
             sql = f"SELECT * FROM {table} ORDER BY {','.join(keys)}"
@@ -262,7 +268,7 @@ def logical_export(connection: sqlite3.Connection) -> dict[str, object]:
         rows = connection.execute(f"SELECT * FROM {name} ORDER BY {','.join(keys)}").fetchall()
         tables.append({"name": name, "sql": sql, "rows": [list(row) for row in rows]})
     return {
-        "storage_schema_version": 5,
+        "storage_schema_version": 6,
         "schema": [list(row) for row in schema_objects(connection)],
         "tables": tables,
     }
@@ -316,6 +322,7 @@ def replace_rows(
                 ).fetchone()[0]
                 remove_owner_citations(connection, (("attestation", key),))
             connection.execute("DELETE FROM pins WHERE source_identity=?", (identity,))
+            connection.execute("DELETE FROM claim_type_names WHERE source_identity=?", (identity,))
             if kind == "exhaust-promotion":
                 connection.execute(
                     "DELETE FROM promotion_subjects WHERE promotion_identity=?", (identity,)
@@ -381,7 +388,7 @@ def initialize(
     connection = sqlite3.connect(path)
     try:
         connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("PRAGMA user_version=5")
+        connection.execute("PRAGMA user_version=6")
         connection.executescript(complete_schema_sql())
         replace_rows(
             connection,

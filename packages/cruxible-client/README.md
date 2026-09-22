@@ -3463,7 +3463,7 @@ Import: `cruxible_client.authoring.procedures.ProcedurePreview`. [Source](src/cr
 | `edges` | `dict[str, dict[str, str]]` | `Field(default_factory=dict)` |
 | `providers` | `dict[str, ProviderBinding]` | `Field(default_factory=dict)` |
 | `terminals` | `tuple[str, ...]` | `()` |
-| `returns` | `str` | `Required` |
+| `returns` | `str \| None` | `Required` |
 | `budget` | `ProcedureBudgetV3` | `Required` |
 | `hard_caps` | `ProcedureHardCapsV3` | `Required` |
 | `errors` | `tuple[CompositionDiagnostic, ...]` | `()` |

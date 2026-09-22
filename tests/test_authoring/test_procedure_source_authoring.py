@@ -233,3 +233,243 @@ def test_source_and_sequence_refuse_nonexistent_standalone_contracts():
             budget=_budget(),
             hard_caps=_hard_caps(),
         ).preview()
+
+
+def _field_request():
+    return (
+        blueprint()
+        ._at(SimpleNamespace())
+        .model_copy(
+            update={
+                "text": (
+                    "def assess(request, world):\n"
+                    "    item = world.project.work_item['wi-42']\n"
+                    "    status = item.status.one()\n"
+                    "    if status.value == 'ready':\n"
+                    "        return Result.value(positive=True)\n"
+                    "    return Result.value(positive=False)\n"
+                )
+            }
+        )
+    )
+
+
+def _source_payload(request):
+    from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayloadV2
+
+    return ProcedureAuthoringPayloadV2(
+        activation_policy="snapshot",
+        owned_contracts=(),
+        definition={"name": request.name, "source_request": request.model_dump(mode="json")},
+    )
+
+
+def test_source_ontology_lookup_reads_only_matching_definitions_and_preserves_ambiguity(
+    tmp_path, monkeypatch
+):
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+    from cruxible_core.indexes.typed_state import OWNER_BY_KIND
+    from tests.core_support._support import initialize_local
+    from tests.test_claims.test_claims import _claim_type
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+
+    instance, owner = initialize_local(tmp_path)
+    claim_type = _claim_type()
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    definitions = [claim_type] + [
+        claim_type.model_copy(
+            update={
+                "identity": ArtifactIdentity(kind="ClaimType", name=f"other.type{i}.field{i}"),
+                "predicate": f"other.type{i}.field{i}",
+                "allowed_subject_kinds": (f"other.type{i}",),
+            }
+        )
+        for i in range(24)
+    ]
+    for item in definitions:
+        tree[claim_type_path(item.identity.name)] = render_claim_type(item)
+    _accept_tree(
+        instance, owner, tree, proposal_name="ontology", timestamp="2026-08-21T12:00:00.000000Z"
+    )
+    # Authenticate once before counting the request's selected definition parses.
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        projection.require_source_authentication()
+    codec = OWNER_BY_KIND["claim-type"]
+    parse = codec.parse
+    paths = []
+
+    def counted(content, *, path, **kwargs):
+        paths.append(path)
+        return parse(content, path=path, **kwargs)
+
+    from dataclasses import replace
+
+    monkeypatch.setitem(OWNER_BY_KIND, "claim-type", replace(codec, parse=counted))
+    at = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    preview = service_preview_procedure_source(
+        instance, request=ProcedureSourcePreviewRequestV1(source=_field_request(), at=at)
+    )
+    assert preview.ready_for_prepare, preview.errors
+    assert paths == [claim_type_path(claim_type.identity.name)]
+    assert tuple(preview.definition.source.claim_types) == (claim_type.predicate,)
+
+    import pytest
+
+    from cruxible_core.authoring import lowering
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.proposals.proposals import AuthenticatedActor
+
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    with monkeypatch.context() as guarded:
+        guarded.setattr(
+            lowering,
+            "_parse_reference_tree",
+            lambda *a, **k: pytest.fail("source parsed whole tree"),
+        )
+        for request in (
+            _field_request(),
+            _field_request().model_copy(
+                update={
+                    "name": "kind-only",
+                    "text": (
+                        "def assess(request, world):\n"
+                        "    item = world.project.work_item['wi-42']\n"
+                        "    return Result.value(positive=True)\n"
+                    ),
+                }
+            ),
+        ):
+            compiled = coordinator.compile(
+                actor=AuthenticatedActor(actor_id="owner"),
+                payload=_source_payload(request),
+                canonical_timestamp="2026-08-21T12:01:00.000000Z",
+            )
+            assert compiled.verdict == "passed", compiled.frontier.model_dump_json()
+
+    # A distinct predicate with the same field suffix on the same subject is ambiguous.
+    collision = claim_type.model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ClaimType", name="other.work_item.status"),
+            "predicate": "other.work_item.status",
+        }
+    )
+
+    from cruxible_client.contracts.procedures.source_compiler import SourceCompileError
+    from cruxible_core.authoring.procedure_source import resolve_indexed_source
+    from cruxible_core.indexes.evaluated_state import EvaluationRows
+
+    # The compiler must preserve ambiguity even before the vocabulary reuse law runs.
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        selected = EvaluationRows(projection).overlay(
+            {claim_type_path(collision.identity.name): render_claim_type(collision)}
+        )
+        with pytest.raises(SourceCompileError, match="ambiguous"):
+            resolve_indexed_source(_field_request(), selected)
+
+
+def test_source_prepare_uses_staged_claim_type_and_query_versions(tmp_path):
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.authoring.models import (
+        ChangeSetAuthoringPayloadV1,
+        ClaimTypeAuthoringPayloadV1,
+        QueryDefinitionAuthoringPayloadV1,
+    )
+    from cruxible_client.contracts.claim_types import claim_type_digest
+    from cruxible_client.contracts.procedures.artifacts import parse_procedure, procedure_path
+    from cruxible_client.contracts.procedures.source_requests import SourceQuerySelection
+    from cruxible_client.contracts.query.definitions import query_definition_digest
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.authoring.preflight import compute_preflight
+    from cruxible_core.proposals.proposals import AuthenticatedActor
+    from tests.core_support._support import initialize_local
+    from tests.test_authoring.test_authoring_procedures import _change_set_query
+    from tests.test_claims.test_claims import _claim_type
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+
+    instance, owner = initialize_local(tmp_path)
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    claim_type, query = _claim_type(), _change_set_query()
+    request = _field_request()
+    # Use a governed query and a field read in the same source; neither yet exists.
+    request = request.model_copy(
+        update={
+            "text": request.text.replace("request, world", "request, world, bindings").replace(
+                "    item =",
+                "    rows = query(bindings.items, parameters=bindings.items.parameters())\n"
+                "    item =",
+            ),
+            "bindings": {"items": SourceQuerySelection(name=query.identity.name)},
+        }
+    )
+    for generation in range(2):
+        if generation:
+            query = query.model_copy(
+                update={
+                    "description": "Revised query description",
+                    "lifecycle": ArtifactLifecycle(
+                        predecessor_digest=query_definition_digest(query).tagged
+                    ),
+                }
+            )
+        payload = ChangeSetAuthoringPayloadV1(
+            members=(
+                *((ClaimTypeAuthoringPayloadV1(claim_type=claim_type),) if not generation else ()),
+                _source_payload(request),
+                QueryDefinitionAuthoringPayloadV1(query_definition=query),
+            )
+        )
+        before = instance.accepted_coordinate()
+        result = coordinator.compile(
+            actor=actor,
+            payload=payload,
+            canonical_timestamp=f"2026-08-21T12:0{generation}:00.000000Z",
+        )
+        assert result.verdict == "passed", result.frontier.model_dump_json()
+        pending = coordinator.get(result.certificate.intent_id, actor=actor).intent
+        lowered = compute_preflight(instance, intent=pending, actor=actor).lowered
+        assert lowered is not None
+        assert instance.accepted_coordinate() == before
+        path = procedure_path(request.name)
+        procedure = parse_procedure(lowered.proposed_tree[path], path=path)
+        source = procedure.definition.source
+        assert (
+            source.claim_types[claim_type.predicate].version == claim_type_digest(claim_type).tagged
+        )
+        assert source.bindings["items"].version == query_definition_digest(query).tagged
+        _accept_tree(
+            instance,
+            owner,
+            lowered.proposed_tree,
+            proposal_name=f"staged-{generation}",
+            timestamp=f"2026-08-21T12:0{generation}:00.000000Z",
+        )
+
+
+def test_source_same_changeset_child_procedure_remains_unresolved(tmp_path):
+    from cruxible_client.contracts.authoring.models import ChangeSetAuthoringPayloadV1
+    from cruxible_client.contracts.procedures.source_requests import SourceProcedureSelection
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.proposals.proposals import AuthenticatedActor
+    from tests.core_support._support import initialize_local
+    from tests.test_procedures.test_nested_source_runs import blueprints
+
+    instance, _ = initialize_local(tmp_path)
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    child, parent = (item._at(SimpleNamespace()) for item in blueprints())
+    parent = parent.model_copy(
+        update={"bindings": {"child": SourceProcedureSelection(name="child")}}
+    )
+    result = coordinator.compile(
+        actor=AuthenticatedActor(actor_id="owner"),
+        payload=ChangeSetAuthoringPayloadV1(
+            members=(_source_payload(child), _source_payload(parent))
+        ),
+        canonical_timestamp="2026-08-21T12:00:00.000000Z",
+    )
+    assert result.verdict == "refused"
+    assert any(
+        "Procedure:child is not uniquely accepted" in diagnostic.message
+        for diagnostic in result.frontier.diagnostics
+    )

@@ -733,7 +733,7 @@ def test_installed_compiler_revision_labels_are_exact_and_complete() -> None:
 
 
 def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
-    """The September 22 ruling separates producer authority from ClaimTypes in revision 28.
+    """The September 22 bounded source review authorizes checked compilation in revision 29.
 
     Historical admission bytes and compiler rules remain unchanged.
     """

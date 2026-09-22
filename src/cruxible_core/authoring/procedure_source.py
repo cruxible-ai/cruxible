@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from collections.abc import Callable, Iterable
 from dataclasses import replace
-from typing import Any, Literal, NoReturn, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypeVar
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.captures import CaptureContractV1, capture_contract_digest
@@ -54,8 +54,49 @@ from cruxible_client.contracts.provider_interfaces import (
 from cruxible_client.contracts.providers import ProviderV2, provider_digest
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1, query_definition_digest
 
+if TYPE_CHECKING:
+    from cruxible_core.indexes.evaluated_state import EvaluationRows
+
 SourceLookup = Callable[[str], Any]
 T = TypeVar("T")
+
+
+def source_ontology_names(text: str) -> frozenset[str]:
+    """Conservative lexical candidates; the compiler still resolves exact meanings.
+
+    Attribute suffixes and literal names cover field access, world namespaces,
+    explicit claim_type/kind calls and subscripts, including assigned aliases.
+    """
+    try:
+        syntax = ast.parse(text)
+    except SyntaxError:
+        return frozenset()
+    names: set[str] = set()
+    for node in ast.walk(syntax):
+        if isinstance(node, ast.Attribute):
+            names.add(node.attr)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            names.add(node.value)
+    return frozenset(names)
+
+
+def resolve_indexed_source(
+    request: ProcedureSourceRequestV1, rows: EvaluationRows
+) -> CompiledSource:
+    identities, kinds = rows.claim_type_names(source_ontology_names(request.text))
+    sources: dict[str, Any] = {}
+
+    def lookup(identity: str) -> Any:
+        if identity not in sources:
+            sources[identity] = rows.source(identity)
+        return sources[identity]
+
+    return resolve_source(
+        request,
+        lookup=lookup,
+        claim_types=(lookup(identity) for identity in identities),
+        subject_kinds=kinds,
+    )
 
 
 def resolve_source(
@@ -63,6 +104,7 @@ def resolve_source(
     *,
     lookup: SourceLookup,
     claim_types: Iterable[object],
+    subject_kinds: Iterable[str] = (),
     rules: Literal[
         "cruxible.procedure-source.v1", "cruxible.procedure-source.v2"
     ] = "cruxible.procedure-source.v2",
@@ -202,7 +244,7 @@ def resolve_source(
             artifact = require("CaptureContract", name, CaptureContractV1)
             captures[name] = capture_contract_digest(artifact).tagged
     types: dict[str, SourceClaimType] = {}
-    kinds: set[str] = set()
+    kinds: set[str] = set(subject_kinds)
     for claim_type in claim_types:
         if not isinstance(claim_type, ClaimType):
             fail("The accepted ClaimType directory returned an invalid definition")
@@ -270,7 +312,11 @@ def resolve_source(
 
 
 def verify_source_bindings(
-    procedure: ProcedureArtifactV2, *, lookup: SourceLookup, claim_types: Iterable[object]
+    procedure: ProcedureArtifactV2,
+    *,
+    lookup: SourceLookup,
+    claim_types: Iterable[object],
+    subject_kinds: Iterable[str] = (),
 ) -> None:
     """Acceptance resolves retained declarations against the candidate state.
 
@@ -319,7 +365,13 @@ def verify_source_bindings(
         terminal_capability=definition.terminal_capability,
         description=definition.description,
     )
-    compiled = resolve_source(request, lookup=lookup, claim_types=claim_types, rules=program.rules)
+    compiled = resolve_source(
+        request,
+        lookup=lookup,
+        claim_types=claim_types,
+        subject_kinds=subject_kinds,
+        rules=program.rules,
+    )
     # Older retained source may carry an author's absolute source location.
     # Verify its dependencies under the same portable coordinate without ever
     # rewriting its stored bytes or recomputing its historical digest.

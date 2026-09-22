@@ -1646,44 +1646,18 @@ def _lower_procedure(
     base_tree: Mapping[str, bytes],
     accepted_reference_tree: Mapping[str, bytes] | None = None,
     candidate_identities: frozenset[str] = frozenset(),
+    candidate_paths: tuple[str, ...] = (),
 ) -> LoweredAuthoring:
     payload = intent.payload
     assert isinstance(payload, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2)
-    parsed = _parse_reference_tree(
-        instance,
-        base_tree if accepted_reference_tree is None else accepted_reference_tree,
-        base=base,
-    )
-    accepted: dict[str, tuple[str, str]] = {}
-    duplicates: set[str] = set()
-    for envelope in parsed.envelopes:
-        if envelope.identity in accepted:
-            duplicates.add(envelope.identity)
-        accepted[envelope.identity] = (envelope.path, envelope.artifact_digest)
-    for duplicate_identity in duplicates:
-        accepted.pop(duplicate_identity, None)
     source_authoring = "source_request" in payload.definition
+    accepted: dict[str, tuple[str, str]] = {}
+    candidate_artifacts: dict[str, tuple[str, str]] = {}
     if source_authoring:
         from cruxible_client.contracts.procedures.source_compiler import SourceCompileError
         from cruxible_client.contracts.procedures.source_requests import ProcedureSourceRequestV1
-        from cruxible_core.authoring.procedure_source import resolve_source
-        from cruxible_core.indexes.typed_state import OWNER_BY_KIND
-
-        reference_tree = base_tree if accepted_reference_tree is None else accepted_reference_tree
-        envelopes = {row.identity: row for row in parsed.envelopes if row.identity in accepted}
-        sources: dict[str, object] = {}
-
-        def source_lookup(identity: str) -> object | None:
-            if identity not in sources:
-                row = envelopes.get(identity)
-                if row is None or row.kind not in OWNER_BY_KIND:
-                    return None
-                sources[identity] = OWNER_BY_KIND[row.kind].parse(
-                    reference_tree[row.path],
-                    path=row.path,
-                    codec=artifact_codec_for_compiler(base.compiler),
-                )
-            return sources[identity]
+        from cruxible_core.authoring.procedure_source import resolve_indexed_source
+        from cruxible_core.indexes.evaluated_state import EvaluationRows
 
         try:
             if set(payload.definition) != {"name", "source_request"}:
@@ -1693,15 +1667,24 @@ def _lower_procedure(
             )
             if source_request.name != payload.definition["name"]:
                 raise ValueError("The Procedure name must match its source request")
-            compiled = resolve_source(
-                source_request,
-                lookup=source_lookup,
-                claim_types=(
-                    source_lookup(row.identity)
-                    for row in parsed.envelopes
-                    if row.kind == "claim-type"
-                ),
-            )
+            with instance.bind_accepted_projection(base) as projection:
+                rows = EvaluationRows(projection)
+                # Only already-staged non-Procedure siblings enter this selection.
+                # Child Procedures continue to resolve at the accepted base.
+                edits = {path: base_tree[path] for path in candidate_paths if path in base_tree}
+                selected = rows.overlay(edits) if edits else rows
+                compiled = resolve_indexed_source(source_request, selected)
+                policy = getattr(payload, "acquisition_policy", None)
+                if policy is not None:
+                    identity = "SourceAcquisitionPolicy:" + policy
+                    for view, target in ((rows, accepted), (selected, candidate_artifacts)):
+                        row = view.connection.execute(
+                            f"SELECT path,artifact_digest FROM {view.table('artifact_lookup')} "
+                            "WHERE identity=?",
+                            (identity,),
+                        ).fetchone()
+                        if row is not None:
+                            target[identity] = (row[0], row[1])
             payload = ProcedureAuthoringPayloadV2(
                 definition=compiled.definition.model_dump(mode="json", by_alias=True),
                 activation_policy=payload.activation_policy,
@@ -1729,15 +1712,27 @@ def _lower_procedure(
                 repair_kind="replace_definition",
                 repair_description="Repair the indicated source and prepare again.",
             )
-    candidate_artifacts: dict[str, tuple[str, str]] = {}
-    if candidate_identities:
-        candidate_parsed = _parse_reference_tree(instance, base_tree, base=base)
-        for envelope in candidate_parsed.envelopes:
-            if envelope.identity in candidate_identities:
-                candidate_artifacts[envelope.identity] = (
-                    envelope.path,
-                    envelope.artifact_digest,
-                )
+    else:
+        parsed = _parse_reference_tree(
+            instance,
+            base_tree if accepted_reference_tree is None else accepted_reference_tree,
+            base=base,
+        )
+        duplicates: set[str] = set()
+        for envelope in parsed.envelopes:
+            if envelope.identity in accepted:
+                duplicates.add(envelope.identity)
+            accepted[envelope.identity] = (envelope.path, envelope.artifact_digest)
+        for duplicate_identity in duplicates:
+            accepted.pop(duplicate_identity, None)
+        if candidate_identities:
+            candidate_parsed = _parse_reference_tree(instance, base_tree, base=base)
+            for envelope in candidate_parsed.envelopes:
+                if envelope.identity in candidate_identities:
+                    candidate_artifacts[envelope.identity] = (
+                        envelope.path,
+                        envelope.artifact_digest,
+                    )
     owned_contracts = (
         {contract.identity.name: contract for contract in payload.owned_contracts}
         if isinstance(payload, ProcedureAuthoringPayloadV2)
@@ -2523,6 +2518,11 @@ def _lower_change_set(
         for member in payload.members
         if not isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2)
     )
+    candidate_paths = tuple(
+        primary_paths[i]
+        for i, member in enumerate(payload.members)
+        if not isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2)
+    )
     for stage in MEMBER_STAGING_ORDER:
         for index, member in enumerate(payload.members):
             if _member_stage(member) != stage:
@@ -2554,6 +2554,7 @@ def _lower_change_set(
                         members=payload.members,
                         claim_identities=claim_identities,
                         candidate_identities=candidate_identities,
+                        candidate_paths=candidate_paths,
                         re_author_siblings=re_author_siblings.get(index, {}),
                     )
                 except AuthoringLoweringError as error:
@@ -2630,6 +2631,7 @@ def _stage_change_set_member(
     members: tuple[AuthoringChangeSetMemberV1, ...],
     claim_identities: Mapping[str, str],
     candidate_identities: frozenset[str],
+    candidate_paths: tuple[str, ...],
     re_author_siblings: Mapping[str, int],
 ) -> StagedMember:
     """Write one member into the staged tree and report what it resolved to."""
@@ -2680,6 +2682,7 @@ def _stage_change_set_member(
             base_tree=staged_tree,
             accepted_reference_tree=base_tree,
             candidate_identities=candidate_identities,
+            candidate_paths=candidate_paths,
         )
         return fork_tree(lowered.proposed_tree), dict(lowered.resolved_authoring), set(), {}
     if isinstance(member, ProcedureMandateAuthoringPayloadV1):

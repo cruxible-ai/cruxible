@@ -5,7 +5,8 @@ from cruxible_client.contracts.procedures.source_requests import (
     ProcedureSourcePreviewRequestV1,
     ProcedureSourcePreviewV1,
 )
-from cruxible_core.authoring.procedure_source import resolve_source
+from cruxible_core.authoring.procedure_source import resolve_indexed_source
+from cruxible_core.indexes.evaluated_state import EvaluationRows
 from cruxible_core.runtime.instance import PlaybillInstance
 
 
@@ -17,13 +18,7 @@ def service_preview_procedure_source(
     )
     try:
         with instance.bind_accepted_projection(coordinate) as projection:
-            types = (
-                projection.typed.source(row.identity)
-                for row in projection.typed.envelopes(kind="claim-type")
-            )
-            compiled = resolve_source(
-                request.source, lookup=projection.typed.source, claim_types=types
-            )
+            compiled = resolve_indexed_source(request.source, EvaluationRows(projection))
         return ProcedureSourcePreviewV1(
             name=request.source.name,
             coordinate=request.at,

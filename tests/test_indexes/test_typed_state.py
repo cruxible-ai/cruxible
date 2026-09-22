@@ -60,7 +60,7 @@ def test_typed_claim_source_parity_and_no_builtin_payload_copy(tmp_path):
     assert reader.principal("owner", active=True).principal_id == "owner"
     assert reader.principal_registry().semantic_root == instance.accepted_coordinate().semantic_root
     exported = canonical_logical_export(path)
-    assert exported["storage_schema_version"] == 5
+    assert exported["storage_schema_version"] == 6
     assert projection_logical_digest(path) == projection_logical_digest(path)
     connection.close()
 
@@ -166,3 +166,110 @@ def test_line_identity_lookup_and_role_sensitive_dependency_read(tmp_path):
                 procedure.directly_runnable,
             )
         ]
+
+
+def test_claim_type_name_selection_has_indexed_lookups():
+    with sqlite3.connect(":memory:") as connection:
+        connection.executescript(schema_sql())
+        for column in ("name", "leaf"):
+            plan = [
+                row[3]
+                for row in connection.execute(
+                    "EXPLAIN QUERY PLAN SELECT source_identity,kind,name "
+                    f"FROM claim_type_names WHERE {column}=?",
+                    ("status",),
+                )
+            ]
+            assert len(plan) == 1
+            assert "SEARCH claim_type_names USING COVERING INDEX" in plan[0]
+            assert f"({column}=?)" in plan[0]
+
+
+def test_claim_type_name_overlay_and_delta_match_cold_reconstruction(tmp_path):
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.claim_types import (
+        claim_type_digest,
+        claim_type_path,
+        render_claim_type,
+    )
+    from cruxible_core.indexes.evaluated_state import EvaluationRows
+    from cruxible_core.indexes.typed_sqlite import parse_static_owners, replace_rows
+    from tests.test_claims.test_claims import _claim_type
+    from tests.test_indexes.test_indexed_evaluation import _fixture
+
+    original = _claim_type()
+    path = claim_type_path(original.identity.name)
+    sources = {path: render_claim_type(original)}
+    tree, _, _ = _fixture(tmp_path, sources)
+    successor = original.model_copy(
+        update={
+            "allowed_subject_kinds": ("new.work_item",),
+            "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(original).tagged),
+        }
+    )
+    retired = successor.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired",
+                predecessor_digest=claim_type_digest(original).tagged,
+            )
+        }
+    )
+    for index, changed in enumerate(
+        (render_claim_type(successor), render_claim_type(retired), None)
+    ):
+        base = EvaluationRows(tree._accepted_reader())
+        try:
+            selected = base.overlay({path: changed})
+            assert base.claim_type_names(("project.work_item",))[1] == ("project.work_item",)
+            assert selected.claim_type_names(("project.work_item",)) == ((), ())
+            if index == 0:
+                assert selected.source(original.identity.qualified).allowed_subject_kinds == (
+                    "new.work_item",
+                )
+                assert selected.claim_type_names(("status",))[0] == (original.identity.qualified,)
+                assert selected.claim_type_names(("new.work_item",))[1] == ("new.work_item",)
+            else:
+                assert selected.claim_type_names(("status", "new.work_item")) == ((), ())
+            candidate_rows = [
+                tuple(row)
+                for row in selected.connection.execute(
+                    "SELECT * FROM selected_claim_type_names ORDER BY source_identity,kind,name"
+                )
+            ]
+        finally:
+            base.close()
+        cold_dir = tmp_path / str(index)
+        cold_dir.mkdir()
+        updated = {} if changed is None else {path: changed}
+        cold, _, _ = _fixture(cold_dir, updated)
+        projection = cold._accepted_reader()
+        try:
+            expected = [
+                tuple(row)
+                for row in projection._connection.execute(
+                    "SELECT * FROM claim_type_names ORDER BY source_identity,kind,name"
+                )
+            ]
+            assert candidate_rows == expected
+            warm = tree._accepted_reader()
+            try:
+                # A real delta writer must remove old name rows before inserting a successor.
+                replace_rows(
+                    warm._connection,
+                    request=warm.accepted,
+                    parsed=parse_static_owners(updated, accepted=warm.accepted),
+                    sources=updated,
+                    codec=warm.typed.codec,
+                    changed_paths=(path,),
+                )
+                assert [
+                    tuple(row)
+                    for row in warm._connection.execute(
+                        "SELECT * FROM claim_type_names ORDER BY source_identity,kind,name"
+                    )
+                ] == expected
+            finally:
+                warm.close()  # Roll back; each case starts from the same accepted projection.
+        finally:
+            projection.close()

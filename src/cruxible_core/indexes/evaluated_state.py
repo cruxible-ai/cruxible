@@ -133,6 +133,21 @@ class EvaluationRows:
             )[0]
         )
 
+    def source(self, identity: str) -> Any:
+        row = self.connection.execute(
+            f"SELECT kind,path FROM {self.table('artifact_lookup')} WHERE identity=?", (identity,)
+        ).fetchone()
+        if row is None:
+            return None
+        return OWNER_BY_KIND[row[0]].parse(
+            self.source_bytes(row[1]), path=row[1], codec=self.reader.codec
+        )
+
+    def claim_type_names(self, names: Iterable[str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        from cruxible_core.indexes.typed_state import select_claim_type_names
+
+        return select_claim_type_names(self.connection, names, table=self.table("claim_type_names"))
+
     def state(self, path: str) -> ArtifactDependencyStateV1:
         row = self.one(
             f"SELECT kind,format_tag,artifact_digest FROM {self.table('artifact_lookup')} WHERE path=?",
@@ -361,6 +376,9 @@ class EvaluationRows:
         )
         candidate.connection.execute(
             "CREATE TEMP VIEW selected_pins AS SELECT * FROM main.pins WHERE source_identity NOT IN (SELECT identity FROM changed_sources) UNION ALL SELECT * FROM temp.pins"
+        )
+        candidate.connection.execute(
+            "CREATE TEMP VIEW selected_claim_type_names AS SELECT * FROM main.claim_type_names WHERE source_identity NOT IN (SELECT identity FROM changed_sources) UNION ALL SELECT * FROM temp.claim_type_names"
         )
         candidate.prefix = "selected_"
         return candidate

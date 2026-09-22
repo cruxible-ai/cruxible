@@ -1782,13 +1782,42 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
 
         assert isinstance(procedure.definition, ProcedureDefinitionV6)
         source = procedure.definition.source
+        type_ids = tuple(
+            "ClaimType:" + name for name in (() if source is None else source.claim_types)
+        )
+        subject_kinds: tuple[str, ...] = ()
+        if source is not None and source.rules == "cruxible.procedure-source.v2":
+            from cruxible_core.authoring.procedure_source import source_ontology_names
+            from cruxible_core.indexes.evaluated_state import EvaluationRows, SelectedRows
+
+            names = source_ontology_names(source.text)
+            states = context.candidate_states
+            if isinstance(states, SelectedRows) and states.owner is not None:
+                owner = states.owner
+                type_ids, subject_kinds = (
+                    owner.claim_type_names(names)
+                    if isinstance(owner, EvaluationRows)
+                    else owner.call(lambda rows: rows.claim_type_names(names))
+                )
+            else:
+                # Cold replay already materialized definitions; use the same name relation.
+                from cruxible_core.indexes.typed_state import claim_type_names
+
+                matched = [
+                    row
+                    for accepted in context.resolved.claim_types.values()
+                    for row in claim_type_names(accepted.claim_type)
+                    if row[2] in names or row[3] in names
+                ]
+                type_ids = tuple(sorted({row[0] for row in matched if row[1] == "predicate"}))
+                subject_kinds = tuple(
+                    sorted({row[2] for row in matched if row[1] == "subject_kind"})
+                )
         verify_source_bindings(
             procedure,
             lookup=source_lookup,
-            claim_types=(
-                source_lookup("ClaimType:" + name)
-                for name in (() if source is None else source.claim_types)
-            ),
+            claim_types=(source_lookup(identity) for identity in type_ids),
+            subject_kinds=subject_kinds,
         )
     if int(procedure.definition.graph_format) == 5:
         if procedure.artifact_format != "playbill-procedure-v2":
