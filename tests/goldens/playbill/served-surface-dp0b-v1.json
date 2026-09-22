@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-22:line-listening-dispatch",
-    "surface_digest": "sha256:89b74214308b4b586b073ca21bba642d895a29cdf76c19e9ee3966a8f5eb43ab"
+    "register_entry": "2026-09-22:line-trigger-capture-inputs",
+    "surface_digest": "sha256:34161452bba378a2c16b2efd3e49d05c7fa25a834c5ae37ba7a88c6984b4d114"
   },
   "surface": {
     "cli_leaves": [
@@ -941,7 +941,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/authoring/compile",
         "request_model": "types.UnionType[cruxible_client.contracts.authoring.models.AuthoringIntentCompileRequestV1,cruxible_client.contracts.authoring.models.AuthoringIntentCompileRequestV2,cruxible_client.contracts.authoring.models.AuthoringIntentCompileRequestV3,cruxible_core.server.playbill_request_models.PlaybillAuthoringInputCompileRequest]",
-        "request_schema_digest": "sha256:ad8f94bc6a844d50d2f858ba02460922deac0fca52f009eb877143e1fe1c1122",
+        "request_schema_digest": "sha256:f795f76ced4e7a1520df0bfc451dcbb0c4233e9365bcf5f46b68106975a11cb3",
         "response_model": "cruxible_client.contracts.PlaybillAuthoringPreflightResult",
         "response_schema_digest": "sha256:b9f02d5722b1d00d38928913ddeb114c6bd94722d3cd2b140d89e0c2258d41c5"
       },
@@ -966,7 +966,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/authoring/intents",
         "request_model": "types.UnionType[cruxible_client.contracts.authoring.models.AuthoringIntentCreateRequestV1,cruxible_client.contracts.authoring.models.AuthoringIntentCreateRequestV2,cruxible_client.contracts.authoring.models.AuthoringIntentCreateRequestV3,cruxible_core.server.playbill_request_models.PlaybillAuthoringInputCreateRequest]",
-        "request_schema_digest": "sha256:1ca3c36f823f9157d14a332ed391534bd744934a7ebe181992fc515a70ecf1dd",
+        "request_schema_digest": "sha256:bce0a3eb305f246270c77f248b5cf469b78fc3c8c6776e35936b7a2b78ebd789",
         "response_model": "cruxible_client.contracts.PlaybillAuthoringIntentView",
         "response_schema_digest": "sha256:b98e5e1e66a92716bb3a2fb66e34d8bbdc88f87a7ad1725e122f63317691888f"
       },

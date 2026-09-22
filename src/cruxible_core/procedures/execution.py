@@ -2933,6 +2933,35 @@ class ProcedureExecutor:
                 and occurrence.node_id == node.node_id
                 and occurrence.repeat_node_id is None
             )
+            supplied = next(
+                (item for item in admission.landed_capture_inputs if item.input_name == node.as_),
+                None,
+            )
+            if supplied is not None:
+                contract_pin = self._pin(node.capture_contract, label=f"source {node.node_id!r}")
+                contract = self.capture_contracts.get(contract_pin.artifact_digest)
+                selected = next(
+                    (
+                        item
+                        for item in admission.selection_decision.decisions
+                        if item.input_name == node.as_
+                    ),
+                    None,
+                )
+                if (
+                    matches
+                    or contract is None
+                    or capture_contract_digest(contract).tagged != contract_pin.artifact_digest
+                    or supplied.capture_contract_digest != contract_pin.artifact_digest
+                    or self._acquisition_rule(node.as_) is None
+                    or selected is None
+                    or selected.disposition != "selected"
+                    or selected.selected_capture_digests != (supplied.capture_digest,)
+                ):
+                    raise PlaybillExecutionError(
+                        "source_acquisition_plan_mismatch: supplied Source closure differs"
+                    )
+                continue
             if len(matches) != 1:
                 raise PlaybillExecutionError(
                     "source_acquisition_plan_mismatch: Source occurrence is not exact"
@@ -3020,6 +3049,7 @@ class ProcedureExecutor:
         for landed in prepared.landed_capture_materials:
             name = landed.input.input_name
             state.outputs[name] = normalize_canonical(landed.material.value)
+            state.capture_bytes += len(canonical_bytes(landed.material.value))
             tokens = {
                 admitted_capture_token(landed.input.capture_digest),
                 policy_token(landed.input.capture_contract_digest),
@@ -3037,7 +3067,13 @@ class ProcedureExecutor:
                 )
             )
             state.provenance[name] = AliasProvenanceV1(whole=frozenset(tokens))
+            contract = self.capture_contracts.get(landed.input.capture_contract_digest)
             state.facts[landed.input.capture_digest] = DependencyEvidenceFactsV1(
+                selector_privacy=(
+                    contract.retention_erasure_policy.selector_privacy
+                    if contract is not None
+                    else "direct_allowed"
+                ),
                 epistemic_grade=landed.material.epistemic_grade,
                 provenance_grade=landed.material.provenance_grade,
                 acquisition_input_name=name,
@@ -3232,6 +3268,12 @@ class ProcedureExecutor:
                 )
             try:
                 validate_node_input_plane(node, run_input)
+                if isinstance(run_input, LandedCaptureRunInputV1) and isinstance(
+                    node, SourceNodeV3 | SourceNodeV4
+                ):
+                    pin = self._pin(node.capture_contract, label=f"source {node.node_id!r}")
+                    if pin.artifact_digest != run_input.capture_contract_digest:
+                        raise ValueError("landed Capture does not match the Source CaptureContract")
             except ValueError as exc:
                 raise ProcedureBoundaryRefused(
                     "input_material_mismatch",

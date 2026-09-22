@@ -34,6 +34,7 @@ from cruxible_client.contracts.laws import (
     LINE_ACCEPTANCE_LAW,
     LINE_V2_ACCEPTANCE_LAW,
     LINE_V3_ACCEPTANCE_LAW,
+    LINE_V4_ACCEPTANCE_LAW,
     PLAYBILL_ACCEPTANCE_LAWS,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_ACCEPTANCE_LAW,
@@ -61,6 +62,7 @@ from cruxible_client.contracts.laws import (
     SOURCE_CHECKED_UPGRADE_LAW,
     STANDING_MANDATE_ACCEPTANCE_LAW,
     SUBJECT_ACCEPTANCE_LAW,
+    TRIGGER_CAPTURE_UPGRADE_LAW,
     InstalledAcceptanceLaw,
 )
 from cruxible_core.compiler.compiler import (
@@ -84,6 +86,7 @@ from cruxible_core.compiler.compiler import (
     SDK_SOURCE_COMPILER,
     SOURCE_CHECKED_COMPILER,
     SUPPORTED_COMPILERS,
+    TRIGGER_CAPTURE_COMPILER,
     UPGRADE_COMPILER,
     candidate_card_renderer_digest_for_compiler,
     current_compiler_coordinate,
@@ -94,6 +97,13 @@ LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],
     ...,
 ] = (
+    (
+        LINE_V4_ACCEPTANCE_LAW,
+        "playbill.line.v4",
+        "playbill-line-v4",
+        1,
+        "sha256:afaa6812f9cd8967b66875c319b524748839bf0c68dbe13c958145021c8cec50",
+    ),
     (
         CLAIM_TYPE_V5_ACCEPTANCE_LAW,
         "playbill.claim-type.v5",
@@ -317,6 +327,13 @@ HISTORICAL_LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],
     ...,
 ] = (
+    (
+        TRIGGER_CAPTURE_UPGRADE_LAW,
+        "playbill.compiler-upgrade.v1",
+        "playbill-compiler-upgrade-v1",
+        8,
+        "sha256:2466f65d3125984eff80f420e7f6ab52f9f334425da0dfa00cae3d9955fbb8d0",
+    ),
     (
         SOURCE_CHECKED_PROCEDURE_LAW,
         "playbill.procedure.v2",
@@ -612,7 +629,11 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
         SOURCE_CHECKED_COMPILER.rule_digest
         == "sha256:b5801e1343a5df75a62efd80e02f5a09f5bfeb6650be6ef981b3e62c1482e11a"
     )
-    assert current_compiler_coordinate() == SOURCE_CHECKED_COMPILER
+    assert (
+        TRIGGER_CAPTURE_COMPILER.rule_digest
+        == "sha256:ac77438c6269c3268fbd2c850c41172aceb8d8f0bcfac6ebf6f0ee01161e8cb9"
+    )
+    assert current_compiler_coordinate() == TRIGGER_CAPTURE_COMPILER
     assert P2_B4_COMPILER in SUPPORTED_COMPILERS
     assert P2_B4_UNIT2_COMPILER in SUPPORTED_COMPILERS
     # The renderer resolves from the current coordinate itself, so cards derive
@@ -634,7 +655,7 @@ def test_succeeding_the_semantic_revision_keeps_candidate_cards_deriving(
     """
 
     source = Path(compiler_module.__file__).read_text(encoding="utf-8")
-    current_revision = 29
+    current_revision = 30
     anchor = "\n    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,\n"
     bumped = source.replace(
         f"    semantic_revision={current_revision},{anchor}",
@@ -728,12 +749,15 @@ def test_installed_compiler_revision_labels_are_exact_and_complete() -> None:
         "typed-procedure-source-v1",
         "producer-independent-claim-types-v1",
         "checked-procedure-source-v2",
+        "line-trigger-capture-input-v1",
     )
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "checked-procedure-source-v2"
+    assert (
+        COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "line-trigger-capture-input-v1"
+    )
 
 
 def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
-    """The September 22 bounded source review authorizes checked compilation in revision 29.
+    """The September 22 Line input ruling authorizes exact trigger-Capture binding in revision 30.
 
     Historical admission bytes and compiler rules remain unchanged.
     """
@@ -743,5 +767,7 @@ def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
         current_compiler_coordinate,
     )
 
-    assert len(COMPILER_REVISION_LABELS) == 28
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "checked-procedure-source-v2"
+    assert len(COMPILER_REVISION_LABELS) == 29
+    assert (
+        COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "line-trigger-capture-input-v1"
+    )

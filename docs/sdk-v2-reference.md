@@ -1470,6 +1470,25 @@ successful capture terminal. Request limits are bounded by the effective
 Procedure, capture, provider, and instance policies. Capturing a feed does not
 parse its entries or author exposure Claims.
 
+### Consume the Capture that triggered a Line
+
+Set `trigger_input="feed"` on `ChangeSetDraft.line(...)` to bind the event's
+Capture to the Procedure's Source alias `feed`. This authors Line v4 under
+compiler revision 30. The Source's exact CaptureContract must match the
+capture-arrival selector, or the selector anchoring an event-relative window.
+Manual, cadence, and fixed-window triggers cannot provide this input.
+
+Listening and explicit dispatch retain their existing behavior. Admission verifies
+the exact retained Capture against its producer coordinate, acquisition policy,
+and byte budget, then retains the input and its material manifest. The bound Source
+uses those bytes without invoking its provider; other Source nodes still acquire
+normally. Late execution keeps the original observation time and window. Missing,
+stale, incompatible, or unavailable material refuses admission, even if an ordinary
+acquisition rule permits omission or a default. A retry reuses the admitted binding.
+
+Omitting `trigger_input` preserves the existing trigger-only behavior. Existing
+instances need an explicit governed compiler upgrade before accepting Line v4.
+
 ### Compare a feed observation with an accepted baseline
 
 Derivation proposals use a ClaimType v5 evidence rule with `admission="derivational"`.

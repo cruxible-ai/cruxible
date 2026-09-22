@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
@@ -31,7 +32,7 @@ from cruxible_client.contracts.resolution_contracts import (
     resolution_contract_path,
 )
 from cruxible_core.compiler.compiler import artifact_codec_for_compiler
-from cruxible_core.exhaust.records import parse_journal_payload
+from cruxible_core.exhaust.records import ProcedureJournalRecordV1, parse_journal_payload
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.cas import BodyAccessContext
 
@@ -76,13 +77,13 @@ def read_resolution_contract(
     return contract
 
 
-def capture_event_time(
+def read_capture_event(
     instance: PlaybillInstance,
     selector: CaptureEventSelectorV1,
     reference: TriggerEventReferenceV1,
     *,
     now: datetime,
-) -> datetime:
+) -> tuple[ProcedureJournalRecordV1, Mapping[str, object]]:
     from cruxible_core.service.procedures.procedure_runs import _journal, _stream
 
     journal, _ = _journal(instance)
@@ -112,6 +113,17 @@ def capture_event_time(
         raise PlaybillExecutionError("trigger event does not match its CaptureContract selector")
     if record.recorded_at > now:
         raise PlaybillExecutionError("trigger event has not occurred at the evaluation instant")
+    return record, payload
+
+
+def capture_event_time(
+    instance: PlaybillInstance,
+    selector: CaptureEventSelectorV1,
+    reference: TriggerEventReferenceV1,
+    *,
+    now: datetime,
+) -> datetime:
+    record, _ = read_capture_event(instance, selector, reference, now=now)
     return record.recorded_at
 
 

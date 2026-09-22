@@ -1052,6 +1052,627 @@
         "implementation_digest"
       ]
     },
+    "LineDispatchItemV1": {
+      "fields": {
+        "detail": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "detail",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          }
+        },
+        "occurrence_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "occurrence_id",
+          "required": true,
+          "schema": {
+            "title": "Occurrence Id",
+            "type": "string"
+          }
+        },
+        "run_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "run_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Run Id"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "admitted",
+              "pending",
+              "blocked"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Run Id"
+          },
+          "status": {
+            "enum": [
+              "admitted",
+              "pending",
+              "blocked"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "status"
+        ],
+        "title": "LineDispatchItemV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "occurrence_id",
+        "status"
+      ]
+    },
+    "LineDispatchRequestV1": {
+      "fields": {
+        "limit": {
+          "default": 1,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "default": 1,
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "occurrence_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "occurrence_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Occurrence Id"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 1,
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "occurrence_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Occurrence Id"
+          }
+        },
+        "title": "LineDispatchRequestV1",
+        "type": "object"
+      },
+      "required_fields": []
+    },
+    "LineDispatchResultV1": {
+      "fields": {
+        "items": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "items",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/LineDispatchItemV1"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "LineDispatchItemV1": {
+            "additionalProperties": false,
+            "properties": {
+              "detail": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Detail"
+              },
+              "occurrence_id": {
+                "title": "Occurrence Id",
+                "type": "string"
+              },
+              "run_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Run Id"
+              },
+              "status": {
+                "enum": [
+                  "admitted",
+                  "pending",
+                  "blocked"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "occurrence_id",
+              "status"
+            ],
+            "title": "LineDispatchItemV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/LineDispatchItemV1"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "title": "LineDispatchResultV1",
+        "type": "object"
+      },
+      "required_fields": []
+    },
+    "LineEvaluateRequestV1": {
+      "fields": {
+        "cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cursor"
+          }
+        },
+        "limit": {
+          "default": 100,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "default": 100,
+            "maximum": 256,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "since": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "since",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Reads VALIDITY WINDOW. inclusive eligibility bound.",
+            "title": "Since"
+          }
+        },
+        "until": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "until",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Reads VALIDITY WINDOW. exclusive eligibility bound, capped at daemon time.",
+            "title": "Until"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cursor"
+          },
+          "limit": {
+            "default": 100,
+            "maximum": 256,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Reads VALIDITY WINDOW. inclusive eligibility bound.",
+            "title": "Since"
+          },
+          "until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Reads VALIDITY WINDOW. exclusive eligibility bound, capped at daemon time.",
+            "title": "Until"
+          }
+        },
+        "title": "LineEvaluateRequestV1",
+        "type": "object"
+      },
+      "required_fields": []
+    },
+    "LineListenRequestV1": {
+      "fields": {
+        "action": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "action",
+          "required": true,
+          "schema": {
+            "enum": [
+              "start",
+              "stop"
+            ],
+            "title": "Action",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "start",
+              "stop"
+            ],
+            "title": "Action",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "LineListenRequestV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "action"
+      ]
+    },
+    "LineListeningSessionV1": {
+      "fields": {
+        "detail": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "detail",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          }
+        },
+        "evaluated_until": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "evaluated_until",
+          "required": true,
+          "schema": {
+            "description": "Reads VALIDITY WINDOW.",
+            "format": "date-time",
+            "title": "Evaluated Until",
+            "type": "string"
+          }
+        },
+        "line": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "line",
+          "required": true,
+          "schema": {
+            "title": "Line",
+            "type": "string"
+          }
+        },
+        "occurrence_epoch": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "occurrence_epoch",
+          "required": true,
+          "schema": {
+            "title": "Occurrence Epoch",
+            "type": "integer"
+          }
+        },
+        "session_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "session_id",
+          "required": true,
+          "schema": {
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "starts_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "starts_at",
+          "required": true,
+          "schema": {
+            "description": "Reads VALIDITY WINDOW.",
+            "format": "date-time",
+            "title": "Starts At",
+            "type": "string"
+          }
+        },
+        "stops_at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "stops_at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Reads VALIDITY WINDOW.",
+            "title": "Stops At"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          },
+          "evaluated_until": {
+            "description": "Reads VALIDITY WINDOW.",
+            "format": "date-time",
+            "title": "Evaluated Until",
+            "type": "string"
+          },
+          "line": {
+            "title": "Line",
+            "type": "string"
+          },
+          "occurrence_epoch": {
+            "title": "Occurrence Epoch",
+            "type": "integer"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "starts_at": {
+            "description": "Reads VALIDITY WINDOW.",
+            "format": "date-time",
+            "title": "Starts At",
+            "type": "string"
+          },
+          "stops_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Reads VALIDITY WINDOW.",
+            "title": "Stops At"
+          }
+        },
+        "required": [
+          "session_id",
+          "line",
+          "occurrence_epoch",
+          "starts_at",
+          "evaluated_until"
+        ],
+        "title": "LineListeningSessionV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "evaluated_until",
+        "line",
+        "occurrence_epoch",
+        "session_id",
+        "starts_at"
+      ]
+    },
     "LineTriggerBindingV1": {
       "fields": {
         "event": {
@@ -1220,6 +1841,843 @@
       },
       "required_fields": [
         "kind"
+      ]
+    },
+    "LineTriggerCheckRequestV1": {
+      "fields": {
+        "cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cursor"
+          }
+        },
+        "limit": {
+          "default": 100,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "default": 100,
+            "maximum": 256,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "since": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "since",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Reads VALIDITY WINDOW. inclusive eligibility bound.",
+            "title": "Since"
+          }
+        },
+        "until": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "until",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Reads VALIDITY WINDOW. exclusive eligibility bound, capped at daemon time.",
+            "title": "Until"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cursor"
+          },
+          "limit": {
+            "default": 100,
+            "maximum": 256,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Reads VALIDITY WINDOW. inclusive eligibility bound.",
+            "title": "Since"
+          },
+          "until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Reads VALIDITY WINDOW. exclusive eligibility bound, capped at daemon time.",
+            "title": "Until"
+          }
+        },
+        "title": "LineTriggerCheckRequestV1",
+        "type": "object"
+      },
+      "required_fields": []
+    },
+    "LineTriggerCheckResultV1": {
+      "fields": {
+        "checked_since": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "checked_since",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Reads VALIDITY WINDOW.",
+            "title": "Checked Since"
+          }
+        },
+        "checked_until": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "checked_until",
+          "required": true,
+          "schema": {
+            "description": "Reads VALIDITY WINDOW.",
+            "format": "date-time",
+            "title": "Checked Until",
+            "type": "string"
+          }
+        },
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cursor"
+          }
+        },
+        "detail": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "detail",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          }
+        },
+        "line": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "line",
+          "required": true,
+          "schema": {
+            "title": "Line",
+            "type": "string"
+          }
+        },
+        "line_artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "line_artifact_digest",
+          "required": true,
+          "schema": {
+            "title": "Line Artifact Digest",
+            "type": "string"
+          }
+        },
+        "line_identity_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "line_identity_digest",
+          "required": true,
+          "schema": {
+            "title": "Line Identity Digest",
+            "type": "string"
+          }
+        },
+        "occurrence_epoch": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "occurrence_epoch",
+          "required": true,
+          "schema": {
+            "title": "Occurrence Epoch",
+            "type": "integer"
+          }
+        },
+        "occurrences": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "occurrences",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/LineTriggerOccurrenceV1"
+            },
+            "title": "Occurrences",
+            "type": "array"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "met",
+              "not_met",
+              "incomplete"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "BoundObservationWindowV1": {
+            "additionalProperties": false,
+            "description": "Exact boundaries retained at admission, including the verified event anchor.",
+            "properties": {
+              "ends_at": {
+                "description": "Reads VALIDITY WINDOW.",
+                "format": "date-time",
+                "title": "Ends At",
+                "type": "string"
+              },
+              "event": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TriggerEventReferenceV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "starts_at": {
+                "description": "Reads VALIDITY WINDOW.",
+                "format": "date-time",
+                "title": "Starts At",
+                "type": "string"
+              }
+            },
+            "required": [
+              "starts_at",
+              "ends_at"
+            ],
+            "title": "BoundObservationWindowV1",
+            "type": "object"
+          },
+          "LineTriggerBindingV1": {
+            "additionalProperties": false,
+            "description": "Semantic cause of one occurrence, independent of its dispatch instant.",
+            "properties": {
+              "event": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TriggerEventReferenceV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "kind": {
+                "enum": [
+                  "capture_landing",
+                  "window_close"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "window": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BoundObservationWindowV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "title": "LineTriggerBindingV1",
+            "type": "object"
+          },
+          "LineTriggerOccurrenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "admitted_run_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Admitted Run Id"
+              },
+              "binding": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/LineTriggerBindingV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "eligible_at": {
+                "description": "Reads VALIDITY WINDOW.",
+                "format": "date-time",
+                "title": "Eligible At",
+                "type": "string"
+              },
+              "occurrence_id": {
+                "title": "Occurrence Id",
+                "type": "string"
+              },
+              "pending": {
+                "default": false,
+                "title": "Pending",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "occurrence_id",
+              "binding",
+              "eligible_at"
+            ],
+            "title": "LineTriggerOccurrenceV1",
+            "type": "object"
+          },
+          "TriggerEventReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "partition_id": {
+                "minLength": 1,
+                "title": "Partition Id",
+                "type": "string"
+              },
+              "record_digest": {
+                "title": "Record Digest",
+                "type": "string"
+              },
+              "run_id": {
+                "minLength": 1,
+                "title": "Run Id",
+                "type": "string"
+              },
+              "sequence": {
+                "description": "Reads SETTLEMENT ORDER.",
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "run_id",
+              "partition_id",
+              "sequence",
+              "record_digest"
+            ],
+            "title": "TriggerEventReferenceV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "checked_since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Reads VALIDITY WINDOW.",
+            "title": "Checked Since"
+          },
+          "checked_until": {
+            "description": "Reads VALIDITY WINDOW.",
+            "format": "date-time",
+            "title": "Checked Until",
+            "type": "string"
+          },
+          "coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cursor"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          },
+          "line": {
+            "title": "Line",
+            "type": "string"
+          },
+          "line_artifact_digest": {
+            "title": "Line Artifact Digest",
+            "type": "string"
+          },
+          "line_identity_digest": {
+            "title": "Line Identity Digest",
+            "type": "string"
+          },
+          "occurrence_epoch": {
+            "title": "Occurrence Epoch",
+            "type": "integer"
+          },
+          "occurrences": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/LineTriggerOccurrenceV1"
+            },
+            "title": "Occurrences",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "met",
+              "not_met",
+              "incomplete"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "line",
+          "line_identity_digest",
+          "line_artifact_digest",
+          "occurrence_epoch",
+          "coordinate",
+          "status",
+          "checked_until"
+        ],
+        "title": "LineTriggerCheckResultV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "checked_until",
+        "coordinate",
+        "line",
+        "line_artifact_digest",
+        "line_identity_digest",
+        "occurrence_epoch",
+        "status"
+      ]
+    },
+    "LineTriggerOccurrenceV1": {
+      "fields": {
+        "admitted_run_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "admitted_run_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Admitted Run Id"
+          }
+        },
+        "binding": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "binding",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LineTriggerBindingV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "eligible_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "eligible_at",
+          "required": true,
+          "schema": {
+            "description": "Reads VALIDITY WINDOW.",
+            "format": "date-time",
+            "title": "Eligible At",
+            "type": "string"
+          }
+        },
+        "occurrence_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "occurrence_id",
+          "required": true,
+          "schema": {
+            "title": "Occurrence Id",
+            "type": "string"
+          }
+        },
+        "pending": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "pending",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Pending",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "BoundObservationWindowV1": {
+            "additionalProperties": false,
+            "description": "Exact boundaries retained at admission, including the verified event anchor.",
+            "properties": {
+              "ends_at": {
+                "description": "Reads VALIDITY WINDOW.",
+                "format": "date-time",
+                "title": "Ends At",
+                "type": "string"
+              },
+              "event": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TriggerEventReferenceV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "starts_at": {
+                "description": "Reads VALIDITY WINDOW.",
+                "format": "date-time",
+                "title": "Starts At",
+                "type": "string"
+              }
+            },
+            "required": [
+              "starts_at",
+              "ends_at"
+            ],
+            "title": "BoundObservationWindowV1",
+            "type": "object"
+          },
+          "LineTriggerBindingV1": {
+            "additionalProperties": false,
+            "description": "Semantic cause of one occurrence, independent of its dispatch instant.",
+            "properties": {
+              "event": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TriggerEventReferenceV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "kind": {
+                "enum": [
+                  "capture_landing",
+                  "window_close"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "window": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BoundObservationWindowV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "title": "LineTriggerBindingV1",
+            "type": "object"
+          },
+          "TriggerEventReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "partition_id": {
+                "minLength": 1,
+                "title": "Partition Id",
+                "type": "string"
+              },
+              "record_digest": {
+                "title": "Record Digest",
+                "type": "string"
+              },
+              "run_id": {
+                "minLength": 1,
+                "title": "Run Id",
+                "type": "string"
+              },
+              "sequence": {
+                "description": "Reads SETTLEMENT ORDER.",
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "run_id",
+              "partition_id",
+              "sequence",
+              "record_digest"
+            ],
+            "title": "TriggerEventReferenceV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "admitted_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Admitted Run Id"
+          },
+          "binding": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LineTriggerBindingV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "eligible_at": {
+            "description": "Reads VALIDITY WINDOW.",
+            "format": "date-time",
+            "title": "Eligible At",
+            "type": "string"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "pending": {
+            "default": false,
+            "title": "Pending",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "binding",
+          "eligible_at"
+        ],
+        "title": "LineTriggerOccurrenceV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "binding",
+        "eligible_at",
+        "occurrence_id"
       ]
     },
     "ObservationSettlementEvidenceV2": {
