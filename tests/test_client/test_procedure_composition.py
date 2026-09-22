@@ -280,6 +280,23 @@ def test_discovery_requires_explicit_choice_when_multiple_providers_exist():
     binding = ProviderBinding.from_interface(entry, provider="second")
     assert binding.provider == "Provider:second"
     assert binding.effect_class == "external_read"
+    from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
+    from cruxible_client.contracts.provider_contracts import ProviderOperationContractV1
+
+    typed_entry = entry.model_copy(
+        update={
+            "operation_contract": ProviderOperationContractV1(
+                input=ContractSchema(fields={"url": PropertySchema(type="string")}),
+                output="playbill-provider-result-to-external-capture-v1",
+            )
+        }
+    )
+    selected = ProviderBinding.from_interface(typed_entry, provider="second")
+    assert selected.input(url="https://example.test").url == "https://example.test"
+    with pytest.raises(ValueError, match="url"):
+        selected.input(url=False)
+    with pytest.raises(ValueError, match="no declared"):
+        binding.input()
 
 
 def test_sdk_changeset_carries_procedure_line_and_mandate_together():

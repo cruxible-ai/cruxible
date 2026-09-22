@@ -34,7 +34,7 @@ from cruxible_client.authoring.context import (
     PlaybillContextResolutionError,
     resolve_playbill_context,
 )
-from cruxible_client.authoring.procedures import ProviderBinding
+from cruxible_client.authoring.procedures import ProviderBinding, procedure_record_constructor
 from cruxible_client.authoring.procedures import Sequence as ProcedureSequence
 from cruxible_client.authoring.queries import QueryBinding
 from cruxible_client.authoring.sdk_types import (
@@ -187,6 +187,10 @@ from cruxible_client.contracts.predictions import (
     PredictionRuleV1,
     TerminalSettlementEvidenceV2,
 )
+from cruxible_client.contracts.procedures.artifacts import (
+    ProcedureArtifactAny,
+    procedure_artifact_digest,
+)
 from cruxible_client.contracts.procedures.line_specs import (
     ManualTriggerPolicyV1,
     TriggerPolicyV2,
@@ -197,7 +201,7 @@ from cruxible_client.contracts.procedures.windows import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
-from cruxible_client.contracts.records import Record
+from cruxible_client.contracts.records import Record, RecordConstructor
 from cruxible_client.contracts.resolution_contracts import (
     ClaimVersionReferenceV1,
     ResolutionContractReferenceV1,
@@ -3438,6 +3442,27 @@ class Procedure:
         self._playbill = playbill
         self._name = name
         self._coordinate = coordinate
+        self._artifact: ProcedureArtifactAny | None = None
+
+    @property
+    def definition(self) -> ProcedureArtifactAny:
+        """Exact accepted definition used for typed inputs and nested bindings."""
+        if self._artifact is None:
+            reading = self.readiness()
+            if reading.artifact is None:
+                raise ValueError("Daemon did not return the accepted Procedure definition")
+            if (
+                procedure_artifact_digest(reading.artifact).tagged
+                != reading.procedure_artifact_digest
+            ):
+                raise ValueError("Procedure read does not reproduce its accepted digest")
+            self._artifact = reading.artifact
+            self._coordinate = _coordinate(reading.coordinate)
+        return self._artifact.model_copy(deep=True)
+
+    @property
+    def input(self) -> RecordConstructor:
+        return procedure_record_constructor(self.definition, "input")
 
     @property
     def ref(self) -> ProcedureRef:
@@ -3489,24 +3514,31 @@ class Procedure:
     def run(
         self,
         *,
+        input: Record | None = None,
         at: AcceptedCoordinate | None = None,
         resolution_contract: ResolutionContractReferenceV1 | None = None,
         trigger_event: TriggerEventReferenceV1 | None = None,
-        **inputs: CanonicalValue,
     ) -> ProcedureRun:
         if at is not None and self._coordinate is not None and at != self._coordinate:
             raise ValueError("run coordinate differs from the pinned Procedure")
-        normalized = normalize_canonical(inputs)
+        if at is not None:
+            self._coordinate = at
+        if input is not None and not isinstance(input, Record):
+            raise TypeError("Procedure.run requires a record made by procedure.input")
+        constructor = self.input
+        normalized = constructor() if input is None else constructor.from_wire(input)
         result = self._playbill._client.run_playbill_procedure(
             self._playbill._instance_id,
             self._name,
             evaluation_time=self._playbill._evaluation_time(),
             at=self._playbill._read_at(at or self._coordinate),
-            input=normalized,
+            input=normalize_canonical(normalized),
             resolution_contract=resolution_contract,
             trigger_event=trigger_event,
         )
-        return ProcedureRun(self._playbill, result)
+        return ProcedureRun(
+            self._playbill, result, output=procedure_record_constructor(self.definition, "output")
+        )
 
     def measure(
         self,
@@ -3581,9 +3613,16 @@ class Procedure:
 
 
 class ProcedureRun:
-    def __init__(self, playbill: Playbill, raw: api.PlaybillProcedureRunState) -> None:
+    def __init__(
+        self,
+        playbill: Playbill,
+        raw: api.PlaybillProcedureRunState,
+        *,
+        output: RecordConstructor | None = None,
+    ) -> None:
         self._playbill = playbill
         self._raw = raw
+        self._output = output
 
     @property
     def run_id(self) -> str | None:
@@ -3594,8 +3633,23 @@ class ProcedureRun:
         return self._raw.status
 
     @property
-    def result(self) -> CanonicalValue:
-        return cast(CanonicalValue, self._raw.result)
+    def succeeded(self) -> bool:
+        return self._raw.status == "succeeded"
+
+    @property
+    def result(self) -> Record:
+        if not self.succeeded:
+            raise ValueError(f"Procedure has no successful output: {self.status}")
+        if self._output is None:
+            owner = Procedure(
+                self._playbill, str(self._raw.procedure_identity["name"]), self.coordinate
+            )
+            self._output = procedure_record_constructor(owner.definition, "output")
+        return self._output.from_wire(self._raw.result)
+
+    @property
+    def outcome(self) -> api.PlaybillProcedureRunState:
+        return self._raw.model_copy(deep=True)
 
     @property
     def receipt(self) -> str | None:

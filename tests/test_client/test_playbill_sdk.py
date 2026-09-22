@@ -491,10 +491,48 @@ def test_sdk_retirement_owns_claim_ref_and_coordinate_plumbing(tmp_path: Path) -
     }
 
 
-def test_sdk_procedure_run_sends_at_only_for_an_explicit_replay(tmp_path: Path) -> None:
+def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: Path) -> None:
     _workspace(tmp_path)
 
+    from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
+    from cruxible_client.contracts.procedures.contract_schema import PropertySchema
+    from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3, ProjectNodeV3
+    from tests.test_procedures.test_procedure_execution import (
+        _budget,
+        _hard_caps,
+        _owned_accepted,
+        _owned_contract,
+        _owned_pin,
+    )
+
+    ci = _owned_contract("input", {"account": PropertySchema(type="string")})
+    co = _owned_contract("output", {"ok": PropertySchema(type="bool")})
+    pi, po = _owned_pin("contract-in", ci), _owned_pin("contract-out", co)
+    artifact = _owned_accepted(
+        ProcedureDefinitionV3(
+            name="daily-summary",
+            contract_in=pi,
+            contract_out=po,
+            nodes=(
+                ProjectNodeV3(node_id="result", fields={"ok": True}, contract_out=po, as_="result"),
+            ),
+            returns="result",
+            budget=_budget(),
+            hard_caps=_hard_caps(),
+            terminal_capability=1,
+        ),
+        contracts=(ci, co),
+        pins=(pi, po),
+    ).procedure
+
     class ProcedureClient(_Client):
+        def playbill_procedure_readiness(self, *args, **kwargs):
+            return api.PlaybillProcedureReadiness.model_construct(
+                coordinate=_COORDINATE,
+                artifact=artifact,
+                procedure_artifact_digest=procedure_artifact_digest(artifact).tagged,
+            )
+
         def __init__(self) -> None:
             super().__init__()
             self.runs: list[dict[str, object]] = []
@@ -531,11 +569,22 @@ def test_sdk_procedure_run_sends_at_only_for_an_explicit_replay(tmp_path: Path) 
     )
     procedure = pb.accepted_procedure("daily-summary")
 
-    assert procedure.run(account="one").status == "succeeded"
-    assert procedure.run(at=pb.coordinate, account="one").status == "succeeded"
-    assert client.runs[0]["at"] is None
+    assert procedure.run(input=procedure.input(account="one")).status == "succeeded"
+    assert (
+        procedure.run(at=pb.coordinate, input=procedure.input(account="one")).status == "succeeded"
+    )
+    assert client.runs[0]["at"] == _COORDINATE
     assert client.runs[0]["input"] == {"account": "one"}
     assert client.runs[1]["at"] == _COORDINATE
+    run = procedure.run(input=procedure.input(account="one"))
+    assert run.succeeded and run.result.ok is True
+    assert run.outcome.status == "succeeded"
+    with pytest.raises(TypeError, match="record"):
+        procedure.run(input={"account": "one"})
+    run._raw = run._raw.model_copy(update={"status": "halted", "result": None})
+    assert not run.succeeded
+    with pytest.raises(ValueError, match="no successful output"):
+        _ = run.result
 
 
 def test_sdk_line_run_carries_the_asserted_identity_and_occurrence(tmp_path: Path) -> None:

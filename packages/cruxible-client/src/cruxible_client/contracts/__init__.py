@@ -58,6 +58,9 @@ from cruxible_client.contracts.predictions import (
     TerminalSettlementEvidenceV2 as TerminalSettlementEvidenceV2,
 )
 from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.procedures.artifacts import (
+    ProcedureArtifactAny as _ProcedureArtifactAny,
+)
 from cruxible_client.contracts.procedures.readings import (
     PlaybillProcedureMeasureRequestV1 as PlaybillProcedureMeasureRequestV1,
 )
@@ -105,6 +108,9 @@ from cruxible_client.contracts.procedures.windows import (
 )
 from cruxible_client.contracts.procedures.windows import (
     TriggerEventReferenceV1 as TriggerEventReferenceV1,
+)
+from cruxible_client.contracts.provider_contracts import (
+    ProviderOperationContractV1 as _ProviderOperationContractV1,
 )
 from cruxible_client.contracts.provider_installation import (
     PlaybillProviderCatalogV1 as PlaybillProviderCatalogV1,
@@ -1441,6 +1447,7 @@ class PlaybillProcedureReadiness(BaseModel):
     procedure_identity: dict[str, Any]
     procedure_artifact_digest: str
     definition_digest: str
+    artifact: _ProcedureArtifactAny | None = None
     state: Literal["ready", "binding_required", "unsupported"]
     required_slots: list[str]
     unsupported_nodes: list[dict[str, Any]]
@@ -1890,6 +1897,7 @@ class PlaybillProviderInterfaceEntry(BaseModel):
     classifier_status: Literal["installed", "not_installed"]
     interface_basis: Literal["accepted_registration"]
     providers: list[PlaybillProviderInterfaceImplementation] = Field(default_factory=list)
+    operation_contract: _ProviderOperationContractV1 | None = None
 
 
 class PlaybillInterfaceInventory(BaseModel):

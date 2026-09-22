@@ -61,6 +61,7 @@ from cruxible_client.contracts.claim_type_structure import (
     check_claim_type_structure,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.records import RecordConstructor
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.authoring.sdk import ClaimView, Playbill, SubjectDraft
@@ -103,6 +104,7 @@ CLAIM_TYPE_MEMBERS = frozenset(
         "permitted_roles",
         "predicate",
         "referent_sensitivity",
+        "value",
     }
 )
 
@@ -286,6 +288,13 @@ class WorldClaimType(ClaimTypeRef):
             value=admit_literal(value, predicate=self.address, schema=self.literal_schema),
             coordinate=self.coordinate,
         )
+
+    def value(self, **fields: object) -> LiteralValue:
+        """Construct a structured literal using this accepted ClaimType's fields."""
+        if self.literal_schema is None:
+            raise WorldStructureError(f"{self.address!r} has no declared record schema")
+        record = RecordConstructor.from_json_schema(self.literal_schema)(**fields)
+        return self(record)
 
     def __getitem__(self, subject_id: str) -> WorldSubject:
         """Read a Subject when this dotted name is also an accepted kind."""

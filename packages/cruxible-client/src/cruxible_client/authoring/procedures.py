@@ -21,6 +21,11 @@ from cruxible_client.contracts.authoring.inputs import (
     ProcedureInput,
     lower_authoring_input,
 )
+from cruxible_client.contracts.procedures.artifacts import (
+    ProcedureArtifactAny,
+    ProcedureArtifactV2,
+    procedure_owned_contract_digest,
+)
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema
 from cruxible_client.contracts.procedures.contracts import validate_contract_schema
 from cruxible_client.contracts.procedures.graph import (
@@ -36,11 +41,32 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureTransformSpecV1,
     TransformKindV1,
 )
+from cruxible_client.contracts.provider_contracts import ProviderOperationContractV1
+from cruxible_client.contracts.records import RecordConstructor
 
 if TYPE_CHECKING:
     from cruxible_client.contracts import PlaybillProviderInterfaceEntry
 
 Contract: TypeAlias = CarriedContractInput | AcceptedReferenceInput
+
+
+def procedure_record_constructor(
+    artifact: ProcedureArtifactAny, direction: Literal["input", "output"]
+) -> RecordConstructor:
+    pin = (
+        artifact.definition.contract_in
+        if direction == "input"
+        else artifact.definition.contract_out
+    )
+    if not isinstance(artifact, ProcedureArtifactV2) or not isinstance(pin, ArtifactPin):
+        raise ValueError("Typed execution requires a resolved owner-carried Contract")
+    for contract in artifact.owned_contracts:
+        if (
+            contract.identity == pin.target
+            and procedure_owned_contract_digest(contract).tagged == pin.artifact_digest
+        ):
+            return RecordConstructor(contract.contract_schema)
+    raise ValueError("Procedure contract is absent from its exact owner closure")
 
 
 @dataclass(frozen=True)
@@ -71,6 +97,13 @@ class ProviderBinding(BaseModel):
     interface_digest: str
     implementation_digest: str
     effect_class: Literal["none", "external_read", "external_mutation"] | None = None
+    operation_contract: ProviderOperationContractV1 | None = None
+
+    @property
+    def input(self) -> RecordConstructor:
+        if self.operation_contract is None:
+            raise ValueError("This interface has no declared operation contract")
+        return RecordConstructor(self.operation_contract.input)
 
     @field_validator("interface_digest", "implementation_digest")
     @classmethod
@@ -98,6 +131,7 @@ class ProviderBinding(BaseModel):
             interface_digest=entry.interface_digest,
             implementation_digest=selected.implementation_digest,
             effect_class=entry.effect_class,
+            operation_contract=entry.operation_contract,
         )
 
 

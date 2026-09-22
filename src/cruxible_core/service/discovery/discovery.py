@@ -8,6 +8,7 @@ accepted one is refused before any state is read.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Mapping
 from typing import Literal
 
@@ -23,6 +24,10 @@ from cruxible_client.contracts.discovery import (
 from cruxible_client.contracts.errors import PlaybillFormatError, ProposalIntegrityError
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
 from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpecV1
+from cruxible_client.contracts.provider_contracts import (
+    ProviderOperationContractV1,
+    read_provider_operation_contract,
+)
 from cruxible_client.contracts.provider_interfaces import (
     ProviderEffectClassV1,
     parse_provider_interface,
@@ -94,6 +99,7 @@ class ProviderInterfaceEntryV1(_StrictDiscoveryServiceModel):
     # Additive: the live Providers implementing this interface, so an author can
     # pin a graph-v4 Source node from the served inventory alone.
     providers: tuple[ProviderInterfaceImplementationV1, ...] = ()
+    operation_contract: ProviderOperationContractV1 | None = None
 
     @field_validator(
         "artifact_digest",
@@ -164,6 +170,11 @@ def _provider_interfaces(
                 identity=registration.identity.qualified,
                 artifact_digest=provider_interface_digest(registration).tagged,
                 interface_digest=registration.interface_digest,
+                operation_contract=(
+                    read_provider_operation_contract(registration.interface_bytes_hex)
+                    if "contracts" in json.loads(bytes.fromhex(registration.interface_bytes_hex))
+                    else None
+                ),
                 vocabulary_digest=registration.vocabulary_digest,
                 classifier_digest=registration.classifier_digest,
                 effect_class=registration.effect_class,

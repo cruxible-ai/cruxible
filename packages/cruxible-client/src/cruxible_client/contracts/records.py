@@ -161,7 +161,16 @@ class Record(Mapping[str, CanonicalValue]):
         _check_schema(sealed_schema)
         # Normalize nested Records through the existing canonical Mapping path.
         raw = normalize_canonical(value)
-        parsed = validate_contract_schema(sealed_schema, raw)
+        from cruxible_client.contracts.procedures.contracts import ProcedureContractValidationError
+
+        try:
+            parsed = validate_contract_schema(sealed_schema, raw)
+        except ProcedureContractValidationError as exc:
+            raise ProcedureContractValidationError(
+                f"{exc.field_path or 'record'}: {exc}",
+                field_path=exc.field_path,
+                element_index=exc.element_index,
+            ) from exc
         assert isinstance(parsed, dict)
         _validate_nested(sealed_schema, parsed)
         object.__setattr__(self, "_schema", sealed_schema)
@@ -208,6 +217,10 @@ class RecordConstructor:
     """A schema handle usable as .value(...), .input(...), or .parameters(...)."""
 
     _schema: ContractSchema
+
+    @classmethod
+    def from_json_schema(cls, schema: Mapping[str, object]) -> RecordConstructor:
+        return cls(_json_record_schema(schema, "record"))
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_schema", self._schema.model_copy(deep=True))

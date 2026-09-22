@@ -98,7 +98,8 @@ def test_sdk_concrete_procedure_prepares_submits_and_runs(
     assert procedure.readiness().state == "ready"
     run = procedure.run()
     assert run.status == "succeeded"
-    assert run.result == {"count": 1}
+    assert run.succeeded
+    assert run.result.count == 1
     assert run.receipt is not None
 
 

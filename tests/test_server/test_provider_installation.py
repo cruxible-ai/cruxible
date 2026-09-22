@@ -157,7 +157,7 @@ def _run_call(
     state = client.get_playbill_procedure_run(instance_id, run.run_id)
     assert run.status == "succeeded", state.model_dump_json(indent=2)
     assert state.receipt_digest
-    return run.result
+    return run.result.model_dump()
 
 
 def test_installed_workspace_operation_runs_in_real_child(installer_http, tmp_path):
@@ -492,7 +492,7 @@ def test_installed_web_source_fetches_local_http_and_retains_capture(installer_h
         run = pb.accepted_procedure("installed-web-fetch").run()
         state = client.get_playbill_procedure_run(instance_id, run.run_id)
         assert run.status == "succeeded", state.model_dump_json(indent=2)
-        assert run.result == {"text": '{"severity":"high"}'}
+        assert run.result.text == '{"severity":"high"}'
         assert state.source_observations[0].capture_digest
         assert state.receipt_digest
     finally:

@@ -281,7 +281,7 @@ def test_sdk_source_retains_and_reads_acquisition(playbill_http, tmp_path, monke
     assert state.receipt_digest is not None
     assert state.source_observations[0].capture_digest
     # The source result, its evidence identity and receipt survive public readback.
-    assert state.result == run.result
+    assert state.result == run.result.model_dump()
     from cruxible_client.contracts.captures import parse_capture_envelope
     from cruxible_core.storage.cas import BodyAccessContext
 
@@ -411,6 +411,6 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     run = pb.accepted_procedure("replace-me").run()
     state = transport.get_playbill_procedure_run(instance_id, run.run_id)
     assert run.status == "succeeded", str(state.terminal)
-    assert run.result == {"size": 1}
+    assert run.result.size == 1
     assert state.source_observations == []
     assert invoker.spawn_calls == 1
