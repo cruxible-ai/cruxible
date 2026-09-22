@@ -62,3 +62,46 @@ class LineTriggerCheckResultV1(BaseModel):
     checked_until: datetime = Field(description="Reads VALIDITY WINDOW.")
     cursor: str | None = None
     detail: str | None = None
+
+
+class LineListenRequestV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    action: Literal["start", "stop"]
+
+
+class LineEvaluateRequestV1(LineTriggerCheckRequestV1):
+    @model_validator(mode="after")
+    def _explicit_range(self) -> LineEvaluateRequestV1:
+        if self.since is None or self.until is None:
+            raise ValueError("historical evaluation requires an explicit since and until")
+        return self
+
+
+class LineDispatchRequestV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    occurrence_id: str | None = None
+    limit: int = Field(default=1, ge=1, le=100)
+
+
+class LineListeningSessionV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    session_id: str
+    line: str
+    occurrence_epoch: int
+    starts_at: datetime = Field(description="Reads VALIDITY WINDOW.")
+    stops_at: datetime | None = Field(default=None, description="Reads VALIDITY WINDOW.")
+    evaluated_until: datetime = Field(description="Reads VALIDITY WINDOW.")
+    detail: str | None = None
+
+
+class LineDispatchItemV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    occurrence_id: str
+    status: Literal["admitted", "pending", "blocked"]
+    run_id: str | None = None
+    detail: str | None = None
+
+
+class LineDispatchResultV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    items: tuple[LineDispatchItemV1, ...] = ()

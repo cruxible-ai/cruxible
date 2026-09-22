@@ -734,6 +734,27 @@ def register_tools(
         return handlers.handle_playbill_line_check(instance_id, line, request)
 
     @_tool
+    def cruxible_playbill_line_listen(
+        instance_id: str, line: str, request: contracts.LineListenRequestV1
+    ) -> contracts.LineListeningSessionV1:
+        """Start or stop forward listening; this never executes a Procedure."""
+        return handlers.handle_playbill_line_listen(instance_id, line, request)
+
+    @_tool
+    def cruxible_playbill_line_evaluate(
+        instance_id: str, line: str, request: contracts.LineEvaluateRequestV1
+    ) -> contracts.LineTriggerCheckResultV1:
+        """Explicitly evaluate a historical range into pending work; never execute."""
+        return handlers.handle_playbill_line_evaluate(instance_id, line, request)
+
+    @_tool
+    def cruxible_playbill_line_dispatch(
+        instance_id: str, line: str, request: contracts.LineDispatchRequestV1
+    ) -> contracts.LineDispatchResultV1:
+        """Execute retained pending occurrences using the current authenticated actor."""
+        return handlers.handle_playbill_line_dispatch(instance_id, line, request)
+
+    @_tool
     def cruxible_playbill_line_run(
         instance_id: str,
         line: str,

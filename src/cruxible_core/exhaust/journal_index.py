@@ -16,6 +16,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Callable, ParamSpec, TypeVar
+from uuid import uuid4
 
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import PlaybillJournalIntegrityError
@@ -35,16 +36,18 @@ _P = ParamSpec("_P")
 _R = TypeVar("_R")
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS initialized (singleton INTEGER PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS index_identity (singleton INTEGER PRIMARY KEY, identity TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS partitions (
  stream TEXT NOT NULL, partition_id TEXT NOT NULL, end_offset INTEGER NOT NULL,
  sequence INTEGER NOT NULL, digest TEXT NOT NULL, signature TEXT NOT NULL,
  PRIMARY KEY(stream, partition_id));
 CREATE TABLE IF NOT EXISTS records (
- id INTEGER PRIMARY KEY, stream TEXT NOT NULL, partition_id TEXT NOT NULL,
+ id INTEGER PRIMARY KEY AUTOINCREMENT, stream TEXT NOT NULL, partition_id TEXT NOT NULL,
  sequence INTEGER NOT NULL, offset INTEGER NOT NULL, size INTEGER NOT NULL,
  digest TEXT NOT NULL, previous TEXT NOT NULL, event_kind TEXT NOT NULL,
- run_id TEXT, occurrence_id TEXT, recorded_at TEXT NOT NULL,
+ run_id TEXT, occurrence_id TEXT, payload_digest TEXT NOT NULL, recorded_at TEXT NOT NULL,
  UNIQUE(stream, partition_id, sequence));
+CREATE INDEX IF NOT EXISTS records_payload ON records(stream,event_kind,payload_digest);
 CREATE INDEX IF NOT EXISTS records_run ON records(stream, run_id, sequence);
 CREATE INDEX IF NOT EXISTS records_event
  ON records(stream, event_kind, recorded_at, partition_id, sequence);
@@ -54,6 +57,9 @@ CREATE TABLE IF NOT EXISTS capture_selectors (
  record_id INTEGER PRIMARY KEY REFERENCES records(id) ON DELETE CASCADE,
  contract_digest TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS capture_contract ON capture_selectors(contract_digest, record_id);
+CREATE INDEX IF NOT EXISTS records_kind_position ON records(stream,event_kind,id);
+CREATE INDEX IF NOT EXISTS records_stream_position ON records(stream,id);
+CREATE TABLE IF NOT EXISTS capture_progress(stream TEXT PRIMARY KEY, record_id INTEGER NOT NULL);
 """
 
 
@@ -86,6 +92,7 @@ class JournalIndex:
             try:
                 conn.execute("PRAGMA foreign_keys=ON")
                 conn.executescript(_SCHEMA)
+                conn.execute("INSERT OR IGNORE INTO index_identity VALUES(1,?)", (uuid4().hex,))
                 if not conn.execute("SELECT 1 FROM initialized").fetchone():
                     for identity in self.backend._streams_root.glob("*/*/identity.json"):
                         raw = json.loads(identity.read_bytes())
@@ -164,7 +171,8 @@ class JournalIndex:
             record = stored.record
             conn.execute(
                 "INSERT INTO records(stream,partition_id,sequence,offset,size,digest,previous,"
-                "event_kind,run_id,occurrence_id,recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "event_kind,run_id,occurrence_id,payload_digest,recorded_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     _key(stream),
                     partition_id,
@@ -176,6 +184,7 @@ class JournalIndex:
                     record.event_kind,
                     record.run_id,
                     record.occurrence_id,
+                    record.payload_digest,
                     format_datetime(record.recorded_at),
                 ),
             )
@@ -239,6 +248,7 @@ class JournalIndex:
         run_id: str | None = None,
         event_kind: str | None = None,
         occurrence_id: str | None = None,
+        payload_digest: str | None = None,
         first_sequence: int | None = None,
         last_sequence: int | None = None,
         descending: bool = False,
@@ -254,6 +264,7 @@ class JournalIndex:
                 ("run_id", run_id),
                 ("event_kind", event_kind),
                 ("occurrence_id", occurrence_id),
+                ("payload_digest", payload_digest),
             ):
                 if value is not None:
                     where.append(f"{name}=?")
@@ -273,6 +284,22 @@ class JournalIndex:
                 args.append(limit)
             return tuple(self.read_row(row) for row in conn.execute(sql, args).fetchall())
 
+    def positions(self, stream: JournalStreamIdentityV1) -> dict[str, Any]:
+        """A disposable live-reader position, never a work-completion authority.
+
+        A new cache identity invalidates live positions after a rebuild. Pending
+        work still rebuilds from retained transitions; listeners open a new
+        forward range instead of guessing which old cache ordinal was observed.
+        """
+        with self.connection() as conn:
+            identity = conn.execute(
+                "SELECT identity FROM index_identity WHERE singleton=1"
+            ).fetchone()[0]
+            ordinal = conn.execute(
+                "SELECT coalesce(max(id),0) FROM records WHERE stream=?", (_key(stream),)
+            ).fetchone()[0]
+            return {"generation": identity, "ordinal": ordinal}
+
     def captures(
         self,
         stream: JournalStreamIdentityV1,
@@ -283,6 +310,8 @@ class JournalIndex:
         until: datetime,
         limit: int,
         cursor: tuple[str, str, int] | None = None,
+        after: dict[str, Any] | None = None,
+        through: dict[str, Any] | None = None,
     ) -> tuple[tuple[StoredProcedureJournalRecordV1, ...], tuple[str, str, int] | None, bool]:
         """Project new capture selectors once, then verify only selected bodies.
 
@@ -294,11 +323,13 @@ class JournalIndex:
 
         access = BodyAccessContext(principal_id="trigger-discovery", can_read_body=True)
         with self.connection() as conn:
+            progress = conn.execute(
+                "SELECT record_id FROM capture_progress WHERE stream=?", (_key(stream),)
+            ).fetchone()
             fresh = conn.execute(
-                "SELECT r.* FROM records r LEFT JOIN capture_selectors c ON c.record_id=r.id "
-                "WHERE r.stream=? AND r.event_kind='produced_capture' AND c.record_id IS NULL "
-                "ORDER BY r.id LIMIT 1025",
-                (_key(stream),),
+                "SELECT * FROM records WHERE stream=? AND event_kind='produced_capture' "
+                "AND id>? ORDER BY id LIMIT 1025",
+                (_key(stream), progress[0] if progress else 0),
             ).fetchall()
             for row in fresh[:1024]:
                 stored = self.read_row(row)
@@ -317,14 +348,36 @@ class JournalIndex:
                     "INSERT INTO capture_selectors VALUES (?,?)",
                     (row["id"], payload["capture_contract_digest"]),
                 )
+            if fresh:
+                conn.execute(
+                    "INSERT OR REPLACE INTO capture_progress VALUES(?,?)",
+                    (_key(stream), fresh[min(len(fresh), 1024) - 1]["id"]),
+                )
             if len(fresh) > 1024:
                 return (), None, False
             args: list[Any]
             where, args = (
-                ["r.stream=?", "c.contract_digest=?", "r.recorded_at<?"],
-                [_key(stream), contract_digest, format_datetime(until)],
+                ["r.stream=?", "c.contract_digest=?"],
+                [_key(stream), contract_digest],
             )
-            if since is not None:
+            if through is not None:
+                generation = conn.execute(
+                    "SELECT identity FROM index_identity WHERE singleton=1"
+                ).fetchone()[0]
+                if (
+                    through["generation"] != generation
+                    or after is None
+                    or after["generation"] != generation
+                ):
+                    raise PlaybillJournalIntegrityError(
+                        "live event reader position was invalidated by an index rebuild"
+                    )
+                where.extend(("r.id>?", "r.id<=?"))
+                args.extend((after["ordinal"], through["ordinal"]))
+            if through is None:
+                where.append("r.recorded_at<?")
+                args.append(format_datetime(until))
+            if since is not None and through is None:
                 where.append("r.recorded_at>=?")
                 args.append(format_datetime(since))
             if cursor is not None:

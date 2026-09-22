@@ -120,8 +120,8 @@ def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     """A command defined but never registered is dead or invisible, never fine."""
     group_claims, leaf_claims = _walk_lazy_map(CLI_COMMANDS)
     # Includes retained evidence reads through `capture read`.
-    assert len(leaf_claims) == 117, (
-        f"expected 117 Playbill/host leaf commands, found {len(leaf_claims)}"
+    assert len(leaf_claims) == 120, (
+        f"expected 120 Playbill/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)

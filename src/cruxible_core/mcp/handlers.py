@@ -270,6 +270,9 @@ def _get_client() -> CruxibleClient | None:
 #: `tests/test_architecture/test_mcp_validation_seam.py` requires every mutating
 #: operation to appear here and every entry with a model to be given a payload.
 MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
+    "cruxible_playbill_line_dispatch": TypeAdapter(contracts.LineDispatchRequestV1),
+    "cruxible_playbill_line_evaluate": TypeAdapter(contracts.LineEvaluateRequestV1),
+    "cruxible_playbill_line_listen": TypeAdapter(contracts.LineListenRequestV1),
     "cruxible_playbill_provider_install": TypeAdapter(PlaybillProviderInstallRequestV1),
     "cruxible_playbill_activate": None,  # path only
     "cruxible_playbill_authoring_abandon_insertion": TypeAdapter(PlaybillInsertionAbandonRequest),
@@ -1508,6 +1511,39 @@ def handle_playbill_line_check(
         lambda client: client.check_playbill_line(instance_id, line, request=request),
         lambda: playbill_api.playbill_line_check(instance_id, line, request=request),
         operation_name="cruxible_playbill_line_check",
+    )
+
+
+def handle_playbill_line_listen(
+    instance_id: str, line: str, request: contracts.LineListenRequestV1
+) -> contracts.LineListeningSessionV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.listen_playbill_line(instance_id, line, request=request),
+        lambda: playbill_api.playbill_line_listen(instance_id, line, request=request),
+        operation_name="cruxible_playbill_line_listen",
+        local_payload=request.model_dump(mode="json"),
+    )
+
+
+def handle_playbill_line_evaluate(
+    instance_id: str, line: str, request: contracts.LineEvaluateRequestV1
+) -> contracts.LineTriggerCheckResultV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.evaluate_playbill_line(instance_id, line, request=request),
+        lambda: playbill_api.playbill_line_evaluate(instance_id, line, request=request),
+        operation_name="cruxible_playbill_line_evaluate",
+        local_payload=request.model_dump(mode="json"),
+    )
+
+
+def handle_playbill_line_dispatch(
+    instance_id: str, line: str, request: contracts.LineDispatchRequestV1
+) -> contracts.LineDispatchResultV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.dispatch_playbill_line(instance_id, line, request=request),
+        lambda: playbill_api.playbill_line_dispatch(instance_id, line, request=request),
+        operation_name="cruxible_playbill_line_dispatch",
+        local_payload=request.model_dump(mode="json"),
     )
 
 

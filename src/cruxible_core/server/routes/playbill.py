@@ -1272,6 +1272,40 @@ def check_line_trigger(
 
 
 @router.post(
+    "/{instance_id}/playbill/lines/{line}/listen", response_model=contracts.LineListeningSessionV1
+)
+def listen_line(
+    instance_id: str, line: str, req: contracts.LineListenRequestV1
+) -> contracts.LineListeningSessionV1:
+    return playbill_api.playbill_line_listen(
+        resolve_server_instance_id(instance_id), line, request=req
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/lines/{line}/evaluate",
+    response_model=contracts.LineTriggerCheckResultV1,
+)
+def evaluate_line(
+    instance_id: str, line: str, req: contracts.LineEvaluateRequestV1
+) -> contracts.LineTriggerCheckResultV1:
+    return playbill_api.playbill_line_evaluate(
+        resolve_server_instance_id(instance_id), line, request=req
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/lines/{line}/dispatch", response_model=contracts.LineDispatchResultV1
+)
+def dispatch_line(
+    instance_id: str, line: str, req: contracts.LineDispatchRequestV1
+) -> contracts.LineDispatchResultV1:
+    return playbill_api.playbill_line_dispatch(
+        resolve_server_instance_id(instance_id), line, request=req
+    )
+
+
+@router.post(
     "/{instance_id}/playbill/lines/{line}/runs",
     response_model=contracts.PlaybillProcedureRunState,
 )

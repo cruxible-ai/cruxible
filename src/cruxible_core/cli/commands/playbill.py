@@ -3938,6 +3938,94 @@ def check_line(
             )
 
 
+@line_group.command("listen")
+@click.argument("line")
+@click.option("--stop", is_flag=True, help="Stop listening; leave pending work intact.")
+@json_option
+@handle_errors
+def listen_line(line: str, stop: bool, output_json: bool) -> None:
+    from cruxible_client.contracts.line_dispatch import LineListenRequestV1
+
+    result = _server_call(
+        lambda client, instance_id: client.listen_playbill_line(
+            instance_id, line, request=LineListenRequestV1(action="stop" if stop else "start")
+        ),
+        command_name="playbill line listen",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        click.echo(f"{result.line}: {'stopped' if result.stops_at else 'listening'}")
+        click.echo(f"Evaluated through: {result.evaluated_until.isoformat()}")
+        if result.detail:
+            click.echo(result.detail)
+
+
+@line_group.command("evaluate")
+@click.argument("line")
+@click.option("--since", required=True)
+@click.option("--until", required=True)
+@click.option("--limit", default=100, type=click.IntRange(1, 256))
+@click.option("--cursor", default=None)
+@json_option
+@handle_errors
+def evaluate_line(
+    line: str, since: str, until: str, limit: int, cursor: str | None, output_json: bool
+) -> None:
+    from cruxible_client.contracts.line_dispatch import LineEvaluateRequestV1
+
+    request = LineEvaluateRequestV1.model_validate(
+        dict(since=since, until=until, limit=limit, cursor=cursor)
+    )
+    result = _server_call(
+        lambda client, instance_id: client.evaluate_playbill_line(
+            instance_id, line, request=request
+        ),
+        command_name="playbill line evaluate",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        click.echo(f"{result.line}: {result.status} ({len(result.occurrences)} occurrences)")
+        if result.detail:
+            click.echo(result.detail)
+        if result.cursor:
+            click.echo(
+                f"Next cursor: {result.cursor}; retain --until {result.checked_until.isoformat()}"
+            )
+
+
+@line_group.command("dispatch")
+@click.argument("line")
+@click.option("--occurrence-id", default=None)
+@click.option("--limit", default=1, type=click.IntRange(1, 100))
+@json_option
+@handle_errors
+def dispatch_line(line: str, occurrence_id: str | None, limit: int, output_json: bool) -> None:
+    from cruxible_client.contracts.line_dispatch import LineDispatchRequestV1
+
+    result = _server_call(
+        lambda client, instance_id: client.dispatch_playbill_line(
+            instance_id,
+            line,
+            request=LineDispatchRequestV1(occurrence_id=occurrence_id, limit=limit),
+        ),
+        command_name="playbill line dispatch",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    elif not result.items:
+        click.echo("No pending occurrences for this Line epoch.")
+    else:
+        for item in result.items:
+            click.echo(
+                f"{item.occurrence_id}: {item.status}"
+                + (f" run={item.run_id}" if item.run_id else "")
+            )
+            if item.detail:
+                click.echo(item.detail)
+
+
 @line_group.command("run")
 @click.argument("line")
 @click.option("--occurrence-id", default=None, help="Assert the daemon-derived occurrence id.")

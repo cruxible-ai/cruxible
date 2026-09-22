@@ -40,8 +40,17 @@ from cruxible_core.service.procedures.resolution_contracts import bind_window, c
 
 
 def service_check_line_trigger(
-    instance: PlaybillInstance, line: str, request: LineTriggerCheckRequestV1, *, now: datetime
+    instance: PlaybillInstance,
+    line: str,
+    request: LineTriggerCheckRequestV1,
+    *,
+    now: datetime,
+    after: dict[str, Any] | None = None,
+    through: dict[str, Any] | None = None,
+    include_future_windows: bool = False,
 ) -> LineTriggerCheckResultV1:
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
+
     now = ensure_utc(now)
     until = min(request.until or now + timedelta(microseconds=1), now + timedelta(microseconds=1))
     coordinate = instance.accepted_coordinate()
@@ -62,6 +71,8 @@ def service_check_line_trigger(
         accepted.line.occurrence_epoch,
         request.since.isoformat() if request.since else None,
         until.isoformat(),
+        after,
+        through,
     ]
     cursor = None
     if request.cursor:
@@ -100,9 +111,11 @@ def service_check_line_trigger(
                     bodies=instance.body_store(),
                     contract_digest=selector.capture_contract_digest,
                     since=request.since - delay if request.since else None,
-                    until=until - delay,
+                    until=until if include_future_windows else until - delay,
                     limit=request.limit,
                     cursor=cursor,
+                    after=after,
+                    through=through,
                 )
                 for stored in records:
                     record = stored.record
@@ -140,6 +153,17 @@ def service_check_line_trigger(
         elif isinstance(policy, CadenceTriggerPolicyV1):
             prior = _line_admissions(instance, accepted)
             _, due = _line_occurrence(accepted, evaluation_time=now, prior=prior)
+            # An already-pending first cadence keeps its original due instant;
+            # checks must not invent a new occurrence on every call.
+            if dispatch_root(instance).exists():
+                with LineDispatchStore(instance).locked() as conn:
+                    row = conn.execute(
+                        "SELECT eligible_at FROM pending WHERE line_id=? AND epoch=? "
+                        "AND admitted=0 ORDER BY eligible_at,occurrence_id LIMIT 1",
+                        (identity, accepted.line.occurrence_epoch),
+                    ).fetchone()
+                    if row is not None:
+                        due = datetime.fromisoformat(row[0])
             bindings.append((None, due or now))
         elif isinstance(policy, ManualTriggerPolicyV1):
             return LineTriggerCheckResultV1(
@@ -154,7 +178,9 @@ def service_check_line_trigger(
                 detail="Accept a Line with explicit event/window bindings.",
             )
         for binding, eligible in bindings:
-            if eligible >= until or (request.since is not None and eligible < request.since):
+            if (eligible >= until and not include_future_windows) or (
+                request.since is not None and eligible < request.since
+            ):
                 continue
             occurrence, _ = _line_occurrence(
                 accepted, evaluation_time=eligible, prior=(), binding=binding
@@ -172,6 +198,16 @@ def service_check_line_trigger(
             )
     except (PlaybillError, OSError, ValueError) as exc:
         return LineTriggerCheckResultV1(**context, status="incomplete", detail=str(exc))
+    if dispatch_root(instance).exists() and occurrences:
+        pending = LineDispatchStore(instance).pending_ids(
+            identity,
+            accepted.line.occurrence_epoch,
+            tuple(item.occurrence_id for item in occurrences),
+        )
+        occurrences = [
+            item.model_copy(update={"pending": item.occurrence_id in pending})
+            for item in occurrences
+        ]
     return LineTriggerCheckResultV1(
         **context,
         status="incomplete"

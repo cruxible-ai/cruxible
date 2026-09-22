@@ -186,7 +186,7 @@ from cruxible_core.exhaust import (
     LocalJournalBackend,
 )
 from cruxible_core.exhaust.promotions import VerifiedExhaustRecordV1
-from cruxible_core.exhaust.records import parse_journal_payload
+from cruxible_core.exhaust.records import JournalEventKindV1, parse_journal_payload
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -729,19 +729,23 @@ def _accepted_runtime_policy(
         return policy
 
 
-def _accepted_line_by_reference(
-    instance: PlaybillInstance,
-    *,
-    coordinate: AcceptedProjectionCoordinate,
-    reference: str,
-) -> AcceptedLineSpecV1:
-    identity_digest = (
+def _line_reference_digest(reference: str) -> str:
+    return (
         reference
         if reference.startswith("sha256:")
         else line_identity_digest(
             ArtifactIdentity(kind="Line", name=reference.removeprefix("Line:"))
         )
     )
+
+
+def _accepted_line_by_reference(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    reference: str,
+) -> AcceptedLineSpecV1:
+    identity_digest = _line_reference_digest(reference)
     with instance.bind_accepted_projection(coordinate) as projection:
         matches = projection.typed.connection.execute(
             "SELECT identity,path,artifact_digest FROM lines "
@@ -1813,6 +1817,19 @@ def _journal_for_write(instance: PlaybillInstance) -> tuple[LocalJournalBackend,
             stream, run_id=reservation.run_id, event_kind=reservation.intended_event_kind
         ),
         bodies=bodies,
+        intended_event_kinds=frozenset(
+            kind
+            for kind in get_args(JournalEventKindV1)
+            if kind
+            not in {
+                "line_dispatch_transition",
+                "resolution",
+                "resolution_activation",
+                "resolution_disposition",
+                "query_executed",
+                "claim_verdict_observed",
+            }
+        ),
     )
     return journal, root
 
@@ -3388,6 +3405,42 @@ def service_run_playbill_line(
     workspace_file_reader: WorkspaceFileReader | None = None,
     daemon_clock: ProcedureClockProtocol | None = None,
     evaluation_instant_skew: timedelta | None = None,
+    occurrence_basis_time: datetime | None = None,
+) -> ProcedureRunStateV2:
+    instance.require_writable()
+    if request.line != path_identity_digest:
+        raise LineRunIdentityMismatch(
+            f"{LineRunIdentityMismatch.code}: route and request Line identities differ"
+        )
+    from cruxible_core.procedures.line_admission import line_admission_guard
+
+    with line_admission_guard(instance.root, _line_reference_digest(path_identity_digest)):
+        return _run_playbill_line(
+            instance,
+            path_identity_digest=path_identity_digest,
+            request=request,
+            actor_context=actor_context,
+            caller_rung=caller_rung,
+            provider_runtime_operator=provider_runtime_operator,
+            workspace_file_reader=workspace_file_reader,
+            daemon_clock=daemon_clock,
+            evaluation_instant_skew=evaluation_instant_skew,
+            occurrence_basis_time=occurrence_basis_time,
+        )
+
+
+def _run_playbill_line(
+    instance: PlaybillInstance,
+    *,
+    path_identity_digest: str,
+    request: LineRunRequestV1,
+    actor_context: GovernedActorContext,
+    caller_rung: int,
+    provider_runtime_operator: ProviderRuntimeOperatorProtocol | None = None,
+    workspace_file_reader: WorkspaceFileReader | None = None,
+    daemon_clock: ProcedureClockProtocol | None = None,
+    evaluation_instant_skew: timedelta | None = None,
+    occurrence_basis_time: datetime | None = None,
 ) -> ProcedureRunStateV2:
     """Derive, admit, and execute one occurrence of an accepted Line.
 
@@ -3400,11 +3453,6 @@ def service_run_playbill_line(
     skew -- so a mandate validity window cannot be entered by claiming a time.
     """
 
-    instance.require_writable()
-    if request.line != path_identity_digest:
-        raise LineRunIdentityMismatch(
-            f"{LineRunIdentityMismatch.code}: route and request Line identities differ"
-        )
     clock = daemon_clock or SystemProcedureClock()
     evaluation_time = ensure_utc(clock.now())
     asserted = request.evaluation_time
@@ -3570,7 +3618,11 @@ def service_run_playbill_line(
     prior = _line_admissions(instance, accepted_line)
     occurrence_id, next_due = _line_occurrence(
         accepted_line,
-        evaluation_time=evaluation_time,
+        evaluation_time=(
+            min(occurrence_basis_time, evaluation_time)
+            if occurrence_basis_time is not None and isinstance(trigger, CadenceTriggerPolicyV1)
+            else evaluation_time
+        ),
         prior=prior,
         binding=trigger_binding,
     )

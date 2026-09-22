@@ -1488,6 +1488,33 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.LineTriggerCheckResultV1)
 
+    def listen_playbill_line(
+        self, instance_id: str, line: str, *, request: contracts.LineListenRequestV1
+    ) -> contracts.LineListeningSessionV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/lines/{line}/listen",
+            json=request.model_dump(mode="json"),
+        )
+        return self._parse_model(response, contracts.LineListeningSessionV1)
+
+    def evaluate_playbill_line(
+        self, instance_id: str, line: str, *, request: contracts.LineEvaluateRequestV1
+    ) -> contracts.LineTriggerCheckResultV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/lines/{line}/evaluate",
+            json=request.model_dump(mode="json"),
+        )
+        return self._parse_model(response, contracts.LineTriggerCheckResultV1)
+
+    def dispatch_playbill_line(
+        self, instance_id: str, line: str, *, request: contracts.LineDispatchRequestV1
+    ) -> contracts.LineDispatchResultV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/lines/{line}/dispatch",
+            json=request.model_dump(mode="json"),
+        )
+        return self._parse_model(response, contracts.LineDispatchResultV1)
+
     def run_playbill_line(
         self,
         instance_id: str,

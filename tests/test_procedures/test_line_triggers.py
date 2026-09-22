@@ -9,7 +9,7 @@ from cruxible_client.contracts.acquisition_policies import (
     acquisition_policy_path,
     render_acquisition_policy,
 )
-from cruxible_client.contracts.artifacts import ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     capture_contract_digest,
@@ -65,7 +65,7 @@ SELECTOR = CaptureEventSelectorV1(
 )
 
 
-def line_world(tmp_path, trigger):
+def line_world(tmp_path, trigger, *, with_owner=False):
     instance, owner, contract = contract_world(tmp_path)
     base = _slotless_procedure("trigger-method").procedure
     definition = ProcedureDefinitionV4.model_validate(
@@ -98,6 +98,24 @@ def line_world(tmp_path, trigger):
             key=lambda p: (p.role, p.target.qualified, p.artifact_digest),
         )
     )
+    if trigger.kind not in {"capture_landing", "window_close"} or (
+        trigger.kind == "window_close" and trigger.window.kind == "fixed"
+    ):
+        pins = base_line.pins
+    if trigger.kind == "cadence":
+        pins = tuple(
+            sorted(
+                (
+                    *pins,
+                    ArtifactPin(
+                        role="trigger-cadence-policy",
+                        target=ArtifactIdentity(kind="Policy", name="cadence"),
+                        artifact_digest=trigger.cadence_policy_digest,
+                    ),
+                ),
+                key=lambda p: (p.role, p.target.qualified, p.artifact_digest),
+            )
+        )
     line = LineSpecV3.model_validate(
         {
             **base_line.model_dump(mode="python"),
@@ -123,7 +141,7 @@ def line_world(tmp_path, trigger):
     _accept_tree(
         instance, owner, tree, timestamp="2026-08-28T15:01:00.000000Z", proposal_name="trigger"
     )
-    return instance, line, accepted
+    return (instance, line, accepted, owner) if with_owner else (instance, line, accepted)
 
 
 def capture(

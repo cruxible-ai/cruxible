@@ -908,11 +908,32 @@ PRD-c1… rollout-healthy procedure_unit satisfied run=RUN-3f…
 
 ~~~text
 cruxible playbill line check LINE [--since TS] [--until TS] [--limit 100] [--cursor CURSOR] [--json]
+cruxible playbill line listen LINE [--stop] [--json]
+cruxible playbill line evaluate LINE --since TS --until TS [--limit 100] [--cursor CURSOR] [--json]
+cruxible playbill line dispatch LINE [--occurrence-id DIGEST] [--limit 1] [--json]
 cruxible playbill line run LINE --evaluation-time TS
   [--occurrence-id ID] [--json]
 ~~~
 
-Triggers one daemon-derived due occurrence. The occurrence's evaluation
+`check` is read-only: it returns `met`, `not_met`, or `incomplete`, exact
+matching events/windows, and whether each occurrence is pending or already
+admitted. `listen` enables matching into durable pending work; it never runs a
+Procedure. `listen --stop` ends coverage at the last completed evaluation.
+`evaluate` explicitly checks a historical `[since, until)` range and records
+its matches as pending. Follow its cursor to finish a bounded page.
+`dispatch` admits pending occurrences using the caller's current permissions
+and the ordinary Line admission checks. A retry reuses an existing admission.
+
+Restart resumes pending work and opens a new forward listening range. Time
+not covered by completed listening ranges requires explicit `evaluate`; it is
+never replayed automatically. Rebuilding the disposable event index similarly
+opens a new forward range, while retained pending work survives. A changed
+occurrence epoch needs an explicit new subscription. Rebinding within the same
+epoch preserves listening progress; pending work bound to an older Line version
+is reported blocked rather than silently rebound. A trigger Capture identifies
+the occurrence; passing its contents as Procedure inputs is a separate follow-up.
+
+`run` triggers one daemon-derived due occurrence. The occurrence's evaluation
 instant is the daemon's; `--evaluation-time` only asserts the instant the
 caller believes it is running at, and an assertion outside the daemon's skew
 bound is refused. That bound is operational, not wire: the daemon reads

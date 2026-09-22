@@ -2892,6 +2892,40 @@ class Playbill:
             request=LineTriggerCheckRequestV1(since=since, until=until, limit=limit, cursor=cursor),
         )
 
+    def listen_line(self, line: str, *, enabled: bool = True) -> api.LineListeningSessionV1:
+        """Start or stop forward listening; no Procedure is executed."""
+        return self._client.listen_playbill_line(
+            self._instance_id,
+            line,
+            request=api.LineListenRequestV1(action="start" if enabled else "stop"),
+        )
+
+    def evaluate_line(
+        self,
+        line: str,
+        *,
+        since: datetime,
+        until: datetime,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> api.LineTriggerCheckResultV1:
+        """Explicitly turn a missed range into pending occurrences."""
+        return self._client.evaluate_playbill_line(
+            self._instance_id,
+            line,
+            request=api.LineEvaluateRequestV1(since=since, until=until, limit=limit, cursor=cursor),
+        )
+
+    def dispatch_line(
+        self, line: str, *, occurrence_id: str | None = None, limit: int = 1
+    ) -> api.LineDispatchResultV1:
+        """Admit pending work using this connection's current actor and authority."""
+        return self._client.dispatch_playbill_line(
+            self._instance_id,
+            line,
+            request=api.LineDispatchRequestV1(occurrence_id=occurrence_id, limit=limit),
+        )
+
     def run_line(
         self,
         line: str,
