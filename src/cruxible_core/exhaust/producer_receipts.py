@@ -226,6 +226,7 @@ class JournalProducerReceiptResolver:
                     if payload.get("tag") not in {
                         "playbill-procedure-admission-bound-payload-v5",
                         "playbill-procedure-admission-bound-payload-v7",
+                        "playbill-procedure-admission-bound-payload-v8",
                     }:
                         continue
                     try:

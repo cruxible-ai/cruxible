@@ -9,7 +9,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
-from typing import Callable, Literal, Protocol, cast, overload
+from typing import TYPE_CHECKING, Callable, Literal, Protocol, cast, overload
+
+if TYPE_CHECKING:
+    from cruxible_core.procedures.nested import NestedProcedureRunner, ParentInvocationContext
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -71,9 +74,11 @@ from cruxible_client.contracts.procedures.models import (
     GuardPredicateV1,
     HaltNodeV3,
     InboxEgressNodeV3,
+    InvokeNodeV6,
     MandateSettlementNodeV3,
     PredicateOperandV1,
     ProcedureBudgetV3,
+    ProcedureDefinitionV6,
     ProcedureHardCapsV3,
     ProcedurePinSlotRefV1,
     ProjectNodeV3,
@@ -212,6 +217,7 @@ from cruxible_core.procedures.terminal_dependencies import (
     build_terminal_item_manifest,
     derive_terminal_item_facts,
     exhaust_token,
+    manifest_dependency_tokens,
     policy_token,
     produced_capture_token,
     receipt_token,
@@ -661,7 +667,12 @@ class ProcedureRunAdmissionV3(ProcedureRunAdmissionV2):
             raise ValueError("v3 admission line_identity must have kind Line")
         if self.journal_stream != procedure_line_journal_stream(self.instance_id):
             raise ValueError("Line admission must use the Procedure exhaust stream")
-        if self.journal_partition_id != procedure_line_partition(self.line_identity):
+        expected_partition = (
+            procedure_direct_partition(self.semantic_replay_key_digest)
+            if isinstance(self, ProcedureRunAdmissionV8)
+            else procedure_line_partition(self.line_identity)
+        )
+        if self.journal_partition_id != expected_partition:
             raise ValueError("Line admission partition does not reproduce its Line identity")
         if self.occurrence_id is None:
             raise ValueError("Line admission requires an occurrence id")
@@ -741,6 +752,45 @@ class ProcedureRunAdmissionV7(ProcedureRunAdmissionV5):
     tag: Literal["playbill-procedure-run-admission-v7"] = "playbill-procedure-run-admission-v7"  # type: ignore[assignment]
     investigation: InvestigationBindingV1 | None = None
     trigger_binding: LineTriggerBindingV1 | None = None
+
+
+class ProcedureParentBindingV1(_StrictExecutionModel):
+    """Backend-owned link to the admitted invocation that delegated this work."""
+
+    parent_run_id: str
+    parent_admission_digest: str
+    node_id: str
+    ancestors: tuple[ArtifactPin, ...]
+    activation_policies: tuple[Literal["drain", "abort", "snapshot", "epoch-check"], ...]
+
+    @field_validator("parent_admission_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        return _sha256(value, label="parent_admission_digest")
+
+    @model_validator(mode="after")
+    def _lineage(self) -> ProcedureParentBindingV1:
+        identities = tuple(pin.target for pin in self.ancestors)
+        if not identities or len(set(identities)) != len(identities):
+            raise ValueError("child invocation requires a nonrecursive ancestor chain")
+        if any(identity.kind != "Procedure" for identity in identities):
+            raise ValueError("child ancestors must be exact Procedure pins")
+        if len(self.activation_policies) != len(identities):
+            raise ValueError("every ancestor binds its activation policy")
+        return self
+
+
+class ProcedureRunAdmissionV8(ProcedureRunAdmissionV7):
+    """Nested execution retains the root lane, with an explicit delegation binding."""
+
+    tag: Literal["playbill-procedure-run-admission-v8"] = "playbill-procedure-run-admission-v8"  # type: ignore[assignment]
+    parent_binding: ProcedureParentBindingV1
+
+    @model_validator(mode="after")
+    def _nonrecursive(self) -> ProcedureRunAdmissionV8:
+        if self.procedure_identity in {pin.target for pin in self.parent_binding.ancestors}:
+            raise ValueError("recursive Procedure invocation is not supported")
+        return self
 
 
 class LandedCaptureRunMaterialV1(_StrictExecutionModel):
@@ -1517,6 +1567,11 @@ class PreparedProcedureRunV7(PreparedProcedureRunV5):
     admission: ProcedureRunAdmissionV7
 
 
+class PreparedProcedureRunV8(PreparedProcedureRunV5):
+    tag: Literal["playbill-prepared-procedure-run-v8"] = "playbill-prepared-procedure-run-v8"  # type: ignore[assignment]
+    admission: ProcedureRunAdmissionV8
+
+
 class ProcedureAdmissionBoundPayloadV6(ProcedureAdmissionBoundPayloadV2):
     tag: Literal["playbill-procedure-admission-bound-payload-v6"] = (
         "playbill-procedure-admission-bound-payload-v6"  # type: ignore[assignment]
@@ -1529,6 +1584,13 @@ class ProcedureAdmissionBoundPayloadV7(ProcedureAdmissionBoundPayloadV5):
         "playbill-procedure-admission-bound-payload-v7"  # type: ignore[assignment]
     )
     admission: ProcedureRunAdmissionV7
+
+
+class ProcedureAdmissionBoundPayloadV8(ProcedureAdmissionBoundPayloadV5):
+    tag: Literal["playbill-procedure-admission-bound-payload-v8"] = (
+        "playbill-procedure-admission-bound-payload-v8"  # type: ignore[assignment]
+    )
+    admission: ProcedureRunAdmissionV8
 
 
 def parse_admission_payload(
@@ -1545,6 +1607,7 @@ def parse_admission_payload(
             ProcedureAdmissionBoundPayloadV5,
             ProcedureAdmissionBoundPayloadV6,
             ProcedureAdmissionBoundPayloadV7,
+            ProcedureAdmissionBoundPayloadV8,
         )
     }
     model = models.get(payload.get("tag"))
@@ -1681,6 +1744,22 @@ def bind_line_admission_runtime_policy(
 
 
 def procedure_semantic_replay_key_digest(admission: ProcedureRunAdmissionV2) -> str:
+    if isinstance(admission, ProcedureRunAdmissionV8):
+        base: ProcedureRunAdmissionV2 = ProcedureRunAdmissionV7.model_construct(
+            **{
+                name: getattr(admission, name)
+                for name in ProcedureRunAdmissionV7.model_fields
+                if name != "tag"
+            }
+        )
+        return typed_digest(
+            Sha256Value,
+            "playbill-nested-procedure-replay-key-v1",
+            {
+                "execution": procedure_semantic_replay_key_digest(base),
+                "parent_binding": admission.parent_binding.model_dump(mode="json"),
+            },
+        ).tagged
     if admission.resource_budget is not None:
         legacy = admission.model_copy(update={"resource_budget": None})
         return typed_digest(
@@ -2320,6 +2399,8 @@ class _RunState:
     facts: dict[str, DependencyEvidenceFactsV1] = dataclass_field(default_factory=dict)
     outcomes: dict[str, AcquisitionInputOutcomeV1] = dataclass_field(default_factory=dict)
     control: frozenset[DependencyToken] = frozenset()
+    return_tokens: frozenset[DependencyToken] = frozenset()
+    terminal_capture: str | None = None
     provider_calls: int = 0
     capture_bytes: int = 0
     max_items_high_water: int = 0
@@ -2417,6 +2498,8 @@ class ProcedureExecutor:
         declared_effect_grants: tuple[str, ...] = (),
         workspace_file_reader: WorkspaceFileReader | None = None,
         clock: ProcedureClockProtocol | None = None,
+        nested_runner: NestedProcedureRunner | None = None,
+        parent_context: ParentInvocationContext | None = None,
     ) -> None:
         self.journal = journal
         self.bodies = bodies
@@ -2441,6 +2524,8 @@ class ProcedureExecutor:
         self.declared_effect_grants = declared_effect_grants
         self.workspace_file_reader = workspace_file_reader
         self.clock = clock or SystemProcedureClock()
+        self.nested_runner = nested_runner
+        self.parent_context = parent_context
 
     def _pin(
         self,
@@ -2464,7 +2549,11 @@ class ProcedureExecutor:
                 admission.journal_stream,
                 admission.journal_partition_id,
             )
-            self.run_index.rebuild(existing_records, bodies=self.bodies)
+            self.run_index.rebuild_run(
+                admission.run_id,
+                tuple(row for row in existing_records if row.record.run_id == admission.run_id),
+                bodies=self.bodies,
+            )
         except (PlaybillJournalError, ValueError) as exc:
             raise ProcedureBoundaryRefused(
                 "journal_integrity_error",
@@ -2499,6 +2588,10 @@ class ProcedureExecutor:
                 + terminal_state
             )
         self._require_current(admission)
+        if any(isinstance(node, InvokeNodeV6) for node in accepted.procedure.definition.nodes):
+            if self.nested_runner is None:
+                raise PlaybillExecutionError("nested Procedure runner is unavailable")
+            self.nested_runner.preflight(accepted, admission)
         if isinstance(prepared, PreparedProcedureRunV5):
             self._preflight_source_runtime(prepared, accepted)
         if isinstance(prepared, PreparedProcedureRunV5):
@@ -2515,6 +2608,13 @@ class ProcedureExecutor:
                 )
         records: list[StoredProcedureJournalRecordV1] = []
         started_ns = self.clock.monotonic_ns()
+        if self.parent_context is not None and self.parent_context.deadline_ns is not None:
+            # Child planning also consumes the ancestor's remaining time. Its
+            # execution clock cannot restart that deadline after planning ends.
+            started_ns = min(
+                started_ns,
+                self.parent_context.deadline_ns - admission.budget.wall_clock.microseconds * 1000,
+            )
 
         self._append_event(
             admission,
@@ -2528,11 +2628,13 @@ class ProcedureExecutor:
             "admission_bound",
             (
                 (
-                    ProcedureAdmissionBoundPayloadV7
+                    ProcedureAdmissionBoundPayloadV8
+                    if isinstance(admission, ProcedureRunAdmissionV8)
+                    else ProcedureAdmissionBoundPayloadV7
                     if isinstance(admission, ProcedureRunAdmissionV7)
                     else ProcedureAdmissionBoundPayloadV5
                 )(
-                    admission=cast(ProcedureRunAdmissionV7, admission),
+                    admission=cast(ProcedureRunAdmissionV8, admission),
                     admission_material_manifest=prepared.admission_material_manifest,
                     admission_material_manifest_digest=(
                         prepared.admission_material_manifest_digest
@@ -2706,6 +2808,25 @@ class ProcedureExecutor:
             )
         final_payload = {
             "status": status,
+            **(
+                {
+                    "return_manifest": build_terminal_item_manifest(
+                        state.return_tokens,
+                        run_id=admission.run_id,
+                        terminal_node_id="return",
+                        item_key="result",
+                    ).model_dump(mode="json"),
+                    "dependency_facts": {
+                        token.digest: state.facts[token.digest].model_dump(mode="json")
+                        for token in state.return_tokens
+                        if token.digest in state.facts
+                    },
+                    "terminal_capture": state.terminal_capture,
+                }
+                if isinstance(accepted.procedure.definition, ProcedureDefinitionV6)
+                or isinstance(admission, ProcedureRunAdmissionV8)
+                else {}
+            ),
             "output": output,
             "refusal": None if refusal is None else refusal.model_dump(mode="json"),
             "failure": failure_message,
@@ -2935,12 +3056,23 @@ class ProcedureExecutor:
             or procedure.definition_digest != admission.definition_digest
             or procedure.identity != admission.procedure_identity
             or procedure.activation_policy != admission.activation_policy
-            or procedure.definition.hard_caps != admission.hard_caps
+            or (
+                not isinstance(admission, ProcedureRunAdmissionV8)
+                and procedure.definition.hard_caps != admission.hard_caps
+            )
         ):
             raise ProcedureBoundaryRefused(
                 "pin_binding_mismatch",
                 "Procedure admission and accepted artifact differ.",
             )
+        if isinstance(admission, ProcedureRunAdmissionV8):
+            if self.parent_context is None:
+                raise PlaybillExecutionError("nested admission requires its executing parent")
+            self.parent_context.verify(admission, accepted)
+            if self.effective_rung != self.parent_context.child_rung(accepted):
+                raise PlaybillExecutionError("nested invocation changed the parent effective rung")
+        elif self.parent_context is not None:
+            raise PlaybillExecutionError("a child cannot execute under a standalone admission")
         if admission.invocation_origin == "actor":
             if procedure.pins != admission.full_pins:
                 raise ProcedureBoundaryRefused(
@@ -2954,7 +3086,9 @@ class ProcedureExecutor:
                 "pin_binding_mismatch",
                 "Line run pins must close the accepted Procedure pins exactly.",
             )
-        if admission.invocation_origin == "actor":
+        if admission.invocation_origin == "actor" and not isinstance(
+            admission, ProcedureRunAdmissionV8
+        ):
             if procedure.definition.budget != admission.budget:
                 raise PlaybillExecutionError("Procedure admission and accepted artifact differ")
         else:
@@ -3128,6 +3262,22 @@ class ProcedureExecutor:
             )
 
     def _checkpoint_current(self, admission: ProcedureRunAdmissionV1, *, effect: bool) -> None:
+        if isinstance(admission, ProcedureRunAdmissionV8) and admission.lane != "replay":
+            for pin, policy in zip(
+                admission.parent_binding.ancestors,
+                admission.parent_binding.activation_policies,
+                strict=True,
+            ):
+                if policy == "abort" or (policy == "epoch-check" and effect):
+                    if (
+                        self.activation_authority.current_procedure_digest(
+                            pin.target, coordinate=admission.accepted_coordinate
+                        )
+                        != pin.artifact_digest
+                    ):
+                        raise ProcedureBoundaryRefused(
+                            "not_current", "An ancestor Procedure is no longer current."
+                        )
         if admission.activation_policy == "abort" or (
             admission.activation_policy == "epoch-check" and effect
         ):
@@ -3201,6 +3351,7 @@ class ProcedureExecutor:
             try:
                 branch = self._execute_node(
                     node,
+                    accepted=accepted,
                     admission=admission,
                     state=state,
                     records=records,
@@ -3263,6 +3414,9 @@ class ProcedureExecutor:
                 try:
                     if isinstance(node, ReturnNodeV6):
                         result = state.outputs[node.as_]
+                        state.return_tokens = (
+                            state.alias_tokens(frozenset({node.as_})) | state.control
+                        )
                     elif isinstance(node, CaptureEgressNodeV6 | ProposeChangeSetNodeV6):
                         result = _resolve_node_template(
                             node.result,
@@ -3271,8 +3425,16 @@ class ProcedureExecutor:
                             input_payload=state.input_payload,
                             outputs=state.outputs,
                         )
+                        state.return_tokens = _base_tokens(node, state, node.result)
+                        if state.terminal_capture is not None:
+                            state.return_tokens |= frozenset(
+                                {produced_capture_token(state.terminal_capture)}
+                            )
                     else:
                         result = state.outputs[definition.returns]
+                        state.return_tokens = (
+                            state.alias_tokens(frozenset({definition.returns})) | state.control
+                        )
                 except KeyError as exc:  # pragma: no cover - static law should prevent
                     raise PlaybillExecutionError("Procedure return alias was not produced") from exc
                 return_contract = self._pin(
@@ -3315,11 +3477,22 @@ class ProcedureExecutor:
         self,
         node: object,
         *,
+        accepted: AcceptedProcedureV1,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
         started_ns: int,
     ) -> Literal["on_true", "on_false"] | None:
+        if isinstance(node, InvokeNodeV6):
+            self._run_child(
+                node,
+                accepted=accepted,
+                admission=admission,
+                state=state,
+                records=records,
+                started_ns=started_ns,
+            )
+            return None
         if isinstance(node, StateTapNodeV3 | ClaimTapNodeV6):
             if node.as_ not in state.outputs:
                 raise PlaybillExecutionError("admitted state_tap material is absent")
@@ -4033,6 +4206,182 @@ class ProcedureExecutor:
             },
         )
 
+    def _run_child(
+        self,
+        node: InvokeNodeV6,
+        *,
+        accepted: AcceptedProcedureV1,
+        admission: ProcedureRunAdmissionV1,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+        started_ns: int,
+    ) -> None:
+        from cruxible_core.procedures.nested import ParentInvocationContext
+
+        if self.nested_runner is None or not isinstance(admission, ProcedureRunAdmissionV2):
+            raise PlaybillExecutionError("nested Procedure invocation requires an admitted runner")
+        remaining_us = (
+            admission.budget.wall_clock.microseconds
+            - (self.clock.monotonic_ns() - started_ns) // 1000
+        )
+        if remaining_us <= 0:
+            raise _BudgetExceeded(
+                "wall_clock",
+                limit=admission.budget.wall_clock.microseconds,
+                observed=admission.budget.wall_clock.microseconds + 1,
+                node_id=node.node_id,
+            )
+        remaining = admission.budget.model_copy(
+            update={
+                "wall_clock": admission.budget.wall_clock.model_copy(
+                    update={"microseconds": remaining_us}
+                ),
+                "max_provider_calls": max(
+                    0, admission.budget.max_provider_calls - state.provider_calls
+                ),
+                "max_capture_bytes": max(
+                    0, admission.budget.max_capture_bytes - state.capture_bytes
+                ),
+            }
+        )
+        context = ParentInvocationContext(
+            admission,
+            accepted,
+            node,
+            remaining,
+            self.effective_rung,
+            deadline_ns=started_ns + admission.budget.wall_clock.microseconds * 1000,
+        )
+        value = _resolve_node_template(
+            node.input,
+            node_id=node.node_id,
+            transform_kind=None,
+            input_payload=state.input_payload,
+            outputs=state.outputs,
+        )
+        self._append_event(
+            admission,
+            records,
+            "child_invocation",
+            {
+                "node_id": node.node_id,
+                "verdict": "started",
+                "procedure": node.procedure.model_dump(mode="json"),
+                "input_digest": run_value_digest("nested-input", value),
+                "remaining_budget": remaining.model_dump(mode="json"),
+            },
+        )
+        result = self.nested_runner.run(context, value)
+        child_records = [
+            row
+            for row in self.journal.all_records(result.receipt.stream, result.receipt.partition_id)
+            if row.record.run_id == result.run_id
+        ]
+        if (
+            not child_records
+            or tuple(row.record_digest for row in child_records) != result.receipt.record_digests
+        ):
+            raise PlaybillExecutionError("nested receipt does not reproduce retained child records")
+        access = BodyAccessContext(principal_id="nested-procedure", can_read_body=True)
+        payloads = [
+            parse_journal_payload(self.bodies.read(row.record.payload_digest, access=access))
+            for row in child_records
+        ]
+        admitted = next(
+            (
+                parse_admission_payload(payload).admission
+                for row, payload in zip(child_records, payloads, strict=True)
+                if row.record.event_kind == "admission_bound"
+            ),
+            None,
+        )
+        if (
+            not isinstance(admitted, ProcedureRunAdmissionV8)
+            or admitted.parent_binding != context.binding
+        ):
+            raise PlaybillExecutionError("nested receipt is not bound to this parent occurrence")
+        if (
+            admitted.procedure_identity != node.procedure.target
+            or admitted.procedure_artifact_digest != node.procedure.artifact_digest
+            or admitted.run_id != result.run_id
+            or admitted.admission_binding_digest != result.receipt.admission_binding_digest
+            or admitted.journal_stream != result.receipt.stream
+            or admitted.journal_partition_id != result.receipt.partition_id
+        ):
+            raise PlaybillExecutionError("nested receipt names another Procedure")
+        final = payloads[-1]
+        if child_records[-1].record.event_kind != "attempt_finalized" or not isinstance(
+            final, dict
+        ):
+            raise PlaybillExecutionError("nested execution has no durable completion")
+        if final.get("status") != result.status or final.get("output") != result.output:
+            raise PlaybillExecutionError("nested completion differs from returned result")
+        budget = ProcedureRunBudgetV1.model_validate(final["budget"]).observed
+        state.provider_calls += budget.provider_calls
+        state.capture_bytes += budget.capture_bytes
+        state.observe_items(
+            budget.max_items.high_water, "child:" + node.node_id, budget.max_items.field_path or ""
+        )
+        state.observe_result_bytes(
+            budget.result_bytes.high_water,
+            "child:" + node.node_id,
+            budget.result_bytes.field_path or "",
+        )
+        digest = procedure_run_receipt_digest(result.receipt)
+        returned_manifest = TerminalItemDependencyManifestV1.model_validate(
+            final["return_manifest"]
+        )
+        if returned_manifest.run_id != result.run_id:
+            raise PlaybillExecutionError("nested return lineage names another run")
+        returned_tokens = manifest_dependency_tokens(returned_manifest)
+        retained_facts = final.get("dependency_facts", {})
+        if not isinstance(retained_facts, dict):
+            raise PlaybillExecutionError("nested return facts must be an object")
+        for key, facts in retained_facts.items():
+            state.facts[key] = DependencyEvidenceFactsV1.model_validate(facts)
+        tokens = (
+            _base_tokens(node, state, node.input)
+            | returned_tokens
+            | frozenset({receipt_token(digest)})
+        )
+        state.provenance[node.as_] = AliasProvenanceV1(whole=tokens)
+        outcome: dict[str, object] = {
+            "succeeded": result.status == "succeeded",
+            "status": result.status,
+            "receipt": {
+                "run_id": result.run_id,
+                "procedure_identity": admitted.procedure_identity.qualified,
+                "procedure_artifact_digest": admitted.procedure_artifact_digest,
+                "receipt_digest": digest,
+            },
+        }
+        if result.status == "succeeded":
+            outcome["value"] = result.output
+            if final.get("terminal_capture") is not None:
+                capture = final["terminal_capture"]
+                if not isinstance(capture, str):
+                    raise PlaybillExecutionError(
+                        "nested capture reference must name an exact capture"
+                    )
+                if produced_capture_token(capture) not in returned_tokens:
+                    raise PlaybillExecutionError(
+                        "nested capture has no retained dependency binding"
+                    )
+                outcome["terminal"] = {"capture": {"capture_digest": capture}}
+        state.outputs[node.as_] = normalize_canonical(outcome)
+        self._append_event(
+            admission,
+            records,
+            "child_invocation",
+            {
+                "node_id": node.node_id,
+                "verdict": "completed",
+                "status": result.status,
+                "procedure": admitted.procedure_identity.model_dump(mode="json"),
+                "receipt": result.receipt.model_dump(mode="json"),
+            },
+        )
+
     def _run_terminal(
         self,
         node: CaptureEgressNodeV3
@@ -4210,6 +4559,21 @@ class ProcedureExecutor:
         if isinstance(request, TerminalEgressRequestV2) and request.kind == "emit_capture":
             assert isinstance(receipt, TerminalEgressReceiptV2)  # verified above
             for child in receipt.children:
+                if isinstance(node, CaptureEgressNodeV6) and len(receipt.children) == 1:
+                    state.terminal_capture = child.egress_digest
+                    derived = derive_terminal_item_facts(
+                        manifest_dependency_tokens(manifests[child.item_key]),
+                        manifest=manifests[child.item_key],
+                        child_index=child.child_index,
+                        facts=state.facts,
+                        outcomes=tuple(state.outcomes.values()),
+                    )
+                    state.facts[child.egress_digest] = DependencyEvidenceFactsV1(
+                        epistemic_grade=derived.epistemic_grade,
+                        provenance_grade=derived.provenance_grade,
+                        taint_labels=derived.taint_labels,
+                        selector_privacy=derived.selector_privacy,
+                    )
                 self._append_event(
                     admission,
                     records,

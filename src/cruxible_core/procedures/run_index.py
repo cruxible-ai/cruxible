@@ -303,6 +303,30 @@ class ProcedureRunIndex:
             payload = parse_journal_payload(content)
             self.apply_record(stored, payload=payload)
 
+    def rebuild_run(
+        self,
+        run_id: str,
+        records: tuple[StoredProcedureJournalRecordV1, ...],
+        *,
+        bodies: ContentAddressedBodyStore,
+    ) -> None:
+        """Refresh one run without erasing an executing parent's cache entry."""
+        if any(row.record.run_id != run_id for row in records):
+            raise PlaybillExecutionError("run index refresh contains another run")
+        access = BodyAccessContext(principal_id="procedure-run-index", can_read_body=True)
+        self._conn.execute("DELETE FROM procedure_run_index WHERE run_id=?", (run_id,))
+        self._conn.execute(
+            "DELETE FROM procedure_provider_invocation_index WHERE run_id=?", (run_id,)
+        )
+        self._conn.commit()
+        for stored in records:
+            self.apply_record(
+                stored,
+                payload=parse_journal_payload(
+                    bodies.read(stored.record.payload_digest, access=access)
+                ),
+            )
+
 
 __all__ = [
     "IndexedProcedureRunStatusV1",

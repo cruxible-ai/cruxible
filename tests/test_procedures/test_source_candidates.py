@@ -178,3 +178,41 @@ def test_derivation_basis_is_bound_from_the_real_admitted_claim(tmp_path):
     assert result["derivation"]["procedure"]["target"]["name"] == "example"
     with pytest.raises(ValueError, match="exact admitted"):
         bind_source_candidate({**candidate, "basis": [{**value, "value": "changed"}]}, **arguments)
+
+
+def test_nested_capture_selection_rejects_unrelated_handles():
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_core.procedures.source_candidates import bind_source_candidate
+    from cruxible_core.procedures.terminal_dependencies import (
+        AliasProvenanceV1,
+        produced_capture_token,
+    )
+
+    observation = produced_capture_token("sha256:" + "a" * 64)
+    registered = produced_capture_token("sha256:" + "b" * 64)
+    tokens = frozenset({observation, registered})
+    candidate = dict(
+        tag="playbill-source-claim-candidate-v1",
+        subject_kind=delivery.SUBJECT_KIND,
+        subject_id=delivery.SUBJECT_ID,
+        predicate=delivery.PREDICATE,
+        value="high",
+        role="observation",
+        rationale="The child registered this observation.",
+        source_kind="supported_by",
+        source_value={"capture_digest": registered.digest},
+        source_alias="child.terminal.capture",
+    )
+    args = dict(
+        procedure_identity=ArtifactIdentity(kind="Procedure", name="parent"),
+        procedure_digest="sha256:" + "c" * 64,
+        outputs={},
+        provenance={"child": AliasProvenanceV1(whole=tokens)},
+        item_tokens=tokens,
+    )
+    result = bind_source_candidate(candidate, **args)
+    assert result["source"]["capture_digest"] == registered.digest
+    with pytest.raises(ValueError, match="one verified produced Capture"):
+        bind_source_candidate(
+            {**candidate, "source_value": {"capture_digest": "sha256:" + "d" * 64}}, **args
+        )

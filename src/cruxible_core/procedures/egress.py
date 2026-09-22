@@ -79,6 +79,7 @@ from cruxible_core.procedures.terminal_dependencies import (
 if TYPE_CHECKING:
     from cruxible_core.indexes.sqlite import ProjectionHandle
     from cruxible_core.procedures.execution import ProcedureRunAdmissionV1
+    from cruxible_core.procedures.nested import ProcedureDelegation
 
 TerminalEgressKindV1 = Literal[
     "emit_capture",
@@ -991,10 +992,16 @@ def require_procedure_mandate(
     *,
     admission: ProcedureRunAdmissionV1,
     accepted_mandates: Mapping[str, ProcedureMandateV1],
+    delegation: ProcedureDelegation | None = None,
 ) -> ProcedureMandateV1:
     """Resolve and evaluate authority before any effectful adapter is invoked."""
 
     _validated_run_admission(request, admission)
+    from cruxible_core.procedures.nested import authority_procedure
+
+    # A nested carrier alone is insufficient. This checks the executing parent
+    # frame, exact accepted Invoke node, same actor/lane, and constrained limits.
+    authority = authority_procedure(admission, delegation)
     if request.kind not in {"propose_change_set", "mandate_settlement"}:
         raise TerminalAuthorityRefusal(
             "procedure_mandate_not_applicable",
@@ -1022,8 +1029,8 @@ def require_procedure_mandate(
     evaluation = evaluate_procedure_mandate(
         mandate,
         ProcedureMandateInvocationV1(
-            procedure_identity=request.procedure_identity,
-            procedure_artifact_digest=request.procedure_artifact_digest,
+            procedure_identity=authority.target,
+            procedure_artifact_digest=authority.artifact_digest,
             requested_rung=request.required_rung,  # type: ignore[arg-type]
             requested_authority=request.requested_authority,
             target_paths=request.target_paths,
@@ -1047,6 +1054,7 @@ def require_procedure_mandate_at_head(
     *,
     admission: ProcedureRunAdmissionV1,
     projection: ProjectionHandle,
+    delegation: ProcedureDelegation | None = None,
 ) -> ProcedureMandateV1:
     """Re-establish the bound mandate against the accepted tree an effect is about to touch.
 
@@ -1058,6 +1066,9 @@ def require_procedure_mandate_at_head(
     superseded one.
     """
 
+    from cruxible_core.procedures.nested import authority_procedure
+
+    authority = authority_procedure(admission, delegation)
     digest = request.procedure_mandate_digest
     mandates = {}
     if digest is not None:
@@ -1074,8 +1085,8 @@ def require_procedure_mandate_at_head(
                     "accepted ProcedureMandate source differs from its exact digest"
                 )
             if (
-                mandate.procedure.target == request.procedure_identity
-                and mandate.procedure.artifact_digest == request.procedure_artifact_digest
+                mandate.procedure.target == authority.target
+                and mandate.procedure.artifact_digest == authority.artifact_digest
             ):
                 # Retired mandates remain visible: the existing law produces
                 # the same superseded refusal as an absent or replaced digest.
@@ -1089,7 +1100,9 @@ def require_procedure_mandate_at_head(
             repair_kind="author_successor",
             repair=PROCEDURE_MANDATE_REPAIR,
         )
-    return require_procedure_mandate(request, admission=admission, accepted_mandates=mandates)
+    return require_procedure_mandate(
+        request, admission=admission, accepted_mandates=mandates, delegation=delegation
+    )
 
 
 def producer_receipt_for_request(

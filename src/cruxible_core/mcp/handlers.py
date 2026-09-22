@@ -1501,7 +1501,7 @@ def handle_playbill_procedure_readings(
 
 def handle_playbill_line_run(
     instance_id: str,
-    line_identity_digest: str,
+    line: str,
     *,
     occurrence_id: str | None,
     evaluation_time: str | None = None,
@@ -1510,7 +1510,7 @@ def handle_playbill_line_run(
 ) -> contracts.PlaybillProcedureRunState:
     request = LineRunRequestV1.model_validate(
         {
-            "line_identity_digest": line_identity_digest,
+            "line": line,
             "resolution_contract": resolution_contract,
             "trigger_event": trigger_event,
             "occurrence_id": occurrence_id,
@@ -1524,7 +1524,7 @@ def handle_playbill_line_run(
             instance_id,
             resolution_contract=resolution_contract,
             trigger_event=trigger_event,
-            line_identity_digest=line_identity_digest,
+            line=line,
             occurrence_id=request.occurrence_id,
             evaluation_time=(
                 None if request.evaluation_time is None else request.evaluation_time.isoformat()
@@ -1532,7 +1532,7 @@ def handle_playbill_line_run(
         ),
         lambda: playbill_api.playbill_line_run(
             instance_id,
-            line_identity_digest,
+            line,
             request=request,
         ),
         operation_name="cruxible_playbill_line_run",

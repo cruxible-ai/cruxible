@@ -11,7 +11,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from cruxible_client.contracts.acquisition_policies import (
     ACQUISITION_POLICY_PIN_ROLE,
@@ -77,6 +77,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureBudgetV3,
     ProcedureDefinitionV3,
     ProcedureDefinitionV4,
+    ProcedureHardCapsV3,
     ProcedurePinSlotRefV1,
     ProviderNodeV3,
     ProviderNodeV4,
@@ -96,6 +97,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureBudgetExceededDetailV1,
     ProcedureBudgetExhaustedV1,
     ProcedureBudgetRefusalDetailV1,
+    ProcedureChildInvocationV1,
     ProcedureHaltTerminalV1,
     ProcedureInternalFailureCodeV1,
     ProcedureInternalFailureV1,
@@ -207,6 +209,7 @@ from cruxible_core.procedures.execution import (
     ProcedureAdmissionBoundPayloadV3,
     ProcedureAdmissionBoundPayloadV5,
     ProcedureAdmissionBoundPayloadV7,
+    ProcedureBoundaryRefused,
     ProcedureClockProtocol,
     ProcedureRunAdmissionV1,
     ProcedureRunAdmissionV2,
@@ -250,6 +253,7 @@ from cruxible_core.providers.provider_local_runtime import (
 from cruxible_core.providers.provider_outcomes import map_provider_refusal
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.procedures.nested_runs import ServedNestedProcedureRunner
 from cruxible_core.service.procedures.procedures import (
     PlaybillProcedureStateTapReader,
     service_execute_direct_procedure,
@@ -288,7 +292,7 @@ def served_node_kinds(graph_format: int) -> frozenset[str]:
     """Return the node kinds one graph generation serves on the run lanes."""
 
     if graph_format == 6:
-        return SERVED_NODE_KINDS | {"call", "state_claim", "select", "constant", "return"}
+        return SERVED_NODE_KINDS | {"call", "state_claim", "select", "constant", "return", "invoke"}
     if graph_format == 5:
         return (SERVED_NODE_KINDS - {"provider"}) | {"call"}
     if graph_format == 4:
@@ -540,7 +544,7 @@ class LineRunRequestV1(_StrictProcedureSurfaceModel):
     tag: Literal["playbill-line-run-request-v1"] = "playbill-line-run-request-v1"
     resolution_contract: ResolutionContractReferenceV1 | None = None
     trigger_event: TriggerEventReferenceV1 | None = None
-    line_identity_digest: str
+    line: str = Field(validation_alias=AliasChoices("line", "line_identity_digest"))
     occurrence_id: str | None = None
     evaluation_time: datetime | None = Field(
         default=None,
@@ -551,10 +555,13 @@ class LineRunRequestV1(_StrictProcedureSurfaceModel):
         ),
     )
 
-    @field_validator("line_identity_digest")
+    @field_validator("line")
     @classmethod
-    def _identity_digest(cls, value: str) -> str:
-        Sha256Value.from_tagged(value)
+    def _line(cls, value: str) -> str:
+        if value.startswith("sha256:"):
+            Sha256Value.from_tagged(value)
+        else:
+            ArtifactIdentity(kind="Line", name=value.removeprefix("Line:"))
         return value
 
     @field_validator("evaluation_time")
@@ -658,6 +665,7 @@ class ProcedureRunStateV2(_StrictProcedureSurfaceModel):
     ) = None
     receipt_digest: str | None = None
     terminal: ProcedureTerminalV1 | None = None
+    children: tuple[ProcedureChildInvocationV1, ...] = ()
     source_observations: tuple[ProcedureSourceObservationV1, ...] = ()
     terminal_egress: tuple[ProcedureTerminalEgressV1, ...] = ()
 
@@ -716,12 +724,19 @@ def _accepted_runtime_policy(
         return policy
 
 
-def _accepted_line_by_identity_digest(
+def _accepted_line_by_reference(
     instance: PlaybillInstance,
     *,
     coordinate: AcceptedProjectionCoordinate,
-    identity_digest: str,
+    reference: str,
 ) -> AcceptedLineSpecV1:
+    identity_digest = (
+        reference
+        if reference.startswith("sha256:")
+        else line_identity_digest(
+            ArtifactIdentity(kind="Line", name=reference.removeprefix("Line:"))
+        )
+    )
     with instance.bind_accepted_projection(coordinate) as projection:
         matches = projection.typed.connection.execute(
             "SELECT identity,path,artifact_digest FROM lines "
@@ -2007,8 +2022,25 @@ def _state_from_records(
     source_reads: dict[str, SourceReadReceiptV1] = {}
     produced_source_associations: list[ProcedureSourceCaptureAssociationV1] = []
     terminal_egress: dict[str, ProcedureTerminalEgressV1] = {}
+    children: list[ProcedureChildInvocationV1] = []
     for stored in records:
         payload = parse_journal_payload(bodies.read(stored.record.payload_digest, access=access))
+        if (
+            stored.record.event_kind == "child_invocation"
+            and isinstance(payload, dict)
+            and payload.get("verdict") == "completed"
+        ):
+            child_receipt = ProcedureRunReceiptV1.model_validate(payload["receipt"])
+            children.append(
+                ProcedureChildInvocationV1(
+                    node_id=str(payload["node_id"]),
+                    run_id=child_receipt.run_id,
+                    procedure=ArtifactIdentity.model_validate(payload["procedure"]),
+                    status=cast(
+                        Literal["succeeded", "refused", "failed", "halted"], payload["status"]
+                    ),
+                )
+            )
         if stored.record.event_kind == "terminal_egress" and isinstance(payload, dict):
             folded = _fold_terminal_egress(
                 terminal_egress.get(str(payload.get("node_id"))),
@@ -2663,6 +2695,7 @@ def _state_from_records(
         receipt=public_receipt,
         receipt_digest=receipt_digest,
         terminal=terminal,
+        children=tuple(children),
         source_observations=observations,
         terminal_egress=tuple(
             sorted(terminal_egress.values(), key=lambda item: item.node_id.encode("utf-8"))
@@ -2701,31 +2734,25 @@ def _direct_refusal_state(
     )
 
 
-def _prepare_direct_external_run(
+def _plan_direct_external_run(
     instance: PlaybillInstance,
     accepted: AcceptedProcedureV1,
     *,
     coordinate: AcceptedProjectionCoordinate,
     head_at_admission: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
-    invocation_input: object,
-    actor_context: GovernedActorContext,
-    state_reader: PlaybillProcedureStateTapReader,
-    journal_stream: JournalStreamIdentityV1,
-    lane: Literal["current", "replay"],
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
+    budget: ProcedureBudgetV3,
 ) -> (
-    tuple[PreparedProcedureRunV5, SourceAcquisitionPolicyV1 | None, Mapping[str, CaptureContractV1]]
+    tuple[
+        ProcedureAcquisitionPlanV2,
+        SourceAcquisitionPolicyV1 | None,
+        Mapping[str, CaptureContractV1],
+        ProcedureRuntimePolicyV1,
+    ]
     | ProcedureRunStateV2
 ):
-    """Admit a direct run with Source or graph-v5 Call occurrences.
-
-    Bind the same external plan used by Lines, including accepted interface
-    contracts and the runtime output cap. Source nodes additionally bind an
-    accepted acquisition policy and per-input selection decisions. There is no Line:
-    occurrence, no mandate coordinate, no calibration coordinate, and no
-    effective rung, so no terminal can fire from here.
-    """
+    """Resolve the shared external closure without executing or binding state reads."""
 
     definition = accepted.procedure.definition
     assert isinstance(definition, ProcedureDefinitionV4)
@@ -2796,7 +2823,7 @@ def _prepare_direct_external_run(
             slot_pins={},
             provider_runtime_operator=provider_runtime_operator,
             runtime_policy=runtime_policy,
-            budget=definition.budget,
+            budget=budget,
         )
     except ProviderLocalRuntimeRefused as exc:
         return ProcedureRunStateV2(
@@ -2864,6 +2891,49 @@ def _prepare_direct_external_run(
         selection_decision_digest=selection_digest,
         external_occurrences=external_occurrences,
     )
+    return plan, policy, capture_contracts, runtime_policy
+
+
+def _prepare_direct_external_run(
+    instance: PlaybillInstance,
+    accepted: AcceptedProcedureV1,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    head_at_admission: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    invocation_input: object,
+    actor_context: GovernedActorContext,
+    state_reader: PlaybillProcedureStateTapReader,
+    journal_stream: JournalStreamIdentityV1,
+    lane: Literal["current", "replay"],
+    provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
+    effective_budget: ProcedureBudgetV3 | None = None,
+    effective_caps: ProcedureHardCapsV3 | None = None,
+) -> (
+    tuple[PreparedProcedureRunV5, SourceAcquisitionPolicyV1 | None, Mapping[str, CaptureContractV1]]
+    | ProcedureRunStateV2
+):
+    """Bind state and external inputs through the same planner for root and child runs."""
+    definition = accepted.procedure.definition
+    budget = effective_budget or definition.budget
+    caps = effective_caps or definition.hard_caps
+    planned = _plan_direct_external_run(
+        instance,
+        accepted,
+        coordinate=coordinate,
+        head_at_admission=head_at_admission,
+        evaluation_time=evaluation_time,
+        provider_runtime_operator=provider_runtime_operator,
+        budget=budget,
+    )
+    if isinstance(planned, ProcedureRunStateV2):
+        return planned
+    plan, policy, capture_contracts, runtime_policy = planned
+    accepted_coordinate = plan.accepted_coordinate
+    external_occurrences = plan.external_occurrences
+    policy_digest = plan.acquisition_policy_digest
+    selection = plan.selection_decision
+    selection_digest = plan.selection_decision_digest
     plan_digest = procedure_acquisition_plan_digest(plan)
     materials = bind_accepted_state_materials(
         accepted,
@@ -2917,8 +2987,8 @@ def _prepare_direct_external_run(
         "accepted_state_inputs": tuple(item.input for item in materials),
         "landed_capture_inputs": (),
         "exhaust_inputs": (),
-        "budget": definition.budget,
-        "hard_caps": definition.hard_caps,
+        "budget": budget,
+        "hard_caps": caps,
         "actor_context": actor_context,
         "invocation_origin": "actor",
         "journal_stream": journal_stream,
@@ -2946,8 +3016,8 @@ def _prepare_direct_external_run(
         "selection_decision_digest": selection_digest,
         "provider_output_bytes_cap": runtime_policy.provider_output_bytes_cap,
         "resource_budget": resolve_procedure_resource_budget(
-            accepted.procedure.definition.budget,
-            accepted.procedure.definition.hard_caps,
+            budget,
+            caps,
             runtime_policy,
         ),
         "acquisition_plan_digest": plan_digest,
@@ -3177,6 +3247,25 @@ def service_run_playbill_procedure(
             capture_contracts=capture_contracts,
             workspace_file_reader=workspace_file_reader,
             clock=_DeterministicClock(evaluation_time),
+            nested_runner=ServedNestedProcedureRunner(
+                instance,
+                coordinate,
+                head_at_admission,
+                evaluation_time,
+                provider_runtime_operator,
+                workspace_file_reader,
+                _DeterministicClock(evaluation_time),
+            ),
+        )
+    except ProcedureBoundaryRefused as exc:
+        return _direct_refusal_state(
+            accepted,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="pin_binding_mismatch",
+            message=str(exc),
+            details={"boundary_code": exc.code, "detail": exc.details},
         )
     except PlaybillExecutionError as exc:
         if "run_recovery_required" in str(exc):
@@ -3302,7 +3391,7 @@ def service_run_playbill_line(
     """
 
     instance.require_writable()
-    if request.line_identity_digest != path_identity_digest:
+    if request.line != path_identity_digest:
         raise LineRunIdentityMismatch(
             f"{LineRunIdentityMismatch.code}: route and request Line identities differ"
         )
@@ -3319,10 +3408,10 @@ def service_run_playbill_line(
         )
     coordinate = instance.accepted_coordinate()
     head_at_admission = coordinate
-    accepted_line = _accepted_line_by_identity_digest(
+    accepted_line = _accepted_line_by_reference(
         instance,
         coordinate=coordinate,
-        identity_digest=path_identity_digest,
+        reference=path_identity_digest,
     )
     accepted = _accepted_procedure(
         instance,
@@ -3849,30 +3938,52 @@ def service_run_playbill_line(
         raise ProcedureRunNotCurrent(
             f"{ProcedureRunNotCurrent.code}: accepted coordinate advanced before Line append"
         )
-    result = service_execute_direct_procedure(
-        prepared,
-        accepted,
-        journal=journal,
-        bodies=instance.body_store(),
-        run_index_path=root / "procedure-run-index.sqlite",
-        fencing_token=PROCEDURE_RUN_FENCING_TOKEN,
-        activation_authority=_CurrentProcedureAuthority(instance),
-        provider_runtime_invoker_factory=(
-            None
-            if provider_runtime_operator is None
-            else lambda: provider_runtime_operator.invoker_for(
+    try:
+        result = service_execute_direct_procedure(
+            prepared,
+            accepted,
+            journal=journal,
+            bodies=instance.body_store(),
+            run_index_path=root / "procedure-run-index.sqlite",
+            fencing_token=PROCEDURE_RUN_FENCING_TOKEN,
+            activation_authority=_CurrentProcedureAuthority(instance),
+            provider_runtime_invoker_factory=(
+                None
+                if provider_runtime_operator is None
+                else lambda: provider_runtime_operator.invoker_for(
+                    instance,
+                    accepted_oid=coordinate.git_oid,
+                )
+            ),
+            acquisition_policy=line_policy,
+            capture_contracts=capture_contracts,
+            workspace_file_reader=workspace_file_reader,
+            slot_pins=slot_pins,
+            effective_rung=effective_rung,
+            egress_sink=egress_sink,
+            clock=_DeterministicClock(evaluation_time),
+            nested_runner=ServedNestedProcedureRunner(
                 instance,
-                accepted_oid=coordinate.git_oid,
-            )
-        ),
-        acquisition_policy=line_policy,
-        capture_contracts=capture_contracts,
-        workspace_file_reader=workspace_file_reader,
-        slot_pins=slot_pins,
-        effective_rung=effective_rung,
-        egress_sink=egress_sink,
-        clock=_DeterministicClock(evaluation_time),
-    )
+                coordinate,
+                head_at_admission,
+                evaluation_time,
+                provider_runtime_operator,
+                workspace_file_reader,
+                _DeterministicClock(evaluation_time),
+                mandates=dict(mandates),
+            ),
+        )
+    except ProcedureBoundaryRefused as exc:
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="pin_binding_mismatch",
+            message=str(exc),
+            details={"boundary_code": exc.code, "detail": exc.details},
+        )
     if result.status == "succeeded":
         # The terminal and finalization are durable before staged bodies are released.
         capture_store.release()

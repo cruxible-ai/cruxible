@@ -1261,17 +1261,17 @@ def run_procedure(
 
 
 @router.post(
-    "/{instance_id}/playbill/lines/{line_identity_digest}/runs",
+    "/{instance_id}/playbill/lines/{line}/runs",
     response_model=contracts.PlaybillProcedureRunState,
 )
 def run_line(
     instance_id: str,
-    line_identity_digest: str,
+    line: str,
     req: LineRunRequestV1,
 ) -> contracts.PlaybillProcedureRunState:
     return playbill_api.playbill_line_run(
         resolve_server_instance_id(instance_id),
-        line_identity_digest,
+        line,
         request=req,
     )
 

@@ -26,6 +26,8 @@ class SourceSpan(_Closed):
 
 
 class SourceContract(_Closed):
+    model_config = ConfigDict(serialize_by_alias=True)
+
     name: str
     schema_: ContractSchema = Field(alias="schema")
 

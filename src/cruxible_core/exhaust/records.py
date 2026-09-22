@@ -55,6 +55,7 @@ JournalEventKindV1 = Literal[
     "attempt_started",
     "admission_bound",
     "node_fired",
+    "child_invocation",
     "branch_evaluated",
     "source_request_derived",
     "source_read",

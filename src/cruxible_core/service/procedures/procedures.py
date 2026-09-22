@@ -45,6 +45,7 @@ from cruxible_core.procedures.execution import (
     StateTapReaderProtocol,
     StateTapReadResultV1,
 )
+from cruxible_core.procedures.nested import NestedProcedureRunner, ParentInvocationContext
 from cruxible_core.procedures.run_index import ProcedureRunIndex
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.query import service_run_playbill_query
@@ -295,6 +296,8 @@ def service_execute_direct_procedure(
     effective_rung: EffectiveRungV1 | None = None,
     egress_sink: TerminalEgressSinkProtocol | None = None,
     clock: ProcedureClockProtocol | None = None,
+    nested_runner: NestedProcedureRunner | None = None,
+    parent_context: ParentInvocationContext | None = None,
 ) -> ProcedureRunResultV1:
     """Execute through the shared runtime; no transport duplicates orchestration."""
 
@@ -318,6 +321,8 @@ def service_execute_direct_procedure(
             effective_rung=effective_rung,
             egress_sink=egress_sink,
             clock=clock,
+            nested_runner=nested_runner,
+            parent_context=parent_context,
         ).execute(prepared, accepted)
     finally:
         index.close()

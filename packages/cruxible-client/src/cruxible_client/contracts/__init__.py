@@ -92,6 +92,7 @@ from cruxible_client.contracts.procedures.readings import (
     ProcedureReadingSummaryV1 as ProcedureReadingSummaryV1,
 )
 from cruxible_client.contracts.procedures.results import (
+    ProcedureChildInvocationV1,
     ProcedurePendingSuccessorV1,
     ProcedureRunAttributionV1,
     ProcedureRunReceiptV2,
@@ -1525,6 +1526,7 @@ class PlaybillProcedureRunState(BaseModel):
     ) = None
     receipt_digest: str | None = None
     terminal: ProcedureTerminalV1 | None = None
+    children: list[ProcedureChildInvocationV1] = Field(default_factory=list)
     source_observations: list[ProcedureSourceObservationV1] = Field(default_factory=list)
     terminal_egress: list[ProcedureTerminalEgressV1] = Field(default_factory=list)
 

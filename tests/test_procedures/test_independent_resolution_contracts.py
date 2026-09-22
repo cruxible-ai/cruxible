@@ -632,7 +632,7 @@ def unexpected_execution(*args, **kwargs):
 procedure_runs.service_execute_direct_procedure = unexpected_execution
 result = procedure_runs.service_run_playbill_line(
     instance,
-    path_identity_digest=request.line_identity_digest,
+    path_identity_digest=request.line,
     request=request,
     actor_context=GovernedActorContext.model_validate(args["actor"]),
     caller_rung=3,

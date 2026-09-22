@@ -68,6 +68,7 @@ from cruxible_core.procedures.egress import (
     TerminalEgressRequestV1,
     TerminalEgressRequestV2,
 )
+from cruxible_core.procedures.nested import ProcedureDelegation, authority_procedure
 from cruxible_core.procedures.terminal_dependencies import (
     TerminalItemDependencyManifestV1,
 )
@@ -313,6 +314,7 @@ def select_procedure_mandate(
     admission: ProcedureRunAdmissionV1,
     accepted_mandates: Mapping[str, ProcedureMandateV1],
     target_paths: tuple[str, ...],
+    delegation: ProcedureDelegation | None = None,
 ) -> str | None:
     """Bind the one live mandate that covers this request, else the closest.
 
@@ -328,13 +330,14 @@ def select_procedure_mandate(
         if isinstance(request, TerminalEgressRequestV2)
         else request.prepared_at
     )
+    authority = authority_procedure(admission, delegation)
     ranked: list[tuple[int, str]] = []
     for digest, mandate in sorted(accepted_mandates.items(), key=lambda item: item[0]):
         evaluation = evaluate_procedure_mandate(
             mandate,
             ProcedureMandateInvocationV1(
-                procedure_identity=request.procedure_identity,
-                procedure_artifact_digest=request.procedure_artifact_digest,
+                procedure_identity=authority.target,
+                procedure_artifact_digest=authority.artifact_digest,
                 requested_rung=TERMINAL_REQUIRED_RUNGS[request.kind],  # type: ignore[arg-type]
                 requested_authority=admission.hard_caps,
                 target_paths=target_paths,
@@ -357,8 +360,10 @@ class ProposalTerminalEgressSink:
         instance: PlaybillInstance,
         accepted_mandates: Mapping[str, ProcedureMandateV1],
         proposal_service: Callable[[], ProposalService] | None = None,
+        delegation: ProcedureDelegation | None = None,
     ) -> None:
         self.instance = instance
+        self.delegation = delegation
         self.accepted_mandates = dict(accepted_mandates)
         self._proposal_service = proposal_service or instance.proposal_service
         self._prepared: dict[tuple[str, str], PreparedProposal] = {}
@@ -459,6 +464,7 @@ class ProposalTerminalEgressSink:
                 admission=admission,
                 accepted_mandates=self.accepted_mandates,
                 target_paths=target_paths,
+                delegation=self.delegation,
             ),
             lowering_digest=proposal_lowering_digest(lowered.changed_members),
             item_paths=tuple(sorted(item_paths.items(), key=lambda item: item[0].encode("utf-8"))),
@@ -532,6 +538,7 @@ class ProposalTerminalEgressSink:
             item_paths=prepared.item_paths,
             rationale=prepared.rationale,
             changed_paths=prepared.prepared.target_paths,
+            delegation=self.delegation,
         )
 
     def recover_existing(

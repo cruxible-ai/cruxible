@@ -2877,17 +2877,17 @@ class Playbill:
 
     def run_line(
         self,
-        line_identity_digest: str,
+        line: str,
         *,
         occurrence_id: str | None = None,
         resolution_contract: ResolutionContractReferenceV1 | None = None,
         trigger_event: TriggerEventReferenceV1 | None = None,
     ) -> ProcedureRun:
-        """Trigger one daemon-derived occurrence of an accepted Line."""
+        """Trigger a named accepted Line; the daemon resolves its exact identity."""
 
         result = self._client.run_playbill_line(
             self._instance_id,
-            line_identity_digest,
+            line,
             occurrence_id=occurrence_id,
             resolution_contract=resolution_contract,
             trigger_event=trigger_event,
@@ -3677,6 +3677,19 @@ class ProcedureRun:
     @property
     def coordinate(self) -> AcceptedCoordinate:
         return _coordinate(self._raw.coordinate)
+
+    @property
+    def children(self) -> tuple[ProcedureRun, ...]:
+        """Read the retained child runs through the same authorized run service."""
+        return tuple(
+            ProcedureRun(
+                self._playbill,
+                self._playbill._client.get_playbill_procedure_run(
+                    self._playbill._instance_id, link.run_id
+                ),
+            )
+            for link in self._raw.children
+        )
 
     @property
     def track_record(self) -> object:

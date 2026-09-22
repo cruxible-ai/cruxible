@@ -1093,7 +1093,7 @@ Returns an accepted Procedure handle; a typed ProcedureRef retains its coordinat
 
 ```text
 run_line(
-    line_identity_digest: str,
+    line: str,
     *,
     occurrence_id: str | None = None,
     resolution_contract: ResolutionContractReferenceV1 | None = None,
@@ -1107,7 +1107,7 @@ Requests one daemon-derived occurrence of an accepted Line and returns a Procedu
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `line_identity_digest` | Required | Identity digest of the accepted Line to invoke, not its display name. |
+| `line` | Required | Accepted Line name. The daemon resolves and binds its exact identity and version. |
 | `occurrence_id` | `None` | Optional retained occurrence identity; the daemon validates/derives its binding. |
 | `resolution_contract` | `None` | Exact independent resolution-contract reference bound to this run. |
 | `trigger_event` | `None` | Retained trigger-event reference, when the contract/run requires event binding. |
@@ -6057,7 +6057,7 @@ HTTP: `POST f'/api/v1/{instance_id}/playbill/procedures/{name}/readings'`.
 ```text
 run_playbill_line(
     instance_id: str,
-    line_identity_digest: str,
+    line: str,
     *,
     occurrence_id: str | None,
     evaluation_time: str | None = None,

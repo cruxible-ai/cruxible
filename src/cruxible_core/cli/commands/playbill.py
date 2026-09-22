@@ -3902,7 +3902,7 @@ def line_group() -> None:
 
 
 @line_group.command("run")
-@click.argument("line_identity_digest")
+@click.argument("line")
 @click.option("--occurrence-id", default=None, help="Assert the daemon-derived occurrence id.")
 @click.option("--evaluation-time", required=True, help="Explicit ISO-8601 evaluation time.")
 @click.option(
@@ -3920,7 +3920,7 @@ def line_group() -> None:
 @json_option
 @handle_errors
 def run_line(
-    line_identity_digest: str,
+    line: str,
     occurrence_id: str | None,
     evaluation_time: str | None,
     output_json: bool,
@@ -3933,7 +3933,7 @@ def run_line(
     trigger_event = None if event_file is None else _read_model(event_file, TriggerEventReferenceV1)
     request = LineRunRequestV1.model_validate(
         {
-            "line_identity_digest": line_identity_digest,
+            "line": line,
             "occurrence_id": occurrence_id,
             "evaluation_time": evaluation_time,
             "resolution_contract": resolution_contract,
@@ -3943,7 +3943,7 @@ def run_line(
     result = _server_call(
         lambda client, instance_id: client.run_playbill_line(
             instance_id,
-            line_identity_digest,
+            line,
             occurrence_id=request.occurrence_id,
             resolution_contract=resolution_contract,
             trigger_event=trigger_event,
@@ -3956,7 +3956,7 @@ def run_line(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    click.echo(f"{result.run_id or line_identity_digest}: {result.status}")
+    click.echo(f"{result.run_id or line}: {result.status}")
     click.echo(f"Next: {result.next_operation['kind']}")
     _echo_source_observations(result)
 

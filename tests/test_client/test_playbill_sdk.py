@@ -598,10 +598,10 @@ def test_sdk_line_run_carries_the_asserted_identity_and_occurrence(tmp_path: Pat
         def run_playbill_line(
             self,
             _instance_id: str,
-            line_identity_digest: str,
+            line: str,
             **values: object,
         ) -> api.PlaybillProcedureRunState:
-            self.line_request = {"line_identity_digest": line_identity_digest, **values}
+            self.line_request = {"line": line, **values}
             return api.PlaybillProcedureRunState(
                 run_id="RUN-" + "b" * 64,
                 procedure_identity={"kind": "Procedure", "name": "daily-summary"},
@@ -625,11 +625,11 @@ def test_sdk_line_run_carries_the_asserted_identity_and_occurrence(tmp_path: Pat
         clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
     )
 
-    assert pb.run_line(_DIGEST, occurrence_id="sha256:" + "c" * 64).status == "succeeded"
+    assert pb.run_line("daily-line", occurrence_id="sha256:" + "c" * 64).status == "succeeded"
     assert client.line_request == {
         "resolution_contract": None,
         "trigger_event": None,
-        "line_identity_digest": _DIGEST,
+        "line": "daily-line",
         "occurrence_id": "sha256:" + "c" * 64,
         "evaluation_time": "2026-08-24T12:00:00+00:00",
     }
@@ -645,7 +645,7 @@ def test_sdk_line_run_carries_the_asserted_identity_and_occurrence(tmp_path: Pat
         sequence=1,
         record_digest=_DIGEST,
     )
-    pb.run_line(_DIGEST, resolution_contract=contract, trigger_event=event)
+    pb.run_line("daily-line", resolution_contract=contract, trigger_event=event)
     assert client.line_request["resolution_contract"] == contract
     assert client.line_request["trigger_event"] == event
 

@@ -1463,8 +1463,8 @@ observer_intent = pb.procedure(definition=bound_observer).prepare()
 ```
 
 After acceptance, standalone execution uses the accepted capture Line whose
-parameters supply the URL. Invoke it with `pb.run_line(line_identity_digest)`;
-`line_identity_digest` is the exact identity digest of that accepted Line.
+parameters supply the URL. Invoke it with `pb.run_line("security.observe_feed")`,
+using the accepted Line’s name; the daemon resolves and retains its exact bindings.
 Direct Procedure execution does not acquire terminal permission from the
 decorator's capability.
 

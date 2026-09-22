@@ -56,6 +56,7 @@ from cruxible_core.procedures.egress import (
 from cruxible_core.procedures.execution import (
     ProcedureAdmissionBoundPayloadV5,
     ProcedureRunAdmissionV5,
+    ProcedureRunAdmissionV8,
     parse_admission_payload,
 )
 from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
@@ -128,6 +129,7 @@ def _fold_partition(
             if payload.get("tag") in {
                 "playbill-procedure-admission-bound-payload-v5",
                 "playbill-procedure-admission-bound-payload-v7",
+                "playbill-procedure-admission-bound-payload-v8",
             }:
                 bound_payload = parse_admission_payload(payload)
                 if isinstance(bound_payload, ProcedureAdmissionBoundPayloadV5):
@@ -388,13 +390,22 @@ def _resolve_prepared(
         name=admission.procedure_identity.name,
         coordinate=coordinate,
     )
+    delegation = None
+    if isinstance(admission, ProcedureRunAdmissionV8):
+        from cruxible_core.service.procedures.nested_runs import retained_delegation
+
+        delegation = retained_delegation(instance, admission)
+        root = delegation.authority(admission)
+        accepted = _accepted_procedure(instance, name=root.target.name, coordinate=coordinate)
     mandates = _accepted_line_mandates(
         instance,
         accepted,
         coordinate=coordinate,
         evaluation_time=request.evaluation_time,
     )
-    sink = ProposalTerminalEgressSink(instance=instance, accepted_mandates=dict(mandates))
+    sink = ProposalTerminalEgressSink(
+        instance=instance, accepted_mandates=dict(mandates), delegation=delegation
+    )
     try:
         prepared = sink.prepare_terminal_egress(
             request=request,

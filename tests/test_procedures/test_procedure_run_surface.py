@@ -162,7 +162,7 @@ def test_line_without_current_exact_mandate_refuses_typed(
     accepted_line = _accepted_line(line)
     monkeypatch.setattr(
         procedure_run_service,
-        "_accepted_line_by_identity_digest",
+        "_accepted_line_by_reference",
         lambda *_args, **_kwargs: accepted_line,
     )
     monkeypatch.setattr(
@@ -206,7 +206,7 @@ def test_line_closure_loss_refuses_before_mandate_or_occurrence(
     accepted_line = _accepted_line(line)
     monkeypatch.setattr(
         procedure_run_service,
-        "_accepted_line_by_identity_digest",
+        "_accepted_line_by_reference",
         lambda *_args, **_kwargs: accepted_line,
     )
     monkeypatch.setattr(
@@ -379,10 +379,10 @@ def _accept_line_tree(
         timestamp="2026-08-24T15:00:00.000000Z",
     )
     accept_proposal(instance, owner, inspection)
-    return procedure_run_service._accepted_line_by_identity_digest(  # noqa: SLF001
+    return procedure_run_service._accepted_line_by_reference(  # noqa: SLF001
         instance,
         coordinate=instance.accepted_coordinate(),
-        identity_digest=line_identity_digest(line.identity),
+        reference=line_identity_digest(line.identity),
     )
 
 
@@ -1848,7 +1848,7 @@ def _admitted_line_service(
     mandate = _line_mandate(accepted)
     monkeypatch.setattr(
         procedure_run_service,
-        "_accepted_line_by_identity_digest",
+        "_accepted_line_by_reference",
         lambda *_args, **_kwargs: accepted_line,
     )
     monkeypatch.setattr(

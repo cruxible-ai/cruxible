@@ -2108,13 +2108,13 @@ def _render_line_member(
             ),
         )
     policy = parse_acquisition_policy(policy_content, path=policy_target)
-    if procedure.definition.graph_format not in {4, 5}:
+    if procedure.definition.graph_format not in {4, 5, 6}:
         _refuse(
             "playbill.authoring.line_graph_format_unsupported",
             "procedure_name",
-            "Line authoring lowers graph-v4/v5 Procedures only.",
+            "Line authoring requires a supported Procedure graph.",
             repair_kind="replace_procedure_name",
-            repair_description="Name a graph-v4/v5 Procedure, or author the Line as raw bytes.",
+            repair_description="Name a graph-v4, graph-v5, or source-compiled graph-v6 Procedure.",
         )
     if _required_slot_names(procedure):
         _refuse(

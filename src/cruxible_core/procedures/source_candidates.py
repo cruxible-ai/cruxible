@@ -74,6 +74,14 @@ def bind_source_candidate(
         if selected is None or not selected.whole.issubset(item_tokens):
             raise ValueError("candidate evidence does not belong to this item's dataflow")
         captures = {p.digest for p in selected.whole if p.slot == "produced_capture"}
+        if isinstance(candidate.source_value, dict) and set(candidate.source_value) == {
+            "capture_digest"
+        }:
+            # A nested terminal returns an exact registered capture handle. Its
+            # provenance can also include upstream observations it consumed.
+            # Select the handle only when retained dataflow actually contains it.
+            selected_capture = candidate.source_value["capture_digest"]
+            captures = captures & {selected_capture} if isinstance(selected_capture, str) else set()
         if len(captures) != 1:
             raise ValueError("selected evidence must identify one verified produced Capture")
         source = ExistingCaptureCitationSourceV1(capture_digest=captures.pop())

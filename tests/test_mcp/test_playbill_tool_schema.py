@@ -53,7 +53,7 @@ def test_line_run_schema_exposes_occurrence_assertions_and_exact_investigation()
         "resolution_contract",
         "trigger_event",
         "instance_id",
-        "line_identity_digest",
+        "line",
         "evaluation_time",
         "occurrence_id",
     }
@@ -61,7 +61,7 @@ def test_line_run_schema_exposes_occurrence_assertions_and_exact_investigation()
     # occurrence's own instant, so it is optional on every surface.
     assert set(schema["required"]) == {
         "instance_id",
-        "line_identity_digest",
+        "line",
     }
 
 

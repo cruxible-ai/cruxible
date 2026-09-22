@@ -358,6 +358,15 @@ class ProcedurePendingSuccessorV1(_StrictResultModel):
     pending_successor_digest: str
 
 
+class ProcedureChildInvocationV1(_StrictResultModel):
+    """A completed child occurrence, navigable by run ID without copying digests."""
+
+    node_id: str
+    run_id: str
+    procedure: ArtifactIdentity
+    status: Literal["succeeded", "refused", "failed", "halted"]
+
+
 class ProcedureRunReceiptV2(_StrictResultModel):
     tag: Literal["playbill-procedure-run-receipt-v2"] = "playbill-procedure-run-receipt-v2"
     run_id: str

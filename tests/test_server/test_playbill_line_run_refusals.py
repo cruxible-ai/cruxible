@@ -422,10 +422,10 @@ def test_a_real_accepted_line_runs_through_the_live_route_with_no_patch(
     assert state["run_id"] is not None
     admissions = procedure_run_service._line_admissions(  # noqa: SLF001
         instance,
-        procedure_run_service._accepted_line_by_identity_digest(  # noqa: SLF001
+        procedure_run_service._accepted_line_by_reference(  # noqa: SLF001
             instance,
             coordinate=instance.accepted_coordinate(),
-            identity_digest=identity_digest,
+            reference=identity_digest,
         ),
     )
     assert len(admissions) == 1
@@ -497,10 +497,10 @@ def test_a_source_free_line_under_a_required_rule_still_runs(
     assert state["status"] == "succeeded", state["terminal"]
     admissions = procedure_run_service._line_admissions(  # noqa: SLF001
         instance,
-        procedure_run_service._accepted_line_by_identity_digest(  # noqa: SLF001
+        procedure_run_service._accepted_line_by_reference(  # noqa: SLF001
             instance,
             coordinate=instance.accepted_coordinate(),
-            identity_digest=identity_digest,
+            reference=identity_digest,
         ),
     )
     assert len(admissions) == 1

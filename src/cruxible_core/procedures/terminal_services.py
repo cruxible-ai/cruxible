@@ -36,6 +36,7 @@ from cruxible_core.proposals.proposals import (
 if TYPE_CHECKING:
     from cruxible_core.indexes.sqlite import ProjectionHandle
     from cruxible_core.procedures.execution import ProcedureRunAdmissionV1
+    from cruxible_core.procedures.nested import ProcedureDelegation
 
 
 class EffectfulTerminalError(PlaybillFormatError):
@@ -126,6 +127,7 @@ class ProposalTerminalAdapter:
         rationale: str | None = None,
         base_tree: Mapping[str, bytes] | None = None,
         changed_paths: tuple[str, ...] | None = None,
+        delegation: ProcedureDelegation | None = None,
     ) -> TerminalEgressReceiptV2:
         if request.kind != "propose_change_set":
             raise EffectfulTerminalError("proposal adapter serves propose_change_set only")
@@ -151,6 +153,7 @@ class ProposalTerminalAdapter:
             request,
             admission=admission,
             accepted_mandates=accepted_mandates,
+            delegation=delegation,
         )
         actor_id = request.actor_context.actor_id
         assert request.operation_key is not None  # request shape
@@ -165,7 +168,7 @@ class ProposalTerminalAdapter:
             # no second read can disagree with the first.
             with self._bind_projection(current) as projection:
                 require_procedure_mandate_at_head(
-                    request, admission=admission, projection=projection
+                    request, admission=admission, projection=projection, delegation=delegation
                 )
 
         for attempt in range(HEAD_CONTENTION_ATTEMPTS):

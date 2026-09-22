@@ -200,6 +200,16 @@ def terminal_item_manifest_digest(manifest: TerminalItemDependencyManifestV1) ->
     ).tagged
 
 
+def manifest_dependency_tokens(
+    manifest: TerminalItemDependencyManifestV1,
+) -> frozenset[DependencyToken]:
+    return frozenset(
+        DependencyToken(slot, digest)
+        for slot, field in _SLOT_FIELDS.items()
+        for digest in getattr(manifest, field)
+    )
+
+
 def terminal_item_key(*, terminal_node_id: str, child_index: int, item: object) -> str:
     """Address one fanout child by node, deterministic index, and exact content."""
 

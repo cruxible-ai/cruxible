@@ -729,7 +729,7 @@ def register_tools(
     @_tool
     def cruxible_playbill_line_run(
         instance_id: str,
-        line_identity_digest: str,
+        line: str,
         evaluation_time: str | None = None,
         occurrence_id: str | None = None,
         resolution_contract: contracts.ResolutionContractReferenceV1 | None = None,
@@ -738,7 +738,7 @@ def register_tools(
         """Trigger one due occurrence of an accepted Line."""
         return handlers.handle_playbill_line_run(
             instance_id,
-            line_identity_digest,
+            line,
             occurrence_id=occurrence_id,
             evaluation_time=evaluation_time,
             resolution_contract=resolution_contract,

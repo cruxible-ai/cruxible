@@ -43,7 +43,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     SourceAcquisitionPolicyRequired,
     _accepted_acquisition_policies,
     _accepted_capture_contracts,
-    _accepted_line_by_identity_digest,
+    _accepted_line_by_reference,
     _accepted_line_mandates,
     _assert_line_closure_complete,
     _direct_acquisition_policy,
@@ -242,18 +242,25 @@ def test_line_identity_and_closure_select_only_bound_sources(tmp_path, monkeypat
         },
     }
     instance, coordinate, reads = _published_sources(tmp_path, tree, monkeypatch)
-    accepted = _accepted_line_by_identity_digest(
-        instance, coordinate=coordinate, identity_digest=line_identity_digest(selected.identity)
+    accepted = _accepted_line_by_reference(
+        instance, coordinate=coordinate, reference=line_identity_digest(selected.identity)
     )
     assert accepted.line == selected
     assert reads == [line_spec_path(selected.identity.name)]
+    for reference in (selected.identity.name, selected.identity.qualified):
+        reads.clear()
+        assert (
+            _accepted_line_by_reference(instance, coordinate=coordinate, reference=reference)
+            == accepted
+        )
+        assert reads == [line_spec_path(selected.identity.name)]
     reads.clear()
     _assert_line_closure_complete(instance, accepted, coordinate)
     assert reads == [procedure.path]
     reads.clear()
     with pytest.raises(LineRunNotAccepted):
-        _accepted_line_by_identity_digest(
-            instance, coordinate=coordinate, identity_digest="sha256:" + "ab" * 32
+        _accepted_line_by_reference(
+            instance, coordinate=coordinate, reference="sha256:" + "ab" * 32
         )
     assert reads == []
     wrong_pin = pin.model_copy(update={"artifact_digest": "sha256:" + "ab" * 32})

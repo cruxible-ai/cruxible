@@ -1482,7 +1482,7 @@ class CruxibleClient:
     def run_playbill_line(
         self,
         instance_id: str,
-        line_identity_digest: str,
+        line: str,
         *,
         occurrence_id: str | None,
         evaluation_time: str | None = None,
@@ -1490,7 +1490,7 @@ class CruxibleClient:
         trigger_event: contracts.TriggerEventReferenceV1 | None = None,
     ) -> contracts.PlaybillProcedureRunState:
         response = self._client.post(
-            f"/api/v1/{instance_id}/playbill/lines/{line_identity_digest}/runs",
+            f"/api/v1/{instance_id}/playbill/lines/{line}/runs",
             json={
                 **(
                     {"resolution_contract": resolution_contract.model_dump(mode="json")}
@@ -1503,7 +1503,7 @@ class CruxibleClient:
                     else {}
                 ),
                 "tag": "playbill-line-run-request-v1",
-                "line_identity_digest": line_identity_digest,
+                "line": line,
                 "occurrence_id": occurrence_id,
                 "evaluation_time": evaluation_time,
             },
