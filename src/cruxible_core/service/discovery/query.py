@@ -36,7 +36,11 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_client.contracts.query.definitions import AcceptedQueryDefinitionV1
 from cruxible_client.contracts.query.grammar import QueryArtifactsEntryV2, QueryBudgetsV1
-from cruxible_client.contracts.query.results import QueryArtifactDefinitionV2
+from cruxible_client.contracts.query.results import (
+    ClaimQueryResultV1,
+    QueryArtifactDefinitionV2,
+    QueryExecutionReceiptV1,
+)
 from cruxible_client.contracts.subjects import AcceptedSubject, parse_subject, subject_digest
 from cruxible_core.errors import DataValidationError
 from cruxible_core.evidence.source_readers import ExternalSourceReaderProtocol
@@ -51,8 +55,6 @@ from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
 from cruxible_core.query.engine import (
-    ClaimQueryResultV1,
-    QueryExecutionReceiptV1,
     evaluate_artifact_query,
     evaluate_claim_query,
     query_execution_receipt,

@@ -48,6 +48,9 @@ from cruxible_client.contracts.query.grammar import (
     QueryProjectionV1,
     QuerySubjectFieldRefV1,
 )
+from cruxible_client.contracts.query.results import (
+    ClaimQueryResultV1,
+)
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import (
     AcceptedSubject,
@@ -70,7 +73,6 @@ from cruxible_core.query.engine import (
     ClaimFactRowV1,
     ClaimQueryError,
     ClaimQueryFactsV1,
-    ClaimQueryResultV1,
     claim_query_result_digest,
     evaluate_claim_query,
     query_attempted_parameter_digest,

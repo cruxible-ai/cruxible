@@ -83,6 +83,9 @@ from cruxible_client.contracts.procedures.readings import (
     ProcedureReadingSummaryV1,
 )
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+from cruxible_client.contracts.query.results import (
+    QueryExecutionReceiptV1,
+)
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -123,7 +126,6 @@ from cruxible_core.procedures.resolution import (
     procedure_resolution_digest,
     resolution_contract_partition_id,
 )
-from cruxible_core.query.engine import QueryExecutionReceiptV1
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.discovery.query import (

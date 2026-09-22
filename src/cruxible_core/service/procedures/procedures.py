@@ -14,6 +14,9 @@ from cruxible_client.contracts.errors import PlaybillExecutionError, PlaybillJou
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
 from cruxible_client.contracts.procedures.contracts import OwnedProcedureContractValidator
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+from cruxible_client.contracts.query.results import (
+    ClaimQueryResultV1,
+)
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -42,7 +45,6 @@ from cruxible_core.procedures.execution import (
     StateTapReadResultV1,
 )
 from cruxible_core.procedures.run_index import ProcedureRunIndex
-from cruxible_core.query.engine import ClaimQueryResultV1
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.query import service_run_playbill_query
 from cruxible_core.service.discovery.query_definitions import accepted_query_definition

@@ -74,21 +74,42 @@ def test_typed_definition_listing_rejects_partial_or_misbound_results():
         "artifact_digest": claim_type_digest(claim_type).tagged,
         "definition": claim_type.model_dump(mode="json"),
     }
-    body = {
-        "result_shape": "artifact_definition",
-        "verdict": "completed",
-        "truncation": {"clipped_budgets": []},
-        "rows": [{"artifact": artifact}],
-    }
-    # Only the accessor is under test; transport envelope validation is exercised
-    # in test_named_query_workflow through all three public interfaces.
+    from cruxible_client.contracts.query.results import (
+        ClaimQueryResultV1,
+        QueryArtifactDefinitionV2,
+        QueryResultRowV1,
+        QueryTruncationV1,
+    )
+
+    body = ClaimQueryResultV1.model_construct(
+        result_shape="artifact_definition",
+        verdict="completed",
+        conflicts=(),
+        truncation=QueryTruncationV1(),
+        rows=(
+            QueryResultRowV1(
+                tag="playbill-query-result-row-v2",
+                bindings=(),
+                artifact=QueryArtifactDefinitionV2.model_validate(artifact),
+            ),
+        ),
+    )
     result = PlaybillQueryRun.model_construct(result=body)
     assert result.artifact_definitions[0].definition == claim_type
     for change in (
         {"verdict": "refused"},
-        {"truncation": {"clipped_budgets": ["max_results"]}},
+        {
+            "truncation": QueryTruncationV1(
+                clipped_budgets=("max_results",), candidate_result_count=1
+            )
+        },
         {"result_shape": "subject"},
-        {"rows": [{"artifact": {**artifact, "artifact_digest": "sha256:" + "0" * 64}}]},
     ):
         with pytest.raises(ValueError):
-            PlaybillQueryRun.model_construct(result={**body, **change}).artifact_definitions
+            PlaybillQueryRun.model_construct(
+                result=body.model_copy(update=change)
+            ).artifact_definitions
+    with pytest.raises(ValueError):
+        QueryArtifactDefinitionV2.model_validate(
+            {**artifact, "artifact_digest": "sha256:" + "0" * 64}
+        )

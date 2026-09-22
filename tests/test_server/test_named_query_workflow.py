@@ -106,8 +106,8 @@ def test_named_query_complete_workflow(playbill_http, tmp_path, monkeypatch, sur
         )
     else:
         result = pb.run_query(name)
-    assert result.result["verdict"] == "completed"
-    assert result.receipt["definition_digest"] == result.definition_digest
+    assert result.result.verdict == "completed"
+    assert result.receipt.definition_digest == result.definition_digest
     if not ordinary:
         assert isinstance(result.artifact_definitions, tuple)
         if example is query_procedures_example:

@@ -34,6 +34,9 @@ from cruxible_client.contracts.query.grammar import (
     QuerySubjectFieldRefV1,
     QueryTraversalStepV1,
 )
+from cruxible_client.contracts.query.results import (
+    ClaimQueryResultV1,
+)
 from cruxible_client.contracts.subjects import AcceptedSubject, subject_path
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.query.backends import (
@@ -52,7 +55,6 @@ from cruxible_core.query.engine import (
     RESULT_CONFLICT,
     SUBJECT_UNRESOLVED,
     TRAVERSAL_OBJECT_NOT_SUBJECT,
-    ClaimQueryResultV1,
     claim_query_result_digest,
     evaluate_claim_query,
 )

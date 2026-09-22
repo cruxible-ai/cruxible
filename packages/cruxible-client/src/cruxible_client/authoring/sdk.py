@@ -36,6 +36,7 @@ from cruxible_client.authoring.context import (
 )
 from cruxible_client.authoring.procedures import ProviderBinding
 from cruxible_client.authoring.procedures import Sequence as ProcedureSequence
+from cruxible_client.authoring.queries import QueryBinding
 from cruxible_client.authoring.sdk_types import (
     AccessProfile,
     CallSite,
@@ -194,7 +195,9 @@ from cruxible_client.contracts.procedures.windows import (
     TriggerEventReferenceV1,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+from cruxible_client.contracts.records import Record
 from cruxible_client.contracts.resolution_contracts import (
     ClaimVersionReferenceV1,
     ResolutionContractReferenceV1,
@@ -2805,14 +2808,32 @@ class Playbill:
             ),
         )
 
+    def query_binding(self, query: str | QueryRef) -> QueryBinding:
+        """Read an exact query and its parameter types through accepted discovery."""
+        name = _address(query, RefKind.QUERY)
+        requested = self._read_at(query.coordinate if isinstance(query, QueryRef) else None)
+        view = self._client.get_playbill_query_definition(self._instance_id, name, at=requested)
+        coordinate = _coordinate(view.coordinate)
+        self._observe_read(coordinate, expected=requested)
+        return QueryBinding(
+            QueryRef(view.name, coordinate),
+            QueryDefinitionV1.model_validate(view.envelope),
+            view.artifact_digest,
+        )
+
     def run_query(
         self,
-        query: str | QueryRef,
+        query: str | QueryRef | QueryBinding,
         *,
         parameters: Mapping[str, object] | None = None,
         budgets: QueryBudgetsV1 | None = None,
     ) -> api.PlaybillQueryRun:
         """Run a named query at this SDK view's coordinate with a replay receipt."""
+        if isinstance(query, QueryBinding):
+            if parameters is not None and not isinstance(parameters, Record):
+                raise TypeError("a QueryBinding requires parameters made by binding.parameters")
+            parameters = query.parameters(**({} if parameters is None else dict(parameters)))
+            query = query.ref
         name = _address(query, RefKind.QUERY)
         requested = self._read_at(query.coordinate if isinstance(query, QueryRef) else None)
         return self._client.run_playbill_query(

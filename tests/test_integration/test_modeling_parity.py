@@ -37,9 +37,11 @@ from cruxible_client.contracts.query.grammar import (
     QueryTraversalStepV1,
     QueryValueTypeV1,
 )
+from cruxible_client.contracts.query.results import (
+    ClaimQueryResultV1,
+)
 from cruxible_core.query.engine import (
     CLAIM_CONFLICT,
-    ClaimQueryResultV1,
     evaluate_claim_query,
 )
 from tests.core_support import _modeling_parity_worlds as worlds
@@ -438,7 +440,9 @@ class TestDeferredDonorFeatureCoverage:
 
         feature = deferred_feature("select_counts")
         assert feature["playbill_status"] == "not expressible"
-        from cruxible_core.query.engine import QueryIncludeResultV1
+        from cruxible_client.contracts.query.results import (
+            QueryIncludeResultV1,
+        )
 
         fields = set(QueryIncludeResultV1.model_fields)
         assert {"items", "truncated"} <= fields

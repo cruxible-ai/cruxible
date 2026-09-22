@@ -44,6 +44,9 @@ from cruxible_client.contracts.query.definitions import (
     query_definition_path,
 )
 from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.query.results import (
+    ClaimQueryResultV1,
+)
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import (
     AcceptedSubject,
@@ -54,7 +57,6 @@ from cruxible_client.contracts.subjects import (
 from cruxible_core.compiler.compiler import PC_E1_COMPILER
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
-from cruxible_core.query.engine import ClaimQueryResultV1
 
 AUTHORITY_BASIS = ("authority:owner",)
 OBSERVED_AT = datetime(2026, 8, 1, 0, 0, tzinfo=UTC)

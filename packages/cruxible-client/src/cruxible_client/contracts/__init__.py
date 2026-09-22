@@ -125,7 +125,13 @@ from cruxible_client.contracts.provider_installation import (
     ProviderWheelObjectV1 as ProviderWheelObjectV1,
 )
 from cruxible_client.contracts.query.results import (
+    ClaimQueryResultV1 as _ClaimQueryResultV1,
+)
+from cruxible_client.contracts.query.results import (
     QueryArtifactDefinitionV2 as _QueryArtifactDefinitionV2,
+)
+from cruxible_client.contracts.query.results import (
+    QueryExecutionReceiptV1 as _QueryExecutionReceiptV1,
 )
 from cruxible_client.contracts.resolution_contracts import (
     ClaimVersionReferenceV1 as ClaimVersionReferenceV1,
@@ -1398,23 +1404,30 @@ class PlaybillQueryRun(BaseModel):
     name: str
     definition_path: str
     definition_digest: str
-    result: dict[str, Any]
-    receipt: dict[str, Any]
+    result: _ClaimQueryResultV1
+    receipt: _QueryExecutionReceiptV1
     journal_record_digest: str | None = None
+
+    @property
+    def completed(self) -> bool:
+        return self.result.verdict == "completed"
+
+    @property
+    def truncated(self) -> bool:
+        return self.result.truncation.truncated
+
+    @property
+    def has_conflicts(self) -> bool:
+        return bool(self.result.conflicts or any(row.conflicts for row in self.result.rows))
 
     @property
     def artifact_definitions(self) -> tuple[_QueryArtifactDefinitionV2, ...]:
         """Typed definitions; refuse to present a partial read as a complete listing."""
-        if self.result.get("result_shape") != "artifact_definition":
+        if self.result.result_shape != "artifact_definition":
             raise ValueError("this is a Claim query, not an artifact definition query")
-        if self.result.get("verdict") != "completed" or self.result.get("truncation", {}).get(
-            "clipped_budgets"
-        ):
+        if not self.completed or self.truncated:
             raise ValueError("definition listing is refused or truncated")
-        return tuple(
-            _QueryArtifactDefinitionV2.model_validate(row["artifact"])
-            for row in self.result["rows"]
-        )
+        return tuple(row.artifact for row in self.result.rows if row.artifact is not None)
 
 
 class PlaybillProcedureReadiness(BaseModel):

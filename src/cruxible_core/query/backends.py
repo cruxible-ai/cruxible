@@ -43,8 +43,6 @@ from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, ty
 from cruxible_client.contracts.claim_verdicts import (
     CaptureVerdictEvidenceV1,
     ClaimAdjudicationRuleV1,
-    EvidenceCurrency,
-    EvidenceRelativeClaimVerdict,
     claim_verdict_v1_compat,
     evaluate_claim_verdict,
 )
@@ -56,6 +54,7 @@ from cruxible_client.contracts.query.definitions import (
     QueryEvaluationPolicyV1,
 )
 from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.query.results import QueryClaimVisibilityV1
 from cruxible_client.contracts.subjects import AcceptedSubject
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 
@@ -140,19 +139,6 @@ class ClaimQueryFactsV1(_StrictQueryBackendModel):
 
 
 # -- the visible Claim row ------------------------------------------------
-
-
-class QueryClaimVisibilityV1(_StrictQueryBackendModel):
-    """Why one Claim row is present: its verdict and currency at the read time."""
-
-    tag: Literal["playbill-query-claim-visibility-v1"] = "playbill-query-claim-visibility-v1"
-    claim_path: str
-    statement_digest: str
-    artifact_digest: str
-    predicate: str
-    subject_identity: str
-    verdict: EvidenceRelativeClaimVerdict
-    currency: EvidenceCurrency
 
 
 @dataclass(frozen=True)
@@ -618,7 +604,6 @@ __all__ = [
     "ClaimQueryFactsV1",
     "ClaimViewRowV1",
     "DirectClaimFactIndex",
-    "QueryClaimVisibilityV1",
     "SubjectQueryViewV1",
     "SubjectViewAdjacencyV1",
     "SubjectViewRowV1",
