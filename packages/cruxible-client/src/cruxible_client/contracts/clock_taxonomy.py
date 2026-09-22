@@ -394,6 +394,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("RuntimeCredentialMetadata", "created_at"): "ASSERTION TIME",
     ("RuntimeCredentialMetadata", "revoked_at"): "ASSERTION TIME",
     ("SettledOutcomesQueryReceiptV1", "evaluation_time"): "EVALUATION INSTANT",
+    ("ServedNestedProcedureRunner", "evaluation_time"): "EVALUATION INSTANT",
     ("SettledOutcomesQueryRequestV1", "evaluation_time"): "EVALUATION INSTANT",
     ("SettledOutcomesQueryResultV1", "evaluation_time"): "EVALUATION INSTANT",
     # The instant the daemon stamped the terminal lifecycle state; nothing is
@@ -403,6 +404,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     # The instant the daemon actually read the workspace file it receipted.
     ("SourceReadReceiptV1", "read_at"): "EVALUATION INSTANT",
     ("SourceEffectiveTimeV1", "effective_from"): "VALIDITY WINDOW",
+    ("SourceClaimCandidateV1", "effective_from"): "VALIDITY WINDOW",
+    ("SourceClaimCandidateV1", "effective_until"): "VALIDITY WINDOW",
     ("SourceEffectiveTimeV1", "effective_until"): "VALIDITY WINDOW",
     ("SourceSelectionReceiptV1", "evaluation_time"): "EVALUATION INSTANT",
     ("StandingMandate", "valid_from"): "VALIDITY WINDOW",
