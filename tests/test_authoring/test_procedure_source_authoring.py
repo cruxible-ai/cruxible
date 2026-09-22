@@ -56,9 +56,26 @@ def test_preview_and_prepare_accept_the_same_symbolic_source(tmp_path):
     assert preview.definition.source.text == source.source
     assert preview.nodes[-1].kind == "return"
     assert preview.source_map[-1].span.filename == __file__
+    from cruxible_client.authoring.procedures import ProcedurePreview
+
+    client = SimpleNamespace(preview_playbill_procedure_source=lambda *args, **kwargs: preview)
+    world = SimpleNamespace(
+        coordinate=at, _playbill=SimpleNamespace(_client=client, _instance_id="test")
+    )
+    inspected = source.preview(world=world)
+    assert isinstance(inspected, ProcedurePreview)
+    assert inspected.source == preview.definition.source
+    assert len(inspected.return_paths) == 2
+    assert all(path.kind == "pure" for path in inspected.return_paths)
+    assert inspected.branch_values[0].kind == "guard"
+    assert inspected.nodes[-1].kind == "return"
+    assert (
+        inspected.model_dump(mode="json")["return_paths"][0]["contract"]["target"]["kind"]
+        == "Contract"
+    )
     # Preview is read-only and authoring keeps the input symbolic, even after preview.
     assert coordinator.instance.accepted_coordinate() == coordinate
-    authored = source.build(world=SimpleNamespace())
+    authored = source.build(world=world)
     assert "sha256:" not in authored.model_dump_json()
     compiled = coordinator.compile(
         actor=actor,
@@ -80,17 +97,15 @@ def test_source_failure_is_localized_and_does_not_execute(tmp_path):
             }
         )
     )
-    authored = (
-        blueprint()
-        .build(world=SimpleNamespace())
-        .model_copy(
-            update={
-                "definition": {
-                    "name": request.name,
-                    "source_request": request.model_dump(mode="json", by_alias=True),
-                }
-            }
-        )
+    from cruxible_client.authoring.inputs import ProcedureInput
+
+    authored = ProcedureInput(
+        kind="procedure",
+        activation_policy="snapshot",
+        definition={
+            "name": request.name,
+            "source_request": request.model_dump(mode="json", by_alias=True),
+        },
     )
     compiled = coordinator.compile(
         actor=actor,
@@ -101,3 +116,18 @@ def test_source_failure_is_localized_and_does_not_execute(tmp_path):
     assert any(":31:" in diagnostic.message for diagnostic in compiled.frontier.diagnostics), (
         compiled.frontier.model_dump_json()
     )
+
+
+def test_source_inspection_without_context_is_explicitly_unresolved():
+    import pytest
+
+    from cruxible_client.authoring.procedures import ProcedureCompositionError
+
+    candidate = blueprint()
+    assert candidate.filename == __file__
+    assert candidate.contract_in.name == "assessment.request"
+    assert not candidate.preview().ready_for_prepare
+    with pytest.raises(ProcedureCompositionError, match="backend"):
+        candidate.build()
+    with pytest.raises(ValueError, match="Unknown"):
+        candidate.bind(typo=object())

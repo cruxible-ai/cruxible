@@ -1,11 +1,12 @@
 # Cruxible Python SDK reference
 
-**Implemented API at Playbill `7e57b184a` · 2026-09-21.** Install
+**SDK v2 development API · 2026-09-22 (not yet released).** Install
 `cruxible-client` for the Python client; install `cruxible` separately for the
 daemon/CLI/MCP runtime. This is an API reference, not an implementation plan.
-The [SDK v2 proposal](../../docs/sdk-v2-reference.md) defines proposed additions
-separately, including contract-derived record constructors and typed query/run
-results. None of its new syntax is implied available here.
+The [SDK v2 reference](../../docs/sdk-v2-reference.md) specifies retained source
+authoring, contract-derived records, typed query/run results, and sequential
+child calls. Source authoring is available on the development branch. Names and
+typed handles are authoring inputs; exact versions and hashes resolve in the backend.
 
 Coverage: every public `Playbill` operation, returned authoring/run handles,
 World access, typed values, source selectors, Procedure composition,
@@ -1101,7 +1102,8 @@ run_line(
 ) -> ProcedureRun
 ```
 
-Requests one daemon-derived occurrence of an accepted Line and returns a ProcedureRun.
+Requests one daemon-derived occurrence of a named accepted Line and returns a ProcedureRun.
+The backend resolves the Line identity; callers do not pass its digest.
 
 **Conditions and effects:** May invoke providers, register captures, or submit proposals under admitted authority; it is not a preview or permission grant.
 
@@ -3507,6 +3509,17 @@ bind(*, bindings: Mapping[str | SlotRef, TypedRef]) -> api.PlaybillProcedureBind
 
 <a id="api-procedure-run"></a>
 
+### Typed invocation and child inspection
+
+`Procedure.input(**fields)` constructs an immutable record from the exact accepted
+input contract. Pass it as `Procedure.run(input=record)`; successful
+`ProcedureRun.result` follows the declared output contract. `ProcedureRun.succeeded`
+guards result access, and `.children` returns authorized child run handles.
+`pb.query_binding(name)` provides a typed `.parameters(**fields)` constructor;
+`pb.run_query(binding, parameters=record)` uses the existing query service and
+returns typed result and receipt models. See the [v2 reference](../../docs/sdk-v2-reference.md)
+for the exhaustive source syntax, arguments, validation, and execution boundaries.
+
 ### `Procedure.run`
 
 [Source](src/cruxible_client/authoring/sdk.py#L3468)
@@ -3517,7 +3530,7 @@ run(
     at: AcceptedCoordinate | None = None,
     resolution_contract: ResolutionContractReferenceV1 | None = None,
     trigger_event: TriggerEventReferenceV1 | None = None,
-    **inputs: CanonicalValue,
+    input: Record,
 ) -> ProcedureRun
 ```
 
@@ -3599,7 +3612,7 @@ status: str
 [Source](src/cruxible_client/authoring/sdk.py#L3576)
 
 ```text
-result: CanonicalValue
+result: Record
 ```
 
 <a id="api-procedurerun-receipt"></a>

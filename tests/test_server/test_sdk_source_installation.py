@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from cruxible_client import Playbill
+from cruxible_client import Disposition, Playbill
 from cruxible_client.authoring.inputs import CarriedContractInput
 from cruxible_client.authoring.source import (
     claim_candidate,
@@ -34,7 +34,7 @@ from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 from tests.test_server.test_provider_installation import installer_http  # noqa: F401
 
 
-def test_installed_fetch_emits_capture_and_parent_reads_typed_child_result(
+def test_installed_fetch_parent_proposal_and_derivation_policy_boundary(
     installer_http,  # noqa: F811
     tmp_path,
 ):
@@ -151,7 +151,11 @@ def test_installed_fetch_emits_capture_and_parent_reads_typed_child_result(
 
         knowledge = pb.changes(rationale="Describe the advisory observation.")
         knowledge.subject(_subject())
-        knowledge.claim_type(_claim_type(capture_contract_digest(contract).tagged))
+        knowledge.claim_type(
+            _claim_type(
+                capture_contract_digest(contract).tagged, roles=("derivation", "observation")
+            ).model_copy(update={"permitted_roles": ("derivation", "observation")})
+        )
         accept(knowledge)
 
         @procedure(
@@ -229,6 +233,76 @@ def test_installed_fetch_emits_capture_and_parent_reads_typed_child_result(
         assert proposal.kind == "propose_change_set" and proposal.verdict == "delivered"
         assert proposal.proposal_id
         _approve_and_activate(http, instance_id, reviewer, proposal.proposal_id)
+        pb.refresh()
+
+        @procedure(
+            name="verify-parent",
+            input=Request,
+            output=Result,
+            budget=budget,
+            hard_caps=caps,
+            terminal_capability=2,
+        )
+        def verify_parent(request, world, bindings):
+            baseline = world.security.advisory["osv-2026-0001"].severity.one()
+            observed = invoke(bindings.observer, input=bindings.observer.input(url=request.url))
+            if not observed.succeeded:
+                return halt("Observation failed")
+            candidate = claim_candidate(
+                subject=world.security.advisory["osv-2026-0001"],
+                predicate=world.claim_type("security.advisory.severity"),
+                value=baseline.value,
+                role="derivation",
+                rationale="Rechecked the accepted baseline against a fresh observation.",
+                supported_by=observed.terminal.capture,
+                basis=(baseline,),
+                dispositions={baseline: Disposition.NOT_TESTED},
+            )
+            return propose_change_set(
+                candidates=[candidate],
+                result=Result.value(status=observed.value.status, text=observed.value.text),
+            )
+
+        verify_parent = verify_parent.bind(observer=pb.accepted_procedure("observe-web").ref)
+        inspected = verify_parent.preview(world=pb.world())
+        assert len(inspected.state_dependencies) == 1 and len(inspected.children) == 1
+        assert inspected.state_dependencies[0].subject_kind == "security.advisory"
+        accept(pb.procedure(definition=verify_parent))
+        accept(
+            pb.changes(rationale="Verify the same baseline with an exact child.")
+            .line(
+                name="verify-line",
+                procedure="verify-parent",
+                acquisition_policy="source-reads",
+                requested_terminal_rung=2,
+                parameters={"url": f"http://127.0.0.1:{server.server_port}/state.json"},
+            )
+            .procedure_mandate(
+                ProcedureMandateInputV1(
+                    kind="procedure_mandate",
+                    name="verify-authority",
+                    procedure_name="verify-parent",
+                    rung=2,
+                    authority_ceiling=caps,
+                    namespace=("claims",),
+                    valid_from=now - timedelta(days=1),
+                    expires_at=now + timedelta(days=1),
+                )
+            )
+        )
+        pb.refresh()
+        verified = pb.run_line("verify-line")
+        # A direct-evidence rule cannot authorize a reducer merely because it
+        # executed successfully. Preserve the existing gate until reducer
+        # authorization can be bound without a ClaimType/Procedure digest cycle.
+        assert verified.status == "node_refused"
+        assert Origin.calls == 2
+        (derived,) = verified.outcome.terminal_egress
+        assert derived.verdict == "refused" and derived.proposal_id is None
+        assert verified.outcome.terminal.code == "proposal_lowering_refused"
+        assert (
+            "playbill.evidence.reducer_not_allowed" in verified.outcome.terminal.model_dump_json()
+        )
     finally:
         server.shutdown()
         server.server_close()

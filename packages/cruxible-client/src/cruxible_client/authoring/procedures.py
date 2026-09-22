@@ -12,7 +12,7 @@ from dataclasses import field as dataclass_field
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from cruxible_client.contracts.artifacts import ArtifactPin, parse_artifact_identity
 from cruxible_client.contracts.authoring.inputs import (
@@ -21,6 +21,7 @@ from cruxible_client.contracts.authoring.inputs import (
     ProcedureInput,
     lower_authoring_input,
 )
+from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactAny,
     ProcedureArtifactV2,
@@ -38,8 +39,16 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureBudgetV3,
     ProcedureDefinitionV5,
     ProcedureHardCapsV3,
+    ProcedureNodeV6,
+    ProcedurePinSlotRefV1,
     ProcedureTransformSpecV1,
     TransformKindV1,
+)
+from cruxible_client.contracts.procedures.source_program import (
+    ProcedureSourceV1,
+    SourceBinding,
+    SourceMapEntry,
+    SourceSpan,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_contracts import ProviderOperationContractV1
@@ -228,6 +237,50 @@ class CompositionDiagnostic(BaseModel):
     step: str | None = None
     code: str
     message: str
+    span: SourceSpan | None = None
+    related_spans: tuple[SourceSpan, ...] = ()
+    hint: str | None = None
+
+
+class ProcedureStateDependency(BaseModel):
+    node_id: str
+    kind: Literal["claim", "query"]
+    selection: ArtifactPin | ProcedurePinSlotRefV1
+    cardinality: Literal["one", "all", "query"]
+    limit: int | None = None
+    admitted_context: bool = True
+    subject_kind: str | None = None
+    selector: JsonValue = None
+
+    _canonical_selector = field_validator("selector", mode="before")(normalize_canonical)
+
+
+class ProcedureBindingRequirement(BaseModel):
+    slot: str
+    resolved: SourceBinding | None = None
+
+
+class ProcedureBranchValue(BaseModel):
+    node_id: str
+    kind: Literal["guard", "select"]
+    producers: tuple[str, ...] = ()
+    predicate: GuardPredicateV1 | None = None
+    contract: ArtifactPin | ProcedurePinSlotRefV1 | None = None
+    successors: dict[str, str] = Field(default_factory=dict)
+
+
+class ProcedureReturnPath(BaseModel):
+    node_id: str
+    kind: Literal["pure", "capture", "proposal", "halt"]
+    contract: ArtifactPin | ProcedurePinSlotRefV1
+    required_terminal_rung: int
+
+
+class ProcedureChildCall(BaseModel):
+    node_id: str
+    procedure: ArtifactPin
+    inherits_authority: bool = True
+    shares_budget: bool = True
 
 
 class ProcedurePreview(BaseModel):
@@ -236,11 +289,11 @@ class ProcedurePreview(BaseModel):
     name: str
     ready_for_prepare: bool
     contracts: tuple[CarriedContractInput, ...]
-    contract_in: dict[str, Any]
-    contract_out: dict[str, Any]
+    contract_in: ArtifactPin | ProcedurePinSlotRefV1 | dict[str, Any]
+    contract_out: ArtifactPin | ProcedurePinSlotRefV1 | dict[str, Any]
     terminal_capability: Literal[1, 2, 3]
     acquisition_policy: str | None
-    nodes: tuple[dict[str, Any], ...]
+    nodes: tuple[ProcedureNodeV6 | dict[str, Any], ...]
     edges: dict[str, dict[str, str]] = Field(default_factory=dict)
     providers: dict[str, ProviderBinding] = Field(default_factory=dict)
     terminals: tuple[str, ...] = ()
@@ -248,6 +301,13 @@ class ProcedurePreview(BaseModel):
     budget: ProcedureBudgetV3
     hard_caps: ProcedureHardCapsV3
     errors: tuple[CompositionDiagnostic, ...] = ()
+    source: ProcedureSourceV1 | None = None
+    source_map: tuple[SourceMapEntry, ...] = ()
+    state_dependencies: tuple[ProcedureStateDependency, ...] = ()
+    binding_requirements: tuple[ProcedureBindingRequirement, ...] = ()
+    branch_values: tuple[ProcedureBranchValue, ...] = ()
+    return_paths: tuple[ProcedureReturnPath, ...] = ()
+    children: tuple[ProcedureChildCall, ...] = ()
     pending_checks: tuple[str, ...] = (
         "Resolve accepted references at the intent base and verify provider interfaces.",
         "Validate runtime values against contracts; preview does not execute any path.",

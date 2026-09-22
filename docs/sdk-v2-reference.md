@@ -1,16 +1,15 @@
-# Cruxible Python SDK v2 reference — proposal
+# Cruxible Python SDK v2 reference
 
-**Status: proposed; none of the new APIs in this document is implemented.**
-“v2” identifies this SDK proposal, not a package release or graph-format number.
-The [current SDK reference](../packages/cruxible-client/README.md) describes the
-implemented public surface at Playbill `7e57b184a`, checked on 2026-09-21.
+**Status: implemented on the SDK v2 development branch, with the derivation-policy blocker noted below; not released or deployed.**
+“v2” names the SDK surface, not a package release. The
+[base SDK reference](../packages/cruxible-client/README.md) covers connection,
+governance, discovery, and the existing composition frontend. This reference
+specifies source authoring, contract-derived records, and their execution semantics.
+Reserved or unsupported forms are identified explicitly below.
 
-This is a reference for the proposed SDK: signatures, arguments, values,
-semantics, validation, errors, and availability. It contains no implementation
-schedule. The agreed authoring direction is contract-derived records and field
-access across inputs, outputs, queries, state, and child calls. The spellings
-below specify that direction; availability remains proposed. Explicitly
-unsettled entries at the end are not supported constructs.
+Agents select names and typed handles. The daemon resolves exact dependency
+versions, computes digests, and retains the bindings in the accepted graph and
+run receipts. Digest fields exposed for inspection are not authoring inputs.
 
 The main addition is retained Python source for authoring Procedures. The source
 is compiled into a governed graph; the daemon does not run an arbitrary Python
@@ -39,11 +38,11 @@ provider contracts, and execution surfaces remain in use.
 - [Preview and diagnostics](#preview-and-diagnostics)
 - [Source identity and review](#source-identity-and-review)
 - [Complete examples](#complete-examples)
-- [Unsettled API details](#unsettled-api-details)
+- [Reserved and unsupported forms](#reserved-and-unsupported-forms)
 
 ## API coverage and availability
 
-The proposed SDK is the implemented SDK plus the additions and extensions below.
+SDK v2 extends the existing SDK with the additions below.
 The unchanged API is specified by the linked reference sections, including every
 signature, default, returned handle, input model, and HTTP-client operation.
 This document does not silently remove an existing operation.
@@ -65,27 +64,26 @@ This document does not silently remove an existing operation.
 
 ### New and extended public names
 
-Proposed new import location: `cruxible_client.authoring.source`. This module
-**does not exist today**. Types described as symbolic are compiler values, not
+Import source authoring from `cruxible_client.authoring.source`. Types described as symbolic are compiler values, not
 ordinary Python objects whose methods execute during authoring.
 
-| Name | Role | Status in this proposal |
+| Name | Role | Availability |
 |---|---|---|
-| `procedure` | Decorate a literal Procedure definition. | Signature proposed below. |
-| `ProcedureBlueprint` | Immutable source and binding selection; preview/build operations. | Proposed host object. |
-| `ProcedureWorld`, `ProcedureSubject`, `ClaimSelection[T]`, `ProcedureClaim[T]` | Typed, admitted-state expressions using the existing ontology. | Proposed symbolic interfaces; not a second state store. |
-| `query`, `ProcedureQueryResult` | Named-query state tap and structured result. | Proposed source intrinsic and result adapter. |
-| `call` | Invoke a contracted provider operation. | Proposed source intrinsic over Call semantics. |
-| `source`, `AcquisitionResult` | Acquire an observation through a Source interface. | Proposed source intrinsic and contract-derived result. |
-| `require` | Explicit refusal condition. | Proposed source intrinsic over Guard semantics. |
-| `claim_candidate`, `ClaimCandidate` | Construct a governed Claim candidate without submitting it. | Proposed source counterpart of the existing Claim authoring contract. |
-| `emit_capture`, `propose_change_set`, `halt` | Terminal return expressions. | Proposed source syntax over existing terminal categories. |
-| `invoke`, `InvocationOutcome[T]` | Invoke an exact accepted child Procedure. | Proposed extension; not served by today's executor. |
+| `procedure` | Decorate a literal Procedure definition. | Implemented; signature below. |
+| `ProcedureBlueprint` | Immutable source and binding selection; preview/build operations. | Implemented host object. |
+| `ProcedureWorld`, `ProcedureSubject`, `ClaimSelection[T]`, `ProcedureClaim[T]` | Typed, admitted-state expressions using the existing ontology. | Symbolic compiler interfaces; not separately instantiated Python classes. |
+| `query`, `ProcedureQueryResult` | Named-query state tap and structured result. | Source intrinsic and result adapter. |
+| `call` | Invoke a contracted provider operation. | Source intrinsic over Call semantics. |
+| `source`, `AcquisitionResult` | Acquire an observation through a Source interface. | Source intrinsic and contract-derived result. |
+| `require` | Explicit refusal condition. | Source intrinsic over Guard semantics. |
+| `claim_candidate`, `ClaimCandidate` | Construct a governed Claim candidate without submitting it. | Source counterpart of the existing Claim authoring contract. |
+| `emit_capture`, `propose_change_set`, `halt` | Terminal return expressions. | Source syntax over existing terminal categories. |
+| `invoke`, `InvocationOutcome[T]` | Invoke an exact accepted child Procedure. | Implemented sequential child execution. |
 | `parallel` | Concurrent independent branches with a join. | Reserved sketch; no final callable signature or default failure policy. |
-| `ProcedurePreview`, `CompositionDiagnostic`, `ProcedureCompositionError` | Existing inspection/error types extended with source information. | Extend these types; do not introduce a competing preview API. |
-| `Playbill.procedure(definition=...)` | Consume a `ProcedureBlueprint` as well as the existing input forms. | Proposed overload; returns the existing `ProcedureDraft`. |
-| `Contract.value`, `bindings.<slot>.input`, `bindings.<query>.parameters` | Construct schema-defined records. | Proposed contract-derived constructors; not executable user helpers. |
-| `Playbill.query_binding`, typed `Procedure.input/run` | Resolve query schemas and construct host invocation values. | Proposed adapters over existing definition reads and execution services. |
+| `ProcedurePreview`, `CompositionDiagnostic`, `ProcedureCompositionError` | Existing inspection/error types extended with source information. | Shared public inspection/error types; extended with source information. |
+| `Playbill.procedure(definition=...)` | Consume a `ProcedureBlueprint` as well as the existing input forms. | Implemented overload; returns the existing `ProcedureDraft`. |
+| `Contract.value`, `bindings.<slot>.input`, `bindings.<query>.parameters` | Construct schema-defined records. | Contract-derived constructors; not executable user helpers. |
+| `Playbill.query_binding`, typed `Procedure.input/run` | Resolve query schemas and construct host invocation values. | Typed adapters over existing definition reads and execution services. |
 
 Unlisted Python functions are not implicitly allowed inside source. In
 particular, ordinary SDK calls such as `pb.accept(...)` or `pb.capture(...)`
@@ -93,8 +91,7 @@ are host operations, not executable Procedure intrinsics.
 
 ## Types and notation
 
-Signatures below use `text` blocks because they specify a proposed language/API,
-not runnable declarations in the current SDK. Generic `T`, `I`, and `O` denote
+Signatures below use `text` blocks to distinguish API notation from runnable Python. Generic `T`, `I`, and `O` denote
 schema-checked value shapes. They do not authorize arbitrary Python classes.
 
 | Name used below | Definition |
@@ -106,13 +103,13 @@ schema-checked value shapes. They do not authorize arbitrary Python classes.
 | `Record[S]` | Immutable host value constructed under exact schema `S`. Inside compiled source the corresponding constructor produces `Value[Record[S]]`. Schema identity accompanies authoring checks; wire values retain their existing canonical encoding. |
 | `QueryParameters[P]` | A record from the QueryDefinition's parameter declarations, including required/default/type rules. |
 | `QueryBinding[P, R]` | Read-only accepted query reference plus its parameter and result schema view. It does not store another query definition or execute a query. |
-| `ProviderBinding` | Existing discovery result: Provider and interface identities, exact interface/implementation digests, and declared effect class. The proposed typed handle resolves the selected interface's input/output schemas at the same context. |
+| `ProviderBinding` | Existing discovery result: Provider and interface identities, exact interface/implementation digests, and declared effect class. The typed handle resolves the selected interface's input/output schemas at the same context. |
 | `QueryRef`, `ProcedureRef`, `SubjectRef`, `ClaimTypeRef`, `CaptureRef` | Existing typed references with their identity/version/coordinate assertions. |
 | `BindingValue` | `ProviderBinding \| QueryBinding \| QueryRef \| ProcedureRef`. `QueryBinding` is a schema-resolved view of a `QueryRef`. Each slot has one required reference kind determined by its use. |
 | `BindingSlot[T]` | Symbolic `bindings.<name>` reference whose selected host binding must have type `T`; not an object the author constructs inside the body. |
 | `ProcedureBudgetV3`, `ProcedureHardCapsV3` | Existing explicit budget/cap models. A nested invocation does not reset their effective limits. |
 | `TerminalReturn[O]` | Symbolic instruction to end this invocation, carrying a declared result and/or terminal effect. Not a successful runtime receipt by itself. |
-| `SourceSpan` | Proposed location data: filename, start/end line, start/end column. Convention proposed: one-based lines, zero-based UTF-8 byte columns, exclusive end. |
+| `SourceSpan` | Location data: filename, start/end line, start/end column. Convention: one-based lines, zero-based UTF-8 byte columns, exclusive end. |
 
 Typed Subject/literal wrappers serialize through the existing canonical SDK
 rules. A Procedure input/output contract remains explicit; annotations on a
@@ -179,19 +176,16 @@ remain valid for explicitly open JSON and genuinely typed maps such as
 
 ### Resolution and editor types
 
-Today's `ProviderBinding` contains identities/digests, not the input/output
-schemas. The proposed handle resolves those schemas through the existing
-accepted interface read. Query and Procedure handles likewise use their exact
+`ProviderBinding.operation_contract` retains the selected input/output schemas
+from the existing accepted interface read. Query and Procedure handles likewise use their exact
 accepted definitions. Bindings not yet supplied stay visibly unresolved during
-preview; prepare/build require resolution. Never fetch an unrelated latest
+preview; prepare/build require a World context and backend resolution. Never fetch an unrelated latest
 schema to validate a historical or already bound definition.
 
-Runtime-derived schema discovery does not itself give Python editors static
-field knowledge. Generate read-only types/stubs from these exact schemas,
-building on the existing World stub surface. Stubs identify their schema
-versions/coordinate; they neither pin execution nor replace daemon validation.
-Unrepresentable schema constructs receive explicit diagnostics rather than an
-`Any` escape hatch.
+Runtime schema checking does not give editors static field completion. Existing
+World stubs remain available; generated provider/Procedure record stubs are not
+part of this release. Unsupported source schema forms receive explicit diagnostics
+rather than inferred shapes or an arbitrary-code fallback.
 
 Wire JSON, CLI/MCP payloads, retained digests, and receipt semantics keep their
 existing canonical definitions. Typed SDK adapters validate/serialize those
@@ -199,13 +193,9 @@ same records; they do not establish a second payload format.
 
 ## Typed host execution
 
-These are proposed v2 signatures. Today's `Procedure.run(**inputs)` and
-`ProcedureRun.result: CanonicalValue` are documented in the current reference.
-The v2 record argument replaces unstructured keyword payload assembly in this
-high-level API. The typed query binding and parameter record likewise replace
-bare-name/dictionary assembly on the proposed high-level query path. These are
-explicit SDK signature changes; shared HTTP execution operations and their
-canonical payload schemas remain unchanged.
+Typed records replace keyword dictionary assembly for the high-level Procedure
+run API. Named queries also accept typed bindings and parameter records. The
+lower-level HTTP payload remains canonical JSON.
 
 ```text
 Procedure[I, O].input(**fields) -> Record[I]
@@ -239,7 +229,7 @@ an input record. A live head change must not silently replace those contracts:
 normal coordinate/version checks still apply. Pure host execution example:
 
 ```python
-# PROPOSED typed host API; accepted Procedure already exists.
+# Typed host API; accepted Procedure already exists.
 assessment = pb.accepted_procedure("security.assess_asset")
 run = assessment.run(
     input=assessment.input(asset_id="web-01", policy_id="default"),
@@ -322,7 +312,7 @@ procedure(
 is required, including for an explicitly empty input contract. Optional `world`
 and `bindings` are compiler contexts, not caller-provided mutable runtime inputs.
 Keyword-only/default/variadic parameters on this source function are outside the
-proposed subset. The host decorator arguments supply metadata and contracts;
+supported subset. The host decorator arguments supply metadata and contracts;
 source compilation does not execute arbitrary decorator argument expressions in
 the daemon.
 
@@ -344,7 +334,7 @@ an explicitly accepted child Procedure.
 
 ### Readable properties
 
-These are proposed readonly properties. Exact metadata is inherited from the
+These are readonly properties. Exact metadata is inherited from the
 decorator; reading a property has no network or execution effect.
 
 | Property | Type | Meaning |
@@ -385,13 +375,13 @@ preview(*, world: World | None = None) -> ProcedurePreview
 Produces a structured report without executing the body. `world` supplies an
 explicit pinned ontology/definition context; it is not a captured live dataset.
 No provider is called and no accepted state is written. A supplied World may
-perform normal schema reads. Without one, anything requiring accepted schema
-resolution remains visibly pending; purely carried contracts can still be
-checked locally.
+perform normal schema reads. Without a World, preview reports
+`playbill.source.context_required` and remains unready; dependency compilation
+and identity resolution belong to the backend, including for pure Procedures.
 
 `ready_for_prepare` is false when required source, contract, or binding checks
 are unresolved or erroneous. Runtime authority/availability checks still remain
-pending even when this flag is true. The proposed additions to `ProcedurePreview`
+pending even when this flag is true. The source fields of `ProcedurePreview`
 are specified under [Preview and diagnostics](#preview-and-diagnostics).
 
 ### `build`
@@ -405,8 +395,9 @@ Procedure authoring input with its retained source association when all required
 static checks pass. Otherwise raises `ProcedureCompositionError` carrying the
 preview. It does not return a partial executable graph after a compilation error.
 
-The source-association field's serialization is not finalized; this signature
-promises one shared authoring input, not an additional publication channel.
+The returned `ProcedureInput.definition.source_request` contains source and symbolic
+selections. Prepare resolves it again at its authoring base; preview is not a
+substitute for admission. The accepted graph retains `definition.source`.
 
 ### `Playbill.procedure` overload
 
@@ -437,7 +428,7 @@ from its uses and requires them to be consistent.
 | `invoke(bindings.observer, ...)` | `ProcedureRef` | `pb.accepted_procedure(name).ref` |
 
 Provider bindings carry exact accepted interface and implementation identifiers.
-Their proposed typed view additionally resolves the interface schemas at the
+Their typed view additionally resolves the interface schemas at the
 same accepted context. They do not carry credentials or an executable Python object. Runtime deployment
 and credentials stay daemon-side. The actual input and output of a provider are
 validated at execution even if static compatibility passed.
@@ -460,13 +451,13 @@ operations. Neither `.bind()` nor source syntax performs these steps implicitly.
 
 ## Python source language
 
-This section enumerates the proposed subset. Python is the readable source
+This section enumerates the supported subset. Python is the readable source
 notation, not a guarantee that all valid Python programs compile. Host setup can
 use ordinary Python; only the retained literal definition is the Procedure.
 
 ### Statements
 
-| Construct | Proposed support and exact boundary |
+| Construct | Supported forms and exact boundary |
 |---|---|
 | Function declaration | One literal Procedure function with the recognized parameters and explicit decorator metadata. |
 | Local assignment | Bind a named canonical/symbolic value. No mutation of state or arbitrary objects. Reusing a name across mutually exclusive arms is allowed when the join has a well-typed selected value. |
@@ -489,7 +480,7 @@ use ordinary Python; only the retained literal definition is the Procedure.
 
 ### Expressions
 
-| Construct | Proposed support and exact boundary |
+| Construct | Supported forms and exact boundary |
 |---|---|
 | `request.field` and nested declared fields | Checked against the invocation contract. Unknown fields refuse. |
 | Ontology namespace/Subject/predicate access | Checked against the explicit World schema, described below. |
@@ -618,9 +609,8 @@ fields and incompatible values; runtime validation still checks actual data.
 
 ### `ProcedureQueryResult[R]`
 
-A typed adapter over the existing query response. Today's `PlaybillQueryRun`
-exposes `result` and `receipt` as dictionaries; it does not expose the convenience
-properties below.
+The host `PlaybillQueryRun` exposes typed existing result/receipt models. Source
+query taps expose the same fields through contract-checked symbolic access.
 
 | Field | Meaning |
 |---|---|
@@ -649,11 +639,12 @@ Row types follow the QueryDefinition's declared result shape:
 | `path` | Existing path, binding, and relation records with declared projected fields. |
 | `artifact_definition` | Existing typed artifact definitions, discriminated by artifact kind/version. Retain the current completeness requirement on the `artifact_definitions` listing convenience. |
 
-For a declared projection, `row.fields.<projection_name>` accesses the typed
-value from the existing projected-field collection. Its type follows the
-projection expression and pinned ClaimType/Subject field. Keep declared
-optionality, multiplicity, and conflict information; a possibly absent or
-ambiguous value cannot silently become a scalar. Without a declared projection,
+For a declared projection, host `row.fields.<projection_name>` returns the existing
+`QueryProjectedFieldV1` envelope. Check `.state` (`present`, `absent`, or `conflict`)
+before using its canonical `.value`. Field access does not turn missing or
+ambiguous data into a scalar. Domain value validation remains owned by the
+accepted ClaimType and query evaluator; arbitrary nested projected JSON is not
+promoted to undeclared source attributes. Without a declared projection,
 do not invent arbitrary domain fields on a Subject row. Nested includes retain
 their own completeness metadata.
 
@@ -758,7 +749,7 @@ an eager all-operands predicate cannot be substituted where it changes behavior.
 ### Joining branch values
 
 ```python
-# PROPOSED source fragment.
+# Source fragment.
 if observation.release == target_claim.value:
     verification = verification_type.verified
 else:
@@ -775,14 +766,14 @@ an error unless every path lacking it has already terminated.
 A name assigned on only one continuing arm is not assigned `None` automatically.
 A select is not a database resolution policy and does not choose among competing
 Claims. Preview must expose branch producers, the join, and the selected value's
-type. This selection capability is new; today's graph control convergence alone
-does not supply it.
+type. The source graph uses an explicit Select node to retain which producer supplied
+the joined value; control convergence alone does not select a value.
 
 ## Claim candidates
 
 ### `claim_candidate`
 
-This proposed intrinsic reuses the public Claim authoring vocabulary. It does
+This intrinsic reuses the public Claim authoring vocabulary. It does
 not introduce a separate untyped evidence list or a second Claim contract.
 `P` below is the selected predicate; it determines the value schema.
 
@@ -812,7 +803,7 @@ claim_candidate(
 | `supported_by`, `copied_from`, `self_source` | Exactly one is required, as in existing host Claim authoring. No implicit source from the fact that a Procedure ran. |
 | `qualifier`, `effective_period` | Optional statement qualification and applicability period. |
 | `revises`, `dispositions` | Existing lineage and contender-handling meanings. Do not automatically supersede every earlier Claim. |
-| `basis` | Proposed exact Claim dependencies used by this conclusion. Default empty; supplied Claims retain their exact versions rather than only current values. |
+| `basis` | Exact selected Claim dependencies used by this conclusion. Default empty; supplied Claims retain their exact versions. Positive derivational evidence admission has the policy blocker described in the comparison example. |
 
 **Returns:** a symbolic candidate description; it has not been submitted,
 approved, or accepted. It is consumed by `propose_change_set`.
@@ -827,9 +818,9 @@ source uses captured evidence references, not arbitrary host file objects. A
 copied capture cannot be upgraded to independent support by changing an argument.
 A changed target Claim is not covered by an earlier verification's exact basis.
 
-`basis` is a proposed addition, not an existing helper. Its lowering into existing
-dependency records must preserve that meaning; the retained field encoding is
-not selected by this document. Source authoring of new Subjects/ClaimTypes and
+`basis` accepts exact `.one()` selections and lowers into existing derivation
+input pins. The backend verifies the selection against retained admitted reads;
+callers never supply those pins themselves. Source authoring of new Subjects/ClaimTypes and
 non-Claim candidate kinds can continue through the existing authoring API; a
 separate intrinsic for every changeset operation is not specified here.
 
@@ -922,8 +913,8 @@ invoke(
 
 Both arguments are required. The exact accepted child supplies contracts `I`
 and `O`. Use `bindings.<child>.input(...)` for record input; successful output
-retains the child's declared typed fields. This is a proposed execution extension, not syntax for a feature already
-served by the current executor.
+retains the child's declared typed fields. Each child has its own journal and
+receipt while sharing the parent's admitted authority and remaining budget.
 
 | Property | Required behavior |
 |---|---|
@@ -939,14 +930,14 @@ served by the current executor.
 
 ### `InvocationOutcome[O]`
 
-| Field | Proposed type / availability |
+| Field | Type / availability |
 |---|---|
-| `status` | Distinguishes success, halt, refusal, and failure; exact enum spellings remain unsettled. |
+| `status` | `succeeded`, `halted`, `refused`, or `failed`. |
 | `succeeded` | `bool`; true only when a valid successful output exists. |
 | `value` | `O`, available only on success. Compiler requires control-flow proof or an explicit guard before reading. |
 | `terminal` | Typed terminal result when the child's declared outcome provides one. A pure child does not gain a capture here. |
 | `terminal.capture` | Verified capture reference only when the child contract guarantees capture-terminal success. |
-| `receipt` | Nested execution receipt/reference preserving exact child identity and outcome. Exact transport wrapper remains unsettled. |
+| `receipt` | Exact child receipt reference; host `ProcedureRun.children` returns authorized child run handles. |
 
 A successful child with mixed possible terminal kinds may still require an
 additional terminal-kind check before `.terminal.capture` is available. The
@@ -954,7 +945,7 @@ examples assume a child whose every successful path emits a capture. No success
 output exists for a halted/refused/failed child.
 
 ```python
-# PROPOSED source fragment.
+# Source fragment.
 observed = invoke(
     bindings.observer,
     input=bindings.observer.input(asset=asset_claim.value),
@@ -966,8 +957,8 @@ release = observed.value.release
 
 This does not choose general retry/cancellation/recovery semantics. Child-outcome
 handling cannot authorize ignoring an effect failure that the existing admission
-or run contract treats as fatal. Such outcome rules must be explicit before
-serving this API; ordinary Python exceptions are not the escape route.
+or run contract treats as fatal. Existing effect refusals and failures remain enforced; ordinary Python exceptions
+are not an escape route.
 
 ## Parallel execution and bounded repetition
 
@@ -1022,23 +1013,23 @@ Reuse the current type and its existing fields:
 Its normal structured serialization remains the inspection surface. The SDK
 objects are typed: contract references use existing contract-reference variants;
 `nodes` use node-kind variants over the graph contracts; dependencies, branch
-results, return paths, and pending checks have explicit records. Diagnostics'
-expected/actual values use typed contract/construct descriptions. Existing typed
+results and return paths have explicit records. Pending checks remain explanatory
+strings, and diagnostic messages describe the expected shape. Existing typed
 edge/provider maps remain maps. Do not fill new fixed-shape fields with `Any`
 dictionaries merely because their serialized preview is JSON.
 
-Proposed additional fields:
+Source inspection fields:
 
-| Field | Proposed content |
+| Field | Content |
 |---|---|
 | `source` | Authored text, source identity, diagnostic filename, selected source-language rule identifier. |
 | `source_map` | Node/expression identities mapped to `SourceSpan` values. Line numbers are locations, not persistent node identities. |
-| `state_dependencies` | Subject/predicate or named-query selections, parameter dependencies, admitted-context requirements, completeness/cardinality conditions. |
+| `state_dependencies` | Exact Subject/predicate or query selections, selector/parameter templates, cardinality and limits, and admitted-context requirements. |
 | `binding_requirements` | Every slot, kind, expected contract/effects, supplied selection or explicit unresolved status. |
-| `branch_values` | Conditions, producers, joins, selected output types, and any path on which a value is unavailable. |
+| `branch_values` | Guard predicates, branch successors, Select producers, and selected output contract pins. Unavailable value use is a diagnostic. |
 | `return_paths` | Reachable pure/capture/proposal/halt paths, output shape, required terminal capability. |
-| `children` | Exact child selections, contracts, state/authority/budget obligations when nested calls are present. |
-| `concurrency` | Proposed branch/join information only when the parallel contract is defined and supported. |
+| `children` | Exact child call selections and inherited authority/shared-budget obligations. Resolved child contracts appear in `binding_requirements`. |
+| Concurrency | Unsupported; no concurrency field or parallel runtime is implied. |
 
 Static errors and pending runtime checks are distinct. A provider not installed
 at execution time is not proved installed by a structurally valid blueprint.
@@ -1047,13 +1038,12 @@ validate at prepare, and what necessarily remains a runtime check.
 
 ### Extended `CompositionDiagnostic`
 
-Keep existing `step`, `code`, and `message`. Proposed additions:
+Keep existing `step`, `code`, and `message`. Source diagnostics add:
 
 | Field | Meaning |
 |---|---|
 | `span` | Narrowest useful source location of the problem. |
 | `related_spans` | Other relevant producers, consumers, assignments, or contract uses. |
-| `expected`, `actual` | Structured contract/shape or construct details where applicable. |
 | `hint` | A concrete supported expression or action, without suggesting arbitrary-code execution. |
 
 ### Errors by stage
@@ -1077,8 +1067,8 @@ Keep existing `step`, `code`, and `message`. Proposed additions:
 `preview()` reports static diagnostics. `build()` raises the existing
 `ProcedureCompositionError` with that preview on a static failure. Normal
 transport, authorization, and governed refusal handling stays as specified in
-the current SDK. Exact new diagnostic-code strings are not minted by this
-proposal; once published they must be stable public identifiers.
+the base SDK. Source diagnostic codes use the `playbill.source.*` namespace,
+including unsupported syntax, binding, contract, availability, and context errors.
 
 ## Source identity and review
 
@@ -1095,19 +1085,20 @@ source and explicit bindings must suffice for non-executing verification.
 
 A graph produced from Sequence or another authoring surface can have a canonical
 rendered source view. That view must be labeled as a rendering; it cannot claim
-to recover comments or the original source structure. The public accessor and
-source-storage encoding remain unsettled. Historical source and graphs retain
-their original verification rules.
+to recover comments or the original source structure. Accepted readiness includes the typed artifact; its `definition.source` holds
+the authored text, rule identifier, and exact resolved bindings. Historical
+source and graphs retain their original verification rules. Rendering original
+source from non-source graphs is not implemented.
 
 ## Complete examples
 
-These are complete behavioral scenarios for the proposed source frontend, not
-programs executable on today's SDK. They state the starting accepted state,
-every input/output schema, external binding, invocation lane, and expected
-effect. They do not bootstrap an empty instance or imply that governance and
-provider installation happen on import. Existing contract constructors in the
-setup can be validated today; source compilation and nested execution remain
-proposed.
+These scenarios use the implemented frontend. Each states its required accepted
+fixtures, external bindings, invocation lane, and expected effect. They do not
+bootstrap an empty instance or imply that governance and provider installation
+happen on import. The installed-provider integration test exercises web acquisition,
+registered capture, child invocation, parent proposal, and separate approval.
+Document conversion requires the installed provider's declared engine extras;
+heavy-engine execution is not part of that integration test.
 
 ### Accepted fixture and shared contracts
 
@@ -1207,14 +1198,14 @@ CAPS = ProcedureHardCapsV3(
 )
 ```
 
-The record constructors `.value(...)` used later are proposed extensions to
+The record constructors `.value(...)` are schema-derived extensions to
 these contract handles. The carried field declarations above are already real
 SDK types; their `fields` map is typed schema data, not an untyped value payload.
 
 Common source imports:
 
 ```python
-# PROPOSED module: not importable from today's SDK.
+# Source authoring intrinsics; the decorated body is never called as Python.
 from cruxible_client.authoring.source import (
     procedure,
     query,
@@ -1381,7 +1372,7 @@ conflict checks precede its use as the visible population count. No list
 iteration, invented aggregation provider, or custom `ExposureRow` is needed.
 
 ```python
-# After the query is accepted; PROPOSED binding/blueprint adapters.
+# After the query is accepted:
 bound_assessment = assess_asset.bind(
     open_exposures=pb.query_binding("security.open_exposures"),
 )
@@ -1454,7 +1445,7 @@ def observe_feed(request, bindings):
 ```
 
 ```python
-# Existing provider selection; PROPOSED typed blueprint binding.
+# Bind the accepted provider interface:
 bound_observer = observe_feed.bind(
     fetch=pb.provider_binding("web.fetch", provider="web"),
 )
@@ -1475,6 +1466,14 @@ Procedure, capture, provider, and instance policies. Capturing a feed does not
 parse its entries or author exposure Claims.
 
 ### Compare a feed observation with an accepted baseline
+
+**Known blocker:** compilation, exact `basis` binding, and child capture linkage
+are implemented. Positive governed derivation admission still needs a reducer
+policy decision: current rules whitelist the exact Procedure digest while that
+Procedure pins the ClaimType. Updating the allowlist changes the pinned type.
+The example below is the intended source shape, not a completed end-to-end
+acceptance recipe. Direct observation proposals work; a direct evidence rule
+correctly refuses this derivation. No manual digest workaround is supported.
 
 This connects state reads, an exact child binding, a successful capture, a
 comparison, and a governed proposal. The child was defined above; no unspecified
@@ -1566,7 +1565,8 @@ baseline or interpreting feed contents is outside this Procedure's purpose.
 This uses the existing `doc.to_markdown` provider interface. The caller really
 does supply a document: it is the artifact being transformed, not a hidden
 precomputed state conclusion. Its declared `source` input has a nested JSON
-schema; `document` and `derived` outputs are declared as open JSON objects.
+schema. Interface revision 3 additionally declares the fields of `document`
+and `derived`, including `derived.text`; revision 2 retains its original open schema.
 
 ```python
 @procedure(
@@ -1620,11 +1620,11 @@ if conversion_run.succeeded:
     print(conversion_run.result.derived)
 ```
 
-The current implementation returns converted Markdown and metadata in
-`derived`. The accepted interface only declares that field as an object, so the
-Procedure returns it intact. It must not pretend `derived.text` is a declared
-typed field without a more precise accepted interface schema. Ordinary host
-code may inspect the open JSON with the corresponding runtime checks.
+The example returns `document` and `derived` intact under its declared output
+contract. A Procedure bound to interface revision 3 may instead select
+`converted.derived.text` into a declared text output. Older accepted interfaces
+retain their original precision; an open JSON field does not acquire attributes
+from one successful response.
 
 A successful conversion returns a result and execution evidence. It does not
 register a capture, submit a Claim, or accept knowledge.
@@ -1646,26 +1646,22 @@ register a capture, submit a Claim, or accept knowledge.
 | `expected_format="xml"` | Invalid enum value under the selected `web.fetch` contract. |
 | Undeclared output field or missing required field | Localized constructor error against the Procedure output schema. |
 | Reading an open JSON member as a declared attribute | Schema precision diagnostic; no type inferred from one successful sample. |
-| Executing these examples today | Source API unavailable; no claim of source-compiler or nested-runtime validation. |
+| Execution | Source compilation and sequential nested execution are implemented; normal installation, admission, and governance remain required. |
 
 Parallel joins, arbitrary iteration, recursive invocation, and the unselected
 Transform/Repeat source forms are not made executable by these examples.
 
-## Unsettled API details
+## Reserved and unsupported forms
 
-The reference is explicit about what it cannot yet specify. These are missing
-public contract decisions, not an implementation work breakdown.
-
-| Area | Not yet specified |
+| Area | Boundary |
 |---|---|
-| Source serialization/access | Retained-source association field, source-storage encoding, and exact read accessor. The identity/review/verification requirements above are fixed in this proposal. |
-| Source declaration lookup | Exact accepted source packaging for interactive/non-file definitions. No fallback to daemon Python execution. |
-| Schema forms without typed source representation | Unsupported nested schema forms require explicit diagnostics. The existing schema remains authoritative; no handwritten replacement or `Any` fallback. Typed parameter constructors, row envelopes/projections, and conflict/count conveniences are specified above. |
-| Transform and Repeat syntax | Complete source forms for these existing node capabilities. Current graph/Sequence paths remain available as documented. |
-| Exact Claim `basis` lowering | Encoding that preserves selected Claim versions and dependency meaning using existing records where possible. |
-| Child outcome wrapper | Final status enum and nested receipt transport shape, including which failures are inspectable versus fatal. |
-| Parallel API | Join, cancellation, sibling failure, result availability, and concurrency-limit arguments/defaults. |
-| Diagnostics | Final stable code strings and serialized additions to preview/diagnostic models. |
+| Source declaration lookup | Definitions must have inspectable Python module source; interactive closures without source are refused. |
+| Schema precision | Unsupported schema forms receive localized diagnostics. Open JSON remains open JSON. |
+| Editor completion | World stubs exist; generated provider/Procedure record stubs remain future work. Runtime contract checking is implemented. |
+| Transform and Repeat syntax | Use the existing graph/Sequence forms. Arbitrary source loops are refused. |
+| Parallel execution | Reserved; join, cancellation, sibling failure, and concurrency policies are not implemented. |
+| Recursive invocation | Refused, including indirect cycles. Sequential acyclic child calls are supported. |
+| Original source rendering | Accepted source is retained; generating Python source from a non-source graph is not implemented. |
 
-Unsettled entries must not be advertised as available APIs. Unsupported source
-gets an explicit error and locality; it never gets an arbitrary-code escape hatch.
+Unsupported source reports a diagnostic and locality. It never falls back to
+executing arbitrary Python or an unregistered provider.
