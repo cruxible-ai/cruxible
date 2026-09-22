@@ -38,9 +38,8 @@ def test_init_and_explain_publish_their_protocol_enums() -> None:
     assert {"instance_id", "principals"} <= set(init["required"])
     assert init["properties"]["operating_profile"]["enum"] == ["local", "cloud"]
     assert init["properties"]["require_independent_approval"]["default"] is False
-    # Seed parity: MCP-first clients opt out of seeding exactly as CLI/HTTP/SDK do.
-    assert init["properties"]["seed"]["default"] is True
-    assert "seed" not in init["required"]
+    # Bootstrap no longer installs a seed implicitly; provider setup is separate.
+    assert "seed" not in init["properties"]
 
     explain = schemas["cruxible_playbill_explain"].inputSchema
     assert explain["properties"]["detail"]["enum"] == ["summary", "evidence", "proof"]
