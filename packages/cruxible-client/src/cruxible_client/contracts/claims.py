@@ -1615,6 +1615,31 @@ def claim_retirement_pin_digest_updates(
     )
 
 
+def claim_preserves_derivation(claim: ClaimArtifactAny, *, predecessor: ClaimArtifactAny) -> bool:
+    """Recognize existing succession/retirement deltas without a new computation.
+
+    Live admission uses this AFTER the Claim law passes. These exact machine
+    deltas preserve the assertion and its execution backing; a manually revised
+    result or new evidence must instead come from another Procedure execution.
+    """
+
+    return claim.identity == predecessor.identity and (
+        _is_claim_type_rederivation(
+            claim,
+            predecessor=predecessor,
+            claim_type_digest=claim.statement.claim_type_digest,
+            claim_type_identity=claim.statement.claim_type,
+        )
+        or _is_attributed_retirement(claim, predecessor=predecessor)
+        or _is_claim_type_attributed_retirement(
+            claim,
+            predecessor=predecessor,
+            claim_type_digest=claim.statement.claim_type_digest,
+            claim_type_identity=claim.statement.claim_type,
+        )
+    )
+
+
 def evaluate_claim_law(
     claim: ClaimArtifactAny,
     *,
@@ -2399,6 +2424,7 @@ __all__ = [
     "build_claim_citation",
     "claim_citation_id",
     "claim_citation_references",
+    "claim_preserves_derivation",
     "claim_retirement_pin_digest_updates",
     "claim_path",
     "claim_referent_context_digest",

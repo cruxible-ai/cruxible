@@ -157,11 +157,18 @@ class ProposalTerminalAdapter:
         )
         actor_id = request.actor_context.actor_id
         assert request.operation_key is not None  # request shape
+        # Bind permission to this execution's exact lowered outputs, not a flag
+        # that would authorize other Claims in the same candidate or on retry.
+        claim_outputs = {
+            path: candidate_tree[path]
+            for path in changed
+            if path.startswith("claims/") and path in candidate_tree
+        }
 
         def _authorize_at_head(
             current: AcceptedProjectionCoordinate,
             _head_tree: Mapping[str, bytes],
-        ) -> None:
+        ) -> Mapping[str, bytes]:
             # The mandate admission bound is re-established against the exact
             # coordinate the door evaluates at, inside the door's own read, so a
             # mandate retired since admission cannot author a new proposal and
@@ -170,6 +177,7 @@ class ProposalTerminalAdapter:
                 require_procedure_mandate_at_head(
                     request, admission=admission, projection=projection, delegation=delegation
                 )
+            return claim_outputs
 
         for attempt in range(HEAD_CONTENTION_ATTEMPTS):
             try:

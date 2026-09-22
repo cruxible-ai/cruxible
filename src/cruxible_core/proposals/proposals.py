@@ -102,6 +102,7 @@ from cruxible_client.contracts.claims import (
     LiteralClaimObject,
     SubjectClaimObject,
     claim_artifact_digest,
+    claim_preserves_derivation,
     claim_retirement_pin_digest_updates,
     claim_statement_address,
     claim_statement_digest,
@@ -4173,6 +4174,44 @@ class ProposalHeadMovedError(ProposalAdmissionError):
     """
 
 
+def _require_executed_derivations(
+    outcome: CandidateEvaluation,
+    *,
+    current_tree: Mapping[str, bytes],
+    authorized: Mapping[str, bytes],
+) -> None:
+    """Gate new execution claims at the live door, including raw and cached candidates.
+
+    The terminal's fresh mandate callback vouches for exact output bytes. Neither
+    a wire payload nor an operation-looking ref confers that authority. Historical
+    law evaluation remains frozen; untouched Claims and their mechanical retirement
+    or ClaimType succession do not assert a new execution.
+    """
+
+    if outcome.candidate is None:
+        return
+    for member in outcome.candidate.members:
+        path = member.path
+        if not path.startswith("claims/") or not path.endswith(".json"):
+            continue
+        content = outcome.tree.get(path)
+        previous = current_tree.get(path)
+        if content is None or content == previous:
+            continue
+        claim = parse_claim(content, path=path)
+        if claim.backing.reducer_digest is None:
+            continue
+        if previous is not None and claim_preserves_derivation(
+            claim, predecessor=parse_claim(previous, path=path)
+        ):
+            continue
+        if authorized.get(path) != content:
+            raise ProposalAdmissionError(
+                "playbill.authoring.derivation_requires_execution: "
+                f"{path} must be the exact output of an authorized Procedure terminal"
+            )
+
+
 class ProposalService:
     """Daemon-only PB-C proposal service; it never updates main or accepted state."""
 
@@ -4241,7 +4280,9 @@ class ProposalService:
         request: ProposalAdmissionRequest,
         candidate_tree: Mapping[str, bytes],
         timestamp: str,
-        authorize: Callable[[AcceptedProjectionCoordinate, Mapping[str, bytes]], None]
+        authorize: Callable[
+            [AcceptedProjectionCoordinate, Mapping[str, bytes]], Mapping[str, bytes] | None
+        ]
         | None = None,
         prepared: PreparedEvaluationScope | None = None,
     ) -> ProposalResult:
@@ -4257,6 +4298,10 @@ class ProposalService:
         coordinate is verified atomically with first publication, and
         contention raises `ProposalHeadMovedError` before any effect is
         committed so the caller can evaluate again or refuse.
+
+        Only a Procedure terminal's callback returns a path-to-bytes mapping of
+        its computed Claim outputs. Those exact bytes may introduce derivation
+        provenance; ordinary callers and callbacks returning None may not.
 
         `prepared` may reuse a same-call evaluation; it never replaces the
         fresh authorization callback or the publication head check.
@@ -4299,8 +4344,9 @@ class ProposalService:
                 "playbill.proposal.creator_principal_invalid: authenticated actor does not "
                 "resolve to an active Principal at the accepted coordinate"
             ) from exc
-        if authorize is not None:
-            authorize(current, current_tree)
+        authorized_derivations = (
+            {} if authorize is None else (authorize(current, current_tree) or {})
+        )
 
         # No rebase means both roles name the exact tree just read. Keep this
         # operation-local proof instead of transferring every blob a second time.
@@ -4355,6 +4401,9 @@ class ProposalService:
                 attestation_principal_provider=self.attestation_principal_provider,
                 accepted_referents_provider=self.accepted_referents_provider,
             )
+        _require_executed_derivations(
+            outcome, current_tree=current_tree, authorized=authorized_derivations
+        )
         # A refused proposal has no members to summarize, so it keeps the bare
         # subject the ledger has always written for it -- unless the author said
         # why they proposed it, which is still true of a set that did not pass.

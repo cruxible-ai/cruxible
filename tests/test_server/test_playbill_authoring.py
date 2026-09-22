@@ -26,6 +26,67 @@ COORDINATE = contracts.PlaybillAcceptedCoordinate(
 INTENT_ID = "AIT-" + "5" * 32
 
 
+def test_http_raw_intent_cannot_assert_procedure_execution(playbill_http):
+    from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+    from cruxible_client.contracts.authoring.models import (
+        ClaimAuthoringPayloadV3,
+        ClaimDependencyDraftsV1,
+        ClaimDerivationBindingV1,
+    )
+    from tests.test_authoring.test_authoring_preflight import _self_source_payload
+
+    client, instance_id, _private_key = playbill_http
+    original = _self_source_payload()
+    payload = ClaimAuthoringPayloadV3(
+        statement=original.statement.model_copy(update={"role": "derivation"}),
+        rationale="A raw caller cannot supply execution provenance.",
+        source=original.source,
+        dependency_drafts=ClaimDependencyDraftsV1(),
+        derivation=ClaimDerivationBindingV1(
+            procedure=ArtifactPin(
+                role="reducer",
+                target=ArtifactIdentity(kind="Procedure", name="unexecuted"),
+                artifact_digest="sha256:" + "1" * 64,
+            ),
+            inputs=(
+                ArtifactPin(
+                    role="input-claim",
+                    target=ArtifactIdentity(kind="Claim", name="CLM-" + "2" * 32),
+                    artifact_digest="sha256:" + "3" * 64,
+                ),
+            ),
+        ),
+    )
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/authoring/intents",
+        json={
+            "tag": "playbill-authoring-intent-create-request-v1",
+            "payload": payload.model_dump(mode="json"),
+        },
+    )
+    assert response.status_code == 200, response.text
+    intent_id = response.json()["intent"]["intent_id"]
+    compiled = client.post(
+        f"/api/v1/{instance_id}/playbill/authoring/compile",
+        json={
+            "tag": "playbill-authoring-intent-compile-request-v1",
+            "payload": payload.model_dump(mode="json"),
+            "intent_id": intent_id,
+        },
+    )
+    assert compiled.status_code == 200, compiled.text
+    assert compiled.json()["verdict"] == "refused"
+    assert "playbill.authoring.derivation_requires_execution" in {
+        item["code"] for item in compiled.json()["frontier"]["diagnostics"]
+    }
+    submitted = client.post(
+        f"/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/submit",
+        json={"tag": "playbill-authoring-intent-submit-request-v1"},
+    )
+    assert submitted.status_code == 200, submitted.text
+    assert submitted.json()["status"]["proposal_id"] is None
+
+
 def test_http_compile_and_submit_keep_the_frozen_request_boundary(
     playbill_http: tuple[TestClient, str, Path],
     monkeypatch,
@@ -382,6 +443,7 @@ def test_http_authoring_openapi_exposes_frozen_union_and_rejects_removed_brief_i
         "playbill-claim-type-v1",
         "playbill-claim-type-v3",
         "playbill-claim-type-v4",
+        "playbill-claim-type-v5",
     ]
 
     response = client.post(
@@ -457,12 +519,13 @@ def test_http_claim_type_lowering_returns_typed_nested_validation_refusal(
     claim_type_input["evidence_admission_policy"] = {
         "rules": [
             {
-                "rule_id": "derivational-without-reducer",
+                "rule_id": "obsolete-producer-allowlist",
                 "claim_roles": ["observation"],
                 "capture_contract_digests": ["sha256:" + "a" * 64],
                 "evidence_kinds": ["self_asserted"],
                 "admission": "derivational",
                 "subject_binding": "exact_claim_subject",
+                "allowed_reducer_digests": ["sha256:" + "b" * 64],
             }
         ]
     }
@@ -487,8 +550,8 @@ def test_http_claim_type_lowering_returns_typed_nested_validation_refusal(
     body = response.json()
     assert body["error_type"] == "ClaimTypeInputValidationError"
     assert body["error_code"] == "playbill.claim_type.input_invalid"
-    assert "$.evidence_admission_policy.rules[0]" in body["message"]
-    assert "derivational evidence requires at least one allowed reducer" in body["message"]
+    assert "$.rules[0].allowed_reducer_digests" in body["message"]
+    assert "Extra inputs are not permitted" in body["message"]
 
 
 def test_http_migration_domain_refusal_is_a_bad_request(

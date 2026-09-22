@@ -1,6 +1,6 @@
 # Cruxible Python SDK v2 reference
 
-**Status: implemented on the SDK v2 development branch, with the derivation-policy blocker noted below; not released or deployed.**
+**Status: implemented on the SDK v2 development branch; not released or deployed.**
 “v2” names the SDK surface, not a package release. The
 [base SDK reference](../packages/cruxible-client/README.md) covers connection,
 governance, discovery, and the existing composition frontend. This reference
@@ -805,7 +805,7 @@ claim_candidate(
 | `supported_by`, `copied_from`, `self_source` | Exactly one is required, as in existing host Claim authoring. No implicit source from the fact that a Procedure ran. |
 | `qualifier`, `effective_period` | Optional statement qualification and applicability period. |
 | `revises`, `dispositions` | Existing lineage and contender-handling meanings. Do not automatically supersede every earlier Claim. |
-| `basis` | Exact selected Claim dependencies used by this conclusion. Default empty; supplied Claims retain their exact versions. Positive derivational evidence admission has the policy blocker described in the comparison example. |
+| `basis` | Exact selected Claim dependencies used by this conclusion. Default empty; supplied Claims retain their exact versions. The executing Procedure binds derivation provenance when its authorized terminal proposes the candidate. |
 
 **Returns:** a symbolic candidate description; it has not been submitted,
 approved, or accepted. It is consumed by `propose_change_set`.
@@ -1478,6 +1478,10 @@ contains no producer allowlist. The existing Procedure mandate authorizes the
 exact producer, actor, lane, and proposal scope, and ordinary governed approval
 controls acceptance. A direct-only evidence rule still refuses a derivation.
 Names and typed handles remain the authoring inputs; Core resolves every digest.
+Ordinary authoring, including raw payloads and manual revisions, cannot assert
+Procedure execution. The proposal door requires the exact output bytes from the
+authorized terminal. Mechanical retirement and ClaimType succession preserve
+existing provenance without claiming a new computation.
 
 This connects state reads, an exact child binding, a successful capture, a
 comparison, and a governed proposal. The child was defined above; no unspecified

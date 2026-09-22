@@ -46,6 +46,7 @@ from cruxible_core.claims.claim_type_migrations import (
     service_migrate_claim_type,
 )
 from cruxible_core.proposals.proposals import AuthenticatedActor, evaluate_proposal_tree
+from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
@@ -147,6 +148,49 @@ def _derivation_capable(authoring, *, value: str | None = None):  # type: ignore
     )
 
 
+def _accept_historical_derivation_tree(instance, tree):  # type: ignore[no-untyped-def]
+    """Seed old signed history under frozen laws, not today's live submission gate.
+
+    These retirement fixtures deliberately contain legacy, asserted reducer
+    digests. New submissions may no longer create those assertions. Retirement
+    and replay must still work on records accepted before that gate existed.
+    """
+
+    base = instance.accepted_coordinate()
+    current_tree = instance.tree_at(base.git_oid)
+    outcome = evaluate_proposal_tree(
+        base_tree=current_tree,
+        current_tree=current_tree,
+        proposed_tree=tree,
+        current=base,
+        bodies=instance.body_store(),
+        timestamp=TIMESTAMP,
+        rebased=False,
+        actor_id="owner",
+    )
+    candidate = outcome.candidate
+    assert candidate is not None, outcome.diagnostics
+    bundle = instance.prepare_generation(
+        base=base,
+        candidate_tree=outcome.tree,
+        candidate=candidate,
+        approvals=(
+            _sign(
+                client_material(instance.root.parent, instance),
+                candidate.candidate_digest,
+                base.semantic_root,
+            ),
+        ),
+        actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
+        sequence=instance.accepted_history()[-1].sequence + 1,
+    )
+    publisher = instance.activation_publisher()
+    projection = publisher.prebuild(bundle, base=base)
+    assert publisher.activate(bundle, projection, base=base).status == "accepted"
+    instance.refresh()
+
+
 def _accepted_dependency_world(tmp_path: Path):  # type: ignore[no-untyped-def]
     """Accept root -> middle -> leaf using historical inputs and a Claim pin."""
 
@@ -195,13 +239,7 @@ def _accepted_dependency_world(tmp_path: Path):  # type: ignore[no-untyped-def]
         }
     )
     tree[middle_path] = render_claim(middle)
-    _accept_tree(
-        instance,
-        owner,
-        tree,
-        timestamp=TIMESTAMP,
-        proposal_name="retirement-chain-middle",
-    )
+    _accept_historical_derivation_tree(instance, tree)
 
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     middle = parse_claim(tree[middle_path], path=middle_path)
@@ -238,13 +276,7 @@ def _accepted_dependency_world(tmp_path: Path):  # type: ignore[no-untyped-def]
         }
     )
     tree[leaf_path] = render_claim(leaf)
-    _accept_tree(
-        instance,
-        owner,
-        tree,
-        timestamp=TIMESTAMP,
-        proposal_name="retirement-chain-leaf",
-    )
+    _accept_historical_derivation_tree(instance, tree)
 
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     root = parse_claim(tree[claim_path(STATUS_CLAIM_ID)], path=claim_path(STATUS_CLAIM_ID))
@@ -751,13 +783,7 @@ def test_terminal_replay_uses_only_the_original_retirement_changeset(
             }
         )
         tree[claim_path(leaf_id)] = render_claim(legacy_leaf)
-        _accept_tree(
-            instance,
-            owner,
-            tree,
-            timestamp=TIMESTAMP,
-            proposal_name="legacy-retire-leaf",
-        )
+        _accept_historical_derivation_tree(instance, tree)
 
     middle_request = _request(instance, mode="submit")
     middle_result = service_retire_claim(

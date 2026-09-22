@@ -788,6 +788,7 @@ def _lower_claim(
     payload: ClaimAuthoringPayloadV1 | None = None,
     claim_identity: str | None = None,
     claim_index: _ClaimPredicateIndex | None = None,
+    derivation_procedure: ArtifactPin | None = None,
 ) -> LoweredAuthoring:
     """Lower one authored Claim against the tree it is being written onto.
 
@@ -801,6 +802,22 @@ def _lower_claim(
     authored = intent.payload if payload is None else payload
     assert isinstance(authored, ClaimAuthoringPayloadV1)
     payload = authored
+    derivation = payload.derivation if isinstance(payload, ClaimAuthoringPayloadV3) else None
+    if payload.statement.role == "derivation" or derivation is not None:
+        if (
+            derivation is None
+            or derivation_procedure is None
+            or derivation.procedure.target != derivation_procedure.target
+            or derivation.procedure.artifact_digest != derivation_procedure.artifact_digest
+        ):
+            _refuse(
+                "playbill.authoring.derivation_requires_execution",
+                "derivation",
+                "Derived Claims must be produced by the executing Procedure's proposal "
+                "terminal; ordinary authoring cannot assert or carry execution provenance.",
+                repair_kind="run_procedure",
+                repair_description="Run the authorized Procedure to propose this derivation.",
+            )
     claim_id = intent.semantic_identity if claim_identity is None else claim_identity
     type_path = claim_type_path(payload.statement.predicate)
     candidate_base_tree, dependency_paths = _install_claim_dependencies(
@@ -1211,7 +1228,6 @@ def _lower_claim(
                 artifact_digest=object_referent[1],
             )
         )
-    derivation = payload.derivation if isinstance(payload, ClaimAuthoringPayloadV3) else None
     if derivation is not None:
         try:
             if statement.role != "derivation":
@@ -1255,15 +1271,9 @@ def _lower_claim(
                 tuple(sorted(pin.artifact_digest for pin in derivation.inputs))
                 if derivation is not None
                 else ()
-                if predecessor is None
-                else predecessor.backing.input_claim_digests
             ),
             reducer_digest=(
-                derivation.procedure.artifact_digest
-                if derivation is not None
-                else None
-                if predecessor is None
-                else predecessor.backing.reducer_digest
+                derivation.procedure.artifact_digest if derivation is not None else None
             ),
             source_mappings=_merge_mappings(
                 () if predecessor is None else predecessor.backing.source_mappings,
@@ -2456,6 +2466,7 @@ def _lower_change_set(
     actor_id: str,
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
+    derivation_procedure: ArtifactPin | None = None,
 ) -> LoweredAuthoring:
     payload = intent.payload
     assert isinstance(payload, ChangeSetAuthoringPayloadV1)
@@ -2556,6 +2567,7 @@ def _lower_change_set(
                         candidate_identities=candidate_identities,
                         candidate_paths=candidate_paths,
                         re_author_siblings=re_author_siblings.get(index, {}),
+                        derivation_procedure=derivation_procedure,
                     )
                 except AuthoringLoweringError as error:
                     raise _rescope_member_error(
@@ -2633,6 +2645,7 @@ def _stage_change_set_member(
     candidate_identities: frozenset[str],
     candidate_paths: tuple[str, ...],
     re_author_siblings: Mapping[str, int],
+    derivation_procedure: ArtifactPin | None = None,
 ) -> StagedMember:
     """Write one member into the staged tree and report what it resolved to."""
 
@@ -2647,6 +2660,7 @@ def _stage_change_set_member(
             payload=member,
             claim_identity=claim_id,
             claim_index=claim_index,
+            derivation_procedure=derivation_procedure,
         )
         member_resolved = dict(lowered.resolved_authoring)
         member_resolved["claim_id"] = claim_id
@@ -3224,8 +3238,14 @@ def lower_authoring(
     *,
     intent: AuthoringIntentV1,
     actor_id: str,
+    derivation_procedure: ArtifactPin | None = None,
 ) -> LoweredAuthoring:
-    """Resolve one intent against its immutable base without submitting anything."""
+    """Resolve one intent against its immutable base without submitting anything.
+
+    Only the Procedure terminal supplies `derivation_procedure`, from the actual
+    run. It is not a wire field or inferred from the intent's ID or payload.
+    Proposal admission separately checks authority over the exact lowered bytes.
+    """
 
     base = instance.resolve_accepted_coordinate(
         git_oid=intent.base_coordinate.git_oid,
@@ -3240,6 +3260,7 @@ def lower_authoring(
             actor_id=actor_id,
             base=base,
             base_tree=base_tree,
+            derivation_procedure=derivation_procedure,
         )
     if isinstance(intent.payload, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
         return _lower_procedure(instance, intent=intent, base=base, base_tree=base_tree)
@@ -3268,6 +3289,7 @@ def lower_authoring(
             actor_id=actor_id,
             base=base,
             base_tree=base_tree,
+            derivation_procedure=derivation_procedure,
         )
     if isinstance(intent.payload, LineAuthoringPayloadV1):
         path, content, digest = _render_line_member(intent.payload, tree=base_tree)

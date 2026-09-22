@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
+from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.authoring.models import (
     AUTHORING_CHANGE_SET_MEMBERSHIP_DIGEST_DOMAIN,
     AuthoringIntentV1,
@@ -393,7 +394,17 @@ class ProposalTerminalEgressSink:
         if evidence is None:
             evidence = evidence_by_item(request, manifests or {})
         else:
-            missing = [item.item_key for item in request.items if item.item_key not in evidence]
+            # Self-source items retain their body in the request, not a selected
+            # Capture. Recovery must use the same rule as evidence_by_item.
+            missing = [
+                egress_item.item_key
+                for egress_item, item in zip(request.items, items, strict=True)
+                if egress_item.item_key not in evidence
+                and not (
+                    isinstance(item, ProcedureClaimProposalItemV2)
+                    and isinstance(item.source, SelfSourceBodyV1)
+                )
+            ]
             if missing:
                 raise ProposalDeliveryRefused(
                     "proposal_item_evidence_missing",
@@ -436,6 +447,11 @@ class ProposalTerminalEgressSink:
                 self.instance,
                 intent=intent,
                 actor_id=request.actor_context.actor_id,
+                derivation_procedure=ArtifactPin(
+                    role="reducer",
+                    target=request.procedure_identity,
+                    artifact_digest=request.procedure_artifact_digest,
+                ),
             )
         except AuthoringLoweringError as exc:
             raise ProposalDeliveryRefused(
