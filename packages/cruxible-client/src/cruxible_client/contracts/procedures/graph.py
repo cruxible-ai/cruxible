@@ -14,24 +14,29 @@ from cruxible_client.contracts.procedures.models import (
     TERMINAL_NODE_KINDS,
     TERMINAL_REQUIRED_RUNGS,
     CaptureEgressNodeV3,
+    CaptureEgressNodeV6,
+    ClaimTapNodeV6,
+    ConstantNodeV6,
     GuardNodeV3,
     InboxEgressNodeV3,
     MandateSettlementNodeV3,
     ProcedureDefinitionAny,
     ProcedureDefinitionV3,
     ProcedureDefinitionV4,
-    ProcedureNodeV3,
-    ProcedureNodeV4,
+    ProcedureNodeAny,
     ProcedurePinSlotRefV1,
     ProjectNodeV3,
     ProposeChangeSetNodeV3,
+    ProposeChangeSetNodeV6,
     ProviderNodeV3,
     ProviderNodeV4,
     RepeatNodeV3,
     RepeatNodeV4,
+    SelectNodeV6,
     SourceNodeV3,
     SourceNodeV4,
     StateTapNodeV3,
+    StateTapNodeV6,
     TransformNodeV3,
     iter_pin_bindings,
 )
@@ -69,7 +74,7 @@ ProcedureGraphV4 = ProcedureGraphV3
 ProcedureNodeDigestsV4 = ProcedureNodeDigestsV3
 
 
-def _declared_edges(node: ProcedureNodeV3 | ProcedureNodeV4) -> dict[str, str]:
+def _declared_edges(node: ProcedureNodeAny) -> dict[str, str]:
     if isinstance(node, GuardNodeV3):
         edges: dict[str, str] = {"on_false": node.on_false}
         if node.on_true is not None:
@@ -79,7 +84,7 @@ def _declared_edges(node: ProcedureNodeV3 | ProcedureNodeV4) -> dict[str, str]:
     return {} if target is None else {"next": str(target)}
 
 
-def _node_alias(node: ProcedureNodeV3 | ProcedureNodeV4) -> str | None:
+def _node_alias(node: ProcedureNodeAny) -> str | None:
     value = getattr(node, "as_", None)
     return value if isinstance(value, str) else None
 
@@ -93,11 +98,17 @@ def _successors(edges: dict[str, str]) -> tuple[str, ...]:
 
 
 def _reference_templates(
-    node: ProcedureNodeV3 | ProcedureNodeV4,
+    node: ProcedureNodeAny,
 ) -> Iterator[tuple[str, object]]:
     """Yield only fields whose values the v3 runtime resolves as references."""
 
-    if isinstance(node, StateTapNodeV3):
+    if isinstance(node, ConstantNodeV6):
+        return
+    if isinstance(node, CaptureEgressNodeV6 | ProposeChangeSetNodeV6):
+        yield "result", node.result
+    if isinstance(node, ClaimTapNodeV6):
+        yield "subject_id", node.subject_id
+    elif isinstance(node, StateTapNodeV3):
         yield "parameters", node.parameters
     elif isinstance(node, SourceNodeV3 | SourceNodeV4):
         yield "request", node.request
@@ -185,7 +196,7 @@ def _alias_dataflow(
 
 
 def _validate_node_references(
-    node: ProcedureNodeV3 | ProcedureNodeV4,
+    node: ProcedureNodeAny,
     *,
     available: frozenset[str],
 ) -> None:
@@ -317,8 +328,49 @@ def _analyze_procedure(definition: ProcedureDefinitionAny) -> ProcedureGraphV3:
         predecessors=predecessors,
     )
 
+    # A select may read branch-local aliases only if EVERY path produces
+    # exactly one of them. Min/max counts over the DAG prove this in O(V + E)
+    # per join, without enumerating exponentially many paths.
+    for node in definition.nodes:
+        if not isinstance(node, SelectNodeV6):
+            continue
+        if not set(node.sources).issubset(reachable_aliases[node.node_id]):
+            raise ProcedureGraphFormatError("select names a producer outside its incoming paths")
+        producers = {
+            _node_alias(candidate): candidate
+            for candidate in definition.nodes
+            if _node_alias(candidate) in node.sources
+        }
+        if any(
+            getattr(producer, "contract_out", None) != node.contract_out
+            for producer in producers.values()
+        ):
+            raise ProcedureGraphFormatError("select producers must share its exact output contract")
+        counts: dict[str, tuple[int, int]] = {}
+        for candidate in definition.nodes:
+            before = [counts[pred] for pred in predecessors[candidate.node_id]] or [(0, 0)]
+            low, high = min(v[0] for v in before), max(v[1] for v in before)
+            if candidate.node_id == node.node_id:
+                if (low, high) != (1, 1):
+                    raise ProcedureGraphFormatError(
+                        "select requires exactly one producer on every incoming path"
+                    )
+                break
+            produced_here = int(_node_alias(candidate) in node.sources)
+            counts[candidate.node_id] = (low + produced_here, high + produced_here)
+
+    alias_nodes = {_node_alias(node): node for node in definition.nodes if _node_alias(node)}
     for node in definition.nodes:
         _validate_node_references(node, available=available[node.node_id])
+        if isinstance(node, StateTapNodeV6 | ClaimTapNodeV6):
+            for location, template in _reference_templates(node):
+                for alias in _step_alias_references(template, location=location):
+                    if not isinstance(
+                        alias_nodes[alias], StateTapNodeV6 | ClaimTapNodeV6 | ConstantNodeV6
+                    ):
+                        raise ProcedureGraphFormatError(
+                            "admission selectors cannot depend on runtime output"
+                        )
 
     for node in definition.nodes:
         if edges[node.node_id]:
@@ -354,7 +406,7 @@ def analyze_procedure_v4(definition: ProcedureDefinitionV4) -> ProcedureGraphV4:
     return _analyze_procedure(definition)
 
 
-def _node_local_payload(node: ProcedureNodeV3 | ProcedureNodeV4) -> dict[str, object]:
+def _node_local_payload(node: ProcedureNodeAny) -> dict[str, object]:
     payload = node.model_dump(mode="json", by_alias=True)
     payload.pop("node_id")
     payload.pop("next", None)

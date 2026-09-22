@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from cruxible_client.contracts.canonical import ArtifactDigest, CasDigest, Sha256Value, typed_digest
 from cruxible_client.contracts.procedures.models import (
+    ClaimTapNodeV6,
     ExhaustTapNodeV3,
     SourceNodeV3,
     SourceNodeV4,
@@ -87,6 +88,33 @@ class AcceptedStateRunInputV2(_StrictInputModel):
         return value
 
 
+class AcceptedClaimRunInputV1(_StrictInputModel):
+    tag: Literal["playbill-accepted-claim-run-input-v1"] = "playbill-accepted-claim-run-input-v1"
+    kind: Literal["accepted_claim"] = "accepted_claim"
+    input_name: str
+    read_coordinate: SemanticReadCoordinateV1
+    claim_type_digest: str
+    parameters_digest: str
+    result_digest: str
+    effective_query_budgets: QueryBudgetsV1
+    material_body_digest: str
+
+    _claim_type = field_validator("claim_type_digest")(_artifact_digest)
+    _payloads = field_validator("parameters_digest", "result_digest")(_sha256)
+    _material = field_validator("material_body_digest")(AcceptedStateRunInputV2._material)
+    _name = field_validator("input_name")(AcceptedStateRunInputV2._input_name)
+
+
+def accepted_read_definition_digest(
+    value: AcceptedStateRunInputV1 | AcceptedStateRunInputV2 | AcceptedClaimRunInputV1,
+) -> str:
+    return (
+        value.claim_type_digest
+        if isinstance(value, AcceptedClaimRunInputV1)
+        else value.query_definition_digest
+    )
+
+
 class LandedCaptureRunInputV1(_StrictInputModel):
     tag: Literal["playbill-landed-capture-run-input-v1"] = "playbill-landed-capture-run-input-v1"
     kind: Literal["landed_capture"] = "landed_capture"
@@ -127,13 +155,18 @@ class ExhaustRunInputV1(_StrictInputModel):
 
 
 ProcedureRunInputV1 = Annotated[
-    AcceptedStateRunInputV1 | AcceptedStateRunInputV2 | LandedCaptureRunInputV1 | ExhaustRunInputV1,
+    AcceptedStateRunInputV1
+    | AcceptedStateRunInputV2
+    | AcceptedClaimRunInputV1
+    | LandedCaptureRunInputV1
+    | ExhaustRunInputV1,
     Field(discriminator="kind"),
 ]
 
 
 _PLANE_FOR_NODE: dict[str, str] = {
     "state_tap": "accepted_state",
+    "state_claim": "accepted_state",
     "source": "landed_capture",
     "exhaust_tap": "exhaust",
 }
@@ -141,6 +174,7 @@ _PLANE_FOR_NODE: dict[str, str] = {
 _PLANE_DIGEST_DOMAINS: dict[str, str] = {
     "accepted_state": "playbill-accepted-state-run-input-v1",
     "accepted_state_v2": "playbill-accepted-state-run-input-v2",
+    "accepted_claim": "playbill-accepted-claim-run-input-v1",
     "landed_capture": "playbill-landed-capture-run-input-v1",
     "exhaust": "playbill-exhaust-run-input-v1",
 }
@@ -180,7 +214,9 @@ def validate_run_input_vector(
     if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
         raise ValueError("Procedure run inputs must be sorted and unique by input_name")
     for item in inputs:
-        if isinstance(item, AcceptedStateRunInputV1 | AcceptedStateRunInputV2):
+        if isinstance(
+            item, AcceptedStateRunInputV1 | AcceptedStateRunInputV2 | AcceptedClaimRunInputV1
+        ):
             validate_local_read_coordinate(
                 item.read_coordinate,
                 expected_accepted=expected_accepted,
@@ -199,13 +235,17 @@ def validate_run_input_vector(
 
 
 def validate_node_input_plane(
-    node: StateTapNodeV3 | SourceNodeV3 | SourceNodeV4 | ExhaustTapNodeV3,
+    node: ClaimTapNodeV6 | StateTapNodeV3 | SourceNodeV3 | SourceNodeV4 | ExhaustTapNodeV3,
     run_input: ProcedureRunInputV1,
 ) -> None:
     """Refuse any attempt to relabel evidence between the three input planes."""
 
     expected = _PLANE_FOR_NODE[node.kind]
-    actual = "accepted_state" if run_input.kind == "accepted_state_v2" else run_input.kind
+    actual = (
+        "accepted_state"
+        if run_input.kind in {"accepted_state_v2", "accepted_claim"}
+        else run_input.kind
+    )
     if actual != expected:
         raise ValueError(
             f"Procedure node {node.node_id!r} requires {expected!r}, got {run_input.kind!r}"
@@ -213,7 +253,7 @@ def validate_node_input_plane(
 
 
 def node_input_plane(
-    node: StateTapNodeV3 | SourceNodeV3 | SourceNodeV4 | ExhaustTapNodeV3,
+    node: ClaimTapNodeV6 | StateTapNodeV3 | SourceNodeV3 | SourceNodeV4 | ExhaustTapNodeV3,
 ) -> str:
     """Return the one plane a graph input node may ever read."""
 

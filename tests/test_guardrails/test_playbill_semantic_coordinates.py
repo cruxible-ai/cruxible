@@ -52,6 +52,8 @@ from cruxible_client.contracts.laws import (
     QUERY_DEFINITION_V2_ACCEPTANCE_LAW,
     RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
     RESOURCE_BUDGET_UPGRADE_LAW,
+    SDK_SOURCE_PROCEDURE_LAW,
+    SDK_SOURCE_UPGRADE_LAW,
     SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW,
     STANDING_MANDATE_ACCEPTANCE_LAW,
     SUBJECT_ACCEPTANCE_LAW,
@@ -74,6 +76,7 @@ from cruxible_core.compiler.compiler import (
     PROVIDER_PACKAGE_COMPILER,
     RESOLUTION_COMPILER,
     RESOURCE_BUDGET_COMPILER,
+    SDK_SOURCE_COMPILER,
     SUPPORTED_COMPILERS,
     UPGRADE_COMPILER,
     candidate_card_renderer_digest_for_compiler,
@@ -301,6 +304,20 @@ HISTORICAL_LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],
     ...,
 ] = (
+    (
+        SDK_SOURCE_PROCEDURE_LAW,
+        "playbill.procedure.v2",
+        "playbill-procedure-v2",
+        8,
+        "sha256:9b3678d159c57032a9ccc8d54f5af8cd765b079298a1cba56f35b81242086d40",
+    ),
+    (
+        SDK_SOURCE_UPGRADE_LAW,
+        "playbill.compiler-upgrade.v1",
+        "playbill-compiler-upgrade-v1",
+        5,
+        "sha256:0f7ecfec34dab4f0ebdf6ec7f3ebff50dfd11c220033e1cb779c361f56838994",
+    ),
     (
         RESOURCE_BUDGET_UPGRADE_LAW,
         "playbill.compiler-upgrade.v1",
@@ -549,7 +566,11 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
         RESOURCE_BUDGET_COMPILER.rule_digest
         == "sha256:1498eb0f56d995753d3db504723d14eabdc6b4cdc66832c613b31a755645a098"
     )
-    assert current_compiler_coordinate() == RESOURCE_BUDGET_COMPILER
+    assert (
+        SDK_SOURCE_COMPILER.rule_digest
+        == "sha256:ccaf2bbe59d12bf76465774f869c017084343c64adc23573f694008a8051382d"
+    )
+    assert current_compiler_coordinate() == SDK_SOURCE_COMPILER
     assert P2_B4_COMPILER in SUPPORTED_COMPILERS
     assert P2_B4_UNIT2_COMPILER in SUPPORTED_COMPILERS
     # The renderer resolves from the current coordinate itself, so cards derive
@@ -571,7 +592,7 @@ def test_succeeding_the_semantic_revision_keeps_candidate_cards_deriving(
     """
 
     source = Path(compiler_module.__file__).read_text(encoding="utf-8")
-    current_revision = 26
+    current_revision = 27
     anchor = "\n    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,\n"
     bumped = source.replace(
         f"    semantic_revision={current_revision},{anchor}",
@@ -662,12 +683,13 @@ def test_installed_compiler_revision_labels_are_exact_and_complete() -> None:
         "provider-operation-contracts-v1",
         "provider-package-registration-v1",
         "bounded-resource-budgets-v1",
+        "typed-procedure-source-v1",
     )
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "bounded-resource-budgets-v1"
+    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "typed-procedure-source-v1"
 
 
 def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
-    """The September 19 bounded-limit ruling admits resource budgets as revision 26.
+    """The September 21 SDK v2 ruling admits typed source graphs as revision 27.
 
     Historical admission bytes and compiler rules remain unchanged.
     """
@@ -677,5 +699,5 @@ def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
         current_compiler_coordinate,
     )
 
-    assert len(COMPILER_REVISION_LABELS) == 25
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "bounded-resource-budgets-v1"
+    assert len(COMPILER_REVISION_LABELS) == 26
+    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "typed-procedure-source-v1"

@@ -63,6 +63,9 @@ from cruxible_client.contracts.procedures.line_specs import (
 from cruxible_client.contracts.procedures.models import (
     TERMINAL_REQUIRED_RUNGS,
     CaptureEgressNodeV3,
+    CaptureEgressNodeV6,
+    ClaimTapNodeV6,
+    ConstantNodeV6,
     ExhaustTapNodeV3,
     GuardNodeV3,
     GuardPredicateV1,
@@ -75,15 +78,19 @@ from cruxible_client.contracts.procedures.models import (
     ProcedurePinSlotRefV1,
     ProjectNodeV3,
     ProposeChangeSetNodeV3,
+    ProposeChangeSetNodeV6,
     ProviderNodeV3,
     ProviderNodeV4,
     RepeatBodyNodeV3,
     RepeatBodyNodeV4,
     RepeatNodeV3,
     RepeatNodeV4,
+    ReturnNodeV6,
+    SelectNodeV6,
     SourceNodeV3,
     SourceNodeV4,
     StateTapNodeV3,
+    StateTapNodeV6,
     TransformNodeV3,
     iter_pin_bindings,
 )
@@ -176,11 +183,13 @@ from cruxible_core.procedures.egress import (
     verify_terminal_egress_receipt,
 )
 from cruxible_core.procedures.input_planes import (
+    AcceptedClaimRunInputV1,
     AcceptedStateRunInputV1,
     AcceptedStateRunInputV2,
     ExhaustRunInputV1,
     LandedCaptureRunInputV1,
     ProcedureRunInputV1,
+    accepted_read_definition_digest,
     merge_run_input_vector,
     run_input_digest,
     validate_node_input_plane,
@@ -333,7 +342,7 @@ class AcceptedStateRunMaterialV2(_StrictExecutionModel):
     tag: Literal["playbill-accepted-state-run-material-v2"] = (
         "playbill-accepted-state-run-material-v2"
     )
-    input: AcceptedStateRunInputV2
+    input: AcceptedStateRunInputV2 | AcceptedClaimRunInputV1
     value: object
 
     @field_validator("value", mode="before")
@@ -574,7 +583,7 @@ class ProcedureRunAdmissionV1(_StrictExecutionModel):
 
 class ProcedureRunAdmissionV2(ProcedureRunAdmissionV1):
     tag: Literal["playbill-procedure-run-admission-v2"] = "playbill-procedure-run-admission-v2"  # type: ignore[assignment]
-    accepted_state_inputs: tuple[AcceptedStateRunInputV2, ...]  # type: ignore[assignment]
+    accepted_state_inputs: tuple[AcceptedStateRunInputV2 | AcceptedClaimRunInputV1, ...]  # type: ignore[assignment]
     bound_coordinate: AcceptedCoordinate
     head_at_admission: AcceptedCoordinate
     lane: Literal["current", "replay"]
@@ -1138,6 +1147,16 @@ class StateTapReaderProtocol(Protocol):
         coordinate: AcceptedCoordinate,
     ) -> StateTapReadResultV1: ...
 
+    def read_accepted_claim(
+        self,
+        *,
+        claim_type: ArtifactPin,
+        subject_kind: str,
+        subject_id: str,
+        cardinality: Literal["one", "all"],
+        coordinate: AcceptedCoordinate,
+    ) -> StateTapReadResultV1: ...
+
 
 class ProviderExecutorProtocol(Protocol):
     def execute_provider(
@@ -1243,22 +1262,30 @@ def procedure_pin_set_digest(
 def procedure_replay_input_projection(
     run_input: ProcedureRunInputV1,
 ) -> ProcedureReplayInputProjectionV1:
-    if isinstance(run_input, AcceptedStateRunInputV1 | AcceptedStateRunInputV2):
+    if isinstance(
+        run_input, AcceptedStateRunInputV1 | AcceptedStateRunInputV2 | AcceptedClaimRunInputV1
+    ):
         provenance = {
             "plane": "accepted_state",
-            "query_definition_digest": run_input.query_definition_digest,
+            (
+                "claim_type_digest"
+                if isinstance(run_input, AcceptedClaimRunInputV1)
+                else "query_definition_digest"
+            ): accepted_read_definition_digest(run_input),
             "parameters_digest": run_input.parameters_digest,
             "read_coordinate": run_input.read_coordinate.model_dump(mode="json"),
             "effective_query_budgets": (
                 run_input.effective_query_budgets.model_dump(mode="json")
-                if isinstance(run_input, AcceptedStateRunInputV2)
+                if isinstance(run_input, AcceptedStateRunInputV2 | AcceptedClaimRunInputV1)
                 else None
             ),
         }
         return ProcedureReplayInputProjectionV1(
             input_name=run_input.input_name,
             plane="accepted_state",
-            kind="query_result",
+            kind="claim_selection"
+            if isinstance(run_input, AcceptedClaimRunInputV1)
+            else "query_result",
             value_or_body_digest=run_input.result_digest,
             provenance_digest=typed_digest(
                 Sha256Value,
@@ -1799,7 +1826,11 @@ def procedure_semantic_replay_key_digest(admission: ProcedureRunAdmissionV2) -> 
         {
             "input_name": item.input_name,
             "read_coordinate": item.read_coordinate.model_dump(mode="json"),
-            "query_definition_digest": item.query_definition_digest,
+            (
+                "claim_type_digest"
+                if isinstance(item, AcceptedClaimRunInputV1)
+                else "query_definition_digest"
+            ): accepted_read_definition_digest(item),
             "parameters_digest": item.parameters_digest,
             "result_digest": item.result_digest,
             "effective_query_budgets": item.effective_query_budgets.model_dump(mode="json"),
@@ -1940,12 +1971,53 @@ def accepted_procedure_pin_set_digest(accepted: AcceptedProcedureV1) -> str:
     return procedure_pin_set_digest(accepted.procedure.pins, _node_pin_sets(accepted))
 
 
+def state_tap_parameters(
+    node: StateTapNodeV3 | ClaimTapNodeV6,
+    *,
+    invocation_input: object,
+    values: dict[str, CanonicalValue],
+) -> CanonicalValue:
+    if isinstance(node, ClaimTapNodeV6):
+        return _resolve_template(
+            {
+                "subject_kind": node.subject_kind,
+                "subject_id": node.subject_id,
+                "cardinality": node.cardinality,
+            },
+            input_payload=normalize_canonical(invocation_input),
+            outputs=values,
+        )
+    if isinstance(node, StateTapNodeV6):
+        return _resolve_template(
+            node.parameters, input_payload=normalize_canonical(invocation_input), outputs=values
+        )
+    return normalize_canonical(node.parameters)
+
+
+def state_tap_view(node: StateTapNodeV3 | ClaimTapNodeV6, value: object) -> CanonicalValue:
+    if isinstance(node, StateTapNodeV6):
+        from cruxible_client.contracts.query.results import ClaimQueryResultV1
+
+        result = ClaimQueryResultV1.model_validate(value)
+        return normalize_canonical(
+            {
+                "result": value,
+                "completed": result.verdict == "completed",
+                "truncated": result.truncation.truncated,
+                "has_conflicts": bool(result.conflicts),
+            }
+        )
+    return normalize_canonical(value)
+
+
 def bind_accepted_state_materials(
     accepted: AcceptedProcedureV1,
     *,
     accepted_coordinate: AcceptedCoordinate,
     state_reader: StateTapReaderProtocol,
     bodies: ContentAddressedBodyStore,
+    invocation_input: object = None,
+    slot_pins: Mapping[str, ArtifactPin] | None = None,
 ) -> tuple[AcceptedStateRunMaterialV2, ...]:
     """Read and retain every accepted-state tap this run will observe.
 
@@ -1955,33 +2027,59 @@ def bind_accepted_state_materials(
     """
 
     materials: list[AcceptedStateRunMaterialV2] = []
+    values: dict[str, CanonicalValue] = {}
     for node in accepted.procedure.definition.nodes:
-        if not isinstance(node, StateTapNodeV3):
+        if isinstance(node, ConstantNodeV6):
+            values[node.as_] = normalize_canonical(node.fields)
+        if not isinstance(node, StateTapNodeV3 | ClaimTapNodeV6):
             continue
-        query = _exact_pin(node.query, label=f"state_tap {node.node_id!r}")
-        parameters = normalize_canonical(node.parameters)
+        binding = node.claim_type if isinstance(node, ClaimTapNodeV6) else node.query
+        query = resolve_procedure_pin(
+            binding, slot_pins=slot_pins, label=f"state read {node.node_id!r}"
+        )
+        parameters = state_tap_parameters(node, invocation_input=invocation_input, values=values)
         try:
-            read = state_reader.read_accepted_state(
-                query=query,
-                parameters=parameters,
-                coordinate=accepted_coordinate,
-            )
+            if isinstance(node, ClaimTapNodeV6):
+                assert isinstance(parameters, dict)
+                identity = parameters["subject_id"]
+                if not isinstance(identity, str):
+                    raise PlaybillExecutionError("Subject id must resolve to a string")
+                read = state_reader.read_accepted_claim(
+                    claim_type=query,
+                    subject_kind=node.subject_kind,
+                    subject_id=identity,
+                    cardinality=node.cardinality,
+                    coordinate=accepted_coordinate,
+                )
+            else:
+                read = state_reader.read_accepted_state(
+                    query=query, parameters=parameters, coordinate=accepted_coordinate
+                )
         except Exception as exc:
             raise ProcedureBoundaryRefused(
                 "state_tap_refused",
-                "The accepted-state reader refused the pinned query.",
-                details={"node_id": node.node_id, "query_digest": query.artifact_digest},
+                "The accepted-state reader refused this selection.",
+                details={"node_id": node.node_id, "reason": str(exc)},
             ) from exc
-        value = normalize_canonical(read.value)
+        value = state_tap_view(node, read.value)
+        values[node.as_] = value
         retained = bodies.store(canonical_bytes(value))
-        run_input = AcceptedStateRunInputV2(
+        common = dict(
             input_name=node.as_,
             read_coordinate=accepted_coordinate,
-            query_definition_digest=query.artifact_digest,
             parameters_digest=run_value_digest("state-parameters", parameters),
             result_digest=run_value_digest("state-result", value),
             effective_query_budgets=read.effective_budgets,
             material_body_digest=retained.digest,
+        )
+        run_input = (
+            AcceptedClaimRunInputV1.model_validate(
+                dict(common, claim_type_digest=query.artifact_digest)
+            )
+            if isinstance(node, ClaimTapNodeV6)
+            else AcceptedStateRunInputV2.model_validate(
+                dict(common, query_definition_digest=query.artifact_digest)
+            )
         )
         materials.append(AcceptedStateRunMaterialV2(input=run_input, value=value))
     materials.sort(key=lambda item: item.input.input_name.encode("utf-8"))
@@ -2020,6 +2118,7 @@ def prepare_direct_procedure_run(
             accepted_coordinate=accepted_coordinate,
             state_reader=state_reader,
             bodies=bodies,
+            invocation_input=invocation_input,
         )
     )
 
@@ -2359,7 +2458,7 @@ class ProcedureExecutor:
         accepted: AcceptedProcedureV1,
     ) -> ProcedureRunResultV1:
         admission = prepared.admission
-        self._verify_correspondence(admission, accepted)
+        self._verify_correspondence(admission, accepted, prepared.accepted_state_materials)
         try:
             existing_records = self.journal.all_records(
                 admission.journal_stream,
@@ -2770,7 +2869,7 @@ class ProcedureExecutor:
                 whole=frozenset(
                     {
                         accepted_state_token(digest),
-                        policy_token(accepted_state.input.query_definition_digest),
+                        policy_token(accepted_read_definition_digest(accepted_state.input)),
                     }
                 )
             )
@@ -2827,6 +2926,7 @@ class ProcedureExecutor:
         self,
         admission: ProcedureRunAdmissionV1,
         accepted: AcceptedProcedureV1,
+        state_materials: tuple[AcceptedStateRunMaterialV1 | AcceptedStateRunMaterialV2, ...],
     ) -> None:
         procedure = accepted.procedure
         if (
@@ -2886,13 +2986,31 @@ class ProcedureExecutor:
                     )
         self._verify_effective_rung(admission)
         self._verify_input_planes(admission, accepted)
+        retained_values = {
+            item.input.input_name: normalize_canonical(item.value) for item in state_materials
+        }
+        retained_values.update(
+            {
+                node.as_: normalize_canonical(node.fields)
+                for node in procedure.definition.nodes
+                if isinstance(node, ConstantNodeV6)
+            }
+        )
         expected_state_inputs = {
             node.as_: (
-                self._pin(node.query, label=f"state_tap {node.node_id!r}"),
-                run_value_digest("state-parameters", normalize_canonical(node.parameters)),
+                self._pin(
+                    node.claim_type if isinstance(node, ClaimTapNodeV6) else node.query,
+                    label=f"state read {node.node_id!r}",
+                ),
+                run_value_digest(
+                    "state-parameters",
+                    state_tap_parameters(
+                        node, invocation_input=admission.invocation_input, values=retained_values
+                    ),
+                ),
             )
             for node in procedure.definition.nodes
-            if isinstance(node, StateTapNodeV3)
+            if isinstance(node, StateTapNodeV3 | ClaimTapNodeV6)
         }
         actual_state_inputs = {item.input_name: item for item in admission.accepted_state_inputs}
         if set(actual_state_inputs) != set(expected_state_inputs):
@@ -2903,7 +3021,7 @@ class ProcedureExecutor:
         for name, (query, parameters_digest) in expected_state_inputs.items():
             actual = actual_state_inputs[name]
             if (
-                actual.query_definition_digest != query.artifact_digest
+                accepted_read_definition_digest(actual) != query.artifact_digest
                 or actual.parameters_digest != parameters_digest
                 or actual.read_coordinate != admission.accepted_coordinate
             ):
@@ -2948,7 +3066,10 @@ class ProcedureExecutor:
         nodes = {
             node.as_: node
             for node in accepted.procedure.definition.nodes
-            if isinstance(node, StateTapNodeV3 | SourceNodeV3 | SourceNodeV4 | ExhaustTapNodeV3)
+            if isinstance(
+                node,
+                ClaimTapNodeV6 | StateTapNodeV3 | SourceNodeV3 | SourceNodeV4 | ExhaustTapNodeV3,
+            )
         }
         for run_input in admission.run_inputs:
             node = nodes.get(run_input.input_name)
@@ -3140,7 +3261,18 @@ class ProcedureExecutor:
                 )
             if target is None:
                 try:
-                    result = state.outputs[definition.returns]
+                    if isinstance(node, ReturnNodeV6):
+                        result = state.outputs[node.as_]
+                    elif isinstance(node, CaptureEgressNodeV6 | ProposeChangeSetNodeV6):
+                        result = _resolve_node_template(
+                            node.result,
+                            node_id=node.node_id,
+                            transform_kind=None,
+                            input_payload=state.input_payload,
+                            outputs=state.outputs,
+                        )
+                    else:
+                        result = state.outputs[definition.returns]
                 except KeyError as exc:  # pragma: no cover - static law should prevent
                     raise PlaybillExecutionError("Procedure return alias was not produced") from exc
                 return_contract = self._pin(
@@ -3188,7 +3320,7 @@ class ProcedureExecutor:
         records: list[StoredProcedureJournalRecordV1],
         started_ns: int,
     ) -> Literal["on_true", "on_false"] | None:
-        if isinstance(node, StateTapNodeV3):
+        if isinstance(node, StateTapNodeV3 | ClaimTapNodeV6):
             if node.as_ not in state.outputs:
                 raise PlaybillExecutionError("admitted state_tap material is absent")
             self._extend_alias(state, node.as_, _node_policy_tokens(node) | state.control)
@@ -3269,13 +3401,28 @@ class ProcedureExecutor:
                 base=_base_tokens(node, state, declared_spec),
             )
             return None
-        if isinstance(node, ProjectNodeV3):
-            value = _resolve_node_template(
-                node.fields,
-                node_id=node.node_id,
-                transform_kind=None,
-                input_payload=state.input_payload,
-                outputs=state.outputs,
+        if isinstance(node, ProjectNodeV3 | SelectNodeV6):
+            if isinstance(node, SelectNodeV6):
+                present = [alias for alias in node.sources if alias in state.outputs]
+                if len(present) != 1:
+                    raise ProcedureBoundaryRefused(
+                        "compiler_invariant_broken",
+                        "A branch join must select exactly one available producer.",
+                        details={"node_id": node.node_id},
+                    )
+                fields: object = "$steps." + present[0]
+            else:
+                fields = node.fields
+            value = (
+                normalize_canonical(fields)
+                if isinstance(node, ConstantNodeV6)
+                else _resolve_node_template(
+                    fields,
+                    node_id=node.node_id,
+                    transform_kind=None,
+                    input_payload=state.input_payload,
+                    outputs=state.outputs,
+                )
             )
             contract = self._pin(node.contract_out, label=f"project {node.node_id!r} output")
             state.outputs[node.as_] = _validate_node_contract(
@@ -3287,10 +3434,11 @@ class ProcedureExecutor:
                 max_items=_effective_max_items(admission),
                 observe_items=state.observe_items,
             )
+            provenance_fields = {} if isinstance(node, ConstantNodeV6) else fields
             state.provenance[node.as_] = _projected_provenance(
-                node.fields,
+                provenance_fields,
                 state=state,
-                base=_base_tokens(node, state, node.fields),
+                base=_base_tokens(node, state, provenance_fields),
                 value=state.outputs[node.as_],
             )
             return None

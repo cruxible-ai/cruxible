@@ -72,7 +72,7 @@ class QueryDefinitionFormatError(PlaybillFormatError):
 
 
 class _StrictQueryDefinitionModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
 
 
 class QueryEvaluationPolicyV1(_StrictQueryDefinitionModel):

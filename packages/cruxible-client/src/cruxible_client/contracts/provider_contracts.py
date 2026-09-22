@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema
 
@@ -21,6 +21,13 @@ class ProviderOperationContractV1(BaseModel):
 
     input: ContractSchema
     output: ContractSchema | Literal["playbill-provider-result-to-external-capture-v1"]
+    material: ContractSchema | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def _material_schema(self) -> "ProviderOperationContractV1":
+        if self.material is not None and self.output != ACQUISITION_RESULT:
+            raise ValueError("Only an acquisition interface declares captured material")
+        return self
 
 
 def read_provider_operation_contract(interface_bytes_hex: str) -> ProviderOperationContractV1:
@@ -66,6 +73,16 @@ def validate_provider_value(
         parsed = ProviderResultToExternalCaptureV1.model_validate(payload)
         if canonical_bytes(parsed.model_dump(mode="json")) != canonical_bytes(payload):
             raise ValueError("Acquisition output must use the canonical Capture result encoding")
+        if contract.material is not None:
+            import base64
+
+            from cruxible_client.contracts.records import Record
+
+            content = base64.b64decode(parsed.content_base64, validate=True)
+            material = json.loads(content)
+            if canonical_bytes(material) != content:
+                raise ValueError("Typed acquisition material must use canonical JSON")
+            Record(contract.material, material)
     else:
         validate_contract_schema(schema, payload)
     # Interface checks cannot rewrite the exact request or returned bytes: those

@@ -41,7 +41,11 @@ from cruxible_client.contracts.providers import (
     provider_path,
     render_provider,
 )
-from cruxible_core.compiler.compiler import PROVIDER_PACKAGE_COMPILER, RESOURCE_BUDGET_COMPILER
+from cruxible_core.compiler.compiler import (
+    PROVIDER_PACKAGE_COMPILER,
+    RESOURCE_BUDGET_COMPILER,
+    SDK_SOURCE_COMPILER,
+)
 from cruxible_core.derived.derived_state import fork_tree
 from cruxible_core.errors import ConfigError
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -323,6 +327,7 @@ def service_install_provider(
     if instance.accepted_coordinate().compiler not in (
         PROVIDER_PACKAGE_COMPILER,
         RESOURCE_BUDGET_COMPILER,
+        SDK_SOURCE_COMPILER,
     ):
         raise ConfigError(
             "provider installation requires an explicit upgrade to the package compiler"

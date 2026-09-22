@@ -24,7 +24,6 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecy
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
     Sha256Value,
-    canonical_bytes,
     normalize_canonical,
     typed_digest,
 )
@@ -86,7 +85,6 @@ from cruxible_client.contracts.procedures.models import (
     RepeatNodeV4,
     SourceNodeV3,
     SourceNodeV4,
-    StateTapNodeV3,
     iter_pin_bindings,
 )
 from cruxible_client.contracts.procedures.results import (
@@ -173,7 +171,7 @@ from cruxible_client.contracts.workspace_file import (
     source_read_receipt_digest,
 )
 from cruxible_core.claims.closure import DEFERRED_PIN_TARGET_KINDS
-from cruxible_core.compiler.compiler import RESOURCE_BUDGET_COMPILER
+from cruxible_core.compiler.compiler import RESOURCE_BUDGET_COMPILER, SDK_SOURCE_COMPILER
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -240,7 +238,6 @@ from cruxible_core.procedures.execution import (
     run_value_digest,
     verify_line_admission_spec,
 )
-from cruxible_core.procedures.input_planes import AcceptedStateRunInputV2
 from cruxible_core.procedures.proposal_delivery import (
     ProposalTerminalEgressSink,
 )
@@ -290,6 +287,8 @@ GRAPH_V3_UNSERVED_NODE_KINDS = frozenset({"source"})
 def served_node_kinds(graph_format: int) -> frozenset[str]:
     """Return the node kinds one graph generation serves on the run lanes."""
 
+    if graph_format == 6:
+        return SERVED_NODE_KINDS | {"call", "state_claim", "select", "constant", "return"}
     if graph_format == 5:
         return (SERVED_NODE_KINDS - {"provider"}) | {"call"}
     if graph_format == 4:
@@ -945,33 +944,18 @@ def _line_state_materials(
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
     slot_pins: Mapping[str, ArtifactPin],
+    invocation_input: object,
 ) -> tuple[AcceptedStateRunMaterialV2, ...]:
-    materials: list[AcceptedStateRunMaterialV2] = []
-    reader = PlaybillProcedureStateTapReader(instance=instance, evaluation_time=evaluation_time)
-    accepted_coordinate = AcceptedCoordinate.from_internal(coordinate)
-    for node in accepted_procedure.procedure.definition.nodes:
-        if not isinstance(node, StateTapNodeV3):
-            continue
-        query = _resolve_line_pin(node.query, slot_pins=slot_pins)
-        parameters = normalize_canonical(node.parameters)
-        read = reader.read_accepted_state(
-            query=query,
-            parameters=parameters,
-            coordinate=accepted_coordinate,
-        )
-        value = normalize_canonical(read.value)
-        retained = instance.body_store().store(canonical_bytes(value))
-        run_input = AcceptedStateRunInputV2(
-            input_name=node.as_,
-            read_coordinate=accepted_coordinate,
-            query_definition_digest=query.artifact_digest,
-            parameters_digest=run_value_digest("state-parameters", parameters),
-            result_digest=run_value_digest("state-result", value),
-            effective_query_budgets=read.effective_budgets,
-            material_body_digest=retained.digest,
-        )
-        materials.append(AcceptedStateRunMaterialV2(input=run_input, value=value))
-    return tuple(sorted(materials, key=lambda item: item.input.input_name.encode("utf-8")))
+    return bind_accepted_state_materials(
+        accepted_procedure,
+        accepted_coordinate=AcceptedCoordinate.from_internal(coordinate),
+        state_reader=PlaybillProcedureStateTapReader(
+            instance=instance, evaluation_time=evaluation_time
+        ),
+        bodies=instance.body_store(),
+        slot_pins=slot_pins,
+        invocation_input=invocation_input,
+    )
 
 
 def _provider_nodes(
@@ -1073,7 +1057,7 @@ def _plan_external_occurrences(
             )
         )
         operation_contract = None
-        if int(definition.graph_format) == 5:
+        if int(definition.graph_format) >= 5:
             try:
                 operation_contract = check_provider_node_contract(
                     node, interface, accepted_procedure.procedure, slot_pins=slot_pins
@@ -1105,7 +1089,7 @@ def _plan_external_occurrences(
             ),
         )
         produces_capture = isinstance(node, SourceNodeV4)
-        call_kind = "call" if int(definition.graph_format) == 5 else "provider"
+        call_kind = "call" if int(definition.graph_format) >= 5 else "provider"
         translation = translate_provider_budget(
             budget=budget,
             hard_caps=definition.hard_caps,
@@ -1518,7 +1502,7 @@ def _readiness(
                 if body.operation != "transform"
             )
     slots = _required_slots(accepted.procedure)
-    if slots and accepted.procedure.definition.graph_format in {4, 5}:
+    if slots and accepted.procedure.definition.graph_format in {4, 5, 6}:
         unsupported_rows.append(
             ProcedureUnsupportedNodeV1(
                 node_id="procedure",
@@ -1650,7 +1634,7 @@ def service_bind_playbill_procedure(
     instance.require_writable()
     coordinate = instance.accepted_coordinate()
     accepted = _accepted_procedure(instance, name=name, coordinate=coordinate)
-    if accepted.procedure.definition.graph_format in {4, 5}:
+    if accepted.procedure.definition.graph_format in {4, 5, 6}:
         raise ProcedureBindingGraphV4LineClosureRequired(
             f"{ProcedureBindingGraphV4LineClosureRequired.code}: graph-v4 Provider slots "
             "are resolved only by accepted Line closure"
@@ -2886,6 +2870,7 @@ def _prepare_direct_external_run(
         accepted_coordinate=accepted_coordinate,
         state_reader=state_reader,
         bodies=instance.body_store(),
+        invocation_input=invocation_input,
     )
     node_pin_sets = procedure_node_pin_sets(accepted)
     bindings = tuple(
@@ -3116,7 +3101,7 @@ def service_run_playbill_procedure(
     capture_contracts: Mapping[str, CaptureContractV1] = {}
     if _source_input_names(accepted) or (
         isinstance(accepted.procedure.definition, ProcedureDefinitionV4)
-        and int(accepted.procedure.definition.graph_format) == 5
+        and int(accepted.procedure.definition.graph_format) >= 5
         and _provider_nodes(accepted.procedure.definition)
     ):
         planned = _prepare_direct_external_run(
@@ -3560,7 +3545,9 @@ def service_run_playbill_line(
     runtime_policy = _accepted_runtime_policy(instance, coordinate)
     slot_pins = _line_slot_pins(accepted_line)
     budget = _line_budget(
-        accepted_line, accepted, resource_budgets=coordinate.compiler == RESOURCE_BUDGET_COMPILER
+        accepted_line,
+        accepted,
+        resource_budgets=coordinate.compiler in {RESOURCE_BUDGET_COMPILER, SDK_SOURCE_COMPILER},
     )
     try:
         external_occurrences = _line_external_occurrences(
@@ -3664,6 +3651,7 @@ def service_run_playbill_line(
         coordinate=coordinate,
         evaluation_time=evaluation_time,
         slot_pins=slot_pins,
+        invocation_input=accepted_line.line.parameters,
     )
     full_pins = close_procedure_pin_slots(
         accepted.procedure,

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicyV1
 from cruxible_client.contracts.artifacts import ArtifactPin
@@ -169,6 +170,92 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
         return StateTapReadResultV1(
             value=state_tap_value(run.result),
             effective_budgets=run.result.budgets,
+        )
+
+    def read_accepted_claim(
+        self,
+        *,
+        claim_type: ArtifactPin,
+        subject_kind: str,
+        subject_id: str,
+        cardinality: Literal["one", "all"],
+        coordinate: AcceptedCoordinate,
+    ) -> StateTapReadResultV1:
+        from cruxible_client.contracts.claim_reads import (
+            MAX_CLAIM_READ_BATCH,
+            ClaimReadBatchRequestV1,
+        )
+        from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
+        from cruxible_client.contracts.claims import claim_artifact_digest, claim_statement_digest
+        from cruxible_client.contracts.subjects import SubjectShell, subject_path
+        from cruxible_core.service.claims.claim_reads import service_read_claim_batch
+        from cruxible_core.service.claims.claims import _claim_from_view
+
+        if claim_type.target.kind != "ClaimType":
+            raise PlaybillExecutionError("A Claim field read requires an exact ClaimType")
+        internal = self.instance.resolve_accepted_coordinate(
+            **coordinate.model_dump(mode="json", exclude={"tag"})
+        )
+        path = subject_path(subject_kind, subject_id)
+        with self.instance.bind_accepted_projection(internal) as projection:
+            selected_type = projection.typed.source(claim_type.target.qualified)
+            subject = projection.typed.source(f"Subject:{subject_kind}/{subject_id}")
+        if (
+            not isinstance(selected_type, ClaimType)
+            or claim_type_digest(selected_type).tagged != claim_type.artifact_digest
+        ):
+            raise PlaybillExecutionError("ClaimType differs from the admitted field binding")
+        if (
+            subject_kind not in selected_type.allowed_subject_kinds
+            or not isinstance(subject, SubjectShell)
+            or subject.lifecycle.state != "live"
+        ):
+            raise PlaybillExecutionError(
+                "Subject is absent, retired, or outside the ClaimType's admitted kinds"
+            )
+        budget = self.budgets or QueryBudgetsV1(max_results=256, max_traversal_depth=0)
+        limit = 2 if cardinality == "one" else min(budget.max_results, MAX_CLAIM_READ_BATCH)
+        request = ClaimReadBatchRequestV1.model_validate(
+            dict(
+                at=coordinate.model_dump(mode="json"),
+                subject_paths=(path,),
+                predicates=(selected_type.predicate,),
+                limit=limit,
+                evaluation_time=self.evaluation_time,
+            )
+        )
+        batch = service_read_claim_batch(self.instance, request=request)
+        if batch.truncated or (cardinality == "one" and len(batch.claims) != 1):
+            raise PlaybillExecutionError(
+                "Claim selection must be complete and satisfy its declared cardinality"
+            )
+        values = []
+        for view in batch.claims:
+            claim = _claim_from_view(view)
+            facts = {item["schema_id"]: item["value"] for item in view.facts}
+            verdict = facts.get("playbill.claim.current_verdict")
+            if (
+                not isinstance(verdict, dict)
+                or "verdict" not in verdict
+                or "currency" not in verdict
+            ):
+                raise PlaybillExecutionError("Selected Claim has no current verdict and currency")
+            obj = claim.statement.object.model_dump(mode="json")
+            value = obj.get("value") if obj["kind"] == "literal" else obj
+            values.append(
+                dict(
+                    value=value,
+                    verdict=verdict["verdict"],
+                    currency=verdict["currency"],
+                    identity=claim.identity.qualified,
+                    artifact_digest=claim_artifact_digest(claim).tagged,
+                    statement_digest=claim_statement_digest(claim.statement).tagged,
+                    path=view.envelope["path"],
+                    claim=claim.model_dump(mode="json"),
+                )
+            )
+        return StateTapReadResultV1(
+            value=values[0] if cardinality == "one" else values, effective_budgets=budget
         )
 
 

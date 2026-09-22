@@ -41,6 +41,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureTransformSpecV1,
     TransformKindV1,
 )
+from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_contracts import ProviderOperationContractV1
 from cruxible_client.contracts.records import RecordConstructor
 
@@ -98,6 +99,7 @@ class ProviderBinding(BaseModel):
     implementation_digest: str
     effect_class: Literal["none", "external_read", "external_mutation"] | None = None
     operation_contract: ProviderOperationContractV1 | None = None
+    coordinate: AcceptedCoordinate | None = None
 
     @property
     def input(self) -> RecordConstructor:

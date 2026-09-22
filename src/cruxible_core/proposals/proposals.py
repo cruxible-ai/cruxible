@@ -1735,6 +1735,51 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
     from cruxible_client.contracts.laws import PROVIDER_CONTRACT_PROCEDURE_LAW
 
     installed = _installed(context, procedure.artifact_format)
+    if int(procedure.definition.graph_format) == 6:
+        from cruxible_client.contracts.laws import SDK_SOURCE_PROCEDURE_LAW
+        from cruxible_client.contracts.procedures.artifacts import ProcedureArtifactV2
+        from cruxible_client.contracts.procedures.models import ProcedureDefinitionV6
+        from cruxible_client.contracts.query.definitions import (
+            parse_query_definition,
+            query_definition_path,
+        )
+        from cruxible_core.authoring.procedure_source import verify_source_bindings
+
+        if not isinstance(procedure, ProcedureArtifactV2):
+            raise ValueError("graph-v6 requires the owner-carried Contract envelope")
+        if context.historical_law_coordinate is not None and installed != SDK_SOURCE_PROCEDURE_LAW:
+            raise ProposalIntegrityError("graph-v6 requires its exact source-compilation law")
+        installed = SDK_SOURCE_PROCEDURE_LAW
+
+        def source_lookup(identity: str) -> object | None:
+            kind = identity.split(":", 1)[0]
+            if kind == "QueryDefinition":
+                path = query_definition_path(identity.split(":", 1)[1])
+                content = context.candidate_tree.get(path)
+                return None if content is None else parse_query_definition(content, path=path)
+            owners = {
+                "Provider": (context.resolved.providers, "provider"),
+                "ProviderInterface": (context.resolved.provider_interfaces, "registration"),
+                "Procedure": (context.resolved.procedures, "procedure"),
+                "ClaimType": (context.resolved.claim_types, "claim_type"),
+                "CaptureContract": (context.resolved.capture_contracts, "contract"),
+            }
+            if kind not in owners:
+                return None
+            mapping, attribute = owners[kind]
+            selected = mapping.get(identity)
+            return None if selected is None else getattr(selected, attribute)
+
+        assert isinstance(procedure.definition, ProcedureDefinitionV6)
+        source = procedure.definition.source
+        verify_source_bindings(
+            procedure,
+            lookup=source_lookup,
+            claim_types=(
+                source_lookup("ClaimType:" + name)
+                for name in (() if source is None else source.claim_types)
+            ),
+        )
     if int(procedure.definition.graph_format) == 5:
         if procedure.artifact_format != "playbill-procedure-v2":
             raise ValueError("graph-v5 requires the owner-carried Contract envelope")

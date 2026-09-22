@@ -60,7 +60,7 @@ class ProcedureFormatError(PlaybillFormatError):
 
 
 class _StrictProcedureArtifactModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
 
 
 def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
@@ -486,7 +486,7 @@ def _evaluate_graph_v4_provider_pins(
                 "playbill.procedure.provider_interface_pin_mismatch",
                 f"Provider occurrence {occurrence_id!r} does not bind its exact interface.",
             )
-        if int(definition.graph_format) == 5:
+        if int(definition.graph_format) >= 5:
             try:
                 check_provider_node_contract(occurrence, accepted_interface, procedure)
             except (ValueError, KeyError) as exc:

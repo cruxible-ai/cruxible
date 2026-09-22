@@ -152,6 +152,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinitionV3,
     ProcedureDefinitionV4,
     ProcedureDefinitionV5,
+    ProcedureDefinitionV6,
     ProcedurePinSlotRefV1,
     iter_pin_bindings,
 )
@@ -1618,6 +1619,73 @@ def _lower_procedure(
         accepted[envelope.identity] = (envelope.path, envelope.artifact_digest)
     for duplicate_identity in duplicates:
         accepted.pop(duplicate_identity, None)
+    source_authoring = "source_request" in payload.definition
+    if source_authoring:
+        from cruxible_client.contracts.procedures.source_compiler import SourceCompileError
+        from cruxible_client.contracts.procedures.source_requests import ProcedureSourceRequestV1
+        from cruxible_core.authoring.procedure_source import resolve_source
+        from cruxible_core.indexes.typed_state import OWNER_BY_KIND
+
+        reference_tree = base_tree if accepted_reference_tree is None else accepted_reference_tree
+        envelopes = {row.identity: row for row in parsed.envelopes if row.identity in accepted}
+        sources: dict[str, object] = {}
+
+        def source_lookup(identity: str) -> object | None:
+            if identity not in sources:
+                row = envelopes.get(identity)
+                if row is None or row.kind not in OWNER_BY_KIND:
+                    return None
+                sources[identity] = OWNER_BY_KIND[row.kind].parse(
+                    reference_tree[row.path],
+                    path=row.path,
+                    codec=artifact_codec_for_compiler(base.compiler),
+                )
+            return sources[identity]
+
+        try:
+            if set(payload.definition) != {"name", "source_request"}:
+                raise ValueError("Source authoring accepts a name and source_request only")
+            source_request = ProcedureSourceRequestV1.model_validate(
+                payload.definition["source_request"]
+            )
+            if source_request.name != payload.definition["name"]:
+                raise ValueError("The Procedure name must match its source request")
+            compiled = resolve_source(
+                source_request,
+                lookup=source_lookup,
+                claim_types=(
+                    source_lookup(row.identity)
+                    for row in parsed.envelopes
+                    if row.kind == "claim-type"
+                ),
+            )
+            payload = ProcedureAuthoringPayloadV2(
+                definition=compiled.definition.model_dump(mode="json", by_alias=True),
+                activation_policy=payload.activation_policy,
+                owned_contracts=tuple(
+                    ProcedureOwnedContractV1(
+                        identity=ArtifactIdentity(kind="Contract", name=contract.name),
+                        schema=contract.schema_,
+                    )
+                    for contract in compiled.contracts
+                ),
+                acquisition_policy=getattr(payload, "acquisition_policy", None),
+                retire=payload.retire,
+            )
+        except (SourceCompileError, ValueError) as exc:
+            diagnostic = exc.diagnostic if isinstance(exc, SourceCompileError) else None
+            _refuse(
+                diagnostic.code if diagnostic else "playbill.authoring.procedure_source_invalid",
+                "definition.source_request",
+                (
+                    f"{diagnostic.span.filename}:{diagnostic.span.line}:"
+                    f"{diagnostic.span.column + 1}: {diagnostic.message}"
+                    if diagnostic
+                    else str(exc)
+                ),
+                repair_kind="replace_definition",
+                repair_description="Repair the indicated source and prepare again.",
+            )
     candidate_artifacts: dict[str, tuple[str, str]] = {}
     if candidate_identities:
         candidate_parsed = _parse_reference_tree(instance, base_tree, base=base)
@@ -1632,12 +1700,16 @@ def _lower_procedure(
         if isinstance(payload, ProcedureAuthoringPayloadV2)
         else None
     )
-    resolved_definition = _resolve_authoring_references(
-        payload.definition,
-        accepted=accepted,
-        candidates=candidate_artifacts,
-        candidate_identities=candidate_identities,
-        owned_contracts=owned_contracts,
+    resolved_definition = (
+        payload.definition
+        if source_authoring
+        else _resolve_authoring_references(
+            payload.definition,
+            accepted=accepted,
+            candidates=candidate_artifacts,
+            candidate_identities=candidate_identities,
+            owned_contracts=owned_contracts,
+        )
     )
     graph_format = (
         resolved_definition.get("graph_format") if isinstance(resolved_definition, dict) else None
@@ -1646,9 +1718,11 @@ def _lower_procedure(
     # definition digest already dispatches on the declared graph_format, so a
     # graph-v4 definition lowers into the SAME accepted artifact shape a v3 one
     # does. Only the parse generation differs; historical v3 bytes are untouched.
-    graph_generation = graph_format if graph_format in {4, 5} else 3
-    definition_model: type[ProcedureDefinitionV3] | type[ProcedureDefinitionV4] = (
-        ProcedureDefinitionV5
+    graph_generation = graph_format if graph_format in {4, 5, 6} else 3
+    definition_model = (
+        ProcedureDefinitionV6
+        if graph_generation == 6
+        else ProcedureDefinitionV5
         if graph_generation == 5
         else ProcedureDefinitionV4
         if graph_generation == 4

@@ -38,7 +38,7 @@ QuerySubjectFieldV1 = Literal["subject_id", "subject_kind"]
 
 
 class _StrictQueryModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
 
 
 def _nfc(value: str, *, label: str) -> str:

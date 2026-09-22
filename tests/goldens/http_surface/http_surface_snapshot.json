@@ -178,6 +178,9 @@
   "/api/v1/{instance_id}/playbill/procedure-runs/{run_id}": {
     "GET": "PlaybillProcedureRunState"
   },
+  "/api/v1/{instance_id}/playbill/procedures/source/preview": {
+    "POST": "ProcedureSourcePreviewV1"
+  },
   "/api/v1/{instance_id}/playbill/procedures/{name}/bind": {
     "POST": "PlaybillProcedureBindResult"
   },

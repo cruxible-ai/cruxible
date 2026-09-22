@@ -276,6 +276,14 @@ class OwnedProcedureContractValidator:
             procedure_owned_contract_digest(contract).tagged: contract
             for contract in accepted.procedure.owned_contracts
         }
+        self._structured = int(accepted.procedure.definition.graph_format) == 6
+
+    def _validate_structured(self, owned: ProcedureOwnedContractV1, value: CanonicalValue) -> None:
+        if self._structured:
+            from cruxible_client.contracts.records import validate_record_constraints
+
+            assert isinstance(value, dict)
+            validate_record_constraints(owned.contract_schema, value)
 
     def validate_contract(
         self,
@@ -293,7 +301,9 @@ class OwnedProcedureContractValidator:
             raise ProcedureContractValidationError(
                 f"{direction} contract pin is outside the Procedure owner closure"
             )
-        return _validate_payload(owned, payload)
+        value = _validate_payload(owned, payload)
+        self._validate_structured(owned, value)
+        return value
 
     def validate_contract_with_budget(
         self,
@@ -312,11 +322,13 @@ class OwnedProcedureContractValidator:
             raise ProcedureContractValidationError(
                 f"{direction} contract pin is outside the Procedure owner closure"
             )
-        return _validate_payload_with_budget(
+        result = _validate_payload_with_budget(
             owned,
             payload,
             max_items=max_items,
         )
+        self._validate_structured(owned, result.value)
+        return result
 
     def unique_list_field_path(self, contract: ArtifactPin) -> str | None:
         owned = self._contracts.get(contract.artifact_digest)

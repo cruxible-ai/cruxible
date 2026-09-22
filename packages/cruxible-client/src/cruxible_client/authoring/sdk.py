@@ -75,6 +75,7 @@ from cruxible_client.authoring.selectors import (
     WorkspaceSources,
 )
 from cruxible_client.authoring.signing import ApprovalSigner
+from cruxible_client.authoring.source import ProcedureBlueprint
 from cruxible_client.authoring.source_map import (
     DiagnosticSourceMap,
     capture_keyword_sites,
@@ -860,7 +861,9 @@ class ChangeSetDraft:
         )
         return self
 
-    def procedure(self, *, definition: ProcedureInput | ProcedureSequence) -> ChangeSetDraft:
+    def procedure(
+        self, *, definition: ProcedureInput | ProcedureSequence | ProcedureBlueprint
+    ) -> ChangeSetDraft:
         """Compose a Procedure with its Line and mandate in one existing changeset."""
         draft = self._playbill.procedure(definition=definition)
         assert isinstance(draft.payload, (ProcedureAuthoringPayloadV1, ProcedureAuthoringPayloadV2))
@@ -2727,12 +2730,19 @@ class Playbill:
         matches = [entry for entry in inventory.interfaces if entry.identity == identity]
         if len(matches) != 1:
             raise ValueError(f"No unique accepted provider interface {identity!r}")
-        return ProviderBinding.from_interface(matches[0], provider=provider)
+        return ProviderBinding.from_interface(matches[0], provider=provider).model_copy(
+            update={
+                "coordinate": AcceptedCoordinate.model_validate(
+                    inventory.coordinate.model_dump(mode="json")
+                )
+            },
+            deep=True,
+        )
 
     def procedure(
         self,
         *,
-        definition: ProcedureInput | ProcedureSequence,
+        definition: ProcedureInput | ProcedureSequence | ProcedureBlueprint,
     ) -> ProcedureDraft:
         """Author a Procedure from a Sequence or the input shared by CLI and HTTP.
 
@@ -2751,6 +2761,8 @@ class Playbill:
         """
 
         sites = capture_keyword_sites("procedure", stacklevel=1)
+        if isinstance(definition, ProcedureBlueprint):
+            definition = definition.build(world=self.world())
         if isinstance(definition, ProcedureSequence):
             definition = definition.build()
         if not isinstance(definition, ProcedureInput):
@@ -2770,6 +2782,13 @@ class Playbill:
         if definition.definition.get("graph_format") == 5:
             allowed = allowed | {"call"}
         nodes = definition.definition.get("nodes")
+        if "source_request" in definition.definition:
+            from cruxible_client.contracts.procedures.source_requests import (
+                ProcedureSourceRequestV1,
+            )
+
+            ProcedureSourceRequestV1.model_validate(definition.definition["source_request"])
+            nodes = ()
         if not isinstance(nodes, list | tuple):
             raise ValueError("Procedure input must declare its nodes")
         unsupported = tuple(

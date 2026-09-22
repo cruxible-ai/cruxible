@@ -3611,11 +3611,10 @@ def run_query(
         _emit_json(result.model_dump(mode="json"))
         return
     receipt = result.receipt
-    rows = result.result.get("rows") or []
-    click.echo(f"{result.name}: {receipt['verdict']} with {len(rows)} row(s)")
-    click.echo(f"Receipt definition: {receipt['definition_digest']}")
-    click.echo(f"Receipt parameters: {receipt['parameter_digest']}")
-    click.echo(f"Receipt result digest: {receipt['result_digest']}")
+    click.echo(f"{result.name}: {receipt.verdict} with {len(result.result.rows)} row(s)")
+    click.echo(f"Receipt definition: {receipt.definition_digest}")
+    click.echo(f"Receipt parameters: {receipt.parameter_digest}")
+    click.echo(f"Receipt result digest: {receipt.result_digest}")
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
 
 

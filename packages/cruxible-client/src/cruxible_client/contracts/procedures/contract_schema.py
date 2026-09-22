@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from cruxible_client.contracts.primitives import canonical_json
 
@@ -30,6 +30,8 @@ PropertyType = Literal[
 
 class PropertySchema(BaseModel):
     """One owner-carried Contract field, byte-compatible with the deferred family."""
+
+    model_config = ConfigDict(json_schema_mode_override="validation")
 
     type: PropertyType = "string"
     primary_key: bool = False
@@ -95,6 +97,8 @@ class PropertySchema(BaseModel):
 
 class ContractSchema(BaseModel):
     """Typed input or output schema carried inside one Procedure-v2 envelope."""
+
+    model_config = ConfigDict(json_schema_mode_override="validation")
 
     description: str | None = None
     fields: dict[str, PropertySchema]

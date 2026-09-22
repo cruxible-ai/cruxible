@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.procedures.models import (
     CaptureEgressNodeV3,
+    ClaimTapNodeV6,
     ExhaustTapNodeV3,
     MandateSettlementNodeV3,
     ProcedureDefinitionAny,
@@ -26,6 +27,7 @@ from cruxible_client.contracts.procedures.models import (
     RepeatBodyNodeV4,
     RepeatNodeV3,
     RepeatNodeV4,
+    SelectNodeV6,
     SourceNodeV3,
     SourceNodeV4,
     StateTapNodeV3,
@@ -131,7 +133,13 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinitionAny) -> N
 
     for node in definition.nodes:
         prefix = f"Procedure node {node.node_id!r}"
-        if isinstance(node, StateTapNodeV3):
+        if isinstance(node, ClaimTapNodeV6):
+            check(
+                node.claim_type,
+                PinExpectation((("claim-type", "ClaimType"),)),
+                f"{prefix} claim_type",
+            )
+        elif isinstance(node, StateTapNodeV3):
             check(node.query, QUERY, f"{prefix} query")
         elif isinstance(node, SourceNodeV3 | SourceNodeV4):
             check(node.capture_contract, CAPTURE_CONTRACT, f"{prefix} capture_contract")
@@ -178,7 +186,7 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinitionAny) -> N
         elif isinstance(node, TransformNodeV3):
             check(node.contract_in, CONTRACT_IN, f"{prefix} contract_in")
             check(node.contract_out, CONTRACT_OUT, f"{prefix} contract_out")
-        elif isinstance(node, ProjectNodeV3):
+        elif isinstance(node, ProjectNodeV3 | SelectNodeV6):
             check(node.contract_out, CONTRACT_OUT, f"{prefix} contract_out")
         elif isinstance(node, RepeatNodeV3 | RepeatNodeV4):
             for body in node.body:

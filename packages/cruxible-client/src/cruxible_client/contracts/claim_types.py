@@ -11,11 +11,14 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    GetJsonSchemaHandler,
     ValidationError,
     field_validator,
     model_serializer,
     model_validator,
 )
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema
 
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -54,7 +57,7 @@ class ClaimTypeFreshnessHorizonInvalid(ClaimTypeFormatError):
 
 
 class _StrictClaimTypeModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
 
 
 class ClaimFreshnessDurationV1(_StrictClaimTypeModel):
@@ -107,6 +110,22 @@ class ClaimAttestationConsequencePolicyV1(_StrictClaimTypeModel):
 
 
 class ClaimType(_StrictClaimTypeModel):
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, schema: CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        # The versioned serializer omits fields; it does not turn a ClaimType
+        # into an arbitrary dictionary. Keep the declared grammar in OpenAPI.
+        def declared(node: CoreSchema) -> CoreSchema:
+            result = dict(node)
+            if result.get("type") == "model":
+                result.pop("serialization", None)
+            elif isinstance(result.get("schema"), dict):
+                result["schema"] = declared(result["schema"])
+            return cast(CoreSchema, result)
+
+        return handler(declared(schema))
+
     artifact_format: Literal[
         "playbill-claim-type-v1",
         "playbill-claim-type-v3",

@@ -19,6 +19,7 @@ from cruxible_client.contracts.captures import CanonicalDurationV1
 from cruxible_client.contracts.procedures.measurements import (
     ProcedureMeasurementDeclarationV1,
 )
+from cruxible_client.contracts.procedures.source_program import ProcedureSourceV1
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 _NODE_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
@@ -775,7 +776,7 @@ TERMINAL_REQUIRED_RUNGS = {
     "propose_change_set": 2,
     "mandate_settlement": 3,
 }
-TERMINAL_NODE_KINDS = frozenset((*TERMINAL_REQUIRED_RUNGS, "halt"))
+TERMINAL_NODE_KINDS = frozenset((*TERMINAL_REQUIRED_RUNGS, "halt", "return"))
 
 
 class ProcedureDefinitionV3(_StrictProcedureModel):
@@ -846,7 +847,7 @@ class ProcedureDefinitionV3(_StrictProcedureModel):
             raise ValueError("Procedure node ids must be unique")
         if len(set(aliases)) != len(aliases):
             raise ValueError("Procedure output aliases must be unique")
-        if self.returns not in aliases:
+        if self.returns not in aliases and int(self.graph_format) != 6:
             raise ValueError("Procedure returns must name one declared output alias")
         if self.budget.wall_clock.microseconds > self.hard_caps.max_wall_clock.microseconds:
             raise ValueError("Procedure budget exceeds its wall-clock hard cap")
@@ -971,7 +972,7 @@ class ProcedureDefinitionV4(_StrictProcedureModel):
             raise ValueError("Procedure node ids must be unique")
         if len(set(aliases)) != len(aliases):
             raise ValueError("Procedure output aliases must be unique")
-        if self.returns not in aliases:
+        if self.returns not in aliases and int(self.graph_format) != 6:
             raise ValueError("Procedure returns must name one declared output alias")
         if self.budget.wall_clock.microseconds > self.hard_caps.max_wall_clock.microseconds:
             raise ValueError("Procedure budget exceeds its wall-clock hard cap")
@@ -1036,8 +1037,106 @@ class ProcedureDefinitionV5(ProcedureDefinitionV4):
     nodes: tuple[ProcedureNodeV5, ...]
 
 
+class SelectNodeV6(_StrictProcedureModel):
+    """Join mutually exclusive record producers without guessing a winner."""
+
+    kind: Literal["select"] = "select"
+    node_id: str
+    sources: tuple[str, ...]
+    contract_out: ProcedurePinBindingV1
+    as_: str = Field(alias="as")
+    next: str | None = None
+
+    @field_validator("sources")
+    @classmethod
+    def _sources(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(value) < 2 or len(set(value)) != len(value):
+            raise ValueError("select requires at least two distinct producer aliases")
+        for alias in value:
+            _canonical_identifier(alias, _ALIAS_RE, label="select producer")
+        return value
+
+
+class ReturnNodeV6(ProjectNodeV3):
+    """A typed successful leaf; each branch may return its own exact value."""
+
+    kind: Literal["return"] = "return"  # type: ignore[assignment]
+
+
+class ConstantNodeV6(ProjectNodeV3):
+    """Exact literal record; dollar-prefixed strings are data, never references."""
+
+    kind: Literal["constant"] = "constant"  # type: ignore[assignment]
+
+
+class ClaimTapNodeV6(_StrictProcedureModel):
+    """A bounded field read using an exact ClaimType and named Subject."""
+
+    kind: Literal["state_claim"] = "state_claim"
+    node_id: str
+    claim_type: ArtifactPin
+    subject_kind: str
+    subject_id: object
+    cardinality: Literal["one", "all"] = "one"
+    as_: str = Field(alias="as")
+    next: str | None = None
+
+    _subject = field_validator("subject_id", mode="before")(normalize_canonical)
+
+
+class StateTapNodeV6(StateTapNodeV3):
+    """Request-bound query with a typed view over the retained query result."""
+
+    view: Literal["typed_query"] = "typed_query"
+
+
+class CaptureEgressNodeV6(CaptureEgressNodeV3):
+    result: object
+
+    _result = field_validator("result", mode="before")(normalize_canonical)
+
+
+class ProposeChangeSetNodeV6(ProposeChangeSetNodeV3):
+    result: object
+
+    _result = field_validator("result", mode="before")(normalize_canonical)
+
+
+ProcedureNodeV6 = Annotated[
+    ClaimTapNodeV6
+    | StateTapNodeV6
+    | SourceNodeV4
+    | ExhaustTapNodeV3
+    | CallNodeV5
+    | TransformNodeV3
+    | GuardNodeV3
+    | ProjectNodeV3
+    | RepeatNodeV5
+    | CaptureEgressNodeV6
+    | InboxEgressNodeV3
+    | ProposeChangeSetNodeV6
+    | MandateSettlementNodeV3
+    | HaltNodeV3
+    | SelectNodeV6
+    | ReturnNodeV6
+    | ConstantNodeV6,
+    Field(discriminator="kind"),
+]
+
+
+class ProcedureDefinitionV6(ProcedureDefinitionV5):
+    """Source-language graph with explicit value joins and typed return paths."""
+
+    graph_format: Literal[6] = 6  # type: ignore[assignment]
+    nodes: tuple[ProcedureNodeV6, ...]  # type: ignore[assignment]
+    source: ProcedureSourceV1 | None = None
+
+
+ProcedureNodeAny: TypeAlias = ProcedureNodeV3 | ProcedureNodeV4 | ProcedureNodeV5 | ProcedureNodeV6
+
+
 ProcedureDefinitionAny: TypeAlias = Annotated[
-    ProcedureDefinitionV3 | ProcedureDefinitionV4 | ProcedureDefinitionV5,
+    ProcedureDefinitionV3 | ProcedureDefinitionV4 | ProcedureDefinitionV5 | ProcedureDefinitionV6,
     Field(discriminator="graph_format"),
 ]
 

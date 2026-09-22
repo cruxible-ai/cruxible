@@ -21,6 +21,10 @@ from cruxible_client.contracts.claim_reads import (
 )
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.procedures.source_requests import (
+    ProcedureSourcePreviewRequestV1,
+    ProcedureSourcePreviewV1,
+)
 from cruxible_client.contracts.provider_installation import (
     PlaybillProviderCatalogV1,
     PlaybillProviderInstallRequestV1,
@@ -1187,6 +1191,17 @@ async def run_query(
         evaluation_time=req.evaluation_time,
         parameters=req.parameters,
         budgets=req.budgets,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/procedures/source/preview", response_model=ProcedureSourcePreviewV1
+)
+async def procedure_source_preview(
+    instance_id: str, req: ProcedureSourcePreviewRequestV1
+) -> ProcedureSourcePreviewV1:
+    return playbill_api.playbill_procedure_source_preview(
+        resolve_server_instance_id(instance_id), request=req
     )
 
 

@@ -531,7 +531,7 @@ class ProcedureReplayInputProjectionV1(_StrictResultModel):
     )
     input_name: str
     plane: Literal["accepted_state", "landed_capture", "exhaust"]
-    kind: Literal["query_result", "capture", "reduced_exhaust"]
+    kind: Literal["query_result", "claim_selection", "capture", "reduced_exhaust"]
     value_or_body_digest: str
     provenance_digest: str
 
@@ -544,7 +544,9 @@ class ProcedureReplayInputProjectionV1(_StrictResultModel):
             "landed_capture": "capture",
             "exhaust": "reduced_exhaust",
         }
-        if self.kind != expected[self.plane]:
+        if self.kind != expected[self.plane] and not (
+            self.plane == "accepted_state" and self.kind == "claim_selection"
+        ):
             raise ValueError("replay input projection plane and kind disagree")
         return self
 

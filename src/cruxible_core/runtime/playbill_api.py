@@ -67,6 +67,10 @@ from cruxible_client.contracts.predictions import (
 )
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.procedures.artifacts import procedure_path
+from cruxible_client.contracts.procedures.source_requests import (
+    ProcedureSourcePreviewRequestV1,
+    ProcedureSourcePreviewV1,
+)
 from cruxible_client.contracts.provider_installation import (
     PlaybillProviderCatalogV1,
     PlaybillProviderInstallRequestV1,
@@ -1694,6 +1698,17 @@ def playbill_run_query(
         paths=(result.definition_path,),
     )
     return contracts.PlaybillQueryRun.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_procedure_source_preview(
+    instance_id: str, *, request: ProcedureSourcePreviewRequestV1
+) -> ProcedureSourcePreviewV1:
+    from cruxible_core.service.procedures.source_preview import service_preview_procedure_source
+
+    check_permission("cruxible_playbill_procedure_readiness", instance_id=instance_id)
+    return service_preview_procedure_source(
+        get_playbill_manager().get(instance_id), request=request
+    )
 
 
 def playbill_procedure_readiness(

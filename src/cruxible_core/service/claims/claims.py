@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+from cruxible_client.contracts import PlaybillClaimViewV2 as ClientClaimViewV2
 from cruxible_client.contracts.accepted_attestations import ClaimAttestationEvidence
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.candidates import CandidateMemberEvidence
@@ -300,7 +301,9 @@ def _public_claim(view: ClaimProjectionView) -> PlaybillClaimView:
     )
 
 
-def _claim_from_view(view: PlaybillClaimView | PlaybillClaimViewV2) -> ClaimArtifactAny:
+def _claim_from_view(
+    view: PlaybillClaimView | PlaybillClaimViewV2 | ClientClaimViewV2,
+) -> ClaimArtifactAny:
     path = view.envelope.get("path")
     if not isinstance(path, str):
         raise ProposalIntegrityError("Claim projection envelope has no path")

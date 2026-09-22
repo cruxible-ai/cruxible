@@ -36,6 +36,10 @@ from cruxible_client.contracts.errors import (
     PlaybillDeprecatedWriteError,
     PlaybillSinceRequestInvalid,
 )
+from cruxible_client.contracts.procedures.source_requests import (
+    ProcedureSourcePreviewRequestV1,
+    ProcedureSourcePreviewV1,
+)
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_installation import (
     PlaybillProviderCatalogV1,
@@ -1365,6 +1369,17 @@ class CruxibleClient:
             },
         )
         return self._parse_model(response, contracts.PlaybillQueryRun)
+
+    def preview_playbill_procedure_source(
+        self, instance_id: str, *, request: ProcedureSourcePreviewRequestV1
+    ) -> ProcedureSourcePreviewV1:
+        from cruxible_client.contracts.procedures.source_requests import ProcedureSourcePreviewV1
+
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/procedures/source/preview",
+            json=request.model_dump(mode="json", by_alias=True),
+        )
+        return self._parse_model(response, ProcedureSourcePreviewV1)
 
     def playbill_procedure_readiness(
         self,

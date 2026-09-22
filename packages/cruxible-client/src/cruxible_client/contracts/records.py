@@ -101,7 +101,9 @@ def _check_schema(schema: ContractSchema) -> None:
             _check_json_schema(field.json_schema, name)
 
 
-def _validate_nested(schema: ContractSchema, value: Mapping[str, object], prefix: str = "") -> None:
+def validate_record_constraints(
+    schema: ContractSchema, value: Mapping[str, object], prefix: str = ""
+) -> None:
     from cruxible_client.contracts.claims import _validate_literal_schema
     from cruxible_client.contracts.procedures.contracts import ProcedureContractValidationError
 
@@ -123,7 +125,9 @@ def _validate_nested(schema: ContractSchema, value: Mapping[str, object], prefix
         if field.item_fields is not None and isinstance(item, list):
             nested = ContractSchema(fields=field.item_fields)
             for index, member in enumerate(item):
-                _validate_nested(nested, cast(Mapping[str, object], member), f"{path}[{index}]")
+                validate_record_constraints(
+                    nested, cast(Mapping[str, object], member), f"{path}[{index}]"
+                )
 
 
 def record_field_names(schema: ContractSchema) -> dict[str, str]:
@@ -172,7 +176,7 @@ class Record(Mapping[str, CanonicalValue]):
                 element_index=exc.element_index,
             ) from exc
         assert isinstance(parsed, dict)
-        _validate_nested(sealed_schema, parsed)
+        validate_record_constraints(sealed_schema, parsed)
         object.__setattr__(self, "_schema", sealed_schema)
         object.__setattr__(self, "_data", deepcopy(parsed))
 
