@@ -741,14 +741,16 @@ def test_http_proposal_selector_resolves_against_a_live_instance(
     from cruxible_core.service.authoring.documents import service_propose_playbill_document
 
     client, instance_id, _private_key = playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    body = instance.store_document_body(b"HTTP selector fixture\n")
     proposed = service_propose_playbill_document(
-        get_playbill_manager().get(instance_id),
+        instance,
         shell=DocumentShell(
             identity="document:http-selector",
             document_kind="design",
             title="HTTP selector",
             media_type="text/markdown",
-            body_digest="sha256:" + "f" * 64,
+            body_digest=body.digest,
             authority=DocumentAuthority(required_tier="graph_write"),
             governance_scope=("project:playbill",),
             lifecycle=DocumentLifecycle(revision=1),
