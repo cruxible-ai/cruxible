@@ -265,11 +265,19 @@ def test_the_gate_is_the_first_statement_of_every_served_write_door() -> None:
     for module, names in DECLARED_WRITE_GATES.items():
         path = SOURCE / module
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            if not any(name.endswith(node.name) for name in names):
-                continue
+        for name in names:
+            scope = tree.body
+            for part in name.split("."):
+                matches = [
+                    item
+                    for item in scope
+                    if isinstance(item, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+                    and item.name == part
+                ]
+                assert len(matches) == 1, f"{module}:{name} is not uniquely defined"
+                node = matches[0]
+                scope = node.body
+            assert isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             body = list(node.body)
             if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
                 body = body[1:]  # the docstring
