@@ -155,6 +155,7 @@ from cruxible_client.contracts.claim_attestations import (
     ClaimStance,
     PreparedClaimAttestationRequestV1,
 )
+from cruxible_client.contracts.claim_type_structure import ClaimRole as ClaimRoleValue
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicyV1,
     ClaimEvidenceFreshnessV1,
@@ -178,8 +179,8 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
+    ClaimEvidenceAdmissionPolicyV2,
+    ClaimEvidenceAdmissionRuleV2,
     ClaimResolutionPolicyV1,
 )
 from cruxible_client.contracts.predictions import (
@@ -2015,30 +2016,26 @@ class Playbill:
             if isinstance(source, SourceRef):
                 self._assert_coordinate(source.coordinate)
         source_ids = tuple(sorted({_address(item, RefKind.SOURCE) for item in sources}))
+        role_values: tuple[ClaimRoleValue, ...] = tuple(role.value for role in roles)
+        modes: tuple[tuple[Literal["derivational", "direct"], tuple[ClaimRoleValue, ...]], ...] = (
+            ("derivational", tuple(r for r in role_values if r == "derivation")),
+            ("direct", tuple(sorted({r for r in role_values if r != "derivation"}))),
+        )
         rules = tuple(
-            ClaimEvidenceAdmissionRuleV1(
-                rule_id=f"source-{source_id}",
-                claim_roles=tuple(sorted({role.value for role in roles})),
+            ClaimEvidenceAdmissionRuleV2(
+                rule_id=f"source-{source_id}-{admission}",
+                claim_roles=rule_roles,
                 capture_contract_digests=(
                     capture_contract_digest(foreign_source_capture_contract(source_id)).tagged,
                 ),
                 evidence_kinds=("self_asserted",),
-                admission="direct",
+                admission=admission,
                 subject_binding="exact_claim_subject",
             )
             for source_id in source_ids
+            for admission, rule_roles in modes
+            if rule_roles
         )
-        artifact_format: Literal[
-            "playbill-claim-type-v1",
-            "playbill-claim-type-v3",
-            "playbill-claim-type-v4",
-        ]
-        if attestation_consequence_policy is not None:
-            artifact_format = "playbill-claim-type-v4"
-        elif evidence_freshness is not None:
-            artifact_format = "playbill-claim-type-v3"
-        else:
-            artifact_format = "playbill-claim-type-v1"
         lifecycle = ArtifactLifecycle()
         if isinstance(predicate, ClaimTypeRef):
             predecessor = self._client.get_playbill_claim_type(
@@ -2048,7 +2045,7 @@ class Playbill:
             )
             lifecycle = ArtifactLifecycle(predecessor_digest=predecessor.artifact_digest)
         definition = ClaimType(
-            artifact_format=artifact_format,
+            artifact_format="playbill-claim-type-v5",
             identity=ArtifactIdentity(kind="ClaimType", name=name),
             predicate=name,
             allowed_subject_kinds=tuple(subject_kinds),
@@ -2058,7 +2055,7 @@ class Playbill:
             cardinality=arity.value,
             permitted_roles=tuple(role.value for role in roles),
             referent_sensitivity=sensitivity.value,
-            evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(rules=rules),
+            evidence_admission_policy=ClaimEvidenceAdmissionPolicyV2(rules=rules),
             admission_policy=admission_policy,
             resolution_policy=resolution_policy,
             pins=tuple(pins),

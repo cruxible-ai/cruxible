@@ -310,3 +310,60 @@ def test_requirement_ids_cannot_alias_across_policy_kinds() -> None:
                 ),
             ),
         )
+
+
+def test_current_derivation_policy_requires_provenance_without_authorizing_producers():
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionPolicyV2,
+        ClaimEvidenceAdmissionRuleV2,
+    )
+
+    rule = ClaimEvidenceAdmissionRuleV2(
+        rule_id="derived-observation",
+        claim_roles=("derivation",),
+        capture_contract_digests=(DIGEST_A,),
+        evidence_kinds=("source.observation",),
+        admission="derivational",
+        subject_binding="exact_claim_subject",
+    )
+    policy = ClaimEvidenceAdmissionPolicyV2(rules=(rule,))
+    for reducer in (DIGEST_A, DIGEST_B):
+        assert (
+            evaluate_claim_evidence_admission(
+                policy,
+                _evidence(
+                    claim_role="derivation",
+                    reducer_digest=reducer,
+                    input_claim_artifact_digests=(DIGEST_A,),
+                ),
+            ).verdict
+            == "eligible"
+        )
+    for missing in ({"reducer_digest": None}, {"input_claim_artifact_digests": ()}):
+        evidence = _evidence(
+            claim_role="derivation",
+            reducer_digest=DIGEST_B,
+            input_claim_artifact_digests=(DIGEST_A,),
+        ).model_copy(update=missing)
+        assert evaluate_claim_evidence_admission(policy, evidence).refusal_code == (
+            "playbill.evidence.derivation_incomplete"
+        )
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        ClaimEvidenceAdmissionRuleV2.model_validate(
+            {
+                **rule.model_dump(),
+                "allowed_reducer_digests": [DIGEST_B],
+            }
+        )
+    direct = policy.model_copy(update={"rules": (rule.model_copy(update={"admission": "direct"}),)})
+    assert (
+        evaluate_claim_evidence_admission(
+            direct,
+            _evidence(
+                claim_role="derivation",
+                reducer_digest=DIGEST_B,
+                input_claim_artifact_digests=(DIGEST_A,),
+            ),
+        ).refusal_code
+        == "playbill.evidence.reducer_not_allowed"
+    )

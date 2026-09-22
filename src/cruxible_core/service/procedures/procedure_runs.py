@@ -173,7 +173,11 @@ from cruxible_client.contracts.workspace_file import (
     source_read_receipt_digest,
 )
 from cruxible_core.claims.closure import DEFERRED_PIN_TARGET_KINDS
-from cruxible_core.compiler.compiler import RESOURCE_BUDGET_COMPILER, SDK_SOURCE_COMPILER
+from cruxible_core.compiler.compiler import (
+    CLAIM_EVIDENCE_COMPILER,
+    RESOURCE_BUDGET_COMPILER,
+    SDK_SOURCE_COMPILER,
+)
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -3636,7 +3640,8 @@ def service_run_playbill_line(
     budget = _line_budget(
         accepted_line,
         accepted,
-        resource_budgets=coordinate.compiler in {RESOURCE_BUDGET_COMPILER, SDK_SOURCE_COMPILER},
+        resource_budgets=coordinate.compiler
+        in {RESOURCE_BUDGET_COMPILER, SDK_SOURCE_COMPILER, CLAIM_EVIDENCE_COMPILER},
     )
     try:
         external_occurrences = _line_external_occurrences(

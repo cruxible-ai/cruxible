@@ -19,10 +19,12 @@ from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_ACCEPTANCE_LAW,
     ATTESTATION_ACCEPTANCE_LAW,
     CAPTURE_CONTRACT_ACCEPTANCE_LAW,
+    CLAIM_EVIDENCE_UPGRADE_LAW,
     CLAIM_LAW_V3_REVISION_8,
     CLAIM_TYPE_ACCEPTANCE_LAW,
     CLAIM_TYPE_V3_ACCEPTANCE_LAW,
     CLAIM_TYPE_V4_ACCEPTANCE_LAW,
+    CLAIM_TYPE_V5_ACCEPTANCE_LAW,
     CLAIM_V2_ACCEPTANCE_LAW,
     CLAIM_V3_ACCEPTANCE_LAW,
     CLAIM_V3_REVISION_7_ACCEPTANCE_LAW,
@@ -61,6 +63,7 @@ from cruxible_client.contracts.laws import (
 )
 from cruxible_core.compiler.compiler import (
     ATTESTATION_COMPILER,
+    CLAIM_EVIDENCE_COMPILER,
     ONTOLOGY_COMPILER,
     P2_B0_COMPILER,
     P2_B1_COMPILER,
@@ -88,6 +91,13 @@ LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],
     ...,
 ] = (
+    (
+        CLAIM_TYPE_V5_ACCEPTANCE_LAW,
+        "playbill.claim-type.v5",
+        "playbill-claim-type-v5",
+        4,
+        "sha256:0d9d00e747c3158e11afdfd47deef77a726eed2167be09d924120c705c54f85e",
+    ),
     (
         PROVIDER_INTERFACE_V2_ACCEPTANCE_LAW,
         "playbill.provider-interface.v2",
@@ -304,6 +314,13 @@ HISTORICAL_LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],
     ...,
 ] = (
+    (
+        CLAIM_EVIDENCE_UPGRADE_LAW,
+        "playbill.compiler-upgrade.v1",
+        "playbill-compiler-upgrade-v1",
+        6,
+        "sha256:3a14c231299a962f232366b33995fa3fe746ad8565d557880ab3e2ff478d687e",
+    ),
     (
         SDK_SOURCE_PROCEDURE_LAW,
         "playbill.procedure.v2",
@@ -570,7 +587,11 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
         SDK_SOURCE_COMPILER.rule_digest
         == "sha256:ccaf2bbe59d12bf76465774f869c017084343c64adc23573f694008a8051382d"
     )
-    assert current_compiler_coordinate() == SDK_SOURCE_COMPILER
+    assert (
+        CLAIM_EVIDENCE_COMPILER.rule_digest
+        == "sha256:1086f50631d0189cfda34737f02e0af5e951bb643dcd22d702ff411386698164"
+    )
+    assert current_compiler_coordinate() == CLAIM_EVIDENCE_COMPILER
     assert P2_B4_COMPILER in SUPPORTED_COMPILERS
     assert P2_B4_UNIT2_COMPILER in SUPPORTED_COMPILERS
     # The renderer resolves from the current coordinate itself, so cards derive
@@ -592,7 +613,7 @@ def test_succeeding_the_semantic_revision_keeps_candidate_cards_deriving(
     """
 
     source = Path(compiler_module.__file__).read_text(encoding="utf-8")
-    current_revision = 27
+    current_revision = 28
     anchor = "\n    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,\n"
     bumped = source.replace(
         f"    semantic_revision={current_revision},{anchor}",
@@ -684,12 +705,16 @@ def test_installed_compiler_revision_labels_are_exact_and_complete() -> None:
         "provider-package-registration-v1",
         "bounded-resource-budgets-v1",
         "typed-procedure-source-v1",
+        "producer-independent-claim-types-v1",
     )
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "typed-procedure-source-v1"
+    assert (
+        COMPILER_REVISION_LABELS[current_compiler_coordinate()]
+        == "producer-independent-claim-types-v1"
+    )
 
 
 def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
-    """The September 21 SDK v2 ruling admits typed source graphs as revision 27.
+    """The September 22 ruling separates producer authority from ClaimTypes in revision 28.
 
     Historical admission bytes and compiler rules remain unchanged.
     """
@@ -699,5 +724,8 @@ def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
         current_compiler_coordinate,
     )
 
-    assert len(COMPILER_REVISION_LABELS) == 26
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "typed-procedure-source-v1"
+    assert len(COMPILER_REVISION_LABELS) == 27
+    assert (
+        COMPILER_REVISION_LABELS[current_compiler_coordinate()]
+        == "producer-independent-claim-types-v1"
+    )

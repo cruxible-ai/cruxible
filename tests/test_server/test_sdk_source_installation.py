@@ -23,6 +23,10 @@ from cruxible_client.contracts.captures import (
     capture_component_pin,
     capture_contract_digest,
 )
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicyV2,
+    ClaimEvidenceAdmissionRuleV2,
+)
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.models import ProcedureBudgetV3, ProcedureHardCapsV3
 from cruxible_client.provider_installation import install_provider_package
@@ -34,7 +38,7 @@ from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 from tests.test_server.test_provider_installation import installer_http  # noqa: F401
 
 
-def test_installed_fetch_parent_proposal_and_derivation_policy_boundary(
+def test_installed_fetch_parent_proposal_and_accepted_derivation(
     installer_http,  # noqa: F811
     tmp_path,
 ):
@@ -151,11 +155,36 @@ def test_installed_fetch_parent_proposal_and_derivation_policy_boundary(
 
         knowledge = pb.changes(rationale="Describe the advisory observation.")
         knowledge.subject(_subject())
-        knowledge.claim_type(
-            _claim_type(
-                capture_contract_digest(contract).tagged, roles=("derivation", "observation")
-            ).model_copy(update={"permitted_roles": ("derivation", "observation")})
+        definition = _claim_type(capture_contract_digest(contract).tagged)
+        observed_rule = ClaimEvidenceAdmissionRuleV2.model_validate(
+            definition.evidence_admission_policy.rules[0].model_dump(
+                exclude={"tag", "allowed_reducer_digests"}
+            )
         )
+        definition = definition.model_copy(
+            update={
+                "artifact_format": "playbill-claim-type-v5",
+                "permitted_roles": ("derivation", "observation"),
+                "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV2(
+                    rules=tuple(
+                        sorted(
+                            (
+                                observed_rule,
+                                observed_rule.model_copy(
+                                    update={
+                                        "rule_id": "derived-observation",
+                                        "claim_roles": ("derivation",),
+                                        "admission": "derivational",
+                                    }
+                                ),
+                            ),
+                            key=lambda rule: rule.rule_id,
+                        )
+                    )
+                ),
+            }
+        )
+        knowledge.claim_type(definition)
         accept(knowledge)
 
         @procedure(
@@ -269,15 +298,22 @@ def test_installed_fetch_parent_proposal_and_derivation_policy_boundary(
         assert inspected.state_dependencies[0].subject_kind == "security.advisory"
         accept(pb.procedure(definition=verify_parent))
         accept(
-            pb.changes(rationale="Verify the same baseline with an exact child.")
-            .line(
+            pb.changes(rationale="Verify the same baseline with an exact child.").line(
                 name="verify-line",
                 procedure="verify-parent",
                 acquisition_policy="source-reads",
                 requested_terminal_rung=2,
                 parameters={"url": f"http://127.0.0.1:{server.server_port}/state.json"},
             )
-            .procedure_mandate(
+        )
+        pb.refresh()
+        denied = pb.run_line("verify-line")
+        assert denied.status == "admission_refused"
+        assert Origin.calls == 1
+        accept(
+            pb.changes(
+                rationale="Authorize the exact derivation Procedure separately from its ClaimType."
+            ).procedure_mandate(
                 ProcedureMandateInputV1(
                     kind="procedure_mandate",
                     name="verify-authority",
@@ -292,17 +328,38 @@ def test_installed_fetch_parent_proposal_and_derivation_policy_boundary(
         )
         pb.refresh()
         verified = pb.run_line("verify-line")
-        # A direct-evidence rule cannot authorize a reducer merely because it
-        # executed successfully. Preserve the existing gate until reducer
-        # authorization can be bound without a ClaimType/Procedure digest cycle.
-        assert verified.status == "node_refused"
+        assert verified.succeeded, verified.outcome.model_dump_json(indent=2)
         assert Origin.calls == 2
         (derived,) = verified.outcome.terminal_egress
-        assert derived.verdict == "refused" and derived.proposal_id is None
-        assert verified.outcome.terminal.code == "proposal_lowering_refused"
-        assert (
-            "playbill.evidence.reducer_not_allowed" in verified.outcome.terminal.model_dump_json()
+        assert derived.verdict == "delivered" and derived.proposal_id
+        assert len(pb.world().security.advisory["osv-2026-0001"].claims) == 1
+        _approve_and_activate(http, instance_id, reviewer, derived.proposal_id)
+        pb.refresh()
+        claims = pb.world().security.advisory["osv-2026-0001"].claims
+        assert len(claims) == 2
+        original = client.get_playbill_claim(
+            instance_id, next(v.claim_id for v in claims if v.role == "observation")
         )
+        derived_claim = client.get_playbill_claim(
+            instance_id, next(v.claim_id for v in claims if v.role == "derivation")
+        )
+        from cruxible_client.contracts.claims import ClaimBackingV2
+
+        backing = ClaimBackingV2.model_validate(
+            next(
+                fact["value"]
+                for fact in derived_claim.facts
+                if fact["schema_id"] == "playbill.claim.backing"
+            )
+        )
+        assert backing.input_claim_digests == (original.envelope["artifact_digest"],)
+        assert (
+            backing.reducer_digest
+            == pb.accepted_procedure("verify-parent").readiness().procedure_artifact_digest
+        )
+        assert client.get_playbill_claim_type(
+            instance_id, definition.predicate
+        ).envelope == definition.model_dump(mode="json")
     finally:
         server.shutdown()
         server.server_close()

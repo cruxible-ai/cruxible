@@ -187,17 +187,13 @@ class ClaimResolutionPolicyV1(_StrictPolicyModel):
         return self
 
 
-class ClaimEvidenceAdmissionRuleV1(_StrictPolicyModel):
-    tag: Literal["playbill-claim-evidence-admission-rule-v1"] = (
-        "playbill-claim-evidence-admission-rule-v1"
-    )
+class _EvidenceRule(_StrictPolicyModel):
     rule_id: str
     claim_roles: tuple[ClaimRole, ...]
     capture_contract_digests: tuple[str, ...]
     evidence_kinds: tuple[str, ...]
     admission: Literal["origin_only", "direct", "derivational"]
     subject_binding: Literal["exact_claim_subject", "contract_source_mapping"]
-    allowed_reducer_digests: tuple[str, ...] = ()
     attestation_requirement: AttestationRequirement = "none"
 
     @field_validator("rule_id")
@@ -209,19 +205,34 @@ class ClaimEvidenceAdmissionRuleV1(_StrictPolicyModel):
         "claim_roles",
         "capture_contract_digests",
         "evidence_kinds",
-        "allowed_reducer_digests",
     )
     @classmethod
     def _rule_sets(cls, value: tuple[str, ...], info: object) -> tuple[str, ...]:
         field_name = str(getattr(info, "field_name", "evidence-admission field"))
-        nonempty = field_name != "allowed_reducer_digests"
-        _sorted_unique(value, label=field_name, nonempty=nonempty)
-        if field_name in {"capture_contract_digests", "allowed_reducer_digests"}:
+        _sorted_unique(value, label=field_name, nonempty=True)
+        if field_name == "capture_contract_digests":
             for item in value:
                 ArtifactDigest.from_tagged(item)
         elif field_name == "evidence_kinds":
             if any(not _EVIDENCE_KIND_RE.fullmatch(item) for item in value):
                 raise ValueError("evidence kinds must be canonical identifiers")
+        return value
+
+
+class ClaimEvidenceAdmissionRuleV1(_EvidenceRule):
+    """Frozen producer allowlist for historical ClaimTypes only."""
+
+    tag: Literal["playbill-claim-evidence-admission-rule-v1"] = (
+        "playbill-claim-evidence-admission-rule-v1"
+    )
+    allowed_reducer_digests: tuple[str, ...] = ()
+
+    @field_validator("allowed_reducer_digests")
+    @classmethod
+    def _reducers(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        _sorted_unique(value, label="allowed_reducer_digests", nonempty=False)
+        for digest in value:
+            ArtifactDigest.from_tagged(digest)
         return value
 
     @model_validator(mode="after")
@@ -231,6 +242,17 @@ class ClaimEvidenceAdmissionRuleV1(_StrictPolicyModel):
         if self.admission != "derivational" and self.allowed_reducer_digests:
             raise ValueError("only derivational evidence may name reducers")
         return self
+
+
+class ClaimEvidenceAdmissionRuleV2(_EvidenceRule):
+    """Evidence requirements; producer authorization belongs to governed mandates."""
+
+    tag: Literal["playbill-claim-evidence-admission-rule-v2"] = (
+        "playbill-claim-evidence-admission-rule-v2"
+    )
+
+
+ClaimEvidenceAdmissionRule = ClaimEvidenceAdmissionRuleV1 | ClaimEvidenceAdmissionRuleV2
 
 
 class ClaimEvidenceAdmissionPolicyV1(_StrictPolicyModel):
@@ -248,6 +270,26 @@ class ClaimEvidenceAdmissionPolicyV1(_StrictPolicyModel):
         if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
             raise ValueError("evidence-admission rules must be sorted and unique by rule_id")
         return value
+
+
+class ClaimEvidenceAdmissionPolicyV2(_StrictPolicyModel):
+    tag: Literal["playbill-claim-evidence-admission-policy-v2"] = (
+        "playbill-claim-evidence-admission-policy-v2"
+    )
+    rules: tuple[ClaimEvidenceAdmissionRuleV2, ...] = ()
+
+    @field_validator("rules")
+    @classmethod
+    def _rules(
+        cls, value: tuple[ClaimEvidenceAdmissionRuleV2, ...]
+    ) -> tuple[ClaimEvidenceAdmissionRuleV2, ...]:
+        ids = tuple(item.rule_id for item in value)
+        if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("evidence-admission rules must be sorted and unique by rule_id")
+        return value
+
+
+ClaimEvidenceAdmissionPolicy = ClaimEvidenceAdmissionPolicyV1 | ClaimEvidenceAdmissionPolicyV2
 
 
 class ClaimCorroborationResultV1(_StrictPolicyModel):
@@ -476,10 +518,14 @@ def _attestation_satisfied(
 
 
 def _derivation_satisfied(
-    rule: ClaimEvidenceAdmissionRuleV1,
+    rule: ClaimEvidenceAdmissionRule,
     evidence: EvidenceAdmissionInputV1,
 ) -> bool:
     if rule.admission == "derivational":
+        if isinstance(rule, ClaimEvidenceAdmissionRuleV2):
+            return evidence.reducer_digest is not None and bool(
+                evidence.input_claim_artifact_digests
+            )
         return evidence.reducer_digest in rule.allowed_reducer_digests and bool(
             evidence.input_claim_artifact_digests
         )
@@ -487,7 +533,7 @@ def _derivation_satisfied(
 
 
 def evaluate_claim_evidence_admission_trace(
-    policy: ClaimEvidenceAdmissionPolicyV1,
+    policy: ClaimEvidenceAdmissionPolicy,
     evidence: EvidenceAdmissionInputV1,
     *,
     subject_binding_by_rule: Mapping[str, bool] | None = None,
@@ -503,7 +549,7 @@ def evaluate_claim_evidence_admission_trace(
     if contract_rules:
         binding = subject_binding_by_rule or {}
 
-        def mismatch_count(rule: ClaimEvidenceAdmissionRuleV1) -> tuple[int, bytes]:
+        def mismatch_count(rule: ClaimEvidenceAdmissionRule) -> tuple[int, bytes]:
             mismatches = sum(
                 (
                     evidence.claim_role not in rule.claim_roles,
@@ -574,7 +620,7 @@ def evaluate_claim_evidence_admission_trace(
 
 
 def evaluate_claim_evidence_admission(
-    policy: ClaimEvidenceAdmissionPolicyV1,
+    policy: ClaimEvidenceAdmissionPolicy,
     evidence: EvidenceAdmissionInputV1,
 ) -> ClaimEvidenceAdmissionResultV1:
     """Evaluate evidence shape without granting Claim activation authority."""
@@ -661,8 +707,12 @@ __all__ = [
     "ClaimAdmissionCandidateResultV1",
     "ClaimAdmissionPolicyV1",
     "ClaimEvidenceAdmissionPolicyV1",
+    "ClaimEvidenceAdmissionPolicyV2",
+    "ClaimEvidenceAdmissionPolicy",
     "ClaimEvidenceAdmissionResultV1",
     "ClaimEvidenceAdmissionRuleV1",
+    "ClaimEvidenceAdmissionRuleV2",
+    "ClaimEvidenceAdmissionRule",
     "ClaimResolutionPolicyV1",
     "ClaimResolutionResultV1",
     "ClaimVerdict",

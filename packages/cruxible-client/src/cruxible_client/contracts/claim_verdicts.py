@@ -13,7 +13,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import ArtifactDigest, CasDigest, Sha256Value, typed_digest
 from cruxible_client.contracts.captures import CanonicalDurationV1
 from cruxible_client.contracts.claim_types import ClaimType
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV1
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicy
 from cruxible_client.contracts.providers import ProviderV1
 
 EvidenceBasisKind = Literal[
@@ -64,12 +64,12 @@ def observation_trust_grade(
     return values[provenance_grade]
 
 
-def _policy_digest(policy: ClaimEvidenceAdmissionPolicyV1) -> str:
+def _policy_digest(policy: ClaimEvidenceAdmissionPolicy) -> str:
     payload = policy.model_dump(mode="json")
     payload.pop("tag")
     return typed_digest(
         Sha256Value,
-        "playbill-claim-evidence-admission-policy-v1",
+        policy.tag,
         payload,
     ).tagged
 

@@ -48,6 +48,7 @@ from cruxible_core.authoring.store import AuthoringIntentStore
 from cruxible_core.claims.claim_retirement import ClaimRetireResultV1, service_retire_claim
 from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputV1,
+    ClaimTypeInputValidationError,
     claim_type_input_template,
     lint_claim_type_input,
     lower_claim_type_input,
@@ -516,7 +517,7 @@ def test_fresh_template_claim_reaches_supported_through_flow_a(
     assert verdict.verdict.verdict == "supported"
 
 
-def test_claim_type_input_lowers_freshness_into_the_existing_v3_artifact() -> None:
+def test_claim_type_input_preserves_optional_freshness_in_v5() -> None:
     original = claim_type_input_example()
     freshness = ClaimEvidenceFreshnessV1(
         stale_after=ClaimFreshnessDurationV1(microseconds=2_592_000_000_000)
@@ -528,16 +529,17 @@ def test_claim_type_input_lowers_freshness_into_the_existing_v3_artifact() -> No
         }
     )
 
-    legacy = lower_claim_type_input(original, tree={})
+    plain = lower_claim_type_input(original, tree={})
     governed = lower_claim_type_input(fresh, tree={})
 
-    assert legacy.artifact_format == "playbill-claim-type-v1"
+    assert plain.artifact_format == "playbill-claim-type-v5"
+    assert plain.evidence_freshness is None
     assert "evidence_freshness" not in original.model_dump(mode="json")
-    assert governed.artifact_format == "playbill-claim-type-v3"
+    assert governed.artifact_format == "playbill-claim-type-v5"
     assert governed.evidence_freshness == freshness
 
 
-def test_claim_type_input_lowers_attestation_consequences_into_v4() -> None:
+def test_claim_type_input_preserves_attestation_consequences_in_v5() -> None:
     original = claim_type_input_example()
     policy = ClaimAttestationConsequencePolicyV1(
         rules=(
@@ -558,9 +560,32 @@ def test_claim_type_input_lowers_attestation_consequences_into_v4() -> None:
         tree={},
     )
 
-    assert governed.artifact_format == "playbill-claim-type-v4"
+    assert governed.artifact_format == "playbill-claim-type-v5"
     assert governed.evidence_freshness is None
     assert governed.attestation_consequence_policy == policy
+
+
+def test_claim_type_input_refuses_producer_authorization() -> None:
+    original = claim_type_input_example()
+    producer_bound = original.model_copy(
+        update={
+            "evidence_admission_policy": {
+                "rules": [
+                    {
+                        "rule_id": "derivation",
+                        "claim_roles": ["derivation"],
+                        "capture_contract_digests": ["sha256:" + "ab" * 32],
+                        "evidence_kinds": ["self_asserted"],
+                        "admission": "derivational",
+                        "subject_binding": "exact_claim_subject",
+                        "allowed_reducer_digests": ["sha256:" + "cd" * 32],
+                    }
+                ]
+            }
+        }
+    )
+    with pytest.raises(ClaimTypeInputValidationError, match="allowed_reducer_digests"):
+        lower_claim_type_input(producer_bound, tree={})
 
 
 def test_empty_claim_type_policy_warns_when_an_accepted_capture_contract_exists(

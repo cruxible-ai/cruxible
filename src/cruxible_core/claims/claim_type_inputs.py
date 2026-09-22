@@ -25,6 +25,7 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
 )
 from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV2
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillProposalInspection
@@ -160,12 +161,13 @@ def lower_claim_type_input(
         predecessor = parse_claim_type(tree[path], path=path)
     payload = value.model_dump(mode="json")
     payload.pop("anticipated_source_ids", None)
-    if value.attestation_consequence_policy is not None:
-        payload["artifact_format"] = "playbill-claim-type-v4"
-    elif value.evidence_freshness is not None:
-        payload["artifact_format"] = "playbill-claim-type-v3"
-    else:
-        payload["artifact_format"] = "playbill-claim-type-v1"
+    payload["artifact_format"] = "playbill-claim-type-v5"
+    try:
+        payload["evidence_admission_policy"] = ClaimEvidenceAdmissionPolicyV2.model_validate(
+            value.evidence_admission_policy
+        ).model_dump(mode="json")
+    except ValidationError as exc:
+        raise ClaimTypeInputValidationError(exc) from exc
     payload["identity"] = ArtifactIdentity(kind="ClaimType", name=value.predicate).model_dump(
         mode="json"
     )

@@ -1142,7 +1142,7 @@ def test_an_unknown_claim_type_object_kind_falls_back_to_the_literal_shape(
     assert draft.payload.statement.object == LiteralClaimObject(value="docs/readme")
 
 
-def test_claim_type_builder_selects_v4_for_attestation_consequences(tmp_path: Path) -> None:
+def test_claim_type_builder_preserves_attestation_consequences_in_v5(tmp_path: Path) -> None:
     _workspace(tmp_path)
     pb = Playbill._from_client(  # type: ignore[arg-type]
         _Client(),
@@ -1181,7 +1181,7 @@ def test_claim_type_builder_selects_v4_for_attestation_consequences(tmp_path: Pa
         attestation_consequence_policy=policy,
     )
 
-    assert draft.definition.artifact_format == "playbill-claim-type-v4"
+    assert draft.definition.artifact_format == "playbill-claim-type-v5"
     assert draft.definition.attestation_consequence_policy == policy
 
 

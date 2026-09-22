@@ -4818,8 +4818,30 @@
             "title": "ClaimEvidenceAdmissionPolicyV1",
             "type": "object"
           },
+          "ClaimEvidenceAdmissionPolicyV2": {
+            "additionalProperties": false,
+            "properties": {
+              "rules": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ClaimEvidenceAdmissionRuleV2"
+                },
+                "title": "Rules",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-claim-evidence-admission-policy-v2",
+                "default": "playbill-claim-evidence-admission-policy-v2",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "ClaimEvidenceAdmissionPolicyV2",
+            "type": "object"
+          },
           "ClaimEvidenceAdmissionRuleV1": {
             "additionalProperties": false,
+            "description": "Frozen producer allowlist for historical ClaimTypes only.",
             "properties": {
               "admission": {
                 "enum": [
@@ -4904,6 +4926,87 @@
               "subject_binding"
             ],
             "title": "ClaimEvidenceAdmissionRuleV1",
+            "type": "object"
+          },
+          "ClaimEvidenceAdmissionRuleV2": {
+            "additionalProperties": false,
+            "description": "Evidence requirements; producer authorization belongs to governed mandates.",
+            "properties": {
+              "admission": {
+                "enum": [
+                  "origin_only",
+                  "direct",
+                  "derivational"
+                ],
+                "title": "Admission",
+                "type": "string"
+              },
+              "attestation_requirement": {
+                "default": "none",
+                "enum": [
+                  "none",
+                  "verified_provider",
+                  "verified_principal",
+                  "any_verified"
+                ],
+                "title": "Attestation Requirement",
+                "type": "string"
+              },
+              "capture_contract_digests": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Contract Digests",
+                "type": "array"
+              },
+              "claim_roles": {
+                "items": {
+                  "enum": [
+                    "normative",
+                    "observation",
+                    "environment_binding",
+                    "derivation"
+                  ],
+                  "type": "string"
+                },
+                "title": "Claim Roles",
+                "type": "array"
+              },
+              "evidence_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Evidence Kinds",
+                "type": "array"
+              },
+              "rule_id": {
+                "title": "Rule Id",
+                "type": "string"
+              },
+              "subject_binding": {
+                "enum": [
+                  "exact_claim_subject",
+                  "contract_source_mapping"
+                ],
+                "title": "Subject Binding",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-claim-evidence-admission-rule-v2",
+                "default": "playbill-claim-evidence-admission-rule-v2",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "rule_id",
+              "claim_roles",
+              "capture_contract_digests",
+              "evidence_kinds",
+              "admission",
+              "subject_binding"
+            ],
+            "title": "ClaimEvidenceAdmissionRuleV2",
             "type": "object"
           },
           "ClaimEvidenceFreshnessV1": {
@@ -5301,7 +5404,8 @@
                 "enum": [
                   "playbill-claim-type-v1",
                   "playbill-claim-type-v3",
-                  "playbill-claim-type-v4"
+                  "playbill-claim-type-v4",
+                  "playbill-claim-type-v5"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -5326,7 +5430,15 @@
                 "type": "string"
               },
               "evidence_admission_policy": {
-                "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV1"
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV1"
+                  },
+                  {
+                    "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV2"
+                  }
+                ],
+                "title": "Evidence Admission Policy"
               },
               "evidence_freshness": {
                 "anyOf": [
@@ -47583,8 +47695,30 @@
             "title": "ClaimEvidenceAdmissionPolicyV1",
             "type": "object"
           },
+          "ClaimEvidenceAdmissionPolicyV2": {
+            "additionalProperties": false,
+            "properties": {
+              "rules": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ClaimEvidenceAdmissionRuleV2"
+                },
+                "title": "Rules",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-claim-evidence-admission-policy-v2",
+                "default": "playbill-claim-evidence-admission-policy-v2",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "ClaimEvidenceAdmissionPolicyV2",
+            "type": "object"
+          },
           "ClaimEvidenceAdmissionRuleV1": {
             "additionalProperties": false,
+            "description": "Frozen producer allowlist for historical ClaimTypes only.",
             "properties": {
               "admission": {
                 "enum": [
@@ -47669,6 +47803,87 @@
               "subject_binding"
             ],
             "title": "ClaimEvidenceAdmissionRuleV1",
+            "type": "object"
+          },
+          "ClaimEvidenceAdmissionRuleV2": {
+            "additionalProperties": false,
+            "description": "Evidence requirements; producer authorization belongs to governed mandates.",
+            "properties": {
+              "admission": {
+                "enum": [
+                  "origin_only",
+                  "direct",
+                  "derivational"
+                ],
+                "title": "Admission",
+                "type": "string"
+              },
+              "attestation_requirement": {
+                "default": "none",
+                "enum": [
+                  "none",
+                  "verified_provider",
+                  "verified_principal",
+                  "any_verified"
+                ],
+                "title": "Attestation Requirement",
+                "type": "string"
+              },
+              "capture_contract_digests": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Contract Digests",
+                "type": "array"
+              },
+              "claim_roles": {
+                "items": {
+                  "enum": [
+                    "normative",
+                    "observation",
+                    "environment_binding",
+                    "derivation"
+                  ],
+                  "type": "string"
+                },
+                "title": "Claim Roles",
+                "type": "array"
+              },
+              "evidence_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Evidence Kinds",
+                "type": "array"
+              },
+              "rule_id": {
+                "title": "Rule Id",
+                "type": "string"
+              },
+              "subject_binding": {
+                "enum": [
+                  "exact_claim_subject",
+                  "contract_source_mapping"
+                ],
+                "title": "Subject Binding",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-claim-evidence-admission-rule-v2",
+                "default": "playbill-claim-evidence-admission-rule-v2",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "rule_id",
+              "claim_roles",
+              "capture_contract_digests",
+              "evidence_kinds",
+              "admission",
+              "subject_binding"
+            ],
+            "title": "ClaimEvidenceAdmissionRuleV2",
             "type": "object"
           },
           "ClaimEvidenceFreshnessV1": {
@@ -48083,7 +48298,8 @@
                 "enum": [
                   "playbill-claim-type-v1",
                   "playbill-claim-type-v3",
-                  "playbill-claim-type-v4"
+                  "playbill-claim-type-v4",
+                  "playbill-claim-type-v5"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -48108,7 +48324,15 @@
                 "type": "string"
               },
               "evidence_admission_policy": {
-                "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV1"
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV1"
+                  },
+                  {
+                    "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV2"
+                  }
+                ],
+                "title": "Evidence Admission Policy"
               },
               "evidence_freshness": {
                 "anyOf": [

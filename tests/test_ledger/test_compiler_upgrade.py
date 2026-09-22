@@ -6,12 +6,14 @@ from cruxible_client.contracts.compiler_upgrade import COMPILER_UPGRADE_PATH
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_core.compiler.compiler import (
     ATTESTATION_COMPILER,
+    CLAIM_EVIDENCE_COMPILER,
     ONTOLOGY_COMPILER,
     PC_HR_COMPILER,
     PROVIDER_CONTRACT_COMPILER,
     PROVIDER_PACKAGE_COMPILER,
     RESOLUTION_COMPILER,
     RESOURCE_BUDGET_COMPILER,
+    SDK_SOURCE_COMPILER,
     UPGRADE_COMPILER,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -65,6 +67,7 @@ def approve(instance, proposal, reviewer):
         for source in [PC_HR_COMPILER, ATTESTATION_COMPILER, RESOLUTION_COMPILER, ONTOLOGY_COMPILER]
     ]
     + [
+        (SDK_SOURCE_COMPILER, CLAIM_EVIDENCE_COMPILER),
         (PROVIDER_PACKAGE_COMPILER, RESOURCE_BUDGET_COMPILER),
         (UPGRADE_COMPILER, PROVIDER_CONTRACT_COMPILER),
         (RESOLUTION_COMPILER, PROVIDER_CONTRACT_COMPILER),

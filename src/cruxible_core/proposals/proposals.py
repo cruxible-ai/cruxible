@@ -2520,7 +2520,7 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
             claim_type.admission_policy,
         ),
         _canonical_model_digest(
-            "playbill-claim-evidence-admission-policy-v1",
+            claim_type.evidence_admission_policy.tag,
             claim_type.evidence_admission_policy,
         ),
         _canonical_model_digest(
@@ -2563,6 +2563,25 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
             claim_type=previous,
             artifact_digest=claim_type_digest(previous).tagged,
         )
+    from cruxible_core.compiler.compiler import CLAIM_EVIDENCE_COMPILER
+
+    if (
+        context.historical_law_coordinate is None
+        and context.current.compiler == CLAIM_EVIDENCE_COMPILER
+    ):
+        if any(pin.target.kind == "Procedure" for pin in claim_type.pins) or any(
+            getattr(rule, "allowed_reducer_digests", ())
+            for rule in claim_type.evidence_admission_policy.rules
+        ):
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "playbill.claim_type.producer_authorization_forbidden",
+                        "Producer authorization belongs to Procedure mandates, not ClaimTypes.",
+                        context.path,
+                    ),
+                )
+            )
     law = evaluate_claim_type_law(
         claim_type,
         path=context.path,

@@ -42,6 +42,7 @@ from cruxible_client.contracts.providers import (
     render_provider,
 )
 from cruxible_core.compiler.compiler import (
+    CLAIM_EVIDENCE_COMPILER,
     PROVIDER_PACKAGE_COMPILER,
     RESOURCE_BUDGET_COMPILER,
     SDK_SOURCE_COMPILER,
@@ -328,6 +329,7 @@ def service_install_provider(
         PROVIDER_PACKAGE_COMPILER,
         RESOURCE_BUDGET_COMPILER,
         SDK_SOURCE_COMPILER,
+        CLAIM_EVIDENCE_COMPILER,
     ):
         raise ConfigError(
             "provider installation requires an explicit upgrade to the package compiler"

@@ -261,6 +261,16 @@ __exit__(*_args: object) -> None
 
 ## Knowledge authoring
 
+New ClaimType authoring emits the producer-independent v5 artifact and v2 evidence
+policy. Evidence rules define admissible capture contracts, roles, subject binding,
+and attestation requirements. A derivational rule also requires exact producer and
+input-Claim provenance, but never an allowlist of producing Procedures. Producer
+permission is enforced through the existing Procedure mandates and governed
+proposal approval. Historical ClaimType formats retain their original validation.
+
+The compact derivation profile is `replay-verifiable-derivation-v2`; it requires
+capture-contract and evidence-kind parameters, with no reducer digest parameter.
+
 <a id="api-playbill-changes"></a>
 
 ### `Playbill.changes`

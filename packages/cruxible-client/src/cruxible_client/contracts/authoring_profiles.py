@@ -22,8 +22,8 @@ from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.policies import (
     AttestationRequirement,
     ClaimAdmissionPolicyV1,
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
+    ClaimEvidenceAdmissionPolicyV2,
+    ClaimEvidenceAdmissionRuleV2,
     ClaimResolutionPolicyV1,
 )
 
@@ -31,7 +31,7 @@ ClaimTypeProfileId = Literal[
     "ordinary-project-fact-v1",
     "append-only-source-observation-v1",
     "policy-owner-normative-claim-v1",
-    "replay-verifiable-derivation-v1",
+    "replay-verifiable-derivation-v2",
     "source-backed-scientific-result-v1",
 ]
 
@@ -48,7 +48,7 @@ class ClaimTypeProfileDefinitionV1(_StrictProfileModel):
     tag: Literal["playbill-claim-type-profile-definition-v1"] = (
         "playbill-claim-type-profile-definition-v1"
     )
-    profile_id: ClaimTypeProfileId
+    profile_id: ClaimTypeProfileId | Literal["replay-verifiable-derivation-v1"]
     required_parameters: tuple[str, ...]
     optional_parameters: tuple[str, ...] = ()
     allowed_overrides: tuple[Literal["conflict_result", "require_current"], ...] = (
@@ -122,8 +122,8 @@ CLAIM_TYPE_AUTHORING_PROFILES: tuple[ClaimTypeProfileDefinitionV1, ...] = (
     _profile("ordinary-project-fact-v1"),
     _profile("policy-owner-normative-claim-v1"),
     _profile(
-        "replay-verifiable-derivation-v1",
-        required=("capture_contract_digest", "evidence_kind", "reducer_digest"),
+        "replay-verifiable-derivation-v2",
+        required=("capture_contract_digest", "evidence_kind"),
         optional=("attestation_requirement",),
     ),
     _profile(
@@ -241,8 +241,8 @@ def _profile_policies(
     structure: ClaimTypeStructure,
     parameters: dict[str, object],
     overrides: dict[str, object],
-) -> tuple[ClaimEvidenceAdmissionPolicyV1, ClaimAdmissionPolicyV1, ClaimResolutionPolicyV1]:
-    evidence = ClaimEvidenceAdmissionPolicyV1()
+) -> tuple[ClaimEvidenceAdmissionPolicyV2, ClaimAdmissionPolicyV1, ClaimResolutionPolicyV1]:
+    evidence = ClaimEvidenceAdmissionPolicyV2()
     admission = ClaimAdmissionPolicyV1()
     if profile_id in {
         "append-only-source-observation-v1",
@@ -250,9 +250,9 @@ def _profile_policies(
     }:
         if structure.cardinality != "many":
             raise AuthoringProfileError("observation profiles require cardinality='many'")
-        evidence = ClaimEvidenceAdmissionPolicyV1(
+        evidence = ClaimEvidenceAdmissionPolicyV2(
             rules=(
-                ClaimEvidenceAdmissionRuleV1(
+                ClaimEvidenceAdmissionRuleV2(
                     rule_id="source-observation",
                     claim_roles=("observation",),
                     capture_contract_digests=(
@@ -265,10 +265,10 @@ def _profile_policies(
                 ),
             )
         )
-    elif profile_id == "replay-verifiable-derivation-v1":
-        evidence = ClaimEvidenceAdmissionPolicyV1(
+    elif profile_id == "replay-verifiable-derivation-v2":
+        evidence = ClaimEvidenceAdmissionPolicyV2(
             rules=(
-                ClaimEvidenceAdmissionRuleV1(
+                ClaimEvidenceAdmissionRuleV2(
                     rule_id="replay-verifiable-derivation",
                     claim_roles=("derivation",),
                     capture_contract_digests=(
@@ -277,7 +277,6 @@ def _profile_policies(
                     evidence_kinds=(str(parameters["evidence_kind"]),),
                     admission="derivational",
                     subject_binding="contract_source_mapping",
-                    allowed_reducer_digests=(_require_digest(parameters, "reducer_digest"),),
                     attestation_requirement=_attestation(parameters),
                 ),
             )
@@ -321,6 +320,7 @@ def expand_claim_type_profile(request: ClaimTypeProfileInputV1) -> ClaimTypeExpa
     )
     structure = request.structure
     claim_type = ClaimType(
+        artifact_format="playbill-claim-type-v5",
         identity=ArtifactIdentity(kind="ClaimType", name=structure.predicate),
         predicate=structure.predicate,
         allowed_subject_kinds=structure.allowed_subject_kinds,
@@ -369,6 +369,12 @@ def verify_claim_type_expansion_evidence(
     """Verify profile identity and every digest against the exact expanded bytes."""
 
     definition = _definitions().get(evidence.profile_id)
+    if evidence.profile_id == "replay-verifiable-derivation-v1":
+        definition = _profile(
+            cast(ClaimTypeProfileId, evidence.profile_id),
+            required=("capture_contract_digest", "evidence_kind", "reducer_digest"),
+            optional=("attestation_requirement",),
+        )
     if definition is None or definition.profile_digest != evidence.profile_digest:
         raise AuthoringProfileError("ClaimType expansion names an unknown or stale profile")
     if evidence.compiler_digest != compiler_digest:

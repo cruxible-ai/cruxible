@@ -341,7 +341,7 @@ decorator; reading a property has no network or execution effect.
 |---|---|---|
 | `name` | `str` | Declared Procedure name. |
 | `source` | `str` | Authored source retained for review, including comments. |
-| `filename` | `str` | Diagnostic/source-map label, not a daemon filesystem permission. |
+| `filename` | `str` | Caller-local diagnostic/source-map label. Accepted source uses a portable Procedure filename and relative lines, so relocating identical code does not change its identity. |
 | `contract_in`, `contract_out` | `Contract` | Declared invocation and successful-result contracts. |
 | `budget`, `hard_caps` | Existing models | Declared limits. |
 | `terminal_capability` | `Literal[1, 2, 3]` | Declared terminal capability. |
@@ -1085,7 +1085,10 @@ source and explicit bindings must suffice for non-executing verification.
 
 A graph produced from Sequence or another authoring surface can have a canonical
 rendered source view. That view must be labeled as a rendering; it cannot claim
-to recover comments or the original source structure. Accepted readiness includes the typed artifact; its `definition.source` holds
+to recover comments or the original source structure. Local file locations and
+line offsets stay in preview diagnostics; retained source uses a portable
+coordinate. Historical source envelopes retain their original bytes and digest
+rules. Accepted readiness includes the typed artifact; its `definition.source` holds
 the authored text, rule identifier, and exact resolved bindings. Historical
 source and graphs retain their original verification rules. Rendering original
 source from non-source graphs is not implemented.
@@ -1467,13 +1470,12 @@ parse its entries or author exposure Claims.
 
 ### Compare a feed observation with an accepted baseline
 
-**Known blocker:** compilation, exact `basis` binding, and child capture linkage
-are implemented. Positive governed derivation admission still needs a reducer
-policy decision: current rules whitelist the exact Procedure digest while that
-Procedure pins the ClaimType. Updating the allowlist changes the pinned type.
-The example below is the intended source shape, not a completed end-to-end
-acceptance recipe. Direct observation proposals work; a direct evidence rule
-correctly refuses this derivation. No manual digest workaround is supported.
+Derivation proposals use a ClaimType v5 evidence rule with `admission="derivational"`.
+The rule requires the producing Procedure and exact input-Claim provenance; it
+contains no producer allowlist. The existing Procedure mandate authorizes the
+exact producer, actor, lane, and proposal scope, and ordinary governed approval
+controls acceptance. A direct-only evidence rule still refuses a derivation.
+Names and typed handles remain the authoring inputs; Core resolves every digest.
 
 This connects state reads, an exact child binding, a successful capture, a
 comparison, and a governed proposal. The child was defined above; no unspecified

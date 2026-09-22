@@ -16,6 +16,7 @@ from cruxible_client.contracts.artifacts import (
 from cruxible_client.contracts.authoring_profiles import (
     CLAIM_TYPE_AUTHORING_PROFILES,
     AuthoringProfileError,
+    ClaimTypeExpansionEvidenceV1,
     ClaimTypeProfileInputV1,
     expand_claim_type_profile,
     verify_claim_type_expansion_evidence,
@@ -39,6 +40,7 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV1,
+    ClaimEvidenceAdmissionRuleV1,
     ClaimResolutionPolicyV1,
 )
 from cruxible_core.compiler.compiler import current_compiler_coordinate
@@ -365,7 +367,14 @@ def test_claim_type_v3_horizon_proposal_uses_the_frozen_refusal_code(tmp_path: P
 
 
 def test_compact_ordinary_profile_and_expert_input_expand_to_identical_bytes() -> None:
-    direct = literal_claim_type()
+    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV2
+
+    direct = literal_claim_type().model_copy(
+        update={
+            "artifact_format": "playbill-claim-type-v5",
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV2(),
+        }
+    )
     profile = next(
         item
         for item in CLAIM_TYPE_AUTHORING_PROFILES
@@ -456,17 +465,85 @@ def test_profile_seed_list_is_exact_and_digest_pinned() -> None:
         "append-only-source-observation-v1",
         "ordinary-project-fact-v1",
         "policy-owner-normative-claim-v1",
-        "replay-verifiable-derivation-v1",
+        "replay-verifiable-derivation-v2",
         "source-backed-scientific-result-v1",
     )
     assert all(item.profile_digest.startswith("sha256:") for item in CLAIM_TYPE_AUTHORING_PROFILES)
+
+
+def test_derivation_profile_removes_producer_input_but_verifies_frozen_expansions() -> None:
+    profile = next(
+        item
+        for item in CLAIM_TYPE_AUTHORING_PROFILES
+        if item.profile_id == "replay-verifiable-derivation-v2"
+    )
+    request = ClaimTypeProfileInputV1(
+        profile_id=profile.profile_id,
+        profile_digest=profile.profile_digest,
+        authoring_source_digest="sha256:" + "65" * 32,
+        compiler_digest="sha256:" + "66" * 32,
+        structure=literal_claim_type().structure.model_copy(
+            update={"permitted_roles": ("derivation",)}
+        ),
+        parameters={
+            "capture_contract_digest": "sha256:" + "aa" * 32,
+            "evidence_kind": "source.observation",
+        },
+    )
+    expanded = expand_claim_type_profile(request)
+    assert expanded.claim_type.artifact_format == "playbill-claim-type-v5"
+    rule = expanded.claim_type.evidence_admission_policy.rules[0]
+    assert "allowed_reducer_digests" not in rule.model_dump()
+    with pytest.raises(AuthoringProfileError, match="closed schema"):
+        expand_claim_type_profile(
+            request.model_copy(
+                update={
+                    "parameters": {**request.parameters, "reducer_digest": "sha256:" + "bb" * 32}
+                }
+            )
+        )
+
+    historical = expanded.claim_type.model_copy(
+        update={
+            "artifact_format": "playbill-claim-type-v1",
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+                rules=(
+                    ClaimEvidenceAdmissionRuleV1(
+                        **rule.model_dump(exclude={"tag"}),
+                        allowed_reducer_digests=("sha256:" + "bb" * 32,),
+                    ),
+                )
+            ),
+        }
+    )
+    # These coordinates were produced by the pre-change profile expander.
+    evidence = ClaimTypeExpansionEvidenceV1(
+        profile_id="replay-verifiable-derivation-v1",
+        profile_digest="sha256:7e99d7021ea8d8ad3f202ae83770b68b513e20bcfc79d1010466b222ebffa021",
+        authoring_source_digest=request.authoring_source_digest,
+        compiler_digest=request.compiler_digest,
+        overrides={},
+        overrides_digest="sha256:c0310a1fde63b3acf5f7d03335a04f08bc9765815a303b069cd10a2f51e3f625",
+        expanded_output_digest="sha256:990b88fdfd2617632b6e502ef19090b8a5db1b0750bf4adb825fab7f5cd13c6f",
+        expanded_artifact_digest="sha256:926f4cfa919aaca96f72ed1dde5aa06b09da1954013d3ffe338d94eefb8b616e",
+    )
+    verify_claim_type_expansion_evidence(
+        evidence, claim_type=historical, compiler_digest=request.compiler_digest
+    )
 
 
 def test_profile_evidence_and_complete_expansion_are_visible_in_atomic_review(
     tmp_path: Path,
 ) -> None:
     instance, _owner = initialize_local(tmp_path)
-    direct = literal_claim_type()
+    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV2
+
+    direct = literal_claim_type().model_copy(
+        update={
+            "artifact_format": "playbill-claim-type-v5",
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV2(),
+        }
+    )
     profile = next(
         item
         for item in CLAIM_TYPE_AUTHORING_PROFILES
@@ -505,3 +582,89 @@ def test_profile_evidence_and_complete_expansion_are_visible_in_atomic_review(
     assert result["expanded_claim_type"] == direct.model_dump(mode="json")
     assert result["authoring_expansion"] == expansion.evidence.model_dump(mode="json")
     assert review.members[0].closure_role == "authored"
+
+
+def test_current_claim_type_has_no_producer_dependencies_and_requires_new_compiler():
+    from cruxible_client.contracts.artifacts import ArtifactPin
+    from cruxible_client.contracts.errors import ProjectionFormatError
+    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV2
+    from cruxible_core.compiler.compiler import (
+        CLAIM_EVIDENCE_COMPILER,
+        SDK_SOURCE_COMPILER,
+        artifact_kinds_for_compiler,
+        projection_registry_for_compiler,
+    )
+    from cruxible_core.compiler.projection_artifacts import parse_projection_tree
+
+    definition = literal_claim_type().model_copy(
+        update={
+            "artifact_format": "playbill-claim-type-v5",
+            "literal_schema": {"type": "string"},
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV2(),
+        }
+    )
+    definition = ClaimType.model_validate(definition.model_dump())
+    producer = ArtifactPin(
+        role="producer",
+        target=ArtifactIdentity(kind="Procedure", name="derive"),
+        artifact_digest="sha256:" + "aa" * 32,
+    )
+    with pytest.raises(ValueError, match="cannot depend"):
+        ClaimType.model_validate({**definition.model_dump(), "pins": [producer]})
+    tree = {claim_type_path(definition.predicate): render_claim_type(definition)}
+    with pytest.raises(ProjectionFormatError, match="revision 28"):
+        parse_projection_tree(
+            tree,
+            registry=projection_registry_for_compiler(SDK_SOURCE_COMPILER),
+            artifact_kinds=artifact_kinds_for_compiler(SDK_SOURCE_COMPILER),
+        )
+    parsed = parse_projection_tree(
+        tree,
+        registry=projection_registry_for_compiler(CLAIM_EVIDENCE_COMPILER),
+        artifact_kinds=artifact_kinds_for_compiler(CLAIM_EVIDENCE_COMPILER),
+    )
+    assert parsed.envelopes[0].artifact_digest == claim_type_digest(definition).tagged
+
+
+def test_current_admission_refuses_producer_allowlist_in_historical_format(tmp_path):
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionPolicyV1,
+        ClaimEvidenceAdmissionRuleV1,
+    )
+
+    instance, _owner = initialize_local(tmp_path)
+    definition = literal_claim_type().model_copy(
+        update={
+            "permitted_roles": ("derivation",),
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+                rules=(
+                    ClaimEvidenceAdmissionRuleV1(
+                        rule_id="old-reducer",
+                        claim_roles=("derivation",),
+                        capture_contract_digests=("sha256:" + "aa" * 32,),
+                        evidence_kinds=("source.observation",),
+                        admission="derivational",
+                        subject_binding="exact_claim_subject",
+                        allowed_reducer_digests=("sha256:" + "bb" * 32,),
+                    ),
+                )
+            ),
+        }
+    )
+    base = instance.accepted_coordinate()
+    proposal = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/old-reducer", proposed_base_oid=base.git_oid
+        ),
+        candidate_tree={
+            **instance.tree_at(base.git_oid),
+            claim_type_path(definition.predicate): render_claim_type(definition),
+        },
+        timestamp="2026-08-16T17:00:00.000000Z",
+    )
+    assert proposal.candidate is None
+    assert any(
+        d.code == "playbill.claim_type.producer_authorization_forbidden"
+        for d in proposal.evaluation.diagnostics
+    )

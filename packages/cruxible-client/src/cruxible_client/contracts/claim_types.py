@@ -42,6 +42,7 @@ from cruxible_client.contracts.governance import PermissionTier, governance_iden
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV1,
+    ClaimEvidenceAdmissionPolicyV2,
     ClaimResolutionPolicyV1,
 )
 
@@ -130,6 +131,7 @@ class ClaimType(_StrictClaimTypeModel):
         "playbill-claim-type-v1",
         "playbill-claim-type-v3",
         "playbill-claim-type-v4",
+        "playbill-claim-type-v5",
     ] = "playbill-claim-type-v1"
     identity: ArtifactIdentity
     predicate: str
@@ -142,7 +144,7 @@ class ClaimType(_StrictClaimTypeModel):
         Literal["normative", "observation", "environment_binding", "derivation"], ...
     ]
     referent_sensitivity: Literal["identity", "shell"] = "identity"
-    evidence_admission_policy: ClaimEvidenceAdmissionPolicyV1
+    evidence_admission_policy: ClaimEvidenceAdmissionPolicyV1 | ClaimEvidenceAdmissionPolicyV2
     admission_policy: ClaimAdmissionPolicyV1
     resolution_policy: ClaimResolutionPolicyV1
     pins: tuple[ArtifactPin, ...] = ()
@@ -205,8 +207,20 @@ class ClaimType(_StrictClaimTypeModel):
                 raise ValueError("ClaimType v3 requires evidence freshness")
             if self.attestation_consequence_policy is not None:
                 raise ValueError("ClaimType v3 cannot carry v4 attestation consequences")
-        elif self.attestation_consequence_policy is None:
+        elif (
+            self.artifact_format == "playbill-claim-type-v4"
+            and self.attestation_consequence_policy is None
+        ):
             raise ValueError("ClaimType v4 requires an attestation consequence policy")
+        if self.artifact_format == "playbill-claim-type-v5":
+            if not isinstance(self.evidence_admission_policy, ClaimEvidenceAdmissionPolicyV2):
+                raise ValueError(
+                    "ClaimType v5 requires evidence policy v2 without producer authorization"
+                )
+            if any(pin.target.kind == "Procedure" for pin in self.pins):
+                raise ValueError("ClaimTypes cannot depend on producing Procedures")
+        elif not isinstance(self.evidence_admission_policy, ClaimEvidenceAdmissionPolicyV1):
+            raise ValueError("Historical ClaimTypes require their original evidence policy")
         ClaimTypeStructure(
             predicate=self.predicate,
             allowed_subject_kinds=self.allowed_subject_kinds,
@@ -285,6 +299,7 @@ def parse_claim_type(
         "playbill-claim-type-v1",
         "playbill-claim-type-v3",
         "playbill-claim-type-v4",
+        "playbill-claim-type-v5",
     }:
         declared = payload.get("artifact_format") if isinstance(payload, dict) else None
         raise ClaimTypeFormatError(f"unsupported ClaimType artifact format: {declared!r}")
@@ -331,10 +346,19 @@ def _claim_type_digest_v4(claim_type: ClaimType) -> ArtifactDigest:
     )
 
 
+def _claim_type_digest_v5(claim_type: ClaimType) -> ArtifactDigest:
+    return typed_digest(
+        ArtifactDigest,
+        "playbill-envelope-v1",
+        claim_type.model_dump(mode="json"),
+    )
+
+
 CLAIM_TYPE_DIGEST_FUNCTIONS: dict[str, Callable[[ClaimType], ArtifactDigest]] = {
     "playbill-claim-type-v1": _claim_type_digest_v1,
     "playbill-claim-type-v3": _claim_type_digest_v3,
     "playbill-claim-type-v4": _claim_type_digest_v4,
+    "playbill-claim-type-v5": _claim_type_digest_v5,
 }
 
 

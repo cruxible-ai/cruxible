@@ -14,6 +14,7 @@ PROCEDURE_RUNTIME_POLICY_LAW_IDENTIFIER = "playbill.procedure-runtime-policy.v1"
 CLAIM_TYPE_LAW_IDENTIFIER = "playbill.claim-type.v1"
 CLAIM_TYPE_LAW_V3_IDENTIFIER = "playbill.claim-type.v3"
 CLAIM_TYPE_LAW_V4_IDENTIFIER = "playbill.claim-type.v4"
+CLAIM_TYPE_LAW_V5_IDENTIFIER = "playbill.claim-type.v5"
 CLAIM_LAW_V2_IDENTIFIER = "playbill.claim.v2"
 CLAIM_LAW_V3_IDENTIFIER = "playbill.claim.v3"
 CAPTURE_CONTRACT_LAW_IDENTIFIER = "playbill.capture-contract.v1"
@@ -198,6 +199,11 @@ CLAIM_TYPE_LAW_V4 = _artifact_law_coordinate(
     "playbill-claim-type-v4",
     semantic_revision=4,
 )
+CLAIM_TYPE_LAW_V5 = _artifact_law_coordinate(
+    CLAIM_TYPE_LAW_V5_IDENTIFIER,
+    "playbill-claim-type-v5",
+    semantic_revision=4,
+)
 PROVIDER_LAW = _artifact_law_coordinate(
     PROVIDER_LAW_IDENTIFIER,
     "playbill-provider-v1",
@@ -363,6 +369,11 @@ CLAIM_TYPE_V4_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="claim-type",
     artifact_tag="playbill-claim-type-v4",
 )
+CLAIM_TYPE_V5_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=CLAIM_TYPE_LAW_V5,
+    artifact_kind="claim-type",
+    artifact_tag="playbill-claim-type-v5",
+)
 CAPTURE_CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CAPTURE_CONTRACT_LAW,
     artifact_kind="capture-contract",
@@ -523,6 +534,14 @@ SDK_SOURCE_UPGRADE_LAW = InstalledAcceptanceLaw(
     artifact_tag="playbill-compiler-upgrade-v1",
     current=False,
 )
+CLAIM_EVIDENCE_UPGRADE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=6
+    ),
+    artifact_kind="compiler-upgrade",
+    artifact_tag="playbill-compiler-upgrade-v1",
+    current=False,
+)
 PROVIDER_CONTRACT_PROCEDURE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
         PROCEDURE_LAW_V2_IDENTIFIER, "playbill-procedure-v2", semantic_revision=7
@@ -579,6 +598,7 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         PROVIDER_PACKAGE_UPGRADE_LAW,
         RESOURCE_BUDGET_UPGRADE_LAW,
         SDK_SOURCE_UPGRADE_LAW,
+        CLAIM_EVIDENCE_UPGRADE_LAW,
         SDK_SOURCE_PROCEDURE_LAW,
         PROVIDER_CONTRACT_PROCEDURE_LAW,
         PROVIDER_CONTRACT_UPGRADE_LAW,
@@ -594,6 +614,7 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         CLAIM_TYPE_ACCEPTANCE_LAW,
         CLAIM_TYPE_V3_ACCEPTANCE_LAW,
         CLAIM_TYPE_V4_ACCEPTANCE_LAW,
+        CLAIM_TYPE_V5_ACCEPTANCE_LAW,
         DOCUMENT_ACCEPTANCE_LAW,
         EXHAUST_PROMOTION_ACCEPTANCE_LAW,
         PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
@@ -634,6 +655,10 @@ __all__ = [
     "CLAIM_TYPE_LAW_V3_IDENTIFIER",
     "CLAIM_TYPE_LAW_V4",
     "CLAIM_TYPE_LAW_V4_IDENTIFIER",
+    "CLAIM_TYPE_LAW_V5_IDENTIFIER",
+    "CLAIM_TYPE_LAW_V5",
+    "CLAIM_TYPE_V5_ACCEPTANCE_LAW",
+    "CLAIM_EVIDENCE_UPGRADE_LAW",
     "CAPTURE_CONTRACT_ACCEPTANCE_LAW",
     "CAPTURE_CONTRACT_LAW",
     "CAPTURE_CONTRACT_LAW_IDENTIFIER",
