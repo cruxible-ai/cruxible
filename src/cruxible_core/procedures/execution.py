@@ -4300,18 +4300,16 @@ class ProcedureExecutor:
         ):
             raise PlaybillExecutionError("nested receipt does not reproduce retained child records")
         access = BodyAccessContext(principal_id="nested-procedure", can_read_body=True)
-        payloads = [
-            parse_journal_payload(self.bodies.read(row.record.payload_digest, access=access))
-            for row in child_records
+        admission_records = [
+            row for row in child_records if row.record.event_kind == "admission_bound"
         ]
-        admitted = next(
-            (
-                parse_admission_payload(payload).admission
-                for row, payload in zip(child_records, payloads, strict=True)
-                if row.record.event_kind == "admission_bound"
-            ),
-            None,
-        )
+        if len(admission_records) != 1:
+            raise PlaybillExecutionError("nested receipt requires exactly one child admission")
+        admitted = parse_admission_payload(
+            parse_journal_payload(
+                self.bodies.read(admission_records[0].record.payload_digest, access=access)
+            )
+        ).admission
         if (
             not isinstance(admitted, ProcedureRunAdmissionV8)
             or admitted.parent_binding != context.binding
@@ -4326,7 +4324,9 @@ class ProcedureExecutor:
             or admitted.journal_partition_id != result.receipt.partition_id
         ):
             raise PlaybillExecutionError("nested receipt names another Procedure")
-        final = payloads[-1]
+        final = parse_journal_payload(
+            self.bodies.read(child_records[-1].record.payload_digest, access=access)
+        )
         if child_records[-1].record.event_kind != "attempt_finalized" or not isinstance(
             final, dict
         ):

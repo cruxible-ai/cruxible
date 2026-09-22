@@ -5,11 +5,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from cruxible_client.authoring.inputs import CarriedContractInput
+from cruxible_client.authoring.inputs import CarriedContractInput, ProcedureInput
 from cruxible_client.authoring.source import halt, invoke, procedure
 from cruxible_client.contracts.authoring.inputs import lower_authoring_input
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-from cruxible_client.contracts.procedures.source_requests import SourceProcedureSelection
+from cruxible_client.contracts.procedures.source_requests import (
+    ProcedureSourcePreviewRequestV1,
+    SourceProcedureSelection,
+)
+from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.preflight import compute_preflight
 from cruxible_core.exhaust.records import parse_journal_payload
@@ -22,6 +26,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_get_playbill_procedure_run,
     service_run_playbill_procedure,
 )
+from cruxible_core.service.procedures.source_preview import service_preview_procedure_source
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._support import initialize_local
 from tests.test_indexes.test_resolution_contracts import _accept_tree
@@ -70,18 +75,29 @@ def blueprints():
 def accept_blueprint(instance, owner, blueprint, **bindings):
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="owner")
-    authored = blueprint.build(world=SimpleNamespace())
+    source = blueprint._at(SimpleNamespace())
     if bindings:
-        source = dict(authored.definition["source_request"])
-        source["bindings"] = {
-            key: (
-                SourceProcedureSelection(name=name) if isinstance(name, str) else name
-            ).model_dump(mode="json")
-            for key, name in bindings.items()
-        }
-        authored = authored.model_copy(
-            update={"definition": {"name": blueprint.name, "source_request": source}}
+        source = source.model_copy(
+            update={
+                "bindings": {
+                    key: (SourceProcedureSelection(name=name) if isinstance(name, str) else name)
+                    for key, name in bindings.items()
+                }
+            }
         )
+    preview = service_preview_procedure_source(
+        instance,
+        request=ProcedureSourcePreviewRequestV1(
+            source=source,
+            at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        ),
+    )
+    assert preview.ready_for_prepare, preview.errors
+    authored = ProcedureInput(
+        kind="procedure",
+        activation_policy=blueprint.activation_policy,
+        definition={"name": blueprint.name, "source_request": source.model_dump(mode="json")},
+    )
     assert "sha256:" not in authored.model_dump_json()
     assert "artifact_digest" not in authored.model_dump_json()
     compiled = coordinator.compile(
@@ -127,6 +143,16 @@ def test_child_occurrences_have_exact_bindings_and_replay_without_execution(
     child, parent = blueprints()
     accept_blueprint(instance, owner, child)
     accept_blueprint(instance, owner, parent, child="child")
+    body_store = type(instance.body_store())
+    read_body = body_store.read
+    verification_reads = []
+
+    def track_read(store, digest, *, access):
+        if access.principal_id == "nested-procedure":
+            verification_reads.append(digest)
+        return read_body(store, digest, access=access)
+
+    monkeypatch.setattr(body_store, "read", track_read)
     actor = GovernedActorContext(
         actor_id="owner",
         actor_type="human_user",
@@ -148,6 +174,7 @@ def test_child_occurrences_have_exact_bindings_and_replay_without_execution(
         if kind == "child_invocation" and value["verdict"] == "completed"
     ]
     assert len(children) == (2 if positive else 1)
+    assert len(verification_reads) == 2 * len(children)
     assert len({item["receipt"]["run_id"] for item in children}) == len(children)
     for child_record in children:
         child_payloads = payloads(instance, child_record["receipt"]["run_id"])
