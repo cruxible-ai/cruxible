@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -11,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatementV1,
+    AuthoringExistingClaimDispositionV1,
     ClaimDerivationBindingV1,
     ExistingCaptureCitationSourceV1,
     SelfSourceBodyV1,
@@ -34,6 +36,7 @@ class SourceClaimCandidateV1(BaseModel):
     subject_kind: str
     subject_id: str
     predicate: str
+    object_kind: Literal["literal", "subject", "exact_content"] = "literal"
     value: object
     role: Literal["normative", "observation", "environment_binding", "derivation"]
     rationale: str
@@ -43,6 +46,10 @@ class SourceClaimCandidateV1(BaseModel):
     basis: tuple[dict[str, Any], ...] = ()
     qualifier: str | None = None
     revises: str | None = None
+    revision_claim: dict[str, Any] | None = None
+    effective_from: datetime | None = None
+    effective_until: datetime | None = None
+    dispositions: tuple[dict[str, Any], ...] = ()
 
     _canonical = field_validator("value", "source_value", mode="before")(normalize_canonical)
 
@@ -86,8 +93,8 @@ def bind_source_candidate(
             raise ValueError("selected evidence must identify one verified produced Capture")
         source = ExistingCaptureCitationSourceV1(capture_digest=captures.pop())
         citation_role = "evidence" if candidate.source_kind == "supported_by" else "copy"
-    bindings: list[ArtifactPin] = []
-    for supplied in candidate.basis:
+
+    def selected_claim(supplied: dict[str, Any]) -> ArtifactPin:
         # Match the complete admitted read, including its exact Claim and verdict.
         matching = [
             name
@@ -103,9 +110,9 @@ def bind_source_candidate(
         digest = claim_artifact_digest(claim).tagged
         if supplied.get("artifact_digest") != digest:
             raise ValueError("candidate basis does not reproduce its Claim version")
-        bindings.append(
-            ArtifactPin(role="input-claim", target=claim.identity, artifact_digest=digest)
-        )
+        return ArtifactPin(role="input-claim", target=claim.identity, artifact_digest=digest)
+
+    bindings = [selected_claim(supplied) for supplied in candidate.basis]
     if bool(bindings) != (candidate.role == "derivation"):
         raise ValueError("only derivation Claims may carry nonempty basis")
     derivation = (
@@ -118,6 +125,46 @@ def bind_source_candidate(
             inputs=tuple(sorted(bindings, key=lambda p: p.target.qualified)),
         )
     )
+    revises = candidate.revises
+    if candidate.revision_claim is not None:
+        if revises is not None:
+            raise ValueError("revision must identify one selected Claim")
+        revises = selected_claim(candidate.revision_claim).target.name
+    dispositions = []
+    for item in candidate.dispositions:
+        if set(item) == {"claim", "disposition"}:
+            claim_id = selected_claim(item["claim"]).target.name
+        elif set(item) == {"claim_id", "disposition"}:
+            claim_id = item["claim_id"]
+        else:
+            raise ValueError("invalid selected Claim disposition")
+        dispositions.append(
+            AuthoringExistingClaimDispositionV1(
+                claim_id=claim_id,
+                disposition=item["disposition"],
+            )
+        )
+    if len({d.claim_id for d in dispositions}) != len(dispositions):
+        raise ValueError("Claim dispositions must be unique")
+    if candidate.object_kind == "subject":
+        target = candidate.value
+        if not isinstance(target, dict) or set(target) != {"subject_kind", "subject_id"}:
+            raise ValueError("Subject value must identify an accepted Subject")
+        obj = dict(
+            kind="subject",
+            address=SemanticAddress.whole_artifact(
+                subject_path(target["subject_kind"], target["subject_id"])
+            ),
+        )
+    elif candidate.object_kind == "exact_content":
+        if not isinstance(candidate.value, str):
+            raise ValueError("ExactContent requires UTF-8 text")
+        obj = dict(
+            kind="exact_content_body",
+            content_base64=base64.b64encode(candidate.value.encode()).decode("ascii"),
+        )
+    else:
+        obj = dict(kind="literal", value=candidate.value)
     result = ProcedureClaimProposalItemV2(
         statement=AuthoringClaimStatementV1.model_validate(
             dict(
@@ -126,12 +173,15 @@ def bind_source_candidate(
                 ),
                 predicate=candidate.predicate,
                 qualifier=candidate.qualifier,
-                object=dict(kind="literal", value=candidate.value),
+                object=obj,
                 role=candidate.role,
+                effective_from=candidate.effective_from,
+                effective_until=candidate.effective_until,
             )
         ),
         rationale=candidate.rationale,
-        revises=candidate.revises,
+        revises=revises,
+        existing_claim_dispositions=tuple(sorted(dispositions, key=lambda d: d.claim_id)),
         source=source,
         citation_role=citation_role,
         derivation=derivation,

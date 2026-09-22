@@ -1195,6 +1195,7 @@ class StateTapReaderProtocol(Protocol):
         query: ArtifactPin,
         parameters: CanonicalValue,
         coordinate: AcceptedCoordinate,
+        budgets: QueryBudgetsV1 | None = None,
     ) -> StateTapReadResultV1: ...
 
     def read_accepted_claim(
@@ -1204,6 +1205,7 @@ class StateTapReaderProtocol(Protocol):
         subject_kind: str,
         subject_id: str,
         cardinality: Literal["one", "all"],
+        limit: int | None = None,
         coordinate: AcceptedCoordinate,
     ) -> StateTapReadResultV1: ...
 
@@ -2076,14 +2078,21 @@ def state_tap_parameters(
 def state_tap_view(node: StateTapNodeV3 | ClaimTapNodeV6, value: object) -> CanonicalValue:
     if isinstance(node, StateTapNodeV6):
         from cruxible_client.contracts.query.results import ClaimQueryResultV1
+        from cruxible_core.query.engine import query_execution_receipt
 
         result = ClaimQueryResultV1.model_validate(value)
         return normalize_canonical(
             {
                 "result": value,
+                "coordinate": result.coordinate.model_dump(mode="json"),
+                "definition_path": result.definition_path,
+                "definition_digest": result.definition_digest,
+                "receipt": query_execution_receipt(result).model_dump(mode="json"),
                 "completed": result.verdict == "completed",
                 "truncated": result.truncation.truncated,
-                "has_conflicts": bool(result.conflicts),
+                "has_conflicts": bool(
+                    result.conflicts or any(row.conflicts for row in result.rows)
+                ),
             }
         )
     return normalize_canonical(value)
@@ -2128,11 +2137,19 @@ def bind_accepted_state_materials(
                     subject_kind=node.subject_kind,
                     subject_id=identity,
                     cardinality=node.cardinality,
+                    limit=node.limit,
                     coordinate=accepted_coordinate,
                 )
             else:
                 read = state_reader.read_accepted_state(
-                    query=query, parameters=parameters, coordinate=accepted_coordinate
+                    query=query,
+                    parameters=parameters,
+                    coordinate=accepted_coordinate,
+                    **(
+                        {"budgets": node.budgets}
+                        if isinstance(node, StateTapNodeV6) and node.budgets is not None
+                        else {}
+                    ),
                 )
         except Exception as exc:
             raise ProcedureBoundaryRefused(

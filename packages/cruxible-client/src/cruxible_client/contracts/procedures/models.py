@@ -20,6 +20,7 @@ from cruxible_client.contracts.procedures.measurements import (
     ProcedureMeasurementDeclarationV1,
 )
 from cruxible_client.contracts.procedures.source_program import ProcedureSourceV1
+from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 _NODE_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
@@ -1078,16 +1079,24 @@ class ClaimTapNodeV6(_StrictProcedureModel):
     subject_kind: str
     subject_id: object
     cardinality: Literal["one", "all"] = "one"
+    limit: int | None = Field(default=None, ge=1, le=2**31 - 1)
     as_: str = Field(alias="as")
     next: str | None = None
 
     _subject = field_validator("subject_id", mode="before")(normalize_canonical)
+
+    @model_validator(mode="after")
+    def _bounded_selection(self) -> ClaimTapNodeV6:
+        if (self.cardinality == "all") != (self.limit is not None):
+            raise ValueError("all() requires a positive limit; one() takes no limit")
+        return self
 
 
 class StateTapNodeV6(StateTapNodeV3):
     """Request-bound query with a typed view over the retained query result."""
 
     view: Literal["typed_query"] = "typed_query"
+    budgets: QueryBudgetsV1 | None = None
 
 
 class CaptureEgressNodeV6(CaptureEgressNodeV3):

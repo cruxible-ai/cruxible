@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from pydantic import BaseModel
+
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 
 
@@ -23,10 +25,8 @@ def object_field(fields: dict[str, Any]) -> PropertySchema:
     )
 
 
-def query_view_schema() -> ContractSchema:
-    from cruxible_client.contracts.query.results import ClaimQueryResultV1
-
-    raw = ClaimQueryResultV1.model_json_schema()
+def expanded_model_schema(model: type[BaseModel]) -> dict[str, Any]:
+    raw = model.model_json_schema()
     definitions = raw.get("$defs", {})
 
     def expand(schema: dict[str, Any], stack: tuple[str, ...] = ()) -> dict[str, Any]:
@@ -51,12 +51,29 @@ def query_view_schema() -> ContractSchema:
             if key not in {"$defs", "title", "description", "default"}
         }
 
+    return expand(raw)
+
+
+def query_view_schema() -> ContractSchema:
+    from cruxible_client.contracts.projection import AcceptedProjectionCoordinate
+    from cruxible_client.contracts.query.results import ClaimQueryResultV1, QueryExecutionReceiptV1
+
     return ContractSchema(
         fields={
+            "coordinate": PropertySchema(
+                type="json", json_schema=expanded_model_schema(AcceptedProjectionCoordinate)
+            ),
+            "definition_path": PropertySchema(type="string"),
+            "definition_digest": PropertySchema(type="string"),
+            "receipt": PropertySchema(
+                type="json", json_schema=expanded_model_schema(QueryExecutionReceiptV1)
+            ),
             "completed": PropertySchema(type="bool"),
             "truncated": PropertySchema(type="bool"),
             "has_conflicts": PropertySchema(type="bool"),
-            "result": PropertySchema(type="json", json_schema=expand(raw)),
+            "result": PropertySchema(
+                type="json", json_schema=expanded_model_schema(ClaimQueryResultV1)
+            ),
         }
     )
 

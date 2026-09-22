@@ -176,6 +176,23 @@ def test_derivation_basis_is_bound_from_the_real_admitted_claim(tmp_path):
     result = bind_source_candidate(candidate, **arguments)
     assert result["derivation"]["inputs"][0]["artifact_digest"] == value["artifact_digest"]
     assert result["derivation"]["procedure"]["target"]["name"] == "example"
+    revision = bind_source_candidate(
+        {
+            **candidate,
+            "revision_claim": value,
+            "dispositions": [{"claim": value, "disposition": "not_tested"}],
+        },
+        **arguments,
+    )
+    assert revision["revises"] == value["claim_id"]
+    assert revision["existing_claim_dispositions"][0]["claim_id"] == value["claim_id"]
+    for field in ("revision_claim", "dispositions"):
+        forged = {**value, "value": "changed"}
+        entry = (
+            forged if field == "revision_claim" else [{"claim": forged, "disposition": "support"}]
+        )
+        with pytest.raises(ValueError, match="exact admitted"):
+            bind_source_candidate({**candidate, field: entry}, **arguments)
     with pytest.raises(ValueError, match="exact admitted"):
         bind_source_candidate({**candidate, "basis": [{**value, "value": "changed"}]}, **arguments)
 
@@ -215,4 +232,107 @@ def test_nested_capture_selection_rejects_unrelated_handles():
     with pytest.raises(ValueError, match="one verified produced Capture"):
         bind_source_candidate(
             {**candidate, "source_value": {"capture_digest": "sha256:" + "d" * 64}}, **args
+        )
+
+
+@pytest.mark.parametrize(
+    "kind,expression",
+    [
+        ("subject", "world.security.advisory['another']"),
+        ("exact_content", "ExactContent('Exact words')"),
+        ("literal", "'high'"),
+    ],
+)
+def test_source_candidate_preserves_value_kind_period_and_dispositions(kind, expression):
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_core.procedures.execution import _resolve_template
+    from cruxible_core.procedures.source_candidates import bind_source_candidate
+
+    program = source_program(expression)
+    key = "security.advisory.severity"
+    structure = program.claim_types[key].structure.model_copy(
+        update={
+            "object_kind": kind,
+            "literal_schema": program.claim_types[key].structure.literal_schema
+            if kind == "literal"
+            else None,
+            "allowed_object_subject_kinds": ("security.advisory",) if kind == "subject" else (),
+        }
+    )
+    claim_id = "CLM-" + "a" * 32
+    text = program.text.replace(
+        "role='observation',",
+        "role='observation',\n"
+        "            effective_period=EffectivePeriod("
+        "starts_at='2026-09-22T00:00:00Z', ends_at=None),\n"
+        f"            dispositions={{'{claim_id}': Disposition.NOT_TESTED}},",
+    )
+    program = program.model_copy(
+        update={
+            "text": text,
+            "claim_types": {
+                key: program.claim_types[key].model_copy(update={"structure": structure})
+            },
+        }
+    )
+    compiled = compile_source(
+        program,
+        name="example",
+        input=INPUT,
+        output=OUTPUT,
+        budget=_budget(),
+        hard_caps=_hard_caps(),
+        terminal_capability=2,
+    )
+    template = compiled.definition.nodes[-1].candidate_templates[0]
+    resolved = _resolve_template(template, input_payload={}, outputs={})
+    item = bind_source_candidate(
+        resolved,
+        procedure_identity=ArtifactIdentity(kind="Procedure", name="example"),
+        procedure_digest="sha256:" + "c" * 64,
+        outputs={},
+        provenance={},
+        item_tokens=frozenset(),
+    )
+    assert item["statement"]["object"]["kind"] == (
+        "exact_content_body" if kind == "exact_content" else kind
+    )
+    assert item["statement"]["effective_from"] == "2026-09-22T00:00:00+00:00"
+    assert item["existing_claim_dispositions"] == [
+        {"claim_id": claim_id, "disposition": "not_tested"}
+    ]
+    if kind == "subject":
+        assert item["statement"]["object"]["address"]["artifact_path"].endswith("another.json")
+    if kind == "exact_content":
+        import base64
+
+        assert base64.b64decode(item["statement"]["object"]["content_base64"]) == b"Exact words"
+    with pytest.raises(ValueError, match="increasing"):
+        bind_source_candidate(
+            {**resolved, "effective_until": "2026-09-21T00:00:00Z"},
+            procedure_identity=ArtifactIdentity(kind="Procedure", name="example"),
+            procedure_digest="sha256:" + "c" * 64,
+            outputs={},
+            provenance={},
+            item_tokens=frozenset(),
+        )
+
+
+@pytest.mark.parametrize("selector", ["all()", "all(limit=0)", "one(limit=1)"])
+def test_claim_selectors_refuse_unbounded_or_misleading_arguments(selector):
+    program = source_program().model_copy(
+        update={
+            "text": "def example(request, world):\n"
+            f"    selected = world.security.advisory['osv-2026-0001'].severity.{selector}\n"
+            "    return Output.value(value='done')\n"
+        }
+    )
+    with pytest.raises(SourceCompileError):
+        compile_source(
+            program,
+            name="example",
+            input=INPUT,
+            output=OUTPUT,
+            budget=_budget(),
+            hard_caps=_hard_caps(),
         )

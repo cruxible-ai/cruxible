@@ -468,3 +468,34 @@ def test_required_nullable_source_output_executes_without_weakening_old_contract
     # Historical Contract normalization has not changed its null rule.
     with pytest.raises(ProcedureContractValidationError):
         validate_contract_schema(output.schema_, {"value": None})
+
+
+def test_query_defaults_and_explicit_budget_use_existing_contracts():
+    from cruxible_client.contracts.procedures.source_program import SourceQueryBinding
+    from cruxible_client.contracts.query.definitions import query_definition_digest
+    from tests.test_query.test_query_definitions import active_work_query
+
+    definition = active_work_query()
+    binding = SourceQueryBinding(
+        name=definition.identity.name,
+        version=query_definition_digest(definition).tagged,
+        definition=definition,
+    )
+    program = """
+        def example(request, bindings):
+            result = query(bindings.work,
+                parameters=bindings.work.parameters(status='ready'),
+                budgets=QueryBudgetsV1(max_results=1, max_traversal_depth=0,
+                                      max_paths=1, max_paths_per_result=1))
+            return Output.value(value=result.receipt.verdict)
+    """
+    compiled = compile(program, bindings={"work": binding})
+    assert compiled.definition.nodes[0].budgets.max_results == 1
+    with pytest.raises(SourceCompileError, match="ceiling"):
+        compile(program.replace("max_results=1", "max_results=1000000"), bindings={"work": binding})
+    # Required parameters cannot silently disappear when parameters is omitted.
+    with pytest.raises(SourceCompileError):
+        compile(
+            program.replace("parameters=bindings.work.parameters(status='ready'),", ""),
+            bindings={"work": binding},
+        )

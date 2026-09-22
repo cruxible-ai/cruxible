@@ -137,7 +137,10 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
         query: ArtifactPin,
         parameters: CanonicalValue,
         coordinate: AcceptedCoordinate,
+        budgets: QueryBudgetsV1 | None = None,
     ) -> StateTapReadResultV1:
+        if budgets is not None and self.budgets is not None and not budgets.within(self.budgets):
+            raise PlaybillExecutionError("state tap query budget exceeds the run ceiling")
         if query.target.kind != "QueryDefinition":
             raise PlaybillExecutionError("state tap pin must target QueryDefinition")
         if not isinstance(parameters, Mapping):
@@ -163,7 +166,7 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
             evaluation_time=self.evaluation_time,
             parameters=dict(parameters),
             at=coordinate,
-            budgets=self.budgets,
+            budgets=budgets or self.budgets,
         )
         if run.result.verdict != "completed":
             code = None if run.result.refusal is None else run.result.refusal.code
@@ -180,6 +183,7 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
         subject_kind: str,
         subject_id: str,
         cardinality: Literal["one", "all"],
+        limit: int | None = None,
         coordinate: AcceptedCoordinate,
     ) -> StateTapReadResultV1:
         from cruxible_client.contracts.claim_reads import (
@@ -215,7 +219,11 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
                 "Subject is absent, retired, or outside the ClaimType's admitted kinds"
             )
         budget = self.budgets or QueryBudgetsV1(max_results=256, max_traversal_depth=0)
-        limit = 2 if cardinality == "one" else min(budget.max_results, MAX_CLAIM_READ_BATCH)
+        if cardinality == "all" and (limit is None or limit <= 0):
+            raise PlaybillExecutionError("A plural Claim read requires an explicit positive limit")
+        limit = (
+            2 if cardinality == "one" else min(limit or 0, budget.max_results, MAX_CLAIM_READ_BATCH)
+        )
         request = ClaimReadBatchRequestV1.model_validate(
             dict(
                 at=coordinate.model_dump(mode="json"),
@@ -246,6 +254,15 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
             values.append(
                 dict(
                     value=value,
+                    claim_id=claim.identity.name,
+                    revision=claim_artifact_digest(claim).tagged,
+                    subject=claim.statement.subject.model_dump(mode="json"),
+                    predicate=claim.statement.predicate,
+                    qualifier=claim.statement.qualifier,
+                    role=claim.statement.role,
+                    object_kind=obj["kind"],
+                    lifecycle_state=claim.lifecycle.state,
+                    captures=list(claim.backing.capture_digests),
                     verdict=verdict["verdict"],
                     currency=verdict["currency"],
                     identity=claim.identity.qualified,

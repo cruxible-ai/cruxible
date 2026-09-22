@@ -59,3 +59,32 @@ def test_field_read_selects_one_subject_and_retains_exact_claim(tmp_path, monkey
             cardinality="one",
             coordinate=at,
         )
+
+
+def test_plural_field_read_requires_bound_and_retains_semantic_metadata(tmp_path):
+    instance, _ = seed_claims(tmp_path)
+    coordinate = instance.accepted_coordinate()
+    at = AcceptedCoordinate.from_internal(coordinate)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        envelope = projection.typed.envelope("ClaimType:" + PREDICATE)
+    args = dict(
+        claim_type=ArtifactPin(
+            role="claim-type",
+            target=ArtifactIdentity(kind="ClaimType", name=PREDICATE),
+            artifact_digest=envelope.artifact_digest,
+        ),
+        subject_kind=SUBJECT_KIND,
+        subject_id="wi-42",
+        cardinality="all",
+        coordinate=at,
+    )
+    reader = PlaybillProcedureStateTapReader(
+        instance=instance, evaluation_time=datetime.fromisoformat(EVALUATION_TIME)
+    )
+    with pytest.raises(PlaybillExecutionError, match="explicit positive limit"):
+        reader.read_accepted_claim(**args)
+    (selected,) = reader.read_accepted_claim(limit=1, **args).value
+    assert selected["predicate"] == PREDICATE
+    assert selected["role"] == "observation" and selected["lifecycle_state"] == "live"
+    assert selected["subject"]["artifact_path"].endswith("wi-42.json")
+    assert selected["claim_id"].startswith("CLM-") and selected["captures"]

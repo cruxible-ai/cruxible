@@ -166,6 +166,30 @@ class QueryProjectedFieldV1(_StrictQueryEngineModel):
         return self
 
 
+class QueryProjectedFields(tuple[QueryProjectedFieldV1, ...]):
+    """Named access to the existing projected-field envelopes; wire stays an array.
+
+    A field still exposes its explicit presence/conflict state. Attribute access
+    must never turn an absent projection into a seemingly present null value.
+    """
+
+    def __getattribute__(self, name: str) -> Any:
+        if not name.startswith("_"):
+            for field in self:
+                if field.name == name:
+                    return field
+            raise AttributeError(f"Query has no projected field {name!r}")
+        return super().__getattribute__(name)
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> Any:
+        from pydantic_core import core_schema
+
+        return core_schema.no_info_after_validator_function(
+            cls, handler.generate_schema(tuple[QueryProjectedFieldV1, ...])
+        )
+
+
 class QueryIncludeItemV1(_StrictQueryEngineModel):
     """One hydrated side-context Claim attached to a primary row."""
 
@@ -210,7 +234,7 @@ class QueryResultRowV1(_StrictQueryEngineModel):
     result_subject_identity: str | None = None
     path: tuple[QueryClaimVisibilityV1, ...] = ()
     relation_claim: QueryClaimVisibilityV1 | None = None
-    fields: tuple[QueryProjectedFieldV1, ...] = ()
+    fields: QueryProjectedFields = Field(default_factory=QueryProjectedFields)
     read_claims: tuple[QueryClaimVisibilityV1, ...] = ()
     includes: tuple[QueryIncludeResultV1, ...] = ()
     conflicts: tuple[QueryConflictV1, ...] = ()

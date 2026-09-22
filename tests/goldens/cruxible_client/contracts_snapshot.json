@@ -23404,6 +23404,20 @@
                 "title": "Kind",
                 "type": "string"
               },
+              "limit": {
+                "anyOf": [
+                  {
+                    "maximum": 2147483647,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Limit"
+              },
               "next": {
                 "anyOf": [
                   {
@@ -23873,6 +23887,52 @@
               "input"
             ],
             "title": "InboxEgressNodeV3",
+            "type": "object"
+          },
+          "InvokeNodeV6": {
+            "additionalProperties": false,
+            "description": "A call to an exact accepted Procedure under the enclosing run's limits.",
+            "properties": {
+              "as": {
+                "title": "As",
+                "type": "string"
+              },
+              "input": {
+                "title": "Input"
+              },
+              "kind": {
+                "const": "invoke",
+                "default": "invoke",
+                "title": "Kind",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "procedure": {
+                "$ref": "#/$defs/ArtifactPin"
+              }
+            },
+            "required": [
+              "node_id",
+              "procedure",
+              "input",
+              "as"
+            ],
+            "title": "InvokeNodeV6",
             "type": "object"
           },
           "MandateSettlementNodeV3": {
@@ -25064,6 +25124,7 @@
                       "exhaust_tap": "#/$defs/ExhaustTapNodeV3",
                       "guard": "#/$defs/GuardNodeV3",
                       "halt": "#/$defs/HaltNodeV3",
+                      "invoke": "#/$defs/InvokeNodeV6",
                       "mandate_settlement": "#/$defs/MandateSettlementNodeV3",
                       "post_inbox": "#/$defs/InboxEgressNodeV3",
                       "project": "#/$defs/ProjectNodeV3",
@@ -25079,6 +25140,9 @@
                     "propertyName": "kind"
                   },
                   "oneOf": [
+                    {
+                      "$ref": "#/$defs/InvokeNodeV6"
+                    },
                     {
                       "$ref": "#/$defs/ClaimTapNodeV6"
                     },
@@ -25951,6 +26015,14 @@
               "candidate_templates": {
                 "items": {},
                 "title": "Candidate Templates",
+                "type": "array"
+              },
+              "claim_types": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ArtifactPin"
+                },
+                "title": "Claim Types",
                 "type": "array"
               },
               "kind": {
@@ -28619,6 +28691,11 @@
           "SourceProcedureBinding": {
             "additionalProperties": false,
             "properties": {
+              "capture_terminal": {
+                "default": false,
+                "title": "Capture Terminal",
+                "type": "boolean"
+              },
               "input": {
                 "$ref": "#/$defs/ContractSchema"
               },
@@ -28634,6 +28711,13 @@
               },
               "output": {
                 "$ref": "#/$defs/ContractSchema"
+              },
+              "required_terminal_rung": {
+                "default": 0,
+                "maximum": 3,
+                "minimum": 0,
+                "title": "Required Terminal Rung",
+                "type": "integer"
               },
               "version": {
                 "title": "Version",
@@ -28796,6 +28880,17 @@
               "as": {
                 "title": "As",
                 "type": "string"
+              },
+              "budgets": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryBudgetsV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "kind": {
                 "const": "state_tap",
@@ -30774,6 +30869,20 @@
                 "title": "Kind",
                 "type": "string"
               },
+              "limit": {
+                "anyOf": [
+                  {
+                    "maximum": 2147483647,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Limit"
+              },
               "next": {
                 "anyOf": [
                   {
@@ -31243,6 +31352,52 @@
               "input"
             ],
             "title": "InboxEgressNodeV3",
+            "type": "object"
+          },
+          "InvokeNodeV6": {
+            "additionalProperties": false,
+            "description": "A call to an exact accepted Procedure under the enclosing run's limits.",
+            "properties": {
+              "as": {
+                "title": "As",
+                "type": "string"
+              },
+              "input": {
+                "title": "Input"
+              },
+              "kind": {
+                "const": "invoke",
+                "default": "invoke",
+                "title": "Kind",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "procedure": {
+                "$ref": "#/$defs/ArtifactPin"
+              }
+            },
+            "required": [
+              "node_id",
+              "procedure",
+              "input",
+              "as"
+            ],
+            "title": "InvokeNodeV6",
             "type": "object"
           },
           "MandateSettlementNodeV3": {
@@ -32262,6 +32417,7 @@
                       "exhaust_tap": "#/$defs/ExhaustTapNodeV3",
                       "guard": "#/$defs/GuardNodeV3",
                       "halt": "#/$defs/HaltNodeV3",
+                      "invoke": "#/$defs/InvokeNodeV6",
                       "mandate_settlement": "#/$defs/MandateSettlementNodeV3",
                       "post_inbox": "#/$defs/InboxEgressNodeV3",
                       "project": "#/$defs/ProjectNodeV3",
@@ -32277,6 +32433,9 @@
                     "propertyName": "kind"
                   },
                   "oneOf": [
+                    {
+                      "$ref": "#/$defs/InvokeNodeV6"
+                    },
                     {
                       "$ref": "#/$defs/ClaimTapNodeV6"
                     },
@@ -33124,6 +33283,14 @@
               "candidate_templates": {
                 "items": {},
                 "title": "Candidate Templates",
+                "type": "array"
+              },
+              "claim_types": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ArtifactPin"
+                },
+                "title": "Claim Types",
                 "type": "array"
               },
               "kind": {
@@ -35792,6 +35959,11 @@
           "SourceProcedureBinding": {
             "additionalProperties": false,
             "properties": {
+              "capture_terminal": {
+                "default": false,
+                "title": "Capture Terminal",
+                "type": "boolean"
+              },
               "input": {
                 "$ref": "#/$defs/ContractSchema"
               },
@@ -35807,6 +35979,13 @@
               },
               "output": {
                 "$ref": "#/$defs/ContractSchema"
+              },
+              "required_terminal_rung": {
+                "default": 0,
+                "maximum": 3,
+                "minimum": 0,
+                "title": "Required Terminal Rung",
+                "type": "integer"
               },
               "version": {
                 "title": "Version",
@@ -35969,6 +36148,17 @@
               "as": {
                 "title": "As",
                 "type": "string"
+              },
+              "budgets": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryBudgetsV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "kind": {
                 "const": "state_tap",
@@ -37519,6 +37709,19 @@
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
           }
         },
+        "children": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "children",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/ProcedureChildInvocationV1"
+            },
+            "title": "Children",
+            "type": "array"
+          }
+        },
         "evaluation_time": {
           "has_default": false,
           "has_default_factory": false,
@@ -38689,6 +38892,41 @@
               "max_capture_bytes"
             ],
             "title": "ProcedureBudgetV3",
+            "type": "object"
+          },
+          "ProcedureChildInvocationV1": {
+            "additionalProperties": false,
+            "description": "A completed child occurrence, navigable by run ID without copying digests.",
+            "properties": {
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "procedure": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "succeeded",
+                  "refused",
+                  "failed",
+                  "halted"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "run_id",
+              "procedure",
+              "status"
+            ],
+            "title": "ProcedureChildInvocationV1",
             "type": "object"
           },
           "ProcedureHaltTerminalV1": {
@@ -41534,6 +41772,13 @@
           },
           "bound_coordinate": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "children": {
+            "items": {
+              "$ref": "#/$defs/ProcedureChildInvocationV1"
+            },
+            "title": "Children",
+            "type": "array"
           },
           "evaluation_time": {
             "title": "Evaluation Time",
@@ -47764,6 +48009,20 @@
                 "title": "Kind",
                 "type": "string"
               },
+              "limit": {
+                "anyOf": [
+                  {
+                    "maximum": 2147483647,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Limit"
+              },
               "next": {
                 "anyOf": [
                   {
@@ -48502,6 +48761,52 @@
               "input"
             ],
             "title": "InboxEgressNodeV3",
+            "type": "object"
+          },
+          "InvokeNodeV6": {
+            "additionalProperties": false,
+            "description": "A call to an exact accepted Procedure under the enclosing run's limits.",
+            "properties": {
+              "as": {
+                "title": "As",
+                "type": "string"
+              },
+              "input": {
+                "title": "Input"
+              },
+              "kind": {
+                "const": "invoke",
+                "default": "invoke",
+                "title": "Kind",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "procedure": {
+                "$ref": "#/$defs/ArtifactPin"
+              }
+            },
+            "required": [
+              "node_id",
+              "procedure",
+              "input",
+              "as"
+            ],
+            "title": "InvokeNodeV6",
             "type": "object"
           },
           "MandateSettlementNodeV3": {
@@ -49521,6 +49826,7 @@
                       "exhaust_tap": "#/$defs/ExhaustTapNodeV3",
                       "guard": "#/$defs/GuardNodeV3",
                       "halt": "#/$defs/HaltNodeV3",
+                      "invoke": "#/$defs/InvokeNodeV6",
                       "mandate_settlement": "#/$defs/MandateSettlementNodeV3",
                       "post_inbox": "#/$defs/InboxEgressNodeV3",
                       "project": "#/$defs/ProjectNodeV3",
@@ -49536,6 +49842,9 @@
                     "propertyName": "kind"
                   },
                   "oneOf": [
+                    {
+                      "$ref": "#/$defs/InvokeNodeV6"
+                    },
                     {
                       "$ref": "#/$defs/ClaimTapNodeV6"
                     },
@@ -50383,6 +50692,14 @@
               "candidate_templates": {
                 "items": {},
                 "title": "Candidate Templates",
+                "type": "array"
+              },
+              "claim_types": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ArtifactPin"
+                },
+                "title": "Claim Types",
                 "type": "array"
               },
               "kind": {
@@ -52400,7 +52717,6 @@
                 "type": "array"
               },
               "fields": {
-                "default": [],
                 "items": {
                   "$ref": "#/$defs/QueryProjectedFieldV1"
                 },
@@ -53831,6 +54147,11 @@
           "SourceProcedureBinding": {
             "additionalProperties": false,
             "properties": {
+              "capture_terminal": {
+                "default": false,
+                "title": "Capture Terminal",
+                "type": "boolean"
+              },
               "input": {
                 "$ref": "#/$defs/ContractSchema"
               },
@@ -53846,6 +54167,13 @@
               },
               "output": {
                 "$ref": "#/$defs/ContractSchema"
+              },
+              "required_terminal_rung": {
+                "default": 0,
+                "maximum": 3,
+                "minimum": 0,
+                "title": "Required Terminal Rung",
+                "type": "integer"
               },
               "version": {
                 "title": "Version",
@@ -54008,6 +54336,17 @@
               "as": {
                 "title": "As",
                 "type": "string"
+              },
+              "budgets": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryBudgetsV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "kind": {
                 "const": "state_tap",
@@ -59852,6 +60191,118 @@
       "required_fields": [
         "comparison",
         "threshold"
+      ]
+    },
+    "ProcedureChildInvocationV1": {
+      "fields": {
+        "node_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "node_id",
+          "required": true,
+          "schema": {
+            "title": "Node Id",
+            "type": "string"
+          }
+        },
+        "procedure": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "procedure",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ArtifactIdentity"
+          }
+        },
+        "run_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "run_id",
+          "required": true,
+          "schema": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "succeeded",
+              "refused",
+              "failed",
+              "halted"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "A completed child occurrence, navigable by run ID without copying digests.",
+        "properties": {
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "procedure": {
+            "$ref": "#/$defs/ArtifactIdentity"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "succeeded",
+              "refused",
+              "failed",
+              "halted"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "run_id",
+          "procedure",
+          "status"
+        ],
+        "title": "ProcedureChildInvocationV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "node_id",
+        "procedure",
+        "run_id",
+        "status"
       ]
     },
     "ProcedureMeasurementContractStatusV1": {

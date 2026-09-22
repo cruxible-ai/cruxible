@@ -36,7 +36,11 @@ from cruxible_client.contracts.procedures.source_program import (
     SourceQueryBinding,
     SourceSpan,
 )
-from cruxible_client.contracts.procedures.source_views import query_view_schema, read_object_schema
+from cruxible_client.contracts.procedures.source_views import (
+    expanded_model_schema,
+    query_view_schema,
+    read_object_schema,
+)
 from cruxible_client.contracts.records import RecordConstructor, record_field_names
 
 ValueType = ContractSchema | PropertySchema
@@ -602,9 +606,18 @@ class _Compiler:
         if isinstance(node, ast.Call):
             if isinstance(node.func, ast.Attribute) and node.func.attr in {"one", "all"}:
                 selected = self.expr(node.func.value)
-                if not isinstance(selected, ClaimSelection) or node.args or node.keywords:
-                    self.fail(node, "one/all select a typed Claim field without arguments")
-                return self.claim_read(selected, node, node.func.attr)
+                if not isinstance(selected, ClaimSelection) or node.args:
+                    self.fail(node, "one/all select a typed Claim field")
+                if node.func.attr == "one":
+                    if node.keywords:
+                        self.fail(node, "one() accepts no arguments")
+                    return self.claim_read(selected, node, "one")
+                if len(node.keywords) != 1 or node.keywords[0].arg != "limit":
+                    self.fail(node, "all() requires an explicit positive limit")
+                limit = self.value(node.keywords[0].value)
+                if not limit.literal or type(limit.wire) is not int or limit.wire <= 0:
+                    self.fail(node, "all() requires an explicit positive limit")
+                return self.claim_read(selected, node, "all", limit.wire)
             if (
                 isinstance(node.func, ast.Attribute)
                 and node.func.attr in {"claim_type", "kind"}
@@ -709,7 +722,10 @@ class _Compiler:
                 binding=binding,
             )
         if name == "query":
-            if not isinstance(binding, SourceQueryBinding) or set(kwargs) != {"parameters"}:
+            if not isinstance(binding, SourceQueryBinding) or set(kwargs) - {
+                "parameters",
+                "budgets",
+            }:
                 self.fail(
                     node,
                     "query requires an accepted query binding and typed parameters",
@@ -717,8 +733,44 @@ class _Compiler:
                 )
             from cruxible_client.contracts.query.parameters import QueryParameters
 
-            value = self.value(kwargs["parameters"])
-            if value.type != QueryParameters(binding.definition).schema:
+            parameters = QueryParameters(binding.definition)
+            if "parameters" in kwargs and not (
+                isinstance(kwargs["parameters"], ast.Constant)
+                and kwargs["parameters"].value is None
+            ):
+                value = self.value(kwargs["parameters"])
+            else:
+                try:
+                    value = Value(dict(parameters()), parameters.schema, literal=True)
+                except ValueError as exc:
+                    self.fail(node, str(exc), "contract_value_invalid")
+            budgets = None
+            if "budgets" in kwargs and not (
+                isinstance(kwargs["budgets"], ast.Constant) and kwargs["budgets"].value is None
+            ):
+                from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+
+                supplied = kwargs["budgets"]
+                if not (
+                    isinstance(supplied, ast.Call)
+                    and isinstance(supplied.func, ast.Name)
+                    and supplied.func.id == "QueryBudgetsV1"
+                    and not supplied.args
+                ):
+                    self.fail(supplied, "Use QueryBudgetsV1 with literal bounded values")
+                try:
+                    budgets = QueryBudgetsV1.model_validate(
+                        {k.arg: ast.literal_eval(k.value) for k in supplied.keywords}
+                    )
+                except (ValueError, TypeError) as exc:
+                    self.fail(supplied, str(exc), "contract_value_invalid")
+                if not budgets.within(binding.definition.maximum_budgets):
+                    self.fail(
+                        supplied,
+                        "Query budget exceeds its accepted ceiling",
+                        "contract_value_invalid",
+                    )
+            if value.type != parameters.schema:
                 self.fail(node, "Use this query's typed parameter constructor", "contract_mismatch")
             if value.phase == "runtime":
                 self.fail(
@@ -738,6 +790,7 @@ class _Compiler:
                 node,
                 query=query_pin.model_dump(mode="json"),
                 parameters=self.wire(value, node),
+                budgets=None if budgets is None else budgets.model_dump(mode="json"),
                 **{"as": True},
             )
             return Value("$steps." + emitted["as"], query_view_schema(), phase="state")
@@ -811,15 +864,36 @@ class _Compiler:
         )
         return Value("$steps." + emitted["as"], binding.operation.output)
 
-    def claim_read(self, selected: ClaimSelection, node: ast.Call, cardinality: str) -> Value:
+    def claim_read(
+        self, selected: ClaimSelection, node: ast.Call, cardinality: str, limit: int | None = None
+    ) -> Value:
         shape = selected.type.structure
-        if shape.object_kind != "literal":
-            self.fail(
-                node, "This source version requires a literal Claim field", "claim_value_kind"
+        from cruxible_client.contracts.claims import ExactContentClaimObject, SubjectClaimObject
+        from cruxible_client.contracts.semantic import SemanticAddress
+
+        value_schema = (
+            shape.literal_schema
+            if shape.object_kind == "literal"
+            else expanded_model_schema(
+                SubjectClaimObject if shape.object_kind == "subject" else ExactContentClaimObject
             )
+        )
         schema = ContractSchema(
             fields={
-                "value": PropertySchema(type="json", json_schema=shape.literal_schema),
+                "value": PropertySchema(type="json", json_schema=value_schema),
+                "claim_id": PropertySchema(type="string"),
+                "revision": PropertySchema(type="string"),
+                "subject": PropertySchema(
+                    type="json", json_schema=expanded_model_schema(SemanticAddress)
+                ),
+                "predicate": PropertySchema(type="string"),
+                "qualifier": PropertySchema(type="json", json_schema={"type": ["string", "null"]}),
+                "role": PropertySchema(type="string"),
+                "object_kind": PropertySchema(type="string"),
+                "lifecycle_state": PropertySchema(type="string"),
+                "captures": PropertySchema(
+                    type="json", json_schema={"type": "array", "items": {"type": "string"}}
+                ),
                 "verdict": PropertySchema(type="string"),
                 "currency": PropertySchema(type="string"),
                 "identity": PropertySchema(type="string"),
@@ -841,6 +915,7 @@ class _Compiler:
             subject_kind=selected.subject.kind,
             subject_id=self.wire(selected.subject.identity, node),
             cardinality=cardinality,
+            limit=limit,
             **{"as": True},
         )
         return ClaimValue(
@@ -854,7 +929,16 @@ class _Compiler:
     def candidate(self, node: ast.Call) -> ClaimCandidate:
         fields = {k.arg: k.value for k in node.keywords}
         required = {"subject", "predicate", "value", "role", "rationale"}
-        optional = {"supported_by", "copied_from", "self_source", "qualifier", "revises", "basis"}
+        optional = {
+            "supported_by",
+            "copied_from",
+            "self_source",
+            "qualifier",
+            "revises",
+            "basis",
+            "effective_period",
+            "dispositions",
+        }
         if node.args or not required.issubset(fields) or set(fields) - required - optional:
             self.fail(
                 node, "claim_candidate needs a typed statement, role, rationale and one source"
@@ -865,25 +949,54 @@ class _Compiler:
         shape = predicate.structure
         if subject.kind not in shape.allowed_subject_kinds:
             self.fail(node, "ClaimType does not admit this Subject kind", "contract_mismatch")
-        if shape.object_kind != "literal":
-            self.fail(
-                node,
-                "This source form currently needs a literal-valued ClaimType",
-                "contract_mismatch",
-            )
-        expected = PropertySchema(type="json", json_schema=shape.literal_schema)
-        value = self.value(fields["value"], expected=expected)
-        if value.literal:
-            try:
-                RecordConstructor(ContractSchema(fields={"value": expected}))(value=value.wire)
-            except ValueError as exc:
-                self.fail(fields["value"], str(exc), "contract_value_invalid")
-        elif not _assignable(value.type, expected):
-            self.fail(
-                fields["value"],
-                "Value is outside the accepted ClaimType range",
-                "contract_mismatch",
-            )
+        if shape.object_kind == "subject":
+            target = self.expr(fields["value"])
+            if (
+                not isinstance(target, Subject)
+                or target.kind not in shape.allowed_object_subject_kinds
+            ):
+                self.fail(
+                    fields["value"], "Use a Subject of an admitted object kind", "contract_mismatch"
+                )
+            object_value = {
+                "subject_kind": target.kind,
+                "subject_id": self.wire(target.identity, node),
+            }
+        elif shape.object_kind == "exact_content":
+            content = fields["value"]
+            if not (
+                isinstance(content, ast.Call)
+                and isinstance(content.func, ast.Name)
+                and content.func.id == "ExactContent"
+                and len(content.args) == 1
+                and not content.keywords
+            ):
+                self.fail(
+                    content,
+                    "Use ExactContent(text); the daemon computes its content identity",
+                    "contract_mismatch",
+                )
+            text = self.value(content.args[0])
+            if _json_type(text.type).get("type") != "string":
+                self.fail(
+                    content, "ExactContent source values must be UTF-8 text", "contract_mismatch"
+                )
+            object_value = self.wire(text, content)
+        else:
+            expected = PropertySchema(type="json", json_schema=shape.literal_schema)
+            value = self.value(fields["value"], expected=expected)
+            if value.literal:
+                try:
+                    RecordConstructor(ContractSchema(fields={"value": expected}))(value=value.wire)
+                except ValueError as exc:
+                    self.fail(fields["value"], str(exc), "contract_value_invalid")
+            elif not _assignable(value.type, expected):
+                self.fail(
+                    fields["value"],
+                    "Value is outside the accepted ClaimType range",
+                    "contract_mismatch",
+                )
+            object_value = self.wire(value, node)
         role = self.value(fields["role"])
         if not role.literal or role.wire not in shape.permitted_roles:
             self.fail(fields["role"], "Role is not admitted by this ClaimType", "contract_mismatch")
@@ -933,17 +1046,94 @@ class _Compiler:
         extras: dict[str, Any] = {}
         for name in ("qualifier", "revises"):
             if name in fields:
-                extra = self.value(fields[name])
+                extra = self.expr(fields[name])
+                if (
+                    name == "revises"
+                    and isinstance(extra, ClaimValue)
+                    and isinstance(extra.type, ContractSchema)
+                ):
+                    extras["revision_claim"] = self.wire(extra, node)
+                    continue
+                if not isinstance(extra, Value):
+                    self.fail(
+                        fields[name],
+                        f"{name} must name a selected Claim or text",
+                        "contract_mismatch",
+                    )
                 if _json_type(extra.type).get("type") not in {"string", "null"}:
                     self.fail(fields[name], f"{name} must be text or null", "contract_mismatch")
                 extras[name] = self.wire(extra, node)
+        if "effective_period" in fields:
+            period = fields["effective_period"]
+            if not (isinstance(period, ast.Constant) and period.value is None):
+                if not (
+                    isinstance(period, ast.Call)
+                    and isinstance(period.func, ast.Name)
+                    and period.func.id == "EffectivePeriod"
+                    and not period.args
+                    and {k.arg for k in period.keywords} == {"starts_at", "ends_at"}
+                ):
+                    self.fail(period, "Use EffectivePeriod(starts_at=..., ends_at=...)")
+                for keyword in period.keywords:
+                    instant = self.value(keyword.value)
+                    if _json_type(instant.type).get("type") not in {"string", "null"}:
+                        self.fail(
+                            keyword.value,
+                            "Effective bounds must be UTC timestamps or null",
+                            "contract_mismatch",
+                        )
+                    key = "effective_from" if keyword.arg == "starts_at" else "effective_until"
+                    extras[key] = self.wire(instant, period)
+        if "dispositions" in fields:
+            dispositions = fields["dispositions"]
+            if not (isinstance(dispositions, ast.Constant) and dispositions.value is None):
+                if not isinstance(dispositions, ast.Dict):
+                    self.fail(
+                        dispositions,
+                        "dispositions maps selected Claims or Claim IDs to dispositions",
+                    )
+                values = []
+                for claim_key, raw in zip(dispositions.keys, dispositions.values, strict=True):
+                    if claim_key is None:
+                        self.fail(dispositions, "Disposition expansion is unsupported")
+                    selected = self.expr(claim_key)
+                    if isinstance(selected, ClaimValue) and isinstance(
+                        selected.type, ContractSchema
+                    ):
+                        reference = {"claim": self.wire(selected, claim_key)}
+                    elif (
+                        isinstance(selected, Value)
+                        and selected.literal
+                        and isinstance(selected.wire, str)
+                    ):
+                        reference = {"claim_id": selected.wire}
+                    else:
+                        self.fail(
+                            claim_key,
+                            "Disposition keys must be selected Claims or literal Claim IDs",
+                        )
+                    disposition: object
+                    if (
+                        isinstance(raw, ast.Attribute)
+                        and isinstance(raw.value, ast.Name)
+                        and raw.value.id == "Disposition"
+                    ):
+                        disposition = raw.attr.lower()
+                    else:
+                        entry = self.value(raw)
+                        disposition = entry.wire if entry.literal else None
+                    if disposition not in {"not_tested", "support", "contradict", "unsure"}:
+                        self.fail(raw, "Unknown Claim disposition", "contract_value_invalid")
+                    values.append({**reference, "disposition": disposition})
+                extras["dispositions"] = values
         return ClaimCandidate(
             dict(
                 tag="playbill-source-claim-candidate-v1",
                 subject_kind=subject.kind,
                 subject_id=self.wire(subject.identity, node),
                 predicate=shape.predicate,
-                value=self.wire(value, node),
+                object_kind=shape.object_kind,
+                value=object_value,
                 role=role.wire,
                 rationale=self.wire(rationale, node),
                 source_kind=source_kind,

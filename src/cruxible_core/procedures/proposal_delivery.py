@@ -237,6 +237,11 @@ def _claim_members(
             if isinstance(item, ProcedureClaimProposalItemV2)
             else "evidence",
             derivation=item.derivation if isinstance(item, ProcedureClaimProposalItemV2) else None,
+            existing_claim_dispositions=(
+                item.existing_claim_dispositions
+                if isinstance(item, ProcedureClaimProposalItemV2)
+                else ()
+            ),
             claim_ref=item.revises,
             dependency_drafts=ClaimDependencyDraftsV1(),
         )
