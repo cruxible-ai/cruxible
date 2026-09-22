@@ -50,9 +50,37 @@ uv run mypy src
   known failures, and review context. Reviewers should put requested changes and
   approval notes in `ReviewRequest.review_notes`.
 
-## State-write dogfooding
+## Project-state completion requirement
 
-For the foreseeable future, follow [the state-write timing and friction protocol](docs/dogfooding/state-write-friction.md) whenever writing project state. Record operational timings alongside the checkpoint and carry the previous observation into the next meaningful update; do not create recursive measurement-only writes.
+A meaningful implementation, merge, deployment, review outcome, or maintainer scope
+ruling is not complete until its existing project-state item is reconciled. Do
+this without waiting for a reminder. Batch one coherent checkpoint at the end of
+the work; do not write after every tool call or create telemetry-only updates.
+
+- Read the existing project workspace's `project-state/README.md` and current
+  accepted items first. Linked worktrees reuse that instance and workspace;
+  do not initialize a competing project instance or invent a second roadmap.
+- Use the public typed SDK and existing credentials: revise existing Claims,
+  prepare, submit, inspect the exact changeset, satisfy the instance's approval
+  policy, accept, and verify the changed values at the receipt's coordinate.
+  Never patch ledger files or projection databases directly.
+- Record the exact code range and validation, remaining failures, and task
+  ownership. Keep implemented, merged, pushed, deployed, adopted, and released
+  distinct. Preserve unrelated work and release/scope rulings.
+- Refresh existing gitignored governed views after acceptance and check sync.
+  Keep receipts/timings in the existing `.playbill/project-state/` checkpoint
+  area. Do not put operational scripts, payloads, or review guides in `docs/`.
+- Measure connection, reads, prepare, submit, review/approval, acceptance and
+  readback separately; record omissions, retries and workflow friction. Carry
+  the previous completed timing observation in the next meaningful checkpoint,
+  without a recursive measurement-only write.
+- Before the final reply, check: code outcome recorded, acceptance/readback
+  verified, views refreshed. If access or compatibility blocks the update,
+  report the specific blocker and retained pending intent/proposal rather than
+  claiming state is current. Do not silently upgrade a daemon to fix SDK skew.
+
+This completion requirement does not authorize unrelated state changes, expanded
+release scope, or sending messages to other agents or people.
 
 ## Versioning
 
