@@ -70,6 +70,7 @@ nav:
       - For AI agents: for-ai-agents.md
       - Family 1 Documents: playbill-family-1.md
   - Reference:
+      - SDK v2 proposal: sdk-v2-reference.md
       - CLI reference: cli-reference.md
       - MCP tools: mcp-tools.md
       - DP-0 review guide: dp0-review-guide.md

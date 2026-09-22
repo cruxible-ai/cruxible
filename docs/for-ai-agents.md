@@ -36,9 +36,11 @@ contracts, and recall-only tags are the intended “double-click” points.
 
 ## The world is typed
 
-Do not pass strings. `pb.world()` reads the accepted vocabulary once and hands
-it back as objects, so the names in your program are the names the daemon
-accepted rather than spellings you hope match:
+Prefer typed references where the SDK offers them. `pb.world()` reads the
+accepted vocabulary and hands it back as objects, so names and constrained
+values come from the daemon's accepted ontology. APIs that accept canonical
+addresses still support strings; typed references additionally carry their
+observed coordinate:
 
 ~~~python
 w = pb.world()
@@ -68,14 +70,24 @@ vulnerability.claims            # every live Claim about this Subject
 vulnerability.explain()         # the governance and provenance context
 ~~~
 
-`pb.world()` refreshes first, so a world is always built at the instance's
-current accepted coordinate, and it refuses once that orientation moves, under
-the same law as every other typed ref: a name that resolved at one coordinate
-may name something else at the next. `pb.world()` reads no Subjects at all; the
-first Subject access of ANY kind reads every Subject of every kind in one list,
-because the served verb takes neither a kind filter nor a cursor. A read-back
-(`subject.claims`, `subject.<predicate>`) walks every page of the accepted list
-rather than answering with the first one.
+On a live client, `pb.world()` selects current accepted state; on `pb.at(coordinate)`
+it selects that fixed coordinate. Each World owns a pinned reading context and
+remains readable when the live client advances. This does not make old references
+current for authoring: preparation still checks the references against its base.
+
+World fields return all live Claim contenders for the selected Subject and
+predicate. Cardinality-one metadata does not turn a field into a scalar or
+silently pick a winning Claim. Each Claim retains its identity, revision, value,
+verdict, and evidence references. Use `world.prefetch(subjects=(...),
+predicates=(...), max_claims=...)` to populate complete, bounded selections.
+Use `pb.run_query(name_or_ref, parameters=...)` for named joins and filtered
+populations, checking truncation before assuming completeness.
+
+`pb.world()` reads vocabulary, not Subjects. The current first Subject access
+loads the Subject listing; ordinary uncached field reads page the relevant Claim
+listing and load the matching live Claim views. Prefetch uses the batch reader.
+An incomplete or non-advancing selection refuses instead of masquerading as a
+complete answer.
 
 Where a name the daemon accepted is not a name Python can spell -- a segment
 that is a keyword, a Subject ID with a hyphen, a predicate leaf that collides
@@ -332,14 +344,33 @@ proposal and activation, plus any candidate-committed approval requirements.
 
 ## Procedures
 
-A Procedure is the governed way to compute over accepted state and, now, to
-READ. The served run lanes admit `state_tap`, `transform`, `project`, `guard`,
-`repeat` and `halt`, plus `source` on a graph-v4 definition. Effectful terminals
--- emitting a Capture, posting to an inbox, proposing a change set, settling a
-mandate -- are NOT served: `readiness` lists them as unsupported nodes, and a
-run of a Procedure containing one is refused before any journal exists. Read
-readiness before writing a graph; a node being legal in the schema is not the
-same as a lane being able to execute it.
+The implemented authoring API accepts a `ProcedureInput` or a typed `Sequence`
+from `cruxible_client.authoring.procedures`. Sequence supports blueprint-first
+composition, accepted provider selection with `pb.provider_binding(...)`,
+immutable `.bind(...)`, and a structured `.preview()` before preparation.
+`pb.procedure(definition=blueprint).prepare()` uses the same authoring lifecycle
+as other definitions. Preview does not invoke providers or grant authority.
+See the [SDK reference](../packages/cruxible-client/README.md#procedure-composition-and-execution)
+for constructors, a complete local example, and execution methods.
+
+| Surface | Supported behavior |
+|---|---|
+| Sequence / ProcedureInput authoring | StateTap, Source, graph-v5 Call, Transform, Project, Guard, EmitCapture, ProposeChangeSet, Halt; bounded Repeat through ProcedureInput. |
+| Direct Procedure run | State reads, acquisition, contracted Calls on graph v5, deterministic computation, routing, bounded Repeat, and Halt. |
+| Accepted Line occurrence | The same execution machinery plus authorized EmitCapture and ProposeChangeSet terminal paths. |
+| Not served by this SDK authoring surface | PostInbox and MandateSettlement, despite their presence in graph contracts. |
+
+Terminals end their path and cannot have successors. Capture emission retains
+evidence; it does not assert or accept a Claim. Proposal emission submits through
+governed authoring; it does not approve or accept the proposal. Direct readiness
+can report capture/proposal terminals as unsupported because those require the
+Line lane. Use `pb.run_line(...)` for an accepted, authorized Line occurrence.
+
+The [SDK v2 reference proposal](sdk-v2-reference.md) describes retained Python
+source, contract-derived input/output records, typed query/run results, typed
+field reads inside Procedures, branch-value merging, and proposed composition
+forms. Those are proposed APIs, not syntax the current SDK accepts. Follow the
+current SDK reference when executing against the installed package.
 
 A `source` node reads through an accepted Provider under accepted authority,
 not through ambient filesystem access. Before it can run, accepted state must
@@ -371,12 +402,17 @@ graph actually plans an occurrence for: a policy may declare an input a given
 Procedure does not serve, and whether such an input ever arrives is reported by
 the read, not guessed before it.
 
-What a completed run retains is the point. Each Source occurrence reports a
-`SourceReadReceiptV1` -- the real on-disk path, the byte length, and the SHA-256
-of the exact bytes read -- and the digest of the Capture those bytes became.
-Cite those, not your own reading of the file. A direct Source run is identified
-by its evaluation instant: re-running at the same instant replays the retained
-observation, and reading a changed source means running at a later one.
+Each successful Source occurrence retains its acquisition evidence and capture
+references. Receipt details depend on the provider: a workspace-file read and a
+web fetch do not describe the same source substrate. Cite the retained evidence,
+not an agent's later retelling. `pb.capture(digest)` reads the retained body under
+the current access rules; it never refetches the external source.
+
+Use the run ID to read retained execution status (`run.refresh()` in the SDK).
+A new `.run()` is an invocation, not a general-purpose historical replay API.
+StateTaps bind their reads at admission; they do not perform arbitrary dynamic
+queries using outputs from later nodes. Source requests can depend on earlier
+runtime outputs. A completed run is not itself a measurement verdict.
 
 ### Measurements and readings
 
