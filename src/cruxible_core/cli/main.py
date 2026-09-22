@@ -733,6 +733,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "line": _group(
                 "Trigger accepted Lines.",
                 {
+                    "check": _command(
+                        "playbill",
+                        "check_line",
+                        "Check trigger eligibility without running a Line.",
+                    ),
                     "run": _command(
                         "playbill", "run_line", "Trigger one due accepted Line occurrence."
                     ),

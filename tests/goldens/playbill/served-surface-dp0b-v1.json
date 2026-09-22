@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-22:checked-procedure-source-v2",
-    "surface_digest": "sha256:7f47423f9ddb5a92045f8529c6124fdde716134ff2f6851ecada96c0be6e9eb1"
+    "register_entry": "2026-09-22:line-trigger-check",
+    "surface_digest": "sha256:bbb8173af09ff199b6765fc8850cb02bdd4464e2ff7e26ad0e01521de7e9edd6"
   },
   "surface": {
     "cli_leaves": [
@@ -428,6 +428,13 @@
       },
       {
         "client_operations": [
+          "check_playbill_line"
+        ],
+        "command": "playbill line check",
+        "delegate": "cruxible_core.cli.commands.playbill.check_line"
+      },
+      {
+        "client_operations": [
           "run_playbill_line"
         ],
         "command": "playbill line run",
@@ -835,6 +842,7 @@
       "playbill_ledger_clone_url",
       "playbill_ledger_publish",
       "playbill_ledger_set_mirror",
+      "playbill_line_check",
       "playbill_line_run",
       "playbill_list_claim_types",
       "playbill_list_claims",
@@ -1468,6 +1476,18 @@
         "response_schema_digest": "sha256:0eb7c0095ab7f579bd5debd368eaa43ffbe0da0bb73ed681a3fa490f11bf069a"
       },
       {
+        "delegate": "cruxible_core.server.routes.playbill.check_line_trigger",
+        "facade_operations": [
+          "playbill_line_check"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/playbill/lines/{line}/check",
+        "request_model": "cruxible_client.contracts.line_dispatch.LineTriggerCheckRequestV1",
+        "request_schema_digest": "sha256:26142070bb7aa491b6b5ceaa6e0d1cb70de5e334855d11e3672d53d48eec1b6f",
+        "response_model": "cruxible_client.contracts.line_dispatch.LineTriggerCheckResultV1",
+        "response_schema_digest": "sha256:1b29c9f8a9b30b44bd37a14b7077dd433e59d06f4f54fe9c9e49e3be003aef57"
+      },
+      {
         "delegate": "cruxible_core.server.routes.playbill.run_line",
         "facade_operations": [
           "playbill_line_run"
@@ -2023,6 +2043,7 @@
       "playbill_inspect_proposal",
       "playbill_inspect_refusal",
       "playbill_instance_decommission",
+      "playbill_line_check",
       "playbill_line_run",
       "playbill_list_claim_types",
       "playbill_list_claims",
@@ -2519,6 +2540,16 @@
         "name": "cruxible_playbill_instance_decommission",
         "output_schema_digest": "sha256:519c9b57ae41752d90d72ebf71faab8c169f272eb4d3d96bcbc2ce87a3b14063",
         "permission": "ADMIN"
+      },
+      {
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_line_check",
+        "facade_operations": [
+          "playbill_line_check"
+        ],
+        "input_schema_digest": "sha256:4189a6f98e2859ac7951a06dcf2c15d432c9076217d090abc0719f28b193d2d4",
+        "name": "cruxible_playbill_line_check",
+        "output_schema_digest": "sha256:2bca7adc2d946a10cda75b74ffdaf062d395aa2eb175047e57adc1ebaf88b0a3",
+        "permission": "READ_ONLY"
       },
       {
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_line_run",

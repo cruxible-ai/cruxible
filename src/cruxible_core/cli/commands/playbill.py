@@ -3901,6 +3901,43 @@ def line_group() -> None:
     """Trigger accepted Lines."""
 
 
+@line_group.command("check")
+@click.argument("line")
+@click.option("--since", default=None, help="Inclusive eligibility timestamp.")
+@click.option("--until", default=None, help="Exclusive eligibility timestamp.")
+@click.option("--limit", default=100, type=click.IntRange(1, 256))
+@click.option("--cursor", default=None)
+@json_option
+@handle_errors
+def check_line(
+    line: str,
+    since: str | None,
+    until: str | None,
+    limit: int,
+    cursor: str | None,
+    output_json: bool,
+) -> None:
+    from cruxible_client.contracts.line_dispatch import LineTriggerCheckRequestV1
+
+    request = LineTriggerCheckRequestV1.model_validate(
+        dict(since=since, until=until, limit=limit, cursor=cursor)
+    )
+    result = _server_call(
+        lambda client, instance_id: client.check_playbill_line(instance_id, line, request=request),
+        command_name="playbill line check",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        click.echo(f"{result.line}: {result.status} ({len(result.occurrences)} occurrences)")
+        if result.detail:
+            click.echo(result.detail)
+        if result.cursor:
+            click.echo(
+                f"Next cursor: {result.cursor}; retain --until {result.checked_until.isoformat()}"
+            )
+
+
 @line_group.command("run")
 @click.argument("line")
 @click.option("--occurrence-id", default=None, help="Assert the daemon-derived occurrence id.")

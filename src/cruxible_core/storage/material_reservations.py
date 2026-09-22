@@ -7,7 +7,7 @@ import json
 import os
 import stat
 import tempfile
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -442,7 +442,8 @@ class ProcedureMaterialReservationStore:
 
     def recover(
         self,
-        records: Sequence[StoredProcedureJournalRecordV1],
+        records: Sequence[StoredProcedureJournalRecordV1]
+        | Callable[[MaterialReservationV1], Sequence[StoredProcedureJournalRecordV1]],
         *,
         bodies: ContentAddressedBodyStore,
     ) -> tuple[str, ...]:
@@ -456,7 +457,8 @@ class ProcedureMaterialReservationStore:
 
     def recover_run_material(
         self,
-        records: Sequence[StoredProcedureJournalRecordV1],
+        records: Sequence[StoredProcedureJournalRecordV1]
+        | Callable[[MaterialReservationV1], Sequence[StoredProcedureJournalRecordV1]],
         *,
         bodies: ContentAddressedBodyStore,
         intended_event_kinds: frozenset[JournalEventKindV1] | None = None,
@@ -477,7 +479,8 @@ class ProcedureMaterialReservationStore:
 
     def _recover(
         self,
-        records: Sequence[StoredProcedureJournalRecordV1],
+        records: Sequence[StoredProcedureJournalRecordV1]
+        | Callable[[MaterialReservationV1], Sequence[StoredProcedureJournalRecordV1]],
         *,
         bodies: ContentAddressedBodyStore,
         include_pending_admission: bool,
@@ -499,7 +502,7 @@ class ProcedureMaterialReservationStore:
                 ):
                     continue
                 matches: list[StoredProcedureJournalRecordV1] = []
-                for stored in records:
+                for stored in records(reservation) if callable(records) else records:
                     record = stored.record
                     if record.stream.instance_id != reservation.instance_id:
                         continue

@@ -154,6 +154,9 @@
   "/api/v1/{instance_id}/playbill/ledger/publish": {
     "POST": "PlaybillLedgerMirrorV1"
   },
+  "/api/v1/{instance_id}/playbill/lines/{line}/check": {
+    "POST": "LineTriggerCheckResultV1"
+  },
   "/api/v1/{instance_id}/playbill/lines/{line}/runs": {
     "POST": "PlaybillProcedureRunState"
   },

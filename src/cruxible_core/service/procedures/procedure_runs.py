@@ -859,12 +859,21 @@ def _resolve_line_pin(
 def _line_admissions(
     instance: PlaybillInstance,
     accepted_line: AcceptedLineSpecV1,
+    *,
+    occurrence_id: str | None = None,
 ) -> tuple[ProcedureRunAdmissionV5, ...]:
     journal, _root = _journal(instance)
     stream = procedure_line_journal_stream(instance.descriptor.instance_id)
     partition = procedure_line_partition(accepted_line.line.identity)
     admissions: list[ProcedureRunAdmissionV5] = []
-    for stored in journal.all_records(stream, partition):
+    for stored in journal.select_records(
+        stream,
+        partition_id=partition,
+        event_kind="admission_bound",
+        occurrence_id=occurrence_id,
+        descending=True,
+        limit=1,
+    ):
         if stored.record.event_kind != "admission_bound":
             continue
         payload = parse_journal_payload(
@@ -1798,14 +1807,11 @@ def _journal_for_write(instance: PlaybillInstance) -> tuple[LocalJournalBackend,
 
     journal, root = _journal(instance)
     stream = _stream(instance)
-    records = tuple(
-        stored
-        for partition_id in journal.partition_ids(stream)
-        for stored in journal.all_records(stream, partition_id)
-    )
     bodies = instance.body_store()
     ProcedureMaterialReservationStore(bodies.reservation_root).recover_run_material(
-        records,
+        lambda reservation: journal.select_records(
+            stream, run_id=reservation.run_id, event_kind=reservation.intended_event_kind
+        ),
         bodies=bodies,
     )
     return journal, root
@@ -1868,9 +1874,8 @@ def _records_for_run(instance: PlaybillInstance, run_id: str):  # type: ignore[n
     journal, _root = _journal(instance)
     records = tuple(
         item
-        for partition_id in journal.partition_ids(_stream(instance))
-        for item in journal.all_records(_stream(instance), partition_id)
-        if item.record.run_id == run_id and item.record.admission_binding_digest is not None
+        for item in journal.select_records(_stream(instance), run_id=run_id)
+        if item.record.admission_binding_digest is not None
     )
     partitions = {item.record.partition_id for item in records}
     admission_digests = {
@@ -3594,7 +3599,9 @@ def service_run_playbill_line(
                 "repair": "Re-run at or after next_due.",
             },
         )
-    existing = next((item for item in prior if item.occurrence_id == occurrence_id), None)
+    existing = next(
+        iter(_line_admissions(instance, accepted_line, occurrence_id=occurrence_id)), None
+    )
     if existing is not None:
         if not isinstance(existing, ProcedureRunAdmissionV7):
             return _line_refusal_state(

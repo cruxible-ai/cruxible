@@ -2562,13 +2562,14 @@ class ProcedureExecutor:
         admission = prepared.admission
         self._verify_correspondence(admission, accepted, prepared.accepted_state_materials)
         try:
-            existing_records = self.journal.all_records(
+            existing_records = self.journal.select_records(
                 admission.journal_stream,
-                admission.journal_partition_id,
+                partition_id=admission.journal_partition_id,
+                run_id=admission.run_id,
             )
             self.run_index.rebuild_run(
                 admission.run_id,
-                tuple(row for row in existing_records if row.record.run_id == admission.run_id),
+                existing_records,
                 bodies=self.bodies,
             )
         except (PlaybillJournalError, ValueError) as exc:

@@ -907,7 +907,8 @@ PRD-c1… rollout-healthy procedure_unit satisfied run=RUN-3f…
 ## playbill line
 
 ~~~text
-cruxible playbill line run LINE_IDENTITY_DIGEST --evaluation-time TS
+cruxible playbill line check LINE [--since TS] [--until TS] [--limit 100] [--cursor CURSOR] [--json]
+cruxible playbill line run LINE --evaluation-time TS
   [--occurrence-id ID] [--json]
 ~~~
 

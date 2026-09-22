@@ -177,6 +177,10 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV2,
     ProjectionCurrencyPolicy,
 )
+from cruxible_client.contracts.line_dispatch import (
+    LineTriggerCheckRequestV1,
+    LineTriggerCheckResultV1,
+)
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV2,
@@ -2871,6 +2875,22 @@ class Playbill:
             procedure.coordinate if isinstance(procedure, ProcedureRef) else None
         )
         return Procedure(self, name, None if requested is None else _coordinate(requested))
+
+    def check_line(
+        self,
+        line: str,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> LineTriggerCheckResultV1:
+        """Inspect trigger eligibility and retained admissions without starting work."""
+        return self._client.check_playbill_line(
+            self._instance_id,
+            line,
+            request=LineTriggerCheckRequestV1(since=since, until=until, limit=limit, cursor=cursor),
+        )
 
     def run_line(
         self,

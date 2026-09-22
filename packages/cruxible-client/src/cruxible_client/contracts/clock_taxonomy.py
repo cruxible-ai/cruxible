@@ -74,6 +74,11 @@ def is_time_bearing_field(name: str, annotation: str) -> bool:
 # `observed_at` the instant the daemon evaluated the source, while an attestation
 # is `observed_at` the time its attestor asserts.
 CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
+    ("LineTriggerCheckRequestV1", "since"): "VALIDITY WINDOW",
+    ("LineTriggerCheckRequestV1", "until"): "VALIDITY WINDOW",
+    ("LineTriggerOccurrenceV1", "eligible_at"): "VALIDITY WINDOW",
+    ("LineTriggerCheckResultV1", "checked_since"): "VALIDITY WINDOW",
+    ("LineTriggerCheckResultV1", "checked_until"): "VALIDITY WINDOW",
     ("FixedWindowV1", "starts_at"): "VALIDITY WINDOW",
     ("FixedWindowV1", "duration_seconds"): "VALIDITY WINDOW",
     ("CaptureEventWindowV1", "duration_seconds"): "VALIDITY WINDOW",

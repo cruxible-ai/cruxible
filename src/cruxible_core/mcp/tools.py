@@ -727,6 +727,13 @@ def register_tools(
         return handlers.handle_playbill_procedure_readings(instance_id, name, request)
 
     @_tool
+    def cruxible_playbill_line_check(
+        instance_id: str, line: str, request: contracts.LineTriggerCheckRequestV1
+    ) -> contracts.LineTriggerCheckResultV1:
+        """Check a Line's trigger and admitted occurrences; never enqueue or execute."""
+        return handlers.handle_playbill_line_check(instance_id, line, request)
+
+    @_tool
     def cruxible_playbill_line_run(
         instance_id: str,
         line: str,

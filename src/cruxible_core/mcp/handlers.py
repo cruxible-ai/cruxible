@@ -1501,6 +1501,16 @@ def handle_playbill_procedure_readings(
     )
 
 
+def handle_playbill_line_check(
+    instance_id: str, line: str, request: contracts.LineTriggerCheckRequestV1
+) -> contracts.LineTriggerCheckResultV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.check_playbill_line(instance_id, line, request=request),
+        lambda: playbill_api.playbill_line_check(instance_id, line, request=request),
+        operation_name="cruxible_playbill_line_check",
+    )
+
+
 def handle_playbill_line_run(
     instance_id: str,
     line: str,

@@ -1845,6 +1845,17 @@ def playbill_procedure_readings(
     )
 
 
+def playbill_line_check(
+    instance_id: str, line: str, *, request: contracts.LineTriggerCheckRequestV1
+) -> contracts.LineTriggerCheckResultV1:
+    check_permission("cruxible_playbill_line_check", instance_id=instance_id)
+    from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
+
+    return service_check_line_trigger(
+        get_playbill_manager().get(instance_id), line, request, now=_evaluation_time(None)
+    )
+
+
 def playbill_line_run(
     instance_id: str,
     line_identity_digest: str,

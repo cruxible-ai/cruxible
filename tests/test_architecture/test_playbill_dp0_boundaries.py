@@ -417,6 +417,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "bind_playbill_procedure",
         "run_playbill_procedure",
         "get_playbill_procedure_run",
+        "check_playbill_line",
         "run_playbill_line",
         "predict_playbill",
         "settle_playbill_prediction",

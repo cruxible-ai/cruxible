@@ -1261,6 +1261,17 @@ def run_procedure(
 
 
 @router.post(
+    "/{instance_id}/playbill/lines/{line}/check", response_model=contracts.LineTriggerCheckResultV1
+)
+def check_line_trigger(
+    instance_id: str, line: str, req: contracts.LineTriggerCheckRequestV1
+) -> contracts.LineTriggerCheckResultV1:
+    return playbill_api.playbill_line_check(
+        resolve_server_instance_id(instance_id), line, request=req
+    )
+
+
+@router.post(
     "/{instance_id}/playbill/lines/{line}/runs",
     response_model=contracts.PlaybillProcedureRunState,
 )
