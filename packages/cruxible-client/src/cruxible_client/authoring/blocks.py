@@ -247,15 +247,14 @@ def _query_backing(
     ):
         raise ProjectionRepinError("query backing returned a different accepted coordinate")
     result = evaluated.result
-    if result.get("verdict") != "completed":
+    if result.verdict != "completed":
         raise ProjectionRepinError("a refused query cannot back a declared projection block")
-    truncation = result.get("truncation")
-    if not isinstance(truncation, Mapping) or truncation.get("clipped_budgets"):
+    if result.truncation.clipped_budgets:
         raise ProjectionRepinError("a truncated query cannot back a declared projection block")
-    supplied = result.get("parameters")
-    if not isinstance(supplied, list):
-        raise ProjectionRepinError("query backing did not disclose resolved parameter bindings")
-    bindings = tuple(ProjectionResolvedParameterBindingV1.model_validate(item) for item in supplied)
+    bindings = tuple(
+        ProjectionResolvedParameterBindingV1.model_validate(item.model_dump(mode="json"))
+        for item in result.parameters
+    )
     return ProjectionQueryBackingV1(
         identity=ArtifactIdentity(kind="QueryDefinition", name=bare),
         definition_digest=evaluated.definition_digest,

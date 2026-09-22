@@ -375,8 +375,8 @@ def _analyze_procedure(definition: ProcedureDefinitionAny) -> ProcedureGraphV3:
     for node in definition.nodes:
         if edges[node.node_id]:
             continue
-        alias = _node_alias(node)
-        if node.kind not in TERMINAL_NODE_KINDS and alias != definition.returns:
+        leaf_alias = _node_alias(node)
+        if node.kind not in TERMINAL_NODE_KINDS and leaf_alias != definition.returns:
             raise ProcedureGraphFormatError(
                 f"Procedure leaf {node.node_id!r} neither halts, emits typed egress, nor "
                 f"returns the declared output alias {definition.returns!r}"

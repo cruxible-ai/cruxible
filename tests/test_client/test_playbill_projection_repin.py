@@ -21,7 +21,10 @@ from cruxible_client.authoring.projection_package import load_projection_manifes
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claims import ClaimStatement, LiteralClaimObject
 from cruxible_client.contracts.declared_blocks import ProjectionQueryBackingV1
+from cruxible_client.contracts.projection import AcceptedProjectionCoordinate
+from cruxible_client.contracts.query.results import ClaimQueryResultV1
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.types import CompilerCoordinate
 
 COORDINATE = api.PlaybillAcceptedCoordinate(
     git_oid="1" * 64,
@@ -147,17 +150,39 @@ class _RepinClient:
             coordinate=COORDINATE,
             name=name,
             definition_digest="sha256:" + "9" * 64,
-            result={
-                "verdict": self.query_verdict,
-                "parameters": parameters,
-                "truncation": {"clipped_budgets": self.clipped_budgets},
-                "rows": [{"subject": "wi-42"}],
-                "conflicts": [],
-                "result_shape": "subject",
-                "result_cardinality": "many",
-                "result_binding": "item",
-                "dedupe": "subject",
-            },
+            result=ClaimQueryResultV1.model_validate(
+                {
+                    "definition_path": "queries/project.items.json",
+                    "definition_digest": "sha256:" + "9" * 64,
+                    "parameter_digest": "sha256:" + "a" * 64,
+                    "coordinate": AcceptedProjectionCoordinate(
+                        instance_id="inst_projection",
+                        repository_path=str(Path.cwd()),
+                        git_object_format="sha256",
+                        git_oid=COORDINATE.git_oid,
+                        semantic_root=COORDINATE.semantic_root,
+                        generation_root=COORDINATE.generation_root,
+                        compiler=CompilerCoordinate(rule_digest=COORDINATE.compiler_digest),
+                    ),
+                    "evaluated_at": NOW,
+                    "budgets": {"max_results": 10, "max_traversal_depth": 0},
+                    "refusal": {"code": "playbill.query.refused", "message": "Refused fixture"}
+                    if self.query_verdict == "refused"
+                    else None,
+                    "verdict": self.query_verdict,
+                    "parameters": parameters,
+                    "truncation": {
+                        "clipped_budgets": self.clipped_budgets,
+                        "candidate_result_count": 2 if self.clipped_budgets else 0,
+                    },
+                    "rows": [],
+                    "conflicts": [],
+                    "result_shape": "subject",
+                    "result_cardinality": "many",
+                    "result_binding": "item",
+                    "dedupe": "subject",
+                }
+            ),
         )
 
     def close(self) -> None:
