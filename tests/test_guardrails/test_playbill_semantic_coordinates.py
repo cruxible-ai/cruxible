@@ -57,6 +57,8 @@ from cruxible_client.contracts.laws import (
     SDK_SOURCE_PROCEDURE_LAW,
     SDK_SOURCE_UPGRADE_LAW,
     SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW,
+    SOURCE_CHECKED_PROCEDURE_LAW,
+    SOURCE_CHECKED_UPGRADE_LAW,
     STANDING_MANDATE_ACCEPTANCE_LAW,
     SUBJECT_ACCEPTANCE_LAW,
     InstalledAcceptanceLaw,
@@ -80,6 +82,7 @@ from cruxible_core.compiler.compiler import (
     RESOLUTION_COMPILER,
     RESOURCE_BUDGET_COMPILER,
     SDK_SOURCE_COMPILER,
+    SOURCE_CHECKED_COMPILER,
     SUPPORTED_COMPILERS,
     UPGRADE_COMPILER,
     candidate_card_renderer_digest_for_compiler,
@@ -314,6 +317,20 @@ HISTORICAL_LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],
     ...,
 ] = (
+    (
+        SOURCE_CHECKED_PROCEDURE_LAW,
+        "playbill.procedure.v2",
+        "playbill-procedure-v2",
+        9,
+        "sha256:8d11525ae25a53f10f2b5272eb52799789248d07f05bdecd5dab98f37a19b2f7",
+    ),
+    (
+        SOURCE_CHECKED_UPGRADE_LAW,
+        "playbill.compiler-upgrade.v1",
+        "playbill-compiler-upgrade-v1",
+        7,
+        "sha256:6ab61a1ee536d05c3d2ac40acac6485a90045123015bf3b5f21a5c1cb9c919d1",
+    ),
     (
         CLAIM_EVIDENCE_UPGRADE_LAW,
         "playbill.compiler-upgrade.v1",
@@ -591,7 +608,11 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
         CLAIM_EVIDENCE_COMPILER.rule_digest
         == "sha256:1086f50631d0189cfda34737f02e0af5e951bb643dcd22d702ff411386698164"
     )
-    assert current_compiler_coordinate() == CLAIM_EVIDENCE_COMPILER
+    assert (
+        SOURCE_CHECKED_COMPILER.rule_digest
+        == "sha256:b5801e1343a5df75a62efd80e02f5a09f5bfeb6650be6ef981b3e62c1482e11a"
+    )
+    assert current_compiler_coordinate() == SOURCE_CHECKED_COMPILER
     assert P2_B4_COMPILER in SUPPORTED_COMPILERS
     assert P2_B4_UNIT2_COMPILER in SUPPORTED_COMPILERS
     # The renderer resolves from the current coordinate itself, so cards derive
@@ -613,7 +634,7 @@ def test_succeeding_the_semantic_revision_keeps_candidate_cards_deriving(
     """
 
     source = Path(compiler_module.__file__).read_text(encoding="utf-8")
-    current_revision = 28
+    current_revision = 29
     anchor = "\n    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,\n"
     bumped = source.replace(
         f"    semantic_revision={current_revision},{anchor}",
@@ -706,11 +727,9 @@ def test_installed_compiler_revision_labels_are_exact_and_complete() -> None:
         "bounded-resource-budgets-v1",
         "typed-procedure-source-v1",
         "producer-independent-claim-types-v1",
+        "checked-procedure-source-v2",
     )
-    assert (
-        COMPILER_REVISION_LABELS[current_compiler_coordinate()]
-        == "producer-independent-claim-types-v1"
-    )
+    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "checked-procedure-source-v2"
 
 
 def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
@@ -724,8 +743,5 @@ def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
         current_compiler_coordinate,
     )
 
-    assert len(COMPILER_REVISION_LABELS) == 27
-    assert (
-        COMPILER_REVISION_LABELS[current_compiler_coordinate()]
-        == "producer-independent-claim-types-v1"
-    )
+    assert len(COMPILER_REVISION_LABELS) == 28
+    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "checked-procedure-source-v2"

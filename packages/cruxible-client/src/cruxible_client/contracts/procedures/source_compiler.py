@@ -299,7 +299,12 @@ class _Compiler:
         if "as" in node:
             node["as"] = (
                 self.assignment_alias
-                if kind in {"source", "call", "state_tap", "state_claim"} and self.assignment_alias
+                if (
+                    kind in {"source", "call", "state_tap", "state_claim"}
+                    or kind == "invoke"
+                    and self.program.rules == "cruxible.procedure-source.v2"
+                )
+                and self.assignment_alias
                 else node_id
             )
         if "as" in node and any(previous.get("as") == node["as"] for previous in self.nodes):
@@ -1275,6 +1280,22 @@ class _Compiler:
             if operator is None:
                 self.fail(node, "Unsupported comparison operator")
             left, right = self.value(node.left), self.value(node.comparators[0])
+            if self.program.rules == "cruxible.procedure-source.v2":
+                for value, other, location in (
+                    (left, right, node.left),
+                    (right, left, node.comparators[0]),
+                ):
+                    allowed = _json_type(other.type).get("enum")
+                    if (
+                        value.literal
+                        and allowed is not None
+                        and canonical_bytes(value.wire) not in {canonical_bytes(v) for v in allowed}
+                    ):
+                        self.fail(
+                            location,
+                            "Comparison literal is outside the declared enum",
+                            "enum_value",
+                        )
             if _json_type(left.type).get("type") not in {
                 "string",
                 "integer",
@@ -1369,6 +1390,15 @@ class _Compiler:
                         stmt,
                         "Local assignments cannot shadow Procedure inputs or intrinsics",
                         "reserved_name",
+                    )
+                if (
+                    self.program.rules == "cruxible.procedure-source.v2"
+                    and stmt.targets[0].id in self.environment
+                ):
+                    self.fail(
+                        stmt.targets[0],
+                        "Reassignment is unsupported; use a distinct local name",
+                        "reassignment",
                     )
                 self.assignment_alias = stmt.targets[0].id
                 self.environment[stmt.targets[0].id] = self.expr(stmt.value)
@@ -1617,7 +1647,9 @@ def _compile_source(
             contract_in=root_in,
             contract_out=compiler.contract(output),
             nodes=tuple(compiler.nodes),
-            returns=compiler.returns[0] if compiler.returns else "result",
+            returns=(compiler.returns[0] if compiler.returns else "result")
+            if program.rules == "cruxible.procedure-source.v1"
+            else None,
             budget=budget,
             hard_caps=hard_caps,
             terminal_capability=terminal_capability,

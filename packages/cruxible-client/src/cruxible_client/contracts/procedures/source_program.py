@@ -85,7 +85,9 @@ class SourceClaimType(_Closed):
 class ProcedureSourceV1(_Closed):
     """Source plus explicit data dependencies; no closures or executable imports."""
 
-    rules: Literal["cruxible.procedure-source.v1"] = "cruxible.procedure-source.v1"
+    rules: Literal["cruxible.procedure-source.v1", "cruxible.procedure-source.v2"] = (
+        "cruxible.procedure-source.v1"
+    )
     text: str
     filename: str
     first_line: int = Field(default=1, ge=1)

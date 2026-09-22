@@ -205,3 +205,31 @@ def test_source_relocation_preserves_identity_and_local_diagnostics():
         )
     assert error.value.diagnostic.span.filename == relocated.filename
     assert error.value.diagnostic.span.line == 801
+
+
+def test_source_and_sequence_refuse_nonexistent_standalone_contracts():
+    import pytest
+
+    from cruxible_client.authoring.inputs import AcceptedReferenceInput
+    from cruxible_client.authoring.procedures import Sequence
+
+    reference = AcceptedReferenceInput(
+        kind="accepted", target="Contract:missing", role="contract-in"
+    )
+    with pytest.raises(TypeError, match="owner-carried"):
+        procedure(
+            name="invalid",
+            input=reference,
+            output=blueprint().contract_out,
+            budget=_budget(),
+            hard_caps=_hard_caps(),
+        )(blueprint)
+    with pytest.raises(TypeError, match="owner-carried"):
+        Sequence(
+            name="invalid",
+            contract_in=reference,
+            contract_out=blueprint().contract_out,
+            steps=(),
+            budget=_budget(),
+            hard_caps=_hard_caps(),
+        ).preview()

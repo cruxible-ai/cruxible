@@ -1736,7 +1736,10 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
 
     installed = _installed(context, procedure.artifact_format)
     if int(procedure.definition.graph_format) == 6:
-        from cruxible_client.contracts.laws import SDK_SOURCE_PROCEDURE_LAW
+        from cruxible_client.contracts.laws import (
+            SDK_SOURCE_PROCEDURE_LAW,
+            SOURCE_CHECKED_PROCEDURE_LAW,
+        )
         from cruxible_client.contracts.procedures.artifacts import ProcedureArtifactV2
         from cruxible_client.contracts.procedures.models import ProcedureDefinitionV6
         from cruxible_client.contracts.query.definitions import (
@@ -1747,9 +1750,16 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
 
         if not isinstance(procedure, ProcedureArtifactV2):
             raise ValueError("graph-v6 requires the owner-carried Contract envelope")
-        if context.historical_law_coordinate is not None and installed != SDK_SOURCE_PROCEDURE_LAW:
+        assert isinstance(procedure.definition, ProcedureDefinitionV6)
+        source_law = (
+            SOURCE_CHECKED_PROCEDURE_LAW
+            if procedure.definition.source is not None
+            and procedure.definition.source.rules == "cruxible.procedure-source.v2"
+            else SDK_SOURCE_PROCEDURE_LAW
+        )
+        if context.historical_law_coordinate is not None and installed != source_law:
             raise ProposalIntegrityError("graph-v6 requires its exact source-compilation law")
-        installed = SDK_SOURCE_PROCEDURE_LAW
+        installed = source_law
 
         def source_lookup(identity: str) -> object | None:
             kind = identity.split(":", 1)[0]
@@ -2563,12 +2573,12 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
             claim_type=previous,
             artifact_digest=claim_type_digest(previous).tagged,
         )
-    from cruxible_core.compiler.compiler import CLAIM_EVIDENCE_COMPILER
+    from cruxible_core.compiler.compiler import CLAIM_EVIDENCE_COMPILER, SOURCE_CHECKED_COMPILER
 
-    if (
-        context.historical_law_coordinate is None
-        and context.current.compiler == CLAIM_EVIDENCE_COMPILER
-    ):
+    if context.historical_law_coordinate is None and context.current.compiler in {
+        CLAIM_EVIDENCE_COMPILER,
+        SOURCE_CHECKED_COMPILER,
+    }:
         if any(pin.target.kind == "Procedure" for pin in claim_type.pins) or any(
             getattr(rule, "allowed_reducer_digests", ())
             for rule in claim_type.evidence_admission_policy.rules

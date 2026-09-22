@@ -14,6 +14,7 @@ from cruxible_core.compiler.compiler import (
     RESOLUTION_COMPILER,
     RESOURCE_BUDGET_COMPILER,
     SDK_SOURCE_COMPILER,
+    SOURCE_CHECKED_COMPILER,
     UPGRADE_COMPILER,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -68,6 +69,7 @@ def approve(instance, proposal, reviewer):
     ]
     + [
         (SDK_SOURCE_COMPILER, CLAIM_EVIDENCE_COMPILER),
+        (CLAIM_EVIDENCE_COMPILER, SOURCE_CHECKED_COMPILER),
         (PROVIDER_PACKAGE_COMPILER, RESOURCE_BUDGET_COMPILER),
         (UPGRADE_COMPILER, PROVIDER_CONTRACT_COMPILER),
         (RESOLUTION_COMPILER, PROVIDER_CONTRACT_COMPILER),

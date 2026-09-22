@@ -143,6 +143,12 @@ def test_child_occurrences_have_exact_bindings_and_replay_without_execution(
     child, parent = blueprints()
     accept_blueprint(instance, owner, child)
     accept_blueprint(instance, owner, parent, child="child")
+    from cruxible_core.service.procedures.procedure_runs import _accepted_procedure
+
+    definition = _accepted_procedure(
+        instance, name="parent", coordinate=instance.accepted_coordinate()
+    ).procedure.definition
+    assert [node.as_ for node in definition.nodes if node.kind == "invoke"] == ["first", "second"]
     body_store = type(instance.body_store())
     read_body = body_store.read
     verification_reads = []

@@ -57,7 +57,7 @@ from cruxible_client.contracts.records import RecordConstructor
 if TYPE_CHECKING:
     from cruxible_client.contracts import PlaybillProviderInterfaceEntry
 
-Contract: TypeAlias = CarriedContractInput | AcceptedReferenceInput
+Contract: TypeAlias = CarriedContractInput
 
 
 def procedure_record_constructor(
@@ -297,7 +297,7 @@ class ProcedurePreview(BaseModel):
     edges: dict[str, dict[str, str]] = Field(default_factory=dict)
     providers: dict[str, ProviderBinding] = Field(default_factory=dict)
     terminals: tuple[str, ...] = ()
-    returns: str
+    returns: str | None
     budget: ProcedureBudgetV3
     hard_caps: ProcedureHardCapsV3
     errors: tuple[CompositionDiagnostic, ...] = ()
@@ -420,9 +420,10 @@ class Sequence:
                     )
                 contracts[contract.name] = contract
                 return {"kind": "carried_contract", "name": contract.name, "role": role}
-            if isinstance(contract, AcceptedReferenceInput):
-                return contract.model_copy(update={"role": role}).model_dump(mode="json")
-            raise TypeError("contracts must be carried contracts or accepted references")
+            raise TypeError(
+                "Procedure Contracts must be owner-carried; "
+                "standalone accepted Contract references do not exist"
+            )
 
         root_in = contract_ref(self.contract_in, "contract-in")
         root_out = contract_ref(self.contract_out, "contract-out")

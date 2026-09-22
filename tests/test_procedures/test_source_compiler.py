@@ -499,3 +499,72 @@ def test_query_defaults_and_explicit_budget_use_existing_contracts():
             program.replace("parameters=bindings.work.parameters(status='ready'),", ""),
             bindings={"work": binding},
         )
+
+
+@pytest.mark.parametrize(
+    "body,code",
+    [
+        (
+            'if request.priority == "urgant":\n'
+            '        return Output.value(value="yes")\n'
+            '    return Output.value(value="no")',
+            "enum_value",
+        ),
+        ('x = "a"\n    x = "b"\n    return Output.value(value=x)', "reassignment"),
+    ],
+)
+def test_checked_source_refuses_silent_mistakes_without_rewriting_history(body, code):
+    request = SourceContract(
+        name="request",
+        schema=ContractSchema(
+            fields={"priority": PropertySchema(type="string", enum=["routine", "urgent"])}
+        ),
+    )
+    source = ProcedureSourceV1(
+        text="def example(request):\n    " + body + "\n",
+        filename="checks.py",
+        first_line=90,
+        function="example",
+        contracts={"Output": OUTPUT},
+    )
+    args = dict(
+        name="example", input=request, output=OUTPUT, budget=_budget(), hard_caps=_hard_caps()
+    )
+    historical = compile_source(source, **args)
+    from cruxible_client.contracts.procedures.source_compiler import verify_source_graph
+
+    verify_source_graph(accepted(historical).procedure)
+    with pytest.raises(SourceCompileError) as error:
+        compile_source(source.model_copy(update={"rules": "cruxible.procedure-source.v2"}), **args)
+    assert error.value.diagnostic.code == "playbill.source." + code
+    assert error.value.diagnostic.span.filename == "checks.py"
+    assert error.value.diagnostic.span.line >= 91
+    assert (
+        accepted(compile_source(source, **args)).artifact_digest
+        == accepted(historical).artifact_digest
+    )
+
+
+def test_checked_source_has_explicit_returns_and_keeps_branch_local_bindings(tmp_path):
+    source = ProcedureSourceV1(
+        rules="cruxible.procedure-source.v2",
+        text="""def example(request):
+    if request.choice:
+        label = "yes"
+    else:
+        label = "no"
+    return Output.value(value=label)
+""",
+        filename="branches.py",
+        function="example",
+        contracts={"Output": OUTPUT},
+    )
+    compiled = compile_source(
+        source, name="example", input=INPUT, output=OUTPUT, budget=_budget(), hard_caps=_hard_caps()
+    )
+    assert compiled.definition.returns is None
+    assert execute(tmp_path, compiled, choice=True, count=0).output == {"value": "yes"}
+    with pytest.raises(ValueError, match="explicit return paths"):
+        type(compiled.definition).model_validate(
+            {**compiled.definition.model_dump(), "returns": "invented"}
+        )

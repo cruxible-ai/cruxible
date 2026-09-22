@@ -212,6 +212,7 @@ PROVIDER_PACKAGE_ARTIFACT_KINDS = ArtifactKindRegistry(PROVIDER_CONTRACT_ARTIFAC
 RESOURCE_BUDGET_ARTIFACT_KINDS = ArtifactKindRegistry(PROVIDER_PACKAGE_ARTIFACT_KINDS.entries())
 SDK_SOURCE_ARTIFACT_KINDS = ArtifactKindRegistry(RESOURCE_BUDGET_ARTIFACT_KINDS.entries())
 CLAIM_EVIDENCE_ARTIFACT_KINDS = ArtifactKindRegistry(SDK_SOURCE_ARTIFACT_KINDS.entries())
+SOURCE_CHECKED_ARTIFACT_KINDS = ArtifactKindRegistry(CLAIM_EVIDENCE_ARTIFACT_KINDS.entries())
 
 PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
     tuple(
@@ -848,6 +849,7 @@ def parse_projection_tree(
                     RESOURCE_BUDGET_ARTIFACT_KINDS,
                     SDK_SOURCE_ARTIFACT_KINDS,
                     CLAIM_EVIDENCE_ARTIFACT_KINDS,
+                    SOURCE_CHECKED_ARTIFACT_KINDS,
                 ) and (
                     runtime_policy.result_bytes_cap is not None
                     or runtime_policy.repeat_attempts_cap is not None
@@ -1172,7 +1174,8 @@ def parse_projection_tree(
                     ) from exc
                 if (
                     claim_type.artifact_format == "playbill-claim-type-v5"
-                    and artifact_kinds is not CLAIM_EVIDENCE_ARTIFACT_KINDS
+                    and artifact_kinds
+                    not in (CLAIM_EVIDENCE_ARTIFACT_KINDS, SOURCE_CHECKED_ARTIFACT_KINDS)
                 ):
                     raise ProjectionFormatError(
                         "producer-independent ClaimTypes require compiler revision 28"
@@ -1287,6 +1290,7 @@ def parse_projection_tree(
                     RESOURCE_BUDGET_ARTIFACT_KINDS,
                     SDK_SOURCE_ARTIFACT_KINDS,
                     CLAIM_EVIDENCE_ARTIFACT_KINDS,
+                    SOURCE_CHECKED_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError(
                         "Provider v3 requires the provider-package compiler"
@@ -1419,6 +1423,7 @@ def parse_projection_tree(
                     RESOURCE_BUDGET_ARTIFACT_KINDS,
                     SDK_SOURCE_ARTIFACT_KINDS,
                     CLAIM_EVIDENCE_ARTIFACT_KINDS,
+                    SOURCE_CHECKED_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError(
                         "ProviderInterface v2 requires the provider-package compiler"
@@ -1609,6 +1614,7 @@ def parse_projection_tree(
                     RESOURCE_BUDGET_ARTIFACT_KINDS,
                     SDK_SOURCE_ARTIFACT_KINDS,
                     CLAIM_EVIDENCE_ARTIFACT_KINDS,
+                    SOURCE_CHECKED_ARTIFACT_KINDS,
                 ) and _requires_resource_budgets(
                     procedure_mandate.authority_ceiling.model_dump(mode="json")
                 ):
@@ -1674,6 +1680,7 @@ def parse_projection_tree(
                     RESOURCE_BUDGET_ARTIFACT_KINDS,
                     SDK_SOURCE_ARTIFACT_KINDS,
                     CLAIM_EVIDENCE_ARTIFACT_KINDS,
+                    SOURCE_CHECKED_ARTIFACT_KINDS,
                 ) and (
                     procedure.definition.budget.max_result_bytes is not None
                     or procedure.definition.hard_caps.max_result_bytes is not None
@@ -1688,18 +1695,28 @@ def parse_projection_tree(
                     RESOURCE_BUDGET_ARTIFACT_KINDS,
                     SDK_SOURCE_ARTIFACT_KINDS,
                     CLAIM_EVIDENCE_ARTIFACT_KINDS,
+                    SOURCE_CHECKED_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError("graph-v5 requires the provider-contract compiler")
                 if int(procedure.definition.graph_format) == 6:
                     if artifact_kinds not in (
                         SDK_SOURCE_ARTIFACT_KINDS,
                         CLAIM_EVIDENCE_ARTIFACT_KINDS,
+                        SOURCE_CHECKED_ARTIFACT_KINDS,
                     ):
                         raise ProjectionFormatError("graph-v6 requires compiler revision 27")
+                    from cruxible_client.contracts.procedures.models import ProcedureDefinitionV6
                     from cruxible_client.contracts.procedures.source_compiler import (
                         verify_source_graph,
                     )
 
+                    assert isinstance(procedure.definition, ProcedureDefinitionV6)
+                    if (
+                        procedure.definition.source is not None
+                        and procedure.definition.source.rules == "cruxible.procedure-source.v2"
+                        and artifact_kinds is not SOURCE_CHECKED_ARTIFACT_KINDS
+                    ):
+                        raise ProjectionFormatError("source-v2 requires compiler revision 29")
                     verify_source_graph(procedure)
                 identity = procedure.identity.qualified
                 if identity in identities:
@@ -1925,6 +1942,7 @@ def parse_projection_tree(
                     RESOURCE_BUDGET_ARTIFACT_KINDS,
                     SDK_SOURCE_ARTIFACT_KINDS,
                     CLAIM_EVIDENCE_ARTIFACT_KINDS,
+                    SOURCE_CHECKED_ARTIFACT_KINDS,
                 ) and isinstance(line.budgets, dict):
                     result_budget = line.budgets.get("max_result_bytes")
                     if "max_result_bytes" in line.budgets and (
@@ -1942,6 +1960,7 @@ def parse_projection_tree(
                     RESOURCE_BUDGET_ARTIFACT_KINDS,
                     SDK_SOURCE_ARTIFACT_KINDS,
                     CLAIM_EVIDENCE_ARTIFACT_KINDS,
+                    SOURCE_CHECKED_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError(
                         "Line v3 requires the independent-resolution compiler"
@@ -2041,6 +2060,7 @@ def parse_projection_tree(
                         RESOURCE_BUDGET_ARTIFACT_KINDS,
                         SDK_SOURCE_ARTIFACT_KINDS,
                         CLAIM_EVIDENCE_ARTIFACT_KINDS,
+                        SOURCE_CHECKED_ARTIFACT_KINDS,
                     )
                 ):
                     raise ProjectionFormatError(

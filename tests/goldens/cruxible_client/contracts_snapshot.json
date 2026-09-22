@@ -25335,8 +25335,16 @@
                 "type": "array"
               },
               "returns": {
-                "title": "Returns",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Returns"
               },
               "source": {
                 "anyOf": [
@@ -25364,7 +25372,6 @@
               "contract_in",
               "contract_out",
               "nodes",
-              "returns",
               "budget",
               "hard_caps",
               "terminal_capability"
@@ -25889,8 +25896,11 @@
                 "type": "string"
               },
               "rules": {
-                "const": "cruxible.procedure-source.v1",
                 "default": "cruxible.procedure-source.v1",
+                "enum": [
+                  "cruxible.procedure-source.v1",
+                  "cruxible.procedure-source.v2"
+                ],
                 "title": "Rules",
                 "type": "string"
               },
@@ -32628,8 +32638,16 @@
                 "type": "array"
               },
               "returns": {
-                "title": "Returns",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Returns"
               },
               "source": {
                 "anyOf": [
@@ -32657,7 +32675,6 @@
               "contract_in",
               "contract_out",
               "nodes",
-              "returns",
               "budget",
               "hard_caps",
               "terminal_capability"
@@ -33157,8 +33174,11 @@
                 "type": "string"
               },
               "rules": {
-                "const": "cruxible.procedure-source.v1",
                 "default": "cruxible.procedure-source.v1",
+                "enum": [
+                  "cruxible.procedure-source.v1",
+                  "cruxible.procedure-source.v2"
+                ],
                 "title": "Rules",
                 "type": "string"
               },
@@ -50149,8 +50169,16 @@
                 "type": "array"
               },
               "returns": {
-                "title": "Returns",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Returns"
               },
               "source": {
                 "anyOf": [
@@ -50178,7 +50206,6 @@
               "contract_in",
               "contract_out",
               "nodes",
-              "returns",
               "budget",
               "hard_caps",
               "terminal_capability"
@@ -50678,8 +50705,11 @@
                 "type": "string"
               },
               "rules": {
-                "const": "cruxible.procedure-source.v1",
                 "default": "cruxible.procedure-source.v1",
+                "enum": [
+                  "cruxible.procedure-source.v1",
+                  "cruxible.procedure-source.v2"
+                ],
                 "title": "Rules",
                 "type": "string"
               },

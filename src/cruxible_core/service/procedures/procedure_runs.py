@@ -177,6 +177,7 @@ from cruxible_core.compiler.compiler import (
     CLAIM_EVIDENCE_COMPILER,
     RESOURCE_BUDGET_COMPILER,
     SDK_SOURCE_COMPILER,
+    SOURCE_CHECKED_COMPILER,
 )
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.exhaust import (
@@ -3641,7 +3642,12 @@ def service_run_playbill_line(
         accepted_line,
         accepted,
         resource_budgets=coordinate.compiler
-        in {RESOURCE_BUDGET_COMPILER, SDK_SOURCE_COMPILER, CLAIM_EVIDENCE_COMPILER},
+        in {
+            RESOURCE_BUDGET_COMPILER,
+            SDK_SOURCE_COMPILER,
+            CLAIM_EVIDENCE_COMPILER,
+            SOURCE_CHECKED_COMPILER,
+        },
     )
     try:
         external_occurrences = _line_external_occurrences(

@@ -526,6 +526,22 @@ SDK_SOURCE_PROCEDURE_LAW = InstalledAcceptanceLaw(
     artifact_tag="playbill-procedure-v2",
     current=False,
 )
+SOURCE_CHECKED_PROCEDURE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        PROCEDURE_LAW_V2_IDENTIFIER, "playbill-procedure-v2", semantic_revision=9
+    ),
+    artifact_kind="procedure",
+    artifact_tag="playbill-procedure-v2",
+    current=False,
+)
+SOURCE_CHECKED_UPGRADE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=7
+    ),
+    artifact_kind="compiler-upgrade",
+    artifact_tag="playbill-compiler-upgrade-v1",
+    current=False,
+)
 SDK_SOURCE_UPGRADE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
         "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=5
@@ -600,6 +616,8 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         SDK_SOURCE_UPGRADE_LAW,
         CLAIM_EVIDENCE_UPGRADE_LAW,
         SDK_SOURCE_PROCEDURE_LAW,
+        SOURCE_CHECKED_PROCEDURE_LAW,
+        SOURCE_CHECKED_UPGRADE_LAW,
         PROVIDER_CONTRACT_PROCEDURE_LAW,
         PROVIDER_CONTRACT_UPGRADE_LAW,
         COMPILER_UPGRADE_ACCEPTANCE_LAW,
@@ -659,6 +677,8 @@ __all__ = [
     "CLAIM_TYPE_LAW_V5",
     "CLAIM_TYPE_V5_ACCEPTANCE_LAW",
     "CLAIM_EVIDENCE_UPGRADE_LAW",
+    "SOURCE_CHECKED_PROCEDURE_LAW",
+    "SOURCE_CHECKED_UPGRADE_LAW",
     "CAPTURE_CONTRACT_ACCEPTANCE_LAW",
     "CAPTURE_CONTRACT_LAW",
     "CAPTURE_CONTRACT_LAW_IDENTIFIER",

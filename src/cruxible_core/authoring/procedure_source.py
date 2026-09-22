@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from collections.abc import Callable, Iterable
 from dataclasses import replace
-from typing import Any, NoReturn, TypeVar
+from typing import Any, Literal, NoReturn, TypeVar
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.captures import CaptureContractV1, capture_contract_digest
@@ -59,7 +59,13 @@ T = TypeVar("T")
 
 
 def resolve_source(
-    request: ProcedureSourceRequestV1, *, lookup: SourceLookup, claim_types: Iterable[object]
+    request: ProcedureSourceRequestV1,
+    *,
+    lookup: SourceLookup,
+    claim_types: Iterable[object],
+    rules: Literal[
+        "cruxible.procedure-source.v1", "cruxible.procedure-source.v2"
+    ] = "cruxible.procedure-source.v2",
 ) -> CompiledSource:
     def fail(message: str) -> NoReturn:
         raise SourceCompileError(
@@ -211,6 +217,7 @@ def resolve_source(
         kinds.update(claim_type.allowed_subject_kinds)
         kinds.update(claim_type.allowed_object_subject_kinds)
     program = ProcedureSourceV1(
+        rules=rules,
         text=request.text,
         # Retain a portable source coordinate. The caller's filesystem location
         # belongs to diagnostics, not the accepted Procedure's content identity.
@@ -312,7 +319,7 @@ def verify_source_bindings(
         terminal_capability=definition.terminal_capability,
         description=definition.description,
     )
-    compiled = resolve_source(request, lookup=lookup, claim_types=claim_types)
+    compiled = resolve_source(request, lookup=lookup, claim_types=claim_types, rules=program.rules)
     # Older retained source may carry an author's absolute source location.
     # Verify its dependencies under the same portable coordinate without ever
     # rewriting its stored bytes or recomputing its historical digest.

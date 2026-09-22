@@ -96,7 +96,7 @@ schema-checked value shapes. They do not authorize arbitrary Python classes.
 
 | Name used below | Definition |
 |---|---|
-| `Contract` | Existing `CarriedContractInput \| AcceptedReferenceInput`, also used by `Sequence`. An accepted reference resolves at the authoring base. |
+| `Contract` | `CarriedContractInput`, also used by `Sequence`. Contracts ride their Procedure owner; standalone accepted Contract references are unsupported. |
 | `CanonicalValue` | A value representable by the receiving Cruxible contract. No arbitrary object serialization, float coercion, or custom `__dict__` traversal. |
 | `Value[T]` | Symbolic Procedure value checked against shape `T`. At execution its actual value must satisfy that contract. |
 | `ClaimValue[P]` | Value admitted by the selected predicate `P`: its typed scalar/enum, structured literal record, Subject reference, or exact-content value. Predicate ownership and existing object-kind rules remain authoritative. |
@@ -131,7 +131,7 @@ values, actual runtime data, and canonical serialization.
 
 | Expression | Schema owner | Result |
 |---|---|---|
-| `Contract.value(**fields)` | Carried Contract or accepted Contract resolved at the authoring base | `Record[O]` in host code, `Value[Record[O]]` in source. Used for plain returns and terminal `result=`. |
+| `Contract.value(**fields)` | Owner-carried Contract | `Record[O]` in host code, `Value[Record[O]]` in source. Used for plain returns and terminal `result=`. |
 | `bindings.provider_slot.input(**fields)` | Selected ProviderInterface input contract | Typed Call/Source request record. |
 | `bindings.child_slot.input(**fields)` | Exact child Procedure input contract | Typed child invocation record. |
 | `bindings.query_slot.parameters(**fields)` | Exact QueryDefinition parameter declarations | Typed query parameters. |
@@ -759,7 +759,7 @@ return VerificationOutput.value(verification=verification)
 
 The post-branch value is the value from the selected arm. Both producers must be
 compatible with the receiving output contract. `VerificationOutput` in this
-fragment is the declared carried/accepted output contract, with the two shown
+fragment is the declared owner-carried output contract, with the two shown
 verification literals in its enum. Reading an unproduced value is
 an error unless every path lacking it has already terminated.
 
@@ -1667,3 +1667,9 @@ Transform/Repeat source forms are not made executable by these examples.
 
 Unsupported source reports a diagnostic and locality. It never falls back to
 executing arbitrary Python or an unregistered provider.
+
+Current source authoring uses `cruxible.procedure-source.v2` (compiler revision 29).
+It rejects out-of-enum comparison literals and straight-line reassignment with
+localized diagnostics. Invoke outputs retain authored names; `return_paths` describes
+branch-specific results, and the legacy global `returns` alias is null. Retained
+source-v1 records continue to reproduce under their original compilation rules.

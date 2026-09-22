@@ -47,6 +47,11 @@ if TYPE_CHECKING:
 
 
 def _contract(value: CarriedContractInput) -> SourceContract:
+    if not isinstance(value, CarriedContractInput):
+        raise TypeError(
+            "Procedure Contracts must be owner-carried; "
+            "standalone accepted Contract references do not exist"
+        )
     return SourceContract(name=value.name, schema=value.value.schema)
 
 

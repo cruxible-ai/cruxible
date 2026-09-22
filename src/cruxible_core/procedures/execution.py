@@ -3448,6 +3448,10 @@ class ProcedureExecutor:
                                 {produced_capture_token(state.terminal_capture)}
                             )
                     else:
+                        if definition.returns is None:
+                            raise PlaybillExecutionError(
+                                "Procedure must finish at an explicit return path"
+                            )
                         result = state.outputs[definition.returns]
                         state.return_tokens = (
                             state.alias_tokens(frozenset({definition.returns})) | state.control
@@ -3478,7 +3482,7 @@ class ProcedureExecutor:
                     ),
                     observe_result_bytes=state.observe_result_bytes,
                     boundary="procedure-return",
-                    field_path=definition.returns,
+                    field_path=definition.returns or node.node_id,
                 )
                 try:
                     return normalize_canonical(result)

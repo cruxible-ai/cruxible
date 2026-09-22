@@ -832,6 +832,10 @@ class ProcedureDefinitionV3(_StrictProcedureModel):
     def _annotations(cls, value: object) -> object:
         return normalize_canonical(value)
 
+    def _validate_return_alias(self, aliases: tuple[str, ...]) -> None:
+        if self.returns not in aliases:
+            raise ValueError("Procedure returns must name one declared output alias")
+
     @model_validator(mode="after")
     def _basic_shape(self) -> "ProcedureDefinitionV3":
         if not self.nodes:
@@ -848,8 +852,7 @@ class ProcedureDefinitionV3(_StrictProcedureModel):
             raise ValueError("Procedure node ids must be unique")
         if len(set(aliases)) != len(aliases):
             raise ValueError("Procedure output aliases must be unique")
-        if self.returns not in aliases and int(self.graph_format) != 6:
-            raise ValueError("Procedure returns must name one declared output alias")
+        self._validate_return_alias(aliases)
         if self.budget.wall_clock.microseconds > self.hard_caps.max_wall_clock.microseconds:
             raise ValueError("Procedure budget exceeds its wall-clock hard cap")
         if self.budget.max_provider_calls > self.hard_caps.max_provider_calls:
@@ -957,6 +960,10 @@ class ProcedureDefinitionV4(_StrictProcedureModel):
     def _annotations(cls, value: object) -> object:
         return normalize_canonical(value)
 
+    def _validate_return_alias(self, aliases: tuple[str, ...]) -> None:
+        if self.returns not in aliases:
+            raise ValueError("Procedure returns must name one declared output alias")
+
     @model_validator(mode="after")
     def _basic_shape(self) -> "ProcedureDefinitionV4":
         if not self.nodes:
@@ -973,8 +980,7 @@ class ProcedureDefinitionV4(_StrictProcedureModel):
             raise ValueError("Procedure node ids must be unique")
         if len(set(aliases)) != len(aliases):
             raise ValueError("Procedure output aliases must be unique")
-        if self.returns not in aliases and int(self.graph_format) != 6:
-            raise ValueError("Procedure returns must name one declared output alias")
+        self._validate_return_alias(aliases)
         if self.budget.wall_clock.microseconds > self.hard_caps.max_wall_clock.microseconds:
             raise ValueError("Procedure budget exceeds its wall-clock hard cap")
         if self.budget.max_provider_calls > self.hard_caps.max_provider_calls:
@@ -1154,6 +1160,23 @@ class ProcedureDefinitionV6(ProcedureDefinitionV5):
     graph_format: Literal[6] = 6  # type: ignore[assignment]
     nodes: tuple[ProcedureNodeV6, ...]  # type: ignore[assignment]
     source: ProcedureSourceV1 | None = None
+    returns: str | None = None  # type: ignore[assignment]
+
+    @field_validator("returns")
+    @classmethod
+    def _returns(cls, value: str | None) -> str | None:  # type: ignore[override]
+        return (
+            None
+            if value is None
+            else _canonical_identifier(value, _ALIAS_RE, label="Procedure returns")
+        )
+
+    def _validate_return_alias(self, aliases: tuple[str, ...]) -> None:
+        # Frozen source-v1 retains its historical display-only alias. Source-v2
+        # returns through explicit terminal nodes, never one global alias.
+        if self.source is not None and self.source.rules == "cruxible.procedure-source.v2":
+            if self.returns is not None:
+                raise ValueError("Source-v2 uses explicit return paths, not a return alias")
 
 
 ProcedureNodeAny: TypeAlias = ProcedureNodeV3 | ProcedureNodeV4 | ProcedureNodeV5 | ProcedureNodeV6
