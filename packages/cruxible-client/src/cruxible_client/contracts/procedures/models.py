@@ -1103,8 +1103,22 @@ class ProposeChangeSetNodeV6(ProposeChangeSetNodeV3):
     _result = field_validator("result", mode="before")(normalize_canonical)
 
 
+class InvokeNodeV6(_StrictProcedureModel):
+    """A call to an exact accepted Procedure under the enclosing run's limits."""
+
+    kind: Literal["invoke"] = "invoke"
+    node_id: str
+    procedure: ArtifactPin
+    input: object
+    as_: str = Field(alias="as")
+    next: str | None = None
+
+    _input = field_validator("input", mode="before")(normalize_canonical)
+
+
 ProcedureNodeV6 = Annotated[
-    ClaimTapNodeV6
+    InvokeNodeV6
+    | ClaimTapNodeV6
     | StateTapNodeV6
     | SourceNodeV4
     | ExhaustTapNodeV3

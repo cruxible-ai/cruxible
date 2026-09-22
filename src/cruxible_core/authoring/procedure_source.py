@@ -16,7 +16,14 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_owned_contract_digest,
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema
-from cruxible_client.contracts.procedures.models import ProcedurePinSlotRefV1
+from cruxible_client.contracts.procedures.graph import analyze_procedure_v4
+from cruxible_client.contracts.procedures.models import (
+    TERMINAL_REQUIRED_RUNGS,
+    CaptureEgressNodeV6,
+    InvokeNodeV6,
+    ProcedureDefinitionV5,
+    ProcedurePinSlotRefV1,
+)
 from cruxible_client.contracts.procedures.source_compiler import (
     CompiledSource,
     SourceCompileError,
@@ -77,6 +84,40 @@ def resolve_source(
             fail(f"{identity} is retired")
         return artifact
 
+    child_shapes: dict[str, tuple[bool, int]] = {}
+
+    def child_shape(child: ProcedureArtifactV2, active: tuple[str, ...]) -> tuple[bool, int]:
+        identity = child.identity.name
+        if identity in active:
+            fail(
+                "Recursive Procedure invocation is unsupported: " + " -> ".join((*active, identity))
+            )
+        if identity in child_shapes:
+            return child_shapes[identity]
+        if not child.directly_runnable or not isinstance(child.definition, ProcedureDefinitionV5):
+            fail(f"{identity} must have exact bindings and explicit operation contracts")
+        graph = analyze_procedure_v4(child.definition)
+        leaves = [
+            node
+            for node in child.definition.nodes
+            if not graph.successors[node.node_id] and node.kind != "halt"
+        ]
+        capture = bool(leaves) and all(
+            isinstance(node, CaptureEgressNodeV6) and isinstance(node.input, str) for node in leaves
+        )
+        required = max(
+            (TERMINAL_REQUIRED_RUNGS.get(node.kind, 0) for node in child.definition.nodes),
+            default=0,
+        )
+        for node in child.definition.nodes:
+            if isinstance(node, InvokeNodeV6):
+                nested = require("Procedure", node.procedure.target.name, ProcedureArtifactV2)
+                if procedure_artifact_digest(nested).tagged != node.procedure.artifact_digest:
+                    fail(f"{identity} has a child binding that is not current at this coordinate")
+                required = max(required, child_shape(nested, (*active, identity))[1])
+        child_shapes[identity] = (capture, required)
+        return capture, required
+
     bindings: dict[str, SourceBinding] = {}
     for name, selected in request.bindings.items():
         if isinstance(selected, SourceProviderSelection):
@@ -127,7 +168,12 @@ def resolve_source(
 
             if not child.directly_runnable:
                 fail(f"{selected.name} has unresolved slots")
+            capture_terminal, required_rung = child_shape(
+                child, (request.name.removeprefix("Procedure:"),)
+            )
             bindings[name] = SourceProcedureBinding(
+                capture_terminal=capture_terminal,
+                required_terminal_rung=required_rung,
                 name=child.identity.name,
                 version=procedure_artifact_digest(child).tagged,
                 input=contract(child.definition.contract_in),

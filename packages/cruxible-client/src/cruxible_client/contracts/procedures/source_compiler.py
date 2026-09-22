@@ -7,7 +7,7 @@ fallback interpreter. Host discovery supplies explicit retained schema bindings.
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from typing import Any, Literal, NoReturn, cast
 
@@ -31,6 +31,7 @@ from cruxible_client.contracts.procedures.source_program import (
     SourceContract,
     SourceDiagnostic,
     SourceMapEntry,
+    SourceProcedureBinding,
     SourceProviderBinding,
     SourceQueryBinding,
     SourceSpan,
@@ -52,6 +53,17 @@ class Value:
 @dataclass(frozen=True)
 class Observation(Value):
     """A Source output whose evidence provenance is owned by the runtime."""
+
+
+@dataclass(frozen=True)
+class Invocation(Value):
+    binding: SourceProcedureBinding | None = None
+    success_proven: bool = False
+
+
+@dataclass(frozen=True)
+class InvocationTerminal:
+    invocation: Invocation
 
 
 @dataclass(frozen=True)
@@ -89,6 +101,8 @@ class Namespace:
 
 Expression = (
     Subject
+    | InvocationTerminal
+    | SourceProcedureBinding
     | ClaimCandidate
     | ClaimSelection
     | SourceClaimType
@@ -224,6 +238,7 @@ class _Compiler:
         self.used_bindings: set[str] = set()
         self.used_types: set[str] = set()
         self.used_kinds: set[str] = set()
+        self.required_child_rung = 0
         self.contract(input)
         self.contract(output)
 
@@ -410,6 +425,47 @@ class _Compiler:
             )
         if isinstance(node, ast.Attribute):
             owner = self.expr(node.value)
+            if isinstance(owner, Invocation):
+                assert owner.binding is not None
+                if node.attr in {"value", "terminal"}:
+                    if not owner.success_proven:
+                        self.fail(
+                            node,
+                            "Check succeeded before using a child result",
+                            "child_result_unavailable",
+                        )
+                    if node.attr == "value":
+                        return Value(owner.wire + ".value", owner.binding.output)
+                    if not owner.binding.capture_terminal:
+                        self.fail(
+                            node,
+                            "This child does not guarantee a capture "
+                            "terminal on every successful path",
+                            "child_capture_unavailable",
+                        )
+                    return InvocationTerminal(owner)
+                if node.attr == "receipt":
+                    return Value(
+                        owner.wire + ".receipt",
+                        ContractSchema(
+                            fields={
+                                key: PropertySchema(type="string")
+                                for key in (
+                                    "run_id",
+                                    "procedure_identity",
+                                    "procedure_artifact_digest",
+                                    "receipt_digest",
+                                )
+                            }
+                        ),
+                    )
+            if isinstance(owner, InvocationTerminal):
+                if node.attr != "capture":
+                    self.fail(node, "The child terminal has no such field", "unknown_field")
+                return Observation(
+                    owner.invocation.wire + ".terminal.capture",
+                    ContractSchema(fields={"capture_digest": PropertySchema(type="string")}),
+                )
             if isinstance(owner, Subject):
                 matches = [
                     t
@@ -460,7 +516,9 @@ class _Compiler:
                 if owner.name == "bindings":
                     self.used_bindings.add(node.attr)
                     binding = self.program.bindings.get(node.attr)
-                    if not isinstance(binding, SourceProviderBinding | SourceQueryBinding):
+                    if not isinstance(
+                        binding, SourceProviderBinding | SourceQueryBinding | SourceProcedureBinding
+                    ):
                         self.fail(
                             node,
                             f"Binding {node.attr!r} is missing or unsupported",
@@ -470,6 +528,8 @@ class _Compiler:
                 if owner.name.startswith("contract:") and node.attr == "value":
                     return Constructor(self.program.contracts[owner.name[9:]].schema_)
                 self.fail(node, f"Unknown source member {node.attr!r}", "unknown_field")
+            if isinstance(owner, SourceProcedureBinding) and node.attr == "input":
+                return Constructor(owner.input)
             if isinstance(owner, SourceProviderBinding) and node.attr == "input":
                 return Constructor(owner.operation.input)
             if isinstance(owner, SourceQueryBinding) and node.attr == "parameters":
@@ -564,7 +624,12 @@ class _Compiler:
                 self.fail(
                     node, "No accepted ontology definition matches this name", "unknown_field"
                 )
-            if isinstance(node.func, ast.Name) and node.func.id in {"call", "source", "query"}:
+            if isinstance(node.func, ast.Name) and node.func.id in {
+                "call",
+                "source",
+                "query",
+                "invoke",
+            }:
                 return self.operation(node)
             if isinstance(node.func, ast.Name) and node.func.id == "claim_candidate":
                 return self.candidate(node)
@@ -610,6 +675,39 @@ class _Compiler:
             self.fail(node, f"{name} requires one explicit binding and named arguments")
         binding = self.expr(node.args[0])
         kwargs = {k.arg: k.value for k in node.keywords}
+        if name == "invoke":
+            if not isinstance(binding, SourceProcedureBinding) or set(kwargs) != {"input"}:
+                self.fail(
+                    node, "invoke requires an accepted child and its typed input", "binding_kind"
+                )
+            value = self.value(kwargs["input"])
+            if value.type != binding.input:
+                self.fail(node, "Use the child's typed input constructor", "contract_mismatch")
+            self.required_child_rung = max(self.required_child_rung, binding.required_terminal_rung)
+            child = ArtifactPin(
+                role="procedure",
+                target=ArtifactIdentity(kind="Procedure", name=binding.name),
+                artifact_digest=binding.version,
+            )
+            emitted = self.append(
+                "invoke",
+                node,
+                procedure=child.model_dump(mode="json"),
+                input=self.wire(value, node),
+                **{"as": True},
+            )
+            return Invocation(
+                "$steps." + emitted["as"],
+                ContractSchema(
+                    fields={
+                        "succeeded": PropertySchema(type="bool"),
+                        "status": PropertySchema(
+                            type="string", enum=["succeeded", "halted", "refused", "failed"]
+                        ),
+                    }
+                ),
+                binding=binding,
+            )
         if name == "query":
             if not isinstance(binding, SourceQueryBinding) or set(kwargs) != {"parameters"}:
                 self.fail(
@@ -957,15 +1055,20 @@ class _Compiler:
             yes, no = self.condition(node.operand, code, message)
             return no, yes
         if isinstance(node, ast.BoolOp):
+            initial = dict(self.environment)
             yes, no = self.condition(node.values[0], code, message)
+            previous = node.values[0]
             for term in node.values[1:]:
+                self.refine_success(previous, isinstance(node.op, ast.And))
                 self.tail = yes if isinstance(node.op, ast.And) else no
                 next_yes, next_no = self.condition(term, code, message)
+                previous = term
                 yes, no = (
                     (next_yes, no + next_no)
                     if isinstance(node.op, ast.And)
                     else (yes + next_yes, next_no)
                 )
+            self.environment = initial
             return yes, no
         if isinstance(node, ast.Compare):
             if len(node.ops) != 1:
@@ -1011,6 +1114,32 @@ class _Compiler:
         )
         self.tail = []
         return [(guard, "on_true")], [(guard, "on_false")]
+
+    def refine_success(self, condition: ast.AST, truth: bool) -> None:
+        if isinstance(condition, ast.UnaryOp) and isinstance(condition.op, ast.Not):
+            self.refine_success(condition.operand, not truth)
+        elif isinstance(condition, ast.BoolOp) and (
+            isinstance(condition.op, ast.And)
+            and truth
+            or isinstance(condition.op, ast.Or)
+            and not truth
+        ):
+            for term in condition.values:
+                self.refine_success(term, truth)
+        elif (
+            truth
+            and isinstance(condition, ast.Attribute)
+            and condition.attr == "succeeded"
+            and isinstance(condition.value, ast.Name)
+        ):
+            owner = self.environment.get(condition.value.id)
+            if isinstance(owner, Invocation):
+                self.environment = {
+                    key: replace(value, success_proven=True)
+                    if isinstance(value, Invocation) and value.wire == owner.wire
+                    else value
+                    for key, value in self.environment.items()
+                }
 
     def statements(self, statements: list[ast.stmt]) -> bool:
         terminated = False
@@ -1063,10 +1192,12 @@ class _Compiler:
             elif isinstance(stmt, ast.If):
                 yes, no = self.condition(stmt.test)
                 initial = dict(self.environment)
+                self.refine_success(stmt.test, True)
                 self.tail = yes
                 left_done = self.statements(stmt.body)
                 left_env, left_tail = dict(self.environment), self.tail
                 self.environment = dict(initial)
+                self.refine_success(stmt.test, False)
                 self.tail = no
                 right_done = self.statements(stmt.orelse)
                 right_env, right_tail = dict(self.environment), self.tail
@@ -1078,6 +1209,16 @@ class _Compiler:
                     self.tail = right_tail if left_done else left_tail
                     continue
                 common = left_env.keys() & right_env.keys()
+                for key in common:
+                    left, right = left_env[key], right_env[key]
+                    if (
+                        isinstance(left, Invocation)
+                        and isinstance(right, Invocation)
+                        and left.wire == right.wire
+                    ):
+                        left_env[key] = right_env[key] = replace(
+                            left, success_proven=left.success_proven and right.success_proven
+                        )
                 changed = sorted(name for name in common if left_env[name] != right_env[name])
                 self.environment = {name: left_env[name] for name in common if name not in changed}
                 if not changed:
@@ -1089,6 +1230,8 @@ class _Compiler:
                     if (
                         not isinstance(left, Value)
                         or not isinstance(right, Value)
+                        or isinstance(left, Invocation)
+                        or isinstance(right, Invocation)
                         or not _same_base_type(left.type, right.type)
                         or _field_type(left.type).json_schema != _field_type(right.type).json_schema
                     ):
@@ -1156,6 +1299,7 @@ class _Compiler:
                 for guard, label in no:
                     guard[label] = "$abort"
                 self.tail = yes
+                self.refine_success(call.args[0], True)
             elif isinstance(stmt, ast.Return):
                 if stmt.value is None:
                     self.fail(stmt, "A successful return must provide the declared output")
@@ -1268,6 +1412,12 @@ def _compile_source(
     compiler.environment.update({n: Namespace(n) for n in names[1:]})
     if not compiler.statements(function.body):
         compiler.fail(function, "Every path must explicitly return or halt", "missing_return")
+    if compiler.required_child_rung > terminal_capability:
+        compiler.fail(
+            function,
+            "A child requires a higher terminal capability than this Procedure",
+            "child_capability",
+        )
     root_in = compiler.contract(input)
     root_in["role"] = "contract-in"
     definition = ProcedureDefinitionV6.model_validate(

@@ -15,6 +15,7 @@ from cruxible_client.contracts.procedures.models import (
     CaptureEgressNodeV3,
     ClaimTapNodeV6,
     ExhaustTapNodeV3,
+    InvokeNodeV6,
     MandateSettlementNodeV3,
     ProcedureDefinitionAny,
     ProcedurePinBindingV1,
@@ -134,7 +135,11 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinitionAny) -> N
 
     for node in definition.nodes:
         prefix = f"Procedure node {node.node_id!r}"
-        if isinstance(node, ClaimTapNodeV6):
+        if isinstance(node, InvokeNodeV6):
+            check(
+                node.procedure, PinExpectation((("procedure", "Procedure"),)), f"{prefix} procedure"
+            )
+        elif isinstance(node, ClaimTapNodeV6):
             check(
                 node.claim_type,
                 PinExpectation((("claim-type", "ClaimType"),)),

@@ -19,6 +19,7 @@ from cruxible_client.contracts.procedures.models import (
     ConstantNodeV6,
     GuardNodeV3,
     InboxEgressNodeV3,
+    InvokeNodeV6,
     MandateSettlementNodeV3,
     ProcedureDefinitionAny,
     ProcedureDefinitionV3,
@@ -112,7 +113,7 @@ def _reference_templates(
         yield "parameters", node.parameters
     elif isinstance(node, SourceNodeV3 | SourceNodeV4):
         yield "request", node.request
-    elif isinstance(node, ProviderNodeV3 | ProviderNodeV4):
+    elif isinstance(node, ProviderNodeV3 | ProviderNodeV4 | InvokeNodeV6):
         yield "input", node.input
     elif isinstance(node, TransformNodeV3):
         yield "spec", node.spec

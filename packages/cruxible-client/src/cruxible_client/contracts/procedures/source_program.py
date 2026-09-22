@@ -61,6 +61,8 @@ class SourceProcedureBinding(_Closed):
     version: str
     input: ContractSchema
     output: ContractSchema
+    capture_terminal: bool = False
+    required_terminal_rung: int = Field(default=0, ge=0, le=3)
 
     _versions = field_validator("version")(lambda value: ArtifactDigest.from_tagged(value).tagged)
 
