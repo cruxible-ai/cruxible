@@ -6,7 +6,7 @@ import base64
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Annotated, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -60,6 +60,9 @@ from cruxible_client.contracts.proposal_models import (
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1, QueryDefinitionV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, subject_path
+
+if TYPE_CHECKING:
+    from cruxible_client.contracts.records import RecordConstructor
 
 _SUBJECT_SHORTHAND_RE = re.compile(
     r"^(?P<kind>[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*)/"
@@ -157,6 +160,14 @@ class CarriedContractInput(_StrictInputModel):
     description: str | None = None
     fields: dict[str, PropertySchema]
     allow_extra: bool = False
+
+    @property
+    def value(self) -> RecordConstructor:
+        """Construct a value under this carried schema without changing its wire."""
+        from cruxible_client.contracts.procedures.contract_schema import ContractSchema
+        from cruxible_client.contracts.records import RecordConstructor
+
+        return RecordConstructor(ContractSchema(fields=self.fields, allow_extra=self.allow_extra))
 
 
 class ClaimDispositionInput(_StrictInputModel):
