@@ -1877,6 +1877,13 @@ class GitLedger:
                 raise PlaybillGitError("ledger literal search returned a malformed path") from exc
         return tuple(found)
 
+    def object_sizes(self, oids: Sequence[str]) -> dict[str, tuple[str, int] | None]:
+        """Type and size of each object, read without loading any payload."""
+
+        for oid in oids:
+            self._validate_oid(oid)
+        return _batch_reader(self.path).object_info(tuple(dict.fromkeys(oids)))
+
     def tree_has_path(self, oid: str, path: str) -> bool:
         """Whether this commit's tree names ``path`` as a file or a nonempty directory."""
 
@@ -2412,54 +2419,105 @@ class _BatchBlobReader:
         self.path = path
         self._lock = threading.Lock()
         self._process: subprocess.Popen[bytes] | None = None
+        # A sibling `--batch-check` answers type and size without any payload.
+        self._check_process: subprocess.Popen[bytes] | None = None
         self._owner = 0
+
+    def _spawn(self, mode: str) -> subprocess.Popen[bytes]:
+        return subprocess.Popen(
+            ["git", f"--git-dir={self.path}", "cat-file", mode],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=_command_environment(),
+        )
 
     def _running(self) -> subprocess.Popen[bytes]:
         process = self._process
         if process is None or process.poll() is not None or self._owner != os.getpid():
-            process = subprocess.Popen(
-                ["git", f"--git-dir={self.path}", "cat-file", "--batch"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                env=_command_environment(),
-            )
+            if self._owner != os.getpid():
+                self._check_process = None
+            process = self._spawn("--batch")
             self._process, self._owner = process, os.getpid()
         return process
 
+    def _checking(self) -> subprocess.Popen[bytes]:
+        if self._owner != os.getpid():
+            self._running()
+        process = self._check_process
+        if process is None or process.poll() is not None:
+            process = self._check_process = self._spawn("--batch-check")
+        return process
+
     def close(self) -> None:
-        process, self._process = self._process, None
-        if process is None or self._owner != os.getpid():
+        processes = (self._process, self._check_process)
+        self._process = self._check_process = None
+        if self._owner != os.getpid():
             return
-        for stream in (process.stdin, process.stdout):
-            if stream is not None:
-                try:
-                    stream.close()
-                except OSError:
-                    pass
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
+        for process in processes:
+            if process is None:
+                continue
+            for stream in (process.stdin, process.stdout):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
 
     def forget_inherited(self) -> None:
-        """In a forked child, release this copy of the parent's process untouched.
+        """In a forked child, release this copy of the parent's processes untouched.
 
         The fork hooks hold every reader's lock across ``fork``, so no request
         is in flight and no buffered bytes can reach the parent's pipe here.
         """
 
-        process, self._process = self._process, None
+        processes = (self._process, self._check_process)
+        self._process = self._check_process = None
         self._lock = threading.Lock()
-        if process is None:
-            return
-        for stream in (process.stdin, process.stdout):
-            if stream is not None:
-                try:
-                    stream.close()
-                except OSError:
-                    pass
+        for process in processes:
+            if process is None:
+                continue
+            for stream in (process.stdin, process.stdout):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
+
+    def object_info(self, oids: Sequence[str]) -> dict[str, tuple[str, int] | None]:
+        """Each object's type and size, never its bytes; ``None`` when Git lacks it."""
+
+        found: dict[str, tuple[str, int] | None] = {}
+        with self._lock:
+            process = self._checking()
+            assert process.stdin is not None and process.stdout is not None
+            try:
+                for expected_oid in oids:
+                    process.stdin.write(expected_oid.encode("ascii") + b"\n")
+                    process.stdin.flush()
+                    header = process.stdout.readline()
+                    if not header.endswith(b"\n"):
+                        raise PlaybillGitError("Git object metadata ended before its header")
+                    if header == expected_oid.encode("ascii") + b" missing\n":
+                        found[expected_oid] = None
+                        continue
+                    try:
+                        actual_oid, object_type, raw_size = header[:-1].decode("ascii").split()
+                        size = int(raw_size)
+                    except (UnicodeDecodeError, ValueError) as exc:
+                        raise PlaybillGitError("Git object metadata is malformed") from exc
+                    if actual_oid != expected_oid or size < 0:
+                        raise PlaybillGitError("Git object metadata differs from its request")
+                    found[expected_oid] = (object_type, size)
+            except BaseException:
+                self.close()
+                raise
+        return found
 
     def objects(self, oids: Sequence[str]) -> dict[str, tuple[str, bytes] | None]:
         """Each object's type and bytes by exact ID; ``None`` when Git lacks it."""
@@ -2584,9 +2642,12 @@ def _listing_has_path(listing: tuple[GitTreeEntry, ...], path: str) -> bool:
 def _listing_child_names(listing: tuple[GitTreeEntry, ...], directory: str) -> tuple[str, ...]:
     """A directory's immediate child names, skipping each child's own subtree.
 
-    Every entry beneath ``child/`` sorts before ``child0`` ('/' < '0' and
-    nothing sorts between them), so one bisect per child steps over it: the
-    work tracks the number of children, not the size of the subtree.
+    A file child is one entry and advances by one. A directory child's first
+    entry is ``child/...``; every sibling that shares its name as a prefix
+    and sorts before ``child/`` (``child-x``, ``child.y``) was already passed,
+    and every entry beneath ``child/`` sorts before ``child0`` ('/' < '0' and
+    nothing sorts between them), so one bisect steps over exactly that
+    subtree: the work tracks the number of children, not the subtree sizes.
     """
 
     _positions, ordered = _listing_index(listing)
@@ -2594,9 +2655,12 @@ def _listing_child_names(listing: tuple[GitTreeEntry, ...], directory: str) -> t
     names: list[str] = []
     cursor = bisect.bisect_left(ordered, prefix)
     while cursor < len(ordered) and ordered[cursor].startswith(prefix):
-        name = ordered[cursor][len(prefix) :].split("/", 1)[0]
+        name, separator, _rest = ordered[cursor][len(prefix) :].partition("/")
         names.append(name)
-        cursor = bisect.bisect_left(ordered, prefix + name + "0", cursor + 1)
+        if separator:
+            cursor = bisect.bisect_left(ordered, prefix + name + "0", cursor + 1)
+        else:
+            cursor += 1
     return tuple(names)
 
 
