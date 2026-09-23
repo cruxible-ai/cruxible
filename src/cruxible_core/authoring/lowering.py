@@ -144,7 +144,7 @@ from cruxible_client.contracts.procedures.graph import (
 from cruxible_client.contracts.procedures.line_specs import (
     RUNG_AUTHORITY,
     CaptureLandingTriggerPolicyV2,
-    LineSpecV4,
+    LineSpecV5,
     WindowCloseTriggerPolicyV2,
     line_spec_digest,
     line_spec_path,
@@ -2091,7 +2091,7 @@ def _render_line_member(
     the staged tree -- accepted at the base or authored earlier in the same
     set -- and lowering pins their exact digests. A Procedure that pins every
     Provider it names fills no slot, so the Line's slot bindings and Provider
-    closures are empty. Every Line lowers to v4, which states its authority as a verb.
+    closures are empty. Every Line lowers to v5, which states its authority as a verb.
     """
 
     procedure_target = procedure_path(payload.procedure_name)
@@ -2224,7 +2224,7 @@ def _render_line_member(
             predecessor_digest=predecessor_digest,
         ),
     )
-    line = LineSpecV4.model_validate(line_fields)
+    line = LineSpecV5.model_validate(line_fields)
     if previous_content is not None and _same_revision_content(line, previous):
         return path, previous_content, line_spec_digest(previous).tagged
     return path, render_line_spec(line), line_spec_digest(line).tagged

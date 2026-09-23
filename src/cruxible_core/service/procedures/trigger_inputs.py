@@ -17,6 +17,7 @@ from cruxible_client.contracts.captures import CaptureContractV1
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpecV4,
+    LineSpecV5,
     trigger_capture_selector,
     trigger_capture_source,
 )
@@ -41,7 +42,7 @@ from cruxible_core.storage.cas import BodyAccessContext
 def bind_trigger_capture(
     instance: PlaybillInstance,
     *,
-    line: LineSpecV4,
+    line: LineSpecV4 | LineSpecV5,
     procedure: AcceptedProcedureV1,
     binding: LineTriggerBindingV1 | None,
     contracts: Mapping[str, CaptureContractV1],

@@ -1473,8 +1473,8 @@ parse its entries or author exposure Claims.
 ### Consume the Capture that triggered a Line
 
 Set `trigger_input="feed"` on `ChangeSetDraft.line(...)` to bind the event's
-Capture to the Procedure's Source alias `feed`. Every Line authors as Line v4
-under compiler revision 30. The Source's exact CaptureContract must match the
+Capture to the Procedure's Source alias `feed`. Every new Line authors as
+Line v5 under compiler revision 31. The Source's exact CaptureContract must match the
 capture-arrival selector, or the selector anchoring an event-relative window.
 Manual, cadence, and fixed-window triggers cannot provide this input.
 
@@ -1495,7 +1495,8 @@ stale, incompatible, or unavailable material refuses admission, even if an ordin
 acquisition rule permits omission or a default. A retry reuses the admitted binding.
 
 Omitting `trigger_input` preserves trigger-only behavior. Existing instances need
-an explicit governed compiler upgrade to revision 30 before accepting new Lines.
+an explicit governed compiler upgrade to revision 31 before accepting new Lines;
+Lines accepted as v4 under revision 30 keep their meaning.
 
 ### Compare a feed observation with an accepted baseline
 

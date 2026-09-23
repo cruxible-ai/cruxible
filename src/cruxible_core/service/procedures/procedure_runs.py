@@ -70,6 +70,7 @@ from cruxible_client.contracts.procedures.line_specs import (
     CaptureLandingTriggerPolicyV2,
     LineSpecV2,
     LineSpecV4,
+    LineSpecV5,
     ManualTriggerPolicyV1,
     WindowCloseTriggerPolicyV2,
     evaluate_line_spec_law,
@@ -180,6 +181,7 @@ from cruxible_client.contracts.workspace_file import (
 )
 from cruxible_core.claims.closure import DEFERRED_PIN_TARGET_KINDS
 from cruxible_core.compiler.compiler import (
+    AUTHORITY_VERBS_COMPILER,
     CLAIM_EVIDENCE_COMPILER,
     RESOURCE_BUDGET_COMPILER,
     SDK_SOURCE_COMPILER,
@@ -1232,7 +1234,7 @@ def _line_external_occurrences(
         implementation_closures=getattr(accepted_line.line, "provider_implementation_closures", ()),
         supplied_source_inputs=(
             frozenset({accepted_line.line.trigger_input})
-            if isinstance(accepted_line.line, LineSpecV4)
+            if isinstance(accepted_line.line, LineSpecV4 | LineSpecV5)
             and accepted_line.line.trigger_input is not None
             else frozenset()
         ),
@@ -3767,6 +3769,7 @@ def _run_playbill_line(
             CLAIM_EVIDENCE_COMPILER,
             SOURCE_CHECKED_COMPILER,
             TRIGGER_CAPTURE_COMPILER,
+            AUTHORITY_VERBS_COMPILER,
         },
     )
     capture_contracts = _accepted_capture_contracts(
@@ -3790,7 +3793,10 @@ def _run_playbill_line(
             details={"repair": "Accept the pinned SourceAcquisitionPolicy or succeed the Line."},
         )
     landed_materials: tuple[LandedCaptureRunMaterialV1, ...] = ()
-    if isinstance(accepted_line.line, LineSpecV4) and accepted_line.line.trigger_input is not None:
+    if (
+        isinstance(accepted_line.line, LineSpecV4 | LineSpecV5)
+        and accepted_line.line.trigger_input is not None
+    ):
         from cruxible_core.service.procedures.trigger_inputs import bind_trigger_capture
 
         try:

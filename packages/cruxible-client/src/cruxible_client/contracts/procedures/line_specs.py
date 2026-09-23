@@ -324,21 +324,37 @@ LineAuthority = AuthorityVerb
 
 
 class LineSpecV4(LineSpecV3):
+    """Bind the triggering Capture to one named Source input, without re-fetching.
+
+    Compiler revision 30's Line format, retained exactly for accepted history.
+    """
+
+    artifact_format: Literal["playbill-line-v4"] = "playbill-line-v4"  # type: ignore[assignment]
+    trigger_input: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
+
+    @model_validator(mode="after")
+    def _event_input(self) -> "LineSpecV4":
+        if trigger_capture_selector(self) is None:
+            raise ValueError("a trigger input requires a Capture event trigger or event window")
+        return self
+
+
+class LineSpecV5(LineSpecV3):
     """A Line that states its authority as a verb and may consume its triggering Capture.
 
     ``max_authority`` caps what this Line may do below its Procedure's own
     capability; authoring defaults it to that capability, so the artifact always
-    states it. ``trigger_input`` binds the event's exact Capture to one named
-    Source input, without re-fetching.
+    states it. ``trigger_input`` optionally binds the event's exact Capture to
+    one named Source input, without re-fetching. Compiler revision 31.
     """
 
-    artifact_format: Literal["playbill-line-v4"] = "playbill-line-v4"  # type: ignore[assignment]
+    artifact_format: Literal["playbill-line-v5"] = "playbill-line-v5"  # type: ignore[assignment]
     requested_terminal_rung: None = None  # type: ignore[assignment]
     max_authority: LineAuthority
     trigger_input: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
 
     @model_validator(mode="after")
-    def _event_input(self) -> "LineSpecV4":
+    def _event_input(self) -> "LineSpecV5":
         if self.trigger_input is not None and trigger_capture_selector(self) is None:
             raise ValueError("a trigger input requires a Capture event trigger or event window")
         return self
@@ -351,10 +367,13 @@ class LineSpecV4(LineSpecV3):
         return data
 
 
+TriggerInputLine: TypeAlias = LineSpecV4 | LineSpecV5
+
+
 def line_requested_rung(line: "LineSpecV1") -> Literal[1, 2, 3]:
     """The internal ordering value of what a Line asks to do, for either generation."""
 
-    if isinstance(line, LineSpecV4):
+    if isinstance(line, LineSpecV5):
         return AUTHORITY_RUNG[line.max_authority]
     rung = line.requested_terminal_rung
     assert rung is not None
@@ -372,7 +391,9 @@ def trigger_capture_selector(line: LineSpecV3) -> CaptureEventSelectorV1 | None:
     return None
 
 
-def trigger_capture_source(line: LineSpecV4, procedure: AcceptedProcedureV1) -> SourceNodeV4:
+def trigger_capture_source(
+    line: "LineSpecV4 | LineSpecV5", procedure: AcceptedProcedureV1
+) -> SourceNodeV4:
     """Resolve the single input and verify its closed CaptureContract pin."""
     if line.trigger_input is None:
         raise ValueError("this Line binds no trigger input")
@@ -404,7 +425,7 @@ def trigger_capture_source(line: LineSpecV4, procedure: AcceptedProcedureV1) -> 
 
 
 LineSpecAny: TypeAlias = Annotated[
-    LineSpecV1 | LineSpecV2 | LineSpecV3 | LineSpecV4,
+    LineSpecV1 | LineSpecV2 | LineSpecV3 | LineSpecV4 | LineSpecV5,
     Field(discriminator="artifact_format"),
 ]
 _LINE_SPEC_ADAPTER: TypeAdapter[LineSpecAny] = TypeAdapter(LineSpecAny)
@@ -590,7 +611,7 @@ def evaluate_line_spec_law(
     except ProcedurePinClosureError as exc:
         return _refusal("playbill.line.slot_closure_failed", str(exc), path=path)
     definition = procedure.procedure.definition
-    if isinstance(line, LineSpecV4) and line.trigger_input is not None:
+    if isinstance(line, LineSpecV4 | LineSpecV5) and line.trigger_input is not None:
         try:
             trigger_capture_source(line, procedure)
         except ValueError as exc:
@@ -861,6 +882,8 @@ __all__ = [
     "LineSpecV2",
     "LineSpecV3",
     "LineSpecV4",
+    "LineSpecV5",
+    "TriggerInputLine",
     "AUTHORITY_RUNG",
     "LineAuthority",
     "RUNG_AUTHORITY",

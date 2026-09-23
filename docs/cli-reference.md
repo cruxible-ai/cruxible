@@ -945,7 +945,7 @@ never replayed automatically. Rebuilding the disposable event index similarly
 opens a new forward range, while retained pending work survives. A changed
 occurrence epoch needs an explicit new subscription. Rebinding within the same
 epoch preserves listening progress; pending work bound to an older Line version
-is closed as superseded rather than silently rebound. A Line v4 can bind its
+is closed as superseded rather than silently rebound. A Line v4 or v5 can bind its
 trigger Capture to a named Source input. Its `max_age` is checked at admission
 time, not backdated to when the trigger occurred.
 

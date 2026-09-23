@@ -2677,6 +2677,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
             artifact_digest=claim_type_digest(previous).tagged,
         )
     from cruxible_core.compiler.compiler import (
+        AUTHORITY_VERBS_COMPILER,
         CLAIM_EVIDENCE_COMPILER,
         SOURCE_CHECKED_COMPILER,
         TRIGGER_CAPTURE_COMPILER,
@@ -2686,6 +2687,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         CLAIM_EVIDENCE_COMPILER,
         SOURCE_CHECKED_COMPILER,
         TRIGGER_CAPTURE_COMPILER,
+        AUTHORITY_VERBS_COMPILER,
     }:
         if any(pin.target.kind == "Procedure" for pin in claim_type.pins) or any(
             getattr(rule, "allowed_reducer_digests", ())
