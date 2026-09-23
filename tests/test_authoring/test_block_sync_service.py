@@ -670,6 +670,29 @@ def test_a_block_holding_three_claims_reports_one_ordinary_outcome(
     assert result.has_refusals is False
     assert source.read_bytes() == page_before
 
+    # The check reads every Claim backing in one batch, never one path at a time.
+    from cruxible_client.contracts.authoring.models import PlaybillProjectionCheckRequestV1
+    from cruxible_core.service.authoring.projection_sync import service_check_projection_blocks
+
+    single_reads: list[str] = []
+    read_blob = instance.blob_at
+
+    def counted_blob(oid: str, path: str) -> bytes | None:
+        if path.startswith("claims/"):
+            single_reads.append(path)
+        return read_blob(oid, path)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(instance, "blob_at", counted_blob)
+        checked = service_check_projection_blocks(
+            instance,
+            request=PlaybillProjectionCheckRequestV1(
+                stamps=(stamp,), evaluation_time=EVALUATION_TIME
+            ),
+        )
+    assert checked.results[0].status == "current"
+    assert single_reads == []
+
     from cruxible_client.contracts.authoring.models import (
         PlaybillBlockSyncReadResultV1,
         PlaybillBlockSyncSuccessorCandidateV1,

@@ -247,11 +247,16 @@ def _claim_backing_state(
     stamp_coordinate: AcceptedCoordinate,
     backing: ProjectionClaimBackingV1,
     preferred_successor_digest: str | None,
+    sources: Mapping[str, bytes] | None = None,
 ) -> tuple[ProjectionClaimBackingV1 | None, _ClaimNode, str] | PlaybillBlockSyncReadResultV1:
-    """The Claim backing's terminal spelling, or the typed refusal its lineage earns."""
+    """The Claim backing's terminal spelling, or the typed refusal its lineage earns.
+
+    ``sources``, when given, holds every backing path already read at the marker
+    coordinate in one batch; a path it lacks is absent there.
+    """
 
     path = claim_path(backing.identity.name)
-    raw = instance.blob_at(stamp_coordinate.git_oid, path)
+    raw = instance.blob_at(stamp_coordinate.git_oid, path) if sources is None else sources.get(path)
     if raw is None:
         return _refusal(
             status="refused",
@@ -363,6 +368,23 @@ class ProjectionCheckContext:
             if paths
             else {}
         )
+        # One batched read per marker coordinate instead of one per Claim backing.
+        paths_by_oid: dict[str, set[str]] = {}
+        for stamp in stamps:
+            paths_by_oid.setdefault(stamp.declared_coordinate.git_oid, set()).update(
+                claim_path(b.identity.name)
+                for b in stamp.backing
+                if isinstance(b, ProjectionClaimBackingV1)
+            )
+        self.backing_sources: dict[str, Mapping[str, bytes]] = {}
+        for oid, oid_paths in paths_by_oid.items():
+            if not oid_paths:
+                continue
+            try:
+                self.backing_sources[oid] = instance.blobs_at(oid, tuple(sorted(oid_paths)))
+            except PlaybillError:
+                # An unaccepted marker coordinate is refused per block by `_read`.
+                continue
 
     def _claim_status(self, identity: ArtifactIdentity) -> str:
         facts = self.facts.build()
@@ -513,6 +535,7 @@ class ProjectionCheckContext:
                         stamp_coordinate=declared,
                         backing=backing,
                         preferred_successor_digest=request.preferred_successor_digest,
+                        sources=self.backing_sources.get(declared.git_oid),
                     )
                     if isinstance(state_claim, PlaybillBlockSyncReadResultV1):
                         failure = state_claim
