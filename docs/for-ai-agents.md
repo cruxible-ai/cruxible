@@ -80,6 +80,9 @@ predicate. Cardinality-one metadata does not turn a field into a scalar or
 silently pick a winning Claim. Each Claim retains its identity, revision, value,
 verdict, and evidence references. Use `world.prefetch(subjects=(...),
 predicates=(...), max_claims=...)` to populate complete, bounded selections.
+When you only need values and verdicts -- a status table, a checklist, a view --
+use `world.values(subjects=(...), predicates=(...))`: one request that returns
+each live Claim's value, object, verdict and status without full Claim views.
 Use `pb.run_query(name_or_ref, parameters=...)` for named joins and filtered
 populations, checking truncation before assuming completeness.
 

@@ -270,6 +270,10 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillLedgerMirrorV1", "published_sequence"): "SETTLEMENT ORDER",
     ("PlaybillLedgerMirrorV1", "wait_sequence"): "SETTLEMENT ORDER",
     ("ClaimReadBatchRequestV1", "evaluation_time"): "EVALUATION INSTANT",
+    ("ClaimValuesRequestV1", "evaluation_time"): "EVALUATION INSTANT",
+    ("ClaimValuesResultV1", "evaluation_time"): "EVALUATION INSTANT",
+    # The instants between which a remembered slot answer holds.
+    ("_RememberedSlot", "interval"): "VALIDITY WINDOW",
     ("PlaybillProposalListEntry", "admitted_at"): "ASSERTION TIME",
     ("PlaybillProposalListEntryV1", "admitted_at"): "ASSERTION TIME",
     ("PlaybillReviewOperationalEventV1", "accepted_generation"): "SETTLEMENT ORDER",

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
@@ -49,6 +51,34 @@ class ProjectionCoordinateContext(Protocol):
 
     @property
     def compiler_digest(self) -> str: ...
+
+
+class AcceptedGenerationCoordinate(Protocol):
+    """The generation coordinate that accepted one change-set record."""
+
+    @property
+    def git_oid(self) -> str: ...
+
+    @property
+    def semantic_root(self) -> str: ...
+
+    @property
+    def generation_root(self) -> str: ...
+
+    @property
+    def compiler_digest(self) -> str: ...
+
+
+@dataclass(frozen=True)
+class _AcceptingCoordinate:
+    """The accepting generation, placed in the reading instance's identity."""
+
+    instance_id: str
+    git_object_format: str
+    git_oid: str
+    semantic_root: str
+    generation_root: str
+    compiler_digest: str
 
 
 class _StrictExplanationModel(BaseModel):
@@ -221,8 +251,15 @@ def accepted_artifact_explanation_facts(
     predecessor_digest: str | None,
     records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
     coordinate: ProjectionCoordinateContext,
+    accepted_coordinates: Mapping[int, AcceptedGenerationCoordinate],
 ) -> tuple[ProjectionFact, ...]:
-    """Compile explanation facts only when a stored change set binds exact bytes."""
+    """Compile explanation facts only when a stored change set binds exact bytes.
+
+    Every proof reference names the generation that accepted the record, not the
+    coordinate being read, so an artifact version's explanation is the same at
+    every later coordinate. A reader that cannot resolve that generation (an
+    explicit standalone reader without verified history) compiles none.
+    """
 
     current = _record_for_current_artifact(
         records,
@@ -233,6 +270,17 @@ def accepted_artifact_explanation_facts(
     if current is None:
         return ()
     record_path, record = current
+    accepting = accepted_coordinates.get(record.sequence)
+    if accepting is None:
+        return ()
+    coordinate = _AcceptingCoordinate(
+        instance_id=coordinate.instance_id,
+        git_object_format=coordinate.git_object_format,
+        git_oid=accepting.git_oid,
+        semantic_root=accepting.semantic_root,
+        generation_root=accepting.generation_root,
+        compiler_digest=accepting.compiler_digest,
+    )
     member = next(member for member in record.members if member.path == artifact_path)
     law_digest = record.law_digests[member.law_identifier]
     proof = LedgerProofReference(
@@ -363,6 +411,7 @@ def accepted_document_explanation_facts(
     predecessor_digest: str | None,
     records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
     coordinate: ProjectionCoordinateContext,
+    accepted_coordinates: Mapping[int, AcceptedGenerationCoordinate],
 ) -> tuple[ProjectionFact, ...]:
     """Retain the frozen Family-1 Document projection shape through an adapter."""
 
@@ -375,6 +424,7 @@ def accepted_document_explanation_facts(
         predecessor_digest=predecessor_digest,
         records=records,
         coordinate=coordinate,
+        accepted_coordinates=accepted_coordinates,
     )
 
 

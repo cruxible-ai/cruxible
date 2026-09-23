@@ -350,6 +350,24 @@ class HistoryReader:
             )
         )
 
+    def claim_law_heads(self, paths: tuple[str, ...]) -> dict[str, tuple[int, int] | None]:
+        """The latest law-record location of each Claim path at this cutoff, in one read."""
+
+        heads: dict[str, tuple[int, int] | None] = {path: None for path in paths}
+        for start in range(0, len(paths), 500):
+            chunk = paths[start : start + 500]
+            for path, sequence, ordinal in self._connection.execute(
+                "SELECT member_path, sequence, member_ordinal "
+                "FROM accepted_member_locations WHERE artifact_kind='claim' "
+                "AND has_law_evidence=1 AND sequence<=? AND member_path IN ("
+                + ",".join("?" for _ in chunk)
+                + ") ORDER BY member_path, sequence DESC, member_ordinal DESC",
+                (self.sequence, *chunk),
+            ):
+                if heads[path] is None:
+                    heads[path] = (int(sequence), int(ordinal))
+        return heads
+
     def claim_type_versions(self) -> tuple[ArtifactVersionLocation, ...]:
         """Explicit enumeration for callers requesting the historical type catalog."""
         return tuple(

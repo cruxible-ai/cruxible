@@ -826,27 +826,21 @@ def test_the_resolution_memo_hits_on_the_surfaces_and_misses_when_its_inputs_mov
     _orient(instance)
     evaluated = counted[0]
 
-    # A capture's replay availability is decided by the content-address store,
-    # which the accepted coordinate does not name.
+    # CAS churn that no verdict reads moves the whole-store fingerprint, so the
+    # whole-derivation memo misses; but each remembered slot re-checks only its
+    # own captures' availability, so nothing is derived again. (A slot whose own
+    # retained evidence disappears is re-derived: test_slot_verdict_reuse.)
     before = verdict_input_fingerprint(instance)
     stored = instance.body_store().store(body)
     assert verdict_input_fingerprint(instance) != before
     _orient(instance)
-    assert counted[0] > evaluated
-    evaluated = counted[0]
-    _orient(instance)
     assert counted[0] == evaluated
 
-    # Removal from the existing shard also invalidates; restoring the body
-    # must be observed without another accepted generation.
     path = instance.body_store()._path(stored.digest)
     for action in (path.unlink, lambda: instance.body_store().store(body)):
         before = verdict_input_fingerprint(instance)
         action()
         assert verdict_input_fingerprint(instance) != before
-        _orient(instance)
-        assert counted[0] > evaluated
-        evaluated = counted[0]
         _orient(instance)
         assert counted[0] == evaluated
 

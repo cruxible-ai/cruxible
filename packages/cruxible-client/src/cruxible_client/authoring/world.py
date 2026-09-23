@@ -65,6 +65,7 @@ from cruxible_client.contracts.records import RecordConstructor
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.authoring.sdk import ClaimView, Playbill, SubjectDraft
+    from cruxible_client.contracts.claim_reads import ClaimValueV1
 
 _SEGMENT_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
@@ -875,6 +876,53 @@ class World:
         for view in views:
             self._view_cache[view.claim_id] = view
         return tuple(views)
+
+    def values(
+        self,
+        *,
+        subjects: Sequence[str | SubjectRef],
+        predicates: Sequence[str | ClaimTypeRef] = (),
+    ) -> tuple[ClaimValueV1, ...]:
+        """Each live Claim's value and verdict for these Subjects, in one request.
+
+        Lighter than ``prefetch`` when only values and verdicts are wanted: the
+        daemon reads the Claims' statements and their slot verdicts, not full
+        Claim views. Strings are subject kind/id addresses or paths and fully
+        qualified predicates.
+        """
+        from datetime import datetime
+
+        from cruxible_client.contracts.claim_reads import ClaimValuesRequestV1
+
+        self._assert_current()
+        for ref in (*subjects, *predicates):
+            if isinstance(ref, (SubjectRef, ClaimTypeRef)):
+                self._playbill._assert_coordinate(ref.coordinate)
+        paths = tuple(
+            address if address.startswith("subjects/") else f"subjects/{address}.json"
+            for address in (ref.address if isinstance(ref, SubjectRef) else ref for ref in subjects)
+        )
+        names = tuple(ref.address if isinstance(ref, ClaimTypeRef) else ref for ref in predicates)
+        result = self._playbill._client.read_playbill_claim_values(
+            self._playbill._instance_id,
+            request=ClaimValuesRequestV1.model_validate(
+                {
+                    "at": self._coordinate.model_dump(mode="json"),
+                    "subject_paths": paths,
+                    "predicates": names,
+                    "evaluation_time": datetime.fromisoformat(self._playbill._evaluation_time()),
+                }
+            ),
+        )
+        self._assert_current()
+        if result.coordinate.model_dump(mode="json") != self._coordinate.model_dump(mode="json"):
+            raise WorldStructureError("Claim values returned a different accepted coordinate")
+        if any(
+            row.subject_path not in paths or (names and row.predicate not in names)
+            for row in result.values
+        ):
+            raise WorldStructureError("Claim values returned rows outside the selection")
+        return result.values
 
     def _claims_about(
         self,

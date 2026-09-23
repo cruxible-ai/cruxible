@@ -1067,6 +1067,7 @@ def parse_projection_tree(
                             predecessor_digest=document.predecessor_digest,
                             records=accepted_change_sets,
                             coordinate=coordinate,
+                            accepted_coordinates=accepted_coordinates,
                         )
                     )
                 continue
@@ -1165,6 +1166,7 @@ def parse_projection_tree(
                             predecessor_digest=subject_shell.lifecycle.predecessor_digest,
                             records=accepted_change_sets,
                             coordinate=coordinate,
+                            accepted_coordinates=accepted_coordinates,
                         )
                     )
                 continue
@@ -1280,6 +1282,7 @@ def parse_projection_tree(
                             predecessor_digest=claim_type.lifecycle.predecessor_digest,
                             records=accepted_change_sets,
                             coordinate=coordinate,
+                            accepted_coordinates=accepted_coordinates,
                         )
                     )
                 continue
@@ -1921,6 +1924,7 @@ def parse_projection_tree(
                             predecessor_digest=procedure.lifecycle.predecessor_digest,
                             records=accepted_change_sets,
                             coordinate=coordinate,
+                            accepted_coordinates=accepted_coordinates,
                         )
                     )
                 continue
@@ -2052,6 +2056,7 @@ def parse_projection_tree(
                             predecessor_digest=line.lifecycle.predecessor_digest,
                             records=accepted_change_sets,
                             coordinate=coordinate,
+                            accepted_coordinates=accepted_coordinates,
                         )
                     )
                 continue
@@ -2174,6 +2179,7 @@ def parse_projection_tree(
                             predecessor_digest=query.lifecycle.predecessor_digest,
                             records=accepted_change_sets,
                             coordinate=coordinate,
+                            accepted_coordinates=accepted_coordinates,
                         )
                     )
                 continue
@@ -2440,6 +2446,7 @@ def parse_projection_tree(
                             predecessor_digest=predecessor_digest,
                             records=accepted_change_sets,
                             coordinate=coordinate,
+                            accepted_coordinates=accepted_coordinates,
                         )
                     )
                     raw_result = _current_member_law_result(

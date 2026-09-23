@@ -256,18 +256,15 @@ def test_a_remembered_orientation_reads_no_claims(tmp_path, monkeypatch):
         )
 
 
-def test_remembered_replay_availability_follows_the_cas_signal(tmp_path):
-    from cruxible_core.service.claims.verdict_memo import verdict_input_fingerprint
-
+def test_remembered_replay_availability_follows_the_consulted_cas_files(tmp_path):
     instance, _ = seed_claims(tmp_path)
     claim = ClaimVerdictReadContext(instance, instance.accepted_coordinate()).claims()[0]
     capture = claim.backing.capture_digests[0]
     available = playbill_evidence._current_replay_available
-    signal = verdict_input_fingerprint(instance)
-    assert available(instance, capture, readers={}, fingerprint=signal) is True
-    # Removing the retained body changes the CAS signal; under the new signal the
-    # remembered answer is not reused.
+    assert available(instance, capture, readers={}) is True
+    # An unrelated body arriving does not disturb the remembered answer's files...
+    instance.body_store().store(b"an unrelated body\n")
+    assert available(instance, capture, readers={}) is True
+    # ...while removing the retained Capture body is observed without a new generation.
     instance.body_store()._path(capture).unlink()
-    changed = verdict_input_fingerprint(instance)
-    assert changed != signal
-    assert available(instance, capture, readers={}, fingerprint=changed) is False
+    assert available(instance, capture, readers={}) is False

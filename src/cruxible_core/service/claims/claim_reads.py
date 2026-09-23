@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from typing import Any
 
 from cruxible_client.contracts import PlaybillAcceptedCoordinate as ClientAcceptedCoordinate
 from cruxible_client.contracts import PlaybillClaimViewV2
@@ -14,6 +15,9 @@ from cruxible_client.contracts.claim_reads import (
     ClaimBackingsResultV1,
     ClaimReadBatchRequestV1,
     ClaimReadBatchResultV1,
+    ClaimValuesRequestV1,
+    ClaimValuesResultV1,
+    ClaimValueV1,
 )
 from cruxible_client.contracts.claim_types import claim_type_path
 from cruxible_client.contracts.claims import (
@@ -214,3 +218,101 @@ def service_read_claim_backings(
             )
         )
     return ClaimBackingsResultV1(coordinate=request.at, backings=tuple(backings))
+
+
+def service_read_claim_values(
+    instance: PlaybillInstance,
+    *,
+    request: ClaimValuesRequestV1,
+) -> ClaimValuesResultV1:
+    """Live Claim values and verdicts for explicit Subjects, without full Claim views.
+
+    Selecting by Subject path (and predicate) returns every live contender of
+    each slot it touches, so each verdict is the slot's full resolution. The
+    verdicts come from the same per-slot derivation orient and block checks use,
+    and are reused across coordinates wherever its reads still hold.
+    """
+
+    from cruxible_client.contracts.claim_reads import MAX_CLAIM_VALUE_ROWS
+    from cruxible_client.contracts.errors import PlaybillFormatError as ValuesFormatError
+    from cruxible_core.service.discovery.search import claim_resolution_statuses
+    from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
+
+    coordinate = _resolve_coordinate(
+        instance,
+        PlaybillAcceptedCoordinate.model_validate(request.at.model_dump())
+        if request.at is not None
+        else None,
+    )
+    at = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    clauses = [
+        "lifecycle='live'",
+        "subject_path IN (" + ",".join("?" * len(request.subject_paths)) + ")",
+    ]
+    values: list[object] = list(request.subject_paths)
+    if request.predicates:
+        clauses.append("predicate IN (" + ",".join("?" * len(request.predicates)) + ")")
+        values.extend(request.predicates)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        identities = tuple(
+            str(row[0])
+            for row in projection.typed.connection.execute(
+                "SELECT identity FROM claims WHERE " + " AND ".join(clauses) + " ORDER BY identity",
+                values,
+            )
+        )
+    if len(identities) > MAX_CLAIM_VALUE_ROWS:
+        raise ValuesFormatError("Claim value selection exceeds its row bound; narrow it")
+    evaluation_time = request.evaluation_time or _accepted_generation_time(instance, coordinate)
+    context = ClaimVerdictReadContext(instance, coordinate)
+    context.prefetch(tuple(claim_path(identity.removeprefix("Claim:")) for identity in identities))
+    claims = tuple(context.claim(identity) for identity in identities)
+    verdicts: dict[str, object] = {}
+    statuses = claim_resolution_statuses(
+        instance,
+        claims=claims,
+        at=at,
+        evaluation_time=evaluation_time,
+        verdicts_by_identity=verdicts,  # type: ignore[arg-type]
+        read_context=context,
+    )
+    rows = tuple(
+        _claim_value_row(
+            claim,
+            verdict=verdicts.get(claim.identity.qualified),
+            status=statuses[claim.identity.name],
+        )
+        for claim in claims
+    )
+    return ClaimValuesResultV1(
+        coordinate=ClientAcceptedCoordinate.model_validate(at.model_dump()),
+        evaluation_time=evaluation_time,
+        values=rows,
+    )
+
+
+def _claim_value_row(claim: Any, *, verdict: object, status: str) -> ClaimValueV1:
+    """One Claim's value row, for every statement object variant."""
+
+    from cruxible_client.contracts.claims import ExactContentClaimObject, SubjectClaimObject
+
+    statement = claim.statement
+    claim_object = statement.object
+    if isinstance(claim_object, SubjectClaimObject):
+        value: object = claim_object.address.artifact_path
+    elif isinstance(claim_object, ExactContentClaimObject):
+        value = claim_object.content_digest
+    else:
+        value = claim_object.value
+    return ClaimValueV1(
+        claim_id=claim.identity.name,
+        subject_path=statement.subject.artifact_path,
+        predicate=statement.predicate,
+        qualifier=statement.qualifier,
+        role=statement.role,
+        object_kind=claim_object.kind,
+        object=claim_object,
+        value=value,
+        verdict=str(getattr(verdict, "verdict", "unevaluated")),
+        status=status,
+    )

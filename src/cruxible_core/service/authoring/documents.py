@@ -513,7 +513,9 @@ def service_activate_playbill_proposal(
     # stale answer, so activation forgets them outright.
     from cruxible_core.service.discovery.search import reset_claim_resolution_memo
 
-    reset_claim_resolution_memo()
+    # Remembered slot answers survive: each is re-validated against its own
+    # reads at the new coordinate before it is served.
+    reset_claim_resolution_memo(slots=False)
     advertisement = instance.advertise_workspace()
     # Publish accepted main and remove the closed review branch.
     instance.request_ledger_mirror()

@@ -238,22 +238,39 @@ def _validate_client_principals(
 
 
 _VALIDATED_PATH_CAPACITY = 64
+_PathBinding = tuple[str, tuple[tuple[tuple[int, int, int], ...], ...]]
 _VALIDATED_PATHS: OrderedDict[
     tuple[str, tuple[tuple[str, Any], ...]],
-    tuple[tuple[tuple[int, int, int, str], ...], dict[str, Path]],
+    tuple[_PathBinding, dict[str, Path]],
 ] = OrderedDict()
 
 
-def _path_identity(path: Path) -> tuple[int, int, int, str]:
-    """The leaf's own identity and the full path binding that reaches it.
+def _lstat_identity(path: Path) -> tuple[int, int, int]:
+    status = path.lstat()
+    return (status.st_dev, status.st_ino, status.st_mode)
 
-    The resolved path covers every ancestor: moving an ancestor away and
-    putting a symlink in its place keeps the leaf's inode but changes where the
-    path resolves, so a remembered validation no longer applies.
+
+def _path_binding(root: Path, entries: tuple[tuple[str, Any], ...]) -> _PathBinding:
+    """Where the root resolves, plus every component between it and each storage path.
+
+    Each component's lstat identity (device, inode, mode) is recorded, so a
+    directory -- or any ancestor below the root -- moved away and replaced by a
+    symlink or another inode changes the binding even when the leaf keeps its
+    inode, and the root's own resolution covers the ancestors above it. This is
+    one ``realpath`` plus a few ``lstat`` calls rather than a ``realpath`` of
+    every storage path.
     """
 
-    status = path.lstat()
-    return (status.st_dev, status.st_ino, status.st_mode, str(path.resolve(strict=True)))
+    components = []
+    for _name, relative in entries:
+        current = root
+        identities = []
+        for part in Path(str(relative)).parts:
+            current = current / part
+            status = current.lstat()
+            identities.append((status.st_dev, status.st_ino, status.st_mode))
+        components.append(tuple(identities))
+    return os.path.realpath(root), tuple(components)
 
 
 class PlaybillInstance:
@@ -310,8 +327,7 @@ class PlaybillInstance:
         self.floor_structure_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
         self.floor_export_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
         self._body_store_cache: (
-            tuple[tuple[Path, Path, tuple[int, int, int, str] | None], ContentAddressedBodyStore]
-            | None
+            tuple[tuple[Path, Path, tuple[int, int, int] | None], ContentAddressedBodyStore] | None
         ) = None
         # Verified retained change-set records, keyed by their full accepted
         # location. Their bytes are immutable, so they survive head movement.
@@ -605,29 +621,28 @@ class PlaybillInstance:
     def _validated_paths(root: Path, layout: StorageLayout) -> dict[str, Path]:
         """Resolve and confine every managed storage directory.
 
-        A full validation is remembered with each path's lstat identity (device,
-        inode and mode) and the path it resolves to. Later calls reuse the result
-        only while every identity and resolved path is unchanged; a directory or
-        any ancestor replaced by a symlink or another inode takes the full
-        validation again.
+        A full validation is remembered with the path binding that reached it
+        (see ``_path_binding``). Later calls reuse the result only while that
+        binding is unchanged; a directory or any ancestor replaced by a symlink or
+        another inode takes the full validation again.
         """
         entries = tuple(layout.model_dump().items())
         key = (str(root), entries)
         remembered = _VALIDATED_PATHS.get(key)
         if remembered is not None:
-            identities, cached = remembered
+            binding, cached = remembered
             try:
-                current = tuple(_path_identity(root / relative) for _name, relative in entries)
+                current: _PathBinding | None = _path_binding(root, entries)
             except OSError:
                 current = None
-            if current == identities:
+            if current == binding:
                 return dict(cached)
         paths = PlaybillInstance._validate_paths(root, entries)
         try:
-            identities = tuple(_path_identity(root / relative) for _name, relative in entries)
+            binding = _path_binding(root, entries)
         except OSError:
             return paths
-        _VALIDATED_PATHS[key] = (identities, dict(paths))
+        _VALIDATED_PATHS[key] = (binding, dict(paths))
         _VALIDATED_PATHS.move_to_end(key)
         while len(_VALIDATED_PATHS) > _VALIDATED_PATH_CAPACITY:
             _VALIDATED_PATHS.popitem(last=False)
@@ -733,7 +748,7 @@ class PlaybillInstance:
 
         paths = self._validated_paths(self.root, self.descriptor.storage)
         try:
-            algorithm = _path_identity(paths["cas"] / "sha256")
+            algorithm = _lstat_identity(paths["cas"] / "sha256")
         except OSError:
             algorithm = None
         key = (paths["cas"], paths["leases"], algorithm)
@@ -745,7 +760,7 @@ class PlaybillInstance:
             reservation_root=paths["leases"] / "procedure-material",
         )
         try:
-            key = (paths["cas"], paths["leases"], _path_identity(paths["cas"] / "sha256"))
+            key = (paths["cas"], paths["leases"], _lstat_identity(paths["cas"] / "sha256"))
         except OSError:
             return store
         # The store holds only confined, resolved paths; reuse it while they and
