@@ -2153,6 +2153,24 @@ class _BatchBlobReader:
             process.kill()
             process.wait()
 
+    def forget_inherited(self) -> None:
+        """In a forked child, release this copy of the parent's process untouched.
+
+        The fork hooks hold every reader's lock across ``fork``, so no request
+        is in flight and no buffered bytes can reach the parent's pipe here.
+        """
+
+        process, self._process = self._process, None
+        self._lock = threading.Lock()
+        if process is None:
+            return
+        for stream in (process.stdin, process.stdout):
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+
     def objects(self, oids: Sequence[str]) -> dict[str, tuple[str, bytes] | None]:
         """Each object's type and bytes by exact ID; ``None`` when Git lacks it."""
 
@@ -2273,6 +2291,42 @@ def _batch_reader(path: Path) -> _BatchBlobReader:
         with old._lock:
             old.close()
     return reader
+
+
+def _before_fork() -> None:
+    # A child inherits locks in whatever state they were in. Holding every
+    # reader across fork means none is mid-request, so the child can drop its
+    # copies of the pipes without disturbing the parent's protocol.
+    _BATCH_READERS_LOCK.acquire()
+    for reader in _BATCH_READERS.values():
+        reader._lock.acquire()
+
+
+def _after_fork_in_parent() -> None:
+    for reader in _BATCH_READERS.values():
+        reader._lock.release()
+    _BATCH_READERS_LOCK.release()
+
+
+def _after_fork_in_child() -> None:
+    global _BATCH_READERS_LOCK, _TREE_LISTINGS_LOCK, _VERIFIED_COMMITS_LOCK
+    inherited = tuple(_BATCH_READERS.values())
+    _BATCH_READERS.clear()
+    for reader in inherited:
+        reader.forget_inherited()
+    # The memos themselves are consistent (the GIL completes each operation);
+    # only a lock another thread held at fork time would never be released.
+    _BATCH_READERS_LOCK = threading.Lock()
+    _TREE_LISTINGS_LOCK = threading.Lock()
+    _VERIFIED_COMMITS_LOCK = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(
+        before=_before_fork,
+        after_in_parent=_after_fork_in_parent,
+        after_in_child=_after_fork_in_child,
+    )
 
 
 @atexit.register

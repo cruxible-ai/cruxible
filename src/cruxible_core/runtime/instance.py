@@ -237,15 +237,23 @@ def _validate_client_principals(
     return ordered, posture
 
 
-_VALIDATED_PATHS: dict[
+_VALIDATED_PATH_CAPACITY = 64
+_VALIDATED_PATHS: OrderedDict[
     tuple[str, tuple[tuple[str, Any], ...]],
-    tuple[tuple[tuple[int, int, int], ...], dict[str, Path]],
-] = {}
+    tuple[tuple[tuple[int, int, int, str], ...], dict[str, Path]],
+] = OrderedDict()
 
 
-def _path_identity(path: Path) -> tuple[int, int, int]:
+def _path_identity(path: Path) -> tuple[int, int, int, str]:
+    """The leaf's own identity and the full path binding that reaches it.
+
+    The resolved path covers every ancestor: moving an ancestor away and
+    putting a symlink in its place keeps the leaf's inode but changes where the
+    path resolves, so a remembered validation no longer applies.
+    """
+
     status = path.lstat()
-    return (status.st_dev, status.st_ino, status.st_mode)
+    return (status.st_dev, status.st_ino, status.st_mode, os.path.realpath(path))
 
 
 class PlaybillInstance:
@@ -302,7 +310,8 @@ class PlaybillInstance:
         self.floor_structure_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
         self.floor_export_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
         self._body_store_cache: (
-            tuple[tuple[Path, Path, tuple[int, int, int] | None], ContentAddressedBodyStore] | None
+            tuple[tuple[Path, Path, tuple[int, int, int, str] | None], ContentAddressedBodyStore]
+            | None
         ) = None
         # Verified retained change-set records, keyed by their full accepted
         # location. Their bytes are immutable, so they survive head movement.
@@ -597,9 +606,10 @@ class PlaybillInstance:
         """Resolve and confine every managed storage directory.
 
         A full validation is remembered with each path's lstat identity (device,
-        inode and mode). Later calls lstat each path once and reuse the result
-        only while every identity is unchanged; a directory replaced by a
-        symlink or another inode takes the full validation again.
+        inode and mode) and the path it resolves to. Later calls reuse the result
+        only while every identity and resolved path is unchanged; a directory or
+        any ancestor replaced by a symlink or another inode takes the full
+        validation again.
         """
         entries = tuple(layout.model_dump().items())
         key = (str(root), entries)
@@ -618,6 +628,9 @@ class PlaybillInstance:
         except OSError:
             return paths
         _VALIDATED_PATHS[key] = (identities, dict(paths))
+        _VALIDATED_PATHS.move_to_end(key)
+        while len(_VALIDATED_PATHS) > _VALIDATED_PATH_CAPACITY:
+            _VALIDATED_PATHS.popitem(last=False)
         return paths
 
     @staticmethod
