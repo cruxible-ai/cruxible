@@ -236,13 +236,6 @@ from cruxible_client.contracts.query.definitions import (
     query_definition_digest,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.standing_mandates import (
-    AcceptedStandingMandateV1,
-    StandingMandateError,
-    evaluate_standing_mandate_law,
-    parse_standing_mandate,
-    standing_mandate_digest,
-)
 from cruxible_client.contracts.subjects import (
     AcceptedSubject,
     evaluate_subject_law,
@@ -353,7 +346,6 @@ _PROVIDER_INTERFACE_PATH_RE = re.compile(r"^provider-interfaces/[a-z][a-z0-9_.-]
 _SOURCE_ACQUISITION_POLICY_PATH_RE = re.compile(
     r"^source-acquisition-policies/[a-z][a-z0-9_.-]{0,255}\.json$"
 )
-_STANDING_MANDATE_PATH_RE = re.compile(r"^standing-mandates/[a-z][a-z0-9_.-]{0,255}\.json$")
 _PROCEDURE_MANDATE_PATH_RE = re.compile(r"^procedure-mandates/[a-z][a-z0-9_.-]{0,255}\.json$")
 _PROCEDURE_PATH_RE = re.compile(r"^procedures/[a-z][a-z0-9_.-]{0,255}\.json$")
 _LINE_PATH_RE = re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.json$")
@@ -368,7 +360,6 @@ _DEPENDENCY_CLOSED_PATTERNS: Final = (
     _PROVIDER_PATH_RE,
     _PROVIDER_INTERFACE_PATH_RE,
     _SOURCE_ACQUISITION_POLICY_PATH_RE,
-    _STANDING_MANDATE_PATH_RE,
     _PROCEDURE_MANDATE_PATH_RE,
     _CLAIM_PATH_RE,
     _PROCEDURE_PATH_RE,
@@ -2188,38 +2179,6 @@ def _acquisition_policy_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
-def _standing_mandate_member(context: _MemberContext) -> _MemberVerdict:
-    mandate = parse_standing_mandate(context.content, path=context.path)
-    predecessor: AcceptedStandingMandateV1 | None = None
-    if context.parent_content is not None:
-        previous = parse_standing_mandate(context.parent_content, path=context.path)
-        predecessor = AcceptedStandingMandateV1(
-            path=context.path,
-            mandate=previous,
-            artifact_digest=standing_mandate_digest(previous).tagged,
-        )
-    law = evaluate_standing_mandate_law(
-        mandate,
-        path=context.path,
-        predecessor=predecessor,
-    )
-    if law.verdict == "refused":
-        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
-    if law.artifact_digest is None or law.required_tier is None:
-        raise ProposalIntegrityError("accepted StandingMandate law result is incomplete")
-    return _accepted(
-        context,
-        _installed(context, mandate.artifact_format),
-        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
-        candidate_artifact_digest=law.artifact_digest,
-        required_tier=law.required_tier,
-        approval_scope=law.approval_scope,
-        activation_policy="snapshot",
-        result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
-        retired=mandate.lifecycle.state == "retired",
-    )
-
-
 def _procedure_mandate_member(context: _MemberContext) -> _MemberVerdict:
     mandate = parse_procedure_mandate_any(context.content, path=context.path)
     accepted_procedure = context.resolved.procedures.get(mandate.procedure.target.qualified)
@@ -3165,13 +3124,6 @@ _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
         evaluate=_acquisition_policy_member,
     ),
     _MemberKind(
-        name="standing-mandate",
-        pattern=_STANDING_MANDATE_PATH_RE,
-        removal_code="playbill.change_set.delete_unsupported",
-        removal_message="PC-A2 does not activate artifact deletion semantics.",
-        evaluate=_standing_mandate_member,
-    ),
-    _MemberKind(
         name="procedure-mandate",
         pattern=_PROCEDURE_MANDATE_PATH_RE,
         removal_code="playbill.change_set.delete_unsupported",
@@ -3237,7 +3189,6 @@ ROLE_DEMOTED_MEMBER_FAMILIES: Final[tuple[str, ...]] = (
     "provider",
     "provider-interface",
     "source-acquisition-policy",
-    "standing-mandate",
     "procedure-mandate",
     "capture-contract",
     "claim",
@@ -3534,7 +3485,6 @@ def _evaluate_scoped_members(
             ProviderFormatError,
             ProviderInterfaceFormatError,
             SourceAcquisitionPolicyError,
-            StandingMandateError,
             ProcedureMandateError,
             SubjectFormatError,
             ClaimTypeFormatError,

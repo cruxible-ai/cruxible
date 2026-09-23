@@ -497,21 +497,18 @@ def test_unevaluable_observation_stays_unresolved_until_replaced(tmp_path: Path)
     assert relation.resolution.settlement.content_digest == measured.statement_digest
 
 
-@pytest.mark.parametrize("terminal_kind", ["mandate_settlement", "settled", "proposed"])
+@pytest.mark.parametrize("terminal_kind", ["settled", "proposed"])
 def test_retained_terminal_settles_exact_investigation_and_replays(
     tmp_path: Path, terminal_kind: str
 ):
-    """Exercise the settlement reader against retained terminal receipts.
+    """Exercise the settlement reader against retained settle terminal receipts.
 
-    A retained scaffolding ``mandate_settlement`` receipt and a settle terminal
-    that actually settled both count; a settle terminal that fell back to an
+    A settle terminal that actually settled counts; one that fell back to an
     ordinary proposal settled nothing and cannot settle the prediction.
     """
     from cruxible_core.exhaust import ProcedureExhaustWriter
     from cruxible_core.procedures.egress import (
-        TerminalEgressChildReceiptV1,
         TerminalEgressChildReceiptV2,
-        TerminalEgressReceiptV2,
         TerminalEgressReceiptV4,
     )
     from cruxible_core.service.procedures import procedure_runs
@@ -550,53 +547,30 @@ def test_retained_terminal_settles_exact_investigation_and_replays(
         bodies=instance.body_store(),
         fencing_token=procedure_runs.PROCEDURE_RUN_FENCING_TOKEN,
     )
-    claim = parse_claim(
-        instance.blob_at(observation.coordinate.git_oid, claim_path(observation.identity.name)),
-        path=claim_path(observation.identity.name),
+    settled = terminal_kind == "settled"
+    path = claim_path(observation.identity.name)
+    receipt = TerminalEgressReceiptV4(
+        kind="settle_change_set",
+        run_id=run.run_id,
+        node_id="settle-observation",
+        disposition="settled" if settled else "received",
+        operation_key="sha256:" + "a" * 64,
+        children=(
+            TerminalEgressChildReceiptV2(
+                child_index=0,
+                item_key=path,
+                egress_digest=observation.artifact_digest,
+                path=path,
+            ),
+        ),
+        proposal_id="sha256:" + "b" * 64,
+        candidate_digest="sha256:" + "c" * 64,
+        target_paths=(path,),
+        outcome="settled" if settled else "proposed",
+        procedure_mandate_digest="sha256:" + "d" * 64,
+        accepted_git_oid="e" * 40 if settled else None,
+        fallback_reason=None if settled else "playbill.settle.condition_false",
     )
-    target_law = next(pin.artifact_digest for pin in claim.pins if pin.target.kind == "ClaimType")
-    receipt: TerminalEgressReceiptV2
-    if terminal_kind == "mandate_settlement":
-        receipt = TerminalEgressReceiptV2(
-            kind="mandate_settlement",
-            run_id=run.run_id,
-            node_id="settle-observation",
-            disposition="settled",
-            bound_artifact_digest=target_law,
-            operation_key="sha256:" + "a" * 64,
-            children=(
-                TerminalEgressChildReceiptV1(
-                    child_index=0,
-                    item_key=claim_path(observation.identity.name),
-                    egress_digest=observation.artifact_digest,
-                ),
-            ),
-        )
-    else:
-        settled = terminal_kind == "settled"
-        path = claim_path(observation.identity.name)
-        receipt = TerminalEgressReceiptV4(
-            kind="settle_change_set",
-            run_id=run.run_id,
-            node_id="settle-observation",
-            disposition="settled" if settled else "received",
-            operation_key="sha256:" + "a" * 64,
-            children=(
-                TerminalEgressChildReceiptV2(
-                    child_index=0,
-                    item_key=path,
-                    egress_digest=observation.artifact_digest,
-                    path=path,
-                ),
-            ),
-            proposal_id="sha256:" + "b" * 64,
-            candidate_digest="sha256:" + "c" * 64,
-            target_paths=(path,),
-            outcome="settled" if settled else "proposed",
-            procedure_mandate_digest="sha256:" + "d" * 64,
-            accepted_git_oid="e" * 40 if settled else None,
-            fallback_reason=None if settled else "playbill.settle.condition_false",
-        )
     terminal = writer.append(
         stream=stream,
         partition_id=admission_record.partition_id,

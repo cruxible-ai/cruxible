@@ -706,19 +706,6 @@ class SettleChangeSetNodeV3(ProposeChangeSetNodeV3):
     kind: Literal["settle_change_set"] = "settle_change_set"  # type: ignore[assignment]
 
 
-class MandateSettlementNodeV3(_StrictProcedureModel):
-    kind: Literal["mandate_settlement"] = "mandate_settlement"
-    node_id: str
-    mandate: ProcedurePinBindingV1
-    target_law: ProcedurePinBindingV1
-    input: object
-
-    @field_validator("input", mode="before")
-    @classmethod
-    def _input(cls, value: object) -> object:
-        return normalize_canonical(value)
-
-
 class HaltNodeV3(_StrictProcedureModel):
     """A successful graph leaf that deliberately produces no result."""
 
@@ -739,7 +726,6 @@ ProcedureNodeV3 = Annotated[
     | CaptureEgressNodeV3
     | InboxEgressNodeV3
     | ProposeChangeSetNodeV3
-    | MandateSettlementNodeV3
     | HaltNodeV3,
     Field(discriminator="kind"),
 ]
@@ -757,7 +743,6 @@ ProcedureNodeV4 = Annotated[
     | InboxEgressNodeV3
     | ProposeChangeSetNodeV3
     | SettleChangeSetNodeV3
-    | MandateSettlementNodeV3
     | HaltNodeV3,
     Field(discriminator="kind"),
 ]
@@ -775,7 +760,6 @@ ProcedureNodeV5 = Annotated[
     | InboxEgressNodeV3
     | ProposeChangeSetNodeV3
     | SettleChangeSetNodeV3
-    | MandateSettlementNodeV3
     | HaltNodeV3,
     Field(discriminator="kind"),
 ]
@@ -785,8 +769,6 @@ TERMINAL_REQUIRED_RUNGS = {
     "post_inbox": 1,
     "propose_change_set": 2,
     "settle_change_set": 3,
-    # Retained for accepted history only; authoring never emits it.
-    "mandate_settlement": 3,
 }
 TERMINAL_NODE_KINDS = frozenset((*TERMINAL_REQUIRED_RUNGS, "halt", "return"))
 
@@ -1194,7 +1176,6 @@ ProcedureNodeV6 = Annotated[
     | InboxEgressNodeV3
     | ProposeChangeSetNodeV6
     | SettleChangeSetNodeV6
-    | MandateSettlementNodeV3
     | HaltNodeV3
     | SelectNodeV6
     | ReturnNodeV6
@@ -1274,7 +1255,6 @@ __all__ = [
     "GuardPredicateV1",
     "HaltNodeV3",
     "InboxEgressNodeV3",
-    "MandateSettlementNodeV3",
     "PredicateOperandV1",
     "ProcedureBudgetV3",
     "ProcedureDefinitionV3",

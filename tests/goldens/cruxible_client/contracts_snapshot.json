@@ -26728,54 +26728,6 @@
             "title": "InvokeNodeV6",
             "type": "object"
           },
-          "MandateSettlementNodeV3": {
-            "additionalProperties": false,
-            "properties": {
-              "input": {
-                "title": "Input"
-              },
-              "kind": {
-                "const": "mandate_settlement",
-                "default": "mandate_settlement",
-                "title": "Kind",
-                "type": "string"
-              },
-              "mandate": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactPin"
-                  },
-                  {
-                    "$ref": "#/$defs/ProcedurePinSlotRefV1"
-                  }
-                ],
-                "title": "Mandate"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "target_law": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactPin"
-                  },
-                  {
-                    "$ref": "#/$defs/ProcedurePinSlotRefV1"
-                  }
-                ],
-                "title": "Target Law"
-              }
-            },
-            "required": [
-              "node_id",
-              "mandate",
-              "target_law",
-              "input"
-            ],
-            "title": "MandateSettlementNodeV3",
-            "type": "object"
-          },
           "PlaybillAcceptedCoordinate": {
             "additionalProperties": false,
             "properties": {
@@ -27376,7 +27328,6 @@
                       "exhaust_tap": "#/$defs/ExhaustTapNodeV3",
                       "guard": "#/$defs/GuardNodeV3",
                       "halt": "#/$defs/HaltNodeV3",
-                      "mandate_settlement": "#/$defs/MandateSettlementNodeV3",
                       "post_inbox": "#/$defs/InboxEgressNodeV3",
                       "project": "#/$defs/ProjectNodeV3",
                       "propose_change_set": "#/$defs/ProposeChangeSetNodeV3",
@@ -27421,9 +27372,6 @@
                     },
                     {
                       "$ref": "#/$defs/ProposeChangeSetNodeV3"
-                    },
-                    {
-                      "$ref": "#/$defs/MandateSettlementNodeV3"
                     },
                     {
                       "$ref": "#/$defs/HaltNodeV3"
@@ -27556,7 +27504,6 @@
                       "exhaust_tap": "#/$defs/ExhaustTapNodeV3",
                       "guard": "#/$defs/GuardNodeV3",
                       "halt": "#/$defs/HaltNodeV3",
-                      "mandate_settlement": "#/$defs/MandateSettlementNodeV3",
                       "post_inbox": "#/$defs/InboxEgressNodeV3",
                       "project": "#/$defs/ProjectNodeV3",
                       "propose_change_set": "#/$defs/ProposeChangeSetNodeV3",
@@ -27605,9 +27552,6 @@
                     },
                     {
                       "$ref": "#/$defs/SettleChangeSetNodeV3"
-                    },
-                    {
-                      "$ref": "#/$defs/MandateSettlementNodeV3"
                     },
                     {
                       "$ref": "#/$defs/HaltNodeV3"
@@ -27741,7 +27685,6 @@
                       "exhaust_tap": "#/$defs/ExhaustTapNodeV3",
                       "guard": "#/$defs/GuardNodeV3",
                       "halt": "#/$defs/HaltNodeV3",
-                      "mandate_settlement": "#/$defs/MandateSettlementNodeV3",
                       "post_inbox": "#/$defs/InboxEgressNodeV3",
                       "project": "#/$defs/ProjectNodeV3",
                       "propose_change_set": "#/$defs/ProposeChangeSetNodeV3",
@@ -27789,9 +27732,6 @@
                     },
                     {
                       "$ref": "#/$defs/SettleChangeSetNodeV3"
-                    },
-                    {
-                      "$ref": "#/$defs/MandateSettlementNodeV3"
                     },
                     {
                       "$ref": "#/$defs/HaltNodeV3"
@@ -27927,7 +27867,6 @@
                       "guard": "#/$defs/GuardNodeV3",
                       "halt": "#/$defs/HaltNodeV3",
                       "invoke": "#/$defs/InvokeNodeV6",
-                      "mandate_settlement": "#/$defs/MandateSettlementNodeV3",
                       "post_inbox": "#/$defs/InboxEgressNodeV3",
                       "project": "#/$defs/ProjectNodeV3",
                       "propose_change_set": "#/$defs/ProposeChangeSetNodeV6",
@@ -27984,9 +27923,6 @@
                     },
                     {
                       "$ref": "#/$defs/SettleChangeSetNodeV6"
-                    },
-                    {
-                      "$ref": "#/$defs/MandateSettlementNodeV3"
                     },
                     {
                       "$ref": "#/$defs/HaltNodeV3"
@@ -34282,54 +34218,6 @@
             "title": "InvokeNodeV6",
             "type": "object"
           },
-          "MandateSettlementNodeV3": {
-            "additionalProperties": false,
-            "properties": {
-              "input": {
-                "title": "Input"
-              },
-              "kind": {
-                "const": "mandate_settlement",
-                "default": "mandate_settlement",
-                "title": "Kind",
-                "type": "string"
-              },
-              "mandate": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactPin"
-                  },
-                  {
-                    "$ref": "#/$defs/ProcedurePinSlotRefV1"
-                  }
-                ],
-                "title": "Mandate"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "target_law": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactPin"
-                  },
-                  {
-                    "$ref": "#/$defs/ProcedurePinSlotRefV1"
-                  }
-                ],
-                "title": "Target Law"
-              }
-            },
-            "required": [
-              "node_id",
-              "mandate",
-              "target_law",
-              "input"
-            ],
-            "title": "MandateSettlementNodeV3",
-            "type": "object"
-          },
           "PlaybillAcceptedCoordinate": {
             "additionalProperties": false,
             "properties": {
@@ -34757,7 +34645,6 @@
                       "exhaust_tap": "#/$defs/ExhaustTapNodeV3",
                       "guard": "#/$defs/GuardNodeV3",
                       "halt": "#/$defs/HaltNodeV3",
-                      "mandate_settlement": "#/$defs/MandateSettlementNodeV3",
                       "post_inbox": "#/$defs/InboxEgressNodeV3",
                       "project": "#/$defs/ProjectNodeV3",
                       "propose_change_set": "#/$defs/ProposeChangeSetNodeV3",
@@ -34802,9 +34689,6 @@
                     },
                     {
                       "$ref": "#/$defs/ProposeChangeSetNodeV3"
-                    },
-                    {
-                      "$ref": "#/$defs/MandateSettlementNodeV3"
                     },
                     {
                       "$ref": "#/$defs/HaltNodeV3"
@@ -34937,7 +34821,6 @@
                       "exhaust_tap": "#/$defs/ExhaustTapNodeV3",
                       "guard": "#/$defs/GuardNodeV3",
                       "halt": "#/$defs/HaltNodeV3",
-                      "mandate_settlement": "#/$defs/MandateSettlementNodeV3",
                       "post_inbox": "#/$defs/InboxEgressNodeV3",
                       "project": "#/$defs/ProjectNodeV3",
                       "propose_change_set": "#/$defs/ProposeChangeSetNodeV3",
@@ -34986,9 +34869,6 @@
                     },
                     {
                       "$ref": "#/$defs/SettleChangeSetNodeV3"
-                    },
-                    {
-                      "$ref": "#/$defs/MandateSettlementNodeV3"
                     },
                     {
                       "$ref": "#/$defs/HaltNodeV3"
@@ -35122,7 +35002,6 @@
                       "exhaust_tap": "#/$defs/ExhaustTapNodeV3",
                       "guard": "#/$defs/GuardNodeV3",
                       "halt": "#/$defs/HaltNodeV3",
-                      "mandate_settlement": "#/$defs/MandateSettlementNodeV3",
                       "post_inbox": "#/$defs/InboxEgressNodeV3",
                       "project": "#/$defs/ProjectNodeV3",
                       "propose_change_set": "#/$defs/ProposeChangeSetNodeV3",
@@ -35170,9 +35049,6 @@
                     },
                     {
                       "$ref": "#/$defs/SettleChangeSetNodeV3"
-                    },
-                    {
-                      "$ref": "#/$defs/MandateSettlementNodeV3"
                     },
                     {
                       "$ref": "#/$defs/HaltNodeV3"
@@ -35308,7 +35184,6 @@
                       "guard": "#/$defs/GuardNodeV3",
                       "halt": "#/$defs/HaltNodeV3",
                       "invoke": "#/$defs/InvokeNodeV6",
-                      "mandate_settlement": "#/$defs/MandateSettlementNodeV3",
                       "post_inbox": "#/$defs/InboxEgressNodeV3",
                       "project": "#/$defs/ProjectNodeV3",
                       "propose_change_set": "#/$defs/ProposeChangeSetNodeV6",
@@ -35365,9 +35240,6 @@
                     },
                     {
                       "$ref": "#/$defs/SettleChangeSetNodeV6"
-                    },
-                    {
-                      "$ref": "#/$defs/MandateSettlementNodeV3"
                     },
                     {
                       "$ref": "#/$defs/HaltNodeV3"
@@ -44428,8 +44300,7 @@
                   "emit_capture",
                   "post_inbox",
                   "propose_change_set",
-                  "settle_change_set",
-                  "mandate_settlement"
+                  "settle_change_set"
                 ],
                 "title": "Kind",
                 "type": "string"
@@ -51945,54 +51816,6 @@
             "title": "InvokeNodeV6",
             "type": "object"
           },
-          "MandateSettlementNodeV3": {
-            "additionalProperties": false,
-            "properties": {
-              "input": {
-                "title": "Input"
-              },
-              "kind": {
-                "const": "mandate_settlement",
-                "default": "mandate_settlement",
-                "title": "Kind",
-                "type": "string"
-              },
-              "mandate": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactPin"
-                  },
-                  {
-                    "$ref": "#/$defs/ProcedurePinSlotRefV1"
-                  }
-                ],
-                "title": "Mandate"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "target_law": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactPin"
-                  },
-                  {
-                    "$ref": "#/$defs/ProcedurePinSlotRefV1"
-                  }
-                ],
-                "title": "Target Law"
-              }
-            },
-            "required": [
-              "node_id",
-              "mandate",
-              "target_law",
-              "input"
-            ],
-            "title": "MandateSettlementNodeV3",
-            "type": "object"
-          },
           "PlaybillAcceptedCoordinate": {
             "additionalProperties": false,
             "properties": {
@@ -52420,7 +52243,6 @@
                       "exhaust_tap": "#/$defs/ExhaustTapNodeV3",
                       "guard": "#/$defs/GuardNodeV3",
                       "halt": "#/$defs/HaltNodeV3",
-                      "mandate_settlement": "#/$defs/MandateSettlementNodeV3",
                       "post_inbox": "#/$defs/InboxEgressNodeV3",
                       "project": "#/$defs/ProjectNodeV3",
                       "propose_change_set": "#/$defs/ProposeChangeSetNodeV3",
@@ -52465,9 +52287,6 @@
                     },
                     {
                       "$ref": "#/$defs/ProposeChangeSetNodeV3"
-                    },
-                    {
-                      "$ref": "#/$defs/MandateSettlementNodeV3"
                     },
                     {
                       "$ref": "#/$defs/HaltNodeV3"
@@ -52600,7 +52419,6 @@
                       "exhaust_tap": "#/$defs/ExhaustTapNodeV3",
                       "guard": "#/$defs/GuardNodeV3",
                       "halt": "#/$defs/HaltNodeV3",
-                      "mandate_settlement": "#/$defs/MandateSettlementNodeV3",
                       "post_inbox": "#/$defs/InboxEgressNodeV3",
                       "project": "#/$defs/ProjectNodeV3",
                       "propose_change_set": "#/$defs/ProposeChangeSetNodeV3",
@@ -52649,9 +52467,6 @@
                     },
                     {
                       "$ref": "#/$defs/SettleChangeSetNodeV3"
-                    },
-                    {
-                      "$ref": "#/$defs/MandateSettlementNodeV3"
                     },
                     {
                       "$ref": "#/$defs/HaltNodeV3"
@@ -52785,7 +52600,6 @@
                       "exhaust_tap": "#/$defs/ExhaustTapNodeV3",
                       "guard": "#/$defs/GuardNodeV3",
                       "halt": "#/$defs/HaltNodeV3",
-                      "mandate_settlement": "#/$defs/MandateSettlementNodeV3",
                       "post_inbox": "#/$defs/InboxEgressNodeV3",
                       "project": "#/$defs/ProjectNodeV3",
                       "propose_change_set": "#/$defs/ProposeChangeSetNodeV3",
@@ -52833,9 +52647,6 @@
                     },
                     {
                       "$ref": "#/$defs/SettleChangeSetNodeV3"
-                    },
-                    {
-                      "$ref": "#/$defs/MandateSettlementNodeV3"
                     },
                     {
                       "$ref": "#/$defs/HaltNodeV3"
@@ -52971,7 +52782,6 @@
                       "guard": "#/$defs/GuardNodeV3",
                       "halt": "#/$defs/HaltNodeV3",
                       "invoke": "#/$defs/InvokeNodeV6",
-                      "mandate_settlement": "#/$defs/MandateSettlementNodeV3",
                       "post_inbox": "#/$defs/InboxEgressNodeV3",
                       "project": "#/$defs/ProjectNodeV3",
                       "propose_change_set": "#/$defs/ProposeChangeSetNodeV6",
@@ -53028,9 +52838,6 @@
                     },
                     {
                       "$ref": "#/$defs/SettleChangeSetNodeV6"
-                    },
-                    {
-                      "$ref": "#/$defs/MandateSettlementNodeV3"
                     },
                     {
                       "$ref": "#/$defs/HaltNodeV3"
@@ -76746,8 +76553,7 @@
               "emit_capture",
               "post_inbox",
               "propose_change_set",
-              "settle_change_set",
-              "mandate_settlement"
+              "settle_change_set"
             ],
             "title": "Kind",
             "type": "string"
@@ -77130,8 +76936,7 @@
               "emit_capture",
               "post_inbox",
               "propose_change_set",
-              "settle_change_set",
-              "mandate_settlement"
+              "settle_change_set"
             ],
             "title": "Kind",
             "type": "string"

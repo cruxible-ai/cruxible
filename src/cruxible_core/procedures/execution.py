@@ -75,7 +75,6 @@ from cruxible_client.contracts.procedures.models import (
     HaltNodeV3,
     InboxEgressNodeV3,
     InvokeNodeV6,
-    MandateSettlementNodeV3,
     PredicateOperandV1,
     ProcedureBudgetV3,
     ProcedureDefinitionV6,
@@ -3721,10 +3720,7 @@ class ProcedureExecutor:
             return None
         if isinstance(
             node,
-            CaptureEgressNodeV3
-            | InboxEgressNodeV3
-            | ProposeChangeSetNodeV3
-            | MandateSettlementNodeV3,
+            CaptureEgressNodeV3 | InboxEgressNodeV3 | ProposeChangeSetNodeV3,
         ):
             self._run_terminal(node, admission=admission, state=state, records=records)
             return None
@@ -4448,10 +4444,7 @@ class ProcedureExecutor:
 
     def _run_terminal(
         self,
-        node: CaptureEgressNodeV3
-        | InboxEgressNodeV3
-        | ProposeChangeSetNodeV3
-        | MandateSettlementNodeV3,
+        node: CaptureEgressNodeV3 | InboxEgressNodeV3 | ProposeChangeSetNodeV3,
         *,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
@@ -4539,7 +4532,6 @@ class ProcedureExecutor:
         effectful = isinstance(request, TerminalEgressRequestV2) and request.kind in {
             "propose_change_set",
             "settle_change_set",
-            "mandate_settlement",
         }
         if isinstance(request, TerminalEgressRequestV2) and effectful:
             payload = {
@@ -4700,10 +4692,7 @@ class ProcedureExecutor:
 
     def _terminal_egress_request(
         self,
-        node: CaptureEgressNodeV3
-        | InboxEgressNodeV3
-        | ProposeChangeSetNodeV3
-        | MandateSettlementNodeV3,
+        node: CaptureEgressNodeV3 | InboxEgressNodeV3 | ProposeChangeSetNodeV3,
         *,
         admission: ProcedureRunAdmissionV1,
         rung: EffectiveRungV1,
@@ -4721,23 +4710,11 @@ class ProcedureExecutor:
         """
 
         bound_pin: ArtifactPin | None = None
-        mandate_pin: ArtifactPin | None = None
-        mandate_basis: tuple[str, ...] = ()
         if isinstance(node, CaptureEgressNodeV3):
             bound_pin = self._pin(
                 node.capture_contract,
                 label=f"emit_capture {node.node_id!r} CaptureContract",
             )
-        elif isinstance(node, MandateSettlementNodeV3):
-            bound_pin = self._pin(
-                node.target_law,
-                label=f"mandate_settlement {node.node_id!r} target law",
-            )
-            mandate_pin = self._pin(
-                node.mandate,
-                label=f"mandate_settlement {node.node_id!r} mandate",
-            )
-            mandate_basis = rung.mandate_basis_digests
         request = TerminalEgressRequestV1(
             kind=node.kind,
             run_id=admission.run_id,
@@ -4751,8 +4728,6 @@ class ProcedureExecutor:
             limiting_term=rung.limiting_term,
             granted_operation=rung.granted_operation(node.kind),
             bound_artifact_pin=bound_pin,
-            mandate_pin=mandate_pin,
-            mandate_basis_digests=mandate_basis,
             actor_context=admission.actor_context,
             items=tuple(
                 TerminalEgressItemV1(
@@ -4800,10 +4775,7 @@ class ProcedureExecutor:
 
     def _record_terminal_items(
         self,
-        node: CaptureEgressNodeV3
-        | InboxEgressNodeV3
-        | ProposeChangeSetNodeV3
-        | MandateSettlementNodeV3,
+        node: CaptureEgressNodeV3 | InboxEgressNodeV3 | ProposeChangeSetNodeV3,
         *,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
@@ -5993,10 +5965,7 @@ def _projected_provenance(
 
 
 def _terminal_item_templates(
-    node: CaptureEgressNodeV3
-    | InboxEgressNodeV3
-    | ProposeChangeSetNodeV3
-    | MandateSettlementNodeV3,
+    node: CaptureEgressNodeV3 | InboxEgressNodeV3 | ProposeChangeSetNodeV3,
 ) -> object:
     if isinstance(node, ProposeChangeSetNodeV3):
         return list(node.candidate_templates)

@@ -979,7 +979,6 @@ class ProcedureTerminalEgressV1(_StrictResultModel):
         "post_inbox",
         "propose_change_set",
         "settle_change_set",
-        "mandate_settlement",
     ]
     verdict: TerminalEgressVerdictV1
     required_rung: int = Field(ge=0, le=3)

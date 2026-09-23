@@ -144,7 +144,6 @@ from cruxible_core.procedures.readings import (
     procedure_reading_partition_id,
 )
 from cruxible_core.procedures.resolution import (
-    AcceptedAuthorityBasisV1,
     ProcedureProofReferenceV1,
     ProcedureResolutionBook,
     ProcedureResolutionDispositionV1,
@@ -169,7 +168,6 @@ from cruxible_core.procedures.resolution import (
     resolution_activation_digest,
     resolution_contract_partition_id,
     resolution_event_accepted_coordinate,
-    resolve_authority_basis,
     settled_outcome_relation_digest,
 )
 from cruxible_core.procedures.run_index import (
@@ -198,7 +196,6 @@ __all__ = [
     "AcceptedClaimGuardBuilderV1",
     "AcceptedStateRunInputV1",
     "AcceptedStateRunMaterialV1",
-    "AcceptedAuthorityBasisV1",
     "CadenceTriggerPolicyV1",
     "CalibrationWitnessRefusalCode",
     "CaptureLandingTriggerPolicyV1",
@@ -332,7 +329,6 @@ __all__ = [
     "derive_resolution_activations",
     "resolution_contract_partition_id",
     "resolution_event_accepted_coordinate",
-    "resolve_authority_basis",
     "resolution_activation_digest",
     "select_settled_outcomes_for_calibration",
     "settled_outcome_relation_digest",

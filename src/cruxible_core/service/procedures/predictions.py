@@ -51,11 +51,7 @@ from cruxible_core.exhaust.records import (
 )
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
-from cruxible_core.procedures.egress import (
-    TerminalEgressReceiptV1,
-    TerminalEgressReceiptV2,
-    TerminalEgressReceiptV4,
-)
+from cruxible_core.procedures.egress import TerminalEgressReceiptV4
 from cruxible_core.procedures.resolution import (
     ProcedureProofReferenceV1,
     ProcedureResolutionBook,
@@ -205,30 +201,22 @@ def _terminal_record(
             )
             if isinstance(payload, dict) and payload.get("verdict") == "delivered":
                 receipt_payload = payload.get("receipt")
-                if not isinstance(receipt_payload, dict):
+                if (
+                    not isinstance(receipt_payload, dict)
+                    or receipt_payload.get("tag") != "playbill-terminal-egress-receipt-v4"
+                ):
                     break
-                receipt_types: dict[str, type[TerminalEgressReceiptV1]] = {
-                    "playbill-terminal-egress-receipt-v4": TerminalEgressReceiptV4,
-                    "playbill-terminal-egress-receipt-v2": TerminalEgressReceiptV2,
-                }
-                receipt_type = receipt_types.get(
-                    str(receipt_payload.get("tag")), TerminalEgressReceiptV1
-                )
                 try:
-                    receipt = receipt_type.model_validate(receipt_payload)
+                    receipt = TerminalEgressReceiptV4.model_validate(receipt_payload)
                 except ValidationError:
                     break
-                # A settle terminal counts only when it actually settled; its
-                # fallback proposal settled nothing. The scaffolded kind remains
-                # readable for retained evidence.
-                settled = (
-                    isinstance(receipt, TerminalEgressReceiptV4) and receipt.outcome == "settled"
-                ) or receipt.kind == "mandate_settlement"
+                # Only a settle terminal that actually settled counts; its
+                # fallback proposal settled nothing.
                 if (
                     receipt.run_id == evidence.run_id
                     and payload.get("node_id") == receipt.node_id
                     and payload.get("kind") == receipt.kind
-                    and settled
+                    and receipt.outcome == "settled"
                 ):
                     return stored
             break

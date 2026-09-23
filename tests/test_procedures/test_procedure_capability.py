@@ -15,7 +15,7 @@ from cruxible_client.contracts.procedures.models import (
         ((), 0, "observe"),
         (("transform", "emit_capture", "return"), 0, "observe"),
         (("guard", "propose_change_set", "halt"), 0, "propose"),
-        (("emit_capture", "mandate_settlement"), 0, "settle"),
+        (("emit_capture", "settle_change_set"), 0, "settle"),
         (("transform", "return"), 2, "propose"),
     ],
 )

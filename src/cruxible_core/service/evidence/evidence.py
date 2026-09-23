@@ -60,12 +60,6 @@ from cruxible_client.contracts.source_references import (
     CasSourceReferenceV1,
     LedgerSourceReferenceV1,
 )
-from cruxible_client.contracts.standing_mandates import (
-    StandingMandateQueryResultV1,
-    parse_standing_mandate,
-    standing_mandate_digest,
-    standing_mandate_path,
-)
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.evidence.source_readers import ExternalSourceReaderProtocol
@@ -947,30 +941,6 @@ def service_evaluate_playbill_claim_verdict(
     )
 
 
-def service_get_playbill_standing_mandate(
-    instance: PlaybillInstance,
-    *,
-    identity: str,
-    at: PlaybillAcceptedCoordinate | None = None,
-) -> StandingMandateQueryResultV1:
-    """Read one exact StandingMandate at a resolved accepted coordinate."""
-
-    coordinate = _resolve_coordinate(instance, at)
-    name = identity.removeprefix("StandingMandate:")
-    path = standing_mandate_path(name)
-    content = instance.blob_at(coordinate.git_oid, path)
-    if content is None:
-        raise ProposalIntegrityError(f"StandingMandate is absent: {identity}")
-    mandate = parse_standing_mandate(content, path=path)
-    if mandate.identity.qualified != identity:
-        raise ProposalIntegrityError("StandingMandate identity/path disagreement")
-    return StandingMandateQueryResultV1(
-        coordinate=AcceptedCoordinate.from_internal(coordinate),
-        mandate=mandate,
-        mandate_digest=standing_mandate_digest(mandate).tagged,
-    )
-
-
 __all__ = [
     "PlaybillClaimVerdictQueryV1",
     "PlaybillClaimVerdictQueryV2",
@@ -978,5 +948,4 @@ __all__ = [
     "accepted_claim_providers",
     "accepted_claim_attestations",
     "service_evaluate_playbill_claim_verdict",
-    "service_get_playbill_standing_mandate",
 ]

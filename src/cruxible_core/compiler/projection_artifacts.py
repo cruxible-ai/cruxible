@@ -122,10 +122,6 @@ P2_B0_ARTIFACT_KINDS = ArtifactKindRegistry(
             re.compile(r"^source-acquisition-policies/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
         ),
         ArtifactPathKind(
-            "standing-mandate",
-            re.compile(r"^standing-mandates/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
-        ),
-        ArtifactPathKind(
             "claim",
             re.compile(r"^claims/[0-9a-f]{2}/CLM-[0-9a-f]{32}\.yaml$"),
         ),
@@ -292,7 +288,6 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
                 "playbill-query-definition-v1",
                 "playbill-query-definition-v2",
                 "playbill-source-acquisition-policy-v1",
-                "playbill-standing-mandate-v1",
                 "playbill-procedure-mandate-v1",
                 "playbill-procedure-mandate-v2",
                 "playbill-procedure-producer-receipt-v1",
@@ -399,7 +394,6 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             "playbill-query-definition-v1",
             "playbill-query-definition-v2",
             "playbill-source-acquisition-policy-v1",
-            "playbill-standing-mandate-v1",
             "playbill-procedure-mandate-v1",
             "playbill-procedure-mandate-v2",
             "playbill-procedure-producer-receipt-v1",
@@ -456,7 +450,6 @@ RegisteredPathKind = Literal[
     "provider-interface",
     "query-definition",
     "source-acquisition-policy",
-    "standing-mandate",
     "subject",
 ]
 
@@ -1570,53 +1563,6 @@ def parse_projection_tree(
                         subject_identity=identity,
                         fact_key="complete_policy",
                         value=acquisition_policy.model_dump(mode="json"),
-                    )
-                )
-                continue
-            if kind == "standing-mandate":
-                from cruxible_client.contracts.standing_mandates import (
-                    parse_standing_mandate,
-                    standing_mandate_digest,
-                )
-
-                mandate = parse_standing_mandate(content, path=path, codec=artifact_codec)
-                identity = mandate.identity.qualified
-                if identity in identities:
-                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
-                identities[identity] = path
-                input_digest = file_digest(content).tagged
-                artifact_digest = standing_mandate_digest(mandate).tagged
-                envelopes.append(
-                    ArtifactEnvelopeRow(
-                        identity=identity,
-                        kind="standing-mandate",
-                        format_tag=mandate.artifact_format,
-                        path=path,
-                        artifact_digest=artifact_digest,
-                        predecessor_digest=mandate.lifecycle.predecessor_digest,
-                        revision=projected_revision(
-                            accepted_change_sets,
-                            path=path,
-                            input_digest=input_digest,
-                            artifact_digest=artifact_digest,
-                        ),
-                    )
-                )
-                pins.extend(
-                    PinRow(
-                        source_identity=identity,
-                        target_identity=pin.target.qualified,
-                        target_digest=pin.artifact_digest,
-                    )
-                    for pin in mandate.pins
-                )
-                semantic_facts.append(
-                    ProjectionFact(
-                        schema_id="playbill.standing_mandate.authority",
-                        schema_version=1,
-                        subject_identity=identity,
-                        fact_key="finite_grant",
-                        value=mandate.model_dump(mode="json"),
                     )
                 )
                 continue

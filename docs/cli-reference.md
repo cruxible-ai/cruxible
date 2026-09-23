@@ -777,10 +777,11 @@ The served lanes run deterministic `state_tap`, `transform`, `project`, `guard`,
 `repeat` and `halt` graphs, plus `source` on a graph-v4 definition: a Procedure
 may READ an external source through an accepted Provider. On the DIRECT lane
 the effectful terminals -- `emit_capture`, `post_inbox`, `propose_change_set`,
-`mandate_settlement` -- are not served, and `readiness` lists them as
+`settle_change_set` -- are not served, and `readiness` lists them as
 unsupported nodes before execution: a direct invocation carries no requested
 rung, no occurrence, and no mandate coordinate, and none is fabricated for it.
-The Line lane serves `propose_change_set`; see `playbill line`.
+The Line lane serves `propose_change_set`, and `settle_change_set` under a live
+settle ProcedureMandate; see `playbill line`.
 
 A Source run needs accepted state to authorize it: a live
 SourceAcquisitionPolicy, the CaptureContract each Source node pins, and the

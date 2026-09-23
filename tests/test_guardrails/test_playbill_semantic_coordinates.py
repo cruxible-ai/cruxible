@@ -63,7 +63,6 @@ from cruxible_client.contracts.laws import (
     SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW,
     SOURCE_CHECKED_PROCEDURE_LAW,
     SOURCE_CHECKED_UPGRADE_LAW,
-    STANDING_MANDATE_ACCEPTANCE_LAW,
     SUBJECT_ACCEPTANCE_LAW,
     TRIGGER_CAPTURE_UPGRADE_LAW,
     InstalledAcceptanceLaw,
@@ -261,13 +260,6 @@ LAW_COORDINATES: tuple[
         "playbill-source-acquisition-policy-v1",
         3,
         "sha256:017aa56afdd0160f062abd5957d5900c1c201875f9c3f8a11ba7eb27074ae8a3",
-    ),
-    (
-        STANDING_MANDATE_ACCEPTANCE_LAW,
-        "playbill.standing-mandate.v1",
-        "playbill-standing-mandate-v1",
-        3,
-        "sha256:ab79c01eee9bd149a301d2de27b82d3bb46d4e18717907020e54c4e9d3a75fe7",
     ),
     (
         PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW,

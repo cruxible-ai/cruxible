@@ -84,7 +84,7 @@ def test_typed_reverse_and_full_address_indexes_are_present():
         )
     )
     searches = tuple(row[3] for row in branches if row[3].startswith("SEARCH "))
-    assert len(searches) == 16
+    assert len(searches) == 15
     assert all("(identity=?)" in detail for detail in searches)
     connection.close()
 

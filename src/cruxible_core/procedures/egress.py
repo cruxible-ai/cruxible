@@ -13,9 +13,9 @@ scarcity is a property of the refusal, not a later reconstruction.
 Egress above the cap does not exist, and egress below it is typed by kind:
 ``emit_capture`` emits inert evidence, ``post_inbox`` posts human attention,
 ``propose_change_set`` reaches proposal *receive* only under a rung-2 grant, and
-``mandate_settlement`` traverses the exact pinned target Claim law under the
-resolved mandate.  A receipt cannot relabel one as another: its disposition is
-keyed to its kind, so a proposal can never report itself settled.
+``settle_change_set`` settles under one exact rung-3 Procedure mandate or falls
+back to an ordinary proposal.  A receipt cannot relabel one as another: its
+disposition is keyed to its kind, so a proposal can never report itself settled.
 
 External effects are not a rung.  V1 registers no effect grant at all, so a
 provider call carrying an ``effect_policy`` may prepare a durable intent and
@@ -66,7 +66,6 @@ from cruxible_client.contracts.repairs import (
     RepairOperationV1,
     ServedRepairV1,
 )
-from cruxible_client.contracts.standing_mandates import MandateGrantV1, MandateRuntimeCapV1
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -88,12 +87,9 @@ TerminalEgressKindV1 = Literal[
     "post_inbox",
     "propose_change_set",
     "settle_change_set",
-    "mandate_settlement",
 ]
 #: Terminals that change accepted state under an exact Procedure mandate.
-EFFECTFUL_TERMINAL_KINDS: frozenset[str] = frozenset(
-    {"propose_change_set", "settle_change_set", "mandate_settlement"}
-)
+EFFECTFUL_TERMINAL_KINDS: frozenset[str] = frozenset({"propose_change_set", "settle_change_set"})
 
 TerminalEgressDispositionV1 = Literal["emitted", "posted", "received", "settled"]
 
@@ -139,7 +135,6 @@ TERMINAL_EGRESS_DISPOSITIONS: dict[TerminalEgressKindV1, TerminalEgressDispositi
     "post_inbox": "posted",
     "propose_change_set": "received",
     "settle_change_set": "settled",
-    "mandate_settlement": "settled",
 }
 #: A settle terminal whose condition does not hold may fall back to an ordinary
 #: proposal; its receipt then reports the proposal's disposition, never settled.
@@ -156,11 +151,9 @@ def _disposition_allowed(kind: str, disposition: str) -> bool:
 
 
 #: Terminal kinds whose egress traverses one exact pinned artifact: the
-#: CaptureContract an emission is written under, and the target Claim law a
-#: settlement must traverse.  The other two kinds pin nothing of their own.
-TERMINAL_EGRESS_BOUND_KINDS: frozenset[TerminalEgressKindV1] = frozenset(
-    {"emit_capture", "mandate_settlement"}
-)
+#: CaptureContract an emission is written under.  The other kinds pin nothing
+#: of their own.
+TERMINAL_EGRESS_BOUND_KINDS: frozenset[TerminalEgressKindV1] = frozenset({"emit_capture"})
 
 #: How far material carrying one derived taint label may propagate.  Reading
 #: accepted state constrains nothing; a reduction over unpromoted exhaust, a
@@ -227,6 +220,8 @@ class EffectiveRungV1(_StrictEgressModel):
     sensitivity_policy_digest: str
     mandate_coordinate_digest: str
     calibration_coordinate_digest: str
+    #: Retained wire field for persisted admission evidence; always empty.
+    #: Procedure authority is the exact mandate named by ``mandate_grant``.
     mandate_basis_digests: tuple[str, ...] = ()
     terms: tuple[EffectiveRungTermReadingV1, ...]
     effective_rung: int = Field(ge=NO_TERMINAL_EGRESS, le=3)
@@ -243,10 +238,8 @@ class EffectiveRungV1(_StrictEgressModel):
     @field_validator("mandate_basis_digests")
     @classmethod
     def _basis(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
-            raise ValueError("resolved mandate basis digests must be sorted and unique")
-        for item in value:
-            _tagged(item)
+        if value:
+            raise ValueError("an effective rung carries no inherited mandate basis")
         return value
 
     @model_validator(mode="after")
@@ -312,15 +305,10 @@ def _sensitivity_term(
 
 def _mandate_term(
     *,
-    mandate_grants: Mapping[str, MandateGrantV1],
     mandate_coordinate_digest: str,
     procedure_mandate_rung: int | None,
     caller_tier_rung: int | None = None,
 ) -> EffectiveRungTermReadingV1:
-    # StandingMandate is a Provider/CaptureContract/ClaimType grant and cannot
-    # be reinterpreted as Procedure authority. P2-C binds the exact
-    # ProcedureMandate in the dark v2 request; the executable fold follows B2.
-    del mandate_grants
     if procedure_mandate_rung is None:
         return EffectiveRungTermReadingV1(
             term="mandate_grant",
@@ -350,53 +338,12 @@ def _mandate_term(
     )
 
 
-def _calibration_term(
-    *,
-    calibration_caps: tuple[MandateRuntimeCapV1, ...],
-    calibration_coordinate_digest: str,
-    evaluation_time: datetime,
-) -> EffectiveRungTermReadingV1:
-    rung = 3
-    reason = "No calibration cap narrows this run."
-    for cap in calibration_caps:
-        if cap.cap_kind != "calibration":
-            raise TerminalEgressError(
-                f"the calibration rung term accepts calibration caps only, not {cap.cap_kind!r}"
-            )
-        if cap.suspended:
-            ceiling, detail = NO_TERMINAL_EGRESS, "is suspended"
-        elif cap.valid_until is not None and evaluation_time >= ensure_utc(cap.valid_until):
-            ceiling, detail = NO_TERMINAL_EGRESS, "has expired"
-        elif cap.permitted_operations is None:
-            continue
-        else:
-            ceiling, detail = 3, "permits every rung"
-            for candidate in (0, 1, 2, 3):
-                operation = RUNG_REQUIRED_OPERATIONS[candidate]
-                if operation is not None and operation not in cap.permitted_operations:
-                    ceiling = candidate - 1
-                    detail = f"withholds {operation!r}"
-                    break
-        if ceiling < rung:
-            rung = ceiling
-            reason = f"The calibration cap {detail}."
-    return EffectiveRungTermReadingV1(
-        term="calibration",
-        rung=rung,
-        reason=reason,
-        basis_digest=calibration_coordinate_digest,
-    )
-
-
 def compute_effective_rung(
     *,
     procedure_terminal_capability: int,
     requested_terminal_rung: int,
     selector_privacies: Mapping[str, str],
     taint_labels: tuple[str, ...],
-    mandate_grants: Mapping[str, MandateGrantV1],
-    calibration_caps: tuple[MandateRuntimeCapV1, ...],
-    evaluation_time: datetime,
     procedure_definition_digest: str,
     line_spec_digest: str,
     sensitivity_policy_digest: str,
@@ -407,10 +354,10 @@ def compute_effective_rung(
 ) -> EffectiveRungV1:
     """Fold the five §8.5.1 terms; each may narrow the result and none may widen it.
 
-    ``mandate_grants`` carries only grants that already resolved live through
-    ``resolve_authority_basis``.  Nothing else may reach this computation: an
-    expired, superseded, or absent mandate simply is not in the mapping, and its
-    absence leaves :data:`MANDATE_FREE_RUNG_CEILING` untouched.
+    ``procedure_mandate_rung`` is the rung of the exact accepted Procedure
+    mandate bound to this run; an absent mandate leaves
+    :data:`MANDATE_FREE_RUNG_CEILING` untouched.  No calibration cap is
+    registered, so the calibration term reads rung 3 and never narrows.
     """
 
     terms = (
@@ -435,15 +382,15 @@ def compute_effective_rung(
             sensitivity_policy_digest=sensitivity_policy_digest,
         ),
         _mandate_term(
-            mandate_grants=mandate_grants,
             mandate_coordinate_digest=mandate_coordinate_digest,
             procedure_mandate_rung=procedure_mandate_rung,
             caller_tier_rung=caller_tier_rung,
         ),
-        _calibration_term(
-            calibration_caps=calibration_caps,
-            calibration_coordinate_digest=calibration_coordinate_digest,
-            evaluation_time=ensure_utc(evaluation_time),
+        EffectiveRungTermReadingV1(
+            term="calibration",
+            rung=3,
+            reason="No calibration cap narrows this run.",
+            basis_digest=calibration_coordinate_digest,
         ),
     )
     lowest = min(item.rung for item in terms)
@@ -453,7 +400,6 @@ def compute_effective_rung(
         sensitivity_policy_digest=sensitivity_policy_digest,
         mandate_coordinate_digest=mandate_coordinate_digest,
         calibration_coordinate_digest=calibration_coordinate_digest,
-        mandate_basis_digests=tuple(sorted(mandate_grants, key=lambda item: item.encode("ascii"))),
         terms=terms,
         effective_rung=lowest,
         limiting_term=next(item.term for item in terms if item.rung == lowest),
@@ -482,6 +428,15 @@ class TerminalEgressItemV1(_StrictEgressModel):
         return normalize_canonical(value)
 
 
+#: ``mandate_pin`` and ``mandate_basis_digests`` stay on the request wire so
+#: persisted requests keep their shape, but no terminal carries either:
+#: effectful authority is only the exact Procedure mandate a v2 request names.
+_INHERITED_MANDATE_REFUSAL = (
+    "terminal egress refuses an inherited mandate pin or basis; effectful authority "
+    "is the exact Procedure mandate"
+)
+
+
 class TerminalEgressRequestV1(_StrictEgressModel):
     """Exactly what one authorized terminal hands its sink, and nothing more."""
 
@@ -506,15 +461,6 @@ class TerminalEgressRequestV1(_StrictEgressModel):
 
     _digests = field_validator("procedure_artifact_digest", "admission_binding_digest")(_tagged)
 
-    @field_validator("mandate_basis_digests")
-    @classmethod
-    def _basis(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
-            raise ValueError("mandate basis digests must be sorted and unique")
-        for item in value:
-            _tagged(item)
-        return value
-
     @field_validator("prepared_at")
     @classmethod
     def _prepared_at(cls, value: datetime) -> datetime:
@@ -530,11 +476,8 @@ class TerminalEgressRequestV1(_StrictEgressModel):
             raise ValueError("terminal egress operation disagrees with its rung")
         if (self.bound_artifact_pin is not None) != (self.kind in TERMINAL_EGRESS_BOUND_KINDS):
             raise ValueError(f"{self.kind} egress binds exactly the artifact its law traverses")
-        settlement = self.kind == "mandate_settlement"
-        if settlement != (self.mandate_pin is not None):
-            raise ValueError("only mandate settlement pins a mandate")
-        if settlement != bool(self.mandate_basis_digests):
-            raise ValueError("only mandate settlement carries resolved mandate basis")
+        if self.mandate_pin is not None or self.mandate_basis_digests:
+            raise ValueError(_INHERITED_MANDATE_REFUSAL)
         if not self.items:
             raise ValueError("terminal egress requires at least one child item")
         if tuple(item.child_index for item in self.items) != tuple(range(len(self.items))):
@@ -726,7 +669,7 @@ class TerminalEgressRequestV2(TerminalEgressRequestV1):
         if (self.procedure_mandate_digest is not None) != effectful:
             raise ValueError("effectful terminal egress requires an exact Procedure mandate")
         if self.mandate_pin is not None or self.mandate_basis_digests:
-            raise ValueError("v2 terminal egress refuses inherited StandingMandate authority")
+            raise ValueError(_INHERITED_MANDATE_REFUSAL)
         expected_key = terminal_operation_key(self) if effectful else None
         if self.operation_key != expected_key:
             raise ValueError("terminal operation key does not reproduce from the request")

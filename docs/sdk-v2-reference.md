@@ -844,7 +844,7 @@ there is no accidental Python `None` success.
 The chosen terminal capability and execution lane must permit every reachable
 terminal. Current direct Procedure runs do not supply the accepted Line lane's
 capture/proposal authority. Source syntax does not remove that restriction.
-`PostInbox` and `MandateSettlement` have no source frontend specified here; their
+`PostInbox` and `SettleChangeSet` have no source frontend specified here; their
 existence in other contracts is not a promise of SDK support.
 
 ### `emit_capture`

@@ -4135,9 +4135,6 @@ def _run_playbill_line(
             for item in landed_materials
         },
         taint_labels=(),
-        mandate_grants={},
-        calibration_caps=(),
-        evaluation_time=evaluation_time,
         procedure_definition_digest=accepted.procedure.definition_digest,
         line_spec_digest=accepted_line.artifact_digest,
         sensitivity_policy_digest=sensitivity_policy_digest,

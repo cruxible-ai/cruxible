@@ -59,7 +59,6 @@ from cruxible_client.contracts.provider_interfaces import parse_provider_interfa
 from cruxible_client.contracts.providers import parse_provider
 from cruxible_client.contracts.query.definitions import parse_query_definition
 from cruxible_client.contracts.resolution_contracts import parse_resolution_contract
-from cruxible_client.contracts.standing_mandates import parse_standing_mandate
 from cruxible_client.contracts.subjects import parse_subject
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.compiler.projection_artifacts import (
@@ -256,18 +255,6 @@ OWNER_CODECS = (
         "SourceAcquisitionPolicy",
         "source_acquisition_policies",
         parse_acquisition_policy,
-    ),
-    OwnerCodec(
-        "standing-mandate",
-        "StandingMandate",
-        "standing_mandates",
-        parse_standing_mandate,
-        (
-            ("provider_identity", "TEXT NOT NULL"),
-            ("capture_contract_digest", "TEXT NOT NULL"),
-            ("valid_from_us", "INTEGER NOT NULL"),
-            ("valid_until_us", "INTEGER NOT NULL"),
-        ),
     ),
     OwnerCodec(
         "procedure-mandate",
@@ -547,8 +534,6 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
     if owner.kind == "line":
         result["identity_digest"] = line_identity_digest(source.identity)
         result["requested_terminal_rung"] = line_requested_rung(source)
-    if owner.kind == "standing-mandate":
-        result["provider_identity"] = source.provider.qualified
     for name in ("valid_from", "valid_until", "expires_at"):
         if hasattr(source, name):
             result[name + "_us"] = utc_microseconds(getattr(source, name))

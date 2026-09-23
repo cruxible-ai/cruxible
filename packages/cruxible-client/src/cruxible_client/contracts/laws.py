@@ -22,7 +22,6 @@ PROVIDER_LAW_IDENTIFIER = "playbill.provider.v1"
 PROVIDER_LAW_V2_IDENTIFIER = "playbill.provider.v2"
 PROVIDER_INTERFACE_LAW_IDENTIFIER = "playbill.provider-interface.v1"
 SOURCE_ACQUISITION_POLICY_LAW_IDENTIFIER = "playbill.source-acquisition-policy.v1"
-STANDING_MANDATE_LAW_IDENTIFIER = "playbill.standing-mandate.v1"
 PROCEDURE_MANDATE_LAW_IDENTIFIER = "playbill.procedure-mandate.v1"
 PROCEDURE_LAW_IDENTIFIER = "playbill.procedure.v1"
 PROCEDURE_LAW_V2_IDENTIFIER = "playbill.procedure.v2"
@@ -224,11 +223,6 @@ SOURCE_ACQUISITION_POLICY_LAW = _artifact_law_coordinate(
     "playbill-source-acquisition-policy-v1",
     semantic_revision=3,
 )
-STANDING_MANDATE_LAW = _artifact_law_coordinate(
-    STANDING_MANDATE_LAW_IDENTIFIER,
-    "playbill-standing-mandate-v1",
-    semantic_revision=3,
-)
 PROCEDURE_MANDATE_LAW = _artifact_law_coordinate(
     PROCEDURE_MANDATE_LAW_IDENTIFIER,
     "playbill-procedure-mandate-v1",
@@ -414,11 +408,6 @@ SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=SOURCE_ACQUISITION_POLICY_LAW,
     artifact_kind="source-acquisition-policy",
     artifact_tag="playbill-source-acquisition-policy-v1",
-)
-STANDING_MANDATE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=STANDING_MANDATE_LAW,
-    artifact_kind="standing-mandate",
-    artifact_tag="playbill-standing-mandate-v1",
 )
 PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
@@ -691,7 +680,6 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         QUERY_DEFINITION_ACCEPTANCE_LAW,
         QUERY_DEFINITION_V2_ACCEPTANCE_LAW,
         SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW,
-        STANDING_MANDATE_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW,
         SUBJECT_ACCEPTANCE_LAW,
@@ -779,9 +767,6 @@ __all__ = [
     "SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW",
     "SOURCE_ACQUISITION_POLICY_LAW",
     "SOURCE_ACQUISITION_POLICY_LAW_IDENTIFIER",
-    "STANDING_MANDATE_ACCEPTANCE_LAW",
-    "STANDING_MANDATE_LAW",
-    "STANDING_MANDATE_LAW_IDENTIFIER",
     "PROCEDURE_MANDATE_ACCEPTANCE_LAW",
     "PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW",
     "PROCEDURE_MANDATE_LAW",
