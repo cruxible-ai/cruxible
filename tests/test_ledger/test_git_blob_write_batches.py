@@ -121,6 +121,33 @@ def test_parent_based_writes_match_the_oracle_across_adds_edits_and_removals(led
     ledger._git(["fsck", "--strict", "--no-dangling"])
 
 
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        ({"a/b": b"inside", "keep": b"k"}, {"a": b"now a file", "keep": b"k"}),
+        ({"a": b"a file", "keep": b"k"}, {"a/b": b"now inside", "keep": b"k"}),
+        ({"x/a/b/c": b"deep", "x/z": b"z"}, {"x/a": b"flattened", "x/z": b"z"}),
+    ],
+)
+def test_a_path_may_turn_between_file_and_directory(ledger, tmp_path, before, after):
+    identity = {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+    }
+    parent_tree = ledger._write_tree(before)
+    parent = (
+        ledger._git(["commit-tree", "--no-gpg-sign", parent_tree, "-m", "p"], environment=identity)
+        .decode()
+        .strip()
+    )
+    oid = ledger._write_tree(after, accepted_parent=parent)
+    assert oid == _member_by_member_tree(ledger, after, tmp_path)
+    assert ledger.read_tree(oid) == after
+    ledger._git(["fsck", "--strict", "--no-dangling"])
+
+
 def test_a_path_that_is_both_file_and_directory_is_refused(ledger):
     base = ledger._write_tree({"a": b"file"})
     with pytest.raises(PlaybillGitError, match="both a file and a directory"):

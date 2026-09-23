@@ -391,14 +391,13 @@ class GitLedger:
                 subtrees.setdefault(head, {})[rest] = oid
             else:
                 files[head] = oid
+        # Judge conflicts on the final tree: removed files go first, then each
+        # changed directory, then added files, so a path may turn from a file
+        # into a directory (or back) within one change.
         for name, oid in files.items():
             current = entries.get(name)
-            if current is not None and current[0] == b"40000":
-                raise PlaybillGitError(f"ledger path is both a file and a directory: {name}")
-            if oid is None:
-                entries.pop(name, None)
-            else:
-                entries[name] = (b"100644", oid)
+            if oid is None and current is not None and current[0] != b"40000":
+                entries.pop(name)
         for name, nested in subtrees.items():
             current = entries.get(name)
             if current is not None and current[0] != b"40000":
@@ -408,6 +407,13 @@ class GitLedger:
                 entries.pop(name, None)
             else:
                 entries[name] = (b"40000", child)
+        for name, oid in files.items():
+            if oid is None:
+                continue
+            current = entries.get(name)
+            if current is not None and current[0] == b"40000":
+                raise PlaybillGitError(f"ledger path is both a file and a directory: {name}")
+            entries[name] = (b"100644", oid)
         if not entries:
             return None
         body = b"".join(
@@ -2237,7 +2243,9 @@ class GitLedger:
                 return remembered
         output = self._git(arguments, environment=environment)
         try:
-            includes = b"[include" in config.read_bytes()
+            # Section names are case-insensitive: [include], [Include],
+            # [includeIf "..."] all pull in other files this cache cannot see.
+            includes = _CONFIG_INCLUDE_RE.search(config.read_bytes()) is not None
         except OSError:
             includes = True
         if not includes and _file_identity(config) == before:
@@ -2296,6 +2304,7 @@ def _fsync_directory(path: Path) -> None:
 
 
 _CONFIG_READS_CAPACITY = 64
+_CONFIG_INCLUDE_RE = re.compile(rb"\[\s*include", re.IGNORECASE)
 _CONFIG_READS: OrderedDict[tuple[object, ...], bytes] = OrderedDict()
 _CONFIG_READS_LOCK = threading.Lock()
 

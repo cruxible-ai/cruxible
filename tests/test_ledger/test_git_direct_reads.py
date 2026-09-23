@@ -132,3 +132,21 @@ def test_config_reads_are_remembered_only_while_the_config_file_is_unchanged(
         assert len(calls) == 2  # one fresh read after the change
     finally:
         git_module.GitLedger._git = real  # type: ignore[method-assign]
+
+
+@pytest.mark.parametrize(
+    "section", ["[include]", "[Include]", "[INCLUDE]", '[includeIf "gitdir:/"]']
+)
+def test_config_with_any_include_spelling_is_never_remembered(tmp_path: Path, section: str) -> None:
+    repository, _commit = _repository(tmp_path)
+    included = tmp_path / "included.config"
+    included.write_text("[i18n]\n\tcommitencoding = UTF-8\n")
+    with open(repository / "config", "a") as config:
+        config.write(f"{section}\n\tpath = {included}\n")
+    ledger = git_module.GitLedger.__new__(git_module.GitLedger)
+    ledger.path = repository
+    query = ["config", "--default", "UTF-8", "--get", "i18n.commitencoding"]
+    assert ledger._config_read(query) == b"UTF-8\n"
+    # Only the included file changes; the repository config file does not.
+    included.write_text("[i18n]\n\tcommitencoding = ISO-8859-1\n")
+    assert ledger._config_read(query) == b"ISO-8859-1\n"
