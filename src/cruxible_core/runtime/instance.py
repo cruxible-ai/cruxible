@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
 
@@ -235,6 +235,17 @@ def _validate_client_principals(
         "recovery-configured" if recovery_configured else "narrowed-no-recovery"
     )
     return ordered, posture
+
+
+_VALIDATED_PATHS: dict[
+    tuple[str, tuple[tuple[str, Any], ...]],
+    tuple[tuple[tuple[int, int, int], ...], dict[str, Path]],
+] = {}
+
+
+def _path_identity(path: Path) -> tuple[int, int, int]:
+    status = path.lstat()
+    return (status.st_dev, status.st_ino, status.st_mode)
 
 
 class PlaybillInstance:
@@ -572,8 +583,36 @@ class PlaybillInstance:
 
     @staticmethod
     def _validated_paths(root: Path, layout: StorageLayout) -> dict[str, Path]:
+        """Resolve and confine every managed storage directory.
+
+        A full validation is remembered with each path's lstat identity (device,
+        inode and mode). Later calls lstat each path once and reuse the result
+        only while every identity is unchanged; a directory replaced by a
+        symlink or another inode takes the full validation again.
+        """
+        entries = tuple(layout.model_dump().items())
+        key = (str(root), entries)
+        remembered = _VALIDATED_PATHS.get(key)
+        if remembered is not None:
+            identities, cached = remembered
+            try:
+                current = tuple(_path_identity(root / relative) for _name, relative in entries)
+            except OSError:
+                current = None
+            if current == identities:
+                return dict(cached)
+        paths = PlaybillInstance._validate_paths(root, entries)
+        try:
+            identities = tuple(_path_identity(root / relative) for _name, relative in entries)
+        except OSError:
+            return paths
+        _VALIDATED_PATHS[key] = (identities, dict(paths))
+        return paths
+
+    @staticmethod
+    def _validate_paths(root: Path, entries: tuple[tuple[str, Any], ...]) -> dict[str, Path]:
         paths: dict[str, Path] = {}
-        for name, relative in layout.model_dump().items():
+        for name, relative in entries:
             path = root / relative
             if path.is_symlink():
                 raise PlaybillFormatError(f"managed storage path may not be a symlink: {name}")

@@ -204,3 +204,30 @@ def test_subject_search_evaluates_only_that_subjects_claims(tmp_path, monkeypatc
         assert {pair[0] for chunk in selections for pair in chunk} == {
             identity for identity, _ in scoped_versions
         }
+
+
+def test_status_batches_select_attestations_once_for_every_claim(tmp_path, monkeypatch):
+    from cruxible_core.indexes.typed_state import TypedStateReader
+
+    instance, _ = seed_claims(tmp_path)
+    claims = ClaimVerdictReadContext(instance, instance.accepted_coordinate()).claims()
+    live = [claim for claim in claims if claim.lifecycle.state != "retired"]
+    assert len(live) > 1
+    calls: list[tuple[tuple[str, str], ...]] = []
+    attestations = TypedStateReader.claim_attestations
+
+    def selected(reader, *args, **kwargs):
+        calls.append(kwargs["claim_versions"])
+        return attestations(reader, *args, **kwargs)
+
+    monkeypatch.setattr(TypedStateReader, "claim_attestations", selected)
+    playbill_search.reset_claim_resolution_memo()
+    # No caller context: the batch parses Claims itself, as the sync check does.
+    playbill_search.claim_resolution_statuses(
+        instance,
+        claims=claims,
+        at=PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        evaluation_time=EVALUATION_TIME,
+    )
+    assert len(calls) == 1
+    assert {pair[0] for pair in calls[0]} >= {claim.identity.qualified for claim in live}

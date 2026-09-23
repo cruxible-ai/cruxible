@@ -190,6 +190,10 @@ def claim_resolution_statuses(
             )
         )
     )
+    # Register the whole batch before any verdict, so batch-wide reads (such as
+    # attestation selection) cover every Claim at once, not one Claim per miss.
+    for claim in live:
+        read_context.claim(claim.identity.qualified)
     read_context.prefetch_law_evidence(tuple(claim_path(claim.identity.name) for claim in live))
     for group in live_groups.values():
         first = group[0]

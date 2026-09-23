@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import stat
+import threading
+from collections import OrderedDict
 from pathlib import Path
 
 from cruxible_client.contracts.canonical import CasDigest
@@ -22,6 +24,24 @@ def _fsync_directory(path: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+# Objects already hashed against their address, with the file identity observed
+# when they were: (device, inode, size, mtime, ctime). A file whose identity is
+# unchanged has not been rewritten, so its bytes need not be re-hashed.
+_VERIFIED_CAPACITY = 65536
+_VERIFIED: OrderedDict[tuple[str, str], tuple[int, int, int, int, int]] = OrderedDict()
+_VERIFIED_LOCK = threading.Lock()
+
+
+def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
 
 
 class ContentAddressedBodyStore:
@@ -108,7 +128,25 @@ class ContentAddressedBodyStore:
             redacted=False,
         )
 
+    def _known(self, path: Path, digest: str) -> bool:
+        """Whether this exact file was already verified and has not changed since."""
+
+        try:
+            metadata = path.lstat()
+        except OSError:
+            return False
+        if not stat.S_ISREG(metadata.st_mode):
+            return False
+        with _VERIFIED_LOCK:
+            known = _VERIFIED.get((str(path), digest))
+        return known == _file_identity(metadata)
+
     def _verified_bytes(self, path: Path, digest: str) -> bytes:
+        if self._known(path, digest):
+            try:
+                return path.read_bytes()
+            except OSError as exc:
+                raise PlaybillCasError("CAS object cannot be read") from exc
         self._validate_shard(path.parent)
         if path.is_symlink() or not path.is_file():
             raise PlaybillCasError("CAS object must be a regular file")
@@ -121,12 +159,21 @@ class ContentAddressedBodyStore:
             raise PlaybillCasError("CAS object cannot be read") from exc
         if self.digest_bytes(content).tagged != digest:
             raise PlaybillCasError("CAS object bytes do not match their content address")
+        after = path.lstat()
+        if _file_identity(after) == _file_identity(metadata):
+            with _VERIFIED_LOCK:
+                _VERIFIED[(str(path), digest)] = _file_identity(after)
+                _VERIFIED.move_to_end((str(path), digest))
+                while len(_VERIFIED) > _VERIFIED_CAPACITY:
+                    _VERIFIED.popitem(last=False)
         return content
 
     def verify(self, digest: str) -> bool:
         """Verify exact bytes without disclosing them or their length."""
 
         path = self._path(digest)
+        if self._known(path, digest):
+            return True
         if not path.exists() and not path.is_symlink():
             return False
         self._verified_bytes(path, digest)

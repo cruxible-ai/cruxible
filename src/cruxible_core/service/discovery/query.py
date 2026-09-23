@@ -68,6 +68,7 @@ from cruxible_core.service.evidence.evidence import (
     ClaimVerdictReadContext,
     _claim_read_history_index,
     _current_replay_available,
+    _IndexedClaimLawEvidence,
     _referent_digests,
     _reproduced_claim_adjudication_rule,
     accepted_claim_attestations,
@@ -315,6 +316,23 @@ class _AcceptedQueryFactsRead:
                 )
             return evidence
 
+        # Read the law evidence of every row this build will emit under one
+        # history snapshot, instead of opening a history reader per Claim.
+        law_evidence = history.law_evidence
+        if isinstance(law_evidence, _IndexedClaimLawEvidence):
+            wanted: list[str] = []
+            for path in self._claim_paths:
+                claim = self._claims.get(path)
+                if claim is None:
+                    claim = parse_claim(tree[path], path=path)
+                    self._claims[path] = claim
+                if self._predicates is not None and (
+                    claim.statement.predicate not in self._predicates
+                ):
+                    continue
+                if include_retired or claim.lifecycle.state == "live":
+                    wanted.append(path)
+            law_evidence.prefetch(tuple(wanted))
         rows: list[ClaimFactRowV1] = []
         for path in sorted(self._claim_paths, key=lambda item: item.encode("utf-8")):
             # The full-history path historically looked up evidence before
