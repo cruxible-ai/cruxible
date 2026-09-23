@@ -323,7 +323,10 @@ def claim_resolution_statuses(
         group_statuses: dict[str, SearchStatus] = {}
         _apply_resolution_statuses(resolution, group_statuses, slots=slots)
         statuses.update(group_statuses)
-        if reads is not None:
+        if reads is not None and reads.inconsistent:
+            # Inconsistent observations: nothing from this derivation is remembered.
+            remember = False
+        if reads is not None and not reads.inconsistent:
             derived[slot_key] = (reads, group_boundaries, group_statuses)
     if derived:
         union = VerdictReads()

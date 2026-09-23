@@ -185,3 +185,30 @@ def test_availability_is_not_remembered_across_a_change_during_its_derivation(
     monkeypatch.setattr(playbill_evidence, "_cas_file_identity", identity)
     assert available(instance, capture, readers={}) is False
     assert playbill_evidence._replay_available(instance, capture, readers={}) is False
+
+
+def test_a_shared_capture_observed_inconsistently_is_not_remembered(tmp_path, monkeypatch):
+    from cruxible_core.service.evidence import evidence as playbill_evidence
+    from tests.test_authoring.test_authoring_existing_capture import shared_capture_world
+
+    instance, *_rest = shared_capture_world(tmp_path)
+    claims = ClaimVerdictReadContext(instance, instance.accepted_coordinate()).claims()
+    digests = {claim.backing.capture_digests[0] for claim in claims}
+    assert len(claims) == 2 and len(digests) == 1  # one slot, one shared Capture
+    (capture,) = digests
+    available = playbill_evidence._current_replay_available
+
+    def vanishes_after_first_use(instance_, digest, **kwargs):
+        answer = available(instance_, digest, **kwargs)
+        path = instance.body_store()._path(capture)
+        if digest == capture and path.exists():
+            path.unlink()
+        return answer
+
+    # The first Claim sees the evidence; it is gone before the second is evaluated.
+    playbill_evidence._AVAILABILITY_MEMO.clear()
+    monkeypatch.setattr(playbill_evidence, "_current_replay_available", vanishes_after_first_use)
+    _derive(instance, fresh=True)
+    monkeypatch.setattr(playbill_evidence, "_current_replay_available", available)
+
+    assert _derive(instance, fresh=False) == _derive(instance, fresh=True)

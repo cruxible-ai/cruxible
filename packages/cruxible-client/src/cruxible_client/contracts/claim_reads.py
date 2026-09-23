@@ -8,6 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from cruxible_client.contracts import PlaybillAcceptedCoordinate, PlaybillClaimViewV2
+from cruxible_client.contracts.claims import ClaimObject
 from cruxible_client.contracts.declared_blocks import ProjectionClaimBackingV1
 
 MAX_CLAIM_READ_BATCH = 256
@@ -94,8 +95,8 @@ class ClaimValueV1(BaseModel):
     qualifier: str | None
     role: str
     object_kind: Literal["literal", "subject", "exact_content"]
-    # The statement's object exactly as accepted (every variant's fields).
-    object: dict[str, Any]
+    # The statement's object exactly as accepted.
+    object: ClaimObject
     # The literal itself; the object Subject's artifact path; or the exact
     # content digest. ``object`` carries the selector or span.
     value: Any

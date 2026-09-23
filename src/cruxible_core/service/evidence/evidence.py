@@ -190,6 +190,10 @@ class VerdictReads:
     # one input outside the accepted coordinate, so a remembered answer is keyed
     # on what was used, never on a later re-read.
     used_availability: dict[str, bool] = dataclass_field(default_factory=dict)
+    # Set when one Capture was observed both available and unavailable while
+    # this slot was derived: its verdicts rest on inconsistent observations and
+    # must not be remembered.
+    inconsistent: bool = False
 
     def update(self, other: VerdictReads) -> None:
         self.paths |= other.paths
@@ -198,6 +202,7 @@ class VerdictReads:
         self.providers |= other.providers
         self.captures |= other.captures
         self.used_availability.update(other.used_availability)
+        self.inconsistent = self.inconsistent or other.inconsistent
 
     def keys(self) -> tuple[tuple[str, ...], ...]:
         return (
@@ -421,7 +426,9 @@ class ClaimVerdictReadContext:
         if self._recording is not None:
             self._recording.captures.add(digest)
             if available is not None:
-                self._recording.used_availability[digest] = available
+                seen = self._recording.used_availability.setdefault(digest, available)
+                if seen != available:
+                    self._recording.inconsistent = True
 
     def snapshot(self, reads: VerdictReads) -> dict[tuple[str, ...], object]:
         """Re-read every named input at this context's coordinate, in batches.

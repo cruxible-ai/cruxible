@@ -311,7 +311,7 @@ def _claim_value_row(claim: Any, *, verdict: object, status: str) -> ClaimValueV
         qualifier=statement.qualifier,
         role=statement.role,
         object_kind=claim_object.kind,
-        object=claim_object.model_dump(mode="json"),
+        object=claim_object,
         value=value,
         verdict=str(getattr(verdict, "verdict", "unevaluated")),
         status=status,

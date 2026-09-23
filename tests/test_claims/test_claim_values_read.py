@@ -126,6 +126,6 @@ def test_value_rows_carry_every_object_variant(tmp_path: Path) -> None:
     assert rows["literal"].value == literal.statement.object.value
     assert rows["subject"].value == SUBJECTS[1]
     assert rows["exact_content"].value == digest
-    assert rows["exact_content"].object["span"]["end_byte"] == 4
+    assert rows["exact_content"].object.span.end_byte == 4  # type: ignore[union-attr]
     for kind, claim in variants.items():
-        assert rows[kind].object == claim.statement.object.model_dump(mode="json")
+        assert rows[kind].object == claim.statement.object
