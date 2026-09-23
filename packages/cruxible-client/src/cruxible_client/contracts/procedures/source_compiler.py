@@ -24,6 +24,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureBudgetV3,
     ProcedureDefinitionV6,
     ProcedureHardCapsV3,
+    derived_terminal_capability,
 )
 from cruxible_client.contracts.procedures.source_program import (
     ProcedureSourceV1,
@@ -315,7 +316,7 @@ class _Compiler:
         self.maps.append(SourceMapEntry(node_id=node_id, span=self.span(at)))
         self.tail = (
             []
-            if kind in {"return", "emit_capture", "propose_change_set", "halt"}
+            if kind in {"return", "emit_capture", "propose_change_set", "settle_change_set", "halt"}
             else [(node, "next")]
         )
         return node
@@ -1151,10 +1152,16 @@ class _Compiler:
             )
         )
 
-    def proposal_terminal(self, call: ast.Call, stmt: ast.Return) -> None:
+    def proposal_terminal(
+        self,
+        call: ast.Call,
+        stmt: ast.Return,
+        *,
+        kind: Literal["propose_change_set", "settle_change_set"] = "propose_change_set",
+    ) -> None:
         fields = {k.arg: k.value for k in call.keywords}
         if call.args or set(fields) != {"candidates", "result"}:
-            self.fail(call, "propose_change_set needs candidates and a typed result")
+            self.fail(call, f"{kind} needs candidates and a typed result")
         candidates = fields["candidates"]
         if not isinstance(candidates, ast.Tuple | ast.List) or not candidates.elts:
             self.fail(candidates, "Provide a nonempty list of typed Claim candidates")
@@ -1172,7 +1179,7 @@ class _Compiler:
                 "return_contract",
             )
         self.append(
-            "propose_change_set",
+            kind,
             stmt,
             candidate_templates=templates,
             claim_types=[
@@ -1383,6 +1390,7 @@ class _Compiler:
                         "emit_capture",
                         "claim_candidate",
                         "propose_change_set",
+                        "settle_change_set",
                     }
                     or stmt.targets[0].id in self.program.contracts
                 ):
@@ -1546,6 +1554,12 @@ class _Compiler:
                     and stmt.value.func.id == "propose_change_set"
                 ):
                     self.proposal_terminal(stmt.value, stmt)
+                elif (
+                    isinstance(stmt.value, ast.Call)
+                    and isinstance(stmt.value.func, ast.Name)
+                    and stmt.value.func.id == "settle_change_set"
+                ):
+                    self.proposal_terminal(stmt.value, stmt, kind="settle_change_set")
                 else:
                     value = self.value(stmt.value)
                     if (
@@ -1581,7 +1595,7 @@ def _compile_source(
     output: SourceContract,
     budget: ProcedureBudgetV3,
     hard_caps: ProcedureHardCapsV3,
-    terminal_capability: Literal[1, 2, 3] = 1,
+    terminal_capability: Literal[1, 2, 3] | None = None,
     description: str | None = None,
 ) -> CompiledSource:
     compiler = _Compiler(program, input, output)
@@ -1632,7 +1646,14 @@ def _compile_source(
     compiler.environment.update({n: Namespace(n) for n in names[1:]})
     if not compiler.statements(function.body):
         compiler.fail(function, "Every path must explicitly return or halt", "missing_return")
-    if compiler.required_child_rung > terminal_capability:
+    # New authoring derives capability from the compiled terminals and children;
+    # an explicit value only reproduces a retained artifact during verification.
+    capability = (
+        derived_terminal_capability(compiler.nodes, child_rung=compiler.required_child_rung)
+        if terminal_capability is None
+        else terminal_capability
+    )
+    if compiler.required_child_rung > capability:
         compiler.fail(
             function,
             "A child requires a higher terminal capability than this Procedure",
@@ -1652,7 +1673,7 @@ def _compile_source(
             else None,
             budget=budget,
             hard_caps=hard_caps,
-            terminal_capability=terminal_capability,
+            terminal_capability=capability,
             source=program.model_copy(
                 update={
                     "contracts": {
@@ -1686,7 +1707,7 @@ def compile_source(
     output: SourceContract,
     budget: ProcedureBudgetV3,
     hard_caps: ProcedureHardCapsV3,
-    terminal_capability: Literal[1, 2, 3] = 1,
+    terminal_capability: Literal[1, 2, 3] | None = None,
     description: str | None = None,
 ) -> CompiledSource:
     """Return a graph or a localized diagnostic, including unsupported schemas."""

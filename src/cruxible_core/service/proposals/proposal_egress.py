@@ -367,7 +367,7 @@ def _resolve_prepared(
     if (
         request.run_id != admission.run_id
         or request.admission_binding_digest != admission.admission_binding_digest
-        or request.kind != "propose_change_set"
+        or request.kind not in {"propose_change_set", "settle_change_set"}
     ):
         raise ProcedureRunRecoveryRequired(
             f"{ProcedureRunRecoveryRequired.code}: run {admission.run_id} journaled a prepared "

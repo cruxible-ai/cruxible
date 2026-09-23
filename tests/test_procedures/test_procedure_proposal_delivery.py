@@ -253,7 +253,7 @@ def test_a_line_terminal_produces_a_proposal_the_manager_accepts_and_reads_back(
     assert egress.node_id == "propose"
     assert egress.kind == "propose_change_set"
     assert egress.verdict == "delivered"
-    assert egress.effective_rung == 2
+    assert egress.effective_authority == "propose"
     assert egress.operation_key is not None
     assert egress.procedure_mandate_digest is not None
     assert egress.proposal_id is not None and egress.candidate_digest is not None
@@ -358,12 +358,12 @@ def test_a_line_requesting_rung_one_is_capped_before_the_proposal_door(tmp_path:
     state = run_line(instance, root, line)
 
     refusal = _refusal(state)
-    assert refusal.code == "terminal_rung_capped_by_line_requested_rung", refusal
+    assert refusal.code == "terminal_authority_capped_by_line_max_authority", refusal
     assert _proposal_refs(instance) == []
     (egress,) = state.terminal_egress
-    assert egress.verdict == "refused_effective_rung"
-    assert egress.effective_rung == 1
-    assert egress.limiting_term == "line_requested_rung"
+    assert egress.verdict == "refused_effective_authority"
+    assert egress.effective_authority == "observe"
+    assert egress.limiting_term == "line_max_authority"
 
 
 def test_a_source_failure_stops_the_run_before_the_terminal(tmp_path: Path) -> None:
@@ -1359,3 +1359,82 @@ def test_completed_proposal_retry_survives_closed_ref_cleanup_and_restart(
     assert egress.proposal_id == admission.proposal_id
     assert len(_admissions_for(reopened, target)) == 1
     assert reopened.proposal_ref_target(target) is None
+
+
+# --- runs retained from before authority was served as verbs
+
+
+def _raw_finalized_refusal(instance, run_id: str) -> dict:  # type: ignore[no-untyped-def]
+    from cruxible_core.exhaust.records import parse_journal_payload
+    from cruxible_core.service.procedures import procedure_runs
+
+    records = procedure_runs._records_for_run(instance, run_id)
+    final = next(r.record for r in records if r.record.event_kind == "attempt_finalized")
+    payload = parse_journal_payload(
+        instance.body_store().read(
+            final.payload_digest, access=BodyAccessContext(principal_id="test", can_read_body=True)
+        )
+    )
+    return payload["refusal"]
+
+
+def test_a_retained_rung_cap_refusal_reads_as_todays_authority_code(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from cruxible_core.procedures.egress import EffectiveRungV1
+
+    instance, _owner, root, line, _procedure = proposal_world(tmp_path, requested_terminal_rung=1)
+    # The journal records the code a run wrote before the rename.
+    monkeypatch.setattr(
+        EffectiveRungV1,
+        "refusal_code",
+        property(lambda self: f"terminal_rung_capped_by_{self.limiting_term}"),
+    )
+    state = run_line(instance, root, line)
+    monkeypatch.undo()
+    assert _raw_finalized_refusal(instance, state.run_id)["code"] == (
+        "terminal_rung_capped_by_line_requested_rung"
+    )
+
+    again = service_get_playbill_procedure_run(instance, run_id=state.run_id)
+    refusal = _refusal(again)
+    assert refusal.code == "terminal_authority_capped_by_line_max_authority"
+    (egress,) = again.terminal_egress
+    assert (egress.verdict, egress.limiting_term) == (
+        "refused_effective_authority",
+        "line_max_authority",
+    )
+
+
+def test_a_retained_rung_insufficient_mandate_refusal_reads_as_todays_grant_code(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from cruxible_core.procedures import egress as egress_module
+
+    instance, _owner, root, line, procedure = proposal_world(tmp_path, mandate=None)
+    mandate = fixtures._line_mandate(procedure).model_copy(update={"namespace": ("subjects",)})
+    fixtures._accept_more(
+        instance,
+        _owner,
+        {procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate)},
+        name="subjects-mandate",
+    )
+    original = egress_module.TerminalAuthorityRefusal.__init__
+
+    def historical(self, codes, message, **kwargs):  # type: ignore[no-untyped-def]
+        # The code a mandate that granted too little was refused with before the rename.
+        original(self, ("procedure_mandate_rung_insufficient",), message, **kwargs)
+
+    monkeypatch.setattr(egress_module.TerminalAuthorityRefusal, "__init__", historical)
+    state = run_line(instance, root, line)
+    monkeypatch.undo()
+    assert _raw_finalized_refusal(instance, state.run_id)["code"] == (
+        "procedure_mandate_rung_insufficient"
+    )
+
+    again = service_get_playbill_procedure_run(instance, run_id=state.run_id)
+    refusal = _refusal(again)
+    assert refusal.code == "procedure_mandate_grant_insufficient"
+    assert refusal.details["codes"] == ["procedure_mandate_grant_insufficient"]
+    (egress,) = again.terminal_egress
+    assert egress.refusal_code == "procedure_mandate_grant_insufficient"

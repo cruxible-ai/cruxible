@@ -15,7 +15,12 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_client.contracts.procedures.models import ProcedureBudgetV3, ProcedureHardCapsV3
+from cruxible_client.contracts.procedures.models import (
+    AuthorityVerb,
+    EffectiveAuthority,
+    ProcedureBudgetV3,
+    ProcedureHardCapsV3,
+)
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_execution import (
     ProviderExternalOccurrencePlanV1,
@@ -58,6 +63,30 @@ ProcedureAdmissionRefusalCodeV1: TypeAlias = Literal[
     "trigger_capture_not_yet_observed",
     "line_binding_superseded",
 ]
+#: Codes retained runs were refused with before authority was served as verbs.
+#: A run's journal keeps the bytes it wrote; reading it serves today's code.
+HISTORICAL_NODE_REFUSAL_CODES: dict[str, str] = {
+    "procedure_mandate_rung_insufficient": "procedure_mandate_grant_insufficient",
+    "terminal_rung_capped_by_procedure_terminal_capability": (
+        "terminal_authority_capped_by_procedure_terminal_capability"
+    ),
+    "terminal_rung_capped_by_line_requested_rung": (
+        "terminal_authority_capped_by_line_max_authority"
+    ),
+    "terminal_rung_capped_by_propagated_sensitivity": (
+        "terminal_authority_capped_by_propagated_sensitivity"
+    ),
+    "terminal_rung_capped_by_mandate_grant": "terminal_authority_capped_by_mandate_grant",
+    "terminal_rung_capped_by_calibration": "terminal_authority_capped_by_calibration",
+}
+
+
+def current_refusal_code(code: str) -> str:
+    """The code a retained refusal is served as today."""
+
+    return HISTORICAL_NODE_REFUSAL_CODES.get(code, code)
+
+
 ProcedureNodeRefusalCodeV1: TypeAlias = Literal[
     "guard_refused",
     "repeat_exhausted",
@@ -83,6 +112,10 @@ ProcedureNodeRefusalCodeV1: TypeAlias = Literal[
     "proposal_item_evidence_ambiguous",
     "proposal_lowering_refused",
     "proposal_candidate_refused",
+    "settle_mandate_missing",
+    "settle_mandate_ambiguous",
+    "settle_condition_refused",
+    "settle_publication_refused",
     "proposal_target_paths_mismatch",
     "proposal_receipt_incomplete",
     "effectful_operation_payload_mismatch",
@@ -90,7 +123,7 @@ ProcedureNodeRefusalCodeV1: TypeAlias = Literal[
     "procedure_mandate_superseded",
     "procedure_mandate_expired",
     "procedure_mandate_procedure_mismatch",
-    "procedure_mandate_rung_insufficient",
+    "procedure_mandate_grant_insufficient",
     "procedure_mandate_authority_ceiling_insufficient",
     "procedure_mandate_namespace_mismatch",
     "procedure_mandate_not_applicable",
@@ -106,11 +139,11 @@ ProcedureNodeRefusalCodeV1: TypeAlias = Literal[
     "effect_grant_unrecognized",
     "effect_dispatch_requires_actor",
     "effect_dispatch_requires_authenticated_actor",
-    "terminal_rung_capped_by_procedure_terminal_capability",
-    "terminal_rung_capped_by_line_requested_rung",
-    "terminal_rung_capped_by_propagated_sensitivity",
-    "terminal_rung_capped_by_mandate_grant",
-    "terminal_rung_capped_by_calibration",
+    "terminal_authority_capped_by_procedure_terminal_capability",
+    "terminal_authority_capped_by_line_max_authority",
+    "terminal_authority_capped_by_propagated_sensitivity",
+    "terminal_authority_capped_by_mandate_grant",
+    "terminal_authority_capped_by_calibration",
     "provider_acquisition_plan_required",
     "provider_acquisition_plan_mismatch",
     "workspace_file_read_refused",
@@ -288,6 +321,26 @@ class ProcedureNodeRefusalV1(_StrictResultModel):
     repair: ServedRepairV1
 
     _repair = model_validator(mode="before")(_with_default_repair)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _current_codes(cls, value: object) -> object:
+        # A retained run refused before the verb rename reads as today's code.
+        if not isinstance(value, dict):
+            return value
+        value = dict(value)
+        if isinstance(value.get("code"), str):
+            value["code"] = current_refusal_code(value["code"])
+        details = value.get("details")
+        if isinstance(details, dict) and isinstance(details.get("codes"), list):
+            value["details"] = {
+                **details,
+                "codes": [
+                    current_refusal_code(code) if isinstance(code, str) else code
+                    for code in details["codes"]
+                ],
+            }
+        return value
 
     @field_validator("details", mode="before")
     @classmethod
@@ -927,9 +980,19 @@ class ProcedureSourceCaptureAssociationV1(_StrictResultModel):
         return value
 
 
+#: The independent ceilings a served result can name as what capped a run.
+ServedAuthorityTermV1: TypeAlias = Literal[
+    "procedure_terminal_capability",
+    "line_max_authority",
+    "propagated_sensitivity",
+    "mandate_grant",
+    "calibration",
+]
+
+
 TerminalEgressVerdictV1: TypeAlias = Literal[
     "dependencies_bound_egress_pending",
-    "refused_effective_rung",
+    "refused_effective_authority",
     "prepared",
     "delivered",
     "refused",
@@ -970,11 +1033,16 @@ class ProcedureTerminalEgressV1(_StrictResultModel):
 
     tag: Literal["playbill-procedure-terminal-egress-v1"] = "playbill-procedure-terminal-egress-v1"
     node_id: str
-    kind: Literal["emit_capture", "post_inbox", "propose_change_set", "mandate_settlement"]
+    kind: Literal[
+        "emit_capture",
+        "post_inbox",
+        "propose_change_set",
+        "settle_change_set",
+    ]
     verdict: TerminalEgressVerdictV1
-    required_rung: int = Field(ge=0, le=3)
-    effective_rung: int | None = Field(default=None, ge=-1, le=3)
-    limiting_term: str | None = None
+    required_authority: AuthorityVerb
+    effective_authority: EffectiveAuthority | None = None
+    limiting_term: ServedAuthorityTermV1 | None = None
     operation_key: str | None = None
     procedure_mandate_digest: str | None = None
     target_paths: tuple[str, ...] = ()
@@ -983,6 +1051,11 @@ class ProcedureTerminalEgressV1(_StrictResultModel):
     refusal_code: str | None = None
     children: tuple[ProcedureTerminalEgressChildV1, ...] = ()
     journal_coordinate: ProcedureJournalCoordinateV1 | None = None
+    # A delivered settle terminal: settled into accepted_git_oid, or fell back to
+    # the ordinary proposal it names, for fallback_reason.
+    settle_outcome: Literal["settled", "proposed"] | None = None
+    accepted_git_oid: str | None = None
+    fallback_reason: str | None = None
 
     @field_validator("operation_key", "procedure_mandate_digest", "candidate_digest")
     @classmethod
@@ -1005,13 +1078,18 @@ class ProcedureTerminalEgressV1(_StrictResultModel):
 
     @model_validator(mode="after")
     def _delivered_shape(self) -> "ProcedureTerminalEgressV1":
-        if self.verdict == "delivered" and self.kind == "propose_change_set":
+        delivered_settle = self.verdict == "delivered" and self.kind == "settle_change_set"
+        if self.verdict == "delivered" and self.kind in {"propose_change_set", "settle_change_set"}:
             if self.proposal_id is None or self.candidate_digest is None:
                 raise ValueError(
                     "a delivered proposal egress names its proposal and exact candidate"
                 )
         elif self.proposal_id is not None or self.candidate_digest is not None:
             raise ValueError("only a delivered proposal egress names a proposal")
+        if delivered_settle != (self.settle_outcome is not None):
+            raise ValueError("exactly a delivered settle egress reports its outcome")
+        if (self.settle_outcome == "settled") != (self.accepted_git_oid is not None):
+            raise ValueError("only a settled outcome names its accepted generation")
         if (self.verdict in {"refused", "failed"}) != (self.refusal_code is not None):
             raise ValueError("a refused or failed egress carries exactly its refusal code")
         return self
@@ -1232,7 +1310,9 @@ __all__ = [
     "ProcedureInternalFailureCodeV1",
     "ProcedureInternalFailureV1",
     "ProcedureJournalCoordinateV1",
+    "HISTORICAL_NODE_REFUSAL_CODES",
     "ProcedureNodeRefusalCodeV1",
+    "current_refusal_code",
     "ProcedureNodeRefusalV1",
     "ProcedureOperationalFailureCodeV1",
     "ProcedureOperationalFailureV1",
@@ -1258,6 +1338,7 @@ __all__ = [
     "ProcedureTerminalEgressChildV1",
     "ProcedureTerminalEgressV1",
     "ProcedureTerminalV1",
+    "ServedAuthorityTermV1",
     "TerminalEgressVerdictV1",
     "procedure_admission_material_digest",
     "procedure_acquisition_plan_digest",

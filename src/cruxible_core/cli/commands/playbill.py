@@ -3691,20 +3691,38 @@ def _echo_terminal_egress(result: contracts.PlaybillProcedureRunState) -> None:
 
     A delivered `propose_change_set` prints the proposal id and the exact
     candidate digest, which are the two arguments the existing proposal
-    verbs take; a refused one prints the code the run refused with.
+    verbs take; a settled `settle_change_set` prints the generation it
+    accepted, and one that fell back prints its proposal and why. A capped
+    terminal names the authority it needed and the authority the run had; a
+    refused one prints the code the run refused with.
     """
 
     for egress in result.terminal_egress:
-        if egress.verdict == "delivered" and egress.proposal_id is not None:
+        if egress.settle_outcome == "settled":
+            click.echo(
+                f"Settled {egress.node_id}: accepted {egress.accepted_git_oid} "
+                f"(proposal {egress.proposal_id})"
+            )
+        elif egress.verdict == "delivered" and egress.proposal_id is not None:
+            fallback = (
+                f" (settle fell back: {egress.fallback_reason})"
+                if egress.settle_outcome == "proposed"
+                else ""
+            )
             click.echo(
                 f"Proposal {egress.node_id}: {egress.proposal_id} "
-                f"candidate {egress.candidate_digest}"
+                f"candidate {egress.candidate_digest}{fallback}"
             )
             for child in egress.children:
                 if child.path is not None:
                     click.echo(f"  {child.path}")
         elif egress.verdict == "delivered":
             click.echo(f"Terminal {egress.node_id}: {egress.kind} delivered")
+        elif egress.verdict == "refused_effective_authority":
+            click.echo(
+                f"Terminal {egress.node_id}: {egress.kind} needs {egress.required_authority}; "
+                f"the {egress.limiting_term} term allowed {egress.effective_authority}"
+            )
         else:
             code = egress.refusal_code or egress.verdict
             click.echo(f"Terminal {egress.node_id}: {egress.kind} {egress.verdict} ({code})")

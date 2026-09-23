@@ -26,7 +26,7 @@ from cruxible_core.indexes.logical_digest import (
     store_table_sums,
     stored_table_sums,
 )
-from cruxible_core.indexes.projection import AssemblerRequest
+from cruxible_core.indexes.projection import PROJECTION_STORAGE_SCHEMA_VERSION, AssemblerRequest
 from cruxible_core.indexes.typed_state import (
     OWNER_CODECS,
     insert_owners,
@@ -300,7 +300,7 @@ def logical_export(connection: sqlite3.Connection) -> dict[str, object]:
         rows = connection.execute(f"SELECT * FROM {name} ORDER BY {','.join(keys)}").fetchall()
         tables.append({"name": name, "sql": sql, "rows": [list(row) for row in rows]})
     return {
-        "storage_schema_version": 6,
+        "storage_schema_version": PROJECTION_STORAGE_SCHEMA_VERSION,
         "schema": [list(row) for row in schema_objects(connection)],
         "tables": tables,
     }
@@ -436,7 +436,7 @@ def initialize(
     connection = sqlite3.connect(path)
     try:
         connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("PRAGMA user_version=6")
+        connection.execute(f"PRAGMA user_version={PROJECTION_STORAGE_SCHEMA_VERSION}")
         connection.executescript(complete_schema_sql())
         replace_rows(
             connection,

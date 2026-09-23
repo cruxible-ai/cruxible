@@ -18,6 +18,7 @@ from cruxible_client.contracts.canonical import AcceptanceLawDigest, canonical_d
 from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_ACCEPTANCE_LAW,
     ATTESTATION_ACCEPTANCE_LAW,
+    AUTHORITY_VERBS_UPGRADE_LAW,
     CAPTURE_CONTRACT_ACCEPTANCE_LAW,
     CLAIM_EVIDENCE_UPGRADE_LAW,
     CLAIM_LAW_V3_REVISION_8,
@@ -35,10 +36,12 @@ from cruxible_client.contracts.laws import (
     LINE_V2_ACCEPTANCE_LAW,
     LINE_V3_ACCEPTANCE_LAW,
     LINE_V4_ACCEPTANCE_LAW,
+    LINE_V5_ACCEPTANCE_LAW,
     PLAYBILL_ACCEPTANCE_LAWS,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_ACCEPTANCE_LAW,
     PROCEDURE_MANDATE_ACCEPTANCE_LAW,
+    PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW,
     PROCEDURE_REVISION_5_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
     PROCEDURE_V2_ACCEPTANCE_LAW,
@@ -60,13 +63,13 @@ from cruxible_client.contracts.laws import (
     SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW,
     SOURCE_CHECKED_PROCEDURE_LAW,
     SOURCE_CHECKED_UPGRADE_LAW,
-    STANDING_MANDATE_ACCEPTANCE_LAW,
     SUBJECT_ACCEPTANCE_LAW,
     TRIGGER_CAPTURE_UPGRADE_LAW,
     InstalledAcceptanceLaw,
 )
 from cruxible_core.compiler.compiler import (
     ATTESTATION_COMPILER,
+    AUTHORITY_VERBS_COMPILER,
     CLAIM_EVIDENCE_COMPILER,
     ONTOLOGY_COMPILER,
     P2_B0_COMPILER,
@@ -97,6 +100,13 @@ LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],
     ...,
 ] = (
+    (
+        LINE_V5_ACCEPTANCE_LAW,
+        "playbill.line.v5",
+        "playbill-line-v5",
+        1,
+        "sha256:79f19ce823251bf5c2e47b0b7f96da695da4a6499abc80e0af2efaa8ff585d17",
+    ),
     (
         LINE_V4_ACCEPTANCE_LAW,
         "playbill.line.v4",
@@ -252,11 +262,11 @@ LAW_COORDINATES: tuple[
         "sha256:017aa56afdd0160f062abd5957d5900c1c201875f9c3f8a11ba7eb27074ae8a3",
     ),
     (
-        STANDING_MANDATE_ACCEPTANCE_LAW,
-        "playbill.standing-mandate.v1",
-        "playbill-standing-mandate-v1",
-        3,
-        "sha256:ab79c01eee9bd149a301d2de27b82d3bb46d4e18717907020e54c4e9d3a75fe7",
+        PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW,
+        "playbill.procedure-mandate.v2",
+        "playbill-procedure-mandate-v2",
+        1,
+        "sha256:5caa3dded0dc3c3c2c02eac605f95f8eb18ddd2a34b5701d18f9c20e10fc6124",
     ),
     (
         PROCEDURE_MANDATE_ACCEPTANCE_LAW,
@@ -327,6 +337,13 @@ HISTORICAL_LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],
     ...,
 ] = (
+    (
+        AUTHORITY_VERBS_UPGRADE_LAW,
+        "playbill.compiler-upgrade.v1",
+        "playbill-compiler-upgrade-v1",
+        9,
+        "sha256:7a74bc060270bde7ec05897ae65088e09c6cc030e40463ec68e21519d2c3e230",
+    ),
     (
         TRIGGER_CAPTURE_UPGRADE_LAW,
         "playbill.compiler-upgrade.v1",
@@ -633,7 +650,11 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
         TRIGGER_CAPTURE_COMPILER.rule_digest
         == "sha256:ac77438c6269c3268fbd2c850c41172aceb8d8f0bcfac6ebf6f0ee01161e8cb9"
     )
-    assert current_compiler_coordinate() == TRIGGER_CAPTURE_COMPILER
+    assert (
+        AUTHORITY_VERBS_COMPILER.rule_digest
+        == "sha256:644ac81170dd005ab18b2d882dd9f6525cbb41264be27aa69bee4c9b1a4acebf"
+    )
+    assert current_compiler_coordinate() == AUTHORITY_VERBS_COMPILER
     assert P2_B4_COMPILER in SUPPORTED_COMPILERS
     assert P2_B4_UNIT2_COMPILER in SUPPORTED_COMPILERS
     # The renderer resolves from the current coordinate itself, so cards derive
@@ -655,7 +676,7 @@ def test_succeeding_the_semantic_revision_keeps_candidate_cards_deriving(
     """
 
     source = Path(compiler_module.__file__).read_text(encoding="utf-8")
-    current_revision = 30
+    current_revision = 31
     anchor = "\n    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,\n"
     bumped = source.replace(
         f"    semantic_revision={current_revision},{anchor}",
@@ -750,14 +771,16 @@ def test_installed_compiler_revision_labels_are_exact_and_complete() -> None:
         "producer-independent-claim-types-v1",
         "checked-procedure-source-v2",
         "line-trigger-capture-input-v1",
+        "authority-verbs-settle-mandates-v1",
     )
     assert (
-        COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "line-trigger-capture-input-v1"
+        COMPILER_REVISION_LABELS[current_compiler_coordinate()]
+        == "authority-verbs-settle-mandates-v1"
     )
 
 
 def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
-    """The September 22 Line input ruling authorizes exact trigger-Capture binding in revision 30.
+    """The September 23 rung-3 ruling (R5) authorizes settle mandates and verbs in revision 31.
 
     Historical admission bytes and compiler rules remain unchanged.
     """
@@ -767,7 +790,8 @@ def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
         current_compiler_coordinate,
     )
 
-    assert len(COMPILER_REVISION_LABELS) == 29
+    assert len(COMPILER_REVISION_LABELS) == 30
     assert (
-        COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "line-trigger-capture-input-v1"
+        COMPILER_REVISION_LABELS[current_compiler_coordinate()]
+        == "authority-verbs-settle-mandates-v1"
     )

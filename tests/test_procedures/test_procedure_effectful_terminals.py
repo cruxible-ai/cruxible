@@ -56,7 +56,7 @@ NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 
 def test_direct_lane_requires_line_authority_for_effectful_terminals() -> None:
     assert SERVED_NODE_KINDS.isdisjoint(
-        {"emit_capture", "post_inbox", "propose_change_set", "mandate_settlement"}
+        {"emit_capture", "post_inbox", "propose_change_set", "settle_change_set"}
     )
 
 
@@ -76,7 +76,6 @@ def _base_request(
     item: TerminalEgressItemV1,
     bound: ArtifactPin | None = None,
 ) -> TerminalEgressRequestV1:
-    settlement = kind == "mandate_settlement"
     return TerminalEgressRequestV1(
         kind=kind,
         run_id=admission.run_id,
@@ -85,17 +84,15 @@ def _base_request(
         procedure_identity=admission.procedure_identity,
         procedure_artifact_digest=admission.procedure_artifact_digest,
         admission_binding_digest=admission.admission_binding_digest,
-        effective_rung={"emit_capture": 0, "propose_change_set": 2, "mandate_settlement": 3}[kind],
-        required_rung={"emit_capture": 0, "propose_change_set": 2, "mandate_settlement": 3}[kind],
+        effective_rung={"emit_capture": 0, "propose_change_set": 2, "settle_change_set": 3}[kind],
+        required_rung={"emit_capture": 0, "propose_change_set": 2, "settle_change_set": 3}[kind],
         limiting_term="procedure_terminal_capability",
         granted_operation={
             "emit_capture": "compile_capture",
             "propose_change_set": "propose_change_set",
-            "mandate_settlement": "activate_change_set",
+            "settle_change_set": "activate_change_set",
         }[kind],
         bound_artifact_pin=bound,
-        mandate_pin=(_pin("mandate", "StandingMandate", "settlement") if settlement else None),
-        mandate_basis_digests=(_digest("standing-mandate"),) if settlement else (),
         actor_context=admission.actor_context,
         items=(item,),
         prepared_at=admission.admitted_at,
@@ -215,7 +212,7 @@ def test_terminal_operation_key_excludes_clocks_and_commits_authority_scope(tmp_
         )
     )
     mutations = (
-        {"kind": "mandate_settlement"},
+        {"kind": "settle_change_set"},
         {"target_paths": ("documents/other.md",)},
         {"procedure_mandate_digest": _digest("other-mandate")},
         {"procedure_artifact_digest": _digest("other-procedure")},
@@ -252,25 +249,26 @@ def test_v2_builder_derives_authority_and_uses_monotone_prepared_time(tmp_path) 
     assert caught.value.repair_kind == "rebind_admission"
 
 
-def test_v2_refuses_inherited_standing_mandate_authority(tmp_path) -> None:
+def test_egress_refuses_an_inherited_mandate_pin_or_basis(tmp_path) -> None:
     admission = _admission(tmp_path)
     path = "claims/aa/CLM-" + "a" * 32 + ".json"
     request = _effectful_request(
-        "mandate_settlement",
+        "settle_change_set",
         admission=admission,
         item=_item("candidate"),
         target_paths=(path,),
         mandate_digest=_digest("procedure-mandate"),
-        bound=_pin("target-law", "ClaimType", "prediction"),
     )
-    with pytest.raises(ValueError, match="StandingMandate authority"):
-        TerminalEgressRequestV2.model_validate(
-            {
-                **request.model_dump(mode="python"),
-                "mandate_pin": _pin("mandate", "StandingMandate", "settlement"),
-                "mandate_basis_digests": (_digest("standing-mandate"),),
-            }
-        )
+    inherited = (
+        {"mandate_pin": _pin("mandate", "ProcedureMandate", "settlement")},
+        {"mandate_basis_digests": (_digest("inherited-basis"),)},
+    )
+    for update in inherited:
+        with pytest.raises(ValueError, match="inherited mandate pin or basis"):
+            TerminalEgressRequestV2.model_validate({**request.model_dump(mode="python"), **update})
+        v1 = _base_request("settle_change_set", admission=admission, item=_item("candidate"))
+        with pytest.raises(ValueError, match="inherited mandate pin or basis"):
+            TerminalEgressRequestV1.model_validate({**v1.model_dump(mode="python"), **update})
 
 
 def test_non_effectful_mandate_check_names_the_declared_rung_repair(tmp_path) -> None:
@@ -296,15 +294,12 @@ def test_non_effectful_mandate_check_names_the_declared_rung_repair(tmp_path) ->
     assert caught.value.repair.hand_edit.required_change == "use_declared_terminal_rung"
 
 
-def test_mandate_free_fold_stops_below_proposal_even_with_a_standing_grant() -> None:
+def test_mandate_free_fold_stops_below_proposal() -> None:
     rung = compute_effective_rung(
         procedure_terminal_capability=3,
         requested_terminal_rung=3,
         selector_privacies={},
         taint_labels=(),
-        mandate_grants={},
-        calibration_caps=(),
-        evaluation_time=NOW,
         procedure_definition_digest=_digest("definition"),
         line_spec_digest=_digest("line"),
         sensitivity_policy_digest=_digest("sensitivity"),
@@ -453,12 +448,11 @@ def test_egress_refuses_mandate_expired_between_admission_and_egress(tmp_path) -
     )
     mandate_digest = procedure_mandate_digest(mandate).tagged
     request = _effectful_request(
-        "mandate_settlement",
+        "settle_change_set",
         admission=admission,
         item=_item("candidate"),
         target_paths=(target_path,),
         mandate_digest=mandate_digest,
-        bound=_pin("target-law", "ClaimType", "prediction"),
         prepared_at=NOW,
     )
 
@@ -490,12 +484,11 @@ def test_egress_refuses_expired_mandate_with_rewound_v3_admission(tmp_path) -> N
     )
     mandate_digest = procedure_mandate_digest(mandate).tagged
     request = _effectful_request(
-        "mandate_settlement",
+        "settle_change_set",
         admission=rewound_admission,
         item=_item("candidate"),
         target_paths=(target_path,),
         mandate_digest=mandate_digest,
-        bound=_pin("target-law", "ClaimType", "prediction"),
         prepared_at=NOW,
     )
 
@@ -527,12 +520,11 @@ def test_procedure_mandate_refusal_reports_every_failed_law_and_repair(tmp_path)
     )
     refused_digest = procedure_mandate_digest(refused).tagged
     request = _effectful_request(
-        "mandate_settlement",
+        "settle_change_set",
         admission=admission,
         item=_item("candidate"),
         target_paths=(target_path,),
         mandate_digest=refused_digest,
-        bound=_pin("target-law", "ClaimType", "prediction"),
     )
     with pytest.raises(TerminalAuthorityRefusal) as caught:
         require_procedure_mandate(
@@ -543,9 +535,9 @@ def test_procedure_mandate_refusal_reports_every_failed_law_and_repair(tmp_path)
     assert caught.value.codes == (
         "procedure_mandate_authority_ceiling_insufficient",
         "procedure_mandate_expired",
+        "procedure_mandate_grant_insufficient",
         "procedure_mandate_namespace_mismatch",
         "procedure_mandate_procedure_mismatch",
-        "procedure_mandate_rung_insufficient",
         "procedure_mandate_superseded",
     )
     assert caught.value.procedure_name == "triage"

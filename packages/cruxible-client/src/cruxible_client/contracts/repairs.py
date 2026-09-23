@@ -126,6 +126,22 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     ),
     "proposal_lowering_refused": "repair_the_proposed_claim_the_lowering_diagnostic_names",
     "proposal_candidate_refused": "repair_the_proposed_member_the_candidate_diagnostic_names",
+    "settle_mandate_missing": (
+        "Accept one live settle ProcedureMandate for this Procedure whose scope covers every "
+        "changed ClaimType and change kind, or use a propose terminal."
+    ),
+    "settle_mandate_ambiguous": (
+        "Narrow or retire all but one of the settle mandates that cover this change; exactly "
+        "one may."
+    ),
+    "settle_condition_refused": (
+        "The mandate's condition did not hold for every target and it declares no proposal "
+        "fallback; change the facts it reads, or govern the change as a proposal."
+    ),
+    "settle_publication_refused": (
+        "Re-run the occurrence: the mandate expired, was suspended, or accepted state moved "
+        "before the settlement published."
+    ),
     "proposal_target_paths_mismatch": "rebind_the_terminal_from_the_exact_admitted_run",
     "proposal_receipt_incomplete": "rebind_the_terminal_from_the_exact_admitted_run",
     # The same operation key names another payload: the run that prepared
@@ -141,7 +157,9 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "procedure_mandate_expired": (
         "accept_a_procedure_mandate_whose_window_covers_the_evaluation_instant"
     ),
-    "procedure_mandate_rung_insufficient": "accept_a_procedure_mandate_granting_the_required_rung",
+    "procedure_mandate_grant_insufficient": (
+        "accept_a_procedure_mandate_granting_the_required_authority"
+    ),
     "procedure_mandate_authority_ceiling_insufficient": (
         "accept_a_procedure_mandate_whose_ceiling_covers_the_admitted_hard_caps"
     ),
@@ -154,7 +172,7 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "procedure_mandate_procedure_mismatch": (
         "accept_a_procedure_mandate_pinning_this_exact_procedure_artifact"
     ),
-    "procedure_mandate_not_applicable": "use_the_declared_terminal_rung",
+    "procedure_mandate_not_applicable": "use_the_declared_terminal_authority",
     "procedure_authority_admission_invalid": "rebuild_the_terminal_from_the_exact_admitted_run",
     "procedure_authority_admission_mismatch": "rebuild_the_terminal_from_the_exact_admitted_run",
 }

@@ -486,7 +486,6 @@ def playbill_evidence_extension_registry() -> ProjectionExtensionRegistry:
             "playbill.provider.keys",
             "playbill.provider.provenance",
             "playbill.source_acquisition_policy.policy",
-            "playbill.standing_mandate.authority",
         )
     )
     return ProjectionExtensionRegistry((*prior.declarations("semantic"), *evidence))

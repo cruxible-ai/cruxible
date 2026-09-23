@@ -6,7 +6,7 @@ import re
 from collections import defaultdict
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import Literal, Mapping
+from typing import Literal
 
 from pydantic import (
     BaseModel,
@@ -1429,83 +1429,7 @@ def append_resolution_disposition(
     )
 
 
-class AcceptedAuthorityBasisV1(_StrictResolutionModel):
-    """One exact accepted authority candidate revalidated at verdict time."""
-
-    tag: Literal["playbill-accepted-authority-basis-v1"] = "playbill-accepted-authority-basis-v1"
-    kind: Literal["standing_mandate", "resolution"]
-    basis_digest: str
-    accepted_coordinate: AcceptedCoordinate
-    valid_from: datetime
-    valid_until: datetime
-    current_artifact_digest: str
-    artifact_digest: str
-    resolution_verdict: ResolutionVerdictV1 | None = None
-    resolution_overturned: bool = False
-    accepted_promotion_digest: str | None = None
-
-    @field_validator(
-        "basis_digest",
-        "current_artifact_digest",
-        "artifact_digest",
-        "accepted_promotion_digest",
-    )
-    @classmethod
-    def _digests(cls, value: str | None, info: object) -> str | None:
-        return (
-            None
-            if value is None
-            else _digest(value, label=str(getattr(info, "field_name", "authority digest")))
-        )
-
-    @field_validator("valid_from", "valid_until")
-    @classmethod
-    def _validity(cls, value: datetime) -> datetime:
-        return ensure_utc(value)
-
-    @model_validator(mode="after")
-    def _shape(self) -> "AcceptedAuthorityBasisV1":
-        if self.valid_from >= self.valid_until:
-            raise ValueError("authority basis requires a finite validity interval")
-        if self.kind == "standing_mandate":
-            if self.resolution_verdict is not None or self.accepted_promotion_digest is not None:
-                raise ValueError("StandingMandate basis cannot claim resolution state")
-        elif self.resolution_verdict is None or self.accepted_promotion_digest is None:
-            raise ValueError("resolution basis requires verdict and accepted promotion")
-        return self
-
-
-def resolve_authority_basis(
-    requested_basis_digests: tuple[str, ...],
-    *,
-    accepted_basis: Mapping[str, AcceptedAuthorityBasisV1],
-    evaluation_time: datetime,
-) -> tuple[str, ...]:
-    """Return only exact, current, effective authority; absence never supports."""
-
-    if requested_basis_digests != tuple(sorted(set(requested_basis_digests))):
-        raise ValueError("requested authority basis digests must be sorted and unique")
-    evaluation_time = ensure_utc(evaluation_time)
-    resolved: list[str] = []
-    for digest in requested_basis_digests:
-        _digest(digest, label="requested authority basis")
-        candidate = accepted_basis.get(digest)
-        if candidate is None:
-            continue
-        if not candidate.valid_from <= evaluation_time < candidate.valid_until:
-            continue
-        if candidate.artifact_digest != candidate.current_artifact_digest:
-            continue
-        if candidate.kind == "resolution" and (
-            candidate.resolution_verdict != "satisfied" or candidate.resolution_overturned
-        ):
-            continue
-        resolved.append(candidate.basis_digest)
-    return tuple(sorted(set(resolved)))
-
-
 __all__ = [
-    "AcceptedAuthorityBasisV1",
     "ProcedureProofReferenceV1",
     "ProcedureResolutionBook",
     "ProcedureResolutionDispositionV1",
@@ -1539,6 +1463,5 @@ __all__ = [
     "resolution_contract_partition_id",
     "resolution_disposition_id",
     "resolution_event_accepted_coordinate",
-    "resolve_authority_basis",
     "settled_outcome_relation_digest",
 ]

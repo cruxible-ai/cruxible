@@ -122,10 +122,6 @@ P2_B0_ARTIFACT_KINDS = ArtifactKindRegistry(
             re.compile(r"^source-acquisition-policies/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
         ),
         ArtifactPathKind(
-            "standing-mandate",
-            re.compile(r"^standing-mandates/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
-        ),
-        ArtifactPathKind(
             "claim",
             re.compile(r"^claims/[0-9a-f]{2}/CLM-[0-9a-f]{32}\.yaml$"),
         ),
@@ -214,6 +210,7 @@ SDK_SOURCE_ARTIFACT_KINDS = ArtifactKindRegistry(RESOURCE_BUDGET_ARTIFACT_KINDS.
 CLAIM_EVIDENCE_ARTIFACT_KINDS = ArtifactKindRegistry(SDK_SOURCE_ARTIFACT_KINDS.entries())
 SOURCE_CHECKED_ARTIFACT_KINDS = ArtifactKindRegistry(CLAIM_EVIDENCE_ARTIFACT_KINDS.entries())
 TRIGGER_CAPTURE_ARTIFACT_KINDS = ArtifactKindRegistry(SOURCE_CHECKED_ARTIFACT_KINDS.entries())
+AUTHORITY_VERBS_ARTIFACT_KINDS = ArtifactKindRegistry(TRIGGER_CAPTURE_ARTIFACT_KINDS.entries())
 
 PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
     tuple(
@@ -241,6 +238,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
                 "playbill-line-v1",
                 "playbill-line-v3",
                 "playbill-line-v4",
+                "playbill-line-v5",
                 "playbill-procedure-pin-slot-ref-v1",
                 "playbill-procedure-pin-slot-v1",
                 "playbill-procedure-v1",
@@ -290,8 +288,8 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
                 "playbill-query-definition-v1",
                 "playbill-query-definition-v2",
                 "playbill-source-acquisition-policy-v1",
-                "playbill-standing-mandate-v1",
                 "playbill-procedure-mandate-v1",
+                "playbill-procedure-mandate-v2",
                 "playbill-procedure-producer-receipt-v1",
                 "playbill-procedure-derived-source-request-v1",
                 "playbill-source-read-receipt-v1",
@@ -345,6 +343,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             "playbill-line-v1",
             "playbill-line-v3",
             "playbill-line-v4",
+            "playbill-line-v5",
             "playbill-procedure-pin-slot-v1",
             "playbill-procedure-pin-slot-ref-v1",
             "playbill-procedure-v1",
@@ -395,8 +394,8 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             "playbill-query-definition-v1",
             "playbill-query-definition-v2",
             "playbill-source-acquisition-policy-v1",
-            "playbill-standing-mandate-v1",
             "playbill-procedure-mandate-v1",
+            "playbill-procedure-mandate-v2",
             "playbill-procedure-producer-receipt-v1",
             "playbill-procedure-derived-source-request-v1",
             "playbill-source-read-receipt-v1",
@@ -451,7 +450,6 @@ RegisteredPathKind = Literal[
     "provider-interface",
     "query-definition",
     "source-acquisition-policy",
-    "standing-mandate",
     "subject",
 ]
 
@@ -854,6 +852,7 @@ def parse_projection_tree(
                     CLAIM_EVIDENCE_ARTIFACT_KINDS,
                     SOURCE_CHECKED_ARTIFACT_KINDS,
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
+                    AUTHORITY_VERBS_ARTIFACT_KINDS,
                 ) and (
                     runtime_policy.result_bytes_cap is not None
                     or runtime_policy.repeat_attempts_cap is not None
@@ -1185,6 +1184,7 @@ def parse_projection_tree(
                         CLAIM_EVIDENCE_ARTIFACT_KINDS,
                         SOURCE_CHECKED_ARTIFACT_KINDS,
                         TRIGGER_CAPTURE_ARTIFACT_KINDS,
+                        AUTHORITY_VERBS_ARTIFACT_KINDS,
                     )
                 ):
                     raise ProjectionFormatError(
@@ -1303,6 +1303,7 @@ def parse_projection_tree(
                     CLAIM_EVIDENCE_ARTIFACT_KINDS,
                     SOURCE_CHECKED_ARTIFACT_KINDS,
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
+                    AUTHORITY_VERBS_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError(
                         "Provider v3 requires the provider-package compiler"
@@ -1437,6 +1438,7 @@ def parse_projection_tree(
                     CLAIM_EVIDENCE_ARTIFACT_KINDS,
                     SOURCE_CHECKED_ARTIFACT_KINDS,
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
+                    AUTHORITY_VERBS_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError(
                         "ProviderInterface v2 requires the provider-package compiler"
@@ -1567,61 +1569,25 @@ def parse_projection_tree(
                     )
                 )
                 continue
-            if kind == "standing-mandate":
-                from cruxible_client.contracts.standing_mandates import (
-                    parse_standing_mandate,
-                    standing_mandate_digest,
-                )
-
-                mandate = parse_standing_mandate(content, path=path, codec=artifact_codec)
-                identity = mandate.identity.qualified
-                if identity in identities:
-                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
-                identities[identity] = path
-                input_digest = file_digest(content).tagged
-                artifact_digest = standing_mandate_digest(mandate).tagged
-                envelopes.append(
-                    ArtifactEnvelopeRow(
-                        identity=identity,
-                        kind="standing-mandate",
-                        format_tag=mandate.artifact_format,
-                        path=path,
-                        artifact_digest=artifact_digest,
-                        predecessor_digest=mandate.lifecycle.predecessor_digest,
-                        revision=projected_revision(
-                            accepted_change_sets,
-                            path=path,
-                            input_digest=input_digest,
-                            artifact_digest=artifact_digest,
-                        ),
-                    )
-                )
-                pins.extend(
-                    PinRow(
-                        source_identity=identity,
-                        target_identity=pin.target.qualified,
-                        target_digest=pin.artifact_digest,
-                    )
-                    for pin in mandate.pins
-                )
-                semantic_facts.append(
-                    ProjectionFact(
-                        schema_id="playbill.standing_mandate.authority",
-                        schema_version=1,
-                        subject_identity=identity,
-                        fact_key="finite_grant",
-                        value=mandate.model_dump(mode="json"),
-                    )
-                )
-                continue
             if kind == "procedure-mandate":
                 from cruxible_client.contracts.procedure_mandates import (
-                    parse_procedure_mandate,
+                    ProcedureMandateV2,
+                    parse_procedure_mandate_any,
                     procedure_mandate_digest,
                 )
 
-                procedure_mandate = parse_procedure_mandate(
+                procedure_mandate = parse_procedure_mandate_any(
                     content, path=path, codec=artifact_codec
+                )
+                if (
+                    isinstance(procedure_mandate, ProcedureMandateV2)
+                    and artifact_kinds is not AUTHORITY_VERBS_ARTIFACT_KINDS
+                ):
+                    raise ProjectionFormatError("ProcedureMandate v2 requires compiler revision 31")
+                resources = (
+                    procedure_mandate.resource_ceiling
+                    if isinstance(procedure_mandate, ProcedureMandateV2)
+                    else procedure_mandate.authority_ceiling
                 )
                 if artifact_kinds not in (
                     RESOURCE_BUDGET_ARTIFACT_KINDS,
@@ -1629,9 +1595,8 @@ def parse_projection_tree(
                     CLAIM_EVIDENCE_ARTIFACT_KINDS,
                     SOURCE_CHECKED_ARTIFACT_KINDS,
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
-                ) and _requires_resource_budgets(
-                    procedure_mandate.authority_ceiling.model_dump(mode="json")
-                ):
+                    AUTHORITY_VERBS_ARTIFACT_KINDS,
+                ) and _requires_resource_budgets(resources.model_dump(mode="json")):
                     raise ProjectionFormatError(
                         "resource mandate budgets require compiler revision 26"
                     )
@@ -1657,12 +1622,13 @@ def parse_projection_tree(
                         ),
                     )
                 )
-                pins.append(
+                pins.extend(
                     PinRow(
                         source_identity=identity,
-                        target_identity=procedure_mandate.procedure.target.qualified,
-                        target_digest=procedure_mandate.procedure.artifact_digest,
+                        target_identity=pin.target.qualified,
+                        target_digest=pin.artifact_digest,
                     )
+                    for pin in procedure_mandate.pins
                 )
                 semantic_facts.append(
                     ProjectionFact(
@@ -1696,6 +1662,7 @@ def parse_projection_tree(
                     CLAIM_EVIDENCE_ARTIFACT_KINDS,
                     SOURCE_CHECKED_ARTIFACT_KINDS,
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
+                    AUTHORITY_VERBS_ARTIFACT_KINDS,
                 ) and (
                     procedure.definition.budget.max_result_bytes is not None
                     or procedure.definition.hard_caps.max_result_bytes is not None
@@ -1712,14 +1679,24 @@ def parse_projection_tree(
                     CLAIM_EVIDENCE_ARTIFACT_KINDS,
                     SOURCE_CHECKED_ARTIFACT_KINDS,
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
+                    AUTHORITY_VERBS_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError("graph-v5 requires the provider-contract compiler")
+                if (
+                    any(
+                        getattr(node, "kind", None) == "settle_change_set"
+                        for node in procedure.definition.nodes
+                    )
+                    and artifact_kinds is not AUTHORITY_VERBS_ARTIFACT_KINDS
+                ):
+                    raise ProjectionFormatError("settle_change_set requires compiler revision 31")
                 if int(procedure.definition.graph_format) == 6:
                     if artifact_kinds not in (
                         SDK_SOURCE_ARTIFACT_KINDS,
                         CLAIM_EVIDENCE_ARTIFACT_KINDS,
                         SOURCE_CHECKED_ARTIFACT_KINDS,
                         TRIGGER_CAPTURE_ARTIFACT_KINDS,
+                        AUTHORITY_VERBS_ARTIFACT_KINDS,
                     ):
                         raise ProjectionFormatError("graph-v6 requires compiler revision 27")
                     from cruxible_client.contracts.procedures.models import ProcedureDefinitionV6
@@ -1732,7 +1709,11 @@ def parse_projection_tree(
                         procedure.definition.source is not None
                         and procedure.definition.source.rules == "cruxible.procedure-source.v2"
                         and artifact_kinds
-                        not in (SOURCE_CHECKED_ARTIFACT_KINDS, TRIGGER_CAPTURE_ARTIFACT_KINDS)
+                        not in (
+                            SOURCE_CHECKED_ARTIFACT_KINDS,
+                            TRIGGER_CAPTURE_ARTIFACT_KINDS,
+                            AUTHORITY_VERBS_ARTIFACT_KINDS,
+                        )
                     ):
                         raise ProjectionFormatError("source-v2 requires compiler revision 29")
                     verify_source_graph(procedure)
@@ -1951,16 +1932,23 @@ def parse_projection_tree(
                 from cruxible_client.contracts.procedures.line_specs import (
                     LineSpecV3,
                     LineSpecV4,
+                    LineSpecV5,
                     line_spec_digest,
                     parse_line_spec,
                 )
 
                 line = parse_line_spec(content, path=path, codec=artifact_codec)
-                if (
-                    isinstance(line, LineSpecV4)
-                    and artifact_kinds is not TRIGGER_CAPTURE_ARTIFACT_KINDS
+                if isinstance(line, LineSpecV4) and artifact_kinds not in (
+                    TRIGGER_CAPTURE_ARTIFACT_KINDS,
+                    AUTHORITY_VERBS_ARTIFACT_KINDS,
+                    AUTHORITY_VERBS_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError("Line v4 requires the trigger-Capture compiler")
+                if (
+                    isinstance(line, LineSpecV5)
+                    and artifact_kinds is not AUTHORITY_VERBS_ARTIFACT_KINDS
+                ):
+                    raise ProjectionFormatError("Line v5 requires compiler revision 31")
                 # Older Lines allowed opaque budget keys. Interpret this key only
                 # in the successor compiler, preserving historical acceptance.
                 if artifact_kinds in (
@@ -1969,6 +1957,7 @@ def parse_projection_tree(
                     CLAIM_EVIDENCE_ARTIFACT_KINDS,
                     SOURCE_CHECKED_ARTIFACT_KINDS,
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
+                    AUTHORITY_VERBS_ARTIFACT_KINDS,
                 ) and isinstance(line.budgets, dict):
                     result_budget = line.budgets.get("max_result_bytes")
                     if "max_result_bytes" in line.budgets and (
@@ -1988,6 +1977,7 @@ def parse_projection_tree(
                     CLAIM_EVIDENCE_ARTIFACT_KINDS,
                     SOURCE_CHECKED_ARTIFACT_KINDS,
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
+                    AUTHORITY_VERBS_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError(
                         "Line v3 requires the independent-resolution compiler"
@@ -2090,6 +2080,7 @@ def parse_projection_tree(
                         CLAIM_EVIDENCE_ARTIFACT_KINDS,
                         SOURCE_CHECKED_ARTIFACT_KINDS,
                         TRIGGER_CAPTURE_ARTIFACT_KINDS,
+                        AUTHORITY_VERBS_ARTIFACT_KINDS,
                     )
                 ):
                     raise ProjectionFormatError(

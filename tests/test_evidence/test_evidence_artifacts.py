@@ -10,10 +10,6 @@ from cruxible_client.contracts.candidates import CandidateRecordV3
 from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
 from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
 from cruxible_client.contracts.providers import provider_path, render_provider
-from cruxible_client.contracts.standing_mandates import (
-    render_standing_mandate,
-    standing_mandate_path,
-)
 from cruxible_core.compiler.assembler import ProjectionAssembler
 from cruxible_core.compiler.compiler import projection_registry_for_compiler
 from cruxible_core.compiler.projection_artifacts import parse_projection_tree
@@ -22,12 +18,10 @@ from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
-from cruxible_core.service.evidence.evidence import service_get_playbill_standing_mandate
 from tests.core_support._pc_c_support import capture_contract, provider
 from tests.core_support._support import client_material, initialize_local
 from tests.test_claims.test_claims import _claim_type
 from tests.test_integration.test_acquisition_policies import _policy, _rule
-from tests.test_integration.test_standing_mandates import _mandate
 from tests.test_ledger.test_activation import _sign
 
 TIMESTAMP = "2026-08-16T20:00:00.000000Z"
@@ -40,14 +34,12 @@ def test_evidence_artifacts_share_acceptance_closure_and_projection(tmp_path: Pa
     provider_artifact = provider(contract)
     policy = _policy(_rule("orders"))
     claim_type = _claim_type()
-    mandate = _mandate()
     candidate_tree = {
         **instance.tree_at(base.git_oid),
         capture_contract_path(contract.identity.name): render_capture_contract(contract),
         provider_path(provider_artifact.identity.name): render_provider(provider_artifact),
         claim_type_path(claim_type.predicate): render_claim_type(claim_type),
         acquisition_policy_path(policy.identity.name): render_acquisition_policy(policy),
-        standing_mandate_path(mandate.identity.name): render_standing_mandate(mandate),
     }
     proposed = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="owner"),
@@ -64,7 +56,6 @@ def test_evidence_artifacts_share_acceptance_closure_and_projection(tmp_path: Pa
         "claim-type",
         "provider",
         "source-acquisition-policy",
-        "standing-mandate",
     }
     approval = _sign(
         client_material(tmp_path, instance),
@@ -105,7 +96,6 @@ def test_evidence_artifacts_share_acceptance_closure_and_projection(tmp_path: Pa
         "claim-type",
         "provider",
         "source-acquisition-policy",
-        "standing-mandate",
     }.issubset(kinds)
     schemas = {fact.schema_id for fact in projected.semantic_facts}
     assert {
@@ -113,11 +103,4 @@ def test_evidence_artifacts_share_acceptance_closure_and_projection(tmp_path: Pa
         "playbill.provider.keys",
         "playbill.provider.provenance",
         "playbill.source_acquisition_policy.policy",
-        "playbill.standing_mandate.authority",
     }.issubset(schemas)
-    queried = service_get_playbill_standing_mandate(
-        instance,
-        identity=mandate.identity.qualified,
-    )
-    assert queried.coordinate.git_oid == coordinate.git_oid
-    assert queried.mandate == mandate

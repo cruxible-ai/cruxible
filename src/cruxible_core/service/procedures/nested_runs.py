@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_client.contracts.procedure_mandates import ProcedureMandateV1
+from cruxible_client.contracts.procedure_mandates import ProcedureMandateAny
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
 from cruxible_client.contracts.procedures.models import (
     TERMINAL_REQUIRED_RUNGS,
@@ -139,7 +139,7 @@ class ServedNestedProcedureRunner:
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None
     workspace_file_reader: WorkspaceFileReader | None
     clock: ProcedureClockProtocol
-    mandates: Mapping[str, ProcedureMandateV1] = field(default_factory=dict)
+    mandates: Mapping[str, ProcedureMandateAny] = field(default_factory=dict)
 
     def _accepted(self, pin: ArtifactPin) -> AcceptedProcedureV1:
         from cruxible_core.service.procedures.procedure_runs import _accepted_procedure

@@ -202,6 +202,7 @@ from cruxible_client.contracts.procedures.line_specs import (
     ManualTriggerPolicyV1,
     TriggerPolicyV2,
 )
+from cruxible_client.contracts.procedures.results import ProcedureTerminalEgressV1
 from cruxible_client.contracts.procedures.windows import (
     TriggerEventReferenceV1,
 )
@@ -927,8 +928,8 @@ class ChangeSetDraft:
         name: str,
         procedure: str,
         acquisition_policy: str,
-        requested_terminal_rung: Literal[1, 2, 3],
         trigger_policy: TriggerPolicyV2 | None = None,
+        max_authority: Literal["observe", "propose", "settle"] | None = None,
         trigger_input: str | None = None,
         parameters: CanonicalValue | None = None,
         budgets: Mapping[str, int] | None = None,
@@ -947,9 +948,11 @@ class ChangeSetDraft:
 
         Lowering refuses a Procedure that is not graph-v4/v5 and one whose Source
         nodes leave a Provider slot open: the Line pins exactly what the
-        Procedure names, and an open slot is nothing to pin. A rung-2 Line
-        also needs a live ProcedureMandate over its target namespace before it
-        can run; that is checked at admission, not here.
+        Procedure names, and an open slot is nothing to pin. ``max_authority``
+        (observe, propose or settle) caps this Line below its Procedure's own
+        capability and defaults to it. A Line that proposes or settles also needs
+        a live ProcedureMandate over its target namespace before it can run;
+        that is checked at admission, not here.
         """
 
         self._members.append(
@@ -958,7 +961,7 @@ class ChangeSetDraft:
                     name=name,
                     procedure_name=procedure,
                     acquisition_policy_name=acquisition_policy,
-                    requested_terminal_rung=requested_terminal_rung,
+                    max_authority=max_authority,
                     trigger_policy=trigger_policy or ManualTriggerPolicyV1(),
                     trigger_input=trigger_input,
                     parameters={} if parameters is None else parameters,
@@ -2878,7 +2881,12 @@ class Playbill:
             # Effectful terminals are served on the Line lane: direct runs
             # refuse them at admission. The shared compiler enforces that each
             # terminal ends its path; the SDK must allow authoring that path.
-            allowed = allowed | {"source", "emit_capture", "propose_change_set"}
+            allowed = allowed | {
+                "source",
+                "emit_capture",
+                "propose_change_set",
+                "settle_change_set",
+            }
         if definition.definition.get("graph_format") == 5:
             allowed = allowed | {"call"}
         nodes = definition.definition.get("nodes")
@@ -2902,8 +2910,9 @@ class Playbill:
                 capability=f"procedure nodes {unsupported}",
                 repair=(
                     "Use only state_tap, transform, project, guard, repeat, and halt nodes "
-                    "on the served SDK lane, plus source, emit_capture, and propose_change_set "
-                    "on a graph-v4/v5 definition, and call on a graph-v5 definition."
+                    "on the served SDK lane, plus source, emit_capture, propose_change_set, "
+                    "and settle_change_set on a graph-v4/v5 definition, and call on a graph-v5 "
+                    "definition."
                 ),
             )
         return ProcedureDraft(
@@ -3821,6 +3830,16 @@ class ProcedureRun:
     @property
     def outcome(self) -> api.PlaybillProcedureRunState:
         return self._raw.model_copy(deep=True)
+
+    @property
+    def terminal_egress(self) -> tuple[ProcedureTerminalEgressV1, ...]:
+        """What each terminal did, with the authority it needed and the run held.
+
+        A settle terminal reports `settle_outcome`: `settled` with the
+        `accepted_git_oid`, or `proposed` with its `proposal_id` and
+        `fallback_reason`.
+        """
+        return tuple(item.model_copy(deep=True) for item in self._raw.terminal_egress)
 
     @property
     def receipt(self) -> str | None:

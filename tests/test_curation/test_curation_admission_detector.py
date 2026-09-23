@@ -37,7 +37,6 @@ NOW = datetime(2026, 8, 26, 17, tzinfo=UTC)
         ("procedure", "Procedure", "schema_side"),
         ("query-definition", "QueryDefinition", "schema_side"),
         ("capture-contract", "CaptureContract", "schema_side"),
-        ("standing-mandate", "StandingMandate", "schema_side"),
         ("source-acquisition-policy", "SourceAcquisitionPolicy", "schema_side"),
         ("provider", "Provider", "schema_side"),
         ("line", "Line", "unclassified"),

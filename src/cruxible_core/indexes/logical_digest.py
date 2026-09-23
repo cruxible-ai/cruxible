@@ -22,6 +22,7 @@ from collections.abc import Mapping
 
 from cruxible_client.contracts.canonical import LogicalDigest, typed_digest
 from cruxible_client.contracts.errors import ProjectionIntegrityError
+from cruxible_core.indexes.projection import PROJECTION_STORAGE_SCHEMA_VERSION
 
 LOGICAL_DIGEST_DOMAIN = "playbill-projection-logical-v4"
 ROW_DOMAIN = b"playbill-projection-logical-v4-row\x00"
@@ -114,7 +115,7 @@ def logical_digest_from_sums(connection: sqlite3.Connection, sums: TableSums) ->
         LogicalDigest,
         LOGICAL_DIGEST_DOMAIN,
         {
-            "storage_schema_version": 6,
+            "storage_schema_version": PROJECTION_STORAGE_SCHEMA_VERSION,
             "schema": [list(row) for row in schema_objects(connection)],
             "tables": [
                 {

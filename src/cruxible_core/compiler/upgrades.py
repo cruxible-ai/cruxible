@@ -11,6 +11,7 @@ from cruxible_client.contracts.candidates import (
 from cruxible_client.contracts.compiler_upgrade import COMPILER_UPGRADE_PATH, CompilerUpgradeV1
 from cruxible_client.contracts.errors import SettlementIntegrityError
 from cruxible_client.contracts.laws import (
+    AUTHORITY_VERBS_UPGRADE_LAW,
     CLAIM_EVIDENCE_UPGRADE_LAW,
     COMPILER_UPGRADE_ACCEPTANCE_LAW,
     PROVIDER_CONTRACT_UPGRADE_LAW,
@@ -24,6 +25,7 @@ from cruxible_client.contracts.laws import (
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_core.compiler.compiler import (
     ATTESTATION_COMPILER,
+    AUTHORITY_VERBS_COMPILER,
     CLAIM_EVIDENCE_COMPILER,
     ONTOLOGY_COMPILER,
     P2_B1_COMPILER,
@@ -138,6 +140,18 @@ def upgrade_law(source: CompilerCoordinate, target: CompilerCoordinate) -> Insta
         SOURCE_CHECKED_COMPILER,
     }:
         return TRIGGER_CAPTURE_UPGRADE_LAW
+    if target == AUTHORITY_VERBS_COMPILER and source in {
+        *UPGRADE_V1_SOURCES,
+        UPGRADE_COMPILER,
+        PROVIDER_CONTRACT_COMPILER,
+        PROVIDER_PACKAGE_COMPILER,
+        RESOURCE_BUDGET_COMPILER,
+        SDK_SOURCE_COMPILER,
+        CLAIM_EVIDENCE_COMPILER,
+        SOURCE_CHECKED_COMPILER,
+        TRIGGER_CAPTURE_COMPILER,
+    }:
+        return AUTHORITY_VERBS_UPGRADE_LAW
     raise ValueError("unsupported compiler transition; only explicit forward edges are allowed")
 
 

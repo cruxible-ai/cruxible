@@ -108,7 +108,10 @@ def resolve_source(
     rules: Literal[
         "cruxible.procedure-source.v1", "cruxible.procedure-source.v2"
     ] = "cruxible.procedure-source.v2",
+    retained_terminal_capability: Literal[1, 2, 3] | None = None,
 ) -> CompiledSource:
+    """Resolve and compile source; capability is derived unless reproducing a retained one."""
+
     def fail(message: str) -> NoReturn:
         raise SourceCompileError(
             SourceDiagnostic(
@@ -290,7 +293,7 @@ def resolve_source(
             output=request.output,
             budget=request.budget,
             hard_caps=request.hard_caps,
-            terminal_capability=request.terminal_capability,
+            terminal_capability=retained_terminal_capability,
             description=request.description,
         )
     except SourceCompileError as exc:
@@ -362,7 +365,6 @@ def verify_source_bindings(
         bindings=selections,
         budget=definition.budget,
         hard_caps=definition.hard_caps,
-        terminal_capability=definition.terminal_capability,
         description=definition.description,
     )
     compiled = resolve_source(
@@ -371,6 +373,7 @@ def verify_source_bindings(
         claim_types=claim_types,
         subject_kinds=subject_kinds,
         rules=program.rules,
+        retained_terminal_capability=definition.terminal_capability,
     )
     # Older retained source may carry an author's absolute source location.
     # Verify its dependencies under the same portable coordinate without ever

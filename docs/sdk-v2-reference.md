@@ -77,7 +77,7 @@ ordinary Python objects whose methods execute during authoring.
 | `source`, `AcquisitionResult` | Acquire an observation through a Source interface. | Source intrinsic and contract-derived result. |
 | `require` | Explicit refusal condition. | Source intrinsic over Guard semantics. |
 | `claim_candidate`, `ClaimCandidate` | Construct a governed Claim candidate without submitting it. | Source counterpart of the existing Claim authoring contract. |
-| `emit_capture`, `propose_change_set`, `halt` | Terminal return expressions. | Source syntax over existing terminal categories. |
+| `emit_capture`, `propose_change_set`, `settle_change_set`, `halt` | Terminal return expressions. | Source syntax over existing terminal categories. |
 | `invoke`, `InvocationOutcome[T]` | Invoke an exact accepted child Procedure. | Implemented sequential child execution. |
 | `parallel` | Concurrent independent branches with a join. | Reserved sketch; no final callable signature or default failure policy. |
 | `ProcedurePreview`, `CompositionDiagnostic`, `ProcedureCompositionError` | Existing inspection/error types extended with source information. | Shared public inspection/error types; extended with source information. |
@@ -291,7 +291,6 @@ procedure(
     output: Contract,
     budget: ProcedureBudgetV3,
     hard_caps: ProcedureHardCapsV3,
-    terminal_capability: Literal[1, 2, 3] = 1,
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot",
     acquisition_policy: str | None = None,
     description: str | None = None,
@@ -305,10 +304,13 @@ procedure(
 | `output` | Required | Contract for successful returned values. Every successful reachable return must satisfy it. |
 | `budget` | Required | Declared resource budget, using the current model. No hidden unlimited default. |
 | `hard_caps` | Required | Declared Procedure ceilings; effective admission policy can be stricter. |
-| `terminal_capability` | `1` | Existing numeric capability contract. The graph and chosen run lane must agree; this field does not grant authority. |
 | `activation_policy` | `"snapshot"` | Existing lifecycle behavior; values retain their current meanings. |
 | `acquisition_policy` | `None` | Accepted acquisition policy when needed by Source operations. Missing required policy prevents readiness. |
 | `description` | `None` | Optional human description retained with the definition. |
+
+A Procedure's authority is not an argument: it is the most its terminals and
+invoked children can do (`observe`, `propose` or `settle`), and previews report it
+as `authority`.
 
 **Function form:** `def name(request[, world][, bindings]): ...`. `request`
 is required, including for an explicitly empty input contract. Optional `world`
@@ -346,7 +348,6 @@ decorator; reading a property has no network or execution effect.
 | `filename` | `str` | Caller-local diagnostic/source-map label. Accepted source uses a portable Procedure filename and relative lines, so relocating identical code does not change its identity. |
 | `contract_in`, `contract_out` | `Contract` | Declared invocation and successful-result contracts. |
 | `budget`, `hard_caps` | Existing models | Declared limits. |
-| `terminal_capability` | `Literal[1, 2, 3]` | Declared terminal capability. |
 | `activation_policy` | Existing literal union | Declared activation policy. |
 | `acquisition_policy`, `description` | `str \| None` | Optional definition metadata. |
 | `bindings` | Readonly mapping of slot name to `BindingValue` | Explicit selections currently supplied; an absent slot remains unbound. |
@@ -467,7 +468,7 @@ use ordinary Python; only the retained literal definition is the Procedure.
 | `if`, `elif`, `else` | Conditional graph routing. Both arms are compiled/validated; only the selected arm executes its runtime operations. |
 | `require(...)` statement | Explicit Guard refusal; code/message required. |
 | `return value` | Successful pure completion under the output contract. |
-| `return emit_capture(...)` / `return propose_change_set(...)` | Governed terminal completion. |
+| `return emit_capture(...)` / `return propose_change_set(...)` / `return settle_change_set(...)` | Governed terminal completion. |
 | `return halt(...)` | Explicit halt without a successful output. |
 | Return inside a conditional arm | Supported by the proposal; surviving paths continue, terminated paths do not. |
 | Function docstring and comments | Retained for review; not executed. |
@@ -833,6 +834,7 @@ separate intrinsic for every changeset operation is not specified here.
 | `return value` | Success with the declared output value. | Pure completion; no artificial capture/proposal is needed. |
 | `return emit_capture(...)` | Successful capture terminal plus declared result. | Registers/retains evidence through existing authorized terminal machinery. |
 | `return propose_change_set(...)` | Proposal terminal plus declared result when submission succeeds. | Submits a governed proposal. Does not approve or accept it. |
+| `return settle_change_set(...)` | Settle terminal plus declared result when delivery succeeds. | Accepts the change under the one covering settle ProcedureMandate when its condition holds, or falls back as that mandate declares. |
 | `return halt(reason)` | Explicit halt without successful output. | Does not manufacture an output satisfying the declared success contract. |
 
 A terminal expression must be returned and must end that path. No later step on
@@ -843,8 +845,8 @@ there is no accidental Python `None` success.
 The chosen terminal capability and execution lane must permit every reachable
 terminal. Current direct Procedure runs do not supply the accepted Line lane's
 capture/proposal authority. Source syntax does not remove that restriction.
-`PostInbox` and `MandateSettlement` have no source frontend specified here; their
-existence in other contracts is not a promise of SDK support.
+`PostInbox` has no source frontend specified here; its existence in other
+contracts is not a promise of SDK support.
 
 ### `emit_capture`
 
@@ -889,6 +891,26 @@ dispositions, or governance. The result describes the computation under its
 bindings; it does not assert that the proposal was accepted. Existing no-change
 and refusal outcomes must remain distinguishable in the terminal record rather
 than being disguised as acceptance.
+
+### `settle_change_set`
+
+```text
+settle_change_set(
+    *,
+    candidates: tuple[Value[ClaimCandidate], ...] | list[Value[ClaimCandidate]],
+    result: Value[O],
+) -> TerminalReturn[O]
+```
+
+The same arguments and candidate rules as `propose_change_set`; the Procedure's
+derived authority becomes `settle`. It names no mandate. On a Line, Core selects
+the one live settle ProcedureMandate covering every changed Claim, evaluates that
+mandate's pinned condition query for each target, and either accepts the change
+with no candidate approvals or follows the mandate's declared fallback (an
+ordinary proposal, or a refusal). The run's terminal egress reports
+`settle_outcome` as `settled` with the `accepted_git_oid`, or `proposed` with the
+`fallback_reason`. The Sequence step is `SettleChangeSet(name,
+candidate_templates=...)`.
 
 ### `halt`
 
@@ -1010,7 +1032,7 @@ No arbitrary Python fallback is introduced to cover those missing spellings.
 
 Reuse the current type and its existing fields:
 `name`, `ready_for_prepare`, `contracts`, `contract_in`, `contract_out`,
-`terminal_capability`, `acquisition_policy`, `nodes`, `edges`, `providers`,
+`authority`, `acquisition_policy`, `nodes`, `edges`, `providers`,
 `terminals`, `returns`, `budget`, `hard_caps`, `errors`, and `pending_checks`.
 Its normal structured serialization remains the inspection surface. The SDK
 objects are typed: contract references use existing contract-reference variants;
@@ -1119,7 +1141,7 @@ heavy-engine execution is not part of that integration test.
 | `security.http_response` CaptureContract | Permits the fixture HTTP source/logical source `security.feed`, records acquisition provenance and retained response bytes under explicit byte/retention rules. |
 | `security.registered_http_observation` CaptureContract | Permits registration of the verified acquisition result and preserves its original evidence binding. |
 | `security.feed_reads` acquisition policy | Permits the configured feed acquisition and its declared Source aliases under effective limits. The parent/child admission includes the child's policy/effects. |
-| Capture/proposal Lines | Manually triggered accepted Lines, pinned to the relevant Procedures with parameters below. Capture uses rung 1; proposal uses rung 2 and an applicable live ProcedureMandate. Required credentials/grants remain instance-specific. |
+| Capture/proposal Lines | Manually triggered accepted Lines, pinned to the relevant Procedures with parameters below. Capture Lines observe; proposal Lines propose under an applicable live ProcedureMandate. Required credentials/grants remain instance-specific. |
 
 Scalar state fields used with `.one()` each have exactly one live Claim in this
 fixture. Its verdict checks are explicit below. Claims and relationships were
@@ -1221,6 +1243,7 @@ from cruxible_client.authoring.source import (
     emit_capture,
     claim_candidate,
     propose_change_set,
+    settle_change_set,
     halt,
 )
 ```
@@ -1423,7 +1446,6 @@ request fields, including the format enum and byte limit.
     output=ObserveOutput,
     budget=BUDGET,
     hard_caps=CAPS,
-    terminal_capability=1,
     acquisition_policy="security.feed_reads",
 )
 def observe_feed(request, bindings):
@@ -1473,8 +1495,8 @@ parse its entries or author exposure Claims.
 ### Consume the Capture that triggered a Line
 
 Set `trigger_input="feed"` on `ChangeSetDraft.line(...)` to bind the event's
-Capture to the Procedure's Source alias `feed`. This authors Line v4 under
-compiler revision 30. The Source's exact CaptureContract must match the
+Capture to the Procedure's Source alias `feed`. Every new Line authors as
+Line v5 under compiler revision 31. The Source's exact CaptureContract must match the
 capture-arrival selector, or the selector anchoring an event-relative window.
 Manual, cadence, and fixed-window triggers cannot provide this input.
 
@@ -1494,8 +1516,9 @@ normally. Late execution keeps the original observation time and window. Missing
 stale, incompatible, or unavailable material refuses admission, even if an ordinary
 acquisition rule permits omission or a default. A retry reuses the admitted binding.
 
-Omitting `trigger_input` preserves the existing trigger-only behavior. Existing
-instances need an explicit governed compiler upgrade before accepting Line v4.
+Omitting `trigger_input` preserves trigger-only behavior. Existing instances need
+an explicit governed compiler upgrade to revision 31 before accepting new Lines;
+Lines accepted as v4 under revision 30 keep their meaning.
 
 ### Compare a feed observation with an accepted baseline
 
@@ -1521,7 +1544,6 @@ observer or provider computation supplies a hidden value.
     output=VerifyOutput,
     budget=BUDGET,
     hard_caps=CAPS,
-    terminal_capability=2,
 )
 def verify_feed(request, world, bindings):
     feed = world.security.feed[request.feed_id]
@@ -1577,7 +1599,7 @@ verifier_intent = pb.procedure(definition=bound_verifier).prepare()
 The parent has no independent Source node. Admission includes the child's
 pinned acquisition policy and effective effects/budgets; nested execution does
 not invent or bypass an acquisition policy on the parent. The accepted proposal
-Line binds `feed_id="kev"` and requests rung 2 under its applicable mandate.
+Line binds `feed_id="kev"` and proposes under its applicable mandate.
 Its invocation uses the same `pb.run_line(...)` surface.
 
 | Stage or condition | Expected result/state effect |

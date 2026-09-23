@@ -516,6 +516,8 @@ def _verify_successor(
         parent_state=window.state,
         wire_version=candidate.tag,
         acceptance_laws=laws,
+        # A settled generation replays its delegated authority from the parent state.
+        delegated_mandate_digest=record.mandate_digest,
         historical_law_coordinates={
             member.path: (
                 member.law_identifier,

@@ -136,7 +136,6 @@ def test_p2_b0_compact_bytes_are_pinned_for_every_non_changeset_governed_kind() 
     from cruxible_client.contracts.procedures.line_specs import parse_line_spec
     from cruxible_client.contracts.providers import parse_provider
     from cruxible_client.contracts.query.definitions import parse_query_definition
-    from cruxible_client.contracts.standing_mandates import parse_standing_mandate
     from cruxible_client.contracts.types import PrincipalRecord
     from cruxible_core.exhaust.promotions import parse_exhaust_promotion
 
@@ -155,7 +154,6 @@ def test_p2_b0_compact_bytes_are_pinned_for_every_non_changeset_governed_kind() 
         "provider": parse_provider,
         "query-definition": parse_query_definition,
         "source-acquisition-policy": parse_acquisition_policy,
-        "standing-mandate": parse_standing_mandate,
         "subject": parse_subject,
     }
     seen: set[str] = set()
@@ -286,7 +284,6 @@ def test_p2_b2_reserves_every_current_artifact_tag() -> None:
         "playbill-settled-outcomes-query-result-v1",
         "playbill-source-acquisition-policy-v1",
         "playbill-source-read-receipt-v1",
-        "playbill-standing-mandate-v1",
         "playbill-verified-provider-binding-v1",
         "playbill-workspace-file-source-request-v1",
     )

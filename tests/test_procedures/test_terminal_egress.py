@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
@@ -28,7 +27,6 @@ from cruxible_core.procedures.execution import (
 from cruxible_core.procedures.terminal_services import ProposalDeliveryRefused
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.test_procedures.test_procedure_execution import (
-    NOW,
     _accepted,
     _Authority,
     _budget,
@@ -180,9 +178,6 @@ def test_terminal_sink_delivery_is_receipted_after_item_dependencies(tmp_path) -
         requested_terminal_rung=1,
         selector_privacies={},
         taint_labels=(),
-        mandate_grants={},
-        calibration_caps=(),
-        evaluation_time=NOW,
         procedure_definition_digest=admission.definition_digest,
         line_spec_digest=admission.line_spec_digest or "",
         sensitivity_policy_digest=admission.sensitivity_policy_digest or "",
@@ -236,9 +231,6 @@ def test_proposal_refusal_projects_as_a_repairable_public_node_terminal(
         requested_terminal_rung=1,
         selector_privacies={},
         taint_labels=(),
-        mandate_grants={},
-        calibration_caps=(),
-        evaluation_time=NOW,
         procedure_definition_digest=admission.definition_digest,
         line_spec_digest=admission.line_spec_digest or "",
         sensitivity_policy_digest=admission.sensitivity_policy_digest or "",
@@ -287,9 +279,6 @@ def test_the_mandate_term_names_whichever_source_reached_the_rung() -> None:
         "requested_terminal_rung": 3,
         "selector_privacies": {},
         "taint_labels": (),
-        "mandate_grants": {},
-        "calibration_caps": (),
-        "evaluation_time": datetime(2026, 9, 3, tzinfo=UTC),
         "procedure_definition_digest": _digest("definition"),
         "line_spec_digest": _digest("line"),
         "sensitivity_policy_digest": _digest("sensitivity"),
@@ -304,8 +293,8 @@ def test_the_mandate_term_names_whichever_source_reached_the_rung() -> None:
     )
     term = next(item for item in tier_wins.terms if item.term == "mandate_grant")
     assert term.rung == 3
-    assert "authority tier holds rung 3" in term.reason
-    assert "mandate grants rung 2" in term.reason
+    assert "authority tier holds settle" in term.reason
+    assert "mandate grants propose" in term.reason
 
     mandate_wins = compute_effective_rung(
         **common,  # type: ignore[arg-type]
@@ -314,4 +303,4 @@ def test_the_mandate_term_names_whichever_source_reached_the_rung() -> None:
     )
     term = next(item for item in mandate_wins.terms if item.term == "mandate_grant")
     assert term.rung == 3
-    assert term.reason == "The exact accepted Procedure mandate grants rung 3."
+    assert term.reason == "The exact accepted Procedure mandate grants settle."

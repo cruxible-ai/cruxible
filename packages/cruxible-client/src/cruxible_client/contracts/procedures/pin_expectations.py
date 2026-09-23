@@ -16,7 +16,6 @@ from cruxible_client.contracts.procedures.models import (
     ClaimTapNodeV6,
     ExhaustTapNodeV3,
     InvokeNodeV6,
-    MandateSettlementNodeV3,
     ProcedureDefinitionAny,
     ProcedurePinBindingV1,
     ProcedurePinSlotRefV1,
@@ -58,8 +57,6 @@ CAPTURE_CONTRACT = PinExpectation((("capture-contract", "CaptureContract"),))
 ENVIRONMENT = PinExpectation((("environment", "EnvironmentManifest"),))
 EFFECT_POLICY = PinExpectation((("effect-policy", "EffectPolicy"),))
 REDUCER_OR_QUERY = PinExpectation((("query", "QueryDefinition"), ("reducer", "Reducer")))
-MANDATE = PinExpectation((("mandate", "StandingMandate"),))
-TARGET_LAW = PinExpectation((("target-law", "Policy"),))
 
 TRIGGER_CADENCE_POLICY = PinExpectation((("trigger-cadence-policy", "Policy"),))
 TRIGGER_CAPTURE_CONTRACT = PinExpectation((("trigger-capture-contract", "CaptureContract"),))
@@ -223,9 +220,6 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinitionAny) -> N
                     check(body.effect_policy, EFFECT_POLICY, f"{body_prefix} effect_policy")
         elif isinstance(node, CaptureEgressNodeV3):
             check(node.capture_contract, CAPTURE_CONTRACT, f"{prefix} capture_contract")
-        elif isinstance(node, MandateSettlementNodeV3):
-            check(node.mandate, MANDATE, f"{prefix} mandate")
-            check(node.target_law, TARGET_LAW, f"{prefix} target_law")
 
 
 __all__ = [

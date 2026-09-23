@@ -23,7 +23,6 @@ from cruxible_client.contracts.procedures.models import (
     GuardPredicateV1,
     HaltNodeV3,
     InboxEgressNodeV3,
-    MandateSettlementNodeV3,
     PredicateOperandV1,
     ProcedureBudgetV3,
     ProcedureDefinitionV3,
@@ -254,31 +253,6 @@ def test_semantic_pin_expectations_validate_slot_declarations_not_only_bindings(
             returns="rows",
             pin_slots=(wrong_slot,),
         )
-
-
-def test_mandate_terminal_pin_expectations_are_nominal() -> None:
-    definition = _definition(
-        (
-            ProjectNodeV3(
-                node_id="project",
-                fields={"ready": True},
-                contract_out=_pin("contract-out", "Contract", "result"),
-                as_="result",
-            ),
-            MandateSettlementNodeV3(
-                node_id="settle",
-                mandate=_pin("mandate", "StandingMandate", "release"),
-                target_law=_pin("target-law", "Policy", "release-law"),
-                input="$steps.result",
-            ),
-        ),
-        returns="result",
-    )
-    for field in ("mandate", "target_law"):
-        payload = definition.model_dump(mode="json", by_alias=True)
-        payload["nodes"][1][field] = _pin("wrong", "WrongArtifact", field).model_dump(mode="json")
-        with pytest.raises(ValidationError, match="requires role="):
-            ProcedureDefinitionV3.model_validate(payload)
 
 
 def test_branch_join_tracks_must_availability_separately_from_may_reachability() -> None:
@@ -609,26 +583,6 @@ def test_transform_specs_are_tagged_closed_and_kind_matched() -> None:
             2,
             True,
         ),
-        (
-            MandateSettlementNodeV3(
-                node_id="settle",
-                mandate=_pin("mandate", "StandingMandate", "release"),
-                target_law=_pin("target-law", "Policy", "release-law"),
-                input="$steps.result",
-            ),
-            2,
-            False,
-        ),
-        (
-            MandateSettlementNodeV3(
-                node_id="settle",
-                mandate=_pin("mandate", "StandingMandate", "release"),
-                target_law=_pin("target-law", "Policy", "release-law"),
-                input="$steps.result",
-            ),
-            3,
-            True,
-        ),
     ),
 )
 def test_terminal_kinds_cannot_exceed_the_declared_capability(
@@ -694,12 +648,6 @@ def test_external_provider_effects_do_not_raise_the_terminal_rung() -> None:
         ProposeChangeSetNodeV3(
             node_id="propose",
             candidate_templates=({"input": "$steps.missing"},),
-        ),
-        MandateSettlementNodeV3(
-            node_id="settle",
-            mandate=_pin("mandate", "StandingMandate", "release"),
-            target_law=_pin("target-law", "Policy", "release-law"),
-            input="$steps.missing",
         ),
     ),
 )

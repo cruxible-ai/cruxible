@@ -59,7 +59,6 @@ from cruxible_core.exhaust import (
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.procedures.resolution import (
-    AcceptedAuthorityBasisV1,
     ProcedureProofReferenceV1,
     ProcedureResolutionBook,
     append_procedure_resolution,
@@ -69,7 +68,6 @@ from cruxible_core.procedures.resolution import (
     derive_resolution_activations,
     evaluate_procedure_resolution,
     resolution_contract_partition_id,
-    resolve_authority_basis,
 )
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.proposals.settlement import ChangeActorBinding
@@ -373,53 +371,6 @@ def test_resolution_and_latest_disposition_replay_from_exhaust(tmp_path) -> None
     )
     book.replay(journal.all_records(stream, partition_id), bodies=bodies)
     assert book.latest_non_overturned(activation.contract_id) is None
-
-
-def test_authority_resolver_excludes_absent_expired_superseded_and_overturned() -> None:
-    current = AcceptedAuthorityBasisV1(
-        kind="standing_mandate",
-        basis_digest=_digest("mandate-current"),
-        accepted_coordinate=_coordinate(),
-        valid_from=NOW - timedelta(days=1),
-        valid_until=NOW + timedelta(days=1),
-        current_artifact_digest=_digest("mandate-current"),
-        artifact_digest=_digest("mandate-current"),
-    )
-    expired = current.model_copy(
-        update={
-            "basis_digest": _digest("expired"),
-            "artifact_digest": _digest("expired"),
-            "current_artifact_digest": _digest("expired"),
-            "valid_until": NOW,
-        }
-    )
-    superseded = current.model_copy(
-        update={
-            "basis_digest": _digest("superseded"),
-            "artifact_digest": _digest("superseded"),
-            "current_artifact_digest": _digest("successor"),
-        }
-    )
-    overturned = AcceptedAuthorityBasisV1(
-        kind="resolution",
-        basis_digest=_digest("resolution"),
-        accepted_coordinate=_coordinate(),
-        valid_from=NOW - timedelta(days=1),
-        valid_until=NOW + timedelta(days=1),
-        current_artifact_digest=_digest("promotion"),
-        artifact_digest=_digest("promotion"),
-        resolution_verdict="satisfied",
-        resolution_overturned=True,
-        accepted_promotion_digest=_digest("promotion"),
-    )
-    candidates = {item.basis_digest: item for item in (current, expired, superseded, overturned)}
-    requested = tuple(sorted((*candidates, _digest("absent"))))
-
-    assert resolve_authority_basis(
-        requested,
-        accepted_basis=candidates,
-        evaluation_time=NOW,
-    ) == (current.basis_digest,)
 
 
 def test_resolution_law_refuses_goodhart_clock_and_expectation_mismatches() -> None:

@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
@@ -51,8 +52,9 @@ from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.claims import claim_path
 from cruxible_client.contracts.procedure_mandates import (
+    ProcedureMandateAny,
     ProcedureMandateInvocationV1,
-    ProcedureMandateV1,
+    ProcedureMandateV2,
     evaluate_procedure_mandate,
 )
 from cruxible_client.contracts.procedures.models import TERMINAL_REQUIRED_RUNGS
@@ -60,7 +62,10 @@ from cruxible_client.contracts.procedures.proposal_items import (
     ProcedureClaimProposalItemV1,
     ProcedureClaimProposalItemV2,
 )
-from cruxible_client.contracts.proposal_models import ProposalResult
+from cruxible_client.contracts.proposal_models import (
+    ProposalResult,
+    ProposalSettleSubmissionV1,
+)
 from cruxible_core.authoring import lowering as authoring_lowering
 from cruxible_core.authoring.lowering import AuthoringLoweringError, LoweredAuthoring
 from cruxible_core.procedures.egress import (
@@ -79,6 +84,11 @@ from cruxible_core.procedures.terminal_services import (
     proposal_terminal_payload_digest,
     proposal_terminal_receipt,
     proposal_terminal_ref,
+    settle_terminal_receipt,
+)
+from cruxible_core.proposals.delegated_authority import (
+    delegated_authority_issues,
+    mandate_coverage,
 )
 from cruxible_core.proposals.proposals import ProposalService
 
@@ -318,7 +328,7 @@ def select_procedure_mandate(
     request: TerminalEgressRequestV1,
     *,
     admission: ProcedureRunAdmissionV1,
-    accepted_mandates: Mapping[str, ProcedureMandateV1],
+    accepted_mandates: Mapping[str, ProcedureMandateAny],
     target_paths: tuple[str, ...],
     delegation: ProcedureDelegation | None = None,
 ) -> str | None:
@@ -357,6 +367,65 @@ def select_procedure_mandate(
     return min(ranked)[1]
 
 
+def select_settle_mandate(
+    request: TerminalEgressRequestV1,
+    *,
+    admission: ProcedureRunAdmissionV1,
+    accepted_mandates: Mapping[str, ProcedureMandateAny],
+    target_paths: tuple[str, ...],
+    base_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+    delegation: ProcedureDelegation | None = None,
+) -> str:
+    """Bind the one settle grant that covers every change; none or several refuse.
+
+    Coverage is the mandate's own law (Procedure, window, resources, namespace,
+    ClaimType and change-kind scope); its condition is decided at delivery.
+    """
+
+    authority = authority_procedure(admission, delegation)
+    covering: list[str] = []
+    for digest, mandate in sorted(accepted_mandates.items(), key=lambda item: item[0]):
+        if not isinstance(mandate, ProcedureMandateV2) or mandate.grants != "settle":
+            continue
+        evaluation = evaluate_procedure_mandate(
+            mandate,
+            ProcedureMandateInvocationV1(
+                procedure_identity=authority.target,
+                procedure_artifact_digest=authority.artifact_digest,
+                requested_rung=3,
+                requested_authority=admission.hard_caps,
+                target_paths=target_paths,
+                evaluation_time=request.prepared_at,
+                accepted_mandate_digest=digest,
+            ),
+        )
+        if evaluation.verdict != "permitted":
+            continue
+        _targets, issues = mandate_coverage(
+            mandate,
+            scope=target_paths,
+            current_tree=base_tree,
+            candidate_tree=candidate_tree,
+            evaluated_at=request.prepared_at,
+        )
+        if not issues:
+            covering.append(digest)
+    if not covering:
+        raise ProposalDeliveryRefused(
+            "settle_mandate_missing",
+            "No live settle ProcedureMandate for this Procedure covers every changed Claim.",
+            details={"target_paths": list(target_paths)},
+        )
+    if len(covering) > 1:
+        raise ProposalDeliveryRefused(
+            "settle_mandate_ambiguous",
+            "More than one settle ProcedureMandate covers this change; exactly one must.",
+            details={"mandates": covering},
+        )
+    return covering[0]
+
+
 class ProposalTerminalEgressSink:
     """The production `propose_change_set` sink: prepare once, deliver exactly once."""
 
@@ -364,7 +433,7 @@ class ProposalTerminalEgressSink:
         self,
         *,
         instance: PlaybillInstance,
-        accepted_mandates: Mapping[str, ProcedureMandateV1],
+        accepted_mandates: Mapping[str, ProcedureMandateAny],
         proposal_service: Callable[[], ProposalService] | None = None,
         delegation: ProcedureDelegation | None = None,
     ) -> None:
@@ -384,10 +453,10 @@ class ProposalTerminalEgressSink:
         manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
         evidence: Mapping[str, str] | None = None,
     ) -> PreparedTerminalEgressV1:
-        if request.kind != "propose_change_set":
+        if request.kind not in {"propose_change_set", "settle_change_set"}:
             raise ProposalDeliveryRefused(
                 "proposal_item_invalid",
-                "The proposal sink prepares propose_change_set terminals only.",
+                "The proposal sink prepares proposal and settle terminals only.",
                 details={"kind": request.kind},
             )
         items = proposal_items(request)
@@ -478,15 +547,28 @@ class ProposalTerminalEgressSink:
                     "A terminal item lowered into no changed member.",
                     details={"item_key": item_key, "path": path},
                 )
-        prepared = PreparedTerminalEgressV1(
-            target_paths=target_paths,
-            procedure_mandate_digest=select_procedure_mandate(
+        mandate_digest = (
+            select_settle_mandate(
+                request,
+                admission=admission,
+                accepted_mandates=self.accepted_mandates,
+                target_paths=target_paths,
+                base_tree=self.instance.tree_at(request.accepted_coordinate.git_oid),
+                candidate_tree=lowered.proposed_tree,
+                delegation=self.delegation,
+            )
+            if request.kind == "settle_change_set"
+            else select_procedure_mandate(
                 request,
                 admission=admission,
                 accepted_mandates=self.accepted_mandates,
                 target_paths=target_paths,
                 delegation=self.delegation,
-            ),
+            )
+        )
+        prepared = PreparedTerminalEgressV1(
+            target_paths=target_paths,
+            procedure_mandate_digest=mandate_digest,
             lowering_digest=proposal_lowering_digest(lowered.changed_members),
             item_paths=tuple(sorted(item_paths.items(), key=lambda item: item[0].encode("utf-8"))),
         )
@@ -510,10 +592,13 @@ class ProposalTerminalEgressSink:
         request: TerminalEgressRequestV1,
         admission: ProcedureRunAdmissionV1 | None = None,
     ) -> TerminalEgressReceiptV1:
-        if not isinstance(request, TerminalEgressRequestV2) or request.kind != "propose_change_set":
+        if not isinstance(request, TerminalEgressRequestV2) or request.kind not in {
+            "propose_change_set",
+            "settle_change_set",
+        }:
             raise ProposalDeliveryRefused(
                 "proposal_item_invalid",
-                "The proposal sink delivers prepared v2 propose_change_set egress only.",
+                "The proposal sink delivers prepared v2 proposal and settle egress only.",
                 details={"kind": request.kind},
             )
         key = (request.admission_binding_digest, request.node_id)
@@ -544,13 +629,22 @@ class ProposalTerminalEgressSink:
             request,
             service=service,
             lowering_digest=prepared.prepared.lowering_digest,
-            item_paths=prepared.item_paths,
         )
-        if existing is not None:
-            return existing
         adapter = ProposalTerminalAdapter(
             service=service, bind_projection=self.instance.bind_accepted_projection
         )
+        if request.kind == "settle_change_set":
+            return self._deliver_settle(
+                request,
+                admission=admission,
+                prepared=prepared,
+                adapter=adapter,
+                existing=existing,
+            )
+        if existing is not None:
+            return proposal_terminal_receipt(
+                request, result=existing, item_paths=prepared.item_paths
+            )
         return adapter.deliver(
             request=request,
             admission=admission,
@@ -568,8 +662,7 @@ class ProposalTerminalEgressSink:
         *,
         service: ProposalService,
         lowering_digest: str,
-        item_paths: Mapping[str, str],
-    ) -> TerminalEgressReceiptV1 | None:
+    ) -> ProposalResult | None:
         """Recover by immutable operation admission; refs only protect unfinished writes."""
         assert request.operation_key is not None
         actor_id = request.actor_context.actor_id
@@ -620,7 +713,16 @@ class ProposalTerminalEgressSink:
             proposal_lowering_digest(prepared.changed_members) != lowering_digest
             or admission_record.source_compilation_digest
             != proposal_terminal_payload_digest(
-                prepared.candidate_tree, prepared.prepared.target_paths
+                prepared.candidate_tree,
+                prepared.prepared.target_paths,
+                settle=admission_record.settle_submission,
+            )
+            or (admission_record.settle_submission is not None)
+            != (request.kind == "settle_change_set")
+            or (
+                admission_record.settle_submission is not None
+                and admission_record.settle_submission.mandate_digest
+                != request.procedure_mandate_digest
             )
         ):
             raise ProposalDeliveryRefused(
@@ -628,15 +730,164 @@ class ProposalTerminalEgressSink:
                 "The operation key already names a proposal carrying another authored payload.",
                 details={"proposal_id": admission_record.proposal_id},
             )
-        return proposal_terminal_receipt(
-            request,
-            result=ProposalResult(
-                admission=admission_record,
-                evaluation=evaluation,
-                candidate=candidate,
-            ),
-            item_paths=item_paths,
+        return ProposalResult(
+            admission=admission_record,
+            evaluation=evaluation,
+            candidate=candidate,
         )
+
+    # -- settlement ---------------------------------------------------------
+
+    def _deliver_settle(
+        self,
+        request: TerminalEgressRequestV2,
+        *,
+        admission: ProcedureRunAdmissionV1,
+        prepared: PreparedProposal,
+        adapter: ProposalTerminalAdapter,
+        existing: ProposalResult | None,
+    ) -> TerminalEgressReceiptV1:
+        """Settle under the one covering mandate, or fall back exactly as it declares.
+
+        The condition is checked before anything is written, so a failing
+        condition never leaves a refused proposal under the operation key. The
+        submission mode is retained on the proposal's admission, so a repeated
+        or recovered delivery reports what was actually submitted -- a fallback
+        stays a fallback even after it is accepted through ordinary review.
+        """
+
+        digest = request.procedure_mandate_digest
+        mandate = None if digest is None else self.accepted_mandates.get(digest)
+        if not isinstance(mandate, ProcedureMandateV2) or mandate.condition is None:
+            raise ProposalDeliveryRefused(
+                "settle_mandate_missing",
+                "The settle terminal's bound mandate is no longer an accepted settle grant.",
+            )
+        assert digest is not None
+        result = existing
+        if result is None:
+            head = self.instance.accepted_coordinate()
+            issues = delegated_authority_issues(
+                mandate_digest=digest,
+                scope=request.target_paths,
+                current_tree=self.instance.tree_at(head.git_oid),
+                candidate_tree=prepared.candidate_tree,
+                current=head,
+                timestamp=canonical_candidate_timestamp(request.evaluation_time),
+                facts=self.instance._accepted_query_facts(self.instance, head),
+            )
+            codes = sorted({code for code, _message in issues})
+            if issues and mandate.condition.fallback == "refuse":
+                raise ProposalDeliveryRefused(
+                    "settle_condition_refused",
+                    "The settle mandate does not authorize this change and declares no "
+                    "proposal fallback.",
+                    details={"codes": codes, "messages": [m for _code, m in issues]},
+                )
+            submission = (
+                ProposalSettleSubmissionV1(
+                    mode="fallback", mandate_digest=digest, fallback_reason=", ".join(codes)
+                )
+                if issues
+                else ProposalSettleSubmissionV1(mode="delegated", mandate_digest=digest)
+            )
+            result = adapter.submit(
+                request=request,
+                admission=admission,
+                candidate_tree=prepared.candidate_tree,
+                accepted_mandates=self.accepted_mandates,
+                rationale=prepared.rationale,
+                changed_paths=prepared.prepared.target_paths,
+                delegation=self.delegation,
+                settle_submission=submission,
+            )
+        settle = result.admission.settle_submission
+        assert settle is not None  # submitted above, or verified by recover_existing
+        if settle.mode == "fallback":
+            return settle_terminal_receipt(
+                request,
+                result=result,
+                item_paths=prepared.item_paths,
+                accepted_git_oid=None,
+                fallback_reason=settle.fallback_reason,
+            )
+        if result.candidate is None:
+            raise ProposalDeliveryRefused(
+                "settle_publication_refused",
+                "The delegated candidate was refused at submission.",
+                details={
+                    "proposal_id": result.admission.proposal_id,
+                    "codes": [item.code for item in result.evaluation.diagnostics],
+                },
+            )
+        accepted_oid = self._accepted_oid(result.candidate.candidate_digest, digest=digest)
+        if accepted_oid is None:
+            accepted_oid = self._activate(result, request=request, mandate=mandate, digest=digest)
+        return settle_terminal_receipt(
+            request,
+            result=result,
+            item_paths=prepared.item_paths,
+            accepted_git_oid=accepted_oid,
+        )
+
+    def _accepted_oid(self, candidate_digest: str, *, digest: str) -> str | None:
+        """The accepted generation that settled this exact candidate under this mandate.
+
+        Found through the history index, never a history walk; its retained
+        record must name the same mandate, or it is not this settlement.
+        """
+
+        with self.instance.accepted_history_reader() as history:
+            location = history.generation_for_candidate(candidate_digest)
+            if location is None:
+                return None
+            record = history.read_generation_record(location.sequence, self.instance.blob_at)
+        if record.mandate_digest != digest:
+            raise ProposalDeliveryRefused(
+                "effectful_operation_payload_mismatch",
+                "The delegated candidate was accepted, but not under this settle mandate.",
+                details={"accepted_git_oid": location.git_oid},
+            )
+        return location.git_oid
+
+    def _activate(
+        self,
+        result: ProposalResult,
+        *,
+        request: TerminalEgressRequestV2,
+        mandate: ProcedureMandateV2,
+        digest: str,
+    ) -> str:
+        from cruxible_client.contracts.errors import SettlementIntegrityError
+        from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+
+        # No late acceptance: the mandate must still stand when the change lands.
+        now = datetime.now(timezone.utc)
+        if mandate.suspended or not (mandate.valid_from <= now < mandate.expires_at):
+            raise ProposalDeliveryRefused(
+                "settle_publication_refused",
+                "The settle mandate expired or was suspended before publication.",
+            )
+        try:
+            receipt = service_activate_playbill_proposal(
+                self.instance,
+                proposal_id=result.admission.proposal_id,
+                activated_by=request.actor_context.actor_id,
+                mandate_digest=digest,
+            )
+        except SettlementIntegrityError:
+            raise ProposalDeliveryRefused(
+                "settle_publication_refused",
+                "The delegated candidate no longer reproduces under its mandate at publication.",
+                details={"proposal_id": result.admission.proposal_id},
+            ) from None
+        if receipt.status != "accepted" or receipt.accepted_coordinate is None:
+            raise ProposalDeliveryRefused(
+                "settle_publication_refused",
+                "Accepted state moved before the settlement published.",
+                details={"proposal_id": result.admission.proposal_id, "status": receipt.status},
+            )
+        return receipt.accepted_coordinate.git_oid
 
     @staticmethod
     def _require_same_member_bytes(
@@ -679,4 +930,5 @@ __all__ = [
     "proposal_items",
     "proposal_lowering_digest",
     "select_procedure_mandate",
+    "select_settle_mandate",
 ]
