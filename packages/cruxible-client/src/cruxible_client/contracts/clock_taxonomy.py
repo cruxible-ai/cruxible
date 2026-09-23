@@ -302,6 +302,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ProcedureMandateInvocationV1", "evaluation_time"): "EVALUATION INSTANT",
     ("ProcedureMandateV1", "expires_at"): "VALIDITY WINDOW",
     ("ProcedureMandateV1", "valid_from"): "VALIDITY WINDOW",
+    ("ProcedureMandateV2", "expires_at"): "VALIDITY WINDOW",
+    ("ProcedureMandateV2", "valid_from"): "VALIDITY WINDOW",
     ("ProcedureMeasurementDeclarationV1", "check_after"): "VALIDITY WINDOW",
     ("ProcedureMeasurementDeclarationV1", "expires_after"): "VALIDITY WINDOW",
     ("ProcedureMeasurementReviewTriggerV1", "window"): "VALIDITY WINDOW",
