@@ -3996,19 +3996,26 @@ def evaluate_line(
 
 
 @line_group.command("dispatch")
+@click.option(
+    "--retry",
+    is_flag=True,
+    help="Explicitly retry --occurrence-id against the current Line in the same epoch.",
+)
 @click.argument("line")
 @click.option("--occurrence-id", default=None)
 @click.option("--limit", default=1, type=click.IntRange(1, 100))
 @json_option
 @handle_errors
-def dispatch_line(line: str, occurrence_id: str | None, limit: int, output_json: bool) -> None:
+def dispatch_line(
+    line: str, occurrence_id: str | None, limit: int, retry: bool, output_json: bool
+) -> None:
     from cruxible_client.contracts.line_dispatch import LineDispatchRequestV1
 
     result = _server_call(
         lambda client, instance_id: client.dispatch_playbill_line(
             instance_id,
             line,
-            request=LineDispatchRequestV1(occurrence_id=occurrence_id, limit=limit),
+            request=LineDispatchRequestV1(occurrence_id=occurrence_id, limit=limit, retry=retry),
         ),
         command_name="playbill line dispatch",
     )

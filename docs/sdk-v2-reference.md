@@ -1478,7 +1478,15 @@ compiler revision 30. The Source's exact CaptureContract must match the
 capture-arrival selector, or the selector anchoring an event-relative window.
 Manual, cadence, and fixed-window triggers cannot provide this input.
 
-Listening and explicit dispatch retain their existing behavior. Admission verifies
+Use `pb.check_line(name)` to inspect trigger matches and their `dispatch_status`.
+`pb.dispatch_line(name)` processes pending work; unusable exact Captures close as
+`rejected` and superseded Line bindings close as `superseded`, with typed refusals
+and repair hints. To explicitly retry closed work after repair, use
+`pb.dispatch_line(name, occurrence_id=occurrence_id, retry=True)`. This can bind a
+successor Line only in the same epoch and never substitutes another event or
+Capture. Historical evaluation alone does not reopen closed work.
+
+Listening matches events without executing Procedures. Admission verifies
 the exact retained Capture against its producer coordinate, acquisition policy,
 and byte budget, then retains the input and its material manifest. The bound Source
 uses those bytes without invoking its provider; other Source nodes still acquire

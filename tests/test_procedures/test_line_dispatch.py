@@ -68,7 +68,10 @@ def test_explicit_evaluation_and_pending_rebuild_do_not_execute(tmp_path):
     )
     assert store.journal.read_head(store.stream, "dispatch") == before
     with store.locked() as conn:
-        assert conn.execute("SELECT count(*) FROM pending WHERE admitted=0").fetchone()[0] == 1
+        assert (
+            conn.execute("SELECT count(*) FROM pending WHERE disposition='pending'").fetchone()[0]
+            == 1
+        )
 
 
 def test_listener_restart_keeps_pending_and_leaves_downtime_for_explicit_evaluation(tmp_path):
@@ -505,7 +508,10 @@ def test_one_capture_can_leave_independent_pending_work_for_two_lines(tmp_path):
     assert first_result.items[0].status == "admitted"
     LineDispatchStore(instance).path.unlink()
     with LineDispatchStore(instance).locked() as conn:
-        assert conn.execute("SELECT count(*) FROM pending WHERE admitted=0").fetchone()[0] == 1
+        assert (
+            conn.execute("SELECT count(*) FROM pending WHERE disposition='pending'").fetchone()[0]
+            == 1
+        )
     second_result = service_dispatch_line(
         instance, second.identity.name, LineDispatchRequestV1(), actor=actor, now=now, caller_rung=3
     )
@@ -559,3 +565,138 @@ def test_idle_coverage_is_checkpointed_and_restart_claims_only_durable_range(tmp
         )
         assert old["stops_at"] == durable["evaluated_until"]
         assert conn.execute("SELECT count(*) FROM pending").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("change", ["rebind", "epoch", "race"])
+def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuild(
+    tmp_path, change, monkeypatch
+):
+    new_epoch = change == "epoch"
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.procedures.line_specs import (
+        line_spec_digest,
+        line_spec_path,
+        render_line_spec,
+    )
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+
+    instance, line, procedure, owner = line_world(
+        tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR), with_owner=True
+    )
+    capture(instance, procedure)
+    now = READ_TIME + timedelta(seconds=2)
+    actor = _actor(instance)
+    evaluated = service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequestV1(since=READ_TIME, until=now),
+        actor=actor,
+        now=now,
+    )
+    occurrence = evaluated.occurrences[0]
+    successor = line.model_copy(
+        update={
+            "parameters": {"status": "closed"},
+            "lifecycle": ArtifactLifecycle(predecessor_digest=line_spec_digest(line).tagged),
+        }
+    )
+    if new_epoch:
+        from cruxible_client.contracts.procedures.line_specs import WindowCloseTriggerPolicyV2
+        from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
+
+        successor = successor.model_copy(
+            update={
+                "occurrence_epoch": line.occurrence_epoch + 1,
+                "trigger_policy": WindowCloseTriggerPolicyV2(
+                    window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=1)
+                ),
+            }
+        )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[line_spec_path(line.identity.name)] = render_line_spec(successor)
+
+    def accept_successor():
+        _accept_tree(
+            instance,
+            owner,
+            tree,
+            timestamp="2026-08-28T15:02:00.000000Z",
+            proposal_name="rebind-pending",
+        )
+
+    if change == "race":
+        import cruxible_core.service.procedures.line_dispatch as dispatch_service
+
+        original_run = dispatch_service.service_run_playbill_line
+
+        def run_after_acceptance(*args, **kwargs):
+            accept_successor()
+            monkeypatch.setattr(dispatch_service, "service_run_playbill_line", original_run)
+            return original_run(*args, **kwargs)
+
+        monkeypatch.setattr(dispatch_service, "service_run_playbill_line", run_after_acceptance)
+    else:
+        accept_successor()
+    result = service_dispatch_line(
+        instance, line.identity.name, LineDispatchRequestV1(), actor=actor, now=now, caller_rung=3
+    )
+    assert result.items[0].status == "superseded"
+    assert result.items[0].refusal.code == "line_binding_superseded"
+    store = LineDispatchStore(instance)
+    store.path.unlink()
+    assert (
+        service_dispatch_line(
+            instance,
+            line.identity.name,
+            LineDispatchRequestV1(),
+            actor=actor,
+            now=now,
+            caller_rung=3,
+        ).items
+        == ()
+    )
+    with store.locked() as conn:
+        row = conn.execute("SELECT payload,disposition FROM pending").fetchone()
+        assert row[1] == "superseded"
+        assert json.loads(row[0])["line_artifact_digest"] == evaluated.line_artifact_digest
+    request = LineDispatchRequestV1(occurrence_id=occurrence.occurrence_id, retry=True)
+    retry = service_dispatch_line(
+        instance, line.identity.name, request, actor=actor, now=now, caller_rung=3
+    )
+    if new_epoch:
+        assert retry.items[0].status == "superseded"
+        evaluated_new = service_evaluate_line(
+            instance,
+            line.identity.name,
+            LineEvaluateRequestV1(since=READ_TIME, until=now),
+            actor=actor,
+            now=now,
+        )
+        assert evaluated_new.occurrences[0].occurrence_id != occurrence.occurrence_id
+        fresh = service_dispatch_line(
+            instance,
+            line.identity.name,
+            LineDispatchRequestV1(),
+            actor=actor,
+            now=now,
+            caller_rung=3,
+        )
+        assert fresh.items[0].status == "admitted", fresh
+        return
+    assert retry.items[0].status == "admitted", retry
+    store.path.unlink()
+    again = service_dispatch_line(
+        instance, line.identity.name, request, actor=actor, now=now, caller_rung=3
+    )
+    assert again.items[0].run_id == retry.items[0].run_id
+    with store.locked() as conn:
+        row = json.loads(conn.execute("SELECT payload FROM pending").fetchone()[0])
+        assert row["line_artifact_digest"] == line_spec_digest(successor).tagged
+        assert row["occurrence"]["binding"] == occurrence.binding.model_dump(mode="json")
+
+
+def test_retry_requires_one_explicit_occurrence():
+    with pytest.raises(ValueError, match="retry requires"):
+        LineDispatchRequestV1(retry=True)
+    with pytest.raises(ValueError, match="retry requires"):
+        LineDispatchRequestV1(retry=True, occurrence_id="one", limit=2)

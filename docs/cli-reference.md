@@ -910,19 +910,30 @@ PRD-c1… rollout-healthy procedure_unit satisfied run=RUN-3f…
 cruxible playbill line check LINE [--since TS] [--until TS] [--limit 100] [--cursor CURSOR] [--json]
 cruxible playbill line listen LINE [--stop] [--json]
 cruxible playbill line evaluate LINE --since TS --until TS [--limit 100] [--cursor CURSOR] [--json]
-cruxible playbill line dispatch LINE [--occurrence-id DIGEST] [--limit 1] [--json]
+cruxible playbill line dispatch LINE [--occurrence-id DIGEST] [--retry] [--limit 1] [--json]
 cruxible playbill line run LINE --evaluation-time TS
   [--occurrence-id ID] [--json]
 ~~~
 
 `check` is read-only: it returns `met`, `not_met`, or `incomplete`, exact
-matching events/windows, and whether each occurrence is pending or already
-admitted. `listen` enables matching into durable pending work; it never runs a
-Procedure. `listen --stop` ends coverage at the last completed evaluation.
+matching events/windows, and the dispatch status of each occurrence (pending,
+admitted, rejected, or superseded). `listen` enables matching into durable pending work; it never runs a
+Procedure. Idle coverage is checkpointed at one-minute intervals; event progress
+and partial scans are retained immediately. `listen --stop` ends coverage at the
+last durable checkpoint.
 `evaluate` explicitly checks a historical `[since, until)` range and records
 its matches as pending. Follow its cursor to finish a bounded page.
 `dispatch` admits pending occurrences using the caller's current permissions
-and the ordinary Line admission checks. A retry reuses an existing admission.
+and the ordinary Line admission checks. Permanent input failures close as
+`rejected`; changed Line bindings close as `superseded`. Both leave the runnable
+queue, retaining their evidence and a typed refusal with repair instructions.
+Transient authority/provider failures remain blocked. Historical evaluation
+does not reopen closed work.
+
+`dispatch --occurrence-id DIGEST --retry` explicitly retries one occurrence,
+binding the current accepted Line version only within the same occurrence epoch.
+It preserves the exact event/window and rechecks present authority and freshness;
+it cannot substitute a newer Capture. An existing admission is always reused.
 
 Restart resumes pending work and opens a new forward listening range. Time
 not covered by completed listening ranges requires explicit `evaluate`; it is
@@ -930,8 +941,9 @@ never replayed automatically. Rebuilding the disposable event index similarly
 opens a new forward range, while retained pending work survives. A changed
 occurrence epoch needs an explicit new subscription. Rebinding within the same
 epoch preserves listening progress; pending work bound to an older Line version
-is reported blocked rather than silently rebound. A trigger Capture identifies
-the occurrence; passing its contents as Procedure inputs is a separate follow-up.
+is closed as superseded rather than silently rebound. A Line v4 can bind its
+trigger Capture to a named Source input. Its `max_age` is checked at admission
+time, not backdated to when the trigger occurred.
 
 `run` triggers one daemon-derived due occurrence. The occurrence's evaluation
 instant is the daemon's; `--evaluation-time` only asserts the instant the

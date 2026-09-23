@@ -159,7 +159,7 @@ def service_check_line_trigger(
                 with LineDispatchStore(instance).locked() as conn:
                     row = conn.execute(
                         "SELECT eligible_at FROM pending WHERE line_id=? AND epoch=? "
-                        "AND admitted=0 ORDER BY eligible_at,occurrence_id LIMIT 1",
+                        "AND disposition='pending' ORDER BY eligible_at,occurrence_id LIMIT 1",
                         (identity, accepted.line.occurrence_epoch),
                     ).fetchone()
                     if row is not None:
@@ -199,13 +199,18 @@ def service_check_line_trigger(
     except (PlaybillError, OSError, ValueError) as exc:
         return LineTriggerCheckResultV1(**context, status="incomplete", detail=str(exc))
     if dispatch_root(instance).exists() and occurrences:
-        pending = LineDispatchStore(instance).pending_ids(
+        states = LineDispatchStore(instance).occurrence_states(
             identity,
             accepted.line.occurrence_epoch,
             tuple(item.occurrence_id for item in occurrences),
         )
         occurrences = [
-            item.model_copy(update={"pending": item.occurrence_id in pending})
+            item.model_copy(
+                update={
+                    "pending": states.get(item.occurrence_id) == "pending",
+                    "dispatch_status": states.get(item.occurrence_id),
+                }
+            )
             for item in occurrences
         ]
     return LineTriggerCheckResultV1(

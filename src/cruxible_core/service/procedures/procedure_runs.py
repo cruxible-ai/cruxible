@@ -3332,6 +3332,7 @@ def _line_refusal_state(
     code: str,
     message: str,
     details: object,
+    retryable: bool = False,
 ) -> ProcedureRunStateV2:
     return ProcedureRunStateV2(
         run_id=None,
@@ -3348,6 +3349,7 @@ def _line_refusal_state(
         terminal=ProcedureAdmissionRefusalV1.model_validate(
             {
                 "code": code,
+                "retryable": retryable,
                 "message": message,
                 "details": {
                     "line_identity_digest": line_identity_digest(accepted_line.line.identity),
@@ -3423,6 +3425,7 @@ def service_run_playbill_line(
     daemon_clock: ProcedureClockProtocol | None = None,
     evaluation_instant_skew: timedelta | None = None,
     occurrence_basis_time: datetime | None = None,
+    expected_line_artifact_digest: str | None = None,
 ) -> ProcedureRunStateV2:
     instance.require_writable()
     if request.line != path_identity_digest:
@@ -3443,6 +3446,7 @@ def service_run_playbill_line(
             daemon_clock=daemon_clock,
             evaluation_instant_skew=evaluation_instant_skew,
             occurrence_basis_time=occurrence_basis_time,
+            expected_line_artifact_digest=expected_line_artifact_digest,
         )
 
 
@@ -3458,6 +3462,7 @@ def _run_playbill_line(
     daemon_clock: ProcedureClockProtocol | None = None,
     evaluation_instant_skew: timedelta | None = None,
     occurrence_basis_time: datetime | None = None,
+    expected_line_artifact_digest: str | None = None,
 ) -> ProcedureRunStateV2:
     """Derive, admit, and execute one occurrence of an accepted Line.
 
@@ -3493,6 +3498,23 @@ def _run_playbill_line(
         name=accepted_line.line.procedure.target.name,
         coordinate=coordinate,
     )
+    if (
+        expected_line_artifact_digest is not None
+        and accepted_line.artifact_digest != expected_line_artifact_digest
+    ):
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="line_binding_superseded",
+            message="The accepted Line changed after the pending binding was checked.",
+            details={
+                "expected_line_artifact_digest": expected_line_artifact_digest,
+                "current_line_artifact_digest": accepted_line.artifact_digest,
+            },
+        )
     if accepted.artifact_digest != accepted_line.line.procedure.artifact_digest:
         return _line_refusal_state(
             accepted,
@@ -3748,7 +3770,10 @@ def _run_playbill_line(
         )
     landed_materials: tuple[LandedCaptureRunMaterialV1, ...] = ()
     if isinstance(accepted_line.line, LineSpecV4):
-        from cruxible_core.service.procedures.trigger_inputs import bind_trigger_capture
+        from cruxible_core.service.procedures.trigger_inputs import (
+            TriggerCaptureRefused,
+            bind_trigger_capture,
+        )
 
         try:
             landed_materials = (
@@ -3763,6 +3788,18 @@ def _run_playbill_line(
                     max_bytes=budget.max_capture_bytes,
                 ),
             )
+        except TriggerCaptureRefused as exc:
+            return _line_refusal_state(
+                accepted,
+                accepted_line,
+                coordinate=coordinate,
+                head_at_admission=head_at_admission,
+                evaluation_time=evaluation_time,
+                code=exc.refusal_code,
+                message=str(exc),
+                retryable=exc.retryable,
+                details={"input_name": accepted_line.line.trigger_input},
+            )
         except (PlaybillError, ValueError) as exc:
             return _line_refusal_state(
                 accepted,
@@ -3770,7 +3807,7 @@ def _run_playbill_line(
                 coordinate=coordinate,
                 head_at_admission=head_at_admission,
                 evaluation_time=evaluation_time,
-                code="artifact_binding_mismatch",
+                code="trigger_capture_invalid",
                 message="The exact triggering Capture cannot be admitted as this Source input.",
                 details={"reason": str(exc), "input_name": accepted_line.line.trigger_input},
             )

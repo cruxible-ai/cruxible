@@ -7,6 +7,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cruxible_client.contracts.procedures.results import (
+    ProcedureAdmissionRefusalV1,
+    ProcedureNodeRefusalV1,
+)
 from cruxible_client.contracts.procedures.windows import LineTriggerBindingV1
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import ensure_utc
@@ -47,6 +51,7 @@ class LineTriggerOccurrenceV1(BaseModel):
     eligible_at: datetime = Field(description="Reads VALIDITY WINDOW.")
     admitted_run_id: str | None = None
     pending: bool = False
+    dispatch_status: Literal["pending", "admitted", "rejected", "superseded"] | None = None
 
 
 class LineTriggerCheckResultV1(BaseModel):
@@ -81,6 +86,19 @@ class LineDispatchRequestV1(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     occurrence_id: str | None = None
     limit: int = Field(default=1, ge=1, le=100)
+    retry: bool = Field(
+        default=False,
+        description=(
+            "Explicitly retry one closed or blocked occurrence against "
+            "the current Line version in the same epoch."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _retry_target(self) -> LineDispatchRequestV1:
+        if self.retry and (self.occurrence_id is None or self.limit != 1):
+            raise ValueError("retry requires one explicit occurrence_id and limit=1")
+        return self
 
 
 class LineListeningSessionV1(BaseModel):
@@ -97,9 +115,10 @@ class LineListeningSessionV1(BaseModel):
 class LineDispatchItemV1(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     occurrence_id: str
-    status: Literal["admitted", "pending", "blocked"]
+    status: Literal["admitted", "pending", "blocked", "rejected", "superseded"]
     run_id: str | None = None
     detail: str | None = None
+    refusal: ProcedureAdmissionRefusalV1 | ProcedureNodeRefusalV1 | None = None
 
 
 class LineDispatchResultV1(BaseModel):

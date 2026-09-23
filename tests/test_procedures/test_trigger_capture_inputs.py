@@ -285,7 +285,7 @@ def test_trigger_input_refuses_before_admission_without_refetch(tmp_path, failur
             instance, coordinate=instance.accepted_coordinate(), name=line.procedure.target.name
         )
         contract = capture_contract()
-        with pytest.raises(PlaybillExecutionError, match="over budget"):
+        with pytest.raises(PlaybillExecutionError, match="over budget") as error:
             bind_trigger_capture(
                 instance,
                 line=line,
@@ -296,9 +296,14 @@ def test_trigger_input_refuses_before_admission_without_refetch(tmp_path, failur
                 evaluation_time=now,
                 max_bytes=1,
             )
+        assert error.value.refusal_code == "trigger_capture_over_budget"
+        assert error.value.retryable
         return
     refused = run_line(instance, line, event, at=now)
     assert refused.run_id is None and refused.status == "admission_refused", refused
+    assert refused.terminal.code == (
+        "trigger_capture_stale" if failure == "stale" else "trigger_capture_unavailable"
+    )
     journal, _ = _journal(instance)
     assert not journal.select_records(
         _stream(instance),
@@ -428,3 +433,91 @@ def test_trigger_input_reservations_release_on_failed_admission(tmp_path, monkey
     assert not store.active()
     journal, _ = _journal(instance)
     assert len(journal.select_records(_stream(instance), event_kind="admission_bound")) == 1
+
+
+@pytest.mark.parametrize("failure", ["stale", "missing_envelope", "missing_body"])
+def test_unusable_occurrence_closes_without_starving_later_capture(tmp_path, failure):
+    from cruxible_client.contracts.captures import parse_capture_envelope
+    from cruxible_client.contracts.line_dispatch import (
+        LineEvaluateRequestV1,
+        LineTriggerCheckRequestV1,
+    )
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+    from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
+    from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
+
+    instance, root, line = world(tmp_path)
+    actor = _actor(instance)
+    first, _ = _run(instance, root)
+    digest = first.source_observations[0].capture_digest
+    bodies = instance.body_store()
+    if failure == "missing_body":
+        envelope = parse_capture_envelope(
+            bodies.read(digest, access=BodyAccessContext(principal_id="test", can_read_body=True))
+        )
+        digest = envelope.commitment.digest
+    original_bytes = bodies.read(
+        digest, access=BodyAccessContext(principal_id="test", can_read_body=True)
+    )
+    if failure != "stale":
+        bodies.erase(digest)
+    later = NOW + (timedelta(hours=2) if failure == "stale" else timedelta(seconds=10))
+    (root / RELATIVE_PATH).write_text('{"severity":"low"}')
+    _run(instance, root, evaluation_time=later)
+    now = later + timedelta(seconds=2)
+    evaluated = service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequestV1(since=NOW, until=now),
+        actor=actor,
+        now=now,
+    )
+    assert len(evaluated.occurrences) == 2
+    first_id = next(
+        o.occurrence_id for o in evaluated.occurrences if o.binding.event == event_from(first)
+    )
+    rejected = service_dispatch_line(
+        instance, line.identity.name, LineDispatchRequestV1(), actor=actor, now=now, caller_rung=2
+    ).items[0]
+    assert rejected.occurrence_id == first_id
+    assert rejected.status == "rejected"
+    assert rejected.refusal.code == (
+        "trigger_capture_stale" if failure == "stale" else "trigger_capture_unavailable"
+    )
+    assert not rejected.refusal.retryable
+    assert rejected.detail == rejected.refusal.message
+    assert rejected.refusal.repair.hand_edit.required_change
+    LineDispatchStore(instance).path.unlink()
+    # Re-evaluation cannot silently revive closed work, even after rebuilding SQLite.
+    repeated = service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequestV1(since=NOW, until=now),
+        actor=actor,
+        now=now,
+    )
+    closed = next(o for o in repeated.occurrences if o.occurrence_id == first_id)
+    assert closed.dispatch_status == "rejected"
+    assert not closed.pending
+    admitted = service_dispatch_line(
+        instance, line.identity.name, LineDispatchRequestV1(), actor=actor, now=now, caller_rung=2
+    ).items[0]
+    assert admitted.status == "admitted" and admitted.occurrence_id != first_id
+    check = service_check_line_trigger(
+        instance, line.identity.name, LineTriggerCheckRequestV1(), now=now
+    )
+    assert (
+        next(o for o in check.occurrences if o.occurrence_id == first_id).dispatch_status
+        == "rejected"
+    )
+    if failure != "stale":
+        bodies.store(original_bytes)
+        retry = service_dispatch_line(
+            instance,
+            line.identity.name,
+            LineDispatchRequestV1(occurrence_id=first_id, retry=True),
+            actor=actor,
+            now=now,
+            caller_rung=2,
+        )
+        assert retry.items[0].status == "admitted"

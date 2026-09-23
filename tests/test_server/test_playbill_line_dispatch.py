@@ -47,6 +47,28 @@ def test_typed_sdk_http_check_listen_evaluate_and_dispatch(playbill_http, tmp_pa
     result = sdk.dispatch_line(line.identity.name)
     assert result.items[0].status == "admitted", result
     assert sdk.dispatch_line(line.identity.name).items == ()
+    retried = sdk.dispatch_line(
+        line.identity.name, occurrence_id=evaluated.occurrences[0].occurrence_id, retry=True
+    )
+    assert retried.items[0].run_id == result.items[0].run_id
+    from click.testing import CliRunner
+
+    from cruxible_core.cli.commands import playbill as commands
+
+    monkeypatch.setattr(commands, "_server_call", lambda call, **_: call(transport, instance_id))
+    cli_retry = CliRunner().invoke(
+        commands.line_group,
+        [
+            "dispatch",
+            line.identity.name,
+            "--occurrence-id",
+            evaluated.occurrences[0].occurrence_id,
+            "--retry",
+            "--json",
+        ],
+    )
+    assert cli_retry.exit_code == 0, cli_retry.output
+    assert result.items[0].run_id in cli_retry.output
     final = sdk.check_line(line.identity.name)
     assert not final.occurrences[0].pending
     assert final.occurrences[0].admitted_run_id == result.items[0].run_id

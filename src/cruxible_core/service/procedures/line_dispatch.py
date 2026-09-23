@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from cruxible_client.contracts.errors import PlaybillError, PlaybillExecutionError
@@ -24,6 +24,12 @@ from cruxible_client.contracts.procedures.line_specs import (
     CadenceTriggerPolicyV1,
     line_identity_digest,
 )
+from cruxible_client.contracts.procedures.results import (
+    ProcedureAdmissionRefusalV1,
+    ProcedureNodeRefusalV1,
+)
+from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.repairs import served_repair_for_refusal
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 from cruxible_core.governance.actor_context import GovernedActorContext
@@ -38,7 +44,6 @@ from cruxible_core.service.procedures.procedure_runs import (
     _stream,
     service_run_playbill_line,
 )
-
 
 # Idle polls need not retain a record per tick. A crash may leave at most this
 # checkpoint interval uncovered; restart never advances beyond durable coverage.
@@ -60,9 +65,10 @@ def _enqueue(
     occurrences = []
     for occurrence in result.occurrences:
         pending = False
+        disposition = "admitted"
         if occurrence.admitted_run_id is None:
             exists = conn.execute(
-                "SELECT admitted FROM pending WHERE line_id=? AND epoch=? AND occurrence_id=?",
+                "SELECT disposition FROM pending WHERE line_id=? AND epoch=? AND occurrence_id=?",
                 (result.line_identity_digest, result.occurrence_epoch, occurrence.occurrence_id),
             ).fetchone()
             if exists is None:
@@ -80,8 +86,11 @@ def _enqueue(
                     actor=actor,
                     now=now,
                 )
-            pending = exists is None or not exists[0]
-        occurrences.append(occurrence.model_copy(update={"pending": pending}))
+            pending = exists is None or exists[0] == "pending"
+            disposition = exists[0] if exists else "pending"
+        occurrences.append(
+            occurrence.model_copy(update={"pending": pending, "dispatch_status": disposition})
+        )
     return result.model_copy(update={"occurrences": tuple(occurrences)})
 
 
@@ -235,7 +244,8 @@ def service_match_listening_lines(
             if (
                 is_cadence
                 and conn.execute(
-                    "SELECT 1 FROM pending WHERE line_id=? AND epoch=? AND admitted=0 LIMIT 1",
+                    "SELECT 1 FROM pending WHERE line_id=? AND epoch=? AND "
+                    "disposition='pending' LIMIT 1",
                     (session["line_id"], session["occurrence_epoch"]),
                 ).fetchone()
             ):
@@ -308,8 +318,10 @@ def service_dispatch_line(
         return LineDispatchResultV1()
     store = LineDispatchStore(instance)
     with store.locked() as conn:
-        sql = "SELECT payload FROM pending WHERE line_id=? AND epoch=? AND admitted=0"
-        args: list[Any] = [identity, epoch]
+        sql = "SELECT payload FROM pending WHERE line_id=?"
+        args: list[Any] = [identity]
+        if not request.retry:
+            sql += " AND disposition='pending'"
         if request.occurrence_id:
             sql += " AND occurrence_id=?"
             args.append(request.occurrence_id)
@@ -319,6 +331,7 @@ def service_dispatch_line(
     results = []
     for row in rows:
         data = json.loads(row[0])
+        epoch = data["occurrence_epoch"]
         occurrence = LineTriggerOccurrenceV1.model_validate(data["occurrence"])
         if occurrence.eligible_at > now:
             results.append(
@@ -330,6 +343,18 @@ def service_dispatch_line(
             )
             continue
         with line_admission_guard(instance.root, identity):
+            # Another dispatcher may have closed this row after our initial selection.
+            with store.locked() as conn:
+                latest = conn.execute(
+                    "SELECT disposition,payload FROM pending WHERE line_id=? AND epoch=? "
+                    "AND occurrence_id=?",
+                    (identity, epoch, occurrence.occurrence_id),
+                ).fetchone()
+                disposition, data = latest[0], json.loads(latest[1])
+            if disposition != "pending" and not request.retry:
+                continue
+            refusal: ProcedureAdmissionRefusalV1 | ProcedureNodeRefusalV1 | None = None
+            status: Literal["blocked", "rejected", "superseded"] = "blocked"
             prior = next(
                 iter(_line_admissions(instance, accepted, occurrence_id=occurrence.occurrence_id)),
                 None,
@@ -339,11 +364,29 @@ def service_dispatch_line(
                 current = _accepted_line_by_reference(
                     instance, coordinate=instance.accepted_coordinate(), reference=line
                 )
-                if current.artifact_digest != data["line_artifact_digest"]:
-                    detail = (
-                        "The retained pending binding names another Line version; "
-                        "explicit reconciliation is required."
+                if request.retry and current.line.occurrence_epoch == epoch:
+                    # The exact event/window is unchanged. Only an explicit retry
+                    # may bind a successor Line; retain that decision before admission.
+                    data.update(
+                        line_artifact_digest=current.artifact_digest,
+                        coordinate=AcceptedCoordinate.from_internal(
+                            instance.accepted_coordinate()
+                        ).model_dump(mode="json"),
                     )
+                    with store.locked() as conn:
+                        store.append(conn, "reconciled", data, actor=actor, now=now)
+                if current.artifact_digest != data["line_artifact_digest"]:
+                    refusal = ProcedureAdmissionRefusalV1(
+                        code="line_binding_superseded",
+                        repair=served_repair_for_refusal("line_binding_superseded"),
+                        message=(
+                            "The pending occurrence binds a superseded Line. Explicit "
+                            "retry is required within the same epoch; evaluate a changed "
+                            "epoch separately."
+                        ),
+                    )
+                    status = "superseded"
+                    detail = refusal.message
                 else:
                     binding = occurrence.binding
                     try:
@@ -361,8 +404,9 @@ def service_dispatch_line(
                             workspace_file_reader=workspace_file_reader,
                             daemon_clock=SimpleNamespace(now=lambda: now),
                             occurrence_basis_time=occurrence.eligible_at,
+                            expected_line_artifact_digest=data["line_artifact_digest"],
                         )
-                        # A refused pre-admission run must remain pending.
+                        # The journal, not the execution response, establishes admission.
                         admitted = next(
                             iter(
                                 _line_admissions(
@@ -373,7 +417,23 @@ def service_dispatch_line(
                         )
                         run_id = admitted.run_id if admitted else None
                         if run_id is None:
-                            detail = str(result.terminal)
+                            if isinstance(
+                                result.terminal,
+                                (ProcedureAdmissionRefusalV1, ProcedureNodeRefusalV1),
+                            ):
+                                refusal = result.terminal
+                                detail = refusal.message
+                                if refusal.code in {
+                                    "trigger_capture_stale",
+                                    "trigger_capture_unavailable",
+                                    "trigger_capture_forbidden",
+                                    "trigger_capture_invalid",
+                                }:
+                                    status = "rejected"
+                                elif refusal.code == "line_binding_superseded":
+                                    status = "superseded"
+                            else:
+                                detail = "No durable admission was produced."
                     except PlaybillExecutionError as exc:
                         detail = str(exc)
             with store.locked() as conn:
@@ -393,12 +453,14 @@ def service_dispatch_line(
                 else:
                     store.append(
                         conn,
-                        "dispatch_refused",
+                        "closed" if status in {"rejected", "superseded"} else "dispatch_refused",
                         dict(
                             line_id=identity,
                             epoch=epoch,
                             occurrence_id=occurrence.occurrence_id,
                             detail=detail,
+                            status=status,
+                            refusal=refusal.model_dump(mode="json") if refusal else None,
                         ),
                         actor=actor,
                         now=now,
@@ -406,9 +468,10 @@ def service_dispatch_line(
             results.append(
                 LineDispatchItemV1(
                     occurrence_id=occurrence.occurrence_id,
-                    status="admitted" if run_id else "blocked",
+                    status="admitted" if run_id else status,
                     run_id=run_id,
                     detail=detail,
+                    refusal=refusal,
                 )
             )
     return LineDispatchResultV1(items=tuple(results))

@@ -1084,6 +1084,29 @@
             "type": "string"
           }
         },
+        "refusal": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "refusal",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProcedureAdmissionRefusalV1"
+              },
+              {
+                "$ref": "#/$defs/ProcedureNodeRefusalV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Refusal"
+          }
+        },
         "run_id": {
           "default": null,
           "default_json_serializable": true,
@@ -1113,7 +1136,9 @@
             "enum": [
               "admitted",
               "pending",
-              "blocked"
+              "blocked",
+              "rejected",
+              "superseded"
             ],
             "title": "Status",
             "type": "string"
@@ -1121,6 +1146,401 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "HandEditInstructionV1": {
+            "additionalProperties": false,
+            "properties": {
+              "required_change": {
+                "minLength": 1,
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "minLength": 1,
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "required_change"
+            ],
+            "title": "HandEditInstructionV1",
+            "type": "object"
+          },
+          "HandEditRepairV1": {
+            "additionalProperties": false,
+            "properties": {
+              "hand_edit": {
+                "$ref": "#/$defs/HandEditInstructionV1"
+              }
+            },
+            "required": [
+              "hand_edit"
+            ],
+            "title": "HandEditRepairV1",
+            "type": "object"
+          },
+          "ProcedureAdmissionRefusalV1": {
+            "additionalProperties": false,
+            "properties": {
+              "classification": {
+                "const": "admission_refusal",
+                "default": "admission_refusal",
+                "title": "Classification",
+                "type": "string"
+              },
+              "code": {
+                "enum": [
+                  "binding_required",
+                  "unsupported_node",
+                  "not_current",
+                  "artifact_binding_mismatch",
+                  "pin_binding_mismatch",
+                  "input_material_mismatch",
+                  "state_tap_refused",
+                  "replay_material_mismatch",
+                  "procedure_runtime_policy_absent",
+                  "provider_explicit_implementation_required",
+                  "provider_replay_receipt_required",
+                  "exhaust_binding_carrier_required",
+                  "source_acquisition_policy_required",
+                  "source_acquisition_refused",
+                  "evaluation_instant_skewed",
+                  "line_identity_mismatch",
+                  "line_not_accepted",
+                  "line_closure_incomplete",
+                  "line_mandate_required",
+                  "occurrence_id_mismatch",
+                  "occurrence_not_due",
+                  "occurrence_already_admitted",
+                  "trigger_capture_stale",
+                  "trigger_capture_unavailable",
+                  "trigger_capture_over_budget",
+                  "trigger_capture_forbidden",
+                  "trigger_capture_invalid",
+                  "trigger_capture_not_yet_observed",
+                  "line_binding_superseded"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "details": {
+                "title": "Details"
+              },
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperationV1"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepairV1"
+                  }
+                ],
+                "title": "Repair"
+              },
+              "retryable": {
+                "default": false,
+                "title": "Retryable",
+                "type": "boolean"
+              },
+              "tag": {
+                "const": "playbill-procedure-admission-refusal-v1",
+                "default": "playbill-procedure-admission-refusal-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "repair"
+            ],
+            "title": "ProcedureAdmissionRefusalV1",
+            "type": "object"
+          },
+          "ProcedureBudgetRefusalDetailV1": {
+            "additionalProperties": false,
+            "properties": {
+              "budget_kind": {
+                "enum": [
+                  "max_items",
+                  "result_bytes",
+                  "wall_clock",
+                  "max_provider_calls",
+                  "max_capture_bytes"
+                ],
+                "title": "Budget Kind",
+                "type": "string"
+              },
+              "limit": {
+                "minimum": 0,
+                "title": "Limit",
+                "type": "integer"
+              },
+              "observed": {
+                "minimum": 1,
+                "title": "Observed",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-procedure-budget-refusal-detail-v1",
+                "default": "playbill-procedure-budget-refusal-detail-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "budget_kind",
+              "limit",
+              "observed"
+            ],
+            "title": "ProcedureBudgetRefusalDetailV1",
+            "type": "object"
+          },
+          "ProcedureJournalCoordinateV1": {
+            "additionalProperties": false,
+            "properties": {
+              "journal_family": {
+                "title": "Journal Family",
+                "type": "string"
+              },
+              "partition_id": {
+                "title": "Partition Id",
+                "type": "string"
+              },
+              "record_digest": {
+                "title": "Record Digest",
+                "type": "string"
+              },
+              "sequence": {
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              },
+              "stream_id": {
+                "title": "Stream Id",
+                "type": "string"
+              },
+              "stream_instance_id": {
+                "title": "Stream Instance Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-journal-coordinate-v1",
+                "default": "playbill-procedure-journal-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "stream_instance_id",
+              "journal_family",
+              "stream_id",
+              "partition_id",
+              "sequence",
+              "record_digest"
+            ],
+            "title": "ProcedureJournalCoordinateV1",
+            "type": "object"
+          },
+          "ProcedureNodeRefusalV1": {
+            "additionalProperties": false,
+            "properties": {
+              "budget": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureBudgetRefusalDetailV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "classification": {
+                "const": "node_refusal",
+                "default": "node_refusal",
+                "title": "Classification",
+                "type": "string"
+              },
+              "code": {
+                "enum": [
+                  "guard_refused",
+                  "repeat_exhausted",
+                  "budget_exhausted",
+                  "runtime_reference_unresolved",
+                  "contract_input_refused",
+                  "contract_output_refused",
+                  "adapter_value_invalid",
+                  "shape_items_input_invalid",
+                  "filter_items_input_invalid",
+                  "dedupe_items_input_invalid",
+                  "join_items_left_input_invalid",
+                  "join_items_right_input_invalid",
+                  "aggregate_items_input_invalid",
+                  "result_not_canonical",
+                  "line_binding_required",
+                  "source_acquisition_unavailable",
+                  "source_material_unavailable",
+                  "terminal_not_available",
+                  "terminal_egress_unverified",
+                  "proposal_item_invalid",
+                  "proposal_item_evidence_missing",
+                  "proposal_item_evidence_ambiguous",
+                  "proposal_lowering_refused",
+                  "proposal_candidate_refused",
+                  "proposal_target_paths_mismatch",
+                  "proposal_receipt_incomplete",
+                  "effectful_operation_payload_mismatch",
+                  "procedure_mandate_required",
+                  "procedure_mandate_superseded",
+                  "procedure_mandate_expired",
+                  "procedure_mandate_procedure_mismatch",
+                  "procedure_mandate_rung_insufficient",
+                  "procedure_mandate_authority_ceiling_insufficient",
+                  "procedure_mandate_namespace_mismatch",
+                  "procedure_mandate_not_applicable",
+                  "procedure_authority_admission_invalid",
+                  "procedure_authority_admission_mismatch",
+                  "provider_unavailable",
+                  "unclassified_input",
+                  "unclaimed_bucket",
+                  "playbill.acquisition.unavailable",
+                  "playbill.acquisition.stale",
+                  "playbill.acquisition.oversized",
+                  "playbill.acquisition.refused",
+                  "effect_grant_unrecognized",
+                  "effect_dispatch_requires_actor",
+                  "effect_dispatch_requires_authenticated_actor",
+                  "terminal_rung_capped_by_procedure_terminal_capability",
+                  "terminal_rung_capped_by_line_requested_rung",
+                  "terminal_rung_capped_by_propagated_sensitivity",
+                  "terminal_rung_capped_by_mandate_grant",
+                  "terminal_rung_capped_by_calibration",
+                  "provider_acquisition_plan_required",
+                  "provider_acquisition_plan_mismatch",
+                  "workspace_file_read_refused",
+                  "provider_effect_declaration_mismatch",
+                  "classifier_not_installed",
+                  "classifier_digest_mismatch",
+                  "unknown_extra",
+                  "budget_wall_clock",
+                  "budget_output_size",
+                  "budget_cost",
+                  "provider_declined",
+                  "secret_bundle_too_large",
+                  "insufficient_series_length",
+                  "non_finite_input",
+                  "degenerate_scale",
+                  "mismatched_lengths",
+                  "unknown_method",
+                  "unknown_test_name",
+                  "declared_family_mismatch",
+                  "unsupported_aggregation",
+                  "unknown_column",
+                  "malformed_model_ref",
+                  "undeclared_match_parameters",
+                  "invalid_parameter",
+                  "cross_origin_credentialed_redirect",
+                  "unsupported_redirect_scheme",
+                  "redirect_limit",
+                  "provider_protocol_violation"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "detail_code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Detail Code"
+              },
+              "details": {
+                "title": "Details"
+              },
+              "journal_coordinate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureJournalCoordinateV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperationV1"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepairV1"
+                  }
+                ],
+                "title": "Repair"
+              },
+              "retryable": {
+                "default": false,
+                "title": "Retryable",
+                "type": "boolean"
+              },
+              "tag": {
+                "const": "playbill-procedure-node-refusal-v1",
+                "default": "playbill-procedure-node-refusal-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "node_id",
+              "repair"
+            ],
+            "title": "ProcedureNodeRefusalV1",
+            "type": "object"
+          },
+          "RepairOperationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "additionalProperties": true,
+                "title": "Arguments",
+                "type": "object"
+              },
+              "operation": {
+                "minLength": 1,
+                "title": "Operation",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "title": "RepairOperationV1",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "properties": {
           "detail": {
@@ -1139,6 +1559,21 @@
             "title": "Occurrence Id",
             "type": "string"
           },
+          "refusal": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProcedureAdmissionRefusalV1"
+              },
+              {
+                "$ref": "#/$defs/ProcedureNodeRefusalV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Refusal"
+          },
           "run_id": {
             "anyOf": [
               {
@@ -1155,7 +1590,9 @@
             "enum": [
               "admitted",
               "pending",
-              "blocked"
+              "blocked",
+              "rejected",
+              "superseded"
             ],
             "title": "Status",
             "type": "string"
@@ -1209,6 +1646,20 @@
             "default": null,
             "title": "Occurrence Id"
           }
+        },
+        "retry": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "retry",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Explicitly retry one closed or blocked occurrence against the current Line version in the same epoch.",
+            "title": "Retry",
+            "type": "boolean"
+          }
         }
       },
       "json_schema": {
@@ -1232,6 +1683,12 @@
             ],
             "default": null,
             "title": "Occurrence Id"
+          },
+          "retry": {
+            "default": false,
+            "description": "Explicitly retry one closed or blocked occurrence against the current Line version in the same epoch.",
+            "title": "Retry",
+            "type": "boolean"
           }
         },
         "title": "LineDispatchRequestV1",
@@ -1260,6 +1717,40 @@
       },
       "json_schema": {
         "$defs": {
+          "HandEditInstructionV1": {
+            "additionalProperties": false,
+            "properties": {
+              "required_change": {
+                "minLength": 1,
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "minLength": 1,
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "required_change"
+            ],
+            "title": "HandEditInstructionV1",
+            "type": "object"
+          },
+          "HandEditRepairV1": {
+            "additionalProperties": false,
+            "properties": {
+              "hand_edit": {
+                "$ref": "#/$defs/HandEditInstructionV1"
+              }
+            },
+            "required": [
+              "hand_edit"
+            ],
+            "title": "HandEditRepairV1",
+            "type": "object"
+          },
           "LineDispatchItemV1": {
             "additionalProperties": false,
             "properties": {
@@ -1279,6 +1770,21 @@
                 "title": "Occurrence Id",
                 "type": "string"
               },
+              "refusal": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureAdmissionRefusalV1"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureNodeRefusalV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Refusal"
+              },
               "run_id": {
                 "anyOf": [
                   {
@@ -1295,7 +1801,9 @@
                 "enum": [
                   "admitted",
                   "pending",
-                  "blocked"
+                  "blocked",
+                  "rejected",
+                  "superseded"
                 ],
                 "title": "Status",
                 "type": "string"
@@ -1306,6 +1814,365 @@
               "status"
             ],
             "title": "LineDispatchItemV1",
+            "type": "object"
+          },
+          "ProcedureAdmissionRefusalV1": {
+            "additionalProperties": false,
+            "properties": {
+              "classification": {
+                "const": "admission_refusal",
+                "default": "admission_refusal",
+                "title": "Classification",
+                "type": "string"
+              },
+              "code": {
+                "enum": [
+                  "binding_required",
+                  "unsupported_node",
+                  "not_current",
+                  "artifact_binding_mismatch",
+                  "pin_binding_mismatch",
+                  "input_material_mismatch",
+                  "state_tap_refused",
+                  "replay_material_mismatch",
+                  "procedure_runtime_policy_absent",
+                  "provider_explicit_implementation_required",
+                  "provider_replay_receipt_required",
+                  "exhaust_binding_carrier_required",
+                  "source_acquisition_policy_required",
+                  "source_acquisition_refused",
+                  "evaluation_instant_skewed",
+                  "line_identity_mismatch",
+                  "line_not_accepted",
+                  "line_closure_incomplete",
+                  "line_mandate_required",
+                  "occurrence_id_mismatch",
+                  "occurrence_not_due",
+                  "occurrence_already_admitted",
+                  "trigger_capture_stale",
+                  "trigger_capture_unavailable",
+                  "trigger_capture_over_budget",
+                  "trigger_capture_forbidden",
+                  "trigger_capture_invalid",
+                  "trigger_capture_not_yet_observed",
+                  "line_binding_superseded"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "details": {
+                "title": "Details"
+              },
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperationV1"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepairV1"
+                  }
+                ],
+                "title": "Repair"
+              },
+              "retryable": {
+                "default": false,
+                "title": "Retryable",
+                "type": "boolean"
+              },
+              "tag": {
+                "const": "playbill-procedure-admission-refusal-v1",
+                "default": "playbill-procedure-admission-refusal-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "repair"
+            ],
+            "title": "ProcedureAdmissionRefusalV1",
+            "type": "object"
+          },
+          "ProcedureBudgetRefusalDetailV1": {
+            "additionalProperties": false,
+            "properties": {
+              "budget_kind": {
+                "enum": [
+                  "max_items",
+                  "result_bytes",
+                  "wall_clock",
+                  "max_provider_calls",
+                  "max_capture_bytes"
+                ],
+                "title": "Budget Kind",
+                "type": "string"
+              },
+              "limit": {
+                "minimum": 0,
+                "title": "Limit",
+                "type": "integer"
+              },
+              "observed": {
+                "minimum": 1,
+                "title": "Observed",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-procedure-budget-refusal-detail-v1",
+                "default": "playbill-procedure-budget-refusal-detail-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "budget_kind",
+              "limit",
+              "observed"
+            ],
+            "title": "ProcedureBudgetRefusalDetailV1",
+            "type": "object"
+          },
+          "ProcedureJournalCoordinateV1": {
+            "additionalProperties": false,
+            "properties": {
+              "journal_family": {
+                "title": "Journal Family",
+                "type": "string"
+              },
+              "partition_id": {
+                "title": "Partition Id",
+                "type": "string"
+              },
+              "record_digest": {
+                "title": "Record Digest",
+                "type": "string"
+              },
+              "sequence": {
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              },
+              "stream_id": {
+                "title": "Stream Id",
+                "type": "string"
+              },
+              "stream_instance_id": {
+                "title": "Stream Instance Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-journal-coordinate-v1",
+                "default": "playbill-procedure-journal-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "stream_instance_id",
+              "journal_family",
+              "stream_id",
+              "partition_id",
+              "sequence",
+              "record_digest"
+            ],
+            "title": "ProcedureJournalCoordinateV1",
+            "type": "object"
+          },
+          "ProcedureNodeRefusalV1": {
+            "additionalProperties": false,
+            "properties": {
+              "budget": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureBudgetRefusalDetailV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "classification": {
+                "const": "node_refusal",
+                "default": "node_refusal",
+                "title": "Classification",
+                "type": "string"
+              },
+              "code": {
+                "enum": [
+                  "guard_refused",
+                  "repeat_exhausted",
+                  "budget_exhausted",
+                  "runtime_reference_unresolved",
+                  "contract_input_refused",
+                  "contract_output_refused",
+                  "adapter_value_invalid",
+                  "shape_items_input_invalid",
+                  "filter_items_input_invalid",
+                  "dedupe_items_input_invalid",
+                  "join_items_left_input_invalid",
+                  "join_items_right_input_invalid",
+                  "aggregate_items_input_invalid",
+                  "result_not_canonical",
+                  "line_binding_required",
+                  "source_acquisition_unavailable",
+                  "source_material_unavailable",
+                  "terminal_not_available",
+                  "terminal_egress_unverified",
+                  "proposal_item_invalid",
+                  "proposal_item_evidence_missing",
+                  "proposal_item_evidence_ambiguous",
+                  "proposal_lowering_refused",
+                  "proposal_candidate_refused",
+                  "proposal_target_paths_mismatch",
+                  "proposal_receipt_incomplete",
+                  "effectful_operation_payload_mismatch",
+                  "procedure_mandate_required",
+                  "procedure_mandate_superseded",
+                  "procedure_mandate_expired",
+                  "procedure_mandate_procedure_mismatch",
+                  "procedure_mandate_rung_insufficient",
+                  "procedure_mandate_authority_ceiling_insufficient",
+                  "procedure_mandate_namespace_mismatch",
+                  "procedure_mandate_not_applicable",
+                  "procedure_authority_admission_invalid",
+                  "procedure_authority_admission_mismatch",
+                  "provider_unavailable",
+                  "unclassified_input",
+                  "unclaimed_bucket",
+                  "playbill.acquisition.unavailable",
+                  "playbill.acquisition.stale",
+                  "playbill.acquisition.oversized",
+                  "playbill.acquisition.refused",
+                  "effect_grant_unrecognized",
+                  "effect_dispatch_requires_actor",
+                  "effect_dispatch_requires_authenticated_actor",
+                  "terminal_rung_capped_by_procedure_terminal_capability",
+                  "terminal_rung_capped_by_line_requested_rung",
+                  "terminal_rung_capped_by_propagated_sensitivity",
+                  "terminal_rung_capped_by_mandate_grant",
+                  "terminal_rung_capped_by_calibration",
+                  "provider_acquisition_plan_required",
+                  "provider_acquisition_plan_mismatch",
+                  "workspace_file_read_refused",
+                  "provider_effect_declaration_mismatch",
+                  "classifier_not_installed",
+                  "classifier_digest_mismatch",
+                  "unknown_extra",
+                  "budget_wall_clock",
+                  "budget_output_size",
+                  "budget_cost",
+                  "provider_declined",
+                  "secret_bundle_too_large",
+                  "insufficient_series_length",
+                  "non_finite_input",
+                  "degenerate_scale",
+                  "mismatched_lengths",
+                  "unknown_method",
+                  "unknown_test_name",
+                  "declared_family_mismatch",
+                  "unsupported_aggregation",
+                  "unknown_column",
+                  "malformed_model_ref",
+                  "undeclared_match_parameters",
+                  "invalid_parameter",
+                  "cross_origin_credentialed_redirect",
+                  "unsupported_redirect_scheme",
+                  "redirect_limit",
+                  "provider_protocol_violation"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "detail_code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Detail Code"
+              },
+              "details": {
+                "title": "Details"
+              },
+              "journal_coordinate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureJournalCoordinateV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperationV1"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepairV1"
+                  }
+                ],
+                "title": "Repair"
+              },
+              "retryable": {
+                "default": false,
+                "title": "Retryable",
+                "type": "boolean"
+              },
+              "tag": {
+                "const": "playbill-procedure-node-refusal-v1",
+                "default": "playbill-procedure-node-refusal-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "node_id",
+              "repair"
+            ],
+            "title": "ProcedureNodeRefusalV1",
+            "type": "object"
+          },
+          "RepairOperationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "additionalProperties": true,
+                "title": "Arguments",
+                "type": "object"
+              },
+              "operation": {
+                "minLength": 1,
+                "title": "Operation",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "title": "RepairOperationV1",
             "type": "object"
           }
         },
@@ -2277,6 +3144,24 @@
                   }
                 ]
               },
+              "dispatch_status": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "pending",
+                      "admitted",
+                      "rejected",
+                      "superseded"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Dispatch Status"
+              },
               "eligible_at": {
                 "description": "Reads VALIDITY WINDOW.",
                 "format": "date-time",
@@ -2478,6 +3363,32 @@
             ]
           }
         },
+        "dispatch_status": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "dispatch_status",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pending",
+                  "admitted",
+                  "rejected",
+                  "superseded"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Dispatch Status"
+          }
+        },
         "eligible_at": {
           "has_default": false,
           "has_default_factory": false,
@@ -2649,6 +3560,24 @@
                 "type": "null"
               }
             ]
+          },
+          "dispatch_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pending",
+                  "admitted",
+                  "rejected",
+                  "superseded"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Dispatch Status"
           },
           "eligible_at": {
             "description": "Reads VALIDITY WINDOW.",
@@ -40181,7 +41110,14 @@
                   "line_mandate_required",
                   "occurrence_id_mismatch",
                   "occurrence_not_due",
-                  "occurrence_already_admitted"
+                  "occurrence_already_admitted",
+                  "trigger_capture_stale",
+                  "trigger_capture_unavailable",
+                  "trigger_capture_over_budget",
+                  "trigger_capture_forbidden",
+                  "trigger_capture_invalid",
+                  "trigger_capture_not_yet_observed",
+                  "line_binding_superseded"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -65763,7 +66699,14 @@
                   "line_mandate_required",
                   "occurrence_id_mismatch",
                   "occurrence_not_due",
-                  "occurrence_already_admitted"
+                  "occurrence_already_admitted",
+                  "trigger_capture_stale",
+                  "trigger_capture_unavailable",
+                  "trigger_capture_over_budget",
+                  "trigger_capture_forbidden",
+                  "trigger_capture_invalid",
+                  "trigger_capture_not_yet_observed",
+                  "line_binding_superseded"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -67847,7 +68790,14 @@
                   "line_mandate_required",
                   "occurrence_id_mismatch",
                   "occurrence_not_due",
-                  "occurrence_already_admitted"
+                  "occurrence_already_admitted",
+                  "trigger_capture_stale",
+                  "trigger_capture_unavailable",
+                  "trigger_capture_over_budget",
+                  "trigger_capture_forbidden",
+                  "trigger_capture_invalid",
+                  "trigger_capture_not_yet_observed",
+                  "line_binding_superseded"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -70269,7 +71219,14 @@
                   "line_mandate_required",
                   "occurrence_id_mismatch",
                   "occurrence_not_due",
-                  "occurrence_already_admitted"
+                  "occurrence_already_admitted",
+                  "trigger_capture_stale",
+                  "trigger_capture_unavailable",
+                  "trigger_capture_over_budget",
+                  "trigger_capture_forbidden",
+                  "trigger_capture_invalid",
+                  "trigger_capture_not_yet_observed",
+                  "line_binding_superseded"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -72795,7 +73752,14 @@
                   "line_mandate_required",
                   "occurrence_id_mismatch",
                   "occurrence_not_due",
-                  "occurrence_already_admitted"
+                  "occurrence_already_admitted",
+                  "trigger_capture_stale",
+                  "trigger_capture_unavailable",
+                  "trigger_capture_over_budget",
+                  "trigger_capture_forbidden",
+                  "trigger_capture_invalid",
+                  "trigger_capture_not_yet_observed",
+                  "line_binding_superseded"
                 ],
                 "title": "Code",
                 "type": "string"

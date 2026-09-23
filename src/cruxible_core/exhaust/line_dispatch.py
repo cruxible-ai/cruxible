@@ -41,10 +41,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS active_session ON sessions(line_id,epoch) WHER
 CREATE INDEX IF NOT EXISTS sessions_active ON sessions(active);
 CREATE TABLE IF NOT EXISTS pending (
  line_id TEXT NOT NULL, epoch INTEGER NOT NULL, occurrence_id TEXT NOT NULL,
- admitted INTEGER NOT NULL, eligible_at TEXT NOT NULL, payload TEXT NOT NULL, run_id TEXT,
+ disposition TEXT NOT NULL, eligible_at TEXT NOT NULL, payload TEXT NOT NULL, run_id TEXT,
  PRIMARY KEY(line_id,epoch,occurrence_id));
 CREATE INDEX IF NOT EXISTS unresolved
- ON pending(line_id,epoch,eligible_at,occurrence_id) WHERE admitted=0;
+ ON pending(line_id,eligible_at,occurrence_id) WHERE disposition='pending';
 """
 
 
@@ -73,6 +73,13 @@ class LineDispatchStore:
             conn = sqlite3.connect(self.path)
             conn.row_factory = sqlite3.Row
             try:
+                # This is a disposable projection, never a migration of authority.
+                columns = {row[1] for row in conn.execute("PRAGMA table_info(pending)")}
+                if columns and "disposition" not in columns:
+                    conn.executescript(
+                        "BEGIN IMMEDIATE; DROP TABLE pending; DROP TABLE sessions; "
+                        "DROP TABLE progress;" + _SCHEMA + "COMMIT;"
+                    )
                 conn.executescript(_SCHEMA)
                 row = conn.execute("SELECT sequence FROM progress WHERE singleton=1").fetchone()
                 start = row[0] + 1 if row else 1
@@ -117,16 +124,36 @@ class LineDispatchStore:
                     data["line_identity_digest"],
                     data["occurrence_epoch"],
                     data["occurrence"]["occurrence_id"],
-                    0,
+                    "pending",
                     format_datetime(parse_datetime(data["occurrence"]["eligible_at"])),
                     json.dumps(data),
                 ),
             )
         elif kind == "admitted":
             conn.execute(
-                "UPDATE pending SET admitted=1,run_id=? "
+                "UPDATE pending SET disposition='admitted',run_id=? "
                 "WHERE line_id=? AND epoch=? AND occurrence_id=?",
                 (data["run_id"], data["line_id"], data["epoch"], data["occurrence_id"]),
+            )
+        elif kind == "closed":
+            if data["status"] not in {"rejected", "superseded"}:
+                raise ValueError("invalid closed occurrence disposition")
+            conn.execute(
+                "UPDATE pending SET disposition=? WHERE line_id=? AND epoch=? "
+                "AND occurrence_id=? AND disposition!='admitted'",
+                (data["status"], data["line_id"], data["epoch"], data["occurrence_id"]),
+            )
+        elif kind == "reconciled":
+            conn.execute(
+                "UPDATE pending SET disposition='pending',payload=? WHERE "
+                "line_id=? AND epoch=? AND occurrence_id=? AND "
+                "disposition!='admitted'",
+                (
+                    json.dumps(data),
+                    data["line_identity_digest"],
+                    data["occurrence_epoch"],
+                    data["occurrence"]["occurrence_id"],
+                ),
             )
         elif kind != "dispatch_refused":
             raise ValueError("unknown Line dispatch transition")
@@ -182,12 +209,14 @@ class LineDispatchStore:
             {key: data.get(key) for key in LineListeningSessionV1.model_fields}
         )
 
-    def pending_ids(self, line_id: str, epoch: int, occurrence_ids: tuple[str, ...]) -> set[str]:
+    def occurrence_states(
+        self, line_id: str, epoch: int, occurrence_ids: tuple[str, ...]
+    ) -> dict[str, str]:
         with self.locked() as conn:
             return {
-                row[0]
+                row[0]: row[1]
                 for row in conn.execute(
-                    "SELECT occurrence_id FROM pending WHERE line_id=? AND epoch=? AND admitted=0 "
+                    "SELECT occurrence_id,disposition FROM pending WHERE line_id=? AND epoch=? "
                     + "AND occurrence_id IN ("
                     + ",".join("?" for _ in occurrence_ids)
                     + ")",

@@ -2922,13 +2922,15 @@ class Playbill:
         )
 
     def dispatch_line(
-        self, line: str, *, occurrence_id: str | None = None, limit: int = 1
+        self, line: str, *, occurrence_id: str | None = None, limit: int = 1, retry: bool = False
     ) -> api.LineDispatchResultV1:
         """Admit pending work using this connection's current actor and authority."""
         return self._client.dispatch_playbill_line(
             self._instance_id,
             line,
-            request=api.LineDispatchRequestV1(occurrence_id=occurrence_id, limit=limit),
+            request=api.LineDispatchRequestV1(
+                occurrence_id=occurrence_id, limit=limit, retry=retry
+            ),
         )
 
     def run_line(
